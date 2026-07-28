@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "size": [24, 24],
+  "categories": {
+    "01 Inputs": {
+      "fill": "#126E82",
+      "meaning": "Topology, supports, and loads"
+    },
+    "02 Form Finding": {
+      "fill": "#A9462E",
+      "meaning": "FD and TNA configuration and solvers"
+    },
+    "03 Diagnostics": {
+      "fill": "#765300",
+      "meaning": "Validation and diagnostic results"
+    },
+    "04 Visualisation": {
+      "fill": "#624494",
+      "meaning": "Diagram styling and preview payloads"
+    }
+  },
+  "components": [
+    {
+      "key": "network",
+      "label": "NW",
+      "category": "01 Inputs",
+      "filename": "network.png"
+    },
+    {
+      "key": "support_set",
+      "label": "SS",
+      "category": "01 Inputs",
+      "filename": "support_set.png"
+    },
+    {
+      "key": "load_case",
+      "label": "LC",
+      "category": "01 Inputs",
+      "filename": "load_case.png"
+    },
+    {
+      "key": "fd_settings",
+      "label": "FS",
+      "category": "02 Form Finding",
+      "filename": "fd_settings.png"
+    },
+    {
+      "key": "tna_control",
+      "label": "TC",
+      "category": "02 Form Finding",
+      "filename": "tna_control.png"
+    },
+    {
+      "key": "fd_solve",
+      "label": "FD",
+      "category": "02 Form Finding",
+      "filename": "fd_solve.png"
+    },
+    {
+      "key": "tna_solve",
+      "label": "TN",
+      "category": "02 Form Finding",
+      "filename": "tna_solve.png"
+    },
+    {
+      "key": "validate",
+      "label": "VA",
+      "category": "03 Diagnostics",
+      "filename": "validate.png"
+    },
+    {
+      "key": "diagram_style",
+      "label": "DS",
+      "category": "04 Visualisation",
+      "filename": "diagram_style.png"
+    },
+    {
+      "key": "preview_payload",
+      "label": "PV",
+      "category": "04 Visualisation",
+      "filename": "preview_payload.png"
+    }
+  ]
+}

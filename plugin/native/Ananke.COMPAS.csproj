@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyName>Ananke.COMPAS</AssemblyName>
+    <RootNamespace>Ananke.COMPAS</RootNamespace>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <TargetExt>.gha</TargetExt>
+    <Platforms>AnyCPU</Platforms>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RhinoCommon">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Grasshopper">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GH_IO">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\GH_IO.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Eto">
+      <HintPath>C:\Program Files\Rhino 8\System\Eto.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Rhino.Runtime.Code">
+      <HintPath>C:\Program Files\Rhino 8\System\Rhino.Runtime.Code.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RhinoCodeEditor">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCodeEditor.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RhinoCodePlatform.GH">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCodePlatform.GH.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RhinoCodePlatform.GH1">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCodePlatform.GH1.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RhinoCodePlatform.GH.Context">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCodePlatform.GH.Context.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RhinoCodePlatform.Rhino3D">
+      <HintPath>C:\Program Files\Rhino 8\System\RhinoCodePlatform.Rhino3D.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RhinoCodePluginGH">
+      <HintPath>C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Components\RhinoCodePluginGH.gha</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\icons\*.png">
+      <Link>Icons\%(Filename)%(Extension)</Link>
+      <LogicalName>Ananke.COMPAS.Icons.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\component_scripts\*.py">
+      <Link>Scripts\%(Filename)%(Extension)</Link>
+      <LogicalName>Ananke.COMPAS.Scripts.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

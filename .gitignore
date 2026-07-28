@@ -35,6 +35,8 @@ dist/
 *.3dmbak
 plugin/bin/
 plugin/obj/
+plugin/**/bin/
+plugin/**/obj/
 plugin/build/
 plugin/generated/
 

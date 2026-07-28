@@ -44,8 +44,9 @@ Record the exact generated artefact version in release notes.
 
 1. Add `src/ananke_equilibrium` under the project's **Libraries** collection
    as a Python 3 library.
-2. Add `src/tree_forest_compas` only for components that still need the
-   compatibility solver namespace.
+2. Add `src/tree_forest_compas` as a second Python 3 library. The v0.1 FD and
+   TNA adapters currently use its tested solver backends; it remains required
+   until those backends have moved into `ananke_equilibrium`.
 3. Create `plugin/definitions/ananke_equilibrium_v01.gh`.
 4. Place one source Script component for each v0.1 entry in
    `plugin/components.toml`.
