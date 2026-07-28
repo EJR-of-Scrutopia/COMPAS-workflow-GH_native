@@ -142,7 +142,11 @@ Further project documentation:
   topology.
 - Length and force units are explicit metadata in v0.2. Numeric conversion is
   not performed, so every input to a solve must already use one consistent
-  unit system.
+  unit system. `Network` offers the canonical coordinate units `mm`, `cm`,
+  `m`, `in`, and `ft`; FD force density `q` must use force-unit/length-unit.
+- FD consumes the registered edge network. A faced mesh may therefore feed
+  FD directly; its faces are retained in the result but do not enter the
+  force-density equations. TNA still requires a faced topology.
 - Support and load points are snapped to the nearest registered topology node
   in C# and cross the worker boundary as zero-based node IDs.
 - Native v0.2 accepts only implemented modes: `Explicit`, `Terminals`, or

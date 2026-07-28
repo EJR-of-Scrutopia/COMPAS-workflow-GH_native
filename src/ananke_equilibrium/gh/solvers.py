@@ -385,11 +385,24 @@ def solve_fd(
     *,
     backend: Any = None,
 ) -> Any:
-    """Solve one line ``TopologyBundle`` and return one ``SolvedCase``."""
+    """Solve one topology's edge network and return one ``SolvedCase``.
+
+    A faced topology is accepted because force-density form finding uses its
+    registered vertices and edges; registered faces remain available as
+    provenance but do not enter the FD equations.
+    """
 
     kind, vertices, edges, _ = _topology_data(topology)
-    if kind not in ("line", "fd", "network"):
-        raise AdapterError("FD Solve requires a line TopologyBundle.")
+    if kind not in (
+        "line",
+        "fd",
+        "network",
+        "faced",
+        "mesh",
+        "tna",
+        "thrust",
+    ):
+        raise AdapterError("FD Solve requires a registered edge TopologyBundle.")
     fixed = _support_ids(topology, supports)
     load_records = _load_records(topology, load_case)
 

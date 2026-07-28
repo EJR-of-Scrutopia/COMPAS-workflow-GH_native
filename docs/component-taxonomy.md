@@ -90,6 +90,13 @@ with the topology, faces, boundary conditions, loads, and height/force controls
 required by its solver; an arbitrary collection of curves is not automatically
 a funicular form.
 
+`Network` exposes `mm`, `cm`, `m`, `in`, and `ft` as canonical coordinate
+units. These are explicit dimensional metadata, not an implicit scale
+operation: coordinates remain in the supplied unit, load vectors remain in
+the selected force unit, and FD force density has units of force/length. A
+faced mesh can be passed directly to FD because FD consumes its registered
+edge network; the same topology retains its faces for TNA.
+
 ## Graphic-statics representation
 
 A display bundle must preserve equilibrium correspondence rather than merely

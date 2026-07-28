@@ -6,6 +6,7 @@ import pytest
 
 from ananke_equilibrium.contracts import FDConfig
 from ananke_equilibrium.contracts import HeightControl
+from ananke_equilibrium.contracts import TopologyBundle
 from ananke_equilibrium.contracts import TNAConfig
 from ananke_equilibrium.gh import build_load_case
 from ananke_equilibrium.gh import build_network
@@ -122,6 +123,53 @@ def test_fd_solve_uses_injected_backend_before_optional_compas_imports():
         item for item in diagnostics if item.code == "equilibrium.residual"
     )
     assert residual.value == pytest.approx(1.0e-10)
+
+
+def test_fd_solve_accepts_a_faced_topologys_registered_edges():
+    topology = TopologyBundle(
+        kind="faced",
+        vertices=((0, 0, 0), (1, -1, 0), (2, 0, 0)),
+        edges=((0, 1), (1, 2), (2, 0)),
+        faces=((0, 1, 2),),
+    )
+    supports = _value(build_support_set(node_ids=[0, 2], topology=topology))
+    loads = _value(
+        build_load_case(
+            vectors=[(0, -1, 0)],
+            node_ids=[1],
+            topology=topology,
+        )
+    )
+    calls = []
+
+    def backend(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            equilibrium_vertices=((0, 0, 0), (1, -1, 0), (2, 0, 0)),
+            source_edges=((0, 1), (1, 2), (2, 0)),
+            member_forces=(1.0, 1.0, 1.0),
+            force_densities=(1.0, 1.0, 1.0),
+            support_reactions=((0, 1, 0), (0, 0, 0), (0, 1, 0)),
+            residuals=((0, 0, 0), (0, 1e-10, 0), (0, 0, 0)),
+            fixed=(0, 2),
+            loads=((0, 0, 0), (0, -1, 0), (0, 0, 0)),
+            report="Injected faced FD solve complete.",
+        )
+
+    solved = _value(
+        solve_fd(
+            topology,
+            supports,
+            loads,
+            FDConfig(),
+            backend=backend,
+        )
+    )
+
+    assert calls
+    assert calls[0]["topology"].kind == "faced"
+    assert solved.solver == "fd"
+    assert solved.topology.faces == ((0, 1, 2),)
 
 
 def test_tna_solve_accepts_faced_pattern_and_injected_backend():

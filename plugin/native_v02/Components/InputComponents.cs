@@ -11,6 +11,34 @@ namespace Ananke.COMPAS.Native.Components;
 
 public sealed class NetworkComponent : NativeComponentBase
 {
+    private static readonly IReadOnlyList<ComponentValueListSpec>
+        NetworkValueLists =
+        new[]
+        {
+            new ComponentValueListSpec(
+                1,
+                "Network Kind",
+                new (string Label, string Value)[]
+                {
+                    ("Auto", "Auto"),
+                    ("Line / FD", "Line"),
+                    ("Faced / TNA", "Faced")
+                },
+                "Auto"),
+            new ComponentValueListSpec(
+                3,
+                "Length Unit",
+                new (string Label, string Value)[]
+                {
+                    ("mm", "mm"),
+                    ("cm", "cm"),
+                    ("m", "m"),
+                    ("in", "in"),
+                    ("ft", "ft")
+                },
+                "m")
+        };
+
     public NetworkComponent()
         : base(
             "Network",
@@ -23,6 +51,10 @@ public sealed class NetworkComponent : NativeComponentBase
 
     public override Guid ComponentGuid =>
         new("a9f470fc-e1a8-46c4-ba4c-d7fbe515b161");
+
+    private protected override IReadOnlyList<ComponentValueListSpec>
+        SuggestedValueLists =>
+        NetworkValueLists;
 
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
@@ -49,8 +81,8 @@ public sealed class NetworkComponent : NativeComponentBase
         parameters.AddTextParameter(
             "Length Unit",
             "LU",
-            "Metadata label for the coordinates, for example m. " +
-            "No numeric unit conversion is performed.",
+            "Coordinate unit: mm, cm, m, in, or ft. The unit is carried " +
+            "through every result; coordinates are not rescaled.",
             GH_ParamAccess.item,
             "m");
     }
@@ -82,9 +114,7 @@ public sealed class NetworkComponent : NativeComponentBase
         {
             GeometryTopologyData registered =
                 GeometryTopologyBuilder.Build(geometry, kind, tolerance);
-            string unit = (lengthUnit ?? string.Empty).Trim();
-            if (unit.Length == 0)
-                throw new ArgumentException("Length Unit cannot be empty.");
+            string unit = NormaliseLengthUnit(lengthUnit);
 
             var provenance = new Dictionary<string, string>(
                 StringComparer.Ordinal)
@@ -131,6 +161,27 @@ public sealed class NetworkComponent : NativeComponentBase
 
     private static Point3Dto ToPoint(Point3d point) =>
         new(point.X, point.Y, point.Z);
+
+    private static string NormaliseLengthUnit(string? value)
+    {
+        string key = (value ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant()
+            .Replace(" ", string.Empty, StringComparison.Ordinal);
+        return key switch
+        {
+            "mm" or "millimeter" or "millimeters" or
+                "millimetre" or "millimetres" => "mm",
+            "cm" or "centimeter" or "centimeters" or
+                "centimetre" or "centimetres" => "cm",
+            "m" or "meter" or "meters" or
+                "metre" or "metres" => "m",
+            "in" or "inch" or "inches" => "in",
+            "ft" or "foot" or "feet" => "ft",
+            _ => throw new ArgumentException(
+                "Length Unit must be mm, cm, m, in, or ft.")
+        };
+    }
 
     private static void EnsureValid(ContractDto contract)
     {

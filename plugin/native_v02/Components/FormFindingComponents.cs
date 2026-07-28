@@ -39,7 +39,8 @@ public sealed class FDSolveComponent :
             new EquilibriumProblemParam(),
             "Problem",
             "P",
-            "Validated line topology, supports, and load cases.",
+            "Validated edge topology, supports, and load cases. A faced " +
+            "mesh is solved through its registered edge network.",
             GH_ParamAccess.item);
         parameters.AddParameter(
             new FDSettingsParam(),
@@ -186,8 +187,8 @@ public sealed class FDSolveComponent :
         var errors = new List<string>();
         errors.AddRange(problemValue.Validate());
         errors.AddRange(settingsValue.Validate());
-        if (problemValue.Topology?.NetworkKind != "line")
-            errors.Add("FD Solve requires a Line topology.");
+        if (problemValue.Topology?.NetworkKind is not ("line" or "faced"))
+            errors.Add("FD Solve requires a registered edge topology.");
         if (loadCaseIndex < 0 ||
             loadCaseIndex >= problemValue.LoadCases.Count)
         {

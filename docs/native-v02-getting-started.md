@@ -130,8 +130,15 @@ FD Solve.Result --> Result Breakdown.Result
 Use these steps for a small catenary or cable test:
 
 1. Create a connected line or polyline with at least one free internal vertex.
-   Give the complete geometry list to `Network`, set `Kind` to `Line`, use a
-   weld tolerance appropriate to the Rhino model, and state the length unit.
+   Give the complete geometry list to `Network`, use a weld tolerance
+   appropriate to the Rhino model, and state the length unit. A newly placed
+   component receives dropdowns for `Kind` and `Length Unit`; the supported
+   units are `mm`, `cm`, `m`, `in`, and `ft`, with `m` selected by default.
+   The unit is metadata and does not rescale the supplied coordinates.
+   Reopened or copied components are not mutated; right-click `Network` and
+   choose `Create suggested value lists` if a missing dropdown is wanted.
+   Use `Kind = Line` for lines and polylines. A mesh may remain `Auto`/`Faced`:
+   FD consumes its registered edge network while retaining its faces for TNA.
    `Network` intentionally flattens every Geometry tree branch and registers
    all supplied segments as one topology. A polyline becomes one member per
    segment. Coincident members are merged and retain all contributing source
