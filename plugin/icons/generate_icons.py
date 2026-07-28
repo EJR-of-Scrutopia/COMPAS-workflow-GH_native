@@ -35,12 +35,16 @@ RGB = Tuple[int, int, int]
 # makes unsupported labels fail loudly instead of silently rendering badly.
 GLYPHS: Dict[str, Tuple[str, ...]] = {
     "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
     "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
     "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
     "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
     "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
     "N": ("10001", "11001", "11001", "10101", "10011", "10011", "10001"),
     "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
     "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
     "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
     "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
@@ -199,10 +203,13 @@ def validate_mapping(mapping: dict) -> None:
 
     categories = mapping.get("categories", {})
     components = mapping.get("components", [])
+    native_components = mapping.get("native_components", [])
+    all_components = components + native_components
     manifest = read_manifest_components()
     mapped_keys = [item.get("key") for item in components]
+    all_keys = [item.get("key") for item in all_components]
 
-    if len(mapped_keys) != len(set(mapped_keys)):
+    if len(all_keys) != len(set(all_keys)):
         raise ValueError("icon-map.json contains duplicate component keys")
     if set(mapped_keys) != set(manifest):
         missing = sorted(set(manifest) - set(mapped_keys))
@@ -210,7 +217,7 @@ def validate_mapping(mapping: dict) -> None:
         raise ValueError("Icon coverage mismatch: missing={}, extra={}".format(missing, extra))
 
     filenames: List[str] = []
-    for item in components:
+    for item in all_components:
         key = item["key"]
         label = item["label"]
         category = item["category"]
@@ -224,7 +231,7 @@ def validate_mapping(mapping: dict) -> None:
             raise ValueError("{} label uses unsupported glyphs: {}".format(key, unsupported))
         if category not in categories:
             raise ValueError("{} uses unknown category {!r}".format(key, category))
-        if category != manifest[key]:
+        if key in manifest and category != manifest[key]:
             raise ValueError(
                 "{} category differs from components.toml: {!r} != {!r}".format(
                     key, category, manifest[key]
@@ -259,7 +266,7 @@ def validate_png(path: Path, expected_size: int) -> str:
 def generate(mapping: dict) -> None:
     size = mapping["size"][0]
     categories = mapping["categories"]
-    for item in mapping["components"]:
+    for item in mapping["components"] + mapping.get("native_components", []):
         fill = parse_hex(categories[item["category"]]["fill"])
         data = make_icon(size, fill, item["label"])
         (ICON_DIR / item["filename"]).write_bytes(data)
@@ -267,7 +274,7 @@ def generate(mapping: dict) -> None:
 
 def check(mapping: dict) -> None:
     expected_size = mapping["size"][0]
-    for item in mapping["components"]:
+    for item in mapping["components"] + mapping.get("native_components", []):
         path = ICON_DIR / item["filename"]
         if not path.is_file():
             raise FileNotFoundError("Missing icon: {}".format(path))
@@ -291,7 +298,8 @@ def main() -> None:
     if not arguments.check:
         generate(mapping)
     check(mapping)
-    print("Validated {} component icons.".format(len(mapping["components"])))
+    count = len(mapping["components"]) + len(mapping.get("native_components", []))
+    print("Validated {} component icons.".format(count))
 
 
 if __name__ == "__main__":

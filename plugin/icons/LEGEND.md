@@ -12,6 +12,9 @@ the component category; the white letters identify the individual component.
 | 02 Form Finding | `#A9462E` orange | FD and TNA configuration and solvers |
 | 03 Diagnostics | `#765300` ochre | Validation and diagnostic results |
 | 04 Visualisation | `#624494` violet | Diagram styling and preview payloads |
+| 01 Model | `#126E82` teal | Native topology, support, load, and problem contracts |
+| 05 Visualisation | `#624494` violet | Native result previews and diagram display |
+| 90 Query | `#4E5968` slate | Backend inspection and result extraction |
 
 ## Component mapping
 
@@ -27,6 +30,10 @@ the component category; the white letters identify the individual component.
 | VA | `validate` | Validate | `validate.png` |
 | DS | `diagram_style` | Diagram Style | `diagram_style.png` |
 | PV | `preview_payload` | Preview Payload | `preview_payload.png` |
+| EP | `equilibrium_problem` | Equilibrium Problem | `equilibrium_problem.png` |
+| BH | `backend_health` | Backend Health | `backend_health.png` |
+| RB | `result_breakdown` | Result Breakdown | `result_breakdown.png` |
+| PV | `equilibrium_preview` | Equilibrium Preview | `equilibrium_preview.png` |
 
 ## Regeneration and validation
 

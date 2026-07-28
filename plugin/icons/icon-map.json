@@ -17,6 +17,18 @@
     "04 Visualisation": {
       "fill": "#624494",
       "meaning": "Diagram styling and preview payloads"
+    },
+    "01 Model": {
+      "fill": "#126E82",
+      "meaning": "Native topology, support, load, and problem contracts"
+    },
+    "05 Visualisation": {
+      "fill": "#624494",
+      "meaning": "Native result previews and diagram display"
+    },
+    "90 Query": {
+      "fill": "#4E5968",
+      "meaning": "Backend inspection and result extraction"
     }
   },
   "components": [
@@ -79,6 +91,32 @@
       "label": "PV",
       "category": "04 Visualisation",
       "filename": "preview_payload.png"
+    }
+  ],
+  "native_components": [
+    {
+      "key": "equilibrium_problem",
+      "label": "EP",
+      "category": "01 Model",
+      "filename": "equilibrium_problem.png"
+    },
+    {
+      "key": "backend_health",
+      "label": "BH",
+      "category": "90 Query",
+      "filename": "backend_health.png"
+    },
+    {
+      "key": "result_breakdown",
+      "label": "RB",
+      "category": "90 Query",
+      "filename": "result_breakdown.png"
+    },
+    {
+      "key": "equilibrium_preview",
+      "label": "PV",
+      "category": "05 Visualisation",
+      "filename": "equilibrium_preview.png"
     }
   ]
 }

@@ -327,6 +327,14 @@ def _solved_case(
         mappings={
             "source_edges": edges,
             "solver_edge_keys": solver_edge_keys,
+            "resolved_support_ids": tuple(
+                int(value)
+                for value in get_any(
+                    backend_result,
+                    ("fixed", "support_keys"),
+                    (),
+                ) or ()
+            ),
             "registered_source_edges": get_any(
                 backend_result,
                 ("source_edges",),

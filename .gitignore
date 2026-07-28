@@ -39,6 +39,8 @@ plugin/**/bin/
 plugin/**/obj/
 plugin/build/
 plugin/generated/
+tests/**/bin/
+tests/**/obj/
 
 # Editors and operating systems
 .idea/
