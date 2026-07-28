@@ -1,0 +1,1267 @@
+"""Whole-pattern thrust-network analysis with stable source mappings.
+
+This module deliberately has no Rhino or Grasshopper imports. Registration and
+solving are separate so a Grasshopper definition can register a complete pattern
+once, inspect it, and then run one or more TNA solves without rebuilding topology.
+
+The line registrar follows the same convention as
+``compas_tna.diagrams.FormDiagram.from_lines``: the input is a planar,
+straight-line embedding in the registered analysis XY plane; intersections have
+already been split into line endpoints; the first cycle found by COMPAS is the
+outside face and is removed. Trees and other inputs without loaded faces are not
+TNA patterns and are rejected with guidance to use ``compas_fd`` instead.
+"""
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from dataclasses import field
+from math import isfinite
+from math import sqrt
+from numbers import Real
+from typing import Any
+from typing import Dict
+from typing import Hashable
+from typing import List
+from typing import Optional
+from typing import Sequence
+from typing import Tuple
+
+import compas
+import compas_tna
+from compas.datastructures import Graph
+from compas_tna.diagrams import ForceDiagram
+from compas_tna.diagrams import FormDiagram
+from compas_tna.equilibrium import horizontal_nodal
+from compas_tna.equilibrium import vertical_from_q
+from compas_tna.equilibrium import vertical_from_zmax
+
+
+Point3 = Tuple[float, float, float]
+Edge = Tuple[int, int]
+Vector3 = Tuple[float, float, float]
+
+
+class TNAError(RuntimeError):
+    """Base exception for the headless TNA workflow."""
+
+
+class TNAInputError(TNAError, ValueError):
+    """Raised when input values are malformed or mutually inconsistent."""
+
+
+class TNATopologyError(TNAError, ValueError):
+    """Raised when an input cannot form a valid TNA form/force pair."""
+
+
+class TNASolveError(TNAError):
+    """Raised when COMPAS TNA cannot solve a registered problem."""
+
+
+@dataclass
+class TNAProblem:
+    """A registered, unsolved whole TNA pattern.
+
+    Attributes
+    ----------
+    form
+        The unmodified registered form diagram. Solves operate on a copy.
+    source_to_form
+        Every source vertex key mapped to its registered form vertex.
+        Multiple source keys can map to one vertex after tolerance merging.
+    form_to_sources
+        Reverse mapping from a registered form vertex to all merged source keys.
+    source_edges
+        Stable integer source-edge IDs mapped to source endpoint keys. For line
+        input, IDs are the original line indices, including duplicates.
+    source_edge_to_form
+        Stable source-edge IDs mapped to registered form edges.
+    form_edge_to_sources
+        Reverse edge mapping. Duplicate source lines therefore remain traceable.
+    endpoint_to_source
+        For line input, ``(line_index, endpoint_index)`` mapped to the merged
+        source vertex. Empty for vertices/faces input.
+    """
+
+    form: FormDiagram
+    source_kind: str
+    source_vertex_order: Tuple[Hashable, ...]
+    source_vertices: Dict[Hashable, Point3]
+    source_to_form: Dict[Hashable, int]
+    form_to_sources: Dict[int, Tuple[Hashable, ...]]
+    source_edges: Dict[int, Tuple[Hashable, Hashable]]
+    source_edge_to_form: Dict[int, Edge]
+    form_edge_to_sources: Dict[Edge, Tuple[int, ...]]
+    endpoint_to_source: Dict[Tuple[int, int], Hashable] = field(default_factory=dict)
+    diagnostics: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TNASession:
+    """A solved TNA form/force pair plus stable source and result data."""
+
+    form: FormDiagram
+    force: ForceDiagram
+    source_kind: str
+    source_vertex_order: Tuple[Hashable, ...]
+    source_vertices: Dict[Hashable, Point3]
+    source_to_form: Dict[Hashable, Optional[int]]
+    form_to_sources: Dict[int, Tuple[Hashable, ...]]
+    source_edges: Dict[int, Tuple[Hashable, Hashable]]
+    source_edge_to_form: Dict[int, Optional[Edge]]
+    form_edge_to_sources: Dict[Edge, Tuple[int, ...]]
+    endpoint_to_source: Dict[Tuple[int, int], Hashable]
+    support_keys: Tuple[Hashable, ...]
+    support_form_keys: Tuple[int, ...]
+    source_nodal_pz: Dict[Hashable, float]
+    form_nodal_pz: Dict[int, float]
+    effective_form_loads: Dict[int, Vector3]
+    edge_q: Dict[Edge, float]
+    edge_forces: Dict[Edge, float]
+    support_reactions: Dict[Hashable, Vector3]
+    support_reactions_by_form: Dict[int, Vector3]
+    diagnostics: Dict[str, Any]
+    metadata: Dict[str, Any]
+
+
+def _edge_key(u: int, v: int) -> Edge:
+    return (u, v) if u < v else (v, u)
+
+
+def _unique(items: Sequence[int]) -> List[int]:
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _as_point(value: Any, label: str) -> Point3:
+    try:
+        coordinates = list(value)
+    except TypeError as error:
+        raise TNAInputError("{} must be a 2D or 3D coordinate.".format(label)) from error
+
+    if len(coordinates) == 2:
+        coordinates.append(0.0)
+    if len(coordinates) != 3:
+        raise TNAInputError("{} must contain exactly 2 or 3 values.".format(label))
+
+    try:
+        point = tuple(float(value) for value in coordinates)
+    except (TypeError, ValueError) as error:
+        raise TNAInputError("{} contains a non-numeric coordinate.".format(label)) from error
+
+    if not all(isfinite(value) for value in point):
+        raise TNAInputError("{} contains a non-finite coordinate.".format(label))
+    return point  # type: ignore
+
+
+def _normalise_merge_settings(
+    tolerance: Optional[float],
+    precision: Optional[int],
+) -> Tuple[float, Optional[int]]:
+    if tolerance is None:
+        tolerance = 0.0
+    try:
+        tolerance = float(tolerance)
+    except (TypeError, ValueError) as error:
+        raise TNAInputError("tolerance must be a non-negative number.") from error
+    if tolerance < 0 or not isfinite(tolerance):
+        raise TNAInputError("tolerance must be a finite, non-negative number.")
+
+    if precision is not None:
+        if isinstance(precision, bool):
+            raise TNAInputError("precision must be an integer number of decimal places.")
+        try:
+            precision = int(precision)
+        except (TypeError, ValueError) as error:
+            raise TNAInputError("precision must be an integer number of decimal places.") from error
+        if precision < 0:
+            raise TNAInputError("precision must be zero or greater.")
+    return tolerance, precision
+
+
+def _rounded_point(point: Point3, precision: Optional[int]) -> Point3:
+    if precision is None:
+        return point
+    return tuple(round(value, precision) for value in point)  # type: ignore
+
+
+def _distance_squared(a: Point3, b: Point3) -> float:
+    return sum((a[index] - b[index]) ** 2 for index in range(3))
+
+
+def _merge_source_points(
+    source_items: Sequence[Tuple[Hashable, Point3]],
+    tolerance: float,
+    precision: Optional[int],
+) -> Tuple[
+    Dict[int, Point3],
+    Dict[Hashable, int],
+    Dict[int, Tuple[Hashable, ...]],
+]:
+    """Merge points deterministically, preserving first-seen canonical IDs."""
+    canonical_points = {}  # type: Dict[int, Point3]
+    source_to_canonical = {}  # type: Dict[Hashable, int]
+    canonical_sources = {}  # type: Dict[int, List[Hashable]]
+    tolerance_squared = tolerance * tolerance
+
+    for source_key, original_point in source_items:
+        point = _rounded_point(original_point, precision)
+        found = None
+        for canonical_key, canonical_point in canonical_points.items():
+            if tolerance > 0:
+                if _distance_squared(point, canonical_point) <= tolerance_squared:
+                    found = canonical_key
+                    break
+            elif point == canonical_point:
+                found = canonical_key
+                break
+
+        if found is None:
+            found = len(canonical_points)
+            canonical_points[found] = point
+            canonical_sources[found] = []
+
+        source_to_canonical[source_key] = found
+        canonical_sources[found].append(source_key)
+
+    return (
+        canonical_points,
+        source_to_canonical,
+        {key: tuple(values) for key, values in canonical_sources.items()},
+    )
+
+
+def _face_area_xy(face: Sequence[int], points: Mapping) -> float:
+    area2 = 0.0
+    for index, u in enumerate(face):
+        v = face[(index + 1) % len(face)]
+        x1, y1, _ = points[u]
+        x2, y2, _ = points[v]
+        area2 += x1 * y2 - x2 * y1
+    return 0.5 * area2
+
+
+def _clean_cycle(vertices: Sequence[int]) -> List[int]:
+    cleaned = []
+    for vertex in vertices:
+        if not cleaned or cleaned[-1] != vertex:
+            cleaned.append(vertex)
+    if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
+        cleaned.pop()
+    return cleaned
+
+
+def _edges_from_faces(faces: Sequence[Sequence[int]]) -> List[Edge]:
+    edges = []
+    seen = set()
+    for face in faces:
+        for index, u in enumerate(face):
+            v = face[(index + 1) % len(face)]
+            edge = _edge_key(u, v)
+            if edge not in seen:
+                seen.add(edge)
+                edges.append(edge)
+    return edges
+
+
+def _component_count(vertex_count: int, edges: Sequence[Edge]) -> int:
+    adjacency = {key: [] for key in range(vertex_count)}
+    for u, v in edges:
+        adjacency[u].append(v)
+        adjacency[v].append(u)
+    seen = set()
+    components = 0
+    for start in range(vertex_count):
+        if start in seen:
+            continue
+        components += 1
+        stack = [start]
+        while stack:
+            vertex = stack.pop()
+            if vertex in seen:
+                continue
+            seen.add(vertex)
+            stack.extend(adjacency[vertex])
+    return components
+
+
+def _actual_edges(form: FormDiagram) -> Dict[Edge, Edge]:
+    return {_edge_key(int(u), int(v)): (int(u), int(v)) for u, v in form.edges()}
+
+
+def _build_edge_reverse(
+    source_edge_to_form: Mapping,
+) -> Dict[Edge, Tuple[int, ...]]:
+    reverse = {}  # type: Dict[Edge, List[int]]
+    for source_edge, edge in source_edge_to_form.items():
+        if edge is None:
+            continue
+        key = _edge_key(*edge)
+        reverse.setdefault(key, []).append(int(source_edge))
+    return {edge: tuple(source_edges) for edge, source_edges in reverse.items()}
+
+
+def _normalise_vertex_source(
+    vertices: Any,
+    vertex_keys: Optional[Sequence[Hashable]],
+) -> Tuple[
+    Tuple[Hashable, ...],
+    Dict[Hashable, Point3],
+    bool,
+]:
+    if isinstance(vertices, Mapping):
+        if vertex_keys is not None:
+            raise TNAInputError(
+                "vertex_keys cannot be supplied when vertices is already a mapping."
+            )
+        items = list(vertices.items())
+        mapping_input = True
+    else:
+        try:
+            coordinates = list(vertices)
+        except TypeError as error:
+            raise TNAInputError("vertices must be a coordinate list or mapping.") from error
+        if vertex_keys is None:
+            keys = list(range(len(coordinates)))
+        else:
+            keys = list(vertex_keys)
+            if len(keys) != len(coordinates):
+                raise TNAInputError(
+                    "vertex_keys must have the same length as vertices."
+                )
+        items = list(zip(keys, coordinates))
+        mapping_input = False
+
+    if len(items) < 3:
+        raise TNATopologyError("A TNA pattern needs at least three vertices.")
+
+    source_vertices = {}  # type: Dict[Hashable, Point3]
+    order = []
+    for index, (key, coordinate) in enumerate(items):
+        try:
+            hash(key)
+        except TypeError as error:
+            raise TNAInputError("Vertex keys must be hashable.") from error
+        if key in source_vertices:
+            raise TNAInputError("Duplicate vertex key: {!r}.".format(key))
+        source_vertices[key] = _as_point(coordinate, "vertices[{}]".format(index))
+        order.append(key)
+    return tuple(order), source_vertices, mapping_input
+
+
+def _resolve_face_reference(
+    reference: Any,
+    source_order: Sequence[Hashable],
+    source_vertices: Mapping,
+    mapping_input: bool,
+) -> Hashable:
+    if mapping_input:
+        if reference not in source_vertices:
+            raise TNAInputError(
+                "Face references unknown vertex key {!r}.".format(reference)
+            )
+        return reference
+
+    if reference in source_vertices:
+        return reference
+    if isinstance(reference, int) and not isinstance(reference, bool):
+        if 0 <= reference < len(source_order):
+            return source_order[reference]
+    raise TNAInputError(
+        "Face reference {!r} is neither a source key nor a vertex index.".format(
+            reference
+        )
+    )
+
+
+def _register_vertices_faces(
+    vertices: Any,
+    faces: Any,
+    vertex_keys: Optional[Sequence[Hashable]],
+    tolerance: float,
+    precision: Optional[int],
+    metadata: Optional[Mapping],
+) -> TNAProblem:
+    source_order, source_vertices, mapping_input = _normalise_vertex_source(
+        vertices, vertex_keys
+    )
+
+    if faces is None:
+        raise TNATopologyError(
+            "TNA requires a face-based planar pattern. No faces were supplied; "
+            "use compas_fd for a cable or branching tree."
+        )
+    try:
+        source_faces = list(faces.values()) if isinstance(faces, Mapping) else list(faces)
+    except TypeError as error:
+        raise TNAInputError("faces must be a sequence or mapping.") from error
+    if not source_faces:
+        raise TNATopologyError(
+            "TNA requires at least one loaded face and a dual force diagram. "
+            "A no-face graph/tree belongs in compas_fd."
+        )
+
+    canonical_points, source_to_canonical, canonical_sources = _merge_source_points(
+        [(key, source_vertices[key]) for key in source_order],
+        tolerance,
+        precision,
+    )
+
+    canonical_faces = []
+    for face_index, face in enumerate(source_faces):
+        try:
+            references = list(face)
+        except TypeError as error:
+            raise TNAInputError(
+                "faces[{}] is not a vertex sequence.".format(face_index)
+            ) from error
+        resolved = [
+            _resolve_face_reference(
+                reference, source_order, source_vertices, mapping_input
+            )
+            for reference in references
+        ]
+        canonical = _clean_cycle(
+            [source_to_canonical[reference] for reference in resolved]
+        )
+        if len(set(canonical)) < 3:
+            raise TNATopologyError(
+                "Face {} collapses below three vertices after topology merging.".format(
+                    face_index
+                )
+            )
+        if abs(_face_area_xy(canonical, canonical_points)) <= max(
+            tolerance * tolerance, 1e-16
+        ):
+            raise TNATopologyError(
+                "Face {} has zero area in analysis XY. TNA needs a planar XY "
+                "straight-line embedding.".format(face_index)
+            )
+        canonical_faces.append(canonical)
+
+    canonical_edges = _edges_from_faces(canonical_faces)
+    components = _component_count(len(canonical_points), canonical_edges)
+    if components != 1:
+        raise TNATopologyError(
+            "The pattern has {} disconnected components. Register each connected "
+            "TNA pattern separately.".format(components)
+        )
+
+    form = FormDiagram.from_vertices_and_faces(canonical_points, canonical_faces)
+    if not form.is_valid():
+        raise TNATopologyError(
+            "The merged vertices/faces do not form a valid oriented COMPAS mesh."
+        )
+
+    actual_edges = _actual_edges(form)
+    source_edges = {}
+    source_edge_to_form = {}
+    for edge_id, (u, v) in enumerate(canonical_edges):
+        source_u = canonical_sources[u][0]
+        source_v = canonical_sources[v][0]
+        source_edges[edge_id] = (source_u, source_v)
+        source_edge_to_form[edge_id] = actual_edges[_edge_key(u, v)]
+
+    diagnostics = {
+        "source_kind": "vertices_faces",
+        "input_vertex_count": len(source_order),
+        "registered_vertex_count": form.number_of_vertices(),
+        "merged_vertex_count": len(source_order) - form.number_of_vertices(),
+        "source_edge_count": len(source_edges),
+        "registered_edge_count": form.number_of_edges(),
+        "loaded_face_count": form.number_of_faces(),
+        "component_count": components,
+        "tolerance": tolerance,
+        "precision": precision,
+    }
+    return TNAProblem(
+        form=form,
+        source_kind="vertices_faces",
+        source_vertex_order=source_order,
+        source_vertices=source_vertices,
+        source_to_form=dict(source_to_canonical),
+        form_to_sources=dict(canonical_sources),
+        source_edges=source_edges,
+        source_edge_to_form=source_edge_to_form,
+        form_edge_to_sources=_build_edge_reverse(source_edge_to_form),
+        endpoint_to_source={},
+        diagnostics=diagnostics,
+        metadata=dict(metadata or {}),
+    )
+
+
+def _register_lines(
+    lines: Any,
+    tolerance: float,
+    precision: Optional[int],
+    metadata: Optional[Mapping],
+) -> TNAProblem:
+    try:
+        input_lines = list(lines)
+    except TypeError as error:
+        raise TNAInputError("lines must be a sequence of endpoint pairs.") from error
+    if not input_lines:
+        raise TNATopologyError(
+            "No lines were supplied. TNA requires a connected pattern with "
+            "loaded faces; use compas_fd for a tree."
+        )
+
+    endpoint_items = []
+    parsed_lines = []
+    for line_index, line in enumerate(input_lines):
+        try:
+            endpoints = list(line)
+        except TypeError as error:
+            raise TNAInputError(
+                "lines[{}] is not an endpoint pair.".format(line_index)
+            ) from error
+        if len(endpoints) != 2:
+            raise TNAInputError(
+                "lines[{}] must contain exactly two endpoints.".format(line_index)
+            )
+        start = _as_point(endpoints[0], "lines[{}][0]".format(line_index))
+        end = _as_point(endpoints[1], "lines[{}][1]".format(line_index))
+        parsed_lines.append((start, end))
+        endpoint_items.append(((line_index, 0), start))
+        endpoint_items.append(((line_index, 1), end))
+
+    canonical_points, endpoint_to_canonical, canonical_endpoints = _merge_source_points(
+        endpoint_items, tolerance, precision
+    )
+    source_vertices = dict(canonical_points)
+    source_order = tuple(range(len(canonical_points)))
+    endpoint_to_source = dict(endpoint_to_canonical)
+
+    source_edges = {}
+    unique_edges = []
+    unique_seen = set()
+    duplicate_count = 0
+    for line_index in range(len(parsed_lines)):
+        u = endpoint_to_canonical[(line_index, 0)]
+        v = endpoint_to_canonical[(line_index, 1)]
+        if u == v:
+            raise TNATopologyError(
+                "Line {} collapses to zero length after topology merging.".format(
+                    line_index
+                )
+            )
+        source_edges[line_index] = (u, v)
+        edge = _edge_key(u, v)
+        if edge in unique_seen:
+            duplicate_count += 1
+        else:
+            unique_seen.add(edge)
+            unique_edges.append(edge)
+
+    components = _component_count(len(canonical_points), unique_edges)
+    if components != 1:
+        raise TNATopologyError(
+            "The line pattern has {} disconnected components. Register each "
+            "connected TNA pattern separately.".format(components)
+        )
+    cycle_rank = len(unique_edges) - len(canonical_points) + components
+    if cycle_rank <= 0:
+        raise TNATopologyError(
+            "The registered lines form a tree/no-face graph. TNA needs closed "
+            "faces and a dual force diagram; use compas_fd for this topology."
+        )
+
+    graph = Graph()
+    for key, (x, y, z) in canonical_points.items():
+        graph.add_node(key=key, x=x, y=y, z=z)
+    for u, v in unique_edges:
+        graph.add_edge(u, v)
+
+    try:
+        cycles = graph.find_cycles(breakpoints=list(graph.leaves()))
+    except Exception as error:
+        raise TNATopologyError(
+            "COMPAS could not find faces in the line pattern. Ensure all lines "
+            "form a planar analysis-XY embedding and split every crossing."
+        ) from error
+
+    if not cycles:
+        raise TNATopologyError(
+            "The line pattern contains no planar faces. Use compas_fd for a tree."
+        )
+
+    form = FormDiagram.from_vertices_and_faces(canonical_points, cycles)
+    if form.has_face(0):
+        form.delete_face(0)
+
+    if form.number_of_faces() == 0:
+        raise TNATopologyError(
+            "Removing the outside cycle left no loaded faces. A single loop or "
+            "tree cannot produce a useful TNA dual; provide a whole meshed pattern."
+        )
+    for face in form.faces():
+        vertices = form.face_vertices(face)
+        if len(set(vertices)) < 3 or abs(
+            _face_area_xy(vertices, canonical_points)
+        ) <= max(tolerance * tolerance, 1e-16):
+            raise TNATopologyError(
+                "The line pattern produced a degenerate face. Split crossings "
+                "and remove overlapping or dangling lines."
+            )
+    if not form.is_valid():
+        raise TNATopologyError(
+            "The line cycles do not form a valid oriented COMPAS mesh. Split "
+            "crossings and remove overlapping or dangling lines."
+        )
+
+    actual_edges = _actual_edges(form)
+    source_edge_to_form = {}
+    missing_source_edges = []
+    for edge_id, (u, v) in source_edges.items():
+        edge = actual_edges.get(_edge_key(u, v))
+        if edge is None:
+            missing_source_edges.append(edge_id)
+        else:
+            source_edge_to_form[edge_id] = edge
+    if missing_source_edges:
+        raise TNATopologyError(
+            "Lines {} were not part of any registered face. Remove dangling "
+            "lines or make them part of the whole pattern.".format(
+                missing_source_edges
+            )
+        )
+
+    diagnostics = {
+        "source_kind": "lines",
+        "input_line_count": len(input_lines),
+        "input_endpoint_count": len(endpoint_items),
+        "registered_vertex_count": form.number_of_vertices(),
+        "merged_endpoint_count": len(endpoint_items) - len(canonical_points),
+        "source_edge_count": len(source_edges),
+        "unique_edge_count": len(unique_edges),
+        "duplicate_line_count": duplicate_count,
+        "registered_edge_count": form.number_of_edges(),
+        "loaded_face_count": form.number_of_faces(),
+        "component_count": components,
+        "cycle_rank": cycle_rank,
+        "tolerance": tolerance,
+        "precision": precision,
+    }
+    return TNAProblem(
+        form=form,
+        source_kind="lines",
+        source_vertex_order=source_order,
+        source_vertices=source_vertices,
+        source_to_form={key: key for key in source_order},
+        form_to_sources={key: (key,) for key in source_order},
+        source_edges=source_edges,
+        source_edge_to_form=source_edge_to_form,
+        form_edge_to_sources=_build_edge_reverse(source_edge_to_form),
+        endpoint_to_source=endpoint_to_source,
+        diagnostics=diagnostics,
+        metadata=dict(metadata or {}),
+    )
+
+
+def register_tna_pattern(
+    *,
+    vertices: Any = None,
+    faces: Any = None,
+    lines: Any = None,
+    vertex_keys: Optional[Sequence[Hashable]] = None,
+    tolerance: Optional[float] = 1e-6,
+    precision: Optional[int] = None,
+    metadata: Optional[Mapping] = None,
+) -> TNAProblem:
+    """Register an entire face-based TNA pattern.
+
+    Exactly one source must be supplied:
+
+    * ``vertices`` and ``faces``; or
+    * ``lines`` as endpoint pairs.
+
+    Line intersections are not split automatically. The lines must already be a
+    planar, straight-line embedding in the registered analysis XY plane.
+    Decimal ``precision`` is applied before Euclidean ``tolerance`` merging.
+    """
+    has_vertices_faces = vertices is not None or faces is not None
+    has_lines = lines is not None
+    if has_vertices_faces == has_lines:
+        raise TNAInputError(
+            "Supply exactly one pattern source: vertices+faces, or lines."
+        )
+    if vertices is None or faces is None:
+        if not has_lines:
+            raise TNAInputError("Both vertices and faces are required together.")
+    tolerance, precision = _normalise_merge_settings(tolerance, precision)
+
+    if has_lines:
+        return _register_lines(lines, tolerance, precision, metadata)
+    return _register_vertices_faces(
+        vertices, faces, vertex_keys, tolerance, precision, metadata
+    )
+
+
+def _boundary_vertices(form: FormDiagram) -> List[int]:
+    vertices = []
+    for boundary in form.vertices_on_boundaries():
+        vertices.extend(int(vertex) for vertex in boundary)
+    return _unique(vertices)
+
+
+def _resolve_supports(
+    problem: TNAProblem,
+    form: FormDiagram,
+    support_mode: str,
+    support_keys: Optional[Sequence[Hashable]],
+) -> List[int]:
+    mode = str(support_mode or "").strip().lower()
+    if mode == "boundary":
+        if support_keys:
+            raise TNAInputError(
+                "support_keys is only valid when support_mode='keys'."
+            )
+        supports = _boundary_vertices(form)
+    elif mode == "keys":
+        if not support_keys:
+            raise TNAInputError(
+                "support_mode='keys' requires at least one source support key."
+            )
+        supports = []
+        unknown = []
+        for source_key in support_keys:
+            if source_key not in problem.source_to_form:
+                unknown.append(source_key)
+            else:
+                supports.append(problem.source_to_form[source_key])
+        if unknown:
+            raise TNAInputError(
+                "Unknown source support keys: {!r}.".format(unknown)
+            )
+        supports = _unique(supports)
+    else:
+        raise TNAInputError("support_mode must be 'boundary' or 'keys'.")
+
+    if not supports:
+        raise TNATopologyError(
+            "No supports were selected. TNA vertical equilibrium needs supports."
+        )
+    return supports
+
+
+def _normalise_pz(
+    problem: TNAProblem,
+    pz: Any,
+) -> Tuple[Dict[Hashable, float], Dict[int, float]]:
+    source_values = {}  # type: Dict[Hashable, float]
+    form_values = {int(key): 0.0 for key in problem.form.vertices()}
+
+    if isinstance(pz, Real) and not isinstance(pz, bool):
+        value = float(pz)
+        if not isfinite(value):
+            raise TNAInputError("pz must be finite.")
+        # A scalar means one nodal load per registered vertex, not one per
+        # duplicated source point that merged into it. Assign provenance to the
+        # first source representative and record zero on its welded aliases so
+        # summing source_nodal_pz gives the actual requested total.
+        for source_key in problem.source_vertex_order:
+            source_values[source_key] = 0.0
+        for form_key, source_keys in problem.form_to_sources.items():
+            if source_keys:
+                source_values[source_keys[0]] = value
+        for form_key in form_values:
+            form_values[form_key] = value
+        return source_values, form_values
+
+    if isinstance(pz, Mapping):
+        unknown = [key for key in pz if key not in problem.source_to_form]
+        if unknown:
+            raise TNAInputError("pz contains unknown source keys: {!r}.".format(unknown))
+        for source_key in problem.source_vertex_order:
+            value = float(pz.get(source_key, 0.0))
+            if not isfinite(value):
+                raise TNAInputError("pz contains a non-finite value.")
+            source_values[source_key] = value
+            form_values[problem.source_to_form[source_key]] += value
+        return source_values, form_values
+
+    try:
+        values = list(pz)
+    except TypeError as error:
+        raise TNAInputError(
+            "pz must be a scalar, source-key mapping, or source-aligned sequence."
+        ) from error
+    if len(values) != len(problem.source_vertex_order):
+        raise TNAInputError(
+            "A pz sequence must align with source_vertex_order (expected {}, got {}).".format(
+                len(problem.source_vertex_order), len(values)
+            )
+        )
+    for source_key, raw_value in zip(problem.source_vertex_order, values):
+        value = float(raw_value)
+        if not isfinite(value):
+            raise TNAInputError("pz contains a non-finite value.")
+        source_values[source_key] = value
+        form_values[problem.source_to_form[source_key]] += value
+    return source_values, form_values
+
+
+def _plan_diagonal(form: FormDiagram) -> float:
+    xy = form.vertices_attributes("xy")
+    xs = [float(point[0]) for point in xy]
+    ys = [float(point[1]) for point in xy]
+    return sqrt((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2)
+
+
+def _vector_norm(vector: Sequence[float]) -> float:
+    return sqrt(sum(float(value) ** 2 for value in vector))
+
+
+def _solver_vector(form: FormDiagram, key: int) -> Vector3:
+    values = form.vertex_attributes(key, ["_rx", "_ry", "_rz"])
+    return tuple(float(value or 0.0) for value in values)  # type: ignore
+
+
+def solve_tna_problem(
+    problem: TNAProblem,
+    *,
+    support_mode: str = "boundary",
+    support_keys: Optional[Sequence[Hashable]] = None,
+    pz: Any = -1.0,
+    vertical_mode: str = "zmax",
+    zmax: Optional[float] = None,
+    q_scale: float = -1.0,
+    density: float = 0.0,
+    horizontal_alpha: float = 100.0,
+    horizontal_kmax: int = 100,
+    vertical_kmax: int = 100,
+    vertical_tolerance: float = 1e-3,
+    display: bool = False,
+    metadata: Optional[Mapping] = None,
+) -> TNASession:
+    """Solve a registered whole TNA pattern and return all downstream state.
+
+    Notes
+    -----
+    ``pz`` uses the signed Z axis of the registered analysis coordinate system:
+    negative values act along negative analysis Z. ``support_reactions`` uses
+    the same analysis-coordinate components and therefore balances
+    ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
+    into world coordinates using its recorded ``analysis_plane`` metadata.
+
+    Selfweight through the upstream ``density`` argument is intentionally
+    disabled. In COMPAS TNA 0.7.0, ``LoadUpdater`` adds positive selfweight to
+    ``pz`` while ``FormDiagram.vertex_selfweight`` reports it with the opposite
+    analysis-Z sign, and the final effective load array is not written back to
+    the form. Discretise selfweight into explicit negative ``pz`` values for now.
+    """
+    # Grasshopper may retain a problem created before a Python module refresh.
+    # Accept that equivalent contract while still rejecting arbitrary objects.
+    if not isinstance(problem, TNAProblem):
+        required = (
+            "form",
+            "source_kind",
+            "source_vertex_order",
+            "source_vertices",
+            "source_to_form",
+            "form_to_sources",
+            "source_edges",
+            "source_edge_to_form",
+            "form_edge_to_sources",
+            "endpoint_to_source",
+            "diagnostics",
+            "metadata",
+        )
+        if not all(hasattr(problem, name) for name in required):
+            raise TNAInputError(
+                "problem must be a TNAProblem from register_tna_pattern."
+            )
+
+    density = float(density)
+    if not isfinite(density):
+        raise TNAInputError("density must be finite.")
+    if density != 0.0:
+        raise TNAInputError(
+            "density/selfweight is disabled for this COMPAS TNA 0.7.0 wrapper "
+            "because the upstream LoadUpdater uses a conflicting vertical sign "
+            "and does not persist its final effective loads on the form. Convert "
+            "selfweight to explicit signed nodal pz values (negative analysis Z) "
+            "and solve with density=0.0."
+        )
+
+    form = problem.form.copy()
+    form.dual = None
+    form.vertices_attribute("is_support", False)
+    form.vertices_attribute("is_fixed", False)
+
+    selected_supports = _resolve_supports(
+        problem, form, support_mode, support_keys
+    )
+    form.vertices_attribute("is_support", True, keys=selected_supports)
+
+    source_nodal_pz, registered_nodal_pz = _normalise_pz(problem, pz)
+    for key in form.vertices():
+        form.vertex_attributes(
+            key,
+            ["px", "py", "pz"],
+            [0.0, 0.0, registered_nodal_pz[int(key)]],
+        )
+
+    try:
+        form.update_boundaries()
+    except Exception as error:
+        raise TNATopologyError(
+            "FormDiagram.update_boundaries failed. Check support placement, "
+            "boundary orientation, and face validity."
+        ) from error
+
+    active_vertices = set(int(key) for key in form.vertices())
+    active_source_to_form = {
+        source: (form_key if form_key in active_vertices else None)
+        for source, form_key in problem.source_to_form.items()
+    }
+    active_form_to_sources = {
+        form_key: sources
+        for form_key, sources in problem.form_to_sources.items()
+        if form_key in active_vertices
+    }
+
+    support_form_keys = tuple(int(key) for key in form.supports())
+    if not support_form_keys:
+        raise TNATopologyError(
+            "Boundary updating removed all selected supports. Choose supports "
+            "that remain part of the active pattern."
+        )
+    free_vertices = [
+        int(key) for key in form.vertices() if int(key) not in support_form_keys
+    ]
+    if not free_vertices:
+        raise TNATopologyError(
+            "The pattern has no free vertices after boundary processing."
+        )
+
+    real_edges = [
+        (int(u), int(v)) for u, v in form.edges_where({"_is_edge": True})
+    ]
+    if not real_edges:
+        raise TNATopologyError(
+            "The pattern has no active TNA edges after boundary processing. "
+            "A tree or single unsupported loop has no useful dual force diagram."
+        )
+
+    # update_boundaries keeps conditioned boundary halfedges in the diagram but
+    # marks them ``_is_edge=False``. Only solved/active edges may remain mapped;
+    # otherwise downstream consumers can request q/_f values that do not exist.
+    current_edges = {
+        _edge_key(int(u), int(v)): (int(u), int(v))
+        for u, v in form.edges_where({"_is_edge": True})
+    }
+    active_source_edge_to_form = {}
+    for source_edge, registered_edge in problem.source_edge_to_form.items():
+        active_source_edge_to_form[source_edge] = current_edges.get(
+            _edge_key(*registered_edge)
+        )
+    active_form_edge_to_sources = _build_edge_reverse(active_source_edge_to_form)
+
+    try:
+        force = ForceDiagram.from_formdiagram(form)
+    except Exception as error:
+        raise TNATopologyError(
+            "The active form pattern could not produce a dual force diagram. "
+            "Provide a connected mesh with closed loaded faces."
+        ) from error
+    if force.number_of_edges() == 0:
+        raise TNATopologyError(
+            "The dual force diagram has no edges. TNA requires a whole "
+            "face-connected pattern, not an isolated face or tree."
+        )
+    if force.number_of_edges() != len(real_edges):
+        raise TNATopologyError(
+            "The support/boundary layout creates parallel dual edges "
+            "(active form edges: {}, force edges: {}). The current COMPAS TNA "
+            "force diagram is a mesh and cannot retain those multi-edges. Place "
+            "supports at boundary corners, refine the boundary segmentation, or "
+            "use boundary support mode.".format(
+                len(real_edges), force.number_of_edges()
+            )
+        )
+
+    try:
+        horizontal_nodal(
+            form,
+            force,
+            alpha=float(horizontal_alpha),
+            kmax=int(horizontal_kmax),
+        )
+    except Exception as error:
+        raise TNASolveError(
+            "COMPAS TNA horizontal_nodal failed for the registered whole pattern: "
+            "{}: {}".format(type(error).__name__, error)
+        ) from error
+
+    vertical_tolerance = float(vertical_tolerance)
+    if not isfinite(vertical_tolerance) or vertical_tolerance <= 0:
+        raise TNAInputError("vertical_tolerance must be finite and greater than zero.")
+
+    mode = str(vertical_mode or "").strip().lower()
+    vertical_scale = None
+    try:
+        if mode == "zmax":
+            if zmax is None:
+                base = max(float(form.vertex_attribute(key, "z")) for key in support_form_keys)
+                zmax = base + 0.25 * _plan_diagonal(form)
+            zmax = float(zmax)
+            support_max = max(
+                float(form.vertex_attribute(key, "z")) for key in support_form_keys
+            )
+            if not isfinite(zmax) or zmax <= support_max:
+                raise TNAInputError(
+                    "zmax must be finite and above the highest support elevation."
+                )
+            _, vertical_scale = vertical_from_zmax(
+                form,
+                zmax=zmax,
+                kmax=int(vertical_kmax),
+                xtol=vertical_tolerance,
+                rtol=vertical_tolerance,
+                density=density,
+                display=bool(display),
+            )
+        elif mode == "q":
+            q_scale = float(q_scale)
+            if not isfinite(q_scale) or q_scale == 0:
+                raise TNAInputError("q_scale must be finite and non-zero.")
+            vertical_from_q(
+                form,
+                scale=q_scale,
+                density=density,
+                kmax=int(vertical_kmax),
+                tol=vertical_tolerance,
+                display=bool(display),
+            )
+            vertical_scale = q_scale
+        else:
+            raise TNAInputError("vertical_mode must be 'zmax' or 'q'.")
+    except TNAInputError:
+        raise
+    except Exception as error:
+        raise TNASolveError(
+            "COMPAS TNA {} vertical solve failed: {}: {}".format(
+                mode, type(error).__name__, error
+            )
+        ) from error
+
+    edge_q = {}
+    edge_forces = {}
+    for u, v in form.edges_where({"_is_edge": True}):
+        edge = _edge_key(int(u), int(v))
+        raw_q = float(form.edge_attribute((u, v), "q"))
+        edge_q[edge] = raw_q if mode == "zmax" else raw_q * float(vertical_scale)
+        edge_forces[edge] = float(form.edge_attribute((u, v), "_f"))
+        if not isfinite(edge_q[edge]) or not isfinite(edge_forces[edge]):
+            raise TNASolveError(
+                "The TNA solve produced a non-finite edge result on {}.".format(edge)
+            )
+
+    form_nodal_pz = {
+        int(key): float(form.vertex_attribute(key, "pz")) for key in form.vertices()
+    }
+    effective_form_loads = {
+        int(key): tuple(
+            float(value)
+            for value in form.vertex_attributes(key, ["px", "py", "pz"])
+        )
+        for key in form.vertices()
+    }
+    support_reactions_by_form = {
+        int(key): _solver_vector(form, int(key)) for key in support_form_keys
+    }
+    support_reactions = {}
+    active_support_source_keys = []
+    support_form_set = set(support_form_keys)
+    if str(support_mode or "").strip().lower() == "keys":
+        # Preserve the exact source identities selected by the caller, even
+        # when multiple source vertices were welded to one form vertex.
+        for source_key in support_keys or ():
+            form_key = active_source_to_form.get(source_key)
+            if (
+                form_key in support_form_set
+                and source_key not in active_support_source_keys
+            ):
+                active_support_source_keys.append(source_key)
+                support_reactions[source_key] = support_reactions_by_form[form_key]
+    else:
+        # Boundary mode has no caller-selected source identity, so expose one
+        # stable representative for each active support form vertex.
+        for form_key in support_form_keys:
+            sources = active_form_to_sources.get(form_key, ())
+            if not sources:
+                continue
+            representative = sources[0]
+            active_support_source_keys.append(representative)
+            support_reactions[representative] = support_reactions_by_form[form_key]
+
+    free_residuals = [_solver_vector(form, key) for key in free_vertices]
+    max_free_residual = max(
+        [_vector_norm(vector) for vector in free_residuals] or [0.0]
+    )
+    reaction_sum = tuple(
+        sum(vector[index] for vector in support_reactions_by_form.values())
+        for index in range(3)
+    )
+    load_sum = tuple(
+        sum(vector[index] for vector in effective_form_loads.values())
+        for index in range(3)
+    )
+    global_force_error = tuple(
+        load_sum[index] + reaction_sum[index] for index in range(3)
+    )
+
+    angles = [
+        abs(float(form.edge_attribute((u, v), "_a") or 0.0))
+        for u, v in form.edges_where({"_is_edge": True})
+    ]
+    heights = [float(form.vertex_attribute(key, "z")) for key in form.vertices()]
+    removed_sources = [
+        source for source, form_key in active_source_to_form.items() if form_key is None
+    ]
+    removed_source_edges = [
+        edge_id
+        for edge_id, form_edge in active_source_edge_to_form.items()
+        if form_edge is None
+    ]
+    compression_count = sum(1 for force_value in edge_forces.values() if force_value < 0)
+    tension_count = sum(1 for force_value in edge_forces.values() if force_value > 0)
+
+    diagnostics = dict(problem.diagnostics)
+    diagnostics.update(
+        {
+            "status": "solved",
+            "active_vertex_count": form.number_of_vertices(),
+            "removed_source_keys": tuple(removed_sources),
+            "removed_source_edge_ids": tuple(removed_source_edges),
+            "active_edge_count": len(edge_q),
+            "force_vertex_count": force.number_of_vertices(),
+            "force_edge_count": force.number_of_edges(),
+            "support_count": len(support_form_keys),
+            "free_vertex_count": len(free_vertices),
+            "requested_total_pz": sum(source_nodal_pz.values()),
+            "active_total_pz": sum(form_nodal_pz.values()),
+            "effective_total_pz": load_sum[2],
+            "load_coordinate_system": "registered analysis-plane XYZ",
+            "load_sign_convention": (
+                "signed analysis XYZ; negative pz acts along negative analysis Z"
+            ),
+            "reaction_sign_convention": (
+                "signed analysis XYZ support force; "
+                "load_sum + reaction_sum = 0"
+            ),
+            "vertical_mode": mode,
+            "vertical_scale": float(vertical_scale),
+            "zmax_requested": zmax if mode == "zmax" else None,
+            "zmin_solved": min(heights),
+            "zmax_solved": max(heights),
+            "max_free_residual": max_free_residual,
+            "load_sum": load_sum,
+            "reaction_sum": reaction_sum,
+            "global_force_error": global_force_error,
+            "global_force_error_norm": _vector_norm(global_force_error),
+            "max_reciprocal_angle_deviation": max(angles or [0.0]),
+            "compression_edge_count": compression_count,
+            "tension_edge_count": tension_count,
+        }
+    )
+
+    session_metadata = dict(problem.metadata)
+    session_metadata.update(dict(metadata or {}))
+    session_metadata["versions"] = {
+        "compas": getattr(compas, "__version__", "unknown"),
+        "compas_tna": getattr(compas_tna, "__version__", "unknown"),
+    }
+    session_metadata["solve"] = {
+        "support_mode": support_mode,
+        "vertical_mode": mode,
+        "zmax": zmax if mode == "zmax" else None,
+        "q_scale": q_scale if mode == "q" else None,
+        "density": density,
+        "horizontal_alpha": float(horizontal_alpha),
+        "horizontal_kmax": int(horizontal_kmax),
+        "vertical_kmax": int(vertical_kmax),
+        "vertical_tolerance": vertical_tolerance,
+    }
+
+    return TNASession(
+        form=form,
+        force=force,
+        source_kind=problem.source_kind,
+        source_vertex_order=problem.source_vertex_order,
+        source_vertices=dict(problem.source_vertices),
+        source_to_form=active_source_to_form,
+        form_to_sources=active_form_to_sources,
+        source_edges=dict(problem.source_edges),
+        source_edge_to_form=active_source_edge_to_form,
+        form_edge_to_sources=active_form_edge_to_sources,
+        endpoint_to_source=dict(problem.endpoint_to_source),
+        support_keys=tuple(active_support_source_keys),
+        support_form_keys=support_form_keys,
+        source_nodal_pz=source_nodal_pz,
+        form_nodal_pz=form_nodal_pz,
+        effective_form_loads=effective_form_loads,
+        edge_q=edge_q,
+        edge_forces=edge_forces,
+        support_reactions=support_reactions,
+        support_reactions_by_form=support_reactions_by_form,
+        diagnostics=diagnostics,
+        metadata=session_metadata,
+    )
+
+
+def solve_tna_pattern(
+    *,
+    vertices: Any = None,
+    faces: Any = None,
+    lines: Any = None,
+    vertex_keys: Optional[Sequence[Hashable]] = None,
+    tolerance: Optional[float] = 1e-6,
+    precision: Optional[int] = None,
+    registration_metadata: Optional[Mapping] = None,
+    support_mode: str = "boundary",
+    support_keys: Optional[Sequence[Hashable]] = None,
+    pz: Any = -1.0,
+    vertical_mode: str = "zmax",
+    zmax: Optional[float] = None,
+    q_scale: float = -1.0,
+    density: float = 0.0,
+    horizontal_alpha: float = 100.0,
+    horizontal_kmax: int = 100,
+    vertical_kmax: int = 100,
+    vertical_tolerance: float = 1e-3,
+    display: bool = False,
+    metadata: Optional[Mapping] = None,
+) -> TNASession:
+    """Register and solve a whole TNA pattern in one convenience call."""
+    problem = register_tna_pattern(
+        vertices=vertices,
+        faces=faces,
+        lines=lines,
+        vertex_keys=vertex_keys,
+        tolerance=tolerance,
+        precision=precision,
+        metadata=registration_metadata,
+    )
+    return solve_tna_problem(
+        problem,
+        support_mode=support_mode,
+        support_keys=support_keys,
+        pz=pz,
+        vertical_mode=vertical_mode,
+        zmax=zmax,
+        q_scale=q_scale,
+        density=density,
+        horizontal_alpha=horizontal_alpha,
+        horizontal_kmax=horizontal_kmax,
+        vertical_kmax=vertical_kmax,
+        vertical_tolerance=vertical_tolerance,
+        display=display,
+        metadata=metadata,
+    )
