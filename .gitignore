@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Environments and local configuration
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Python build and package artifacts
+build/
+dist/
+*.egg-info/
+*.whl
+
+# Rhino, Grasshopper, Script Editor, and Yak build artifacts
+*.gha
+*.rhp
+*.rui
+*.yak
+*.gh~
+*.ghx~
+*.3dmbak
+plugin/bin/
+plugin/obj/
+plugin/build/
+plugin/generated/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.DS_Store
+Thumbs.db
+
+# Local logs and scratch files
+*.log
+*.tmp
+*.bak
+scratch/
+
+# Generated Rhino environment/smoke-test reports
+scripts/rhino_environment.txt
+scripts/rhino_smoke_fd.txt
