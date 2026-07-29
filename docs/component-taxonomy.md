@@ -12,8 +12,8 @@ parameters.
 | Registration | `TopologyBundle` | One registered object: nodes, edges, optional faces, source mapping, groups, tolerances, and topology diagnostics. |
 | Actions | `LoadCase` | Named nodal loads, load metadata, and the mapping back to registered nodes. |
 | Solver settings | `FDConfig`, `HeightControl`, `TNAConfig` | Explicit, serialisable controls for force-density or thrust-network solving. |
-| Results | `SolvedCase` | Immutable solved geometry, edge forces, reactions, residuals, provenance, units, and solver diagnostics. |
-| Display | `DiagramStyle`, `DiagramBundle` | Display policy and Rhino-ready preview payloads kept separate from solver data. |
+| Results | `SolvedCase`, `TnaResult` | Immutable solved geometry, edge forces, reactions, residuals, provenance, units, and solver diagnostics. `TnaResult` additionally preserves the reciprocal form/force pair and stable correspondence. |
+| Display | `DiagramStyle`, `DiagramBundle`, `GraphicDiagram` | Display policy and Rhino-ready preview payloads kept separate from solver data. `GraphicDiagram` is the compact native TNA reciprocal bundle. |
 | Design extensions | `BranchDesign` | Later response-field, branch-layout, and Steiner-junction decisions. |
 | Delivery extensions | `StructuralDefinition`, `FEAResult`, `IFCPackage` | Later structural modelling, analysis, and IFC hand-off contracts. |
 
@@ -21,23 +21,26 @@ The precise Python definitions are the source of truth. The table above
 describes their responsibilities, not an invitation to duplicate them inside
 Rhino-specific code.
 
-## v0.1 component surface
+## Native v0.2 component surface
 
-The first working slice has ten components. Their machine-readable contract
-is in `plugin/components.toml`.
+The compiled native slice has twelve components. The C# classes under
+`plugin/native_v02/Components` are authoritative for their current ports;
+`plugin/components.toml` records the preserved script-backed v0.1 surface.
 
-| Component | Inputs | Outputs | Responsibility |
-| --- | --- | --- | --- |
-| **Network** | geometry, kind, plane, tolerance, unit | `TopologyBundle`, status | Weld endpoints, register line/polyline or faced-mesh connectivity, preserve source IDs, and diagnose the whole object. |
-| **Support Set** | topology, points or node IDs, selection mode | `SupportSet`, status | Bind form-finding supports to the registered topology without defining FEA restraint degrees of freedom. |
-| **Load Case** | topology, points or node IDs, vectors, distribution, case name | `LoadCase`, status | Assign named loads to the registered topology without embedding solver assumptions. |
-| **FD Settings** | scalar or member-aligned force densities | `FDConfig`, status | Keep force-density values together and separate from loads or drawing controls. |
-| **TNA Control** | height mode/value, horizontal alpha, iterations, tolerance | `HeightControl`, `TNAConfig`, status | Keep crown-height/force-scale control and advanced solver options together. |
-| **FD Solve** | topology, supports, load case, `FDConfig` | `SolvedCase`, status | Force-density form finding for compatible networks. |
-| **TNA Solve** | faced topology, supports, load case, `HeightControl`, `TNAConfig` | `SolvedCase`, status | Thrust-network form finding for a compatible whole-object pattern. |
-| **Validate** | solved case, tolerances | diagnostics, status | Check topology, residual equilibrium, reactions, closure, and numerical warnings. |
-| **Diagram Style** | preset, scales, label controls | `DiagramStyle`, status | Set scales, colours, labels, and line weights without changing analysis. |
-| **Preview Payload** | solved case, style, kind, dimension | `DiagramBundle`, status | Produce renderer-neutral form/member primitives for the first Rhino preview implementation. |
+| Category | Component | Inputs | Outputs | Responsibility |
+| --- | --- | --- | --- | --- |
+| `01 Model` | **Network** | geometry, kind, weld tolerance, length unit | `Topology` | Weld lines, polylines, or mesh edges into one registered topology, preserve faces and source IDs, and diagnose the whole object. |
+| `01 Model` | **Support Set** | topology, points or node IDs, mode, snap tolerance | `Supports` | Bind form-finding supports to the registered topology without defining FEA restraint degrees of freedom. |
+| `01 Model` | **Load Case** | topology, points or node IDs, vectors, distribution, name, factor, force unit, snap tolerance | `Load Case` | Assign one named load case to the topology without embedding solver assumptions. |
+| `01 Model` | **Equilibrium Problem** | topology, support set, load-case list, name | `Problem` | Validate and bundle the shared solver input. |
+| `02 Form Finding` | **FD Settings** | scalar or member-aligned force densities | `Settings` | Keep force-density values separate from loads and drawing controls. |
+| `02 Form Finding` | **FD Solve** | problem, settings, load-case index | `Result` | Run whole-network COMPAS force-density form finding. |
+| `02 Form Finding` | **TNA Control** | height mode/value, horizontal alpha, horizontal/vertical iterations, tolerance | `Control` | Bundle crown-height or force-scale control and numerical TNA settings. |
+| `02 Form Finding` | **TNA Solve** | problem, control, load-case selector | `Result` (`TnaResult`) | Solve a faced thrust network and preserve the spatial thrust, planar form, reciprocal force, source mapping, loads, reactions, and diagnostics as one state. |
+| `03 Graphic Statics` | **TNA Reciprocal** | TNA result, layout, metric, force scale, vector scale, gap ratio | `Diagram` (`GraphicDiagram`) | Display and pass on the linked thrust/form/force diagram without rerunning the solver. |
+| `05 Visualisation` | **Equilibrium Preview** | equilibrium result, force weight, vector scale | member colours/lines and load, reaction, residual lines | Preview the current FD equilibrium result in the Rhino viewport. |
+| `90 Query` | **Result Breakdown** | equilibrium result | aligned member geometry/forces/densities, vectors, source IDs, supports, diagnostics, report | Deconstruct an equilibrium result for downstream Grasshopper operations. |
+| `90 Query` | **Backend Health** | none | ready, Python, packages, capabilities, report | Verify the persistent Python worker, package environment, and protocol. |
 
 ### Port rules
 
@@ -63,7 +66,11 @@ These are separate stages, not extra modes hidden inside the initial solvers.
 | Topology generation | **Branch Layout** | Candidate trunk/branch graph derived from a field and target points. |
 | Junction optimisation | **Steiner** | Branching topology and junction positions satisfying the chosen 120-degree policy where the Euclidean Steiner assumptions apply. |
 | Reciprocal equilibrium | **AGS Solve** | Force and form diagrams with explicit reciprocal correspondence using `compas_ags`. |
-| Drawing | **Graphic Statics** | Ordered load lines, force polygons/cells, reciprocal member lines, labels, scales, and closure errors. |
+| Force-flow query | **TNA Force Flow** | Ranked and traceable discrete edge paths using `q`, `H`, `F`, or load-path metrics. |
+| Direction registration | **GS Direction Register** | Ordered section paths and effective transferred loads for a declared direction. |
+| Directional drawing | **GS Funicular 2D** | Dashed load line, recovered pole, pole rays, funicular polygon, labels, and closure errors for an ordered path. |
+| Spatial drawing | **Graphic Statics 3D** | Explicit spatial form/force cells and reciprocal correspondence where the selected method supports them. |
+| Column design | **TNA Column Heads / Column Actions** | Candidate heads, augmented supports, re-solved reactions, and branch-tip actions. |
 | Structural assembly | **Structural Model** | `compas_model` elements, materials, sections, connections, supports, and load cases. |
 | Verification | **COMPAS FEA** | Analysis-ready model plus displacements, internal forces, utilisation inputs, and solver provenance. |
 | Information delivery | **IFC** | Mapped products, relationships, properties, analysis provenance, and an IFC file/package. |
@@ -113,8 +120,18 @@ draw member magnitudes:
 A single cable or arch under parallel loads often produces the familiar
 triangular outer force polygon with a fan of rays. A branching frame generally
 has several joint polygons or reciprocal cells and should not be forced into
-one decorative triangle. `AGS Solve` and `Graphic Statics` therefore own the
-reciprocal topology; `Preview Payload` only draws the structured result.
+one decorative triangle. `AGS Solve` and the directional graphic-statics
+stages therefore own any new reciprocal construction; display components only
+draw structured solver or construction results.
+
+For TNA, the reciprocal force diagram is already produced during horizontal
+equilibrium. The worker must serialise it as part of `TnaResult`; a native
+`TNA Reciprocal` component displays that state without rerunning AGS. A
+classical dashed load-line/pole construction is extracted separately from an
+ordered directional path. Its `Force Density q`, `Horizontal Force H`, and
+`Axial Force F` display metrics are equilibrium demands, not material
+capacity or utilisation. See
+[`architecture/tna-graphic-statics-columns.md`](architecture/tna-graphic-statics-columns.md).
 
 ## Naming policy
 

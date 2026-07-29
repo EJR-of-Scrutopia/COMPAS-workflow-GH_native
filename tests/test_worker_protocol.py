@@ -24,6 +24,235 @@ def request(command, payload=None, request_id="request-1"):
     }
 
 
+class FakeDiagram:
+    def __init__(
+        self,
+        vertices,
+        edges,
+        *,
+        faces=(),
+        edge_attributes=None,
+        ordered_edges=None,
+    ):
+        self._vertices = dict(vertices)
+        self._edges = tuple(tuple(edge) for edge in edges)
+        self._faces = {
+            key: tuple(cycle) for key, cycle in faces
+        }
+        self._edge_attributes = dict(edge_attributes or {})
+        self._ordered_edges = (
+            tuple(tuple(edge) for edge in ordered_edges)
+            if ordered_edges is not None
+            else None
+        )
+
+    def vertices(self):
+        return iter(self._vertices)
+
+    def vertex_coordinates(self, key):
+        return self._vertices[key]
+
+    def edges(self):
+        return iter(self._edges)
+
+    def edges_where(self, _conditions=None, **_kwargs):
+        return iter(self._edges)
+
+    def faces(self):
+        return iter(self._faces)
+
+    def face_vertices(self, key):
+        return self._faces[key]
+
+    def edge_attribute(self, edge, name):
+        value = self._edge_attributes.get((tuple(edge), name))
+        if value is None:
+            value = self._edge_attributes.get(
+                ((edge[1], edge[0]), name)
+            )
+        return value
+
+    def ordered_edges(self, _form):
+        if self._ordered_edges is None:
+            return list(self._edges)
+        return list(self._ordered_edges)
+
+
+def tna_payload():
+    vertices = [
+        [float(x), float(y), 0.0]
+        for y in range(3)
+        for x in range(3)
+    ]
+    faces = [
+        [0, 1, 4, 3],
+        [1, 2, 5, 4],
+        [3, 4, 7, 6],
+        [4, 5, 8, 7],
+    ]
+    edges = []
+    seen = set()
+    for face in faces:
+        for index, u in enumerate(face):
+            v = face[(index + 1) % len(face)]
+            edge = (min(u, v), max(u, v))
+            if edge not in seen:
+                seen.add(edge)
+                edges.append(list(edge))
+    return {
+        "topology": {
+            "kind": "faced",
+            "vertices": vertices,
+            "edges": edges,
+            "faces": faces,
+            "source_vertex_ids": [
+                "grid-{}".format(index) for index in range(len(vertices))
+            ],
+            "length_unit": "m",
+            "metadata": {
+                "source": "test",
+                "analysis_plane": [
+                    [0, 0, 0],
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1],
+                ],
+            },
+        },
+        "supports": {
+            "mode": "boundary",
+        },
+        "load_case": {
+            "name": "dead",
+            "distribution": "uniform_nodes",
+            "base_vector": [0, 0, -1],
+        },
+        "control": {
+            "height_control": {
+                "mode": "zmax",
+                "value": 1.0,
+            },
+            "settings": {
+                "horizontal_alpha": 100.0,
+                "horizontal_iterations": 100,
+                "vertical_iterations": 100,
+                "tolerance": 1.0e-3,
+            },
+        },
+    }
+
+
+def fake_tna_backend(**kwargs):
+    topology = kwargs["topology"]
+    form_edges = ((1, 4), (3, 4), (4, 5), (4, 7))
+    force_edges = ((10, 11), (11, 12), (12, 13), (13, 10))
+    form = FakeDiagram(
+        {
+            1: (1.0, 0.0, 0.0),
+            3: (0.0, 1.0, 0.0),
+            4: (1.0, 1.0, 1.0),
+            5: (2.0, 1.0, 0.0),
+            7: (1.0, 2.0, 0.0),
+        },
+        form_edges,
+        faces=(
+            (20, (1, 4, 3)),
+            (21, (1, 5, 4)),
+            (22, (3, 4, 7)),
+            (23, (4, 5, 7)),
+        ),
+        edge_attributes={
+            (edge, "_a"): 179.75 for edge in form_edges
+        },
+    )
+    force = FakeDiagram(
+        {
+            10: (0.0, 0.0, 0.0),
+            11: (1.0, 0.0, 0.0),
+            12: (1.0, 1.0, 0.0),
+            13: (0.0, 1.0, 0.0),
+        },
+        force_edges,
+        faces=((4, (10, 11, 12, 13)),),
+        ordered_edges=force_edges,
+    )
+    source_edges = {
+        index: tuple(edge)
+        for index, edge in enumerate(topology.edges)
+    }
+    active_by_source = {
+        tuple(sorted(edge)): index
+        for index, edge in source_edges.items()
+        if tuple(sorted(edge)) in {
+            tuple(sorted(item)) for item in form_edges
+        }
+    }
+    source_edge_to_form = {
+        source_id: (
+            tuple(edge)
+            if tuple(sorted(edge)) in active_by_source
+            else None
+        )
+        for source_id, edge in source_edges.items()
+    }
+    form_edge_to_sources = {
+        tuple(sorted(edge)): (active_by_source[tuple(sorted(edge))],)
+        for edge in form_edges
+    }
+    return SimpleNamespace(
+        form=form,
+        force=force,
+        source_kind="vertices_faces",
+        source_vertex_order=tuple(range(len(topology.vertices))),
+        source_vertices={
+            index: point for index, point in enumerate(topology.vertices)
+        },
+        source_to_form={
+            index: index if index in (1, 3, 4, 5, 7) else None
+            for index in range(len(topology.vertices))
+        },
+        form_to_sources={
+            index: (index,) for index in (1, 3, 4, 5, 7)
+        },
+        source_edges=source_edges,
+        source_edge_to_form=source_edge_to_form,
+        form_edge_to_sources=form_edge_to_sources,
+        endpoint_to_source={},
+        support_keys=(1, 3, 5, 7),
+        support_form_keys=(1, 3, 5, 7),
+        source_nodal_pz={
+            index: -1.0 for index in range(len(topology.vertices))
+        },
+        form_nodal_pz={
+            index: -1.0 for index in (1, 3, 4, 5, 7)
+        },
+        effective_form_loads={
+            index: (0.0, 0.0, -1.0)
+            for index in (1, 3, 4, 5, 7)
+        },
+        edge_q={edge: -0.25 for edge in form_edges},
+        edge_forces={edge: -0.3535533905932738 for edge in form_edges},
+        support_reactions={
+            index: (0.0, 0.0, 1.25) for index in (1, 3, 5, 7)
+        },
+        support_reactions_by_form={
+            index: (0.0, 0.0, 1.25) for index in (1, 3, 5, 7)
+        },
+        diagnostics={
+            "status": "solved",
+            "vertical_scale": -0.25,
+            "max_free_residual": 1.0e-12,
+            "global_force_error_norm": 0.0,
+            "max_reciprocal_angle_deviation": 179.75,
+        },
+        metadata={
+            "analysis_plane": topology.metadata["analysis_plane"],
+            "solve": {"vertical_mode": "zmax"},
+        },
+        report="Injected worker TNA solve complete.",
+    )
+
+
 def test_frame_roundtrip_uses_big_endian_length_prefix():
     message = request("system.health", request_id="health-1")
 
@@ -55,6 +284,7 @@ def test_health_dispatch_reports_runtime_and_optional_capabilities():
     assert "compas_fd" in health["packages"]
     assert "fd.solve" in health["capabilities"]
     assert "system.health" in health["capabilities"]["commands"]
+    assert "tna.solve" in health["capabilities"]["commands"]
 
 
 def test_unknown_command_returns_structured_error_and_echoes_id():
@@ -130,6 +360,85 @@ def test_fd_solve_decodes_contracts_and_encodes_stable_snapshot():
 
     # The resulting response itself remains valid framed JSON.
     assert decode_frame(encode_frame(response)) == response
+
+
+def test_tna_solve_persists_reciprocal_graphs_and_stable_mappings():
+    calls = []
+
+    def backend(**kwargs):
+        calls.append(kwargs)
+        return fake_tna_backend(**kwargs)
+
+    response = dispatch(
+        request("tna.solve", tna_payload(), "tna-1"),
+        tna_backend=backend,
+    )
+
+    assert response["type"] == "result", response
+    assert response["id"] == "tna-1"
+    assert calls
+    assert calls[0]["topology"].kind == "faced"
+    assert calls[0]["height_control"].mode == "zmax"
+    assert calls[0]["config"].horizontal_alpha == pytest.approx(100.0)
+
+    result = response["result"]
+    assert result["kind"] == "tna_result"
+    assert result["equilibrium"]["solver"] == "tna"
+    assert "session" not in result["equilibrium"]
+    assert len(result["form_graph"]["vertices"]) == 5
+    assert len(result["form_graph"]["edges"]) == 4
+    assert result["form_graph"]["vertices"][0]["source_vertex_ids"] == [
+        "grid-1"
+    ]
+    assert len(result["force_graph"]["vertices"]) == 4
+    assert len(result["force_graph"]["edges"]) == 4
+    assert result["horizontal_scale"] == pytest.approx(-0.25)
+    assert result["analysis_plane"]["zaxis"] == [0.0, 0.0, 1.0]
+
+    first = result["edge_states"][0]
+    assert first["form_edge_id"] == 0
+    assert first["force_edge_id"] == 0
+    assert first["equilibrium_edge_id"] == 0
+    assert first["q"] == pytest.approx(-0.25)
+    assert first["horizontal_force"] == pytest.approx(-0.25)
+    assert first["axial_force"] == pytest.approx(-0.3535533905932738)
+    assert first["force_state"] == "compression"
+    assert first["reciprocity_error_degrees"] == pytest.approx(0.25)
+    assert first["source_edge_ids"]
+
+    mappings = result["mappings"]
+    assert len(mappings["source_vertex_to_form_vertex"]) == 9
+    assert any(
+        item["form_edge_id"] is None
+        for item in mappings["source_edge_to_form_edge"]
+    )
+    assert len(mappings["form_edge_to_force_edge"]) == 4
+    assert len(mappings["form_edge_to_equilibrium_edge"]) == 4
+    assert len(mappings["supports"]) == 4
+    assert len(mappings["loads"]) == 5
+    assert mappings["supports"] == mappings["reactions"]
+    assert mappings["supports"][0]["source_vertex_id"] == "grid-1"
+
+    # The complete reciprocal snapshot itself must remain finite framed JSON.
+    assert decode_frame(encode_frame(response)) == response
+
+
+def test_tna_solve_rejects_line_topology_before_backend_call():
+    payload = tna_payload()
+    payload["topology"]["kind"] = "line"
+    payload["topology"]["faces"] = []
+    called = []
+
+    response = dispatch(
+        request("tna.solve", payload, "bad-tna"),
+        tna_backend=lambda **kwargs: called.append(kwargs),
+    )
+
+    assert response["type"] == "error"
+    assert response["id"] == "bad-tna"
+    assert response["error"]["code"] == "invalid_payload"
+    assert "faced topology" in response["error"]["message"]
+    assert not called
 
 
 def test_solver_stdout_cannot_corrupt_framed_worker_response(capsys):

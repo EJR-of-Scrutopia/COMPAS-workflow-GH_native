@@ -10,6 +10,10 @@
       "fill": "#A9462E",
       "meaning": "FD and TNA configuration and solvers"
     },
+    "03 Graphic Statics": {
+      "fill": "#2F7D6D",
+      "meaning": "Reciprocal form, force, and thrust diagrams"
+    },
     "03 Diagnostics": {
       "fill": "#765300",
       "meaning": "Validation and diagnostic results"
@@ -117,6 +121,12 @@
       "label": "PV",
       "category": "05 Visualisation",
       "filename": "equilibrium_preview.png"
+    },
+    {
+      "key": "tna_reciprocal",
+      "label": "TR",
+      "category": "03 Graphic Statics",
+      "filename": "tna_reciprocal.png"
     }
   ]
 }

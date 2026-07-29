@@ -201,10 +201,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 7)
+        if (parameterTypes.Length != 10)
         {
             failures.Add(
-                $"Expected 7 public persistent contract parameters, found " +
+                $"Expected 10 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");

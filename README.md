@@ -21,7 +21,7 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains nine components:
+The native v0.2 vertical slice contains twelve components:
 
 | Grasshopper subcategory | Component | Purpose |
 | --- | --- | --- |
@@ -31,30 +31,43 @@ The native v0.2 vertical slice contains nine components:
 | `01 Model` | `Equilibrium Problem` | Validate and bundle topology, supports, and loads. |
 | `02 Form Finding` | `FD Settings` | Bundle scalar or member-aligned force densities. |
 | `02 Form Finding` | `FD Solve` | Run whole-network COMPAS force-density form finding. |
+| `02 Form Finding` | `TNA Control` | Bundle crown-height/force-scale and iteration controls. |
+| `02 Form Finding` | `TNA Solve` | Solve a faced thrust network and retain its reciprocal form/force state. |
+| `03 Graphic Statics` | `TNA Reciprocal` | Preview the linked thrust, planar form, reciprocal force, load, and reaction diagrams. |
 | `05 Visualisation` | `Equilibrium Preview` | Draw signed member forces, loads, reactions, and residuals. |
 | `90 Query` | `Result Breakdown` | Extract aligned geometry, forces, source IDs, vectors, and diagnostics. |
 | `90 Query` | `Backend Health` | Check the Python worker, packages, and protocol. |
 
-The implemented solver path is:
+The implemented solver paths share the same registered problem:
 
 ```text
 Geometry --> Network --------+--> Support Set --+
              |               |                  |
              +---------------+--> Load Case ----+--> Equilibrium Problem
-                                                        |
-Force densities --> FD Settings ------------------------+--> FD Solve
-                                                                  |
-                                           +----------------------+
-                                           |
-                                           +--> Equilibrium Preview
-                                           +--> Result Breakdown
+
+Equilibrium Problem + FD Settings --> FD Solve
+                                          +--> Equilibrium Preview
+                                          +--> Result Breakdown
+
+Equilibrium Problem + TNA Control --> TNA Solve --> TNA Reciprocal
+                                                     thrust/form/force
 ```
 
-FD currently works end to end. Native TNA solving, reciprocal 2D and 3D
-graphic statics, branch placement and Steiner relaxation, `compas_model`,
-FEA, and IFC formulation are roadmap items. Installed packages may be reported
-by `Backend Health`, but package detection does not mean those Grasshopper
-workflows have been implemented or structurally verified.
+FD and the first native TNA slice now work end to end. TNA requires a
+registered `Faced` topology. Its result preserves the reciprocal planar
+form/force correspondence, and `TNA Reciprocal` turns that state into a
+compact viewport diagram without rerunning AGS. It can weight the drawing by
+force density `q`, horizontal force `H`, or spatial axial force `F`; these are
+equilibrium demands, not member capacities.
+
+Directional dashed load-line/pole and funicular constructions, generic AGS,
+spatial/3D graphic statics, column and branch placement, Steiner relaxation,
+`compas_model`, FEA, and IFC formulation remain roadmap items. A general TNA
+reciprocal is a force mesh or set of cells and is not forced into the single
+triangle that applies to some ordered cable or arch constructions. Installed
+packages may be reported by `Backend Health`, but package detection does not
+mean those Grasshopper workflows have been implemented or structurally
+verified.
 
 FD, TNA, and graphic statics will remain distinct methods sharing neutral
 inputs, diagnostics, and visualisation contracts. They will not be hidden
@@ -68,7 +81,7 @@ Requirements:
 - the .NET 8 SDK;
 - Rhino 8's CPython interpreter;
 - a Rhino Python site environment named `catenary-compas-2026` containing the
-  required COMPAS packages, including `compas_fd`.
+  required COMPAS packages, including `compas_fd` and `compas_tna`.
 
 From the repository root on the `development` branch, close Rhino and run:
 
@@ -85,9 +98,9 @@ Restart Rhino and Grasshopper yourself after installation. Place
 `Ananke COMPAS > 90 Query > Backend Health` first; `Ready = True` confirms
 that the native plugin can communicate with the persistent COMPAS worker.
 
-See [Native v0.2: install and first FD workflow](docs/native-v02-getting-started.md)
-for custom environment paths, the exact canvas wiring, first-result checks,
-and troubleshooting.
+See [Native v0.2: install and first FD/TNA workflows](docs/native-v02-getting-started.md)
+for custom environment paths, exact canvas wiring, first-result checks, and
+troubleshooting.
 
 ## Python development setup
 

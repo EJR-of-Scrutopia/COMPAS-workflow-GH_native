@@ -124,6 +124,72 @@ public static class WorkerPayloads
         };
     }
 
+    /// <summary>
+    /// Build the exact allowlisted payload accepted by the worker's
+    /// <c>tna.solve</c> command.
+    /// </summary>
+    public static IReadOnlyDictionary<string, object?> ToTnaSolvePayload(
+        this EquilibriumProblemDto problem,
+        TnaControlDto control,
+        int loadCaseIndex = 0)
+    {
+        EnsureValid(problem);
+        EnsureValid(control);
+        if (loadCaseIndex < 0 || loadCaseIndex >= problem.LoadCases.Count)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(loadCaseIndex),
+                loadCaseIndex,
+                $"Load-case index must be in 0..{problem.LoadCases.Count - 1}.");
+        }
+        if (!string.Equals(
+                problem.Topology?.NetworkKind,
+                "faced",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "tna.solve requires a faced topology.");
+        }
+
+        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["topology"] = problem.Topology!.ToWorkerPayload(),
+            ["supports"] = problem.Supports!.ToWorkerPayload(),
+            ["load_case"] = problem.LoadCases[loadCaseIndex].ToWorkerPayload(),
+            ["control"] = control.ToWorkerPayload()
+        };
+    }
+
+    public static IReadOnlyDictionary<string, object?> ToWorkerPayload(
+        this TnaControlDto value)
+    {
+        EnsureValid(value);
+        return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["height_control"] =
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["mode"] =
+                        TnaControlDto.NormaliseHeightMode(value.HeightMode),
+                    ["value"] = value.HeightValue,
+                    ["metadata"] = new Dictionary<string, string>(
+                        StringComparer.Ordinal)
+                },
+            ["settings"] =
+                new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["horizontal_alpha"] = value.HorizontalAlpha,
+                    ["horizontal_iterations"] =
+                        value.HorizontalIterations,
+                    ["vertical_iterations"] =
+                        value.VerticalIterations,
+                    ["tolerance"] = value.Tolerance,
+                    ["metadata"] = new Dictionary<string, string>(
+                        StringComparer.Ordinal)
+                }
+        };
+    }
+
     public static string ToWorkerJson(
         this IReadOnlyDictionary<string, object?> payload)
     {

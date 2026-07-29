@@ -136,3 +136,46 @@ public sealed class EquilibriumResultParam :
     public override Guid ComponentGuid =>
         new("fbbfa975-0b0d-4362-8bce-7636b7be1c40");
 }
+
+public sealed class TnaControlParam : ContractParam<TnaControlGoo>
+{
+    public TnaControlParam()
+        : base(
+            "Ananke TNA Control",
+            "TNA Control",
+            "Crown-height or force-scale controls for one TNA solve.")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("99e438f7-d28f-4198-a3f2-ff7ed98bf4c0");
+}
+
+public sealed class TnaResultParam : ContractParam<TnaResultGoo>
+{
+    public TnaResultParam()
+        : base(
+            "Ananke TNA Result",
+            "TNA Result",
+            "A solved thrust network with reciprocal form and force diagrams.")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("28312b79-af59-4f56-9536-5a0ff81e07e4");
+}
+
+public sealed class GraphicDiagramParam :
+    ContractParam<GraphicDiagramGoo>
+{
+    public GraphicDiagramParam()
+        : base(
+            "Ananke Graphic Diagram",
+            "Graphic Diagram",
+            "A compact renderer-neutral graphic-statics diagram bundle.")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("fb4e1d1c-caf6-44f0-9e58-b499ae25d64c");
+}
