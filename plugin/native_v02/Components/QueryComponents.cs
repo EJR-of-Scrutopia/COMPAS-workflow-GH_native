@@ -14,7 +14,8 @@ public sealed class ResultBreakdownComponent : NativeComponentBase
         : base(
             "Result Breakdown",
             "Result Data",
-            "Extract aligned geometry, forces, vectors, and diagnostics from a result.",
+            "Legacy full deconstruction of a generic FD equilibrium result. " +
+            "For TNA, prefer TNA Geometry, TNA Members, and TNA Actions.",
             ComponentCategories.Query,
             "result_breakdown")
     {
@@ -23,6 +24,8 @@ public sealed class ResultBreakdownComponent : NativeComponentBase
     public override Guid ComponentGuid =>
         new("c80b2201-c11b-4364-895e-5600ff6bcf01");
 
+    public override GH_Exposure Exposure => GH_Exposure.secondary;
+
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
     {
@@ -30,7 +33,8 @@ public sealed class ResultBreakdownComponent : NativeComponentBase
             new EquilibriumResultParam(),
             "Result",
             "R",
-            "Solved FD or TNA result.",
+            "Solved generic FD equilibrium result. TNA Geometry can expose " +
+            "the embedded equilibrium bridge for legacy definitions.",
             GH_ParamAccess.item);
     }
 

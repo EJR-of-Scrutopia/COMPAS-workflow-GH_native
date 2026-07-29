@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -10,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components;
 
@@ -151,6 +153,9 @@ public sealed record TnaSolveTaskResult(
 public sealed class TnaSolveComponent :
     NativeTaskComponentBase<TnaSolveTaskResult>
 {
+    private readonly List<PreviewEdge> _previewEdges = new();
+    private BoundingBox _clippingBox = BoundingBox.Empty;
+
     public TnaSolveComponent()
         : base(
             "TNA Solve",
@@ -163,6 +168,10 @@ public sealed class TnaSolveComponent :
 
     public override Guid ComponentGuid =>
         new("8913cdd7-f563-4930-a310-fd62b3a31831");
+
+    public override bool IsPreviewCapable => true;
+
+    public override BoundingBox ClippingBox => _clippingBox;
 
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
@@ -196,6 +205,13 @@ public sealed class TnaSolveComponent :
             "R",
             "One typed TNA state containing thrust, form and reciprocal force diagrams.",
             GH_ParamAccess.item);
+    }
+
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        _previewEdges.Clear();
+        _clippingBox = BoundingBox.Empty;
     }
 
     protected override void SolveInstance(IGH_DataAccess data)
@@ -287,7 +303,37 @@ public sealed class TnaSolveComponent :
         Message =
             $"{result.LoadCaseName} · {result.Result.EdgeStates.Count} edges · " +
             $"{result.Elapsed.TotalMilliseconds:F0} ms";
+        BuildPreview(result.Result);
         data.SetData(0, new TnaResultGoo(result.Result));
+    }
+
+    public override void DrawViewportWires(IGH_PreviewArgs args)
+    {
+        base.DrawViewportWires(args);
+        foreach (PreviewEdge edge in _previewEdges)
+            args.Display.DrawLine(edge.Line, edge.Colour, 2);
+    }
+
+    private void BuildPreview(TnaResultDto result)
+    {
+        _previewEdges.Clear();
+        foreach (TnaEdgeStateDto state in
+                 result.EdgeStates.OrderBy(item => item.Id))
+        {
+            Line line = TnaQueryGeometry.ThrustLine(result, state);
+            if (!line.IsValid)
+                continue;
+            _previewEdges.Add(
+                new PreviewEdge(
+                    line,
+                    TnaQueryGeometry.ForceColour(state.ForceState)));
+        }
+        Point3d[] points = _previewEdges
+            .SelectMany(edge => new[] { edge.Line.From, edge.Line.To })
+            .ToArray();
+        _clippingBox = points.Length == 0
+            ? BoundingBox.Empty
+            : new BoundingBox(points);
     }
 
     private bool TryReadInputs(
@@ -459,4 +505,6 @@ public sealed class TnaSolveComponent :
             return Array.Empty<string>();
         }
     }
+
+    private sealed record PreviewEdge(Line Line, Color Colour);
 }

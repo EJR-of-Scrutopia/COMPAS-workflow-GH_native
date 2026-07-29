@@ -213,6 +213,11 @@ Load Case.Load Case ------+                                  ^
 TNA Control.Control ------------------------------------------+
 
 TNA Solve.Result --> TNA Reciprocal.TNA Result
+TNA Reciprocal.Diagram --> Graphic Diagram Display.Diagram
+
+TNA Solve.Result --> TNA Geometry.TNA Result
+TNA Solve.Result --> TNA Members.TNA Result
+TNA Solve.Result --> TNA Actions.TNA Result
 ```
 
 1. Supply a mesh with valid faces to `Network` and choose `Kind = Faced`
@@ -230,22 +235,38 @@ TNA Solve.Result --> TNA Reciprocal.TNA Result
    exact case name, a stored stable case ID, or a zero-based index written as
    text; an empty input selects the first case. A text Panel is therefore the
    clearest selector when the problem contains several named cases.
-5. Connect the result to `03 Graphic Statics > TNA Reciprocal`. Newly placed
+5. `TNA Solve` itself previews the resolved thrust edges. Enable Grasshopper
+   preview and use Zoom Extents if needed. To obtain a proper Rhino mesh rather
+   than only the direct edge preview, connect the result to
+   `90 Query > TNA Geometry` and use its `Thrust Mesh` output. Use
+   `TNA Actions` for load and reaction arrows with an explicit display scale.
+6. Connect the result to `03 Graphic Statics > TNA Reciprocal`. Newly placed
    components receive value lists for `Layout` (`Side by Side` or `Overlay`)
    and `Metric` (`Natural F / H`, `Force Density q`, `Horizontal Force H`, or
    `Axial Force F`). `Force Scale`, `Vector Scale`, and `Gap Ratio` change only
    the drawing layout; they do not rerun TNA.
+7. Connect `TNA Reciprocal.Diagram` to
+   `03 Graphic Statics > Graphic Diagram Display`. Choose `Analysis`,
+   `Classical GS`, or `Monochrome`, switch the five diagram roles on or off,
+   and adjust only the display `Weight Scale`. This component provides the
+   reliable styled viewport preview and ordinary Rhino line outputs for the
+   form, thrust, reciprocal force, load, and reaction diagrams.
 
-`TNA Reciprocal` draws the spatial thrust edges, the planar form pattern, the
-mapped reciprocal force diagram, applied loads, and reactions, and emits one
-typed `Graphic Diagram` bundle for later graphic-statics components. The
-force-edge geometry uses the solved physical horizontal scale before applying
-the display-only `Force Scale`.
+`TNA Reciprocal` constructs and can preview the spatial thrust edges, planar
+form pattern, mapped reciprocal force diagram, applied loads, and reactions.
+It emits one renderer-neutral `Graphic Diagram` bundle. `Graphic Diagram
+Display` is the explicit presentation boundary: it owns colours, line weights,
+role visibility, and native line deconstruction without changing the solve.
+The force-edge geometry uses the solved physical horizontal scale before
+applying the display-only `Force Scale`.
 
-The displayed `q`, `H`, and `F` values describe equilibrium demand. They do
-not state how much load a member can carry: material, section or thickness,
-stability, connections, safety factors, and a verification model are still
-needed for capacity or utilisation.
+The displayed `q`, `H`, and `F` values describe equilibrium demand. In the
+horizontal stage, before vertical calibration fixes the physical force scale,
+`q` and `H` are relative equilibrium quantities. The lifted spatial solve
+then supplies `F`; the final `TnaResult` stores all three in the selected
+scale. None states how much load a member can carry: material, section or
+thickness, stability, connections, safety factors, and a verification model
+are still needed for capacity or utilisation.
 
 A general TNA mesh produces a reciprocal force mesh or set of cells. It is
 not expected to fit inside one triangular force diagram. The familiar dashed
@@ -277,11 +298,11 @@ become the actions passed into the column or branch solver.
 analysis. `Vector Scale` changes only the displayed load, reaction, and
 residual lengths.
 
-Use `Result Breakdown` when downstream Grasshopper operations require explicit
-lines and aligned values. Check its diagnostics and residual vectors before
-treating a form as equilibrated. The result is an equilibrium/form-finding
-result, not a stiffness analysis, design-code check, or verified IFC
-structural model.
+For a generic FD result, use `Result Breakdown` when a legacy downstream
+Grasshopper operation requires its complete output surface. Check its
+diagnostics and residual vectors before treating a form as equilibrated. The
+result is an equilibrium/form-finding result, not a stiffness analysis,
+design-code check, or verified IFC structural model.
 
 `Member Source IDs` aligns one-to-one with `Member Lines`. Before attaching
 those IDs, the native result decoder verifies that the worker returned the
@@ -295,18 +316,46 @@ solve, including an automatically selected terminal or boundary support whose
 reaction happens to be zero. `Support Points` contains the corresponding
 solved vertex positions in the same order.
 
-For TNA, use `TNA Reciprocal` rather than `Equilibrium Preview` or `Result
-Breakdown`: the TNA result is a richer typed state containing the thrust,
-form, force, and stable reciprocal mappings together. Its compact `Graphic
-Diagram` output deliberately avoids exposing a large collection of parallel
-Grasshopper outputs.
+For TNA, keep the richer typed result intact and choose a focused consumer:
+
+- `TNA Geometry` returns the resolved thrust mesh, thrust edges, form edges,
+  and an embedded generic equilibrium bridge.
+- `TNA Members` returns one aligned member table: IDs, resolved lines, `q`,
+  `H`, `F`, force state, and source-edge groups.
+- `TNA Actions` returns supports plus paired load and reaction points/vectors,
+  and previews those vectors.
+- `TNA Reciprocal -> Graphic Diagram Display` constructs and displays the
+  linked graphic-statics representation.
+
+`Result Breakdown` accepts a generic `EquilibriumResult`; it does not directly
+accept `TnaResult`. This is why connecting `TNA Solve.Result` to it produces a
+Grasshopper type error. It is retained for saved FD definitions. If an old
+operation cannot yet be migrated, use the explicit compatibility path:
+
+```text
+TNA Solve.Result --> TNA Geometry.Equilibrium --> Result Breakdown.Result
+```
+
+New TNA definitions should use the focused components and avoid expanding
+every solved quantity when only one responsibility is needed.
 
 ## Current boundary and roadmap
 
-The native v0.2 slice currently provides whole-network FD form finding, faced
-TNA solving, the preserved TNA reciprocal state, and its first compact
-graphic-statics viewport/bundle. The following remain separate future
-milestones:
+The native v0.2 slice currently provides whole-network FD form finding, a
+one-shot faced TNA solve, a directly previewable final TNA state, focused TNA
+queries, and an explicit compact graphic-diagram display. The current
+`TNA Solve` internally performs the form/dual, horizontal, and vertical work
+and remains the convenience macro.
+
+A future RhinoVault-style authoring surface will expose the sequence as
+separate `Register -> Relax -> Form -> Dual -> Horizontal -> Vertical ->
+Reciprocal` stages. That staged surface is not implemented by the current
+one-shot component. It will allow a user to inspect or alter the relaxed
+pattern, support and plan-pin roles, reciprocal dual, horizontal equilibrium,
+and height-controlled vertical solve independently. See
+[`architecture/rhinovault-native-stages.md`](architecture/rhinovault-native-stages.md).
+
+The following also remain separate future milestones:
 
 - force-flow ranking and traceable path queries from TNA;
 - directional path registration, effective transverse-load transfer, and the

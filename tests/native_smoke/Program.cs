@@ -33,6 +33,52 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.FDSettingsComponent"] =
                 new[] { 0 }
         };
+    private static readonly HashSet<string> RequiredPreviewComponents = new(
+        StringComparer.Ordinal)
+        {
+            "Ananke.COMPAS.Native.Components.TnaSolveComponent",
+            "Ananke.COMPAS.Native.Components.TnaReciprocalComponent",
+            "Ananke.COMPAS.Native.Components.GraphicDiagramDisplayComponent"
+        };
+    private static readonly IReadOnlyDictionary<
+        string,
+        (string[] Inputs, string[] Outputs)> TnaQueryContracts =
+            new Dictionary<
+                string,
+                (string[] Inputs, string[] Outputs)>(StringComparer.Ordinal)
+            {
+                ["Ananke.COMPAS.Native.Components.TnaGeometryComponent"] = (
+                    new[] { "TNA Result" },
+                    new[]
+                    {
+                        "Thrust Mesh",
+                        "Thrust Edges",
+                        "Form Edges",
+                        "Equilibrium"
+                    }),
+                ["Ananke.COMPAS.Native.Components.TnaMembersComponent"] = (
+                    new[] { "TNA Result" },
+                    new[]
+                    {
+                        "Member IDs",
+                        "Thrust Lines",
+                        "Force Density",
+                        "Horizontal Force",
+                        "Axial Force",
+                        "Force State",
+                        "Source Edge IDs"
+                    }),
+                ["Ananke.COMPAS.Native.Components.TnaActionsComponent"] = (
+                    new[] { "TNA Result", "Vector Scale" },
+                    new[]
+                    {
+                        "Support Points",
+                        "Load Points",
+                        "Load Vectors",
+                        "Reaction Points",
+                        "Reaction Vectors"
+                    })
+            };
 
     public static int Main(string[] args)
     {
@@ -145,6 +191,9 @@ internal static class Program
 
                 string displayName = ReadDisplayName(instance, componentType);
                 ValidateFlattenedInputs(instance, componentType);
+                ValidatePreviewCapability(instance, componentType);
+                ValidateGraphicDisplayContract(instance, componentType);
+                ValidateTnaQueryContract(instance, componentType);
                 ValidateIcon(instance, componentType);
                 RecordDocumentGuid(
                     instance,
@@ -431,6 +480,191 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"Input {index} must flatten bundle collection trees; " +
                     $"mapping was '{mapping}'.");
+            }
+        }
+    }
+
+    private static void ValidatePreviewCapability(
+        object instance,
+        Type componentType)
+    {
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!RequiredPreviewComponents.Contains(typeName))
+            return;
+
+        object? value = componentType
+            .GetProperty("IsPreviewCapable")
+            ?.GetValue(instance);
+        if (value is not true)
+        {
+            throw new InvalidOperationException(
+                "Graphic-statics display components must explicitly remain " +
+                "viewport-preview-capable even when their primary input or " +
+                "output is custom Goo.");
+        }
+    }
+
+    private static void ValidateGraphicDisplayContract(
+        object instance,
+        Type componentType)
+    {
+        const string DisplayType =
+            "Ananke.COMPAS.Native.Components." +
+            "GraphicDiagramDisplayComponent";
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!string.Equals(typeName, DisplayType, StringComparison.Ordinal))
+            return;
+
+        object parameters = componentType
+            .GetProperty("Params")
+            ?.GetValue(instance)
+            ?? throw new InvalidOperationException(
+                "Could not inspect Graphic Diagram Display parameters.");
+        IList inputs = parameters
+            .GetType()
+            .GetProperty("Input")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                "Could not inspect Graphic Diagram Display inputs.");
+        IList outputs = parameters
+            .GetType()
+            .GetProperty("Output")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                "Could not inspect Graphic Diagram Display outputs.");
+
+        string[] expectedInputs =
+        {
+            "Diagram",
+            "Style",
+            "Show Form",
+            "Show Thrust",
+            "Show Force",
+            "Show Loads",
+            "Show Reactions",
+            "Weight Scale"
+        };
+        string[] expectedOutputs =
+        {
+            "Form Lines",
+            "Thrust Lines",
+            "Force Lines",
+            "Load Lines",
+            "Reaction Lines",
+            "Report"
+        };
+        ValidateParameterNames(
+            inputs,
+            expectedInputs,
+            "Graphic Diagram Display",
+            "input");
+        ValidateParameterNames(
+            outputs,
+            expectedOutputs,
+            "Graphic Diagram Display",
+            "output");
+
+        for (int index = 0; index < 5; index++)
+        {
+            object output = outputs[index]
+                ?? throw new InvalidOperationException(
+                    $"Graphic Diagram Display output {index} is null.");
+            string outputType = output.GetType().FullName ?? string.Empty;
+            if (!string.Equals(
+                    outputType,
+                    "Grasshopper.Kernel.Parameters.Param_Line",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Graphic Diagram Display output {index} must expose " +
+                    $"ordinary Rhino lines; received {outputType}.");
+            }
+            object? hidden = output
+                .GetType()
+                .GetProperty("Hidden")
+                ?.GetValue(output);
+            if (hidden is not true)
+            {
+                throw new InvalidOperationException(
+                    $"Graphic Diagram Display line output {index} must hide " +
+                    "its duplicate default preview.");
+            }
+        }
+    }
+
+    private static void ValidateTnaQueryContract(
+        object instance,
+        Type componentType)
+    {
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!TnaQueryContracts.TryGetValue(
+                typeName,
+                out (string[] Inputs, string[] Outputs) contract))
+        {
+            return;
+        }
+
+        object parameters = componentType
+            .GetProperty("Params")
+            ?.GetValue(instance)
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} parameters.");
+        IList inputs = parameters
+            .GetType()
+            .GetProperty("Input")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} inputs.");
+        IList outputs = parameters
+            .GetType()
+            .GetProperty("Output")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} outputs.");
+        ValidateParameterNames(
+            inputs,
+            contract.Inputs,
+            componentType.Name,
+            "input");
+        ValidateParameterNames(
+            outputs,
+            contract.Outputs,
+            componentType.Name,
+            "output");
+    }
+
+    private static void ValidateParameterNames(
+        IList parameters,
+        IReadOnlyList<string> expected,
+        string owner,
+        string label)
+    {
+        if (parameters.Count != expected.Count)
+        {
+            throw new InvalidOperationException(
+                $"{owner} expected {expected.Count} {label}s, " +
+                $"found {parameters.Count}.");
+        }
+
+        for (int index = 0; index < expected.Count; index++)
+        {
+            object parameter = parameters[index]
+                ?? throw new InvalidOperationException(
+                    $"{owner} {label} {index} is null.");
+            string actual = parameter
+                .GetType()
+                .GetProperty("Name")
+                ?.GetValue(parameter)
+                ?.ToString()
+                ?? string.Empty;
+            if (!string.Equals(
+                    actual,
+                    expected[index],
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{owner} {label} {index} must be " +
+                    $"'{expected[index]}'; received '{actual}'.");
             }
         }
     }

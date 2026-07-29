@@ -36,6 +36,10 @@ the component category; the white letters identify the individual component.
 | RB | `result_breakdown` | Result Breakdown | `result_breakdown.png` |
 | PV | `equilibrium_preview` | Equilibrium Preview | `equilibrium_preview.png` |
 | TR | `tna_reciprocal` | TNA Reciprocal | `tna_reciprocal.png` |
+| DD | `graphic_diagram_display` | Graphic Diagram Display | `graphic_diagram_display.png` |
+| TG | `tna_geometry` | TNA Geometry | `tna_geometry.png` |
+| TM | `tna_members` | TNA Members | `tna_members.png` |
+| TA | `tna_actions` | TNA Actions | `tna_actions.png` |
 
 ## Regeneration and validation
 

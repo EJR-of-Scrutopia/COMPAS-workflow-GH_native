@@ -23,7 +23,7 @@ Rhino-specific code.
 
 ## Native v0.2 component surface
 
-The compiled native slice has twelve components. The C# classes under
+The compiled native slice has sixteen components. The C# classes under
 `plugin/native_v02/Components` are authoritative for their current ports;
 `plugin/components.toml` records the preserved script-backed v0.1 surface.
 
@@ -37,9 +37,13 @@ The compiled native slice has twelve components. The C# classes under
 | `02 Form Finding` | **FD Solve** | problem, settings, load-case index | `Result` | Run whole-network COMPAS force-density form finding. |
 | `02 Form Finding` | **TNA Control** | height mode/value, horizontal alpha, horizontal/vertical iterations, tolerance | `Control` | Bundle crown-height or force-scale control and numerical TNA settings. |
 | `02 Form Finding` | **TNA Solve** | problem, control, load-case selector | `Result` (`TnaResult`) | Solve a faced thrust network and preserve the spatial thrust, planar form, reciprocal force, source mapping, loads, reactions, and diagnostics as one state. |
-| `03 Graphic Statics` | **TNA Reciprocal** | TNA result, layout, metric, force scale, vector scale, gap ratio | `Diagram` (`GraphicDiagram`) | Display and pass on the linked thrust/form/force diagram without rerunning the solver. |
+| `03 Graphic Statics` | **TNA Reciprocal** | TNA result, layout, metric, force scale, vector scale, gap ratio | `Diagram` (`GraphicDiagram`) | Construct and preview the linked thrust/form/force diagram without rerunning the solver. |
+| `03 Graphic Statics` | **Graphic Diagram Display** | graphic diagram, style, role visibility, weight scale | form/thrust/force/load/reaction lines, report | Provide the explicit styled viewport boundary and expose ordinary Rhino lines for downstream drawing operations. |
 | `05 Visualisation` | **Equilibrium Preview** | equilibrium result, force weight, vector scale | member colours/lines and load, reaction, residual lines | Preview the current FD equilibrium result in the Rhino viewport. |
-| `90 Query` | **Result Breakdown** | equilibrium result | aligned member geometry/forces/densities, vectors, source IDs, supports, diagnostics, report | Deconstruct an equilibrium result for downstream Grasshopper operations. |
+| `90 Query` | **TNA Geometry** | TNA result | thrust mesh, thrust edges, form edges, equilibrium bridge | Reconstruct the resolved Rhino thrust mesh and provide a compatibility bridge to generic equilibrium consumers. |
+| `90 Query` | **TNA Members** | TNA result | member IDs, thrust lines, `q`, `H`, `F`, state, source-edge tree | Extract only the aligned member demand/provenance table needed for force-flow and later branch-design operations. |
+| `90 Query` | **TNA Actions** | TNA result, vector scale | supports, load points/vectors, reaction points/vectors | Extract paired nodal actions and provide a focused arrow preview. |
+| `90 Query` | **Result Breakdown** | generic equilibrium result | aligned member geometry/forces/densities, vectors, source IDs, supports, diagnostics, report | Preserve the legacy full FD-oriented deconstruction surface. It does not directly accept a `TnaResult`. |
 | `90 Query` | **Backend Health** | none | ready, Python, packages, capabilities, report | Verify the persistent Python worker, package environment, and protocol. |
 
 ### Port rules
@@ -48,6 +52,9 @@ The compiled native slice has twelve components. The C# classes under
   indices can silently drift.
 - A solver returns one `SolvedCase`; downstream visualisation or export reads
   that same result rather than rerunning the solver.
+- Rich TNA state is queried by responsibility. Geometry, member demand, and
+  nodal actions are separate components instead of one oversized bank of
+  unrelated parallel outputs.
 - Status is concise and human-readable. Structured warnings and numerical
   diagnostics remain on the bundle.
 - Rhino geometry conversion happens in the Grasshopper adapter layer.
@@ -59,6 +66,12 @@ The compiled native slice has twelve components. The C# classes under
 ## Roadmap components
 
 These are separate stages, not extra modes hidden inside the initial solvers.
+The current `TNA Solve` remains the implemented one-shot macro. A future
+RhinoVault-style surface will expose `TNA Register`, `TNA Relax`, `TNA Form`,
+`TNA Dual`, `TNA Horizontal`, `TNA Vertical`, and `TNA Reciprocal` as
+inspectable stages. See
+[`architecture/rhinovault-native-stages.md`](architecture/rhinovault-native-stages.md)
+for the current-versus-roadmap boundary and proposed contracts.
 
 | Stage | Planned component | Main result |
 | --- | --- | --- |
@@ -126,12 +139,44 @@ draw structured solver or construction results.
 
 For TNA, the reciprocal force diagram is already produced during horizontal
 equilibrium. The worker must serialise it as part of `TnaResult`; a native
-`TNA Reciprocal` component displays that state without rerunning AGS. A
-classical dashed load-line/pole construction is extracted separately from an
-ordered directional path. Its `Force Density q`, `Horizontal Force H`, and
-`Axial Force F` display metrics are equilibrium demands, not material
-capacity or utilisation. See
+`TNA Reciprocal` component packages and previews that state without rerunning
+AGS. `Graphic Diagram Display` is the explicit presentation/deconstruction
+boundary: it applies a visual preset and exposes the five diagram roles as
+ordinary Rhino lines. A classical dashed load-line/pole construction is
+extracted separately from an ordered directional path.
+
+Before vertical calibration fixes the physical scale, horizontal-equilibrium
+`q` and `H` are relative quantities; the final spatial `F` follows the lifted
+thrust geometry. In a final `TnaResult`, `q`, `H`, and `F` are equilibrium
+demands in the selected scale, not material capacity or utilisation. See
 [`architecture/tna-graphic-statics-columns.md`](architecture/tna-graphic-statics-columns.md).
+
+## Focused result queries
+
+Use the smallest component that matches the downstream operation:
+
+```text
+TNA Solve.Result
+    +--> TNA Geometry --> Thrust Mesh / Thrust Edges / Form Edges
+    +--> TNA Members  --> IDs / Lines / q / H / F / State / Source IDs
+    +--> TNA Actions  --> Supports / Loads / Reactions
+    +--> TNA Reciprocal --> Graphic Diagram Display
+```
+
+`Result Breakdown` is intentionally retained for legacy definitions built
+around the generic `EquilibriumResult`, particularly FD workflows. A
+`TnaResult` is a richer and different Grasshopper type, so connecting it
+directly is a type error. Where an old downstream definition cannot yet be
+migrated, `TNA Geometry.Equilibrium` exposes the embedded generic result as a
+compatibility bridge:
+
+```text
+TNA Solve.Result --> TNA Geometry.Equilibrium --> Result Breakdown.Result
+```
+
+New TNA definitions should not use that bridge as their normal data model;
+they should preserve `TnaResult` and query only the geometry, member, action,
+or diagram information actually needed.
 
 ## Naming policy
 

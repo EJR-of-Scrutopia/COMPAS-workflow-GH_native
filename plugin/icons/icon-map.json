@@ -127,6 +127,30 @@
       "label": "TR",
       "category": "03 Graphic Statics",
       "filename": "tna_reciprocal.png"
+    },
+    {
+      "key": "graphic_diagram_display",
+      "label": "DD",
+      "category": "03 Graphic Statics",
+      "filename": "graphic_diagram_display.png"
+    },
+    {
+      "key": "tna_geometry",
+      "label": "TG",
+      "category": "90 Query",
+      "filename": "tna_geometry.png"
+    },
+    {
+      "key": "tna_members",
+      "label": "TM",
+      "category": "90 Query",
+      "filename": "tna_members.png"
+    },
+    {
+      "key": "tna_actions",
+      "label": "TA",
+      "category": "90 Query",
+      "filename": "tna_actions.png"
     }
   ]
 }

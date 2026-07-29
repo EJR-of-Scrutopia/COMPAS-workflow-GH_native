@@ -482,6 +482,11 @@ public sealed class TnaReciprocalComponent : NativeComponentBase
     public override Guid ComponentGuid =>
         new("30aa4b56-6d9e-47dd-8b15-94a56a046cf6");
 
+    // GraphicDiagram is intentionally renderer-neutral custom Goo. Without
+    // this explicit override Grasshopper sees no geometric output parameter
+    // and can omit this component from the viewport preview pipeline.
+    public override bool IsPreviewCapable => true;
+
     public override BoundingBox ClippingBox => _clippingBox;
 
     private protected override IReadOnlyList<ComponentValueListSpec>
