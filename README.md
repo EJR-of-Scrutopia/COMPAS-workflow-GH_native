@@ -21,7 +21,7 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains twelve components:
+The native v0.2 vertical slice contains sixteen components:
 
 | Grasshopper subcategory | Component | Purpose |
 | --- | --- | --- |
@@ -33,9 +33,13 @@ The native v0.2 vertical slice contains twelve components:
 | `02 Form Finding` | `FD Solve` | Run whole-network COMPAS force-density form finding. |
 | `02 Form Finding` | `TNA Control` | Bundle crown-height/force-scale and iteration controls. |
 | `02 Form Finding` | `TNA Solve` | Solve a faced thrust network and retain its reciprocal form/force state. |
-| `03 Graphic Statics` | `TNA Reciprocal` | Preview the linked thrust, planar form, reciprocal force, load, and reaction diagrams. |
+| `03 Graphic Statics` | `TNA Reciprocal` | Construct one linked, renderer-neutral thrust/form/force graphic diagram from a TNA result. |
+| `03 Graphic Statics` | `Graphic Diagram Display` | Draw that diagram with a preset style and expose ordinary Rhino form, thrust, force, load, and reaction lines. |
 | `05 Visualisation` | `Equilibrium Preview` | Draw signed member forces, loads, reactions, and residuals. |
-| `90 Query` | `Result Breakdown` | Extract aligned geometry, forces, source IDs, vectors, and diagnostics. |
+| `90 Query` | `TNA Geometry` | Extract the resolved thrust mesh, thrust/form edges, and generic equilibrium bridge. |
+| `90 Query` | `TNA Members` | Extract one aligned table of member IDs, thrust lines, `q`, `H`, `F`, force state, and source-edge groups. |
+| `90 Query` | `TNA Actions` | Extract support locations, loads, and reactions while previewing the action vectors. |
+| `90 Query` | `Result Breakdown` | Legacy full deconstruction of a generic `EquilibriumResult`, primarily for FD definitions. |
 | `90 Query` | `Backend Health` | Check the Python worker, packages, and protocol. |
 
 The implemented solver paths share the same registered problem:
@@ -49,16 +53,37 @@ Equilibrium Problem + FD Settings --> FD Solve
                                           +--> Equilibrium Preview
                                           +--> Result Breakdown
 
-Equilibrium Problem + TNA Control --> TNA Solve --> TNA Reciprocal
-                                                     thrust/form/force
+Equilibrium Problem + TNA Control --> TNA Solve.Result
+                                          |  direct thrust-edge preview
+                                          +--> TNA Geometry --> thrust mesh
+                                          +--> TNA Members
+                                          +--> TNA Actions
+                                          +--> TNA Reciprocal
+                                                   |
+                                                   +--> Graphic Diagram Display
+                                                        form/thrust/force/actions
 ```
 
 FD and the first native TNA slice now work end to end. TNA requires a
 registered `Faced` topology. Its result preserves the reciprocal planar
-form/force correspondence, and `TNA Reciprocal` turns that state into a
-compact viewport diagram without rerunning AGS. It can weight the drawing by
-force density `q`, horizontal force `H`, or spatial axial force `F`; these are
-equilibrium demands, not member capacities.
+form/force correspondence. The `TNA Solve` result previews its resolved thrust
+edges directly; `TNA Geometry` additionally reconstructs the proper Rhino
+thrust mesh, and `TNA Actions` provides explicitly scaled load/reaction
+arrows. `TNA Reciprocal` turns the linked state into one compact
+`GraphicDiagram`, and `Graphic Diagram Display` provides the explicit styled
+viewport and ordinary Rhino line outputs without rerunning AGS.
+
+The displayed force density `q`, horizontal force `H`, and spatial axial force
+`F` are equilibrium demands, never member capacities. Before a vertical
+height/force calibration fixes the physical TNA scale, horizontally balanced
+`q` and `H` are relative equilibrium quantities; `F` belongs to the lifted
+spatial result. Material, section, stability, connection, and safety checks
+remain separate verification work.
+
+`Result Breakdown` is retained for saved FD definitions and accepts the
+generic `EquilibriumResult` type, not `TnaResult`. Normal TNA definitions use
+the three focused TNA query components. If a legacy operation genuinely needs
+the generic state, connect `TNA Geometry.Equilibrium` to `Result Breakdown`.
 
 Directional dashed load-line/pole and funicular constructions, generic AGS,
 spatial/3D graphic statics, column and branch placement, Steiner relaxation,
@@ -72,6 +97,13 @@ verified.
 FD, TNA, and graphic statics will remain distinct methods sharing neutral
 inputs, diagnostics, and visualisation contracts. They will not be hidden
 behind one ambiguous solver.
+
+The current `TNA Solve` remains a useful one-shot macro. The planned
+RhinoVault-style design workflow exposes its internal operations as inspectable
+`Register -> Relax -> Form -> Dual -> Horizontal -> Vertical -> Reciprocal`
+stages so ordinary Grasshopper operations can intervene between them. The
+implemented surface and that roadmap are distinguished in
+[RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md).
 
 ## Build and install
 
@@ -142,6 +174,8 @@ Grasshopper Libraries folder; that installed copy is not repository source.
 Further project documentation:
 
 - [Native worker architecture](docs/architecture/native-worker-v02.md)
+- [RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md)
+- [TNA, graphic statics, and column placement](docs/architecture/tna-graphic-statics-columns.md)
 - [Component taxonomy](docs/component-taxonomy.md)
 - [GUID and version policy](docs/versioning-and-guids.md)
 - [Development and release branches](docs/development-workflow.md)

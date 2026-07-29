@@ -1,6 +1,9 @@
 # TNA, graphic statics, and column-placement architecture
 
-Status: implementation contract for the native TNA milestone.
+Status: current native TNA/graphic-display contract plus later design
+architecture. Current and planned components are identified explicitly below.
+The staged RhinoVault-style authoring roadmap is defined separately in
+[`rhinovault-native-stages.md`](rhinovault-native-stages.md).
 
 ## One solved state, three linked diagrams
 
@@ -43,15 +46,22 @@ verification model.
 
 ## Component surface
 
-The compact native workflow is:
+The implemented compact native workflow is:
 
 ```text
-Problem + TNA Control -> TNA Solve -> TnaResult -> TNA Reciprocal -> GS Preview
-                                           |
-                                           +-> Force Flow
-                                           |
-                                           +-> GS Path 2D -> GS Funicular 2D
+Problem + TNA Control -> TNA Solve -> TnaResult
+                                           +-> direct thrust-edge preview
+                                           +-> TNA Geometry
+                                           +-> TNA Members
+                                           +-> TNA Actions
+                                           +-> TNA Reciprocal
+                                                   |
+                                                   +-> Graphic Diagram Display
 ```
+
+`Force Flow`, `GS Direction Register`, `GS Funicular 2D`, and spatial
+graphic-statics components described later in this document are planned, not
+part of the implemented v0.2 component surface.
 
 ### TNA Control
 
@@ -68,7 +78,8 @@ display scale.
 
 ### TNA Reciprocal
 
-This is the default graphic-statics view of a TNA result. It packages:
+This is the implemented constructor for the default graphic-statics view of a
+TNA result. It packages:
 
 - planar form edges;
 - reciprocal force edges and force cells;
@@ -77,10 +88,30 @@ This is the default graphic-statics view of a TNA result. It packages:
 - `q`, `H`, `F`, force state, and reciprocity error;
 - loads, support reactions, and equilibrium diagnostics.
 
-The component returns one typed diagram bundle. Raw aligned lines, IDs, and
-mappings belong in a separate query/deconstruct component.
+The component returns one typed, renderer-neutral diagram bundle and also
+supports a direct compact preview. `Graphic Diagram Display` is the explicit
+presentation boundary: it applies the visual preset and exposes ordinary
+Rhino form, thrust, force, load, and reaction lines.
 
-### Force Flow
+Raw solved data is split by responsibility instead of sent through one large
+deconstructor:
+
+- `TNA Geometry`: resolved thrust mesh, thrust/form edges, generic equilibrium
+  compatibility bridge;
+- `TNA Members`: aligned member IDs, lines, `q`, `H`, `F`, state, and source
+  groups;
+- `TNA Actions`: supports, applied loads, and reactions.
+
+The legacy `Result Breakdown` accepts only the generic `EquilibriumResult`.
+It is not the TNA data model. `TNA Geometry.Equilibrium` may bridge an old
+definition, but new TNA workflows should retain `TnaResult`.
+
+At horizontal equilibrium, before the vertical solve calibrates the physical
+scale, `q` and `H` are relative equilibrium quantities. The lifted thrust
+network then supplies the spatial axial demand `F`. The final result preserves
+all three in its selected scale; none is capacity.
+
+### Force Flow (planned)
 
 This component weights and colours the TNA network by one deterministic value:
 
@@ -93,7 +124,7 @@ These are discrete network force paths, not continuum principal-stress
 trajectories. At a high-valence node there is no unique continuation into a
 "principal line"; a traced path must record its continuation rule.
 
-### Directional two-dimensional graphic statics
+### Directional two-dimensional graphic statics (planned)
 
 The familiar dashed load line, pole rays, and funicular polygon are a special
 directional construction. A general TNA mesh has a reciprocal force mesh and
