@@ -32,6 +32,7 @@ from compas.datastructures import Graph
 from compas_tna.diagrams import ForceDiagram
 from compas_tna.diagrams import FormDiagram
 from compas_tna.equilibrium import horizontal_nodal
+from compas_tna.equilibrium import relax_boundary_openings
 from compas_tna.equilibrium import vertical_from_q
 from compas_tna.equilibrium import vertical_from_zmax
 
@@ -120,6 +121,43 @@ class TNASession:
     edge_forces: Dict[Edge, float]
     support_reactions: Dict[Hashable, Vector3]
     support_reactions_by_form: Dict[int, Vector3]
+    diagnostics: Dict[str, Any]
+    metadata: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class TNABoundarySegment:
+    """One unsupported boundary path between consecutive supports."""
+
+    boundary_index: int
+    segment_index: int
+    form_vertex_keys: Tuple[int, ...]
+    source_vertex_keys: Tuple[Hashable, ...]
+    target_sag: Optional[float]
+    initial_sag: float
+    actual_sag: float
+
+
+@dataclass
+class TNAPreparation:
+    """A relaxed Pattern and its initial Form/Force diagram pair.
+
+    ``pattern`` keeps every input face and edge. ``form`` is the conditioned
+    diagram after :meth:`FormDiagram.update_boundaries`, and ``force`` is its
+    topological dual before horizontal reciprocal equilibrium.
+    """
+
+    problem: TNAProblem
+    pattern: FormDiagram
+    form: FormDiagram
+    force: ForceDiagram
+    support_keys: Tuple[Hashable, ...]
+    support_form_keys: Tuple[int, ...]
+    fixed_keys: Tuple[Hashable, ...]
+    fixed_form_keys: Tuple[int, ...]
+    boundary_segments: Tuple[TNABoundarySegment, ...]
+    source_edge_to_form: Dict[int, Optional[Edge]]
+    form_edge_to_sources: Dict[Edge, Tuple[int, ...]]
     diagnostics: Dict[str, Any]
     metadata: Dict[str, Any]
 
@@ -749,6 +787,542 @@ def _resolve_supports(
     return supports
 
 
+def _resolve_source_keys(
+    problem: TNAProblem,
+    keys: Optional[Sequence[Hashable]],
+    label: str,
+) -> Tuple[List[Hashable], List[int]]:
+    """Resolve optional source keys without giving them structural meaning."""
+    if not keys:
+        return [], []
+    source_keys = []
+    form_keys = []
+    unknown = []
+    for source_key in keys:
+        if source_key not in problem.source_to_form:
+            unknown.append(source_key)
+            continue
+        if source_key not in source_keys:
+            source_keys.append(source_key)
+        form_key = int(problem.source_to_form[source_key])
+        if form_key not in form_keys:
+            form_keys.append(form_key)
+    if unknown:
+        raise TNAInputError("Unknown {} source keys: {!r}.".format(label, unknown))
+    return source_keys, form_keys
+
+
+def _source_representative(problem: TNAProblem, form_key: int) -> Hashable:
+    sources = tuple(problem.form_to_sources.get(int(form_key), ()))
+    if sources:
+        return sources[0]
+    return int(form_key)
+
+
+def _boundary_support_segments(
+    form: FormDiagram,
+    supports: Sequence[int],
+) -> List[Tuple[int, int, Tuple[int, ...]]]:
+    """Split every mesh boundary into paths between consecutive supports.
+
+    RhinoVAULT's ``Pattern.split_boundary`` performs this operation on the
+    exterior boundary.  Applying the same rule per boundary also handles holes
+    when their rims contain two or more explicitly selected supports.
+    Two-vertex paths are held edges and therefore have no unsupported vertex or
+    meaningful sag; they are omitted.
+    """
+    support_set = set(int(key) for key in supports)
+    result = []
+    segment_index = 0
+    for boundary_index, raw_boundary in enumerate(form.vertices_on_boundaries()):
+        boundary = [int(key) for key in raw_boundary]
+        if len(boundary) > 1 and boundary[-1] == boundary[0]:
+            boundary.pop()
+        if len(boundary) < 3:
+            continue
+        anchors = [key for key in boundary if key in support_set]
+        if len(anchors) < 2:
+            continue
+        anchors.sort(key=boundary.index)
+        start_index = boundary.index(anchors[0])
+        cycle = boundary[start_index:] + boundary[:start_index]
+        cycle.append(cycle[0])
+        cursor = 0
+        for anchor in anchors[1:] + anchors[:1]:
+            end = cycle.index(anchor, cursor + 1)
+            segment = tuple(cycle[cursor : end + 1])
+            cursor = end
+            if len(segment) > 2:
+                result.append((boundary_index, segment_index, segment))
+                segment_index += 1
+    return result
+
+
+def _point_line_distance_xy(
+    point: Sequence[float],
+    start: Sequence[float],
+    end: Sequence[float],
+) -> float:
+    dx = float(end[0]) - float(start[0])
+    dy = float(end[1]) - float(start[1])
+    length = sqrt(dx * dx + dy * dy)
+    if length <= 1e-15:
+        raise TNATopologyError(
+            "A support-to-support boundary segment has zero plan span."
+        )
+    return abs(
+        dx * (float(start[1]) - float(point[1]))
+        - (float(start[0]) - float(point[0])) * dy
+    ) / length
+
+
+def _boundary_sag(form: FormDiagram, segment: Sequence[int]) -> float:
+    start = form.vertex_coordinates(segment[0])
+    end = form.vertex_coordinates(segment[-1])
+    dx = float(end[0]) - float(start[0])
+    dy = float(end[1]) - float(start[1])
+    span = sqrt(dx * dx + dy * dy)
+    if span <= 1e-15:
+        raise TNATopologyError(
+            "A support-to-support boundary segment has zero plan span."
+        )
+    rise = max(
+        (
+            _point_line_distance_xy(
+                form.vertex_coordinates(key),
+                start,
+                end,
+            )
+            for key in segment[1:-1]
+        ),
+        default=0.0,
+    )
+    return rise / span
+
+
+def _assert_finite_pattern(form: FormDiagram, stage: str) -> None:
+    for key in form.vertices():
+        point = tuple(float(value) for value in form.vertex_coordinates(key))
+        if not all(isfinite(value) for value in point):
+            raise TNASolveError(
+                "{} produced a non-finite Pattern vertex at {!r}. "
+                "Check that the selected supports constrain every connected "
+                "part of the pattern.".format(stage, key)
+            )
+
+
+def _relax_pattern(
+    form: FormDiagram,
+    fixed: Sequence[int],
+) -> None:
+    if not fixed:
+        raise TNATopologyError(
+            "Pattern relaxation requires at least one support or fixed plan vertex."
+        )
+    try:
+        relax_boundary_openings(form, list(fixed))
+    except Exception as error:
+        raise TNASolveError(
+            "COMPAS FDM Pattern relaxation failed: {}: {}".format(
+                type(error).__name__, error
+            )
+        ) from error
+    _assert_finite_pattern(form, "Pattern relaxation")
+
+
+def _active_source_edge_mappings(
+    problem: TNAProblem,
+    form: FormDiagram,
+) -> Tuple[Dict[int, Optional[Edge]], Dict[Edge, Tuple[int, ...]]]:
+    current_edges = {
+        _edge_key(int(u), int(v)): (int(u), int(v))
+        for u, v in form.edges_where({"_is_edge": True})
+    }
+    source_edge_to_form = {}
+    for source_edge, registered_edge in problem.source_edge_to_form.items():
+        source_edge_to_form[int(source_edge)] = current_edges.get(
+            _edge_key(*registered_edge)
+        )
+    return source_edge_to_form, _build_edge_reverse(source_edge_to_form)
+
+
+def prepare_tna_problem(
+    problem: TNAProblem,
+    *,
+    support_mode: str = "boundary",
+    support_keys: Optional[Sequence[Hashable]] = None,
+    fixed_keys: Optional[Sequence[Hashable]] = None,
+    force_density: float = 1.0,
+    relax: bool = True,
+    boundary_sag: Optional[float] = 0.10,
+    sag_iterations: int = 10,
+    sag_tolerance: float = 0.01,
+    metadata: Optional[Mapping] = None,
+) -> TNAPreparation:
+    """Prepare a TNA Pattern using the RhinoVault boundary workflow.
+
+    The sequence is intentionally explicit:
+
+    1. flatten the registered Pattern into its analysis plane;
+    2. identify structural supports and independent plan-fixed vertices;
+    3. run a uniform-q FDM relaxation;
+    4. split boundaries at structural supports and iteratively scale their
+       edge q values to match a requested rise/span sag;
+    5. create the conditioned FormDiagram and its topological-dual
+       ForceDiagram.
+
+    Intermediate boundary vertices remain free. Only the segment endpoints
+    selected as structural supports become reaction nodes in vertical TNA.
+    """
+    if not isinstance(problem, TNAProblem):
+        required = (
+            "form",
+            "source_kind",
+            "source_vertex_order",
+            "source_vertices",
+            "source_to_form",
+            "form_to_sources",
+            "source_edges",
+            "source_edge_to_form",
+            "form_edge_to_sources",
+            "endpoint_to_source",
+            "diagnostics",
+            "metadata",
+        )
+        if not all(hasattr(problem, name) for name in required):
+            raise TNAInputError(
+                "problem must be a TNAProblem from register_tna_pattern."
+            )
+
+    force_density = float(force_density)
+    if not isfinite(force_density) or force_density <= 0.0:
+        raise TNAInputError("force_density must be finite and greater than zero.")
+    if boundary_sag is not None:
+        boundary_sag = float(boundary_sag)
+        if not isfinite(boundary_sag) or not 0.0 < boundary_sag <= 1.0:
+            raise TNAInputError(
+                "boundary_sag must be a rise/span ratio in the interval (0, 1]."
+            )
+    sag_iterations = int(sag_iterations)
+    if sag_iterations < 0:
+        raise TNAInputError("sag_iterations cannot be negative.")
+    sag_tolerance = float(sag_tolerance)
+    if not isfinite(sag_tolerance) or sag_tolerance <= 0.0:
+        raise TNAInputError("sag_tolerance must be finite and greater than zero.")
+
+    pattern = problem.form.copy()
+    pattern.dual = None
+    # A Pattern is the planar projection of the eventual thrust network. This
+    # prevents an already-resolved vault mesh from leaking its old heights into
+    # a new TNA solve.
+    original_z = [
+        float(pattern.vertex_attribute(key, "z")) for key in pattern.vertices()
+    ]
+    pattern.vertices_attribute("z", 0.0)
+    pattern.vertices_attribute("is_support", False)
+    pattern.vertices_attribute("is_fixed", False)
+
+    selected_supports = _resolve_supports(
+        problem, pattern, support_mode, support_keys
+    )
+    selected_support_set = set(selected_supports)
+    pattern.vertices_attribute("is_support", True, keys=selected_supports)
+
+    selected_support_source_keys = []
+    if str(support_mode or "").strip().lower() == "keys":
+        for source_key in support_keys or ():
+            if (
+                int(problem.source_to_form[source_key]) in selected_support_set
+                and source_key not in selected_support_source_keys
+            ):
+                selected_support_source_keys.append(source_key)
+    else:
+        selected_support_source_keys = [
+            _source_representative(problem, form_key)
+            for form_key in selected_supports
+        ]
+
+    fixed_source_keys, fixed_form_keys = _resolve_source_keys(
+        problem, fixed_keys, "fixed plan"
+    )
+    pattern.vertices_attribute("is_fixed", True, keys=fixed_form_keys)
+    relaxation_fixed = _unique(selected_supports + fixed_form_keys)
+
+    pattern.edges_attribute("q", force_density)
+    if relax:
+        _relax_pattern(pattern, relaxation_fixed)
+
+    segment_paths = _boundary_support_segments(pattern, selected_supports)
+    initial_sags = [_boundary_sag(pattern, path) for _, _, path in segment_paths]
+    target_sags = [boundary_sag for _ in initial_sags]
+
+    sag_iterations_run = 0
+    if boundary_sag is not None and segment_paths and sag_iterations:
+        for iteration in range(sag_iterations):
+            current_sags = [
+                _boundary_sag(pattern, path) for _, _, path in segment_paths
+            ]
+            if all(
+                abs(current - float(target)) < sag_tolerance
+                for current, target in zip(current_sags, target_sags)
+            ):
+                break
+            for current, target, (_, _, path) in zip(
+                current_sags, target_sags, segment_paths
+            ):
+                # This is the exact compas-RV/RhinoVault update rule.
+                # If a perfectly straight input has not yet moved, avoid
+                # zeroing q and let the next FDM pass establish curvature.
+                scale = current / float(target)
+                if scale <= 1e-12:
+                    scale = 1.0
+                for index, u in enumerate(path[:-1]):
+                    v = path[index + 1]
+                    q = float(pattern.edge_attribute((u, v), "q"))
+                    pattern.edge_attribute((u, v), "q", scale * q)
+            _relax_pattern(pattern, relaxation_fixed)
+            sag_iterations_run = iteration + 1
+
+    final_sags = [_boundary_sag(pattern, path) for _, _, path in segment_paths]
+    boundary_segments = []
+    for (
+        boundary_index,
+        segment_index,
+        path,
+    ), initial_sag, target_sag, actual_sag in zip(
+        segment_paths,
+        initial_sags,
+        target_sags,
+        final_sags,
+    ):
+        source_path = tuple(
+            _source_representative(problem, key) for key in path
+        )
+        boundary_segments.append(
+            TNABoundarySegment(
+                boundary_index=boundary_index,
+                segment_index=segment_index,
+                form_vertex_keys=tuple(path),
+                source_vertex_keys=source_path,
+                target_sag=target_sag,
+                initial_sag=initial_sag,
+                actual_sag=actual_sag,
+            )
+        )
+
+    # Preserve source mappings while updating every source coordinate to the
+    # relaxed canonical Pattern vertex.
+    relaxed_source_vertices = {
+        source_key: tuple(
+            float(value)
+            for value in pattern.vertex_coordinates(
+                problem.source_to_form[source_key]
+            )
+        )
+        for source_key in problem.source_vertex_order
+    }
+    relaxed_problem = TNAProblem(
+        form=pattern.copy(),
+        source_kind=problem.source_kind,
+        source_vertex_order=problem.source_vertex_order,
+        source_vertices=relaxed_source_vertices,
+        source_to_form=dict(problem.source_to_form),
+        form_to_sources=dict(problem.form_to_sources),
+        source_edges=dict(problem.source_edges),
+        source_edge_to_form=dict(problem.source_edge_to_form),
+        form_edge_to_sources=dict(problem.form_edge_to_sources),
+        endpoint_to_source=dict(problem.endpoint_to_source),
+        diagnostics=dict(problem.diagnostics),
+        metadata=dict(problem.metadata),
+    )
+
+    form = pattern.copy()
+    form.dual = None
+    try:
+        form.update_boundaries()
+    except Exception as error:
+        raise TNATopologyError(
+            "FormDiagram.update_boundaries failed after Pattern relaxation. "
+            "Check support placement and face orientation."
+        ) from error
+
+    active_supports = tuple(int(key) for key in form.supports())
+    if not active_supports:
+        raise TNATopologyError(
+            "Boundary processing removed all selected supports."
+        )
+    active_edges = [
+        (int(u), int(v)) for u, v in form.edges_where({"_is_edge": True})
+    ]
+    if not active_edges:
+        raise TNATopologyError(
+            "The prepared FormDiagram has no active TNA edges."
+        )
+    try:
+        force = ForceDiagram.from_formdiagram(form)
+    except Exception as error:
+        raise TNATopologyError(
+            "The prepared FormDiagram could not produce a topological dual."
+        ) from error
+    if force.number_of_edges() != len(active_edges):
+        raise TNATopologyError(
+            "The support/boundary layout creates parallel reciprocal edges "
+            "(active form edges: {}, force edges: {}). Refine the boundary "
+            "segmentation or change support locations.".format(
+                len(active_edges), force.number_of_edges()
+            )
+        )
+
+    source_edge_to_form, form_edge_to_sources = _active_source_edge_mappings(
+        problem, form
+    )
+    skipped_boundaries = []
+    support_set = set(selected_supports)
+    boundary_vertex_set = set()
+    for boundary_index, raw_boundary in enumerate(pattern.vertices_on_boundaries()):
+        boundary = [int(key) for key in raw_boundary]
+        boundary_vertex_set.update(boundary)
+        count = sum(key in support_set for key in boundary)
+        if count < 2:
+            skipped_boundaries.append(
+                {
+                    "boundary_index": boundary_index,
+                    "support_count": count,
+                    "reason": "needs at least two boundary supports for sag matching",
+                }
+            )
+    held_boundary_edges = [
+        (int(u), int(v))
+        for u, v in pattern.edges()
+        if pattern.is_edge_on_boundary((u, v))
+        and int(u) in support_set
+        and int(v) in support_set
+    ]
+    boundary_support_count = sum(
+        key in support_set for key in boundary_vertex_set
+    )
+    no_free_opening_segments = len(boundary_segments) == 0
+    boundary_condition_warning = ""
+    if no_free_opening_segments:
+        boundary_condition_warning = (
+            "No support-to-support boundary path contains an intermediate "
+            "free vertex. Selected boundary anchors therefore hold straight "
+            "runs and boundary sag cannot be created."
+        )
+    if boundary_vertex_set and boundary_support_count == len(boundary_vertex_set):
+        boundary_condition_warning = (
+            "Every boundary vertex is a support. The complete rim is held, so "
+            "Pattern relaxation cannot produce unsupported-boundary sag."
+        )
+
+    diagnostics = dict(problem.diagnostics)
+    diagnostics.update(
+        {
+            "status": "prepared",
+            "pattern_vertex_count": pattern.number_of_vertices(),
+            "pattern_edge_count": pattern.number_of_edges(),
+            "pattern_face_count": pattern.number_of_faces(),
+            "support_count": len(active_supports),
+            "plan_fixed_count": len(fixed_form_keys),
+            "boundary_vertex_count": len(boundary_vertex_set),
+            "boundary_support_count": boundary_support_count,
+            "held_boundary_edge_count": len(held_boundary_edges),
+            "held_boundary_edges": tuple(held_boundary_edges),
+            "boundary_has_free_opening_segments": not no_free_opening_segments,
+            "boundary_condition_warning": boundary_condition_warning,
+            "flattened_vertex_count": sum(
+                1 for value in original_z if abs(value) > 1e-12
+            ),
+            "relaxed": bool(relax),
+            "uniform_force_density": force_density,
+            "boundary_segment_count": len(boundary_segments),
+            "boundary_sag_target": boundary_sag,
+            "sag_iterations_run": sag_iterations_run,
+            "max_boundary_sag_error": max(
+                (
+                    abs(segment.actual_sag - float(segment.target_sag))
+                    for segment in boundary_segments
+                    if segment.target_sag is not None
+                ),
+                default=0.0,
+            ),
+            "skipped_boundaries": tuple(skipped_boundaries),
+            "active_form_edge_count": len(active_edges),
+            "force_vertex_count": force.number_of_vertices(),
+            "force_edge_count": force.number_of_edges(),
+            "diagram_state": "topological_dual_not_horizontal_equilibrium",
+        }
+    )
+    preparation_metadata = dict(problem.metadata)
+    preparation_metadata.update(dict(metadata or {}))
+    preparation_metadata["prepare"] = {
+        "force_density": force_density,
+        "relax": bool(relax),
+        "boundary_sag": boundary_sag,
+        "sag_iterations": sag_iterations,
+        "sag_tolerance": sag_tolerance,
+    }
+
+    return TNAPreparation(
+        problem=relaxed_problem,
+        pattern=pattern,
+        form=form,
+        force=force,
+        support_keys=tuple(selected_support_source_keys),
+        support_form_keys=active_supports,
+        fixed_keys=tuple(fixed_source_keys),
+        fixed_form_keys=tuple(fixed_form_keys),
+        boundary_segments=tuple(boundary_segments),
+        source_edge_to_form=source_edge_to_form,
+        form_edge_to_sources=form_edge_to_sources,
+        diagnostics=diagnostics,
+        metadata=preparation_metadata,
+    )
+
+
+def prepare_tna_pattern(
+    *,
+    vertices: Any = None,
+    faces: Any = None,
+    lines: Any = None,
+    vertex_keys: Optional[Sequence[Hashable]] = None,
+    tolerance: Optional[float] = 1e-6,
+    precision: Optional[int] = None,
+    registration_metadata: Optional[Mapping] = None,
+    support_mode: str = "boundary",
+    support_keys: Optional[Sequence[Hashable]] = None,
+    fixed_keys: Optional[Sequence[Hashable]] = None,
+    force_density: float = 1.0,
+    relax: bool = True,
+    boundary_sag: Optional[float] = 0.10,
+    sag_iterations: int = 10,
+    sag_tolerance: float = 0.01,
+    metadata: Optional[Mapping] = None,
+) -> TNAPreparation:
+    """Register and prepare one Pattern in a RhinoVault-style convenience call."""
+    problem = register_tna_pattern(
+        vertices=vertices,
+        faces=faces,
+        lines=lines,
+        vertex_keys=vertex_keys,
+        tolerance=tolerance,
+        precision=precision,
+        metadata=registration_metadata,
+    )
+    return prepare_tna_problem(
+        problem,
+        support_mode=support_mode,
+        support_keys=support_keys,
+        fixed_keys=fixed_keys,
+        force_density=force_density,
+        relax=relax,
+        boundary_sag=boundary_sag,
+        sag_iterations=sag_iterations,
+        sag_tolerance=sag_tolerance,
+        metadata=metadata,
+    )
+
+
 def _normalise_pz(
     problem: TNAProblem,
     pz: Any,
@@ -827,6 +1401,7 @@ def solve_tna_problem(
     *,
     support_mode: str = "boundary",
     support_keys: Optional[Sequence[Hashable]] = None,
+    fixed_keys: Optional[Sequence[Hashable]] = None,
     pz: Any = -1.0,
     vertical_mode: str = "zmax",
     zmax: Optional[float] = None,
@@ -898,6 +1473,10 @@ def solve_tna_problem(
         problem, form, support_mode, support_keys
     )
     form.vertices_attribute("is_support", True, keys=selected_supports)
+    _, selected_fixed = _resolve_source_keys(
+        problem, fixed_keys, "fixed plan"
+    )
+    form.vertices_attribute("is_fixed", True, keys=selected_fixed)
 
     source_nodal_pz, registered_nodal_pz = _normalise_pz(problem, pz)
     for key in form.vertices():
@@ -1180,6 +1759,7 @@ def solve_tna_problem(
     }
     session_metadata["solve"] = {
         "support_mode": support_mode,
+        "fixed_keys": tuple(fixed_keys or ()),
         "vertical_mode": mode,
         "zmax": zmax if mode == "zmax" else None,
         "q_scale": q_scale if mode == "q" else None,
@@ -1227,6 +1807,7 @@ def solve_tna_pattern(
     registration_metadata: Optional[Mapping] = None,
     support_mode: str = "boundary",
     support_keys: Optional[Sequence[Hashable]] = None,
+    fixed_keys: Optional[Sequence[Hashable]] = None,
     pz: Any = -1.0,
     vertical_mode: str = "zmax",
     zmax: Optional[float] = None,
@@ -1253,6 +1834,7 @@ def solve_tna_pattern(
         problem,
         support_mode=support_mode,
         support_keys=support_keys,
+        fixed_keys=fixed_keys,
         pz=pz,
         vertical_mode=vertical_mode,
         zmax=zmax,

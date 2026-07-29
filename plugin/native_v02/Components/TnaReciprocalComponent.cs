@@ -435,7 +435,7 @@ internal static class TnaGraphicDiagramFactory
     }
 }
 
-public sealed class TnaReciprocalComponent : NativeComponentBase
+public sealed class TnaReciprocalComponent : NativePreviewComponentBase
 {
     private static readonly ComponentValueListSpec[] ValueLists =
     {
@@ -618,9 +618,8 @@ public sealed class TnaReciprocalComponent : NativeComponentBase
         }
     }
 
-    public override void DrawViewportWires(IGH_PreviewArgs args)
+    protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
     {
-        base.DrawViewportWires(args);
         Draw(args, _form);
         Draw(args, _thrust);
         Draw(args, _force);

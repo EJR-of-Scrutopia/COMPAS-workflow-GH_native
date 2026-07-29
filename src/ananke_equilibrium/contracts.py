@@ -418,6 +418,162 @@ class TNAConfig(Contract):
         object.__setattr__(self, "metadata", _mapping(self.metadata))
 
 
+@dataclass(frozen=True)
+class TNAPrepareConfig(Contract):
+    """Plan-pattern relaxation and unsupported-boundary controls.
+
+    ``force_density`` is the uniform positive force-density weight used for
+    the initial plan FDM relaxation.  Its absolute value has no effect when all
+    edges share the same value; the opening-sag matcher changes the *relative*
+    force densities of unsupported boundary segments.
+
+    ``boundary_sag`` is rise/span as a ratio (``0.10`` means ten percent).
+    Structural supports and the optional ``fixed_node_ids`` are both held in
+    plan during relaxation.  Only structural supports become reaction nodes in
+    the later TNA vertical solve.
+    """
+
+    force_density: float = 1.0
+    relax: bool = True
+    boundary_sag: Optional[float] = 0.10
+    sag_iterations: int = 10
+    sag_tolerance: float = 0.01
+    fixed_node_ids: Tuple[int, ...] = ()
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        force_density = _finite_float(self.force_density, "force_density")
+        if force_density <= 0.0:
+            raise ContractError("force_density must be greater than zero.")
+        boundary_sag = (
+            _finite_float(self.boundary_sag, "boundary_sag")
+            if self.boundary_sag is not None
+            else None
+        )
+        if boundary_sag is not None and not 0.0 < boundary_sag <= 1.0:
+            raise ContractError(
+                "boundary_sag must be a rise/span ratio greater than zero "
+                "and no greater than one."
+            )
+        iterations = int(self.sag_iterations)
+        if iterations < 0:
+            raise ContractError("sag_iterations cannot be negative.")
+        tolerance = _finite_float(self.sag_tolerance, "sag_tolerance")
+        if tolerance <= 0.0:
+            raise ContractError("sag_tolerance must be greater than zero.")
+        fixed = tuple(dict.fromkeys(int(value) for value in self.fixed_node_ids))
+        if fixed and min(fixed) < 0:
+            raise ContractError("fixed_node_ids cannot contain negative IDs.")
+        object.__setattr__(self, "force_density", force_density)
+        object.__setattr__(self, "relax", bool(self.relax))
+        object.__setattr__(self, "boundary_sag", boundary_sag)
+        object.__setattr__(self, "sag_iterations", iterations)
+        object.__setattr__(self, "sag_tolerance", tolerance)
+        object.__setattr__(self, "fixed_node_ids", fixed)
+        object.__setattr__(self, "metadata", _mapping(self.metadata))
+
+
+@dataclass(frozen=True)
+class PreparedTNA(Contract):
+    """Stable prepared-pattern result plus an optional live COMPAS stage.
+
+    The live ``session`` is retained only inside the Python worker so that the
+    form and force diagrams can be encoded.  It is deliberately excluded from
+    :meth:`to_data`.
+    """
+
+    topology: TopologyBundle
+    support_set: SupportSet
+    config: TNAPrepareConfig
+    pattern: Mapping[str, Any] = field(default_factory=dict)
+    session: Any = None
+    boundary_segments: Tuple[Mapping[str, Any], ...] = ()
+    diagnostics: Tuple[Diagnostic, ...] = ()
+    mappings: Mapping[str, Any] = field(default_factory=dict)
+    report: str = ""
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.support_set.assert_compatible(self.topology)
+        pattern = _mapping(self.pattern)
+        required = {"kind", "vertices", "edges", "faces", "edge_force_densities"}
+        missing = sorted(required - set(pattern))
+        if missing:
+            raise ContractError(
+                "Prepared TNA pattern is missing: {}.".format(", ".join(missing))
+            )
+        if str(pattern["kind"]).strip().lower() != "faced":
+            raise ContractError("Prepared TNA pattern kind must be 'faced'.")
+        vertices = tuple(
+            _point3(point, "Prepared Pattern vertex {}".format(index))
+            for index, point in enumerate(pattern["vertices"])
+        )
+        if len(vertices) != len(self.topology.vertices):
+            raise ContractError(
+                "Prepared Pattern vertices must align with the stable source topology."
+            )
+        edges = tuple(
+            (int(edge[0]), int(edge[1])) for edge in pattern["edges"]
+        )
+        faces = tuple(
+            tuple(int(value) for value in face) for face in pattern["faces"]
+        )
+        q = tuple(
+            _finite_float(value, "Prepared Pattern force density")
+            for value in pattern["edge_force_densities"]
+        )
+        if len(q) != len(edges):
+            raise ContractError(
+                "Prepared Pattern force densities must align with its edges."
+            )
+        fixed = tuple(
+            dict.fromkeys(
+                int(value) for value in pattern.get("fixed_node_ids", ())
+            )
+        )
+        if fixed and (min(fixed) < 0 or max(fixed) >= len(vertices)):
+            raise ContractError(
+                "A prepared fixed plan node ID lies outside the topology."
+            )
+        pattern = {
+            "kind": "faced",
+            "vertices": vertices,
+            "edges": edges,
+            "faces": faces,
+            "edge_force_densities": q,
+            "fixed_node_ids": fixed,
+        }
+        object.__setattr__(self, "pattern", pattern)
+        object.__setattr__(
+            self,
+            "boundary_segments",
+            tuple(dict(item) for item in self.boundary_segments),
+        )
+        object.__setattr__(self, "diagnostics", tuple(self.diagnostics))
+        object.__setattr__(self, "mappings", _mapping(self.mappings))
+        object.__setattr__(self, "report", str(self.report))
+        object.__setattr__(self, "metadata", _mapping(self.metadata))
+
+    @property
+    def supports(self) -> SupportSet:
+        return self.support_set
+
+    def to_data(self) -> Dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "kind": "tna_prepared",
+            "topology": self.topology.to_data(),
+            "support_set": self.support_set.to_data(),
+            "config": self.config.to_data(),
+            "pattern": dict(self.pattern),
+            "boundary_segments": self.boundary_segments,
+            "diagnostics": tuple(item.to_data() for item in self.diagnostics),
+            "mappings": dict(self.mappings),
+            "report": self.report,
+            "metadata": dict(self.metadata),
+        }
+
+
 _STYLE_PRESETS = {
     "analysis": {
         "colours": {
@@ -714,10 +870,12 @@ __all__ = [
     "FDConfig",
     "HeightControl",
     "LoadCase",
+    "PreparedTNA",
     "SCHEMA_VERSION",
     "SolvedCase",
     "SupportSet",
     "TNAConfig",
+    "TNAPrepareConfig",
     "TopologyBoundContract",
     "TopologyBundle",
 ]

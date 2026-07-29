@@ -10,6 +10,7 @@ parameters.
 | Family | Contract | Purpose |
 | --- | --- | --- |
 | Registration | `TopologyBundle` | One registered object: nodes, edges, optional faces, source mapping, groups, tolerances, and topology diagnostics. |
+| Staged TNA | `TnaPattern`, `TnaPrepared` | Stable source pattern with explicit anchors, then the relaxed pattern, boundary-opening records, form graph, topological force graph, mappings, and preparation diagnostics. |
 | Actions | `LoadCase` | Named nodal loads, load metadata, and the mapping back to registered nodes. |
 | Solver settings | `FDConfig`, `HeightControl`, `TNAConfig` | Explicit, serialisable controls for force-density or thrust-network solving. |
 | Results | `SolvedCase`, `TnaResult` | Immutable solved geometry, edge forces, reactions, residuals, provenance, units, and solver diagnostics. `TnaResult` additionally preserves the reciprocal form/force pair and stable correspondence. |
@@ -23,7 +24,7 @@ Rhino-specific code.
 
 ## Native v0.2 component surface
 
-The compiled native slice has sixteen components. The C# classes under
+The compiled native slice has twenty components. The C# classes under
 `plugin/native_v02/Components` are authoritative for their current ports;
 `plugin/components.toml` records the preserved script-backed v0.1 surface.
 
@@ -35,8 +36,12 @@ The compiled native slice has sixteen components. The C# classes under
 | `01 Model` | **Equilibrium Problem** | topology, support set, load-case list, name | `Problem` | Validate and bundle the shared solver input. |
 | `02 Form Finding` | **FD Settings** | scalar or member-aligned force densities | `Settings` | Keep force-density values separate from loads and drawing controls. |
 | `02 Form Finding` | **FD Solve** | problem, settings, load-case index | `Result` | Run whole-network COMPAS force-density form finding. |
+| `02 Form Finding` | **TNA Pattern** | geometry, mode, resolution, weld tolerance | `Pattern`, source `Topology` | Register a mesh or already-split planar line pattern. Surface, grid, triangulation, and skeleton modes fail explicitly until their generators exist. |
+| `02 Form Finding` | **TNA Supports** | pattern, explicit anchor points, optional snap tolerance | supported `Pattern` | Bind only the true structural anchors; intermediate boundary vertices remain free for relaxation. |
+| `02 Form Finding` | **TNA Relax + Boundaries** | supported pattern, nominal plan force density, target boundary sag | `Prepared` | Run planar FDM relaxation, target support-to-support opening sag, and retain the conditioned form plus unbalanced topological force graph. |
+| `02 Form Finding` | **TNA Equilibrium** | prepared state, optional load case, crown-height/signed-q mode and value | `TnaResult` | Run horizontal and vertical TNA with compact controls and preserve the complete solved reciprocal state. |
 | `02 Form Finding` | **TNA Control** | height mode/value, horizontal alpha, horizontal/vertical iterations, tolerance | `Control` | Bundle crown-height or force-scale control and numerical TNA settings. |
-| `02 Form Finding` | **TNA Solve** | problem, control, load-case selector | `Result` (`TnaResult`) | Solve a faced thrust network and preserve the spatial thrust, planar form, reciprocal force, source mapping, loads, reactions, and diagnostics as one state. |
+| `02 Form Finding` | **TNA Solve** | problem, control, load-case selector | `Result` (`TnaResult`) | Retained one-shot faced-pattern compatibility solve. |
 | `03 Graphic Statics` | **TNA Reciprocal** | TNA result, layout, metric, force scale, vector scale, gap ratio | `Diagram` (`GraphicDiagram`) | Construct and preview the linked thrust/form/force diagram without rerunning the solver. |
 | `03 Graphic Statics` | **Graphic Diagram Display** | graphic diagram, style, role visibility, weight scale | form/thrust/force/load/reaction lines, report | Provide the explicit styled viewport boundary and expose ordinary Rhino lines for downstream drawing operations. |
 | `05 Visualisation` | **Equilibrium Preview** | equilibrium result, force weight, vector scale | member colours/lines and load, reaction, residual lines | Preview the current FD equilibrium result in the Rhino viewport. |
@@ -66,12 +71,11 @@ The compiled native slice has sixteen components. The C# classes under
 ## Roadmap components
 
 These are separate stages, not extra modes hidden inside the initial solvers.
-The current `TNA Solve` remains the implemented one-shot macro. A future
-RhinoVault-style surface will expose `TNA Register`, `TNA Relax`, `TNA Form`,
-`TNA Dual`, `TNA Horizontal`, `TNA Vertical`, and `TNA Reciprocal` as
-inspectable stages. See
+The compact RhinoVault-style authoring surface is now implemented as
+`TNA Pattern -> TNA Supports -> TNA Relax + Boundaries -> TNA Equilibrium`;
+`TNA Solve` remains the one-shot compatibility macro. See
 [`architecture/rhinovault-native-stages.md`](architecture/rhinovault-native-stages.md)
-for the current-versus-roadmap boundary and proposed contracts.
+for the exact implemented boundary and later design-by-statics work.
 
 | Stage | Planned component | Main result |
 | --- | --- | --- |
@@ -137,10 +141,12 @@ one decorative triangle. `AGS Solve` and the directional graphic-statics
 stages therefore own any new reciprocal construction; display components only
 draw structured solver or construction results.
 
-For TNA, the reciprocal force diagram is already produced during horizontal
-equilibrium. The worker must serialise it as part of `TnaResult`; a native
-`TNA Reciprocal` component packages and previews that state without rerunning
-AGS. `Graphic Diagram Display` is the explicit presentation/deconstruction
+For staged TNA, `TNA Relax + Boundaries` already serialises the initial
+topological force graph beside its form graph in `TnaPrepared`; that graph is
+not yet horizontally balanced. `TNA Equilibrium` returns the solved
+reciprocal force diagram as part of `TnaResult`. A native `TNA Reciprocal`
+component packages and previews that final state without rerunning AGS.
+`Graphic Diagram Display` is the explicit presentation/deconstruction
 boundary: it applies a visual preset and exposes the five diagram roles as
 ordinary Rhino lines. A classical dashed load-line/pole construction is
 extracted separately from an ordered directional path.
@@ -156,7 +162,7 @@ demands in the selected scale, not material capacity or utilisation. See
 Use the smallest component that matches the downstream operation:
 
 ```text
-TNA Solve.Result
+TNA Equilibrium.TNA Result
     +--> TNA Geometry --> Thrust Mesh / Thrust Edges / Form Edges
     +--> TNA Members  --> IDs / Lines / q / H / F / State / Source IDs
     +--> TNA Actions  --> Supports / Loads / Reactions
@@ -171,7 +177,9 @@ migrated, `TNA Geometry.Equilibrium` exposes the embedded generic result as a
 compatibility bridge:
 
 ```text
-TNA Solve.Result --> TNA Geometry.Equilibrium --> Result Breakdown.Result
+TNA Equilibrium.TNA Result
+    --> TNA Geometry.Equilibrium
+    --> Result Breakdown.Result
 ```
 
 New TNA definitions should not use that bridge as their normal data model;

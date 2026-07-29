@@ -309,6 +309,8 @@ public sealed class TnaSolveComponent :
 
     public override void DrawViewportWires(IGH_PreviewArgs args)
     {
+        if (Hidden)
+            return;
         base.DrawViewportWires(args);
         foreach (PreviewEdge edge in _previewEdges)
             args.Display.DrawLine(edge.Line, edge.Colour, 2);

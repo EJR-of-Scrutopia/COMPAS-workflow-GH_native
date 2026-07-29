@@ -214,7 +214,7 @@ public sealed class ResultBreakdownComponent : NativeComponentBase
     }
 }
 
-public sealed class EquilibriumPreviewComponent : NativeComponentBase
+public sealed class EquilibriumPreviewComponent : NativePreviewComponentBase
 {
     private readonly List<Line> _members = new();
     private readonly List<Color> _memberColours = new();
@@ -388,9 +388,8 @@ public sealed class EquilibriumPreviewComponent : NativeComponentBase
         }
     }
 
-    public override void DrawViewportWires(IGH_PreviewArgs args)
+    protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
     {
-        base.DrawViewportWires(args);
         for (int index = 0; index < _members.Count; index++)
         {
             args.Display.DrawLine(

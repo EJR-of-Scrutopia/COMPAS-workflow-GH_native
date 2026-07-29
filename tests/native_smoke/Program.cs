@@ -31,15 +31,60 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.EquilibriumProblemComponent"] =
                 new[] { 2 },
             ["Ananke.COMPAS.Native.Components.FDSettingsComponent"] =
-                new[] { 0 }
+                new[] { 0 },
+            ["Ananke.COMPAS.Native.Components.TnaPatternComponent"] =
+                new[] { 0 },
+            ["Ananke.COMPAS.Native.Components.TnaSupportsComponent"] =
+                new[] { 1 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
         {
             "Ananke.COMPAS.Native.Components.TnaSolveComponent",
             "Ananke.COMPAS.Native.Components.TnaReciprocalComponent",
-            "Ananke.COMPAS.Native.Components.GraphicDiagramDisplayComponent"
+            "Ananke.COMPAS.Native.Components.GraphicDiagramDisplayComponent",
+            "Ananke.COMPAS.Native.Components.TnaPatternComponent",
+            "Ananke.COMPAS.Native.Components.TnaSupportsComponent",
+            "Ananke.COMPAS.Native.Components.TnaRelaxBoundariesComponent",
+            "Ananke.COMPAS.Native.Components.TnaEquilibriumComponent"
         };
+    private static readonly HashSet<string> NativeVisibilityGuardComponents =
+        new(StringComparer.Ordinal)
+        {
+            "Ananke.COMPAS.Native.Components.TnaReciprocalComponent",
+            "Ananke.COMPAS.Native.Components.GraphicDiagramDisplayComponent",
+            "Ananke.COMPAS.Native.Components.TnaPatternComponent",
+            "Ananke.COMPAS.Native.Components.TnaSupportsComponent",
+            "Ananke.COMPAS.Native.Components.EquilibriumPreviewComponent",
+            "Ananke.COMPAS.Native.Components.TnaActionsComponent"
+        };
+    private static readonly IReadOnlyDictionary<
+        string,
+        (string[] Inputs, string[] Outputs)> TnaWorkflowContracts =
+            new Dictionary<
+                string,
+                (string[] Inputs, string[] Outputs)>(StringComparer.Ordinal)
+            {
+                ["Ananke.COMPAS.Native.Components.TnaPatternComponent"] = (
+                    new[]
+                    {
+                        "Geometry",
+                        "Mode",
+                        "Resolution",
+                        "Weld Tolerance"
+                    },
+                    new[] { "Pattern", "Topology" }),
+                ["Ananke.COMPAS.Native.Components.TnaSupportsComponent"] = (
+                    new[] { "Pattern", "Anchor Points", "Snap Tolerance" },
+                    new[] { "Pattern" }),
+                ["Ananke.COMPAS.Native.Components." +
+                 "TnaRelaxBoundariesComponent"] = (
+                    new[] { "Pattern", "Force Density", "Boundary Sag" },
+                    new[] { "Prepared" }),
+                ["Ananke.COMPAS.Native.Components.TnaEquilibriumComponent"] = (
+                    new[] { "Prepared", "Load Case", "Mode", "Value" },
+                    new[] { "TNA Result" })
+            };
     private static readonly IReadOnlyDictionary<
         string,
         (string[] Inputs, string[] Outputs)> TnaQueryContracts =
@@ -192,8 +237,10 @@ internal static class Program
                 string displayName = ReadDisplayName(instance, componentType);
                 ValidateFlattenedInputs(instance, componentType);
                 ValidatePreviewCapability(instance, componentType);
+                ValidateNativePreviewVisibilityGuard(instance, componentType);
                 ValidateGraphicDisplayContract(instance, componentType);
                 ValidateTnaQueryContract(instance, componentType);
+                ValidateTnaWorkflowContract(instance, componentType);
                 ValidateIcon(instance, componentType);
                 RecordDocumentGuid(
                     instance,
@@ -250,10 +297,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 10)
+        if (parameterTypes.Length != 12)
         {
             failures.Add(
-                $"Expected 10 public persistent contract parameters, found " +
+                $"Expected 12 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
@@ -504,6 +551,45 @@ internal static class Program
         }
     }
 
+    private static void ValidateNativePreviewVisibilityGuard(
+        object instance,
+        Type componentType)
+    {
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!NativeVisibilityGuardComponents.Contains(typeName))
+            return;
+
+        Type? previewBase = componentType.BaseType;
+        if (!string.Equals(
+                previewBase?.FullName,
+                "Ananke.COMPAS.Native.Components.NativePreviewComponentBase",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Custom diagram preview components must derive from the " +
+                "shared native visibility guard so Grasshopper's Preview " +
+                "toggle controls all renderer-owned geometry.");
+        }
+
+        PropertyInfo hiddenProperty = componentType.GetProperty("Hidden")
+            ?? throw new InvalidOperationException(
+                "Preview component does not expose Grasshopper's Hidden state.");
+        if (!hiddenProperty.CanRead || !hiddenProperty.CanWrite)
+        {
+            throw new InvalidOperationException(
+                "Preview component Hidden state must remain readable and " +
+                "writable by Grasshopper.");
+        }
+
+        hiddenProperty.SetValue(instance, true);
+        if (hiddenProperty.GetValue(instance) is not true)
+        {
+            throw new InvalidOperationException(
+                "Preview component did not retain Grasshopper's hidden state.");
+        }
+        hiddenProperty.SetValue(instance, false);
+    }
+
     private static void ValidateGraphicDisplayContract(
         object instance,
         Type componentType)
@@ -598,6 +684,47 @@ internal static class Program
     {
         string typeName = componentType.FullName ?? componentType.Name;
         if (!TnaQueryContracts.TryGetValue(
+                typeName,
+                out (string[] Inputs, string[] Outputs) contract))
+        {
+            return;
+        }
+
+        object parameters = componentType
+            .GetProperty("Params")
+            ?.GetValue(instance)
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} parameters.");
+        IList inputs = parameters
+            .GetType()
+            .GetProperty("Input")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} inputs.");
+        IList outputs = parameters
+            .GetType()
+            .GetProperty("Output")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} outputs.");
+        ValidateParameterNames(
+            inputs,
+            contract.Inputs,
+            componentType.Name,
+            "input");
+        ValidateParameterNames(
+            outputs,
+            contract.Outputs,
+            componentType.Name,
+            "output");
+    }
+
+    private static void ValidateTnaWorkflowContract(
+        object instance,
+        Type componentType)
+    {
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!TnaWorkflowContracts.TryGetValue(
                 typeName,
                 out (string[] Inputs, string[] Outputs) contract))
         {

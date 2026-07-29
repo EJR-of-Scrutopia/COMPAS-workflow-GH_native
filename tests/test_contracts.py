@@ -10,6 +10,7 @@ from ananke_equilibrium.contracts import LoadCase
 from ananke_equilibrium.contracts import SolvedCase
 from ananke_equilibrium.contracts import SupportSet
 from ananke_equilibrium.contracts import TopologyBundle
+from ananke_equilibrium.contracts import TNAPrepareConfig
 
 
 def line_topology():
@@ -107,3 +108,15 @@ def test_height_control_requires_mode_specific_data():
     assert HeightControl.force_scale(-2.0).mode == "q"
     with pytest.raises(ContractError, match="requires a value"):
         HeightControl(mode="zmax")
+
+
+def test_tna_prepare_config_uses_rise_over_span_and_distinct_plan_pins():
+    config = TNAPrepareConfig(
+        boundary_sag=0.10,
+        fixed_node_ids=(2, 2, 5),
+    )
+
+    assert config.boundary_sag == pytest.approx(0.10)
+    assert config.fixed_node_ids == (2, 5)
+    with pytest.raises(ContractError, match="rise/span"):
+        TNAPrepareConfig(boundary_sag=10.0)

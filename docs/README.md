@@ -5,9 +5,9 @@
 - [Native v0.2 getting started](native-v02-getting-started.md) covers
   installation and the current FD, TNA, query, and graphic-display wiring.
 - [RhinoVault-style native TNA stages](architecture/rhinovault-native-stages.md)
-  distinguishes the implemented one-shot TNA workflow from the planned
-  Register, Relax, Form, Dual, Horizontal, Vertical, and Reciprocal authoring
-  stages.
+  documents the implemented `TNA Pattern -> TNA Supports ->
+  TNA Relax + Boundaries -> TNA Equilibrium` authoring workflow and its
+  retained one-shot compatibility path.
 - [TNA, graphic statics, and column placement](architecture/tna-graphic-statics-columns.md)
   defines the current linked diagram contract and later force-flow, directional
   drawing, and column/branch design layers.

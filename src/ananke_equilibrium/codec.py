@@ -19,13 +19,16 @@ from typing import Dict
 from typing import Optional
 from typing import Tuple
 
+from .contracts import Diagnostic
 from .contracts import FDConfig
 from .contracts import HeightControl
 from .contracts import LoadCase
+from .contracts import PreparedTNA
 from .contracts import SCHEMA_VERSION
 from .contracts import SolvedCase
 from .contracts import SupportSet
 from .contracts import TNAConfig
+from .contracts import TNAPrepareConfig
 from .contracts import TopologyBundle
 
 
@@ -454,10 +457,156 @@ def decode_tna_config(value: Any) -> TNAConfig:
     )
 
 
+def decode_tna_prepare_config(value: Any) -> TNAPrepareConfig:
+    """Decode Pattern relaxation and unsupported-boundary controls."""
+    data = _fields(
+        value,
+        "settings",
+        (
+            "schema_version",
+            "force_density",
+            "relax",
+            "boundary_sag",
+            "sag_iterations",
+            "sag_tolerance",
+            "fixed_node_ids",
+            "metadata",
+        ),
+    )
+    return TNAPrepareConfig(
+        force_density=data.get("force_density", 1.0),
+        relax=data.get("relax", True),
+        boundary_sag=data.get("boundary_sag", 0.10),
+        sag_iterations=data.get("sag_iterations", 10),
+        sag_tolerance=data.get("sag_tolerance", 0.01),
+        fixed_node_ids=tuple(data.get("fixed_node_ids", ())),
+        metadata=_object(data.get("metadata", {}), "settings.metadata"),
+    )
+
+
+def decode_tna_prepare_payload(
+    value: Any,
+) -> Tuple[TopologyBundle, SupportSet, TNAPrepareConfig]:
+    """Decode ``tna.prepare`` while keeping explicit source IDs stable."""
+    data = _object(value, "tna.prepare payload")
+    expected = {"topology", "supports", "settings"}
+    missing = sorted(expected - set(data))
+    unknown = sorted(set(data) - expected)
+    if missing:
+        raise CodecError(
+            "tna.prepare payload is missing: {}.".format(", ".join(missing))
+        )
+    if unknown:
+        raise CodecError(
+            "tna.prepare payload contains unsupported fields: {}.".format(
+                ", ".join(unknown)
+            )
+        )
+    topology = decode_topology(data["topology"])
+    supports = decode_supports(data["supports"], topology)
+    if supports.mode != "explicit":
+        raise CodecError(
+            "tna.prepare requires explicit anchor points or node IDs. "
+            "Automatic Boundary support mode holds the entire rim and prevents "
+            "unsupported-boundary sag."
+        )
+    settings = decode_tna_prepare_config(data["settings"])
+    return topology, supports, settings
+
+
+def _decode_diagnostics(value: Any) -> Tuple[Diagnostic, ...]:
+    output = []
+    for index, item in enumerate(value or ()):
+        data = _fields(
+            item,
+            "diagnostics[{}]".format(index),
+            (
+                "schema_version",
+                "code",
+                "severity",
+                "message",
+                "value",
+                "tolerance",
+                "unit",
+                "context",
+            ),
+        )
+        output.append(
+            Diagnostic(
+                code=data.get("code", ""),
+                severity=data.get("severity", "info"),
+                message=data.get("message", ""),
+                value=data.get("value"),
+                tolerance=data.get("tolerance"),
+                unit=data.get("unit", ""),
+                context=_object(
+                    data.get("context", {}),
+                    "diagnostics[{}].context".format(index),
+                ),
+            )
+        )
+    return tuple(output)
+
+
+def decode_prepared_tna(value: Any) -> PreparedTNA:
+    """Reconstruct the stable, session-free output of ``tna.prepare``."""
+    data = _fields(
+        value,
+        "prepared",
+        (
+            "schema_version",
+            "kind",
+            "topology",
+            "support_set",
+            "config",
+            "pattern",
+            "form_graph",
+            "force_graph",
+            "boundary_segments",
+            "diagnostics",
+            "diagnostic_metrics",
+            "mappings",
+            "report",
+            "metadata",
+            "provenance",
+        ),
+    )
+    if data.get("kind") != "tna_prepared":
+        raise CodecError("prepared.kind must be 'tna_prepared'.")
+    topology = decode_topology(data.get("topology"))
+    supports = decode_supports(data.get("support_set"), topology)
+    config = decode_tna_prepare_config(data.get("config", {}))
+    pattern = _fields(
+        data.get("pattern"),
+        "prepared.pattern",
+        (
+            "schema_version",
+            "kind",
+            "vertices",
+            "edges",
+            "faces",
+            "edge_force_densities",
+            "fixed_node_ids",
+        ),
+    )
+    return PreparedTNA(
+        topology=topology,
+        support_set=supports,
+        config=config,
+        pattern=pattern,
+        session=None,
+        boundary_segments=tuple(data.get("boundary_segments", ())),
+        diagnostics=_decode_diagnostics(data.get("diagnostics", ())),
+        mappings=_object(data.get("mappings", {}), "prepared.mappings"),
+        report=data.get("report", ""),
+        metadata=_object(data.get("metadata", {}), "prepared.metadata"),
+    )
+
+
 def decode_tna_payload(
     value: Any,
 ) -> Tuple[
-    TopologyBundle,
+    Any,
     SupportSet,
     LoadCase,
     HeightControl,
@@ -471,7 +620,12 @@ def decode_tna_payload(
     """
 
     data = _object(value, "tna.solve payload")
-    expected = {"topology", "supports", "load_case", "control"}
+    legacy = "prepared" not in data
+    expected = (
+        {"topology", "supports", "load_case", "control"}
+        if legacy
+        else {"prepared", "load_case", "control"}
+    )
     missing = sorted(expected - set(data))
     unknown = sorted(set(data) - expected)
     if missing:
@@ -485,12 +639,18 @@ def decode_tna_payload(
             )
         )
 
-    topology = decode_topology(data["topology"])
-    if topology.kind != "faced" or not topology.faces:
-        raise CodecError(
-            "tna.solve requires a faced topology with registered faces."
-        )
-    supports = decode_supports(data["supports"], topology)
+    if legacy:
+        topology_or_prepared = decode_topology(data["topology"])
+        topology = topology_or_prepared
+        if topology.kind != "faced" or not topology.faces:
+            raise CodecError(
+                "tna.solve requires a faced topology with registered faces."
+            )
+        supports = decode_supports(data["supports"], topology)
+    else:
+        topology_or_prepared = decode_prepared_tna(data["prepared"])
+        topology = topology_or_prepared.topology
+        supports = topology_or_prepared.support_set
     load_case = decode_load_case(data["load_case"], topology)
 
     control = _object(data["control"], "control")
@@ -509,7 +669,7 @@ def decode_tna_payload(
         )
     height_control = decode_height_control(control["height_control"])
     settings = decode_tna_config(control["settings"])
-    return topology, supports, load_case, height_control, settings
+    return topology_or_prepared, supports, load_case, height_control, settings
 
 
 def encode_solved_case(
@@ -804,6 +964,178 @@ def _equilibrium_edge_ids(case: SolvedCase) -> Dict[Tuple[Any, Any], int]:
         except CodecError:
             continue
     return result
+
+
+def encode_tna_prepared(
+    prepared: PreparedTNA,
+    provenance: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Encode a reconstructible prepared Pattern and its initial dual.
+
+    The stable source topology is kept unchanged. Relaxed coordinates, Pattern
+    q values, fixed plan nodes, and derived faces live under ``pattern`` so a
+    later stateless ``tna.solve`` request can reproduce this exact stage.
+    """
+    if not isinstance(prepared, PreparedTNA):
+        raise CodecError(
+            "tna.prepare returned {}, not PreparedTNA.".format(
+                type(prepared).__name__
+            )
+        )
+    stage = prepared.session
+    if stage is None:
+        raise CodecError(
+            "The prepared result does not retain its live COMPAS stage."
+        )
+    form = getattr(stage, "form", None)
+    force = getattr(stage, "force", None)
+    problem = getattr(stage, "problem", None)
+    if form is None or force is None or problem is None:
+        raise CodecError(
+            "TNA Prepare must retain Pattern, Form, and Force diagram state."
+        )
+
+    topology = prepared.topology
+    source_map = {}
+    for record in prepared.mappings.get(
+        "backend_source_to_topology_vertex", ()
+    ):
+        if not isinstance(record, Mapping):
+            continue
+        source_map[record.get("source_key")] = int(
+            record.get("topology_vertex_id")
+        )
+
+    form_to_sources = getattr(problem, "form_to_sources", {})
+    if not isinstance(form_to_sources, Mapping):
+        form_to_sources = {}
+
+    def topology_nodes(form_key: Any) -> Tuple[int, ...]:
+        return tuple(
+            source_map[source]
+            for source in form_to_sources.get(form_key, ())
+            if source in source_map
+        )
+
+    form_keys = _diagram_vertices(form, "prepared TNA form diagram")
+    force_keys = _diagram_vertices(force, "prepared TNA force diagram")
+    form_vertex_ids = {key: index for index, key in enumerate(form_keys)}
+    force_vertex_ids = {key: index for index, key in enumerate(force_keys)}
+    form_vertices = []
+    for vertex_id, key in enumerate(form_keys):
+        point = _diagram_coordinates(form, key, "prepared TNA form diagram")
+        node_ids = topology_nodes(key)
+        form_vertices.append(
+            {
+                "id": vertex_id,
+                "key": _stable_key(key),
+                "point": (point[0], point[1], 0.0),
+                "source_vertex_ids": [
+                    topology.source_vertex_ids[node]
+                    if node < len(topology.source_vertex_ids)
+                    else node
+                    for node in node_ids
+                ],
+            }
+        )
+
+    force_vertices = []
+    for vertex_id, key in enumerate(force_keys):
+        point = _diagram_coordinates(force, key, "prepared TNA force diagram")
+        force_vertices.append(
+            {
+                "id": vertex_id,
+                "key": _stable_key(key),
+                "point": (point[0], point[1], 0.0),
+            }
+        )
+
+    form_edges = _form_active_edges(form)
+    force_edges = _force_ordered_edges(force, form)
+    if len(form_edges) != len(force_edges):
+        raise CodecError(
+            "Prepared TNA form/force edge counts differ ({} and {}).".format(
+                len(form_edges), len(force_edges)
+            )
+        )
+    form_edge_to_sources = getattr(stage, "form_edge_to_sources", {})
+    if not isinstance(form_edge_to_sources, Mapping):
+        form_edge_to_sources = {}
+    form_edge_records = []
+    force_edge_records = []
+    form_to_force = []
+    for edge_id, (form_edge, force_edge) in enumerate(
+        zip(form_edges, force_edges)
+    ):
+        source_edge_ids = tuple(
+            int(value)
+            for value in (
+                _edge_mapping_value(
+                    form_edge_to_sources,
+                    form_edge,
+                    (),
+                )
+                or ()
+            )
+        )
+        form_edge_records.append(
+            {
+                "id": edge_id,
+                "key": (
+                    _stable_key(form_edge[0]),
+                    _stable_key(form_edge[1]),
+                ),
+                "u": form_vertex_ids[form_edge[0]],
+                "v": form_vertex_ids[form_edge[1]],
+                "source_edge_ids": source_edge_ids,
+            }
+        )
+        force_edge_records.append(
+            {
+                "id": edge_id,
+                "key": (
+                    _stable_key(force_edge[0]),
+                    _stable_key(force_edge[1]),
+                ),
+                "u": force_vertex_ids[force_edge[0]],
+                "v": force_vertex_ids[force_edge[1]],
+                "form_edge_id": edge_id,
+            }
+        )
+        form_to_force.append(
+            {"form_edge_id": edge_id, "force_edge_id": edge_id}
+        )
+
+    result = prepared.to_data()
+    result["form_graph"] = {
+        "vertices": form_vertices,
+        "edges": form_edge_records,
+        "faces": _diagram_faces(
+            form,
+            form_vertex_ids,
+            "prepared TNA form diagram",
+        ),
+    }
+    result["force_graph"] = {
+        "vertices": force_vertices,
+        "edges": force_edge_records,
+        "faces": _diagram_faces(
+            force,
+            force_vertex_ids,
+            "prepared TNA force diagram",
+        ),
+    }
+    result["mappings"] = dict(prepared.mappings)
+    result["mappings"]["form_edge_to_force_edge"] = form_to_force
+    diagnostics = getattr(stage, "diagnostics", {})
+    result["diagnostic_metrics"] = (
+        dict(diagnostics) if isinstance(diagnostics, Mapping) else {}
+    )
+    result["provenance"] = dict(provenance or {})
+    encoded = to_json_value(result)
+    if not isinstance(encoded, dict):
+        raise CodecError("PreparedTNA did not encode to a JSON object.")
+    return encoded
 
 
 def encode_tna_result(
@@ -1200,13 +1532,17 @@ __all__ = [
     "decode_frame",
     "decode_json",
     "decode_load_case",
+    "decode_prepared_tna",
     "decode_supports",
     "decode_tna_config",
+    "decode_tna_prepare_config",
+    "decode_tna_prepare_payload",
     "decode_tna_payload",
     "decode_topology",
     "encode_frame",
     "encode_json",
     "encode_solved_case",
+    "encode_tna_prepared",
     "encode_tna_result",
     "read_frame",
     "to_json_value",

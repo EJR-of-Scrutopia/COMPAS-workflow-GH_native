@@ -15,7 +15,8 @@ namespace Ananke.COMPAS.Native.Components;
 /// bundles. The component draws its own styled viewport preview and exposes
 /// ordinary Rhino lines for downstream Grasshopper operations.
 /// </summary>
-public sealed class GraphicDiagramDisplayComponent : NativeComponentBase
+public sealed class GraphicDiagramDisplayComponent :
+    NativePreviewComponentBase
 {
     private static readonly ComponentValueListSpec[] ValueLists =
     {
@@ -278,9 +279,8 @@ public sealed class GraphicDiagramDisplayComponent : NativeComponentBase
         }
     }
 
-    public override void DrawViewportWires(IGH_PreviewArgs args)
+    protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
     {
-        base.DrawViewportWires(args);
         Draw(args, _form);
         Draw(args, _thrust);
         Draw(args, _force);

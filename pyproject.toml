@@ -63,6 +63,7 @@ packages = [
 [tool.hatch.build.targets.sdist]
 include = [
     "/README.md",
+    "/THIRD_PARTY_NOTICES.md",
     "/docs",
     "/examples",
     "/plugin",
