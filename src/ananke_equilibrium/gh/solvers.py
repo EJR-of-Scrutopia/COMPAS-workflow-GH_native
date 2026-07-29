@@ -359,15 +359,19 @@ def _injected_solve(
     load_case: Any,
     config: Any,
     height_control: Any = None,
+    prepared: Any = None,
 ) -> Any:
     try:
-        return backend(
+        values = dict(
             topology=topology,
             supports=supports,
             load_case=load_case,
             config=config,
             height_control=height_control,
         )
+        if prepared is not None:
+            values["prepared"] = prepared
+        return backend(**values)
     except TypeError:
         # A deliberately small compatibility path for four-argument test or
         # application callbacks that predate HeightControl.
@@ -479,6 +483,64 @@ def _tna_pz(topology: Any, load_case: Any) -> Any:
     return values
 
 
+def _faced_analysis_contracts(
+    source_topology: Any,
+    supports: Any,
+    load_case: Any,
+    pattern: Mapping[str, Any],
+) -> tuple[Any, Any, Any]:
+    """Promote a prepared line source to a faced TNA analysis topology."""
+    metadata = dict(get_any(source_topology, ("metadata",), {}))
+    metadata.update(
+        {
+            "source_topology_hash": str(
+                get_any(source_topology, ("topology_hash",), "")
+            ),
+            "source_topology_kind": str(
+                get_any(source_topology, ("kind",), "line")
+            ),
+            "prepared_analysis_topology": True,
+        }
+    )
+    analysis = make_contract(
+        "TopologyBundle",
+        kind="faced",
+        vertices=tuple(pattern["vertices"]),
+        edges=tuple(pattern["edges"]),
+        faces=tuple(pattern["faces"]),
+        source_vertex_ids=tuple(
+            get_any(source_topology, ("source_vertex_ids",), ())
+        ),
+        length_unit=str(get_any(source_topology, ("length_unit",), "m")),
+        metadata=metadata,
+    )
+    analysis_supports = make_contract(
+        "SupportSet",
+        topology_hash=analysis.topology_hash,
+        mode="explicit",
+        node_ids=tuple(get_any(supports, ("node_ids", "keys"), ())),
+        snap_tolerance=get_any(supports, ("snap_tolerance",), None),
+        metadata=dict(get_any(supports, ("metadata",), {})),
+    )
+    analysis_load = make_contract(
+        "LoadCase",
+        topology_hash=analysis.topology_hash,
+        name=str(get_any(load_case, ("name",), "equilibrium")),
+        distribution=str(get_any(load_case, ("distribution",), "point")),
+        points=tuple(get_any(load_case, ("points",), ())),
+        node_ids=tuple(get_any(load_case, ("node_ids",), ())),
+        vectors=tuple(get_any(load_case, ("vectors",), ())),
+        records=tuple(get_any(load_case, ("records",), ())),
+        base_vector=get_any(load_case, ("base_vector",), None),
+        factor=float(get_any(load_case, ("factor",), 1.0)),
+        coordinate_system=str(
+            get_any(load_case, ("coordinate_system",), "world")
+        ),
+        metadata=dict(get_any(load_case, ("metadata",), {})),
+    )
+    return analysis, analysis_supports, analysis_load
+
+
 @friendly("TNA Solve")
 def solve_tna(
     topology: Any,
@@ -489,25 +551,64 @@ def solve_tna(
     *,
     backend: Any = None,
 ) -> Any:
-    """Register and solve one faced ``TopologyBundle`` as a TNA pattern."""
+    """Solve a faced topology or a fully reconstructible prepared Pattern."""
 
-    kind, vertices, _, faces = _topology_data(topology)
+    prepared = (
+        topology if type(topology).__name__ == "PreparedTNA" else None
+    )
+    if prepared is not None:
+        source_topology = get_any(prepared, ("topology",))
+        supports = get_any(prepared, ("support_set", "supports"))
+        pattern = dict(get_any(prepared, ("pattern",)))
+        kind = "faced"
+        vertices = tuple(pattern.get("vertices", ()))
+        faces = tuple(pattern.get("faces", ()))
+        prepared_edges = tuple(pattern.get("edges", ()))
+        prepared_q = tuple(pattern.get("edge_force_densities", ()))
+        fixed_ids = tuple(int(value) for value in pattern.get("fixed_node_ids", ()))
+    else:
+        source_topology = topology
+        kind, vertices, _, faces = _topology_data(source_topology)
+        prepared_edges = ()
+        prepared_q = ()
+        topology_metadata = get_any(source_topology, ("metadata",), {})
+        fixed_ids = tuple(
+            int(value)
+            for value in topology_metadata.get("tna_fixed_node_ids", ())
+        )
     if kind not in ("faced", "mesh", "tna", "thrust"):
         raise AdapterError("TNA Solve requires a faced TopologyBundle.")
     if not faces:
         raise AdapterError("TNA Solve requires registered faces, not isolated lines.")
-    support_ids = _support_ids(topology, supports)
-    pz = _tna_pz(topology, load_case)
+    support_ids = _support_ids(source_topology, supports)
+    pz = _tna_pz(source_topology, load_case)
+    result_topology = source_topology
+    result_supports = supports
+    result_load_case = load_case
+    if prepared is not None and str(
+        get_any(source_topology, ("kind",), "")
+    ).lower() == "line":
+        (
+            result_topology,
+            result_supports,
+            result_load_case,
+        ) = _faced_analysis_contracts(
+            source_topology,
+            supports,
+            load_case,
+            pattern,
+        )
 
     if callable(backend):
         try:
             session = _injected_solve(
                 backend,
-                topology=topology,
-                supports=supports,
-                load_case=load_case,
+                topology=result_topology,
+                supports=result_supports,
+                load_case=result_load_case,
                 height_control=height_control,
                 config=config,
+                prepared=prepared,
             )
         except Exception as error:
             raise AdapterError("Injected TNA backend failed: {}".format(error)) from error
@@ -517,18 +618,39 @@ def solve_tna(
             candidates=_TNA_BACKENDS,
             purpose="TNA Solve",
         )
-        topology_metadata = get_any(topology, ("metadata",), {})
+        topology_metadata = get_any(source_topology, ("metadata",), {})
         tolerance = float(topology_metadata.get("weld_tolerance", 1e-6))
-        metadata = dict(get_any(topology, ("metadata",), {}))
+        metadata = dict(get_any(source_topology, ("metadata",), {}))
         try:
             problem = call_backend(
                 module,
                 "register_tna_pattern",
                 vertices=vertices,
                 faces=faces,
+                vertex_keys=tuple(range(len(vertices))),
                 tolerance=tolerance,
                 metadata=metadata,
             )
+            if prepared is not None:
+                if len(prepared_edges) != len(prepared_q):
+                    raise AdapterError(
+                        "Prepared Pattern q values do not align with its edges."
+                    )
+                actual_edges = {
+                    tuple(sorted((int(u), int(v)))): (int(u), int(v))
+                    for u, v in problem.form.edges()
+                }
+                for edge, q_value in zip(prepared_edges, prepared_q):
+                    key = tuple(sorted((int(edge[0]), int(edge[1]))))
+                    registered = actual_edges.get(key)
+                    if registered is None:
+                        raise AdapterError(
+                            "Prepared Pattern edge {} was lost during "
+                            "reconstruction.".format(tuple(edge))
+                        )
+                    problem.form.edge_attribute(
+                        registered, "q", float(q_value)
+                    )
             height_mode = str(
                 get_any(height_control, ("mode",), "zmax")
             ).lower()
@@ -540,6 +662,7 @@ def solve_tna(
             solve_kwargs = {
                 "support_mode": "keys",
                 "support_keys": support_ids,
+                "fixed_keys": fixed_ids,
                 "pz": pz,
                 "vertical_mode": "q" if height_mode in ("q", "force_scale") else "zmax",
                 "zmax": (
@@ -577,9 +700,9 @@ def solve_tna(
 
     return _solved_case(
         solver="tna",
-        topology=topology,
-        supports=supports,
-        load_case=load_case,
+        topology=result_topology,
+        supports=result_supports,
+        load_case=result_load_case,
         config=config,
         backend_result=session,
     )

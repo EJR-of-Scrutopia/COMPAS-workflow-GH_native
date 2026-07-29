@@ -18,6 +18,8 @@ from .solvers import fd_solve
 from .solvers import solve_fd
 from .solvers import solve_tna
 from .solvers import tna_solve
+from .tna_stages import prepare_tna
+from .tna_stages import tna_prepare
 from .validate import validate
 from .validate import validate_result
 
@@ -37,10 +39,12 @@ __all__ = [
     "make_diagram_style",
     "network",
     "preview_payload",
+    "prepare_tna",
     "solve_fd",
     "solve_tna",
     "support_set",
     "tna_solve",
+    "tna_prepare",
     "validate",
     "validate_result",
 ]

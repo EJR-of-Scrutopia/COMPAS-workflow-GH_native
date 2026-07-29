@@ -15,6 +15,7 @@ namespace Ananke.COMPAS.NativeWorkerIntegration;
 internal static class Program
 {
     private const string FdSolveCommand = "fd.solve";
+    private const string TnaPrepareCommand = "tna.prepare";
     private const string TnaSolveCommand = "tna.solve";
 
     public static async Task<int> Main(string[] args)
@@ -56,6 +57,7 @@ internal static class Program
         ValidateTopologyRegistration();
         ValidateRequiredDiscriminators();
         ValidateTnaContractsAndCodec();
+        await ValidateRealStagedTnaWorker(host).ConfigureAwait(false);
         await ValidateRealTnaWorker(host).ConfigureAwait(false);
         (EquilibriumProblemDto problem, FDSettingsDto settings) =
             BuildProblem();
@@ -189,6 +191,280 @@ internal static class Program
             "Real TNA graphic diagram omitted loads or reactions.");
         Console.WriteLine(
             "PASS tna.solve: real COMPAS TNA reciprocal state decoded natively.");
+    }
+
+    private static async Task ValidateRealStagedTnaWorker(WorkerHost host)
+    {
+        var vertices = new List<Point3Dto>();
+        for (int y = 0; y < 3; y++)
+        {
+            for (int x = 0; x < 3; x++)
+                vertices.Add(new Point3Dto(x, y, 0.0));
+        }
+        int[][] faces =
+        {
+            new[] { 0, 1, 4, 3 },
+            new[] { 1, 2, 5, 4 },
+            new[] { 3, 4, 7, 6 },
+            new[] { 4, 5, 8, 7 }
+        };
+        EdgeDto[] edges =
+        {
+            new(0, 1),
+            new(1, 2),
+            new(0, 3),
+            new(1, 4),
+            new(2, 5),
+            new(3, 6),
+            new(4, 7),
+            new(5, 8),
+            new(3, 4),
+            new(4, 5),
+            new(6, 7),
+            new(7, 8)
+        };
+        TopologyDto topology = TopologyDto.Create(
+            "faced",
+            vertices,
+            edges,
+            faces,
+            sourceVertexIds: Enumerable.Range(0, vertices.Count)
+                .Select(index => $"stage-grid-{index}"),
+            sourceEdgeIds: Enumerable.Range(0, edges.Length)
+                .Select(index => $"stage-edge-{index}"),
+            lengthUnit: "m",
+            provenance: new Dictionary<string, string>
+            {
+                ["weld_tolerance"] = "1e-6"
+            });
+        var supports = new SupportSetDto
+        {
+            TopologyHash = topology.TopologyHash,
+            Mode = "explicit",
+            NodeIds = new[] { 0, 2, 6, 8 }
+        };
+        var source = new TnaPatternDto
+        {
+            PatternMode = "mesh",
+            Topology = topology,
+            Supports = supports,
+            Resolution = 8,
+            WeldTolerance = 1.0e-6
+        };
+        var config = new TnaPrepareConfigDto
+        {
+            ForceDensity = 1.0,
+            Relax = true,
+            BoundarySag = 0.10,
+            SagIterations = 10,
+            SagTolerance = 0.01
+        };
+        RequireValid(source);
+
+        IReadOnlyDictionary<string, object?> preparePayload =
+            InvokeWorkflow<IReadOnlyDictionary<string, object?>>(
+                "PreparePayload",
+                source,
+                config);
+        JsonElement prepareResponse =
+            await host.RequestAsync<JsonElement>(
+                    TnaPrepareCommand,
+                    preparePayload)
+                .ConfigureAwait(false);
+        TnaPreparedDto prepared = InvokeWorkflow<TnaPreparedDto>(
+            "DecodePrepared",
+            prepareResponse,
+            source);
+        RequireValid(prepared);
+        Require(
+            prepared.BoundarySegments.Count == 4,
+            "Staged TNA prepare did not expose four corner-to-corner openings.");
+        Require(
+            prepared.FormGraph.Edges.Count > 0 &&
+            prepared.FormGraph.Edges.Count ==
+            prepared.ForceGraph.Edges.Count,
+            "Staged TNA prepare did not return an aligned form/force dual.");
+        Require(
+            prepared.Mappings.FormEdgeToForceEdge.Count ==
+            prepared.FormGraph.Edges.Count,
+            "Prepared native contract lost form-to-force correspondence.");
+        TnaPreparedDto persisted = ContractJson.DeepClone(prepared);
+        RequireValid(persisted);
+
+        var load = new LoadCaseDto
+        {
+            TopologyHash = topology.TopologyHash,
+            Name = "staged-uniform",
+            Distribution = "uniform_nodes",
+            BaseVector = new Point3Dto(0.0, 0.0, -1.0),
+            Provenance = new Dictionary<string, string>
+            {
+                ["force_unit"] = "kN"
+            }
+        };
+        var control = new TnaControlDto
+        {
+            HeightMode = "zmax",
+            HeightValue = 1.0
+        };
+        RequireValid(load);
+        RequireValid(control);
+        IReadOnlyDictionary<string, object?> solvePayload =
+            InvokeWorkflow<IReadOnlyDictionary<string, object?>>(
+                "StagedSolvePayload",
+                persisted,
+                load,
+                control);
+        JsonElement solveResponse =
+            await host.RequestAsync<JsonElement>(
+                    TnaSolveCommand,
+                    solvePayload)
+                .ConfigureAwait(false);
+        EquilibriumProblemDto analysisProblem =
+            InvokeWorkflow<EquilibriumProblemDto>(
+                "AnalysisProblem",
+                solveResponse,
+                persisted,
+                load);
+        RequireValid(analysisProblem);
+        Require(
+            analysisProblem.Topology?.NetworkKind == "faced",
+            "Staged TNA analysis problem was not promoted to faced topology.");
+        TnaResultDto result = DecodeTna(
+            solveResponse,
+            analysisProblem,
+            control);
+        RequireValid(result);
+        Require(
+            result.Equilibrium?.Problem?.Topology?.Provenance
+                .ContainsKey("source_topology_hash") == true,
+            "Staged TNA result lost original source-topology provenance.");
+        GraphicDiagramDto diagram = BuildTnaGraphicDiagram(result);
+        RequireValid(diagram);
+        Console.WriteLine(
+            "PASS tna.prepare -> tna.solve: native prepared Goo persisted, " +
+            "reconstructed, solved, and decoded.");
+
+        TopologyDto lineTopology = TopologyDto.Create(
+            "line",
+            vertices,
+            edges,
+            sourceVertexIds: Enumerable.Range(0, vertices.Count)
+                .Select(index => $"stage-line-{index}"),
+            sourceEdgeIds: Enumerable.Range(0, edges.Length)
+                .Select(index => $"stage-line-edge-{index}"),
+            lengthUnit: "m");
+        var lineSupports = new SupportSetDto
+        {
+            TopologyHash = lineTopology.TopologyHash,
+            Mode = "explicit",
+            NodeIds = new[] { 0, 2, 6, 8 }
+        };
+        var lineSource = new TnaPatternDto
+        {
+            PatternMode = "lines",
+            Topology = lineTopology,
+            Supports = lineSupports,
+            Resolution = 8,
+            WeldTolerance = 1.0e-6
+        };
+        RequireValid(lineSource);
+
+        JsonElement linePrepareResponse =
+            await host.RequestAsync<JsonElement>(
+                    TnaPrepareCommand,
+                    InvokeWorkflow<IReadOnlyDictionary<string, object?>>(
+                        "PreparePayload",
+                        lineSource,
+                        config))
+                .ConfigureAwait(false);
+        TnaPreparedDto linePrepared = InvokeWorkflow<TnaPreparedDto>(
+            "DecodePrepared",
+            linePrepareResponse,
+            lineSource);
+        RequireValid(linePrepared);
+        Require(
+            linePrepared.Source?.Topology?.NetworkKind == "line" &&
+            linePrepared.Pattern.Faces.Count > 0,
+            "Staged Lines mode did not preserve its line source while " +
+            "deriving a faced analysis pattern.");
+
+        var lineLoad = new LoadCaseDto
+        {
+            TopologyHash = lineTopology.TopologyHash,
+            Name = "staged-line-uniform",
+            Distribution = "uniform_nodes",
+            BaseVector = new Point3Dto(0.0, 0.0, -1.0),
+            Provenance = new Dictionary<string, string>
+            {
+                ["force_unit"] = "kN"
+            }
+        };
+        JsonElement lineSolveResponse =
+            await host.RequestAsync<JsonElement>(
+                    TnaSolveCommand,
+                    InvokeWorkflow<IReadOnlyDictionary<string, object?>>(
+                        "StagedSolvePayload",
+                        linePrepared,
+                        lineLoad,
+                        control))
+                .ConfigureAwait(false);
+        EquilibriumProblemDto lineAnalysisProblem =
+            InvokeWorkflow<EquilibriumProblemDto>(
+                "AnalysisProblem",
+                lineSolveResponse,
+                linePrepared,
+                lineLoad);
+        RequireValid(lineAnalysisProblem);
+        Require(
+            lineAnalysisProblem.Topology?.NetworkKind == "faced" &&
+            lineAnalysisProblem.Topology.Provenance.TryGetValue(
+                "source_topology_kind",
+                out string? sourceKind) &&
+            sourceKind == "line",
+            "Staged Lines mode did not promote the derived pattern with " +
+            "line-source provenance.");
+        TnaResultDto lineResult = DecodeTna(
+            lineSolveResponse,
+            lineAnalysisProblem,
+            control);
+        RequireValid(lineResult);
+        Console.WriteLine(
+            "PASS staged Lines mode: line provenance preserved through " +
+            "derived faced equilibrium.");
+    }
+
+    private static T InvokeWorkflow<T>(
+        string methodName,
+        params object[] arguments)
+    {
+        Assembly nativeAssembly = typeof(WorkerHost).Assembly;
+        Type codecType = nativeAssembly.GetType(
+            "Ananke.COMPAS.Native.Components.TnaWorkflowWorkerCodec",
+            throwOnError: true)
+            ?? throw new InvalidOperationException(
+                "Native TnaWorkflowWorkerCodec type was not found.");
+        MethodInfo method = codecType.GetMethod(
+            methodName,
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                $"TnaWorkflowWorkerCodec.{methodName} was not found.");
+        try
+        {
+            object? value = method.Invoke(null, arguments);
+            return value is T result
+                ? result
+                : throw new InvalidOperationException(
+                    $"TnaWorkflowWorkerCodec.{methodName} returned " +
+                    "the wrong type.");
+        }
+        catch (TargetInvocationException error)
+            when (error.InnerException is not null)
+        {
+            throw new InvalidOperationException(
+                $"TnaWorkflowWorkerCodec.{methodName} rejected the fixture.",
+                error.InnerException);
+        }
     }
 
     private static void ValidateRequiredDiscriminators()

@@ -129,6 +129,30 @@
       "filename": "tna_reciprocal.png"
     },
     {
+      "key": "tna_pattern",
+      "label": "TP",
+      "category": "02 Form Finding",
+      "filename": "tna_pattern.png"
+    },
+    {
+      "key": "tna_supports",
+      "label": "TS",
+      "category": "02 Form Finding",
+      "filename": "tna_supports.png"
+    },
+    {
+      "key": "tna_relax",
+      "label": "RL",
+      "category": "02 Form Finding",
+      "filename": "tna_relax.png"
+    },
+    {
+      "key": "tna_equilibrium",
+      "label": "TE",
+      "category": "02 Form Finding",
+      "filename": "tna_equilibrium.png"
+    },
+    {
       "key": "graphic_diagram_display",
       "label": "DD",
       "category": "03 Graphic Statics",

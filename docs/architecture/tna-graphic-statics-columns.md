@@ -1,8 +1,8 @@
 # TNA, graphic statics, and column-placement architecture
 
-Status: current native TNA/graphic-display contract plus later design
+Status: current staged native TNA/graphic-display contract plus later design
 architecture. Current and planned components are identified explicitly below.
-The staged RhinoVault-style authoring roadmap is defined separately in
+The exact RhinoVault-style authoring sequence is defined separately in
 [`rhinovault-native-stages.md`](rhinovault-native-stages.md).
 
 ## One solved state, three linked diagrams
@@ -49,23 +49,34 @@ verification model.
 The implemented compact native workflow is:
 
 ```text
-Problem + TNA Control -> TNA Solve -> TnaResult
-                                           +-> direct thrust-edge preview
-                                           +-> TNA Geometry
-                                           +-> TNA Members
-                                           +-> TNA Actions
-                                           +-> TNA Reciprocal
-                                                   |
-                                                   +-> Graphic Diagram Display
+TNA Pattern -> TNA Supports -> TNA Relax + Boundaries
+                                   |    relaxed form/topological-force preview
+                                   |
+                                   +-> TNA Equilibrium -> TnaResult
+                                                              +-> TNA Geometry
+                                                              +-> TNA Members
+                                                              +-> TNA Actions
+                                                              +-> TNA Reciprocal
+                                                                       |
+                                                                       +-> Graphic Diagram Display
 ```
+
+`Problem + TNA Control -> TNA Solve` remains the one-shot faced-pattern
+compatibility path for saved definitions.
 
 `Force Flow`, `GS Direction Register`, `GS Funicular 2D`, and spatial
 graphic-statics components described later in this document are planned, not
 part of the implemented v0.2 component surface.
 
-### TNA Control
+### TNA Equilibrium and compatibility control
 
-The control bundle owns the physical solve choices:
+The staged `TNA Equilibrium` component exposes only the current physical solve
+choices: crown-height or signed force-density-scale mode, the target value,
+and an optional load case. Its horizontal alpha, iteration limits, and solve
+tolerance are internal defaults.
+
+The compatibility `TNA Control` bundle exposes the fuller one-shot control
+surface:
 
 - vertical mode: target crown height or horizontal-force scale;
 - target value;

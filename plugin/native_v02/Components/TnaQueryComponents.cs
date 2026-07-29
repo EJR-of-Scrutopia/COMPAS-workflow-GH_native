@@ -396,7 +396,7 @@ public sealed class TnaMembersComponent : NativeComponentBase
 /// Focused nodal-action deconstruction. Points and vectors remain paired by
 /// output index, and the component itself draws the located arrows.
 /// </summary>
-public sealed class TnaActionsComponent : NativeComponentBase
+public sealed class TnaActionsComponent : NativePreviewComponentBase
 {
     private readonly List<Line> _loads = new();
     private readonly List<Line> _reactions = new();
@@ -545,9 +545,8 @@ public sealed class TnaActionsComponent : NativeComponentBase
         }
     }
 
-    public override void DrawViewportWires(IGH_PreviewArgs args)
+    protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
     {
-        base.DrawViewportWires(args);
         foreach (Line line in _loads)
             args.Display.DrawArrow(line, Color.FromArgb(238, 135, 35));
         foreach (Line line in _reactions)
