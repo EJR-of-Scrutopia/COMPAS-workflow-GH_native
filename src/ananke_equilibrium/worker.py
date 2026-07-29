@@ -27,7 +27,9 @@ from .codec import FrameTooLargeError
 from .codec import MAX_FRAME_BYTES
 from .codec import TruncatedFrameError
 from .codec import decode_fd_payload
+from .codec import decode_tna_payload
 from .codec import encode_solved_case
+from .codec import encode_tna_result
 from .codec import read_frame
 from .codec import to_json_value
 from .codec import write_frame
@@ -35,6 +37,7 @@ from .contracts import ContractError
 from .contracts import SCHEMA_VERSION
 from .gh import ComponentResult
 from .gh import solve_fd
+from .gh import solve_tna
 
 
 PROTOCOL_VERSION = 1
@@ -45,6 +48,7 @@ ALLOWED_COMMANDS = frozenset(
         "system.health",
         "system.shutdown",
         "fd.solve",
+        "tna.solve",
     )
 )
 
@@ -280,11 +284,72 @@ def _fd_payload(
     )
 
 
+def _tna_payload(
+    payload: Mapping[str, Any],
+    *,
+    tna_backend: Any = None,
+    tna_solver: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    (
+        topology,
+        supports,
+        load_case,
+        height_control,
+        settings,
+    ) = decode_tna_payload(payload)
+    solver = tna_solver or solve_tna
+    component_result = solver(
+        topology,
+        supports,
+        load_case,
+        height_control,
+        settings,
+        backend=tna_backend,
+    )
+    if not isinstance(component_result, ComponentResult):
+        raise ProtocolError(
+            "solver_contract_error",
+            "TNA solver returned {}, not ComponentResult.".format(
+                type(component_result).__name__
+            ),
+        )
+    if not component_result.ok or component_result.value is None:
+        status = component_result.status
+        raise ProtocolError(
+            "tna_solve_failed",
+            status.message,
+            {
+                "severity": status.severity,
+                "details": dict(status.details),
+            },
+        )
+    status = component_result.status
+    provenance = {
+        "worker": WORKER_NAME,
+        "worker_version": __version__,
+        "protocol_version": PROTOCOL_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "adapter_status": {
+            "severity": status.severity,
+            "message": status.message,
+            "details": dict(status.details),
+        },
+    }
+    return encode_tna_result(
+        component_result.unwrap(),
+        height_control,
+        settings,
+        provenance=provenance,
+    )
+
+
 def dispatch(
     request: Any,
     *,
     fd_backend: Any = None,
     fd_solver: Optional[Callable[..., Any]] = None,
+    tna_backend: Any = None,
+    tna_solver: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
     """Dispatch one decoded request against the fixed command allowlist."""
 
@@ -307,6 +372,15 @@ def dispatch(
                     payload,
                     fd_backend=fd_backend,
                     fd_solver=fd_solver,
+                ),
+            )
+        if command == "tna.solve":
+            return result_response(
+                request_id,
+                _tna_payload(
+                    payload,
+                    tna_backend=tna_backend,
+                    tna_solver=tna_solver,
                 ),
             )
         # Defensive only: _validate_request already enforces the allowlist.
@@ -355,6 +429,8 @@ def serve(
     *,
     fd_backend: Any = None,
     fd_solver: Optional[Callable[..., Any]] = None,
+    tna_backend: Any = None,
+    tna_solver: Optional[Callable[..., Any]] = None,
     max_frame_bytes: int = MAX_FRAME_BYTES,
 ) -> int:
     """Serve framed requests until EOF or a successful shutdown command."""
@@ -393,6 +469,8 @@ def serve(
                 request,
                 fd_backend=fd_backend,
                 fd_solver=fd_solver,
+                tna_backend=tna_backend,
+                tna_solver=tna_solver,
             )
         try:
             write_frame(

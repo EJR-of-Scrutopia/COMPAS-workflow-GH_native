@@ -10,6 +10,7 @@ the component category; the white letters identify the individual component.
 | --- | --- | --- |
 | 01 Inputs | `#126E82` teal | Topology, supports, and loads |
 | 02 Form Finding | `#A9462E` orange | FD and TNA configuration and solvers |
+| 03 Graphic Statics | `#2F7D6D` green | Reciprocal form, force, and thrust diagrams |
 | 03 Diagnostics | `#765300` ochre | Validation and diagnostic results |
 | 04 Visualisation | `#624494` violet | Diagram styling and preview payloads |
 | 01 Model | `#126E82` teal | Native topology, support, load, and problem contracts |
@@ -34,6 +35,7 @@ the component category; the white letters identify the individual component.
 | BH | `backend_health` | Backend Health | `backend_health.png` |
 | RB | `result_breakdown` | Result Breakdown | `result_breakdown.png` |
 | PV | `equilibrium_preview` | Equilibrium Preview | `equilibrium_preview.png` |
+| TR | `tna_reciprocal` | TNA Reciprocal | `tna_reciprocal.png` |
 
 ## Regeneration and validation
 

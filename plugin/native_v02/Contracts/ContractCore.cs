@@ -27,8 +27,11 @@ public static class ContractKinds
     public const string LoadCase = "ananke.load_case";
     public const string EquilibriumProblem = "ananke.equilibrium_problem";
     public const string FDSettings = "ananke.fd_settings";
+    public const string TnaControl = "ananke.tna_control";
     public const string Diagnostic = "ananke.diagnostic";
     public const string EquilibriumResult = "ananke.equilibrium_result";
+    public const string TnaResult = "ananke.tna_result";
+    public const string GraphicDiagram = "ananke.graphic_diagram";
 }
 
 /// <summary>

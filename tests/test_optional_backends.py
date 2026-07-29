@@ -18,6 +18,7 @@ from ananke_equilibrium.gh import build_support_set
 from ananke_equilibrium.gh import solve_fd
 from ananke_equilibrium.gh import solve_tna
 from ananke_equilibrium.gh import validate_result
+from ananke_equilibrium.worker import dispatch
 
 
 def value(result):
@@ -94,3 +95,97 @@ def test_real_tna_backend_through_bundle_and_preview_api():
 
     assert len(case.member_forces) == 4
     assert len(diagram.primitives) == 4
+
+
+def test_real_tna_backend_through_worker_preserves_reciprocal_state():
+    vertices = [
+        [float(x), float(y), 0.0]
+        for y in range(3)
+        for x in range(3)
+    ]
+    faces = [
+        [0, 1, 4, 3],
+        [1, 2, 5, 4],
+        [3, 4, 7, 6],
+        [4, 5, 8, 7],
+    ]
+    edges = []
+    seen = set()
+    for face in faces:
+        for index, u in enumerate(face):
+            v = face[(index + 1) % len(face)]
+            edge = (min(u, v), max(u, v))
+            if edge not in seen:
+                seen.add(edge)
+                edges.append(list(edge))
+
+    response = dispatch(
+        {
+            "v": 1,
+            "type": "request",
+            "id": "real-tna",
+            "command": "tna.solve",
+            "payload": {
+                "topology": {
+                    "kind": "faced",
+                    "vertices": vertices,
+                    "edges": edges,
+                    "faces": faces,
+                    "source_vertex_ids": [
+                        "grid-{}".format(index)
+                        for index in range(len(vertices))
+                    ],
+                    "length_unit": "m",
+                    "metadata": {
+                        "analysis_plane": [
+                            [0, 0, 0],
+                            [1, 0, 0],
+                            [0, 1, 0],
+                            [0, 0, 1],
+                        ]
+                    },
+                },
+                "supports": {"mode": "boundary"},
+                "load_case": {
+                    "name": "dead",
+                    "distribution": "uniform_nodes",
+                    "base_vector": [0, 0, -1],
+                },
+                "control": {
+                    "height_control": {
+                        "mode": "zmax",
+                        "value": 1.0,
+                    },
+                    "settings": {
+                        "horizontal_alpha": 100.0,
+                        "horizontal_iterations": 100,
+                        "vertical_iterations": 100,
+                        "tolerance": 1.0e-3,
+                    },
+                },
+            },
+        }
+    )
+
+    assert response["type"] == "result", response
+    result = response["result"]
+    assert result["kind"] == "tna_result"
+    assert result["equilibrium"]["solver"] == "tna"
+    assert len(result["form_graph"]["edges"]) == 4
+    assert len(result["force_graph"]["edges"]) == 4
+    assert len(result["edge_states"]) == 4
+    assert result["horizontal_scale"] == pytest.approx(-0.375)
+    assert all(
+        state["force_state"] == "compression"
+        for state in result["edge_states"]
+    )
+    assert all(
+        state["reciprocity_error_degrees"] <= 1.0e-8
+        for state in result["edge_states"]
+    )
+    assert all(
+        state["source_edge_ids"]
+        for state in result["edge_states"]
+    )
+    assert len(result["mappings"]["supports"]) == 4
+    assert result["mappings"]["supports"][0]["source_vertex_id"] == "grid-1"

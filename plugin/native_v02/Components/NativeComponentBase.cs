@@ -14,6 +14,7 @@ internal static class ComponentCategories
     public const string Category = "Ananke COMPAS";
     public const string Model = "01 Model";
     public const string FormFinding = "02 Form Finding";
+    public const string GraphicStatics = "03 Graphic Statics";
     public const string Visualisation = "05 Visualisation";
     public const string Query = "90 Query";
 }

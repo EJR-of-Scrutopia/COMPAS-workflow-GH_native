@@ -804,7 +804,8 @@ public sealed record EquilibriumResultDto : ContractDto
                 errors.Add("resolvedSupportNodeIds contains duplicates.");
             }
 
-            if (Problem?.Supports is SupportSetDto problemSupports &&
+            if (solver == "fd" &&
+                Problem?.Supports is SupportSetDto problemSupports &&
                 string.Equals(
                     problemSupports.Mode,
                     "explicit",

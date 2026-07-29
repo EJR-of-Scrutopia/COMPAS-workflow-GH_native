@@ -393,3 +393,87 @@ public sealed class EquilibriumResultGoo :
             $"{warningCount} warning(s) · #{ShortHash(value.TopologyHash)}";
     }
 }
+
+public sealed class TnaControlGoo : ContractGoo<TnaControlDto>
+{
+    public TnaControlGoo()
+    {
+    }
+
+    public TnaControlGoo(TnaControlDto value)
+        : base(value)
+    {
+    }
+
+    protected override string ExpectedKind => ContractKinds.TnaControl;
+    public override string TypeName => "Ananke TNA Control";
+    public override string TypeDescription =>
+        "Crown-height or force-scale controls for one TNA solve.";
+
+    protected override ContractGoo<TnaControlDto> Create(TnaControlDto? value) =>
+        value is null ? new TnaControlGoo() : new TnaControlGoo(value);
+
+    protected override string Format(TnaControlDto value) =>
+        $"TNA Control · {TnaControlDto.NormaliseHeightMode(value.HeightMode)}=" +
+        $"{value.HeightValue:G6} · α={value.HorizontalAlpha:G4}";
+}
+
+public sealed class TnaResultGoo : ContractGoo<TnaResultDto>
+{
+    public TnaResultGoo()
+    {
+    }
+
+    public TnaResultGoo(TnaResultDto value)
+        : base(value)
+    {
+    }
+
+    protected override string ExpectedKind => ContractKinds.TnaResult;
+    public override string TypeName => "Ananke TNA Result";
+    public override string TypeDescription =>
+        "A solved thrust network with its reciprocal form and force diagrams.";
+
+    protected override ContractGoo<TnaResultDto> Create(TnaResultDto? value) =>
+        value is null ? new TnaResultGoo() : new TnaResultGoo(value);
+
+    protected override string Format(TnaResultDto value)
+    {
+        string loadCase = value.Equilibrium?.SolverSettings.TryGetValue(
+            "load_case_name",
+            out string? name) == true
+                ? name
+                : "unknown case";
+        return $"TNA Result · {value.EdgeStates.Count} states · " +
+            $"{loadCase} · #{ShortHash(value.Equilibrium?.TopologyHash)}";
+    }
+}
+
+public sealed class GraphicDiagramGoo :
+    ContractGoo<GraphicDiagramDto>
+{
+    public GraphicDiagramGoo()
+    {
+    }
+
+    public GraphicDiagramGoo(GraphicDiagramDto value)
+        : base(value)
+    {
+    }
+
+    protected override string ExpectedKind => ContractKinds.GraphicDiagram;
+    public override string TypeName => "Ananke Graphic Diagram";
+    public override string TypeDescription =>
+        "A compact renderer-neutral graphic-statics diagram bundle.";
+
+    protected override ContractGoo<GraphicDiagramDto> Create(
+        GraphicDiagramDto? value) =>
+        value is null
+            ? new GraphicDiagramGoo()
+            : new GraphicDiagramGoo(value);
+
+    protected override string Format(GraphicDiagramDto value) =>
+        $"Graphic Diagram · T/F/R " +
+        $"{value.ThrustEdges.Count}/{value.FormEdges.Count}/" +
+        $"{value.ForceEdges.Count} · {value.Layout}";
+}
