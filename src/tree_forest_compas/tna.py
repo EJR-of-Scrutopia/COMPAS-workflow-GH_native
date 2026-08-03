@@ -1396,6 +1396,22 @@ def _solver_vector(form: FormDiagram, key: int) -> Vector3:
     return tuple(float(value or 0.0) for value in values)  # type: ignore
 
 
+def _unoriented_angle(degrees: float) -> float:
+    """Fold a form/force edge-direction difference into a 0-90 degree error.
+
+    A form edge and its dual force edge are unoriented lines, so reciprocity is
+    satisfied when they are parallel *or* antiparallel. ``compas_tna`` stores the
+    oriented difference in ``_a`` and its own source notes that this "does not
+    account for flipped edges", so a perfectly reciprocal but flipped edge is
+    recorded as 180 degrees. Reporting that raw value makes a converged solve
+    look catastrophically wrong. ``ananke_equilibrium.codec`` and
+    ``ananke_equilibrium.gh.validate`` already apply this same fold; this keeps
+    the legacy solver core consistent with them.
+    """
+    value = abs(float(degrees)) % 180.0
+    return min(value, 180.0 - value)
+
+
 def solve_tna_problem(
     problem: TNAProblem,
     *,
@@ -1696,10 +1712,11 @@ def solve_tna_problem(
         load_sum[index] + reaction_sum[index] for index in range(3)
     )
 
-    angles = [
+    raw_angles = [
         abs(float(form.edge_attribute((u, v), "_a") or 0.0))
         for u, v in form.edges_where({"_is_edge": True})
     ]
+    angles = [_unoriented_angle(value) for value in raw_angles]
     heights = [float(form.vertex_attribute(key, "z")) for key in form.vertices()]
     removed_sources = [
         source for source, form_key in active_source_to_form.items() if form_key is None
@@ -1746,6 +1763,7 @@ def solve_tna_problem(
             "global_force_error": global_force_error,
             "global_force_error_norm": _vector_norm(global_force_error),
             "max_reciprocal_angle_deviation": max(angles or [0.0]),
+            "max_raw_form_force_angle": max(raw_angles or [0.0]),
             "compression_edge_count": compression_count,
             "tension_edge_count": tension_count,
         }
