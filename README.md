@@ -190,10 +190,13 @@ solver matrix before publishing.
 docs/                            architecture and workflow documentation
 plugin/native_v02/               compiled C# Grasshopper plugin source
 plugin/native/                   preserved script-backed v0.1 source
+plugin/legacy_component_scripts/ pasteable Rhino 8 Python 3 components and the
+                                 prototype WORKFLOW.md they belong to
 plugin/icons/                    component icon sources
 src/ananke_equilibrium/          public contracts, adapters, codec, and worker
 src/tree_forest_compas/          compatibility solver namespace
 tests/                           headless contract, worker, and solver tests
+tests/legacy/                    solver-core tests for the compatibility namespace
 pyproject.toml                   Python distribution and dependency groups
 ```
 
@@ -203,6 +206,8 @@ Grasshopper Libraries folder; that installed copy is not repository source.
 
 Further project documentation:
 
+- [System analysis: architecture, design intent, graphic statics, and the
+  COMPAS ecosystem](docs/system-analysis.md) (start here for orientation)
 - [Native worker architecture](docs/architecture/native-worker-v02.md)
 - [RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md)
 - [TNA, graphic statics, and column placement](docs/architecture/tna-graphic-statics-columns.md)
