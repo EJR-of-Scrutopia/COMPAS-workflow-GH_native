@@ -58,7 +58,8 @@ public sealed record ComponentValueListSpec(
     int InputIndex,
     string Name,
     IReadOnlyList<(string Label, string Value)> Items,
-    string DefaultValue);
+    string DefaultValue,
+    bool CheckList = false);
 
 /// <summary>
 /// Places populated value lists beside the inputs they answer, so the valid
@@ -91,7 +92,7 @@ internal static class SuggestedValueListPlacement
                 Name = spec.Name,
                 NickName = spec.Name,
                 Description = $"Supported values for {input.Name}.",
-                ListMode = GH_ValueListMode.DropDown
+                ListMode = spec.CheckList ? GH_ValueListMode.CheckList : GH_ValueListMode.DropDown
             };
             valueList.ListItems.Clear();
             foreach ((string label, string value) in spec.Items)
@@ -100,23 +101,46 @@ internal static class SuggestedValueListPlacement
                     new GH_ValueListItem(label, QuoteExpression(value)));
             }
 
-            int selectedIndex = spec.Items
-                .Select((item, index) => (item.Value, index))
-                .Where(item => string.Equals(
-                    item.Value,
-                    spec.DefaultValue,
-                    StringComparison.OrdinalIgnoreCase))
-                .Select(item => item.index)
-                .DefaultIfEmpty(0)
-                .First();
+            if (spec.CheckList)
+            {
+                // Split DefaultValue on comma, trim, collect for matching
+                var selectedValues = spec.DefaultValue
+                    .Split(',')
+                    .Select(v => v.Trim())
+                    .ToList();
 
-            // Set the selection both ways round rather than trusting
-            // SelectItem alone, because whether it assigns or toggles cannot
-            // be established here without Rhino running. Clearing first makes
-            // the outcome identical under either reading.
-            foreach (GH_ValueListItem item in valueList.ListItems)
-                item.Selected = false;
-            valueList.SelectItem(selectedIndex);
+                // Mark items as selected based on raw value comparison
+                // Iterate through original Items and corresponding ListItems
+                int itemIndex = 0;
+                foreach ((string label, string value) in spec.Items)
+                {
+                    valueList.ListItems[itemIndex].Selected = selectedValues.Contains(
+                        value,
+                        StringComparer.OrdinalIgnoreCase);
+                    itemIndex++;
+                }
+            }
+            else
+            {
+                // Original single-select logic for DropDown
+                int selectedIndex = spec.Items
+                    .Select((item, index) => (item.Value, index))
+                    .Where(item => string.Equals(
+                        item.Value,
+                        spec.DefaultValue,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(item => item.index)
+                    .DefaultIfEmpty(0)
+                    .First();
+
+                // Set the selection both ways round rather than trusting
+                // SelectItem alone, because whether it assigns or toggles cannot
+                // be established here without Rhino running. Clearing first makes
+                // the outcome identical under either reading.
+                foreach (GH_ValueListItem item in valueList.ListItems)
+                    item.Selected = false;
+                valueList.SelectItem(selectedIndex);
+            }
             valueList.CreateAttributes();
 
             // Placement is a convenience, not a requirement. Attributes can
