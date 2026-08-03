@@ -4,12 +4,28 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any
 from typing import Mapping
 from typing import Optional
 from typing import Sequence
 
+from ..codec import CodecError
+from ..codec import decode_fd_payload
+from ..codec import decode_tna_payload
+from ..codec import decode_tna_prepare_payload
+from ..contracts import ContractError
 from ..worker import health_payload
+from .study import StudyError
+from .study import build_request
+from .study import load_study
+
+
+_DECODERS = {
+    "fd.solve": decode_fd_payload,
+    "tna.prepare": decode_tna_prepare_payload,
+    "tna.solve": decode_tna_payload,
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
         "health",
         help="Report worker, interpreter, package, and capability state.",
     )
+    check = subparsers.add_parser(
+        "check",
+        help="Validate a study file without solving it.",
+    )
+    check.add_argument("problem", type=Path, help="Path to problem.json")
     return parser
 
 
@@ -62,6 +83,34 @@ def _format_health(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _check(path: Path) -> int:
+    """Decode a study payload and report the first contract failure."""
+
+    try:
+        study = load_study(path)
+    except StudyError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    request = build_request(study)
+    decoder = _DECODERS.get(request["command"])
+    if decoder is None:
+        print(
+            "{}: no validator for command {!r}; solve it to validate.".format(
+                path,
+                request["command"],
+            ),
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        decoder(request["payload"])
+    except (CodecError, ContractError) as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    print("{}: valid {} study".format(path, request["command"]))
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run one CLI invocation and return its process exit code."""
 
@@ -70,6 +119,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args = parser.parse_args(list(argv) if argv is not None else None)
     except SystemExit as exit_error:
         return int(exit_error.code or 0)
+    if args.command == "check":
+        return _check(args.problem)
     if args.command == "health":
         print(_format_health(health_payload()))
         return 0

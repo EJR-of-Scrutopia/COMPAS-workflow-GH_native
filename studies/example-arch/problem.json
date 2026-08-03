@@ -1,0 +1,26 @@
+{
+  "$schema": "../../.vscode/ananke-problem.schema.json",
+  "study": "example-arch",
+  "command": "fd.solve",
+  "payload": {
+    "topology": {
+      "kind": "line",
+      "vertices": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]],
+      "edges": [[0, 1], [1, 2], [2, 3], [3, 4]],
+      "length_unit": "m"
+    },
+    "supports": {
+      "mode": "explicit",
+      "node_ids": [0, 4]
+    },
+    "load_case": {
+      "name": "gravity",
+      "distribution": "uniform_nodes",
+      "vectors": [[0.0, 0.0, -1.0]]
+    },
+    "settings": {
+      "force_densities": 1.0,
+      "sign_convention": "positive_tension"
+    }
+  }
+}
