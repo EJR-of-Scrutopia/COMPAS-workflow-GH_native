@@ -103,22 +103,70 @@ but that pin means it can never share an environment with this project. If you
 want it, it is a separate conda environment and a file-based exchange, not an
 extra.
 
+## 2a. Version currency, audited
+
+Every COMPAS package this project depends on or plans to adopt is at its latest
+published release. There is no upgrade debt in the COMPAS layer.
+
+Two pins are deliberately *not* current:
+
+| Package | Pinned | Latest | Why the pin stays |
+| --- | --- | --- | --- |
+| `numpy` | 2.0.2 | 2.5.1 | Matches the Rhino 8 `catenary-compas-2026` environment declared in the `gh_*.py` headers. |
+| `scipy` | 1.13.1 | 1.18.0 | Same. |
+
+Moving them would make the development environment stop representing what
+Rhino actually runs, which is the one thing this environment exists to do.
+They should move when the Rhino environment moves, together, and with the
+solver matrix retested.
+
+### The `compas_fea` to `compas_fea2` question, settled
+
+`compas_fea` is dead: last release 0.3.3 in November 2021. `compas_fea2` is the
+successor and 0.2.1 is its current release. This project already pins
+`compas_fea2`, so no migration is outstanding.
+
+The live issue is not the version, it is the backend. `compas_fea2` separates
+the modelling frontend from solver backends, and **none of the backend plugins
+are published to PyPI**:
+
+```text
+compas_fea2_opensees   not on PyPI
+compas_fea2_abaqus     not on PyPI
+compas_fea2_ansys      not on PyPI
+compas_fea2_sofistik   not on PyPI
+```
+
+Verified in this environment: `compas_fea2` 0.2.1 imports successfully and
+reports zero registered backends. It can express a model and cannot analyse
+one. OpenSees is the practical first choice because it is free and open, and it
+has to be installed from its GitHub repository rather than from PyPI.
+
 ## 3. Where the empty slots are right now
 
 The worker reports its own capability set. Running `health_payload()` against
 the current environment gives:
 
 ```text
-compas 2.15.1  compas_fd 0.5.4  compas_tna 0.7.0  compas_ags 1.3.3
-compas_model: null   compas_fea2: null   compas_ifc: null
+compas 2.15.1     compas_fd 0.5.4      compas_tna 0.7.0    compas_ags 1.3.3
+compas_model 0.9.3  compas_ifc 2.1.0   compas_fea2 0.2.1
+compas_dem 0.5.0    compas_assembly 0.7.1  compas_cra 0.4.0
+compas_fab 2.0.1    compas_robots 1.0.1    compas_skeleton 2.0.1
 
-fd.solve  true    tna.prepare true    tna.solve true    ags.solve true
-model     false   fea         false   ifc       false
+fd.solve true   tna.prepare true   tna.solve true   ags.solve true
+model    true   ifc         true   masonry   true   fab       true
+patterns true
+fea      false  fea.model   true   fea.backends []
 ```
 
-So three declared extras (`model`, `fea`, `ifc`) are wired in code and simply
-not installed in the development environment. That is the honest starting
-point: the contracts exist, the capability flags exist, the packages do not.
+Every family package is now installed and imports cleanly, with `compas`,
+`numpy` and `scipy` unmoved. So the remaining gap is no longer packaging, it is
+components: the contracts and capability flags exist, the backends are present,
+and the Grasshopper surface for masonry, fabrication, engineering and delivery
+has still to be built.
+
+The single exception is `fea`, which is false by design because a solver
+backend is missing rather than a package. See the audit above.
 
 ## 4. The masonry vault on formwork, end to end
 

@@ -20,6 +20,7 @@ from typing import Callable
 from typing import Dict
 from typing import Mapping
 from typing import Optional
+from typing import Tuple
 
 from . import __version__
 from .codec import CodecError
@@ -65,6 +66,25 @@ _PACKAGE_DISTRIBUTIONS = (
     "compas_model",
     "compas_fea2",
     "compas_ifc",
+    # Masonry family, backing the "04 Masonry" tab.
+    "compas_dem",
+    "compas_assembly",
+    "compas_cra",
+    # Digital fabrication family, backing the "07 Fabrication" tab.
+    "compas_fab",
+    "compas_robots",
+    # Patterns family, backing the TNA Pattern generator modes.
+    "compas_skeleton",
+)
+
+# Backend plugins for compas_fea2. None of them are published to PyPI, so a
+# present compas_fea2 says nothing about whether an analysis can actually run.
+_FEA2_BACKENDS = (
+    "compas_fea2_opensees",
+    "compas_fea2_abaqus",
+    "compas_fea2_ansys",
+    "compas_fea2_sofistik",
+    "compas_fea2_castem",
 )
 
 
@@ -136,6 +156,20 @@ def _distribution_version(name: str) -> Optional[str]:
         return None
 
 
+def _installed_fea2_backends() -> Tuple[str, ...]:
+    """Return the compas_fea2 solver backends present in this environment.
+
+    Checked by distribution metadata rather than import, so a backend that
+    needs its solver executable on PATH is still reported as installed and the
+    check stays cheap and side-effect free.
+    """
+    return tuple(
+        name
+        for name in _FEA2_BACKENDS
+        if _distribution_version(name) is not None
+    )
+
+
 def health_payload() -> Dict[str, Any]:
     """Return environment information without importing optional backends."""
 
@@ -146,6 +180,7 @@ def health_payload() -> Dict[str, Any]:
     packages["ananke-equilibrium"] = (
         packages["ananke-equilibrium"] or __version__
     )
+    fea2_backends = _installed_fea2_backends()
     return {
         "status": "ok",
         "worker": {
@@ -170,8 +205,29 @@ def health_payload() -> Dict[str, Any]:
             "tna.solve": packages["compas_tna"] is not None,
             "ags.solve": packages["compas_ags"] is not None,
             "model": packages["compas_model"] is not None,
-            "fea": packages["compas_fea2"] is not None,
+            # compas_fea2 without a solver backend can express a model but
+            # cannot analyse one, so the flag tracks the backend, not the
+            # package. "fea.model" reports the weaker, honest claim.
+            "fea": (
+                packages["compas_fea2"] is not None
+                and bool(fea2_backends)
+            ),
+            "fea.model": packages["compas_fea2"] is not None,
+            "fea.backends": list(fea2_backends),
             "ifc": packages["compas_ifc"] is not None,
+            # Masonry needs the whole chain: block geometry, contact assembly,
+            # and the equilibrium solver. Any one missing leaves the tab unable
+            # to complete a build-stage analysis.
+            "masonry": (
+                packages["compas_dem"] is not None
+                and packages["compas_assembly"] is not None
+                and packages["compas_cra"] is not None
+            ),
+            "fab": (
+                packages["compas_fab"] is not None
+                and packages["compas_robots"] is not None
+            ),
+            "patterns": packages["compas_skeleton"] is not None,
         },
     }
 

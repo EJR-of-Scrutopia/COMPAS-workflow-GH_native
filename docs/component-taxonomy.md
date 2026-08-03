@@ -111,12 +111,32 @@ Nothing is hidden behind a silent fallback.
 | `01 Model` | core | `compas` | always | none | **Built** |
 | `02 Form Finding` | Form Finding | `compas_fd`, `compas_tna` | `fd.solve`, `tna.solve` | `equilibrium` | **Built** |
 | `03 Graphic Statics` | Form Finding | `compas_ags` | `ags.solve` | `equilibrium` | **Built** |
-| `04 Masonry` | Masonry | `compas_dem`, `compas_assembly`, `compas_cra` | `masonry` | `masonry` | Reserved |
+| `04 Masonry` | Masonry | `compas_dem`, `compas_assembly`, `compas_cra` | `masonry` | `masonry` | Packages installed, components pending |
 | `05 Visualisation` | none | none | always | none | **Built** |
-| `06 Engineering` | Engineering | `compas_fea2` plus a solver | `fea` | `fea` | Reserved |
-| `07 Fabrication` | Digital Fabrication | `compas_fab`, `compas_robots` | `fab` | `fab` | Reserved |
+| `06 Engineering` | Engineering | `compas_fea2` plus a solver | `fea` | `fea` | Package installed, **no solver backend** |
+| `07 Fabrication` | Digital Fabrication | `compas_fab`, `compas_robots` | `fab` | `fab` | Packages installed, components pending |
 | `08 Delivery` | Data Modelling | `compas_model`, `compas_ifc` | `model`, `ifc` | `model`, `ifc` | Packages installed, components pending |
 | `90 Query` | none | none | always | none | **Built** |
+
+### The Engineering flag is deliberately stricter than the others
+
+`compas_fea2` can express a model without being able to analyse one, because
+analysis lives in a separate backend plugin for Abaqus, ANSYS, SOFiSTiK or
+OpenSees. **None of those plugins are published to PyPI**, so the gap is the
+normal case rather than an edge case: installing the `fea` extra gets you a
+modelling API and no solver.
+
+The capability reporting therefore splits the claim:
+
+```text
+fea.model      compas_fea2 is importable, a model can be expressed
+fea.backends   the solver plugins actually installed, by name
+fea            a backend is present, so an analysis can genuinely run
+```
+
+`fea` stays false until a backend is installed from source. That keeps the
+promise the design rules make everywhere else: package detection is not a claim
+that the workflow exists.
 
 `04 Masonry` fills the gap deliberately left between `03` and `05`, so no
 existing subcategory string changes. Subcategory is display grouping only and
