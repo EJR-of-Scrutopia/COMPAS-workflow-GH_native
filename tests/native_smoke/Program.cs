@@ -35,6 +35,10 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.TnaPatternComponent"] =
                 new[] { 0 },
             ["Ananke.COMPAS.Native.Components.TnaSupportsComponent"] =
+                new[] { 1 },
+            ["Ananke.COMPAS.Native.Components.PatternComponent"] =
+                new[] { 0 },
+            ["Ananke.COMPAS.Native.Components.SupportsComponent"] =
                 new[] { 1 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
@@ -46,7 +50,9 @@ internal static class Program
             "Ananke.COMPAS.Native.Components.TnaPatternComponent",
             "Ananke.COMPAS.Native.Components.TnaSupportsComponent",
             "Ananke.COMPAS.Native.Components.TnaRelaxBoundariesComponent",
-            "Ananke.COMPAS.Native.Components.TnaEquilibriumComponent"
+            "Ananke.COMPAS.Native.Components.TnaEquilibriumComponent",
+            "Ananke.COMPAS.Native.Components.PatternComponent",
+            "Ananke.COMPAS.Native.Components.SupportsComponent"
         };
     private static readonly HashSet<string> NativeVisibilityGuardComponents =
         new(StringComparer.Ordinal)
@@ -56,7 +62,9 @@ internal static class Program
             "Ananke.COMPAS.Native.Components.TnaPatternComponent",
             "Ananke.COMPAS.Native.Components.TnaSupportsComponent",
             "Ananke.COMPAS.Native.Components.EquilibriumPreviewComponent",
-            "Ananke.COMPAS.Native.Components.TnaActionsComponent"
+            "Ananke.COMPAS.Native.Components.TnaActionsComponent",
+            "Ananke.COMPAS.Native.Components.PatternComponent",
+            "Ananke.COMPAS.Native.Components.SupportsComponent"
         };
     private static readonly IReadOnlyDictionary<
         string,
@@ -123,6 +131,29 @@ internal static class Program
                         "Reaction Points",
                         "Reaction Vectors"
                     })
+            };
+    private static readonly IReadOnlyDictionary<
+        string,
+        (string Name, string NickName, string Tab, string[] InputNickNames,
+            string[] OutputNickNames)> SpineComponentContracts =
+            new Dictionary<
+                string,
+                (string Name, string NickName, string Tab,
+                    string[] InputNickNames, string[] OutputNickNames)>(
+                StringComparer.Ordinal)
+            {
+                ["Ananke.COMPAS.Native.Components.PatternComponent"] = (
+                    "Pattern",
+                    "Pattern",
+                    "01 Model",
+                    new[] { "G", "M", "R", "Tol" },
+                    new[] { "PAT" }),
+                ["Ananke.COMPAS.Native.Components.SupportsComponent"] = (
+                    "Supports",
+                    "Supports",
+                    "01 Model",
+                    new[] { "PAT", "A", "Tol" },
+                    new[] { "SUP" })
             };
 
     public static int Main(string[] args)
@@ -241,6 +272,7 @@ internal static class Program
                 ValidateGraphicDisplayContract(instance, componentType);
                 ValidateTnaQueryContract(instance, componentType);
                 ValidateTnaWorkflowContract(instance, componentType);
+                ValidateSpineComponentContract(instance, componentType);
                 ValidateIcon(instance, componentType);
                 RecordDocumentGuid(
                     instance,
@@ -783,6 +815,126 @@ internal static class Program
             contract.Outputs,
             componentType.Name,
             "output");
+    }
+
+    /// <summary>
+    /// Spine components (Pattern, Supports, and later stages on the same
+    /// wire) key their ports on the type nickname, not a descriptive word,
+    /// so a wire is self-describing. This asserts the component's own
+    /// Name/NickName, its tab (SubCategory), and every port's NickName
+    /// against the redesign's fixed surface.
+    /// </summary>
+    private static void ValidateSpineComponentContract(
+        object instance,
+        Type componentType)
+    {
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!SpineComponentContracts.TryGetValue(
+                typeName,
+                out (string Name, string NickName, string Tab,
+                    string[] InputNickNames, string[] OutputNickNames)
+                    contract))
+        {
+            return;
+        }
+
+        string actualName =
+            componentType.GetProperty("Name")?.GetValue(instance) as string
+            ?? string.Empty;
+        if (!string.Equals(actualName, contract.Name, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{componentType.Name} Name must be '{contract.Name}'; " +
+                $"received '{actualName}'.");
+        }
+
+        string actualNickName =
+            componentType.GetProperty("NickName")?.GetValue(instance) as string
+            ?? string.Empty;
+        if (!string.Equals(
+                actualNickName,
+                contract.NickName,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{componentType.Name} NickName must be " +
+                $"'{contract.NickName}'; received '{actualNickName}'.");
+        }
+
+        string actualTab =
+            componentType.GetProperty("SubCategory")?.GetValue(instance)
+                as string
+            ?? string.Empty;
+        if (!string.Equals(actualTab, contract.Tab, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{componentType.Name} tab must be '{contract.Tab}'; " +
+                $"received '{actualTab}'.");
+        }
+
+        object parameters = componentType
+            .GetProperty("Params")
+            ?.GetValue(instance)
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} parameters.");
+        IList inputs = parameters
+            .GetType()
+            .GetProperty("Input")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} inputs.");
+        IList outputs = parameters
+            .GetType()
+            .GetProperty("Output")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} outputs.");
+        ValidateParameterNickNames(
+            inputs,
+            contract.InputNickNames,
+            componentType.Name,
+            "input");
+        ValidateParameterNickNames(
+            outputs,
+            contract.OutputNickNames,
+            componentType.Name,
+            "output");
+    }
+
+    private static void ValidateParameterNickNames(
+        IList parameters,
+        IReadOnlyList<string> expected,
+        string owner,
+        string label)
+    {
+        if (parameters.Count != expected.Count)
+        {
+            throw new InvalidOperationException(
+                $"{owner} expected {expected.Count} {label}s, " +
+                $"found {parameters.Count}.");
+        }
+
+        for (int index = 0; index < expected.Count; index++)
+        {
+            object parameter = parameters[index]
+                ?? throw new InvalidOperationException(
+                    $"{owner} {label} {index} is null.");
+            string actual = parameter
+                .GetType()
+                .GetProperty("NickName")
+                ?.GetValue(parameter)
+                ?.ToString()
+                ?? string.Empty;
+            if (!string.Equals(
+                    actual,
+                    expected[index],
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{owner} {label} {index} nickname must be " +
+                    $"'{expected[index]}'; received '{actual}'.");
+            }
+        }
     }
 
     private static void ValidateParameterNames(

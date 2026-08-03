@@ -276,7 +276,7 @@ public sealed class BackendHealthComponent :
             "Backend Health",
             "Health",
             "Inspect the persistent Python/COMPAS worker and installed capabilities.",
-            ComponentCategories.Query,
+            ComponentCategories.System,
             "backend_health")
     {
     }

@@ -46,7 +46,7 @@ public sealed class GraphicDiagramDisplayComponent :
             "Display a TNA graphic diagram with reliable native viewport " +
             "preview and extract its form, thrust, force, load, and reaction " +
             "lines as ordinary Rhino geometry.",
-            ComponentCategories.GraphicStatics,
+            ComponentCategories.Visualise,
             "graphic_diagram_display")
     {
         // The component supplies the coloured/weighted preview itself.

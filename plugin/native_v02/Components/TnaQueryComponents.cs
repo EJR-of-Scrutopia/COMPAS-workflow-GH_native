@@ -181,7 +181,7 @@ public sealed class TnaGeometryComponent : NativeComponentBase
             "TNA Geometry",
             "Extract the resolved thrust mesh, thrust/form edges, and generic " +
             "equilibrium bridge from one TNA result.",
-            ComponentCategories.Query,
+            ComponentCategories.System,
             "tna_geometry")
     {
     }
@@ -290,7 +290,7 @@ public sealed class TnaMembersComponent : NativeComponentBase
             "TNA Members",
             "Extract one aligned TNA member table: geometry, q, horizontal and " +
             "axial demand, force state, and source-edge groups.",
-            ComponentCategories.Query,
+            ComponentCategories.System,
             "tna_members")
     {
     }
@@ -408,7 +408,7 @@ public sealed class TnaActionsComponent : NativePreviewComponentBase
             "TNA Actions",
             "Extract structural supports plus aligned applied loads and support " +
             "reactions from one TNA result.",
-            ComponentCategories.Query,
+            ComponentCategories.System,
             "tna_actions")
     {
     }

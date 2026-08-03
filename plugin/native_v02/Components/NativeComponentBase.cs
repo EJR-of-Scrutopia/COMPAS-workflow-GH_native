@@ -31,27 +31,24 @@ internal static class ComponentCategories
     // compas_fd, compas_tna. Capability: fd.solve, tna.solve. Extra: equilibrium.
     public const string FormFinding = "02 Form Finding";
 
-    // compas_ags. Capability: ags.solve. Extra: equilibrium.
-    public const string GraphicStatics = "03 Graphic Statics";
+    // Viewport preview only. No backend.
+    public const string Visualise = "03 Visualise";
 
     // compas_dem, compas_assembly, compas_cra. Capability: masonry. Extra: masonry.
-    // Reserved. Fills the gap deliberately left between 03 and 05.
+    // Reserved.
     public const string Masonry = "04 Masonry";
 
-    // Viewport preview only. No backend.
-    public const string Visualisation = "05 Visualisation";
-
     // compas_fea2 plus a solver backend. Capability: fea. Extra: fea.
-    public const string Engineering = "06 Engineering";
+    public const string Engineering = "05 Engineering";
 
     // compas_fab, compas_robots. Capability: fab. Extra: fab.
-    public const string Fabrication = "07 Fabrication";
+    public const string Fabrication = "06 Fabrication";
 
     // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
-    public const string Delivery = "08 Delivery";
+    public const string Delivery = "07 Delivery";
 
     // Result extraction. No backend.
-    public const string Query = "90 Query";
+    public const string System = "90 System";
 }
 
 public sealed record ComponentValueListSpec(

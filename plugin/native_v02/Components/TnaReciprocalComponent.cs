@@ -474,7 +474,7 @@ public sealed class TnaReciprocalComponent : NativePreviewComponentBase
             "TNA Reciprocal",
             "Preview the planar form, spatial thrust, physically scaled " +
             "reciprocal force diagram, and mapped load/reaction vectors.",
-            ComponentCategories.GraphicStatics,
+            ComponentCategories.Visualise,
             "tna_reciprocal")
     {
     }

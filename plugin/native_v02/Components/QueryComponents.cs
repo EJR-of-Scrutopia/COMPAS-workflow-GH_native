@@ -16,7 +16,7 @@ public sealed class ResultBreakdownComponent : NativeComponentBase
             "Result Data",
             "Legacy full deconstruction of a generic FD equilibrium result. " +
             "For TNA, prefer TNA Geometry, TNA Members, and TNA Actions.",
-            ComponentCategories.Query,
+            ComponentCategories.System,
             "result_breakdown")
     {
     }
@@ -229,7 +229,7 @@ public sealed class EquilibriumPreviewComponent : NativePreviewComponentBase
             "Equilibrium Preview",
             "Preview",
             "Preview signed member forces, loads, reactions, and residuals.",
-            ComponentCategories.Visualisation,
+            ComponentCategories.Visualise,
             "equilibrium_preview")
     {
     }
