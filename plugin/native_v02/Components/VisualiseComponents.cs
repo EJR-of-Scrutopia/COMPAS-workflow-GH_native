@@ -96,10 +96,11 @@ namespace Ananke.COMPAS.Native.Contracts
 
         protected override string Format(StyleDto value)
         {
+            string preset = StyleDto.NormalisePreset(value.Preset);
             string vector = value.VectorScale > 0.0
                 ? $"x{value.VectorScale:G4}"
                 : "auto";
-            return $"Style · {value.Preset} · weight x{value.WeightScale:G4} " +
+            return $"Style · {preset} · weight x{value.WeightScale:G4} " +
                 $"· vector {vector}";
         }
     }
