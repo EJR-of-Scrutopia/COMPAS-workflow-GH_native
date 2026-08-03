@@ -137,6 +137,42 @@ internal static class Program
                         "Reaction Vectors"
                     })
             };
+    /// <summary>
+    /// Task 10's Deconstruct component replaces the four query components
+    /// above with one merged extraction surface over the unified
+    /// <c>ResultDto</c>. Checked the same way: full parameter Names, in
+    /// registration order, against the plan's fixed output list.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<
+        string,
+        (string[] Inputs, string[] Outputs)> VisualiseContracts =
+            new Dictionary<
+                string,
+                (string[] Inputs, string[] Outputs)>(StringComparer.Ordinal)
+            {
+                ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = (
+                    new[] { "Result" },
+                    new[]
+                    {
+                        "Thrust Mesh",
+                        "Member Lines",
+                        "Form Lines",
+                        "q",
+                        "H",
+                        "F",
+                        "Force State",
+                        "Member IDs",
+                        "Node IDs",
+                        "Support Points",
+                        "Load Points",
+                        "Load Vectors",
+                        "Reaction Points",
+                        "Reaction Vectors",
+                        "Residuals",
+                        "Diagnostics",
+                        "Report"
+                    })
+            };
     private static readonly IReadOnlyDictionary<
         string,
         (string Name, string NickName, string Tab, string[] InputNickNames,
@@ -188,7 +224,13 @@ internal static class Program
                     "FD Solve",
                     "02 Form Finding",
                     new[] { "PRB", "q", "CTL" },
-                    new[] { "RES" })
+                    new[] { "RES" }),
+                ["Ananke.COMPAS.Native.Components.StyleComponent"] = (
+                    "Style",
+                    "Style",
+                    "03 Visualise",
+                    new[] { "Preset", "Weight", "Vector" },
+                    new[] { "STY" })
             };
 
     public static int Main(string[] args)
@@ -306,6 +348,7 @@ internal static class Program
                 ValidateNativePreviewVisibilityGuard(instance, componentType);
                 ValidateGraphicDisplayContract(instance, componentType);
                 ValidateTnaQueryContract(instance, componentType);
+                ValidateVisualiseContract(instance, componentType);
                 ValidateTnaWorkflowContract(instance, componentType);
                 ValidateSpineComponentContract(instance, componentType);
                 ValidateIcon(instance, componentType);
@@ -364,10 +407,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 16)
+        if (parameterTypes.Length != 17)
         {
             failures.Add(
-                $"Expected 16 public persistent contract parameters, found " +
+                $"Expected 17 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
@@ -776,6 +819,47 @@ internal static class Program
     {
         string typeName = componentType.FullName ?? componentType.Name;
         if (!TnaQueryContracts.TryGetValue(
+                typeName,
+                out (string[] Inputs, string[] Outputs) contract))
+        {
+            return;
+        }
+
+        object parameters = componentType
+            .GetProperty("Params")
+            ?.GetValue(instance)
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} parameters.");
+        IList inputs = parameters
+            .GetType()
+            .GetProperty("Input")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} inputs.");
+        IList outputs = parameters
+            .GetType()
+            .GetProperty("Output")
+            ?.GetValue(parameters) as IList
+            ?? throw new InvalidOperationException(
+                $"Could not inspect {componentType.Name} outputs.");
+        ValidateParameterNames(
+            inputs,
+            contract.Inputs,
+            componentType.Name,
+            "input");
+        ValidateParameterNames(
+            outputs,
+            contract.Outputs,
+            componentType.Name,
+            "output");
+    }
+
+    private static void ValidateVisualiseContract(
+        object instance,
+        Type componentType)
+    {
+        string typeName = componentType.FullName ?? componentType.Name;
+        if (!VisualiseContracts.TryGetValue(
                 typeName,
                 out (string[] Inputs, string[] Outputs) contract))
         {

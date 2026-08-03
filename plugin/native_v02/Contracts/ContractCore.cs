@@ -36,6 +36,7 @@ public static class ContractKinds
     public const string AnchoredPattern = "AnchoredPattern";
     public const string Problem = "Problem";
     public const string Relaxed = "Relaxed";
+    public const string Style = "Style";
 }
 
 /// <summary>
