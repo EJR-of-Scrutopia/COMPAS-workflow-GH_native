@@ -96,6 +96,11 @@ internal static class Program
             "Unified FD result did not forward the equilibrium's " +
             $"diagnostics; expected {result.Diagnostics.Count}, received " +
             $"{envelopeResult.Diagnostics.Count}.");
+        Require(
+            envelopeResult.RawWire == response.GetRawText(),
+            "Unified FD result's RawWire did not match the live " +
+            "fd.solve response's raw text exactly; Export's COMPAS mode " +
+            "would forward the wrong payload to export.compas.");
 
         Console.WriteLine(
             $"PASS fd.solve: {result.Vertices.Count} nodes, "
@@ -803,9 +808,23 @@ internal static class Program
             result.Equilibrium?.Diagnostics.Count == 1,
             "Unified TNA result did not forward the fixture's diagnostic " +
             "onto both the envelope and its wrapped equilibrium.");
+        Require(
+            result.RawWire is not null &&
+            result.RawWire.Contains(
+                "\"form_graph\"",
+                StringComparison.Ordinal),
+            "Unified TNA result did not retain the worker's raw wire " +
+            "JSON with its snake_case form_graph field; Export's COMPAS " +
+            "mode needs this exact shape to round-trip through " +
+            "export.compas.");
+        Require(
+            result.RawWire == fixture.GetRawText(),
+            "Unified TNA result's RawWire did not match the response " +
+            "root's raw text exactly.");
         Console.WriteLine(
             "PASS Result envelope codec: unified TNA decode matches the "
-            + "legacy TNA payload field-for-field.");
+            + "legacy TNA payload field-for-field, and retains the "
+            + "worker's raw wire JSON verbatim.");
     }
 
     private static (EquilibriumProblemDto, TnaControlDto) BuildTnaProblem()

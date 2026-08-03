@@ -170,7 +170,8 @@ internal static class TnaWorkerResultCodec
             Mappings = mappings,
             Diagnostics = diagnostics,
             Report = OptionalString(root, "report"),
-            Provenance = provenance
+            Provenance = provenance,
+            RawWire = root.GetRawText()
         };
         IReadOnlyList<string> resultErrors = result.Validate();
         if (resultErrors.Count > 0)

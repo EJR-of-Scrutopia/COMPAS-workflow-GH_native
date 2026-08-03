@@ -16,6 +16,7 @@ public sealed record ExportComponentTaskResult(
     string? Json,
     string? WrittenPath,
     string? WriteError,
+    string? Warning,
     Exception? Error,
     TimeSpan Elapsed);
 
@@ -118,7 +119,7 @@ public sealed class ExportComponent :
             }
             TaskList.Add(Task.Run(
                 () => ComputeAsync(
-                    ContractJson.DeepClone(result!),
+                    CloneResult(result!),
                     format,
                     path,
                     CancelToken),
@@ -138,7 +139,7 @@ public sealed class ExportComponent :
                 return;
             }
             taskResult = ComputeAsync(
-                    ContractJson.DeepClone(result!),
+                    CloneResult(result!),
                     format,
                     path,
                     CancellationToken.None)
@@ -165,6 +166,12 @@ public sealed class ExportComponent :
                 GH_RuntimeMessageLevel.Error,
                 "Export produced no JSON.");
             return;
+        }
+        if (taskResult.Warning is not null)
+        {
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Warning,
+                "Export: " + taskResult.Warning);
         }
         if (taskResult.WriteError is not null)
         {
@@ -222,6 +229,19 @@ public sealed class ExportComponent :
         return true;
     }
 
+    /// <summary>
+    /// <c>ContractJson.DeepClone</c> (the pattern every other solve
+    /// component uses to snapshot inputs before they cross into a
+    /// background task) round-trips through <c>ResultDto</c>'s own
+    /// serializer options, which <c>[JsonIgnore]</c> deliberately excludes
+    /// <see cref="ResultDto.RawWire"/> from: it is a transport artefact, not
+    /// part of the native contract, so a plain deep clone would silently
+    /// drop it. Reattach it afterwards; a string needs no isolation of its
+    /// own, it is immutable already.
+    /// </summary>
+    private static ResultDto CloneResult(ResultDto result) =>
+        ContractJson.DeepClone(result) with { RawWire = result.RawWire };
+
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
         string format,
@@ -231,10 +251,19 @@ public sealed class ExportComponent :
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            string json = format == "compas"
-                ? await BuildCompasJsonAsync(result, cancellationToken)
-                    .ConfigureAwait(false)
-                : ContractJson.Serialize(result);
+            string json;
+            string? warning = null;
+            if (format == "compas")
+            {
+                (json, warning) = await BuildCompasJsonAsync(
+                        result,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                json = ContractJson.Serialize(result);
+            }
 
             string? writtenPath = null;
             string? writeError = null;
@@ -255,6 +284,7 @@ public sealed class ExportComponent :
                 json,
                 writtenPath,
                 writeError,
+                warning,
                 null,
                 stopwatch.Elapsed);
         }
@@ -262,6 +292,7 @@ public sealed class ExportComponent :
         {
             stopwatch.Stop();
             return new ExportComponentTaskResult(
+                null,
                 null,
                 null,
                 null,
@@ -273,20 +304,42 @@ public sealed class ExportComponent :
     /// <summary>
     /// Dispatch <c>export.compas</c> exactly as <c>FdSolveComponent2</c>
     /// dispatches <c>fd.solve</c>: one <c>WorkerRuntime.Host.RequestAsync</c>
-    /// call. The Result has no retained raw wire JSON (checked
-    /// WorkerResultCodec/TnaWorkerResultCodec; both decode straight into
-    /// typed properties), so it is re-serialised here with the same shared
-    /// wire options every codec already reuses.
+    /// call. When the Result carries <see cref="ResultDto.RawWire"/> (every
+    /// Result produced by a live TNA/FD Solve this session does; both
+    /// codecs set it from the worker's own response), that exact payload is
+    /// forwarded verbatim, snake_case fields and all, so the worker sees
+    /// back the same shape it produced. A Result with no RawWire (built by
+    /// hand, or round-tripped through a document save/reload that does not
+    /// carry this transport-only field) falls back to a re-serialised
+    /// ResultDto with the shared wire options every codec reuses; that
+    /// fallback's camelCase member names do not match the worker's
+    /// snake_case fields, so diagram extraction is likely to come back
+    /// null, and callers are warned.
     /// </summary>
-    private static async Task<string> BuildCompasJsonAsync(
+    private static async Task<(string Json, string? Warning)> BuildCompasJsonAsync(
         ResultDto result,
         CancellationToken cancellationToken)
     {
-        JsonElement resultElement =
-            JsonSerializer.SerializeToElement(result, ContractJson.Options);
+        object resultPayload;
+        string? warning;
+        if (!string.IsNullOrEmpty(result.RawWire))
+        {
+            using JsonDocument document = JsonDocument.Parse(result.RawWire);
+            resultPayload = document.RootElement.Clone();
+            warning = null;
+        }
+        else
+        {
+            resultPayload =
+                JsonSerializer.SerializeToElement(result, ContractJson.Options);
+            warning =
+                "result was not produced by a live solve in this " +
+                "session, so diagram extraction may be unavailable.";
+        }
+
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            ["result"] = resultElement
+            ["result"] = resultPayload
         };
         JsonElement response = await WorkerRuntime.Host
             .RequestAsync<JsonElement>(
@@ -294,7 +347,7 @@ public sealed class ExportComponent :
                 payload,
                 cancellationToken)
             .ConfigureAwait(false);
-        return BuildCompasJson(response);
+        return (BuildCompasJson(response), warning);
     }
 
     private static string BuildCompasJson(JsonElement response)

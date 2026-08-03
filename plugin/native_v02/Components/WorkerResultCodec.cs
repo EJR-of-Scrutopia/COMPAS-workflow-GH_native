@@ -157,7 +157,8 @@ internal static class WorkerResultCodec
             Equilibrium = equilibrium,
             Diagnostics = equilibrium.Diagnostics,
             Report = equilibrium.Report,
-            Provenance = equilibrium.Provenance
+            Provenance = equilibrium.Provenance,
+            RawWire = root.GetRawText()
         };
         IReadOnlyList<string> resultErrors = result.Validate();
         if (resultErrors.Count > 0)

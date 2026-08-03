@@ -55,6 +55,22 @@ public sealed record ResultDto : ContractDto
     /// </summary>
     public ProblemDto? Problem { get; init; }
 
+    /// <summary>
+    /// The worker's original result payload JSON, exactly as received
+    /// (snake_case field names throughout, aside from the envelope's own
+    /// <c>kind</c>/<c>solver</c>/<c>resultSchema</c> keys). Both decoders
+    /// set this from the response root they already hold. Export forwards
+    /// it verbatim to <c>export.compas</c> so the worker sees back the
+    /// exact shape it produced, instead of a re-serialised
+    /// <see cref="ResultDto"/> whose camelCase member names do not match
+    /// the worker's own snake_case fields. <see cref="JsonIgnoreAttribute"/>
+    /// keeps this out of Contract-mode serialisation and every other
+    /// contract round trip; it is a transport artefact, not part of the
+    /// native contract.
+    /// </summary>
+    [JsonIgnore]
+    public string? RawWire { get; init; }
+
     protected override void ValidatePayload(List<string> errors)
     {
         string solver = (Solver ?? string.Empty).Trim().ToLowerInvariant();
