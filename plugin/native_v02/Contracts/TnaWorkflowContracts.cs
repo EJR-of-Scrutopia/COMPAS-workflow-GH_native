@@ -737,7 +737,7 @@ public sealed class TnaPatternParam : ContractParam<TnaPatternGoo>
     public TnaPatternParam()
         : base(
             "Ananke TNA Pattern",
-            "TNA Pattern",
+            "PAT",
             "Stable source topology and explicit supports for staged TNA.")
     {
     }

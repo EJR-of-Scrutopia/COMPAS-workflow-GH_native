@@ -48,6 +48,13 @@ public sealed record ResultDto : ContractDto
 
     public string Report { get; init; } = string.Empty;
 
+    /// <summary>
+    /// The spine problem this result was solved against. The worker never
+    /// sends this; solver components attach it client-side so Deconstruct
+    /// and Export can recover every upstream input from the result alone.
+    /// </summary>
+    public ProblemDto? Problem { get; init; }
+
     protected override void ValidatePayload(List<string> errors)
     {
         string solver = (Solver ?? string.Empty).Trim().ToLowerInvariant();

@@ -297,10 +297,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 13)
+        if (parameterTypes.Length != 16)
         {
             failures.Add(
-                $"Expected 13 public persistent contract parameters, found " +
+                $"Expected 16 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
@@ -318,6 +318,19 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"ResultDto contract: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSpineContracts(plugin);
+            Console.WriteLine(
+                "PASS  Spine contracts: AnchoredPattern, Problem, and " +
+                "Relaxed validate correctly (valid and invalid cases), " +
+                "and Problem attaches to ResultDto.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Spine contracts: {DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -972,6 +985,300 @@ internal static class Program
         return plugin.GetType($"{ContractsNamespace}.{typeName}", throwOnError: true)
             ?? throw new InvalidOperationException(
                 $"Type '{ContractsNamespace}.{typeName}' was not found.");
+    }
+
+    // A minimal, internally consistent triangle fixture (3 vertices, 3
+    // edges, 1 face) shared by every JSON template below. Building genuine
+    // JSON and deserializing it through the plugin's own ContractJson codec
+    // exercises the exact path Grasshopper document persistence uses,
+    // rather than merely poking properties by reflection.
+    private const string TopologyJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""ananke.topology"",
+  ""networkKind"": ""faced"",
+  ""vertices"": [
+    {""x"": 0.0, ""y"": 0.0, ""z"": 0.0},
+    {""x"": 1.0, ""y"": 0.0, ""z"": 0.0},
+    {""x"": 0.0, ""y"": 1.0, ""z"": 0.0}
+  ],
+  ""edges"": [
+    {""u"": 0, ""v"": 1},
+    {""u"": 1, ""v"": 2},
+    {""u"": 2, ""v"": 0}
+  ],
+  ""faces"": [[0, 1, 2]],
+  ""lengthUnit"": ""m"",
+  ""topologyHash"": ""__HASH__""
+}";
+
+    private const string SupportSetJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""ananke.support_set"",
+  ""topologyHash"": ""__HASH__"",
+  ""mode"": ""explicit"",
+  ""nodeIds"": [0]
+}";
+
+    private const string TnaPatternJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""ananke.tna_pattern"",
+  ""patternMode"": ""mesh"",
+  ""topology"": __TOPOLOGY__,
+  ""supports"": __SUPPORTS__
+}";
+
+    private const string LoadCaseJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""ananke.load_case"",
+  ""topologyHash"": ""__HASH__"",
+  ""name"": ""spine-smoke"",
+  ""distribution"": ""point"",
+  ""nodeIds"": [0],
+  ""vectors"": [{""x"": 0.0, ""y"": 0.0, ""z"": -1.0}]
+}";
+
+    private const string AnchoredPatternJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""AnchoredPattern"",
+  ""pattern"": __PATTERN__,
+  ""anchorNodeIds"": __ANCHORS__
+}";
+
+    private const string ProblemJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""Problem"",
+  ""anchored"": __ANCHORED__,
+  ""load"": __LOAD__
+}";
+
+    private const string TnaPreparedPatternJson = @"
+{
+  ""patternKind"": ""faced"",
+  ""vertices"": [
+    {""x"": 0.0, ""y"": 0.0, ""z"": 0.0},
+    {""x"": 1.0, ""y"": 0.0, ""z"": 0.0},
+    {""x"": 0.0, ""y"": 1.0, ""z"": 0.0}
+  ],
+  ""edges"": [
+    {""u"": 0, ""v"": 1},
+    {""u"": 1, ""v"": 2},
+    {""u"": 2, ""v"": 0}
+  ],
+  ""faces"": [[0, 1, 2]],
+  ""edgeForceDensities"": [1.0, 1.0, 1.0]
+}";
+
+    private const string TnaDiagramGraphJson = @"
+{
+  ""vertices"": [
+    {""id"": 0, ""point"": {""x"": 0.0, ""y"": 0.0, ""z"": 0.0}},
+    {""id"": 1, ""point"": {""x"": 1.0, ""y"": 0.0, ""z"": 0.0}},
+    {""id"": 2, ""point"": {""x"": 0.0, ""y"": 1.0, ""z"": 0.0}}
+  ],
+  ""edges"": [
+    {""id"": 0, ""u"": 0, ""v"": 1},
+    {""id"": 1, ""u"": 1, ""v"": 2},
+    {""id"": 2, ""u"": 2, ""v"": 0}
+  ]
+}";
+
+    private const string TnaPreparedMappingsJson = @"
+{
+  ""patternVertexToTopologyVertex"": [0, 1, 2],
+  ""backendSourceToTopologyVertex"": [
+    {""topologyVertexId"": 0},
+    {""topologyVertexId"": 1},
+    {""topologyVertexId"": 2}
+  ],
+  ""sourceEdgeToPatternEdge"": [
+    {""sourceEdgeId"": 0, ""patternEdgeId"": 0, ""u"": 0, ""v"": 1},
+    {""sourceEdgeId"": 1, ""patternEdgeId"": 1, ""u"": 1, ""v"": 2},
+    {""sourceEdgeId"": 2, ""patternEdgeId"": 2, ""u"": 2, ""v"": 0}
+  ],
+  ""supportNodeIds"": [0],
+  ""fixedPlanNodeIds"": [],
+  ""formEdgeToForceEdge"": [
+    {""formEdgeId"": 0, ""targetEdgeId"": 0},
+    {""formEdgeId"": 1, ""targetEdgeId"": 1},
+    {""formEdgeId"": 2, ""targetEdgeId"": 2}
+  ]
+}";
+
+    private const string TnaPreparedJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""ananke.tna_prepared"",
+  ""source"": __PATTERN__,
+  ""workerTopologyHash"": ""__HASH__"",
+  ""supportSet"": __SUPPORTS__,
+  ""pattern"": __PREPARED_PATTERN__,
+  ""formGraph"": __FORM_GRAPH__,
+  ""forceGraph"": __FORCE_GRAPH__,
+  ""mappings"": __MAPPINGS__
+}";
+
+    private const string RelaxedJsonTemplate = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""Relaxed"",
+  ""prepared"": __PREPARED__,
+  ""problem"": __PROBLEM__
+}";
+
+    private const string RelaxedEmptyJson = @"
+{
+  ""schemaVersion"": ""0.2"",
+  ""kind"": ""Relaxed""
+}";
+
+    /// <summary>
+    /// Constructs the three spine contracts (<c>AnchoredPatternDto</c>,
+    /// <c>ProblemDto</c>, <c>RelaxedDto</c>) via JSON round-tripped through
+    /// the plugin's own <c>ContractJson</c> codec, exercising one valid and
+    /// one invalid case per type, then confirms a <c>ProblemDto</c> attaches
+    /// to <c>ResultDto.Problem</c> without breaking a valid TNA result.
+    /// </summary>
+    private static void ValidateSpineContracts(Assembly plugin)
+    {
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type anchoredType = RequireContractType(plugin, "AnchoredPatternDto");
+        Type problemType = RequireContractType(plugin, "ProblemDto");
+        Type preparedType = RequireContractType(plugin, "TnaPreparedDto");
+        Type relaxedType = RequireContractType(plugin, "RelaxedDto");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+
+        string zeroHash = new string('0', 64);
+        object draftTopology = DeserializeContract(
+            plugin,
+            topologyType,
+            TopologyJsonTemplate.Replace("__HASH__", zeroHash));
+        string topologyHash = ComputeTopologyHash(plugin, draftTopology);
+        string topologyJson = TopologyJsonTemplate.Replace("__HASH__", topologyHash);
+        string supportSetJson =
+            SupportSetJsonTemplate.Replace("__HASH__", topologyHash);
+        string patternJson = TnaPatternJsonTemplate
+            .Replace("__TOPOLOGY__", topologyJson)
+            .Replace("__SUPPORTS__", supportSetJson);
+
+        // AnchoredPatternDto: valid (one anchor) and invalid (no anchors).
+        string validAnchoredJson = AnchoredPatternJsonTemplate
+            .Replace("__PATTERN__", patternJson)
+            .Replace("__ANCHORS__", "[0]");
+        object validAnchored =
+            DeserializeContract(plugin, anchoredType, validAnchoredJson);
+        RequireNoValidationErrors(validAnchored, "Valid AnchoredPatternDto");
+
+        object invalidAnchored = DeserializeContract(
+            plugin,
+            anchoredType,
+            AnchoredPatternJsonTemplate
+                .Replace("__PATTERN__", patternJson)
+                .Replace("__ANCHORS__", "[]"));
+        RequireValidationErrors(
+            invalidAnchored,
+            "Invalid AnchoredPatternDto without anchor node IDs");
+
+        // ProblemDto: valid (matching topology hash) and invalid
+        // (load.topologyHash does not match the anchored pattern).
+        string validLoadJson = LoadCaseJsonTemplate.Replace("__HASH__", topologyHash);
+        string validProblemJson = ProblemJsonTemplate
+            .Replace("__ANCHORED__", validAnchoredJson)
+            .Replace("__LOAD__", validLoadJson);
+        object validProblem =
+            DeserializeContract(plugin, problemType, validProblemJson);
+        RequireNoValidationErrors(validProblem, "Valid ProblemDto");
+
+        object invalidProblem = DeserializeContract(
+            plugin,
+            problemType,
+            ProblemJsonTemplate
+                .Replace("__ANCHORED__", validAnchoredJson)
+                .Replace(
+                    "__LOAD__",
+                    LoadCaseJsonTemplate.Replace("__HASH__", zeroHash)));
+        RequireValidationErrors(
+            invalidProblem,
+            "Invalid ProblemDto with a load from a different source topology");
+
+        // RelaxedDto: valid (both members present and valid) and invalid
+        // (both members missing).
+        string preparedJson = TnaPreparedJsonTemplate
+            .Replace("__PATTERN__", patternJson)
+            .Replace("__HASH__", topologyHash)
+            .Replace("__SUPPORTS__", supportSetJson)
+            .Replace("__PREPARED_PATTERN__", TnaPreparedPatternJson)
+            .Replace("__FORM_GRAPH__", TnaDiagramGraphJson)
+            .Replace("__FORCE_GRAPH__", TnaDiagramGraphJson)
+            .Replace("__MAPPINGS__", TnaPreparedMappingsJson);
+        object prepared = DeserializeContract(plugin, preparedType, preparedJson);
+        RequireNoValidationErrors(
+            prepared,
+            "Valid TnaPreparedDto (spine smoke fixture)");
+
+        object validRelaxed = DeserializeContract(
+            plugin,
+            relaxedType,
+            RelaxedJsonTemplate
+                .Replace("__PREPARED__", preparedJson)
+                .Replace("__PROBLEM__", validProblemJson));
+        RequireNoValidationErrors(validRelaxed, "Valid RelaxedDto");
+
+        object invalidRelaxed =
+            DeserializeContract(plugin, relaxedType, RelaxedEmptyJson);
+        RequireValidationErrors(
+            invalidRelaxed,
+            "Invalid RelaxedDto missing both prepared and problem");
+
+        // ResultDto.Problem: optional provenance attach (Task 4 step 4)
+        // must not disturb an otherwise-valid TNA result.
+        object resultWithProblem = CreateResultDto(
+            resultType,
+            solver: "tna",
+            equilibrium: CreateInstance(equilibriumType),
+            formGraph: CreateInstance(graphType),
+            forceGraph: CreateInstance(graphType));
+        SetContractProperty(resultWithProblem, resultType, "Problem", validProblem);
+        RequireNoValidationErrors(
+            resultWithProblem,
+            "Valid TNA ResultDto with an attached Problem");
+    }
+
+    private static object DeserializeContract(
+        Assembly plugin,
+        Type contractType,
+        string json)
+    {
+        Type contractJsonType = RequireContractType(plugin, "ContractJson");
+        MethodInfo generic = contractJsonType.GetMethod(
+            "Deserialize",
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ContractJson.Deserialize was not found.");
+        MethodInfo bound = generic.MakeGenericMethod(contractType);
+        return bound.Invoke(null, new object[] { json })
+            ?? throw new InvalidOperationException(
+                $"Deserializing {contractType.FullName} returned null.");
+    }
+
+    private static string ComputeTopologyHash(Assembly plugin, object topology)
+    {
+        Type fingerprintType = RequireContractType(plugin, "TopologyFingerprint");
+        MethodInfo computeMethod = fingerprintType.GetMethod(
+            "Compute",
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "TopologyFingerprint.Compute was not found.");
+        return computeMethod.Invoke(null, new object[] { topology }) as string
+            ?? throw new InvalidOperationException(
+                "TopologyFingerprint.Compute returned an unexpected type.");
     }
 
     private static string DescribeException(Exception exception)
