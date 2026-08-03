@@ -156,6 +156,20 @@ residuals, diagnostics. It replaces `TNA Geometry`, `TNA Members`,
 `TNA Actions`, and `Result Breakdown` in one component with grouped,
 properly named outputs.
 
+**Display is a renderer registry, not one picture.** Each COMPAS method has
+a canonical diagram language (FD a force-scaled network with action
+vectors, TNA plan form plus reciprocal force diagram plus lifted thrust,
+AGS a side-by-side reciprocal pair, 3GS polyhedral cells), and the
+legibility of a result lives in that language. Display therefore renders
+per diagram kind carried by the Result, exactly as `compas.scene` keys one
+SceneObject per data type, and it never homogenises methods into one
+generic drawing. When a future solver arrives, its Result carries its
+diagram kinds and Display gains a renderer for them; the component count
+stays one while the representations stay method-true. The packages' own
+Rhino scene objects cannot be reused directly because COMPAS objects live
+in the worker process, which is the same trade RhinoVault makes with its
+own display conduits.
+
 ### Export
 
 The contracts crossing the worker boundary are already JSON. `Export`
