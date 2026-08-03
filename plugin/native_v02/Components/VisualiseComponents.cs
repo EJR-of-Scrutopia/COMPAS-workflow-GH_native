@@ -225,22 +225,26 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddPointParameter(
                 "Load Points",
                 "LP",
-                "Points carrying applied loads.",
+                "Points carrying applied loads. TNA: non-zero only; FD: " +
+                "unfiltered.",
                 GH_ParamAccess.list);
             parameters.AddVectorParameter(
                 "Load Vectors",
                 "LV",
-                "Applied load vectors aligned with Load Points.",
+                "Applied load vectors aligned with Load Points. TNA: " +
+                "non-zero only; FD: unfiltered.",
                 GH_ParamAccess.list);
             parameters.AddPointParameter(
                 "Reaction Points",
                 "RP",
-                "Points carrying support reactions.",
+                "Points carrying support reactions. TNA: non-zero only; " +
+                "FD: unfiltered.",
                 GH_ParamAccess.list);
             parameters.AddVectorParameter(
                 "Reaction Vectors",
                 "RV",
-                "Support reactions aligned with Reaction Points.",
+                "Support reactions aligned with Reaction Points. TNA: " +
+                "non-zero only; FD: unfiltered.",
                 GH_ParamAccess.list);
             parameters.AddVectorParameter(
                 "Residuals",
