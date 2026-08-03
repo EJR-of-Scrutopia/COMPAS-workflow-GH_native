@@ -82,7 +82,7 @@ internal static class Program
                     new[] { "Pattern", "Force Density", "Boundary Sag" },
                     new[] { "Prepared" }),
                 ["Ananke.COMPAS.Native.Components.TnaEquilibriumComponent"] = (
-                    new[] { "Prepared", "Load Case", "Mode", "Value" },
+                    new[] { "Prepared", "Load Case", "Mode", "Value", "Control" },
                     new[] { "TNA Result" })
             };
     private static readonly IReadOnlyDictionary<
@@ -297,16 +297,28 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 12)
+        if (parameterTypes.Length != 13)
         {
             failures.Add(
-                $"Expected 12 public persistent contract parameters, found " +
+                $"Expected 13 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
         Console.WriteLine(
             $"Parameters passed: " +
             $"{parameterTypes.Length - (failures.Count - componentFailureCount)}");
+
+        try
+        {
+            ValidateResultContract(plugin);
+            Console.WriteLine(
+                "PASS  ResultDto contract: valid TNA, valid FD, and " +
+                "invalid-without-graphs cases validate correctly.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ResultDto contract: {DescribeException(exception)}");
+        }
 
         if (failures.Count == 0)
         {
@@ -846,6 +858,120 @@ internal static class Program
             return;
         }
         documentGuids.Add(guid, name);
+    }
+
+    /// <summary>
+    /// Constructs the unified <c>ResultDto</c> directly from the loaded
+    /// plugin assembly via reflection (this harness has no compile-time
+    /// reference to <c>Ananke.COMPAS.Native.Contracts</c>) and exercises
+    /// its <c>Validate()</c> rules: a valid TNA result (with reciprocal
+    /// graphs), a valid FD result (without them), and an invalid TNA
+    /// result missing its graphs.
+    /// </summary>
+    private static void ValidateResultContract(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+
+        object validTna = CreateResultDto(
+            resultType,
+            solver: "tna",
+            equilibrium: CreateInstance(equilibriumType),
+            formGraph: CreateInstance(graphType),
+            forceGraph: CreateInstance(graphType));
+        RequireNoValidationErrors(validTna, "Valid TNA ResultDto");
+
+        object validFd = CreateResultDto(
+            resultType,
+            solver: "fd",
+            equilibrium: CreateInstance(equilibriumType),
+            formGraph: null,
+            forceGraph: null);
+        RequireNoValidationErrors(validFd, "Valid FD ResultDto");
+
+        object invalidTna = CreateResultDto(
+            resultType,
+            solver: "tna",
+            equilibrium: CreateInstance(equilibriumType),
+            formGraph: null,
+            forceGraph: null);
+        RequireValidationErrors(
+            invalidTna,
+            "Invalid TNA ResultDto without reciprocal graphs");
+    }
+
+    private static object CreateResultDto(
+        Type resultType,
+        string solver,
+        object equilibrium,
+        object? formGraph,
+        object? forceGraph)
+    {
+        object instance = CreateInstance(resultType);
+        SetContractProperty(instance, resultType, "Solver", solver);
+        SetContractProperty(instance, resultType, "Equilibrium", equilibrium);
+        SetContractProperty(instance, resultType, "FormGraph", formGraph);
+        SetContractProperty(instance, resultType, "ForceGraph", forceGraph);
+        return instance;
+    }
+
+    private static object CreateInstance(Type type)
+    {
+        return Activator.CreateInstance(type)
+            ?? throw new InvalidOperationException(
+                $"Could not construct {type.FullName}.");
+    }
+
+    private static void SetContractProperty(
+        object instance,
+        Type type,
+        string propertyName,
+        object? value)
+    {
+        PropertyInfo property = type.GetProperty(propertyName)
+            ?? throw new InvalidOperationException(
+                $"{type.FullName} does not expose property '{propertyName}'.");
+        property.SetValue(instance, value);
+    }
+
+    private static void RequireNoValidationErrors(object instance, string label)
+    {
+        IReadOnlyList<string> errors = InvokeValidate(instance);
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"{label} failed validation: {string.Join(" ", errors)}");
+        }
+    }
+
+    private static void RequireValidationErrors(object instance, string label)
+    {
+        IReadOnlyList<string> errors = InvokeValidate(instance);
+        if (errors.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"{label} unexpectedly passed validation.");
+        }
+    }
+
+    private static IReadOnlyList<string> InvokeValidate(object instance)
+    {
+        MethodInfo validateMethod = instance.GetType().GetMethod("Validate")
+            ?? throw new InvalidOperationException(
+                $"{instance.GetType().FullName} does not expose Validate().");
+        object? result = validateMethod.Invoke(instance, null);
+        return result as IReadOnlyList<string>
+            ?? throw new InvalidOperationException(
+                "Validate() returned an unexpected type.");
+    }
+
+    private static Type RequireContractType(Assembly plugin, string typeName)
+    {
+        const string ContractsNamespace = "Ananke.COMPAS.Native.Contracts";
+        return plugin.GetType($"{ContractsNamespace}.{typeName}", throwOnError: true)
+            ?? throw new InvalidOperationException(
+                $"Type '{ContractsNamespace}.{typeName}' was not found.");
     }
 
     private static string DescribeException(Exception exception)

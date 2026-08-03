@@ -57,6 +57,7 @@ internal static class Program
         ValidateTopologyRegistration();
         ValidateRequiredDiscriminators();
         ValidateTnaContractsAndCodec();
+        ValidateResultEnvelopeCodec();
         await ValidateRealStagedTnaWorker(host).ConfigureAwait(false);
         await ValidateRealTnaWorker(host).ConfigureAwait(false);
         (EquilibriumProblemDto problem, FDSettingsDto settings) =
@@ -70,6 +71,20 @@ internal static class Program
         EquilibriumResultDto result =
             DecodeFd(response, problem, settings);
         ValidateResult(result, problem);
+
+        ResultDto envelopeResult = DecodeFdResult(response, problem, settings);
+        RequireValid(envelopeResult);
+        Require(
+            envelopeResult.Solver == "fd",
+            "Unified FD result did not preserve the solver discriminator.");
+        Require(
+            envelopeResult.ResultSchema == "0.2",
+            "Unified FD result did not preserve the result schema.");
+        Require(
+            envelopeResult.Equilibrium is not null &&
+            envelopeResult.Equilibrium.Vertices.Count == result.Vertices.Count,
+            "Unified FD result did not carry the same solved case as the " +
+            "legacy decode.");
 
         Console.WriteLine(
             $"PASS fd.solve: {result.Vertices.Count} nodes, "
@@ -733,6 +748,45 @@ internal static class Program
             + "and compact graphic diagram.");
     }
 
+    /// <summary>
+    /// Exercises <c>TnaWorkerResultCodec.DecodeResult</c>, the unified
+    /// envelope decode path the real worker now speaks (<c>kind:
+    /// "Result"</c>, <c>solver: "tna"</c>, <c>resultSchema: "0.2"</c> on
+    /// top of the same TNA payload). Kept separate from
+    /// <see cref="ValidateTnaContractsAndCodec"/> so the older
+    /// <c>tna_result</c> fixture and decode path there keep exercising the
+    /// still-compiling legacy codec unchanged.
+    /// </summary>
+    private static void ValidateResultEnvelopeCodec()
+    {
+        (EquilibriumProblemDto problem, TnaControlDto control) =
+            BuildTnaProblem();
+        JsonElement fixture = BuildTnaResultEnvelopeFixture();
+        ResultDto result = DecodeTnaResult(fixture, problem, control);
+        RequireValid(result);
+        Require(
+            result.Solver == "tna",
+            "Unified TNA result did not preserve the solver discriminator.");
+        Require(
+            result.ResultSchema == "0.2",
+            "Unified TNA result did not preserve the result schema.");
+        Require(
+            result.Equilibrium is not null &&
+            result.FormGraph is not null &&
+            result.ForceGraph is not null,
+            "Unified TNA result lost its reciprocal block.");
+        Require(
+            result.HorizontalScale == -0.375,
+            "Unified TNA result did not preserve the signed horizontal scale.");
+        Require(
+            result.EdgeStates.Count == 3 &&
+            result.Mappings?.FormEdgeToForceEdge.Count == 3,
+            "Unified TNA result did not preserve reciprocal edge mappings.");
+        Console.WriteLine(
+            "PASS Result envelope codec: unified TNA decode matches the "
+            + "legacy TNA payload field-for-field.");
+    }
+
     private static (EquilibriumProblemDto, TnaControlDto) BuildTnaProblem()
     {
         TopologyDto topology = TopologyDto.Create(
@@ -803,6 +857,29 @@ internal static class Program
     }
 
     private static JsonElement BuildTnaResultFixture()
+    {
+        return JsonSerializer.SerializeToElement(
+            BuildTnaResultFixtureDictionary(),
+            ContractJson.Options);
+    }
+
+    /// <summary>
+    /// The same fixture as <see cref="BuildTnaResultFixture"/>, but wrapped
+    /// in the unified worker envelope (<c>kind: "Result"</c>, <c>solver:
+    /// "tna"</c>, <c>resultSchema: "0.2"</c>) the way the real worker now
+    /// answers <c>tna.solve</c>, for exercising
+    /// <c>TnaWorkerResultCodec.DecodeResult</c>.
+    /// </summary>
+    private static JsonElement BuildTnaResultEnvelopeFixture()
+    {
+        Dictionary<string, object?> fixture = BuildTnaResultFixtureDictionary();
+        fixture["kind"] = "Result";
+        fixture["solver"] = "tna";
+        fixture["resultSchema"] = "0.2";
+        return JsonSerializer.SerializeToElement(fixture, ContractJson.Options);
+    }
+
+    private static Dictionary<string, object?> BuildTnaResultFixtureDictionary()
     {
         double[][] planar =
         {
@@ -1026,9 +1103,7 @@ internal static class Program
                 ["worker"] = "fixture"
             }
         };
-        return JsonSerializer.SerializeToElement(
-            fixture,
-            ContractJson.Options);
+        return fixture;
     }
 
     private static TnaResultDto DecodeTna(
@@ -1061,6 +1136,40 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "TnaWorkerResultCodec.Decode rejected the fixture.",
+                error.InnerException);
+        }
+    }
+
+    private static ResultDto DecodeTnaResult(
+        JsonElement response,
+        EquilibriumProblemDto problem,
+        TnaControlDto control)
+    {
+        Assembly nativeAssembly = typeof(WorkerHost).Assembly;
+        Type codecType = nativeAssembly.GetType(
+            "Ananke.COMPAS.Native.Components.TnaWorkerResultCodec",
+            throwOnError: true)
+            ?? throw new InvalidOperationException(
+                "Native TnaWorkerResultCodec type was not found.");
+        MethodInfo decodeMethod = codecType.GetMethod(
+            "DecodeResult",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                "TnaWorkerResultCodec.DecodeResult was not found.");
+        try
+        {
+            object? value = decodeMethod.Invoke(
+                null,
+                new object[] { response, problem, control, 0 });
+            return value as ResultDto
+                ?? throw new InvalidOperationException(
+                    "TnaWorkerResultCodec.DecodeResult returned the wrong type.");
+        }
+        catch (TargetInvocationException error)
+            when (error.InnerException is not null)
+        {
+            throw new InvalidOperationException(
+                "TnaWorkerResultCodec.DecodeResult rejected the fixture.",
                 error.InnerException);
         }
     }
@@ -1320,6 +1429,49 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "WorkerResultCodec.DecodeFd rejected the worker result.",
+                error.InnerException);
+        }
+    }
+
+    /// <summary>
+    /// Decodes the same live <c>fd.solve</c> response through
+    /// <c>WorkerResultCodec.DecodeResult</c>, the unified envelope path.
+    /// No separate FD fixture exists: the real worker's flat solved-case
+    /// payload already carries the envelope keys after Task 1, so decoding
+    /// it here is a genuine end-to-end check of the new path rather than a
+    /// synthetic one.
+    /// </summary>
+    private static ResultDto DecodeFdResult(
+        JsonElement response,
+        EquilibriumProblemDto problem,
+        FDSettingsDto settings)
+    {
+        Assembly nativeAssembly = typeof(WorkerHost).Assembly;
+        Type codecType = nativeAssembly.GetType(
+            "Ananke.COMPAS.Native.Components.WorkerResultCodec",
+            throwOnError: true)
+            ?? throw new InvalidOperationException(
+                "Native WorkerResultCodec type was not found.");
+        MethodInfo decodeMethod = codecType.GetMethod(
+            "DecodeResult",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                "Native WorkerResultCodec.DecodeResult was not found.");
+
+        try
+        {
+            object? value = decodeMethod.Invoke(
+                null,
+                new object[] { response, problem, settings, 0 });
+            return value as ResultDto
+                ?? throw new InvalidOperationException(
+                    "WorkerResultCodec.DecodeResult returned the wrong type.");
+        }
+        catch (TargetInvocationException error)
+            when (error.InnerException is not null)
+        {
+            throw new InvalidOperationException(
+                "WorkerResultCodec.DecodeResult rejected the worker result.",
                 error.InnerException);
         }
     }

@@ -122,6 +122,51 @@ internal static class WorkerResultCodec
         return result;
     }
 
+    /// <summary>
+    /// Decode a unified-envelope FD result (<c>kind == "Result"</c>,
+    /// <c>solver == "fd"</c>) into <see cref="ResultDto"/>. FD payloads are
+    /// flat: the envelope only adds the discriminator keys on top of the
+    /// same solved-case shape <see cref="DecodeFd"/> already maps, so the
+    /// flat-to-equilibrium mapping is reused as-is rather than duplicated;
+    /// only the wrapping and the envelope check are new here.
+    /// </summary>
+    public static ResultDto DecodeResult(
+        JsonElement root,
+        EquilibriumProblemDto problem,
+        FDSettingsDto settings,
+        int loadCaseIndex)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new JsonException("FD result must be a JSON object.");
+
+        string kind = RequiredString(root, "kind");
+        if (!string.Equals(kind, "Result", StringComparison.Ordinal))
+            throw new JsonException($"Expected Result, received '{kind}'.");
+        string resultSchema = RequiredString(root, "resultSchema");
+
+        EquilibriumResultDto equilibrium = DecodeFd(
+            root,
+            problem,
+            settings,
+            loadCaseIndex);
+
+        var result = new ResultDto
+        {
+            Solver = "fd",
+            ResultSchema = resultSchema,
+            Equilibrium = equilibrium,
+            Provenance = equilibrium.Provenance
+        };
+        IReadOnlyList<string> resultErrors = result.Validate();
+        if (resultErrors.Count > 0)
+        {
+            throw new JsonException(
+                "The FD worker result failed its native contract: " +
+                string.Join(" ", resultErrors));
+        }
+        return result;
+    }
+
     private static void VerifyEdgeAlignment(
         IReadOnlyList<EdgeDto> solved,
         IReadOnlyList<EdgeDto> registered)

@@ -32,6 +32,7 @@ public static class ContractKinds
     public const string EquilibriumResult = "ananke.equilibrium_result";
     public const string TnaResult = "ananke.tna_result";
     public const string GraphicDiagram = "ananke.graphic_diagram";
+    public const string Result = "Result";
 }
 
 /// <summary>
