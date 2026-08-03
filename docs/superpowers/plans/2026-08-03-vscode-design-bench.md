@@ -1291,9 +1291,19 @@ def test_the_mesh_carries_the_solved_z_values():
     assert zs == [0.0, 0.0, 0.5, 0.5]
 
 
-def test_a_flat_result_still_yields_a_graph_free_scene():
+def test_a_flat_result_yields_nothing_to_display():
+    # No faces means no mesh, and an FD result carries no reciprocal diagrams,
+    # so assert the scene is genuinely empty. Asserting only "no Graphs" would
+    # pass vacuously on an empty list.
     objects = build_scene_objects({"kind": "solved_case", "vertices": [[0.0, 0.0, 0.0]]})
-    assert all(not isinstance(item, Graph) for item in objects)
+    assert objects == []
+
+
+def test_a_result_with_diagrams_but_no_faces_yields_graphs_only():
+    result = {"kind": "tna_result", "form_graph": TNA_RESULT["form_graph"]}
+    objects = build_scene_objects(result)
+    assert [type(item).__name__ for item in objects] == ["Graph"]
+    assert isinstance(objects[0], Graph)
 
 
 def test_view_result_raises_when_the_viewer_is_missing(monkeypatch):
@@ -2505,19 +2515,38 @@ def test_an_undeclared_topology_field_is_rejected_by_the_decoder():
         decode_topology(dict(TOPOLOGY, nonsense=1))
 
 
-def test_declared_topology_fields_are_all_accepted():
+def test_every_declared_topology_field_is_accepted_by_the_decoder():
+    # Exercise the real decoder rather than comparing against a copied list:
+    # a copied list drifts silently, an exercised decoder cannot.
+    samples = {
+        "schema_version": "0.1",
+        "kind": "line",
+        "vertices": TOPOLOGY["vertices"],
+        "edges": TOPOLOGY["edges"],
+        "faces": [],
+        "source_vertex_ids": [0, 1, 2],
+        "length_unit": "m",
+        "metadata": {"note": "sample"},
+    }
     for name in payload_schema("topology")["properties"]:
-        assert name in (
-            "schema_version",
-            "kind",
-            "vertices",
-            "edges",
-            "faces",
-            "source_vertex_ids",
-            "length_unit",
-            "metadata",
-            "topology_hash",
-        )
+        if name == "topology_hash":
+            # Rejected unless it matches the content fingerprint exactly, so
+            # it is validated by test_topology_hash_round_trips below.
+            continue
+        assert name in samples, "schema declares {} with no sample".format(name)
+        decode_topology(dict(TOPOLOGY, **{name: samples[name]}))
+
+
+def test_topology_hash_round_trips():
+    fingerprint = decode_topology(TOPOLOGY).topology_hash
+    assert decode_topology(dict(TOPOLOGY, topology_hash=fingerprint))
+
+
+def test_every_declared_length_unit_is_accepted():
+    from ananke_equilibrium.cli.schema import LENGTH_UNITS
+
+    for unit in LENGTH_UNITS:
+        assert decode_topology(dict(TOPOLOGY, length_unit=unit)).length_unit == unit
 
 
 def test_write_schema_produces_valid_json(tmp_path):
@@ -2853,7 +2882,7 @@ from pathlib import Path
 
 import pytest
 
-from ananke_equilibrium.cli.main import build_parser
+from ananke_equilibrium.cli.main import command_names
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2881,20 +2910,80 @@ def test_settings_map_problem_files_to_the_schema():
 
 
 def test_every_task_invokes_a_real_cli_command():
-    parser = build_parser()
-    known = set(parser._subparsers._group_actions[0].choices)
-    for task in read("tasks.json")["tasks"]:
-        if task.get("command") != "ananke":
+    known = set(command_names())
+    invoked = [
+        task["args"][0]
+        for task in read("tasks.json")["tasks"]
+        if task.get("command") == "ananke"
+    ]
+    assert invoked, "no tasks.json entry invokes the ananke CLI"
+    for command in invoked:
+        assert command in known, "tasks.json invokes unknown command {}".format(command)
+
+
+def test_every_launch_configuration_invokes_a_real_cli_command():
+    known = set(command_names())
+    for configuration in read("launch.json")["configurations"]:
+        if configuration.get("module") != "ananke_equilibrium.cli":
             continue
-        assert task["args"][0] in known, task["label"]
+        assert configuration["args"][0] in known, configuration["name"]
 ```
+
+**Interfaces (added by this task):** `cli.main.command_names() -> Tuple[str, ...]`, returning the registered subcommand names. It exists so configuration tests do not reach into argparse private attributes such as `parser._subparsers._group_actions[0].choices`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_vscode_config.py -v`
 Expected: FAIL with `FileNotFoundError` for `.vscode/settings.json`
 
-- [ ] **Step 3: Write settings.json**
+- [ ] **Step 3: Add the command_names helper**
+
+In `src/ananke_equilibrium/cli/main.py`, add `Tuple` to the typing imports, then add this module-level tuple immediately above `build_parser()` and use it as the single source of subcommand names:
+
+```python
+COMMAND_NAMES = (
+    "solve",
+    "check",
+    "plot",
+    "view",
+    "schema",
+    "health",
+)
+
+
+def command_names() -> Tuple[str, ...]:
+    """Return the registered subcommand names.
+
+    Configuration tests assert that every VS Code task and launch
+    configuration invokes a real command. They use this rather than reaching
+    into argparse internals.
+    """
+
+    return COMMAND_NAMES
+```
+
+Add `"COMMAND_NAMES"` and `"command_names"` to `__all__` in both `cli/main.py` and `cli/__init__.py`, and add `from .main import command_names` to `cli/__init__.py`.
+
+Then add this test to `tests/test_vscode_config.py`:
+
+```python
+def test_command_names_matches_the_parser():
+    from ananke_equilibrium.cli.main import build_parser
+
+    parser = build_parser()
+    registered = {
+        name
+        for action in parser._subparsers._group_actions
+        for name in getattr(action, "choices", {}) or {}
+    }
+    assert registered == set(command_names()), (
+        "COMMAND_NAMES has drifted from the parser's registered subcommands"
+    )
+```
+
+This single test is the only place argparse internals are touched, and its whole job is to prove the public tuple stays truthful.
+
+- [ ] **Step 4: Write settings.json**
 
 Create `.vscode/settings.json`:
 
@@ -2916,7 +3005,7 @@ Create `.vscode/settings.json`:
 }
 ```
 
-- [ ] **Step 4: Write tasks.json**
+- [ ] **Step 5: Write tasks.json**
 
 Create `.vscode/tasks.json`:
 
@@ -2986,7 +3075,7 @@ Create `.vscode/tasks.json`:
 }
 ```
 
-- [ ] **Step 5: Write launch.json**
+- [ ] **Step 6: Write launch.json**
 
 Create `.vscode/launch.json`:
 
@@ -3026,7 +3115,7 @@ Create `.vscode/launch.json`:
 
 `justMyCode` is false deliberately: the point of solving in-process is that a breakpoint inside `solve_tna` or inside COMPAS itself is reachable.
 
-- [ ] **Step 6: Write extensions.json**
+- [ ] **Step 7: Write extensions.json**
 
 Create `.vscode/extensions.json`:
 
@@ -3040,12 +3129,12 @@ Create `.vscode/extensions.json`:
 }
 ```
 
-- [ ] **Step 7: Run test to verify it passes**
+- [ ] **Step 8: Run test to verify it passes**
 
 Run: `python -m pytest tests/test_vscode_config.py -v`
 Expected: PASS, all six tests
 
-- [ ] **Step 8: Write the workflow document**
+- [ ] **Step 9: Write the workflow document**
 
 Create `docs/vscode-design-bench.md` covering, in prose and with runnable commands:
 
@@ -3058,7 +3147,7 @@ Create `docs/vscode-design-bench.md` covering, in prose and with runnable comman
 
 No em dashes.
 
-- [ ] **Step 9: Link it from the README**
+- [ ] **Step 10: Link it from the README**
 
 In `README.md`, in the "Further project documentation" list, add:
 
@@ -3066,12 +3155,12 @@ In `README.md`, in the "Further project documentation" list, add:
 - [The VS Code design bench: JSON studies, the ananke CLI, viewing, and capture](docs/vscode-design-bench.md)
 ```
 
-- [ ] **Step 10: Run the whole suite**
+- [ ] **Step 11: Run the whole suite**
 
 Run: `python -m pytest -ra`
 Expected: PASS. Any pre-existing failure unrelated to this branch should be reported, not fixed silently.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add .vscode docs/vscode-design-bench.md README.md tests/test_vscode_config.py
