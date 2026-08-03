@@ -124,19 +124,60 @@ if Mesh is not None:
     Naked = sum(1 for owners in edges.values() if len(owners) == 1)
     Ok = not defects
 
+    # Rhino's own validity is a different and stricter question than COMPAS's.
+    # A mesh Rhino calls invalid can still register here, so report its reason
+    # rather than leaving "Invalid Mesh" on a panel with no explanation.
+    rhino_valid = True
+    rhino_log = ""
+    try:
+        rhino_valid, rhino_log = mesh.IsValidWithLog()
+    except Exception:
+        try:
+            rhino_valid = bool(mesh.IsValid)
+        except Exception:
+            rhino_valid = True
+
+    triangles = sum(1 for index in range(mesh.Faces.Count) if mesh.Faces[index].IsTriangle)
+    quads = mesh.Faces.Count - triangles
+
     lines = [
         "Mesh diagnosis for TNA registration",
         "Weld tolerance:      {:g}".format(tolerance),
         "Rhino vertices:      {}".format(mesh.Vertices.Count),
         "After welding:       {}".format(len(vertices)),
         "Merged away:         {}".format(mesh.Vertices.Count - len(vertices)),
-        "Rhino faces:         {}".format(mesh.Faces.Count),
+        "Rhino faces:         {}  ({} tri, {} quad)".format(
+            mesh.Faces.Count, triangles, quads
+        ),
         "Usable faces:        {}".format(len(faces)),
         "Edges:               {}".format(len(edges)),
         "Naked (boundary):    {}".format(Naked),
         "Defective edges:     {}".format(len(bad)),
+        "Rhino says valid:    {}".format(rhino_valid),
         "",
     ]
+    if not rhino_valid and rhino_log:
+        lines.append("Rhino's own validity complaint (a stricter, separate check):")
+        lines.extend("  " + part for part in str(rhino_log).strip().splitlines())
+        lines.append("")
+    # Mixed triangles and quads are fine for TNA. A single very high valence
+    # vertex is not a registration problem either, but it makes the horizontal
+    # solve converge far more slowly, so it is worth knowing about.
+    valence = {}
+    for edge in edges:
+        valence[edge[0]] = valence.get(edge[0], 0) + 1
+        valence[edge[1]] = valence.get(edge[1], 0) + 1
+    if valence:
+        worst = max(valence.values())
+        lines.append("Highest vertex valence: {}".format(worst))
+        if worst >= 12:
+            lines.append(
+                "  A vertex joining {} edges is legal but slows horizontal TNA "
+                "convergence sharply. Expect to raise Horizontal Iterations "
+                "well above the default 100 and watch the reported "
+                "reciprocity angle fall.".format(worst)
+            )
+        lines.append("")
     if defects:
         lines.append("REGISTRATION WILL FAIL. Causes:")
         lines.extend("  " + message for message in defects)
