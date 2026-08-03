@@ -85,6 +85,17 @@ internal static class Program
             envelopeResult.Equilibrium.Vertices.Count == result.Vertices.Count,
             "Unified FD result did not carry the same solved case as the " +
             "legacy decode.");
+        Require(
+            !string.IsNullOrEmpty(envelopeResult.Report) &&
+            envelopeResult.Report == result.Report,
+            "Unified FD result did not forward the equilibrium's report; " +
+            $"expected '{result.Report}', received " +
+            $"'{envelopeResult.Report}'.");
+        Require(
+            envelopeResult.Diagnostics.Count == result.Diagnostics.Count,
+            "Unified FD result did not forward the equilibrium's " +
+            $"diagnostics; expected {result.Diagnostics.Count}, received " +
+            $"{envelopeResult.Diagnostics.Count}.");
 
         Console.WriteLine(
             $"PASS fd.solve: {result.Vertices.Count} nodes, "
@@ -782,6 +793,16 @@ internal static class Program
             result.EdgeStates.Count == 3 &&
             result.Mappings?.FormEdgeToForceEdge.Count == 3,
             "Unified TNA result did not preserve reciprocal edge mappings.");
+        Require(
+            result.Report == "Fixture TNA solve.",
+            "Unified TNA result did not forward the fixture's report; " +
+            $"received '{result.Report}'.");
+        Require(
+            result.Diagnostics.Count == 1 &&
+            result.Diagnostics[0].Code == "reciprocity_tolerance" &&
+            result.Equilibrium?.Diagnostics.Count == 1,
+            "Unified TNA result did not forward the fixture's diagnostic " +
+            "onto both the envelope and its wrapped equilibrium.");
         Console.WriteLine(
             "PASS Result envelope codec: unified TNA decode matches the "
             + "legacy TNA payload field-for-field.");
@@ -1096,7 +1117,22 @@ internal static class Program
                 ["loads"] = loads,
                 ["reactions"] = supports
             },
-            ["diagnostics"] = Array.Empty<object>(),
+            ["diagnostics"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["code"] = "reciprocity_tolerance",
+                    ["severity"] = "info",
+                    ["message"] = "Reciprocal angle within tolerance.",
+                    ["value"] = 0.0,
+                    ["tolerance"] = 1.0e-3,
+                    ["unit"] = "deg",
+                    ["context"] = new Dictionary<string, object?>
+                    {
+                        ["source"] = "native-tna-fixture"
+                    }
+                }
+            },
             ["report"] = "Fixture TNA solve.",
             ["provenance"] = new Dictionary<string, object?>
             {

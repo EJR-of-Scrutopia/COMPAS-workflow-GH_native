@@ -155,6 +155,8 @@ internal static class WorkerResultCodec
             Solver = "fd",
             ResultSchema = resultSchema,
             Equilibrium = equilibrium,
+            Diagnostics = equilibrium.Diagnostics,
+            Report = equilibrium.Report,
             Provenance = equilibrium.Provenance
         };
         IReadOnlyList<string> resultErrors = result.Validate();
