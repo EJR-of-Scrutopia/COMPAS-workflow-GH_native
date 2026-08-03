@@ -169,7 +169,8 @@ def test_real_tna_backend_through_worker_preserves_reciprocal_state():
 
     assert response["type"] == "result", response
     result = response["result"]
-    assert result["kind"] == "tna_result"
+    assert result["kind"] == "Result"
+    assert result["solver"] == "tna"
     assert result["equilibrium"]["solver"] == "tna"
     assert len(result["form_graph"]["edges"]) == 4
     assert len(result["force_graph"]["edges"]) == 4

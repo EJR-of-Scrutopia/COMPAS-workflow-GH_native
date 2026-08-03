@@ -187,7 +187,8 @@ def test_worker_prepared_json_is_stateless_and_line_source_finishes_faced():
     )
     assert solved_response["type"] == "result", solved_response
     solved = solved_response["result"]
-    assert solved["kind"] == "tna_result"
+    assert solved["kind"] == "Result"
+    assert solved["solver"] == "tna"
     assert solved["equilibrium"]["topology"]["kind"] == "faced"
     assert solved["equilibrium"]["topology"]["metadata"][
         "source_topology_hash"

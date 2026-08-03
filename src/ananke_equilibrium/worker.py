@@ -30,6 +30,7 @@ from .codec import TruncatedFrameError
 from .codec import decode_fd_payload
 from .codec import decode_tna_prepare_payload
 from .codec import decode_tna_payload
+from .codec import encode_result
 from .codec import encode_solved_case
 from .codec import encode_tna_prepared
 from .codec import encode_tna_result
@@ -482,10 +483,13 @@ def dispatch(
         if command == "fd.solve":
             return result_response(
                 request_id,
-                _fd_payload(
-                    payload,
-                    fd_backend=fd_backend,
-                    fd_solver=fd_solver,
+                encode_result(
+                    "fd",
+                    _fd_payload(
+                        payload,
+                        fd_backend=fd_backend,
+                        fd_solver=fd_solver,
+                    ),
                 ),
             )
         if command == "tna.prepare":
@@ -500,10 +504,13 @@ def dispatch(
         if command == "tna.solve":
             return result_response(
                 request_id,
-                _tna_payload(
-                    payload,
-                    tna_backend=tna_backend,
-                    tna_solver=tna_solver,
+                encode_result(
+                    "tna",
+                    _tna_payload(
+                        payload,
+                        tna_backend=tna_backend,
+                        tna_solver=tna_solver,
+                    ),
                 ),
             )
         # Defensive only: _validate_request already enforces the allowlist.

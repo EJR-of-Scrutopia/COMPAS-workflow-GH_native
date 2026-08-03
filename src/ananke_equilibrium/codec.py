@@ -1521,6 +1521,23 @@ def encode_tna_result(
     return encoded
 
 
+def encode_result(solver, payload):
+    """Wrap a per-solver payload in the unified Result envelope.
+
+    The inner payload is preserved key for key so existing decoders keep
+    working; the envelope adds only the discriminator the single C#
+    ResultDto needs. ``kind`` is overwritten deliberately: the object on
+    the wire is a Result, whatever the solver called it internally.
+    """
+    if solver not in ("tna", "fd"):
+        raise ValueError("solver must be 'tna' or 'fd', got {!r}".format(solver))
+    out = dict(payload)
+    out["kind"] = "Result"
+    out["solver"] = solver
+    out["resultSchema"] = "0.2"
+    return out
+
+
 __all__ = [
     "CodecError",
     "FrameTooLargeError",
@@ -1541,6 +1558,7 @@ __all__ = [
     "decode_topology",
     "encode_frame",
     "encode_json",
+    "encode_result",
     "encode_solved_case",
     "encode_tna_prepared",
     "encode_tna_result",

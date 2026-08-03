@@ -382,7 +382,8 @@ def test_tna_solve_persists_reciprocal_graphs_and_stable_mappings():
     assert calls[0]["config"].horizontal_alpha == pytest.approx(100.0)
 
     result = response["result"]
-    assert result["kind"] == "tna_result"
+    assert result["kind"] == "Result"
+    assert result["solver"] == "tna"
     assert result["equilibrium"]["solver"] == "tna"
     assert "session" not in result["equilibrium"]
     assert len(result["form_graph"]["vertices"]) == 5
