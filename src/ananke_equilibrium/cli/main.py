@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from typing import Mapping
@@ -15,6 +17,7 @@ from ..codec import decode_fd_payload
 from ..codec import decode_tna_payload
 from ..codec import decode_tna_prepare_payload
 from ..contracts import ContractError
+from ..worker import dispatch
 from ..worker import health_payload
 from .study import StudyError
 from .study import build_request
@@ -45,6 +48,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate a study file without solving it.",
     )
     check.add_argument("problem", type=Path, help="Path to problem.json")
+    solve = subparsers.add_parser(
+        "solve",
+        help="Solve a study file and write its result.",
+    )
+    solve.add_argument("problem", type=Path, help="Path to problem.json")
+    solve.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Result path. Defaults to results/result.json beside the study.",
+    )
+    solve.add_argument(
+        "--archive",
+        action="store_true",
+        help="Also write a timestamped copy beside the result.",
+    )
     return parser
 
 
@@ -111,6 +130,48 @@ def _check(path: Path) -> int:
     return 0
 
 
+def solve_study(
+    path: Path,
+    out: Optional[Path] = None,
+    archive: bool = False,
+) -> int:
+    """Solve one study file through the same dispatch Grasshopper uses."""
+
+    try:
+        study = load_study(path)
+    except StudyError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    response = dispatch(build_request(study))
+    if response.get("type") == "error":
+        error = response.get("error", {})
+        print(
+            "{}: {} ({})".format(
+                path,
+                error.get("message", "solve failed"),
+                error.get("code", "unknown"),
+            ),
+            file=sys.stderr,
+        )
+        details = error.get("details")
+        if details:
+            print(json.dumps(details, indent=2), file=sys.stderr)
+        return 1
+    destination = out or (path.parent / "results" / "result.json")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(response["result"], indent=2, sort_keys=True)
+    destination.write_text(payload + "\n", encoding="utf-8")
+    print("{} -> {}".format(path, destination))
+    if archive:
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        archived = destination.with_name(
+            "{}-{}{}".format(destination.stem, stamp, destination.suffix)
+        )
+        archived.write_text(payload + "\n", encoding="utf-8")
+        print("archived -> {}".format(archived))
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run one CLI invocation and return its process exit code."""
 
@@ -119,6 +180,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args = parser.parse_args(list(argv) if argv is not None else None)
     except SystemExit as exit_error:
         return int(exit_error.code or 0)
+    if args.command == "solve":
+        return solve_study(args.problem, out=args.out, archive=args.archive)
     if args.command == "check":
         return _check(args.problem)
     if args.command == "health":
@@ -128,4 +191,4 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 2
 
 
-__all__ = ["build_parser", "main"]
+__all__ = ["build_parser", "main", "solve_study"]

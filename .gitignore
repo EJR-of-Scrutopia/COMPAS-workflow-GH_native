@@ -61,3 +61,6 @@ scratch/
 # Generated Rhino environment/smoke-test reports
 scripts/rhino_environment.txt
 scripts/rhino_smoke_fd.txt
+
+# Study results are build products; the problem file is the source.
+studies/**/results/
