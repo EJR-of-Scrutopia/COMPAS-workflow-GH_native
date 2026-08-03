@@ -41,7 +41,9 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.SupportsComponent"] =
                 new[] { 1 },
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
-                new[] { 2 }
+                new[] { 2 },
+            ["Ananke.COMPAS.Native.Components.FdSolveComponent2"] =
+                new[] { 1 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
@@ -174,7 +176,19 @@ internal static class Program
                     "TNA Relax",
                     "02 Form Finding",
                     new[] { "PRB", "q", "Sag %" },
-                    new[] { "RLX" })
+                    new[] { "RLX" }),
+                ["Ananke.COMPAS.Native.Components.TnaSolveComponent2"] = (
+                    "TNA Solve",
+                    "TNA Solve",
+                    "02 Form Finding",
+                    new[] { "RLX", "M", "V", "CTL" },
+                    new[] { "RES" }),
+                ["Ananke.COMPAS.Native.Components.FdSolveComponent2"] = (
+                    "FD Solve",
+                    "FD Solve",
+                    "02 Form Finding",
+                    new[] { "PRB", "q", "CTL" },
+                    new[] { "RES" })
             };
 
     public static int Main(string[] args)

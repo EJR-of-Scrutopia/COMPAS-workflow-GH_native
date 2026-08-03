@@ -565,3 +565,635 @@ public sealed class TnaRelaxComponent :
         }
     }
 }
+
+public sealed record TnaSolveComponent2TaskResult(
+    ResultDto? Result,
+    Exception? Error,
+    TimeSpan Elapsed,
+    string Mode);
+
+/// <summary>
+/// Solve a Relaxed stage's prepared Pattern against the load case its own
+/// Problem always carries, and decode the worker's unified envelope into
+/// the shared Result contract. This is the redesigned TNA Equilibrium: no
+/// separate Load Case input and no default-load fallback, because RLX's
+/// Problem already guarantees one.
+/// </summary>
+public sealed class TnaSolveComponent2 :
+    NativeTaskComponentBase<TnaSolveComponent2TaskResult>
+{
+    private static readonly ComponentValueListSpec[] ValueLists =
+    {
+        new(
+            1,
+            "Equilibrium Mode",
+            new (string Label, string Value)[]
+            {
+                ("Crown Height", "zmax"),
+                ("Force Scale (signed q)", "q")
+            },
+            "zmax")
+    };
+
+    public TnaSolveComponent2()
+        : base(
+            "TNA Solve",
+            "TNA Solve",
+            "Solve a Relaxed Pattern by crown height or signed q scale " +
+            "against the load case its Problem carries.",
+            ComponentCategories.FormFinding,
+            "tna_solve")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("9d2f4b86-7e1a-4c50-b3f7-6a8e0c9d1235");
+
+    private protected override IReadOnlyList<ComponentValueListSpec>
+        SuggestedValueLists => ValueLists;
+
+    protected override void RegisterInputParams(
+        GH_InputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new RelaxedParam(),
+            "Relaxed",
+            "RLX",
+            "Relaxed Pattern paired with the Problem carrying its load " +
+            "case, from TNA Relax.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Mode",
+            "M",
+            "Crown Height (zmax), or Force Scale as a signed q scale with " +
+            "force/length units. Under positive=tension, compression uses " +
+            "negative q; this is not a direct kN member force.",
+            GH_ParamAccess.item,
+            "zmax");
+        parameters.AddNumberParameter(
+            "Value",
+            "V",
+            "Target crown Z in Crown Height mode; signed q scale in Force " +
+            "Scale mode.",
+            GH_ParamAccess.item,
+            5.0);
+        parameters.AddParameter(
+            new TnaControlParam(),
+            "Control",
+            "CTL",
+            "Optional solver controls from Control. Empty uses alpha 100 " +
+            "with 100 horizontal and vertical iterations. Radial and other " +
+            "high-valence patterns need far more horizontal iterations than " +
+            "a quad grid; raise them until the reported reciprocity angle " +
+            "falls to near zero. Mode and Value on this component override " +
+            "the ones carried by Control.",
+            GH_ParamAccess.item);
+        parameters[3].Optional = true;
+    }
+
+    protected override void RegisterOutputParams(
+        GH_OutputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new ResultParam(),
+            "Result",
+            "RES",
+            "Solved thrust network carried in the unified Result envelope.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        if (InPreSolve)
+        {
+            if (!TryReadInputs(
+                    data,
+                    out RelaxedDto? relaxed,
+                    out TnaControlDto? control))
+            {
+                return;
+            }
+            TaskList.Add(Task.Run(
+                () => ComputeAsync(
+                    ContractJson.DeepClone(relaxed!),
+                    ContractJson.DeepClone(control!),
+                    CancelToken),
+                CancelToken));
+            return;
+        }
+
+        TnaSolveComponent2TaskResult result;
+        if (!GetSolveResults(data, out result!))
+        {
+            if (!TryReadInputs(
+                    data,
+                    out RelaxedDto? relaxed,
+                    out TnaControlDto? control))
+            {
+                return;
+            }
+            result = ComputeAsync(
+                    ContractJson.DeepClone(relaxed!),
+                    ContractJson.DeepClone(control!),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        if (result.Error is not null)
+        {
+            Message = result.Error is OperationCanceledException
+                ? "Cancelled"
+                : "Failed";
+            AddRuntimeMessage(
+                result.Error is OperationCanceledException
+                    ? GH_RuntimeMessageLevel.Warning
+                    : GH_RuntimeMessageLevel.Error,
+                "TNA Solve: " +
+                result.Error.GetBaseException().Message);
+            foreach (string line in SafeRecentStderr().TakeLast(3))
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, line);
+            return;
+        }
+        if (result.Result is null)
+        {
+            Message = "Failed";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "TNA Solve produced no result.");
+            return;
+        }
+
+        foreach (DiagnosticDto diagnostic in result.Result.Diagnostics)
+        {
+            GH_RuntimeMessageLevel? level =
+                diagnostic.Severity.ToLowerInvariant() switch
+                {
+                    "error" => GH_RuntimeMessageLevel.Error,
+                    "warning" => GH_RuntimeMessageLevel.Warning,
+                    _ => null
+                };
+            if (level.HasValue)
+            {
+                AddRuntimeMessage(
+                    level.Value,
+                    $"{diagnostic.Code}: {diagnostic.Message}");
+            }
+        }
+
+        Message =
+            $"{result.Mode} - {result.Result.EdgeStates.Count} edges - " +
+            $"{result.Elapsed.TotalMilliseconds:F0} ms";
+        data.SetData(0, new ResultGoo(result.Result));
+    }
+
+    /// <summary>
+    /// Read RLX plus this component's own Mode/Value, merging any supplied
+    /// Control's numerical settings over the previous hardcoded defaults.
+    /// Mode and Value stay on this component because they are the design
+    /// decision; Control only ever supplies the solver's numerical knobs.
+    /// </summary>
+    private bool TryReadInputs(
+        IGH_DataAccess data,
+        out RelaxedDto? relaxed,
+        out TnaControlDto? control)
+    {
+        relaxed = null;
+        control = null;
+        RelaxedGoo? relaxedGoo = null;
+        string modeInput = "zmax";
+        double value = 5.0;
+        if (!data.GetData(0, ref relaxedGoo) ||
+            relaxedGoo?.Value is not RelaxedDto relaxedValue)
+        {
+            return false;
+        }
+        data.GetData(1, ref modeInput);
+        data.GetData(2, ref value);
+
+        TnaControlGoo? controlGoo = null;
+        TnaControlDto? suppliedControl =
+            data.GetData(3, ref controlGoo) ? controlGoo?.Value : null;
+
+        string mode = TnaControlDto.NormaliseHeightMode(modeInput);
+        var controlValue = new TnaControlDto
+        {
+            HeightMode = mode,
+            HeightValue = value,
+            HorizontalAlpha = suppliedControl?.HorizontalAlpha ?? 100.0,
+            HorizontalIterations = suppliedControl?.HorizontalIterations ?? 100,
+            VerticalIterations = suppliedControl?.VerticalIterations ?? 100,
+            Tolerance = suppliedControl?.Tolerance ?? 1.0e-3,
+            Provenance = new Dictionary<string, string>(
+                StringComparer.Ordinal)
+            {
+                ["component"] = "TNA Solve",
+                ["controls"] = suppliedControl is null ? "defaults" : "Control",
+                ["force_scale_semantics"] =
+                    "signed_q_force_per_length_positive_tension"
+            }
+        };
+
+        var errors = new List<string>();
+        errors.AddRange(relaxedValue.Validate());
+        errors.AddRange(controlValue.Validate());
+        if (mode is not ("zmax" or "q"))
+        {
+            errors.Add(
+                "Mode must be Crown Height (zmax) or Force Scale (q).");
+        }
+        if (errors.Count > 0)
+        {
+            Message = "Invalid";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                string.Join(" ", errors));
+            return false;
+        }
+
+        relaxed = relaxedValue;
+        control = controlValue;
+        return true;
+    }
+
+    private static async Task<TnaSolveComponent2TaskResult> ComputeAsync(
+        RelaxedDto relaxed,
+        TnaControlDto control,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            TnaPreparedDto prepared = relaxed.Prepared!;
+            LoadCaseDto loadCase = relaxed.Problem!.Load!;
+            JsonElement response = await WorkerRuntime.Host
+                .RequestAsync<JsonElement>(
+                    "tna.solve",
+                    TnaWorkflowWorkerCodec.StagedSolvePayload(
+                        prepared,
+                        loadCase,
+                        control),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            EquilibriumProblemDto analysisProblem =
+                TnaWorkflowWorkerCodec.AnalysisProblem(
+                    response,
+                    prepared,
+                    loadCase);
+            ResultDto solved = TnaWorkerResultCodec.DecodeResult(
+                response,
+                analysisProblem,
+                control,
+                0);
+            solved = solved with { Problem = relaxed.Problem };
+            stopwatch.Stop();
+            return new TnaSolveComponent2TaskResult(
+                solved,
+                null,
+                stopwatch.Elapsed,
+                TnaControlDto.NormaliseHeightMode(control.HeightMode));
+        }
+        catch (Exception error)
+        {
+            stopwatch.Stop();
+            return new TnaSolveComponent2TaskResult(
+                null,
+                error,
+                stopwatch.Elapsed,
+                TnaControlDto.NormaliseHeightMode(control.HeightMode));
+        }
+    }
+
+    private static IReadOnlyList<string> SafeRecentStderr()
+    {
+        try
+        {
+            return WorkerRuntime.Host.RecentStderr;
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+}
+
+public sealed record FdSolveTaskResult(
+    ResultDto? Result,
+    Exception? Error,
+    TimeSpan Elapsed);
+
+/// <summary>
+/// Run whole-network COMPAS force-density form finding against a Problem's
+/// own load case, building the solver-neutral EquilibriumProblemDto the
+/// fd.solve worker command expects internally from the shared Problem/RLX
+/// spine rather than requiring one wired in from upstream.
+/// </summary>
+public sealed class FdSolveComponent2 :
+    NativeTaskComponentBase<FdSolveTaskResult>
+{
+    public FdSolveComponent2()
+        : base(
+            "FD Solve",
+            "FD Solve",
+            "Run whole-network COMPAS force-density form finding against " +
+            "the load case the Problem carries.",
+            ComponentCategories.FormFinding,
+            "fd_solve")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("4b8c6e0a-3d9f-47b2-95c1-e7a2d8f4b096");
+
+    protected override void RegisterInputParams(
+        GH_InputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new ProblemParam(),
+            "Problem",
+            "PRB",
+            "The Anchored Pattern bundled with the load case to solve " +
+            "against it.",
+            GH_ParamAccess.item);
+        parameters.AddNumberParameter(
+            "Force Density",
+            "q",
+            "One value broadcasts to all members; otherwise provide one " +
+            "per member. Numeric units are Force Unit per Length Unit.",
+            GH_ParamAccess.list);
+        parameters[1].DataMapping = GH_DataMapping.Flatten;
+        parameters[1].Optional = true;
+        parameters.AddParameter(
+            new TnaControlParam(),
+            "Control",
+            "CTL",
+            "Optional controls carried through to the Result for " +
+            "provenance. FD's direct linear solve has no iterative knobs " +
+            "of its own, so nothing here changes the solve itself.",
+            GH_ParamAccess.item);
+        parameters[2].Optional = true;
+    }
+
+    protected override void RegisterOutputParams(
+        GH_OutputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new ResultParam(),
+            "Result",
+            "RES",
+            "Stable COMPAS FD result carried in the unified Result " +
+            "envelope.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        if (InPreSolve)
+        {
+            if (!TryReadInputs(
+                    data,
+                    out ProblemDto? problem,
+                    out EquilibriumProblemDto? equilibriumProblem,
+                    out FDSettingsDto? settings,
+                    out TnaControlDto? control))
+            {
+                return;
+            }
+            TaskList.Add(Task.Run(
+                () => ComputeAsync(
+                    ContractJson.DeepClone(problem!),
+                    ContractJson.DeepClone(equilibriumProblem!),
+                    ContractJson.DeepClone(settings!),
+                    control is null ? null : ContractJson.DeepClone(control),
+                    CancelToken),
+                CancelToken));
+            return;
+        }
+
+        FdSolveTaskResult result;
+        if (!GetSolveResults(data, out result!))
+        {
+            if (!TryReadInputs(
+                    data,
+                    out ProblemDto? problem,
+                    out EquilibriumProblemDto? equilibriumProblem,
+                    out FDSettingsDto? settings,
+                    out TnaControlDto? control))
+            {
+                return;
+            }
+            result = ComputeAsync(
+                    ContractJson.DeepClone(problem!),
+                    ContractJson.DeepClone(equilibriumProblem!),
+                    ContractJson.DeepClone(settings!),
+                    control is null ? null : ContractJson.DeepClone(control),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        if (result.Error is not null)
+        {
+            Message = result.Error is OperationCanceledException
+                ? "Cancelled"
+                : "Failed";
+            GH_RuntimeMessageLevel level =
+                result.Error is OperationCanceledException
+                    ? GH_RuntimeMessageLevel.Warning
+                    : GH_RuntimeMessageLevel.Error;
+            AddRuntimeMessage(
+                level,
+                "FD Solve: " + result.Error.GetBaseException().Message);
+
+            IReadOnlyList<string> stderr = SafeRecentStderr();
+            foreach (string line in stderr.TakeLast(3))
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, line);
+            return;
+        }
+        if (result.Result?.Equilibrium is null)
+        {
+            Message = "Failed";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "FD Solve produced no result.");
+            return;
+        }
+
+        foreach (DiagnosticDto diagnostic in result.Result.Diagnostics)
+        {
+            GH_RuntimeMessageLevel? level =
+                diagnostic.Severity.ToLowerInvariant() switch
+                {
+                    "error" => GH_RuntimeMessageLevel.Error,
+                    "warning" => GH_RuntimeMessageLevel.Warning,
+                    _ => null
+                };
+            if (level.HasValue)
+            {
+                AddRuntimeMessage(
+                    level.Value,
+                    $"{diagnostic.Code}: {diagnostic.Message}");
+            }
+        }
+
+        Message =
+            $"{result.Result.Equilibrium.Edges.Count} members - " +
+            $"{result.Elapsed.TotalMilliseconds:F0} ms";
+        data.SetData(0, new ResultGoo(result.Result));
+    }
+
+    /// <summary>
+    /// Read PRB and this component's own Force Density, then reconstruct
+    /// the solver-neutral EquilibriumProblemDto fd.solve expects: PRB's
+    /// AnchorNodeIds become an explicit SupportSetDto (the same pattern TNA
+    /// Relax follows), and PRB's own Load becomes the sole load case.
+    /// </summary>
+    private bool TryReadInputs(
+        IGH_DataAccess data,
+        out ProblemDto? problem,
+        out EquilibriumProblemDto? equilibriumProblem,
+        out FDSettingsDto? settings,
+        out TnaControlDto? control)
+    {
+        problem = null;
+        equilibriumProblem = null;
+        settings = null;
+        control = null;
+        ProblemGoo? problemGoo = null;
+        var forceDensities = new List<double>();
+        if (!data.GetData(0, ref problemGoo) ||
+            problemGoo?.Value is not ProblemDto problemValue)
+        {
+            return false;
+        }
+        data.GetDataList(1, forceDensities);
+        if (forceDensities.Count == 0)
+            forceDensities.Add(1.0);
+
+        TnaControlGoo? controlGoo = null;
+        TnaControlDto? suppliedControl =
+            data.GetData(2, ref controlGoo) ? controlGoo?.Value : null;
+
+        var settingsValue = new FDSettingsDto
+        {
+            ForceDensities = forceDensities.ToArray(),
+            SignConvention = "positive_tension",
+            Provenance = new Dictionary<string, string>(
+                StringComparer.Ordinal)
+            {
+                ["component"] = "FD Solve"
+            }
+        };
+
+        var errors = new List<string>(problemValue.Validate());
+        errors.AddRange(settingsValue.Validate());
+        if (suppliedControl is not null)
+            errors.AddRange(suppliedControl.Validate());
+        if (errors.Count > 0)
+        {
+            Message = "Invalid";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                string.Join(" ", errors));
+            return false;
+        }
+
+        // problemValue.Validate() above already guarantees Anchored,
+        // Anchored.Pattern, Anchored.Pattern.Topology, and Load are present.
+        TopologyDto topology = problemValue.Anchored!.Pattern!.Topology!;
+        var supports = new SupportSetDto
+        {
+            TopologyHash = topology.TopologyHash,
+            Mode = "explicit",
+            Points = Array.Empty<Point3Dto>(),
+            NodeIds = problemValue.Anchored.AnchorNodeIds,
+            SnapTolerance = problemValue.Anchored.SnapTolerance,
+            Provenance = new Dictionary<string, string>(
+                StringComparer.Ordinal)
+            {
+                ["source"] = "Supports",
+                ["point_targets_resolved"] = "true"
+            }
+        };
+        var equilibriumProblemValue = new EquilibriumProblemDto
+        {
+            Name = "fd-solve",
+            Topology = topology,
+            Supports = supports,
+            LoadCases = new[] { problemValue.Load! },
+            Provenance = new Dictionary<string, string>(
+                StringComparer.Ordinal)
+            {
+                ["source"] = "FD Solve"
+            }
+        };
+
+        int edgeCount = topology.Edges.Count;
+        int densityCount = settingsValue.ForceDensities.Count;
+        if (densityCount != 1 && densityCount != edgeCount)
+        {
+            Message = "Invalid";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "Force Density must contain one broadcast value or " +
+                $"exactly {edgeCount} member values.");
+            return false;
+        }
+
+        problem = problemValue;
+        equilibriumProblem = equilibriumProblemValue;
+        settings = settingsValue;
+        control = suppliedControl;
+        return true;
+    }
+
+    private static async Task<FdSolveTaskResult> ComputeAsync(
+        ProblemDto problem,
+        EquilibriumProblemDto equilibriumProblem,
+        FDSettingsDto settings,
+        TnaControlDto? control,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            IReadOnlyDictionary<string, object?> payload =
+                equilibriumProblem.ToFdSolvePayload(settings, 0);
+            JsonElement response = await WorkerRuntime.Host
+                .RequestAsync<JsonElement>(
+                    "fd.solve",
+                    payload,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            ResultDto solved = WorkerResultCodec.DecodeResult(
+                response,
+                equilibriumProblem,
+                settings,
+                0);
+            solved = solved with
+            {
+                Problem = problem,
+                Control = control
+            };
+            stopwatch.Stop();
+            return new FdSolveTaskResult(solved, null, stopwatch.Elapsed);
+        }
+        catch (Exception error)
+        {
+            stopwatch.Stop();
+            return new FdSolveTaskResult(null, error, stopwatch.Elapsed);
+        }
+    }
+
+    private static IReadOnlyList<string> SafeRecentStderr()
+    {
+        try
+        {
+            return WorkerRuntime.Host.RecentStderr;
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+}
