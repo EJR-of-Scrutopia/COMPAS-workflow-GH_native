@@ -294,6 +294,83 @@ def _clean_cycle(vertices: Sequence[int]) -> List[int]:
     return cleaned
 
 
+def _format_point(point: Sequence[float]) -> str:
+    return "({:.4g}, {:.4g}, {:.4g})".format(
+        float(point[0]), float(point[1]), float(point[2])
+    )
+
+
+def describe_mesh_defects(
+    vertices: Any,
+    faces: Sequence[Sequence[int]],
+    limit: int = 5,
+) -> Tuple[str, ...]:
+    """Name the defects that stop faces forming a valid COMPAS mesh.
+
+    ``Mesh.is_valid`` answers only yes or no, which leaves nothing to act on.
+    Measured against COMPAS 2.15.1 it is False for exactly two conditions:
+
+    * a directed halfedge claimed by more than one face, which means a face is
+      duplicated or two neighbours are wound the same way round; and
+    * an edge shared by more than two faces, which is non-manifold.
+
+    Both are locatable, so this reports the offending face indices and the
+    coordinates of the edge involved. Reversed winding and pinched vertices are
+    deliberately not reported here: they are real problems, but ``is_valid``
+    accepts them, so naming them would send the search in the wrong direction.
+
+    Returns an empty tuple when nothing is wrong.
+    """
+    points = list(vertices.values()) if isinstance(vertices, Mapping) else list(vertices)
+
+    halfedge_faces = {}  # type: Dict[Tuple[int, int], List[int]]
+    edge_faces = {}  # type: Dict[Edge, List[int]]
+    for face_index, face in enumerate(faces):
+        cycle = list(face)
+        for position, u in enumerate(cycle):
+            v = cycle[(position + 1) % len(cycle)]
+            if u == v:
+                continue
+            halfedge_faces.setdefault((int(u), int(v)), []).append(face_index)
+            edge_faces.setdefault(_edge_key(int(u), int(v)), []).append(face_index)
+
+    def location(u: int, v: int) -> str:
+        try:
+            return "{} to {}".format(
+                _format_point(points[u]), _format_point(points[v])
+            )
+        except (IndexError, TypeError, KeyError):
+            return "vertices {} and {}".format(u, v)
+
+    messages = []
+    for (u, v), owners in sorted(halfedge_faces.items()):
+        if len(owners) > 1:
+            messages.append(
+                "Faces {} share the same directed edge {}. That face is "
+                "duplicated, or two neighbouring faces are wound the same way "
+                "round instead of opposing.".format(
+                    ", ".join(str(index) for index in owners), location(u, v)
+                )
+            )
+
+    for (u, v), owners in sorted(edge_faces.items()):
+        if len(owners) > 2:
+            messages.append(
+                "Edge {} is shared by {} faces ({}). A surface edge can carry "
+                "at most two.".format(
+                    location(u, v),
+                    len(owners),
+                    ", ".join(str(index) for index in owners),
+                )
+            )
+
+    if len(messages) > limit:
+        hidden = len(messages) - limit
+        messages = messages[:limit]
+        messages.append("... and {} more of the same kind.".format(hidden))
+    return tuple(messages)
+
+
 def _edges_from_faces(faces: Sequence[Sequence[int]]) -> List[Edge]:
     edges = []
     seen = set()
@@ -492,8 +569,21 @@ def _register_vertices_faces(
 
     form = FormDiagram.from_vertices_and_faces(canonical_points, canonical_faces)
     if not form.is_valid():
+        defects = describe_mesh_defects(canonical_points, canonical_faces)
+        detail = (
+            "\n".join("  " + message for message in defects)
+            if defects
+            else "  The halfedge structure is inconsistent for an unrecognised "
+            "reason."
+        )
         raise TNATopologyError(
-            "The merged vertices/faces do not form a valid oriented COMPAS mesh."
+            "The pattern is not a valid oriented COMPAS mesh after merging "
+            "coincident vertices at tolerance {:g}:\n{}\n"
+            "Repair the mesh in CAD, then register it again. Note that "
+            "welding can create these defects from geometry that looked "
+            "clean, where two surfaces met within the tolerance.".format(
+                tolerance, detail
+            )
         )
 
     actual_edges = _actual_edges(form)
