@@ -462,3 +462,157 @@ public sealed class SupportsComponent : NativePreviewComponentBase
             throw new InvalidOperationException(string.Join(" ", errors));
     }
 }
+
+/// <summary>
+/// Close the shared spine's setup: one load vector applied to every node or
+/// an explicit subset, bundled with the Anchored Pattern into the Problem
+/// both solvers take. Radical simplicity is the point: one vector, optional
+/// node ids, one factor. Units are metadata already carried on the Pattern.
+/// </summary>
+public sealed class LoadsComponent : NativeComponentBase
+{
+    public LoadsComponent()
+        : base(
+            "Loads",
+            "Loads",
+            "Apply one load vector to every node or an explicit subset, " +
+            "producing the Problem the solvers take.",
+            ComponentCategories.Model,
+            "load_case")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("3f9b7d21-6c84-4e0a-b5d9-8a1c2e4f6072");
+
+    protected override void RegisterInputParams(
+        GH_InputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new AnchoredPatternParam(),
+            "Anchored Pattern",
+            "SUP",
+            "The anchored source Pattern from Supports.",
+            GH_ParamAccess.item);
+        parameters.AddVectorParameter(
+            "Vector",
+            "V",
+            "Load vector applied to every target node.",
+            GH_ParamAccess.item,
+            new Vector3d(0.0, 0.0, -1.0));
+        parameters.AddIntegerParameter(
+            "Node IDs",
+            "ID",
+            "Explicit zero-based topology node IDs to load. Empty applies " +
+            "the Vector to every node.",
+            GH_ParamAccess.list);
+        parameters.AddNumberParameter(
+            "Factor",
+            "F",
+            "Multiplier applied to the Vector.",
+            GH_ParamAccess.item,
+            1.0);
+
+        parameters[2].DataMapping = GH_DataMapping.Flatten;
+        parameters[2].Optional = true;
+    }
+
+    protected override void RegisterOutputParams(
+        GH_OutputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new ProblemParam(),
+            "Problem",
+            "PRB",
+            "The Anchored Pattern bundled with the load case to solve " +
+            "against it.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        AnchoredPatternGoo? supGoo = null;
+        var vector = new Vector3d(0.0, 0.0, -1.0);
+        var nodeIds = new List<int>();
+        double factor = 1.0;
+        if (!data.GetData(0, ref supGoo) ||
+            supGoo?.Value is not AnchoredPatternDto sup ||
+            sup.Pattern?.Topology is not TopologyDto topology)
+        {
+            return;
+        }
+        data.GetData(1, ref vector);
+        data.GetDataList(2, nodeIds);
+        data.GetData(3, ref factor);
+
+        try
+        {
+            if (!vector.IsValid)
+                throw new ArgumentException("Vector contains invalid coordinates.");
+            if (!double.IsFinite(factor))
+                throw new ArgumentException("Factor must be finite.");
+            if (nodeIds.Any(id => id < 0 || id >= topology.Vertices.Count))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(nodeIds),
+                    "A Node ID lies outside the topology.");
+            }
+
+            var factored = new Point3Dto(
+                factor * vector.X,
+                factor * vector.Y,
+                factor * vector.Z);
+            if (!double.IsFinite(factored.X) ||
+                !double.IsFinite(factored.Y) ||
+                !double.IsFinite(factored.Z))
+            {
+                throw new ArgumentException(
+                    "The factored load vector must remain finite.");
+            }
+
+            bool everyNode = nodeIds.Count == 0;
+            var loadCase = new LoadCaseDto
+            {
+                TopologyHash = topology.TopologyHash,
+                Name = "load",
+                Distribution = everyNode ? "uniform_nodes" : "point",
+                Points = Array.Empty<Point3Dto>(),
+                NodeIds = everyNode
+                    ? Array.Empty<int>()
+                    : nodeIds.ToArray(),
+                Vectors = everyNode
+                    ? Array.Empty<Point3Dto>()
+                    : new[] { factored },
+                BaseVector = everyNode ? factored : null,
+                Factor = 1.0,
+                CoordinateSystem = "world",
+                Provenance = new Dictionary<string, string>
+                {
+                    ["source"] = "Grasshopper",
+                    ["force_unit"] = "kN",
+                    ["input_factor"] =
+                        factor.ToString("R", CultureInfo.InvariantCulture)
+                }
+            };
+            EnsureValid(loadCase);
+
+            var problem = new ProblemDto { Anchored = sup, Load = loadCase };
+            EnsureValid(problem);
+
+            Message = everyNode ? "every node" : $"{nodeIds.Count} node(s)";
+            data.SetData(0, new ProblemGoo(problem));
+        }
+        catch (Exception error)
+        {
+            Message = "Invalid";
+            ReportException("Loads failed", error);
+        }
+    }
+
+    private static void EnsureValid(ContractDto contract)
+    {
+        IReadOnlyList<string> errors = contract.Validate();
+        if (errors.Count > 0)
+            throw new InvalidOperationException(string.Join(" ", errors));
+    }
+}

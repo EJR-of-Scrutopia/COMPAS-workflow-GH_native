@@ -39,7 +39,9 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.PatternComponent"] =
                 new[] { 0 },
             ["Ananke.COMPAS.Native.Components.SupportsComponent"] =
-                new[] { 1 }
+                new[] { 1 },
+            ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
+                new[] { 2 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
@@ -153,7 +155,13 @@ internal static class Program
                     "Supports",
                     "01 Model",
                     new[] { "PAT", "A", "Tol" },
-                    new[] { "SUP" })
+                    new[] { "SUP" }),
+                ["Ananke.COMPAS.Native.Components.LoadsComponent"] = (
+                    "Loads",
+                    "Loads",
+                    "01 Model",
+                    new[] { "SUP", "V", "ID", "F" },
+                    new[] { "PRB" })
             };
 
     public static int Main(string[] args)
