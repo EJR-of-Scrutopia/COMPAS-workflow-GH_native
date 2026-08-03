@@ -80,13 +80,6 @@ public sealed class ControlComponent : NativeComponentBase
             "Typed TNA numerical controls shared by staged and one-shot " +
             "TNA solving.",
             GH_ParamAccess.item);
-
-        // TnaControlParam fixes its own NickName ("TNA Control") in its
-        // constructor so the older TNA Control component keeps its port
-        // label. Overriding it here, after registration, gives this
-        // component the shorter CTL port label without touching the shared
-        // param class the old component still relies on.
-        parameters[0].NickName = "CTL";
     }
 
     protected override void SolveInstance(IGH_DataAccess data)
