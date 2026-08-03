@@ -73,6 +73,9 @@ dev = [
 [project.urls]
 Repository = "https://github.com/EJR-of-Scrutopia/COMPAS-workflow-GH_native"
 
+[project.scripts]
+ananke = "ananke_equilibrium.cli.main:main"
+
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/ananke_equilibrium",
