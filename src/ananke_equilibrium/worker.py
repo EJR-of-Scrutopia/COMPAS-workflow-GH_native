@@ -55,6 +55,7 @@ ALLOWED_COMMANDS = frozenset(
         "fd.solve",
         "tna.prepare",
         "tna.solve",
+        "export.compas",
     )
 )
 
@@ -513,6 +514,17 @@ def dispatch(
                     ),
                 ),
             )
+        if command == "export.compas":
+            from .gh.export import compas_export_payload
+
+            result = payload.get("result")
+            if not isinstance(result, Mapping) or result.get("kind") != "Result":
+                raise ProtocolError(
+                    "invalid_payload",
+                    "export.compas requires a Result payload.",
+                    {"request_id": request_id},
+                )
+            return result_response(request_id, compas_export_payload(result))
         # Defensive only: _validate_request already enforces the allowlist.
         raise ProtocolError(
             "unknown_command",
