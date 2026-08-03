@@ -1026,6 +1026,18 @@ public sealed class TnaEquilibriumComponent :
             "Scale mode.",
             GH_ParamAccess.item,
             5.0);
+        parameters.AddParameter(
+            new TnaControlParam(),
+            "Control",
+            "C",
+            "Optional solver controls from TNA Control. Empty uses alpha 100 " +
+            "with 100 horizontal and vertical iterations. Radial and other " +
+            "high-valence patterns need far more horizontal iterations than " +
+            "a quad grid; raise them until the reported reciprocity angle " +
+            "falls to near zero. Mode and Value on this component override " +
+            "the ones carried by Control.",
+            GH_ParamAccess.item);
+        parameters[4].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -1191,19 +1203,29 @@ public sealed class TnaEquilibriumComponent :
         data.GetData(2, ref modeInput);
         data.GetData(3, ref value);
 
+        // Numerical controls come from an optional TNA Control so the staged
+        // and one-shot paths share one settings component. Mode and Value stay
+        // on this component because they are the two design decisions; the
+        // rest are solver settings. Without a Control the previous hardcoded
+        // defaults apply, which are only adequate for grid-like patterns.
+        TnaControlGoo? controlGoo = null;
+        TnaControlDto? suppliedControl =
+            data.GetData(4, ref controlGoo) ? controlGoo?.Value : null;
+
         string mode = TnaControlDto.NormaliseHeightMode(modeInput);
         var controlValue = new TnaControlDto
         {
             HeightMode = mode,
             HeightValue = value,
-            HorizontalAlpha = 100.0,
-            HorizontalIterations = 100,
-            VerticalIterations = 100,
-            Tolerance = 1.0e-3,
+            HorizontalAlpha = suppliedControl?.HorizontalAlpha ?? 100.0,
+            HorizontalIterations = suppliedControl?.HorizontalIterations ?? 100,
+            VerticalIterations = suppliedControl?.VerticalIterations ?? 100,
+            Tolerance = suppliedControl?.Tolerance ?? 1.0e-3,
             Provenance = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
                 ["component"] = "TNA Equilibrium",
+                ["controls"] = suppliedControl is null ? "defaults" : "TNA Control",
                 ["force_scale_semantics"] =
                     "signed_q_force_per_length_positive_tension"
             }
