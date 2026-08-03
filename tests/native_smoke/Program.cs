@@ -54,7 +54,8 @@ internal static class Program
             "Ananke.COMPAS.Native.Components.TnaRelaxBoundariesComponent",
             "Ananke.COMPAS.Native.Components.TnaEquilibriumComponent",
             "Ananke.COMPAS.Native.Components.PatternComponent",
-            "Ananke.COMPAS.Native.Components.SupportsComponent"
+            "Ananke.COMPAS.Native.Components.SupportsComponent",
+            "Ananke.COMPAS.Native.Components.TnaRelaxComponent"
         };
     private static readonly HashSet<string> NativeVisibilityGuardComponents =
         new(StringComparer.Ordinal)
@@ -161,7 +162,19 @@ internal static class Program
                     "Loads",
                     "01 Model",
                     new[] { "SUP", "V", "ID", "F" },
-                    new[] { "PRB" })
+                    new[] { "PRB" }),
+                ["Ananke.COMPAS.Native.Components.ControlComponent"] = (
+                    "Control",
+                    "Control",
+                    "02 Form Finding",
+                    new[] { "Alpha", "HI", "VI", "Tol" },
+                    new[] { "CTL" }),
+                ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = (
+                    "TNA Relax",
+                    "TNA Relax",
+                    "02 Form Finding",
+                    new[] { "PRB", "q", "Sag %" },
+                    new[] { "RLX" })
             };
 
     public static int Main(string[] args)
