@@ -9,13 +9,48 @@ using Grasshopper.Kernel.Special;
 
 namespace Ananke.COMPAS.Native.Components;
 
+/// <summary>
+/// Grasshopper subcategories, one per COMPAS extension family.
+///
+/// The naming follows COMPAS's own family names deliberately, so a tab answers
+/// "which package family backs this" without a lookup. Each backed tab pairs
+/// with one capability flag reported by Backend Health and one optional
+/// dependency group in pyproject.toml, so a tab that does nothing is explained
+/// by a missing package rather than being a mystery.
+///
+/// Subcategory is display grouping only. Component identity is the GUID, so
+/// regrouping never invalidates a saved definition.
+/// </summary>
 internal static class ComponentCategories
 {
     public const string Category = "Ananke COMPAS";
+
+    // Shared spine. No backend beyond compas itself.
     public const string Model = "01 Model";
+
+    // compas_fd, compas_tna. Capability: fd.solve, tna.solve. Extra: equilibrium.
     public const string FormFinding = "02 Form Finding";
+
+    // compas_ags. Capability: ags.solve. Extra: equilibrium.
     public const string GraphicStatics = "03 Graphic Statics";
+
+    // compas_dem, compas_assembly, compas_cra. Capability: masonry. Extra: masonry.
+    // Reserved. Fills the gap deliberately left between 03 and 05.
+    public const string Masonry = "04 Masonry";
+
+    // Viewport preview only. No backend.
     public const string Visualisation = "05 Visualisation";
+
+    // compas_fea2 plus a solver backend. Capability: fea. Extra: fea.
+    public const string Engineering = "06 Engineering";
+
+    // compas_fab, compas_robots. Capability: fab. Extra: fab.
+    public const string Fabrication = "07 Fabrication";
+
+    // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
+    public const string Delivery = "08 Delivery";
+
+    // Result extraction. No backend.
     public const string Query = "90 Query";
 }
 

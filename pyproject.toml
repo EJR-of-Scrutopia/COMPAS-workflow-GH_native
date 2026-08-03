@@ -44,6 +44,25 @@ fea = [
 ifc = [
     "compas_ifc==2.1.0",
 ]
+# Masonry: block tessellation, contact assembly, and coupled rigid-block
+# stability. compas_dem pulls compas_cgal, compas_libigl, and compas_model.
+# Backs the "04 Masonry" tab.
+masonry = [
+    "compas_dem==0.5.0",
+    "compas_assembly==0.7.1",
+    "compas_cra==0.4.0",
+]
+# Digital fabrication: robot models and kinematics. Analytical inverse
+# kinematics needs no further backend; PyBullet and ROS/MoveIt are opt-in.
+# Backs the "07 Fabrication" tab.
+fab = [
+    "compas_fab==2.0.1",
+    "compas_robots==1.0.1",
+]
+# Patterns: backs the Skeleton mode that TNA Pattern currently rejects.
+patterns = [
+    "compas_skeleton==2.0.1",
+]
 dev = [
     "build>=1.2,<2",
     "numpy==2.0.2",

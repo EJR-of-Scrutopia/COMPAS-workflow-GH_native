@@ -68,6 +68,124 @@ The compiled native slice has twenty components. The C# classes under
   boundary; no data-tree object enters the numerical core.
 - Units and sign conventions are explicit in contracts and reports.
 
+### Suggested value lists
+
+A component with a fixed vocabulary offers a populated dropdown on drop, so the
+valid values are visible on the canvas without reading documentation.
+`ComponentValueListSpec` declares them and `SuggestedValueListPlacement` places
+them, once, for every native base class.
+
+The placement has one non-obvious requirement. `Attributes.Pivot` is not a
+stored point; it is read off the centre of `Bounds`, and `Bounds` on a freshly
+dropped component holds whatever the last layout pass computed rather than
+where the object visibly sits. Reading it in `AddedToDocument` without forcing
+a layout lands every list near the canvas origin. The fix is to call
+`ExpireLayout` then `PerformLayout` on the owning component synchronously
+before reading the input's pivot, then again on the new list so it sizes to the
+items it now holds. Deferring with `ScheduleSolution` does not help, because
+waiting for a layout is not the same as causing one.
+
+This pattern is proven in the QS Intelligence Grasshopper plugin, whose
+`ValueLists.cs` documents the two earlier attempts that failed and why. Keep
+the two implementations consistent if either changes.
+
+## Tab layout: one tab per COMPAS family
+
+The subcategories are named after COMPAS's own extension families rather than
+after invented groupings. That choice does real work: the tab tells you which
+package family backs it, so "why is this tab empty" has an answer you can act
+on instead of a shrug.
+
+The rule is a four-way alignment:
+
+```text
+one tab  <->  one COMPAS family  <->  one capability flag  <->  one pyproject extra
+```
+
+`Backend Health` reports the capability flags. An inactive tab is therefore
+always explained by a missing package, and installing an extra lights up a tab.
+Nothing is hidden behind a silent fallback.
+
+| Tab | COMPAS family | Packages | Capability | Extra | State |
+| --- | --- | --- | --- | --- | --- |
+| `01 Model` | core | `compas` | always | none | **Built** |
+| `02 Form Finding` | Form Finding | `compas_fd`, `compas_tna` | `fd.solve`, `tna.solve` | `equilibrium` | **Built** |
+| `03 Graphic Statics` | Form Finding | `compas_ags` | `ags.solve` | `equilibrium` | **Built** |
+| `04 Masonry` | Masonry | `compas_dem`, `compas_assembly`, `compas_cra` | `masonry` | `masonry` | Reserved |
+| `05 Visualisation` | none | none | always | none | **Built** |
+| `06 Engineering` | Engineering | `compas_fea2` plus a solver | `fea` | `fea` | Reserved |
+| `07 Fabrication` | Digital Fabrication | `compas_fab`, `compas_robots` | `fab` | `fab` | Reserved |
+| `08 Delivery` | Data Modelling | `compas_model`, `compas_ifc` | `model`, `ifc` | `model`, `ifc` | Packages installed, components pending |
+| `90 Query` | none | none | always | none | **Built** |
+
+`04 Masonry` fills the gap deliberately left between `03` and `05`, so no
+existing subcategory string changes. Subcategory is display grouping only and
+component identity is the GUID, so regrouping never invalidates a saved
+definition; the versioning policy's breaking-change rules govern ports and
+semantics, not tabs.
+
+### Why TNA is not its own tab
+
+TNA is a method inside Form Finding, which is how COMPAS itself classifies it
+alongside `compas_fd`, `compas_dr` and `compas_ags`. Giving it a tab would
+break the alignment above and would separate it from the shared registration
+spine it depends on. `02 Form Finding` is the fullest tab at eight components,
+and if it becomes crowded the answer is a naming prefix (`TNA ...`, `FD ...`,
+which the components already use) rather than a new tab that implies a new
+backend.
+
+### The Patterns family already has a home
+
+COMPAS lists Patterns (`compas_skeleton`, `compas_singular`) as its own family,
+but in this plugin it is not a tab. It is the missing backend for modes that
+already exist and already fail honestly: `TNA Pattern` offers `Surface`,
+`Grid`, `Triangulation` and `Skeleton`, and rejects all four with an actionable
+error because no generator exists. `compas_skeleton` 2.0.1 is COMPAS 2
+compatible and is the natural implementation of the `Skeleton` mode.
+`compas_singular` is conda-only and would back quad-mesh singularity
+patterning. Adopting them fills in existing modes rather than adding a tab.
+
+### What each reserved tab would hold
+
+Sketched to the same rule the built tabs follow: a stage returns one typed
+bundle, and downstream components read that bundle rather than recomputing.
+
+**`04 Masonry`.** `Block Tessellation` turning a `TnaResult` into intrados and
+extrados block geometry with interface frames; `Assembly` binding those blocks
+into a contact graph; `Stability` running the coupled rigid-block solve for a
+chosen build stage; `Formwork Reaction` extracting the load history the
+falsework carries across the whole sequence. The last of these is the one that
+does not exist anywhere else in the pipeline, because a thrust network
+describes only the completed vault.
+
+**`06 Engineering`.** `Structural Model` and `FEA Solve`, consuming the
+existing `StructuralAnalysisCase`. The current `StructuralHandoff` already
+reports exactly which material, section, restraint and load-combination inputs
+are still missing, so this tab has a specified entry contract already.
+
+**`07 Fabrication`.** `Robot` loading a `compas_robots` model, `Place Sequence`
+ordering block placement from the assembly, and `Inverse Kinematics` returning
+joint configurations per target frame. Analytical IK needs no backend beyond
+`compas_fab` itself, so this tab can be useful before any ROS decision is made.
+
+**`08 Delivery`.** `Compas Model` and `IFC Export`, wrapping formulations that
+`structural.py` already builds and deliberately does not auto-save.
+
+### Sequence across tabs
+
+Left to right on the ribbon is close to the real workflow, which is the second
+reason for the numbering:
+
+```text
+01 Model -> 02 Form Finding -> 04 Masonry -> 07 Fabrication
+                |                  |              |
+                +-> 03 Graphic Statics            |
+                +-> 06 Engineering                |
+                +-> 08 Delivery <-----------------+
+
+05 Visualisation and 90 Query read any stage without advancing it.
+```
+
 ## Roadmap components
 
 These are separate stages, not extra modes hidden inside the initial solvers.
