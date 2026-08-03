@@ -208,6 +208,8 @@ Further project documentation:
 
 - [System analysis: architecture, design intent, graphic statics, and the
   COMPAS ecosystem](docs/system-analysis.md) (start here for orientation)
+- [The COMPAS suite, and how it enters this plugin](docs/compas-suite-adoption.md)
+  (verified package inventory, the masonry-on-formwork pipeline, adoption order)
 - [Native worker architecture](docs/architecture/native-worker-v02.md)
 - [RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md)
 - [TNA, graphic statics, and column placement](docs/architecture/tna-graphic-statics-columns.md)

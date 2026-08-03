@@ -158,7 +158,7 @@ Zurich, which is the lineage this project draws on):
 | `compas_ags` | Algebraic graphic statics for 2D structures. Used here. |
 | `compas_fd` | Force density method, constrained form finding. Used here. |
 | `compas_dr` | Dynamic relaxation, an alternative constrained form finder. |
-| `compas_3gs` | Three-dimensional graphic statics. The natural home for the spatial reciprocal this project currently, and correctly, declines to fake. |
+| `compas_3gs` | Three-dimensional graphic statics. Conceptually the home for the spatial reciprocal this project declines to fake, but dormant since December 2021 and still on the COMPAS 1.x line. See [the suite adoption map](compas-suite-adoption.md). |
 | `compas_tno` | Thrust network *optimisation*: admissible thrust networks in vaulted masonry. |
 | `compas_bender` | Form finding including bending, not just axial action. |
 | `compas-RV` / `compas-RV3` | RhinoVault: the Rhino plugin form of the TNA workflow. This repository's boundary-opening relaxation is adapted from compas-RV's Pattern workflow, credited in `THIRD_PARTY_NOTICES.md`. |
@@ -216,11 +216,14 @@ AGS on the native canvas, spatial/3D graphic statics, directional dashed
 load-line and pole constructions, column and branch placement, Steiner
 relaxation, and the `compas_model`/FEA/IFC stages as native components.
 
-The honest gap worth naming: `compas_3gs` is the missing dependency for the
-spatial reciprocal that a branching tree column actually wants. Until that is
-adopted, the correct routing is the one the code already implements, which is
-3D FD vectors and local cells for diagnosis, planar AGS for intentional slices,
-and FEA for the complete spatial system.
+The honest gap worth naming is the spatial reciprocal that a branching tree
+column actually wants. `compas_3gs` is conceptually its home, but its last
+release is December 2021 and it belongs to the COMPAS 1.x line, so it is a
+research port rather than an install. The routing already implemented here is
+therefore the right answer for now: 3D FD vectors and local cells for
+diagnosis, planar AGS for intentional slices, and FEA for the complete spatial
+system. See [the suite adoption map](compas-suite-adoption.md) for the verified
+version position of every package considered.
 
 ## 6. The recurring TNA message, diagnosed
 
