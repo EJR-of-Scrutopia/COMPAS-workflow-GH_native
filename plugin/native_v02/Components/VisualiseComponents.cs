@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Text.Json.Serialization;
 using Ananke.COMPAS.Native.Contracts;
@@ -679,6 +680,999 @@ namespace Ananke.COMPAS.Native.Components
             Message = $"{style.Preset} · weight x{weightScale:G4} · " +
                 $"vector {vector}";
             data.SetData(0, new StyleGoo(style));
+        }
+    }
+
+    /// <summary>
+    /// The one native viewport boundary for a solved Result: lifts the
+    /// side-by-side reciprocal layout out of <c>TnaReciprocalComponent</c>,
+    /// the styled line weights/colours out of
+    /// <c>GraphicDiagramDisplayComponent</c>, and the load/reaction/residual
+    /// vector drawing out of <c>EquilibriumPreviewComponent</c>, so drawing
+    /// now happens in one current place. Every one of those older
+    /// display-capable components stays untouched and still compiles; their
+    /// logic is copied here, not called.
+    /// </summary>
+    public sealed class DisplayComponent : NativePreviewComponentBase
+    {
+        private static readonly ComponentValueListSpec[] ValueLists =
+        {
+            new(
+                2,
+                "Elements",
+                new (string Label, string Value)[]
+                {
+                    ("Form", "form"),
+                    ("Thrust", "thrust"),
+                    ("Force", "force"),
+                    ("Loads", "loads"),
+                    ("Reactions", "reactions"),
+                    ("Residuals", "residuals")
+                },
+                "thrust,force",
+                true),
+            new(
+                3,
+                "Metric",
+                new (string Label, string Value)[]
+                {
+                    ("None", "none"),
+                    ("Force Density q", "q"),
+                    ("Horizontal Force H", "H"),
+                    ("Axial Force F", "F")
+                },
+                "none")
+        };
+
+        private readonly List<DrawLine> _preview = new();
+        private BoundingBox _clippingBox = BoundingBox.Empty;
+
+        public DisplayComponent()
+            : base(
+                "Display",
+                "Display",
+                "Draw a solved Result's reciprocal form/thrust/force lines, " +
+                "mapped load/reaction/residual vectors, and thrust mesh, " +
+                "with one style preset, auto-scaling, and Elements/Metric " +
+                "filters.",
+                ComponentCategories.Visualise,
+                "graphic_diagram_display")
+        {
+            // This component supplies its own coloured/weighted line
+            // preview, so the duplicate default Grasshopper preview on the
+            // five line outputs stays hidden; their data remains available
+            // to every downstream component. The mesh output (index 0) and
+            // the report (index 6) keep Grasshopper's own default preview.
+            for (int index = 1; index <= 5; index++)
+            {
+                if (Params.Output[index] is IGH_PreviewObject preview)
+                    preview.Hidden = true;
+            }
+        }
+
+        public override Guid ComponentGuid =>
+            new("1e7b3a95-8c4d-4f26-a9b0-5d2c8e6f7143");
+
+        public override bool IsPreviewCapable => true;
+
+        public override BoundingBox ClippingBox => _clippingBox;
+
+        private protected override IReadOnlyList<ComponentValueListSpec>
+            SuggestedValueLists => ValueLists;
+
+        protected override void RegisterInputParams(
+            GH_InputParamManager parameters)
+        {
+            parameters.AddParameter(
+                new ResultParam(),
+                "Result",
+                "RES",
+                "Solved FD or TNA result.",
+                GH_ParamAccess.item);
+            parameters.AddParameter(
+                new StyleParam(),
+                "Style",
+                "STY",
+                "Optional display preset, weight scale, and vector scale.",
+                GH_ParamAccess.item);
+            parameters[1].Optional = true;
+            parameters.AddTextParameter(
+                "Elements",
+                "E",
+                "Which streams to build and draw: form, thrust, force, " +
+                "loads, reactions, residuals. Residuals draw in the " +
+                "viewport only; every other selected stream also feeds " +
+                "its output.",
+                GH_ParamAccess.list);
+            parameters[2].Optional = true;
+            parameters.AddTextParameter(
+                "Metric",
+                "M",
+                "Line-weight metric: None (natural: axial for thrust, " +
+                "horizontal for form/force), Force Density q, Horizontal " +
+                "Force H, or Axial Force F.",
+                GH_ParamAccess.item,
+                "none");
+            parameters.AddNumberParameter(
+                "Weight",
+                "W",
+                "Line-weight multiplier; zero uses Style's weight scale, " +
+                "or 1 when no Style is supplied.",
+                GH_ParamAccess.item,
+                0.0);
+            parameters.AddNumberParameter(
+                "Vector Scale",
+                "VS",
+                "Load/reaction/residual vector scale; zero uses Style's " +
+                "vector scale, or an automatic scale from the solved " +
+                "model's bounding diagonal and largest load/reaction.",
+                GH_ParamAccess.item,
+                0.0);
+            parameters.AddNumberParameter(
+                "Gap",
+                "G",
+                "Side-by-side force-diagram offset as a fraction of the " +
+                "larger diagram span.",
+                GH_ParamAccess.item,
+                0.15);
+        }
+
+        protected override void RegisterOutputParams(
+            GH_OutputParamManager parameters)
+        {
+            parameters.AddMeshParameter(
+                "Thrust Mesh",
+                "TM",
+                "Resolved funicular mesh. Empty unless Elements includes " +
+                "thrust on a TNA result.",
+                GH_ParamAccess.item);
+            parameters.AddLineParameter(
+                "Form Lines",
+                "FL",
+                "Planar form-diagram edges. Empty unless Elements " +
+                "includes form on a TNA result.",
+                GH_ParamAccess.list);
+            parameters.AddLineParameter(
+                "Thrust Lines",
+                "TL",
+                "Spatial thrust-network edges (or FD member axes). Empty " +
+                "unless Elements includes thrust.",
+                GH_ParamAccess.list);
+            parameters.AddLineParameter(
+                "Force Lines",
+                "FCL",
+                "Reciprocal force-diagram edges, laid out beside the form " +
+                "diagram. Empty unless Elements includes force on a TNA " +
+                "result.",
+                GH_ParamAccess.list);
+            parameters.AddLineParameter(
+                "Load Lines",
+                "LL",
+                "Scaled applied-load vectors. Empty unless Elements " +
+                "includes loads.",
+                GH_ParamAccess.list);
+            parameters.AddLineParameter(
+                "Reaction Lines",
+                "RL",
+                "Scaled support-reaction vectors. Empty unless Elements " +
+                "includes reactions.",
+                GH_ParamAccess.list);
+            parameters.AddTextParameter(
+                "Report",
+                "Report",
+                "Auto-scale choices, drawn-element counts, and any " +
+                "unavailable elements or metrics.",
+                GH_ParamAccess.item);
+        }
+
+        protected override void BeforeSolveInstance()
+        {
+            base.BeforeSolveInstance();
+            _preview.Clear();
+            _clippingBox = BoundingBox.Empty;
+        }
+
+        protected override void SolveInstance(IGH_DataAccess data)
+        {
+            ResultGoo? resultGoo = null;
+            StyleGoo? styleGoo = null;
+            var elementsInput = new List<string>();
+            string metricInput = "none";
+            double weightInput = 0.0;
+            double vectorScaleInput = 0.0;
+            double gap = 0.15;
+
+            if (!data.GetData(0, ref resultGoo) ||
+                resultGoo?.Value is not ResultDto result)
+            {
+                return;
+            }
+            data.GetData(1, ref styleGoo);
+            data.GetDataList(2, elementsInput);
+            data.GetData(3, ref metricInput);
+            data.GetData(4, ref weightInput);
+            data.GetData(5, ref vectorScaleInput);
+            data.GetData(6, ref gap);
+
+            try
+            {
+                var errors = new List<string>(result.Validate());
+                StyleDto? style = styleGoo?.Value;
+                if (style is not null)
+                    errors.AddRange(style.Validate());
+
+                HashSet<string> elements = NormaliseElements(elementsInput);
+                foreach (string element in elements)
+                {
+                    if (element is not (
+                            "form" or "thrust" or "force" or
+                            "loads" or "reactions" or "residuals"))
+                    {
+                        errors.Add(
+                            $"Elements value '{element}' is not supported.");
+                    }
+                }
+                string metric = NormaliseMetric(metricInput);
+                if (metric is not ("none" or "q" or "H" or "F"))
+                    errors.Add("Metric must be None, q, H, or F.");
+                if (!double.IsFinite(weightInput) || weightInput < 0.0)
+                    errors.Add("Weight must be finite and non-negative.");
+                if (!double.IsFinite(vectorScaleInput) || vectorScaleInput < 0.0)
+                {
+                    errors.Add(
+                        "Vector Scale must be finite and non-negative.");
+                }
+                if (!double.IsFinite(gap) || gap < 0.0)
+                    errors.Add("Gap must be finite and non-negative.");
+                if (errors.Count > 0)
+                    throw new InvalidOperationException(string.Join(" ", errors));
+
+                EquilibriumResultDto equilibrium = result.Equilibrium!;
+                bool isTna =
+                    string.Equals(
+                        result.Solver,
+                        "tna",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    result.FormGraph is not null &&
+                    result.ForceGraph is not null &&
+                    result.Mappings is not null &&
+                    result.AnalysisPlane is not null;
+
+                var report = new List<string>();
+                if (!string.IsNullOrEmpty(result.Report))
+                    report.Add(result.Report);
+                if (!isTna)
+                    report.Add("FD result: no reciprocal diagram.");
+                if (!isTna && metric == "H")
+                {
+                    report.Add(
+                        "Metric H unavailable for FD result; used F " +
+                        "magnitude.");
+                }
+
+                string preset = style is null
+                    ? "analysis"
+                    : StyleDto.NormalisePreset(style.Preset);
+                double effectiveWeight = weightInput > 0.0
+                    ? weightInput
+                    : style?.WeightScale ?? 1.0;
+
+                Point3d[] equilibriumPoints =
+                    equilibrium.Vertices.Select(Point).ToArray();
+                double diag = equilibriumPoints.Length == 0
+                    ? 0.0
+                    : new BoundingBox(equilibriumPoints).Diagonal.Length;
+
+                IEnumerable<double> actionMagnitudes = isTna
+                    ? result.Mappings!.Loads
+                        .Select(item => Length(item.Vector))
+                        .Concat(result.Mappings!.Reactions
+                            .Select(item => Length(item.Reaction)))
+                    : equilibrium.Loads
+                        .Select(item => Length(item.Vector))
+                        .Concat(equilibrium.Reactions
+                            .Select(item => Length(item.Vector)));
+                double maxAction = actionMagnitudes.DefaultIfEmpty(0.0).Max();
+                double autoVectorScale = maxAction > 1.0e-12
+                    ? 0.15 * diag / maxAction
+                    : 1.0;
+
+                double effectiveVectorScale;
+                string vectorScaleSource;
+                if (vectorScaleInput > 0.0)
+                {
+                    effectiveVectorScale = vectorScaleInput;
+                    vectorScaleSource = "explicit";
+                }
+                else if (style is not null && style.VectorScale > 0.0)
+                {
+                    effectiveVectorScale = style.VectorScale;
+                    vectorScaleSource = "style";
+                }
+                else
+                {
+                    effectiveVectorScale = autoVectorScale;
+                    vectorScaleSource = "auto";
+                }
+                report.Add(
+                    $"Weight x{effectiveWeight:G4}; vector scale " +
+                    $"{vectorScaleSource} x{effectiveVectorScale:G4} " +
+                    $"(diagonal {diag:G4}, max action {maxAction:G4}).");
+
+                var formEdges = new List<MemberEdge>();
+                var thrustEdges = new List<MemberEdge>();
+                var forceEdges = new List<MemberEdge>();
+                var loadLines = new List<Line>();
+                var reactionLines = new List<Line>();
+                var residualLines = new List<Line>();
+                Mesh thrustMesh = new();
+
+                if (isTna)
+                {
+                    TnaEdgeStateDto[] states = result.EdgeStates
+                        .OrderBy(item => item.Id)
+                        .ToArray();
+
+                    if (elements.Contains("thrust"))
+                    {
+                        thrustMesh = ThrustMesh(result);
+                        foreach (TnaEdgeStateDto state in states)
+                        {
+                            thrustEdges.Add(new MemberEdge(
+                                ThrustLine(equilibrium, state),
+                                DisplayMagnitude(state, "thrust", metric),
+                                state.ForceState));
+                        }
+                    }
+                    if (elements.Contains("form"))
+                    {
+                        Dictionary<int, TnaGraphEdgeDto> formGraphEdges =
+                            result.FormGraph!.Edges
+                                .ToDictionary(edge => edge.Id);
+                        Dictionary<int, Point3Dto> formPoints =
+                            result.FormGraph!.Vertices.ToDictionary(
+                                vertex => vertex.Id,
+                                vertex => vertex.Point);
+                        foreach (TnaEdgeStateDto state in states)
+                        {
+                            formEdges.Add(new MemberEdge(
+                                FormLine(state, formGraphEdges, formPoints),
+                                DisplayMagnitude(state, "form", metric),
+                                state.ForceState));
+                        }
+                    }
+                    if (elements.Contains("force"))
+                    {
+                        Dictionary<int, TnaGraphEdgeDto> forceGraphEdges =
+                            result.ForceGraph!.Edges
+                                .ToDictionary(edge => edge.Id);
+                        Dictionary<int, Point3Dto> formVerticesForLayout =
+                            result.FormGraph!.Vertices.ToDictionary(
+                                vertex => vertex.Id,
+                                vertex => vertex.Point);
+                        Dictionary<int, Point3Dto> forceVertices =
+                            result.ForceGraph!.Vertices.ToDictionary(
+                                vertex => vertex.Id,
+                                vertex => vertex.Point);
+                        Dictionary<int, Point3Dto> forceDisplay =
+                            LayoutForceGraph(
+                                formVerticesForLayout,
+                                forceVertices,
+                                result.AnalysisPlane!,
+                                result.HorizontalScale,
+                                gap);
+                        foreach (TnaEdgeStateDto state in states)
+                        {
+                            TnaGraphEdgeDto edge =
+                                forceGraphEdges[state.ForceEdgeId];
+                            forceEdges.Add(new MemberEdge(
+                                new Line(
+                                    Point(forceDisplay[edge.U]),
+                                    Point(forceDisplay[edge.V])),
+                                DisplayMagnitude(state, "force", metric),
+                                state.ForceState));
+                        }
+                    }
+                    if (elements.Contains("loads"))
+                    {
+                        foreach (TnaLoadMappingDto item in
+                                 result.Mappings!.Loads)
+                        {
+                            Vector3d vector = Vector(item.Vector);
+                            if (vector.SquareLength <= 1.0e-24)
+                                continue;
+                            Point3d start = Point(
+                                equilibrium.Vertices[
+                                    item.EquilibriumVertexId]);
+                            loadLines.Add(new Line(
+                                start,
+                                start + effectiveVectorScale * vector));
+                        }
+                    }
+                    if (elements.Contains("reactions"))
+                    {
+                        foreach (TnaSupportMappingDto item in
+                                 result.Mappings!.Reactions)
+                        {
+                            Vector3d vector = Vector(item.Reaction);
+                            if (vector.SquareLength <= 1.0e-24)
+                                continue;
+                            Point3d start = Point(
+                                equilibrium.Vertices[
+                                    item.EquilibriumVertexId]);
+                            reactionLines.Add(new Line(
+                                start,
+                                start + effectiveVectorScale * vector));
+                        }
+                    }
+                }
+                else
+                {
+                    if (elements.Contains("thrust"))
+                    {
+                        Line[] memberLines = MemberLines(equilibrium);
+                        for (int index = 0;
+                             index < memberLines.Length;
+                             index++)
+                        {
+                            double memberForce =
+                                equilibrium.MemberForces[index];
+                            double density =
+                                equilibrium.ForceDensities[index];
+                            double magnitude = metric == "q"
+                                ? Math.Abs(density)
+                                : Math.Abs(memberForce);
+                            thrustEdges.Add(new MemberEdge(
+                                memberLines[index],
+                                magnitude,
+                                ForceStateFor(
+                                    memberForce,
+                                    equilibrium.SignConvention)));
+                        }
+                    }
+                    if (elements.Contains("loads"))
+                    {
+                        foreach (NodalVectorDto item in equilibrium.Loads)
+                        {
+                            Point3d start = Point(item.Point);
+                            loadLines.Add(new Line(
+                                start,
+                                start +
+                                effectiveVectorScale * Vector(item.Vector)));
+                        }
+                    }
+                    if (elements.Contains("reactions"))
+                    {
+                        foreach (NodalVectorDto item in
+                                 equilibrium.Reactions)
+                        {
+                            Point3d start = Point(item.Point);
+                            reactionLines.Add(new Line(
+                                start,
+                                start +
+                                effectiveVectorScale * Vector(item.Vector)));
+                        }
+                    }
+                }
+
+                if (elements.Contains("residuals"))
+                {
+                    foreach (NodalVectorDto item in equilibrium.Residuals)
+                    {
+                        Point3d start = Point(item.Point);
+                        residualLines.Add(new Line(
+                            start,
+                            start +
+                            effectiveVectorScale * Vector(item.Vector)));
+                    }
+                }
+
+                _preview.AddRange(
+                    ToDrawLines(formEdges, "form", preset, effectiveWeight));
+                _preview.AddRange(
+                    ToDrawLines(
+                        thrustEdges,
+                        "thrust",
+                        preset,
+                        effectiveWeight));
+                _preview.AddRange(
+                    ToDrawLines(
+                        forceEdges,
+                        "force",
+                        preset,
+                        effectiveWeight));
+                _preview.AddRange(ToArrowLines(loadLines, "load", preset));
+                _preview.AddRange(
+                    ToArrowLines(reactionLines, "reaction", preset));
+                _preview.AddRange(
+                    ToArrowLines(residualLines, "residual", preset));
+
+                Point3d[] previewPoints = _preview
+                    .SelectMany(item => new[] { item.Line.From, item.Line.To })
+                    .ToArray();
+                _clippingBox = previewPoints.Length == 0
+                    ? BoundingBox.Empty
+                    : new BoundingBox(previewPoints);
+
+                report.Add(
+                    $"Drawn · form {formEdges.Count}, thrust " +
+                    $"{thrustEdges.Count}, force {forceEdges.Count}, " +
+                    $"loads {loadLines.Count}, reactions " +
+                    $"{reactionLines.Count}, residuals " +
+                    $"{residualLines.Count}.");
+
+                data.SetData(0, thrustMesh);
+                data.SetDataList(1, formEdges.Select(edge => edge.Line));
+                data.SetDataList(2, thrustEdges.Select(edge => edge.Line));
+                data.SetDataList(3, forceEdges.Select(edge => edge.Line));
+                data.SetDataList(4, loadLines);
+                data.SetDataList(5, reactionLines);
+                data.SetData(6, string.Join(Environment.NewLine, report));
+                Message = $"{result.Solver.ToUpperInvariant()} · {preset}";
+            }
+            catch (Exception error)
+            {
+                Message = "Invalid";
+                ReportException("Display failed", error);
+            }
+        }
+
+        protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
+        {
+            foreach (DrawLine item in _preview)
+            {
+                if (item.Arrow)
+                    args.Display.DrawArrow(item.Line, item.Colour);
+                else
+                    args.Display.DrawLine(item.Line, item.Colour, item.Weight);
+            }
+        }
+
+        private static HashSet<string> NormaliseElements(
+            IEnumerable<string> values)
+        {
+            string[] tokens = values
+                .SelectMany(value => (value ?? string.Empty).Split(','))
+                .Select(token => token.Trim().ToLowerInvariant())
+                .Where(token => token.Length > 0)
+                .ToArray();
+            return tokens.Length == 0
+                ? new HashSet<string>(
+                    new[] { "thrust", "force" },
+                    StringComparer.Ordinal)
+                : new HashSet<string>(tokens, StringComparer.Ordinal);
+        }
+
+        private static string NormaliseMetric(string? value)
+        {
+            string trimmed = (value ?? string.Empty).Trim();
+            if (trimmed.Length == 0)
+                return "none";
+            return trimmed.ToUpperInvariant() switch
+            {
+                "NONE" => "none",
+                "Q" => "q",
+                "H" => "H",
+                "F" => "F",
+                _ => trimmed
+            };
+        }
+
+        /// <summary>
+        /// Copied and adapted from
+        /// <c>TnaGraphicDiagramFactory.DisplayMagnitude</c>.
+        /// </summary>
+        private static double DisplayMagnitude(
+            TnaEdgeStateDto state,
+            string role,
+            string metric) =>
+            metric switch
+            {
+                "q" => Math.Abs(state.ForceDensity),
+                "H" => Math.Abs(state.HorizontalForce),
+                "F" => Math.Abs(state.AxialForce),
+                _ => role == "thrust"
+                    ? Math.Abs(state.AxialForce)
+                    : Math.Abs(state.HorizontalForce)
+            };
+
+        /// <summary>Copied from <c>DeconstructComponent.ThrustLine</c>.</summary>
+        private static Line ThrustLine(
+            EquilibriumResultDto equilibrium,
+            TnaEdgeStateDto state)
+        {
+            EdgeDto edge = equilibrium.Edges[state.EquilibriumEdgeId];
+            return new Line(
+                Point(equilibrium.Vertices[edge.U]),
+                Point(equilibrium.Vertices[edge.V]));
+        }
+
+        /// <summary>Copied from <c>DeconstructComponent.FormLine</c>.</summary>
+        private static Line FormLine(
+            TnaEdgeStateDto state,
+            IReadOnlyDictionary<int, TnaGraphEdgeDto> edges,
+            IReadOnlyDictionary<int, Point3Dto> points)
+        {
+            TnaGraphEdgeDto edge = edges[state.FormEdgeId];
+            return new Line(Point(points[edge.U]), Point(points[edge.V]));
+        }
+
+        /// <summary>Copied from <c>DeconstructComponent.MemberLines</c>.</summary>
+        private static Line[] MemberLines(EquilibriumResultDto equilibrium) =>
+            equilibrium.Edges
+                .Select(edge => new Line(
+                    Point(equilibrium.Vertices[edge.U]),
+                    Point(equilibrium.Vertices[edge.V])))
+                .ToArray();
+
+        /// <summary>
+        /// Copied from <c>DeconstructComponent.ForceState</c>.
+        /// </summary>
+        private static string ForceStateFor(double force, string signConvention)
+        {
+            if (Math.Abs(force) <= 1.0e-12)
+                return "zero";
+            bool positiveTension = string.Equals(
+                signConvention,
+                "positive_tension",
+                StringComparison.OrdinalIgnoreCase);
+            bool tension = positiveTension ? force > 0.0 : force < 0.0;
+            return tension ? "tension" : "compression";
+        }
+
+        /// <summary>Copied from <c>DeconstructComponent.ThrustMesh</c>.</summary>
+        private static Mesh ThrustMesh(ResultDto result)
+        {
+            EquilibriumResultDto equilibrium = result.Equilibrium!;
+            TnaDiagramGraphDto formGraph = result.FormGraph!;
+            TnaMappingsDto mappings = result.Mappings!;
+
+            Dictionary<int, int> formToEquilibrium = mappings
+                .SourceVertexToFormVertex
+                .Where(item =>
+                    item.FormVertexId.HasValue &&
+                    item.EquilibriumVertexId.HasValue)
+                .GroupBy(item => item.FormVertexId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        int[] equilibriumIds = group
+                            .Select(item => item.EquilibriumVertexId!.Value)
+                            .Distinct()
+                            .ToArray();
+                        if (equilibriumIds.Length != 1)
+                        {
+                            throw new InvalidOperationException(
+                                $"Form vertex {group.Key} maps to multiple " +
+                                "equilibrium vertices.");
+                        }
+                        return equilibriumIds[0];
+                    });
+
+            var mesh = new Mesh();
+            var formToMesh = new Dictionary<int, int>();
+            foreach (TnaGraphVertexDto vertex in
+                     formGraph.Vertices.OrderBy(item => item.Id))
+            {
+                if (!formToEquilibrium.TryGetValue(
+                        vertex.Id,
+                        out int equilibriumId))
+                {
+                    throw new InvalidOperationException(
+                        $"Form vertex {vertex.Id} has no explicit " +
+                        "equilibrium vertex mapping.");
+                }
+                if (equilibriumId < 0 ||
+                    equilibriumId >= equilibrium.Vertices.Count)
+                {
+                    throw new InvalidOperationException(
+                        $"Form vertex {vertex.Id} has no equilibrium vertex.");
+                }
+                formToMesh[vertex.Id] = mesh.Vertices.Add(
+                    Point(equilibrium.Vertices[equilibriumId]));
+            }
+
+            foreach (TnaGraphFaceDto face in
+                     formGraph.Faces.OrderBy(item => item.Id))
+            {
+                int[] vertices = face.Vertices
+                    .Select(id => formToMesh.TryGetValue(id, out int meshId)
+                        ? meshId
+                        : throw new InvalidOperationException(
+                            $"Form face {face.Id} references unknown " +
+                            $"vertex {id}."))
+                    .ToArray();
+                if (vertices.Length == 3)
+                {
+                    mesh.Faces.AddFace(vertices[0], vertices[1], vertices[2]);
+                }
+                else if (vertices.Length == 4)
+                {
+                    mesh.Faces.AddFace(
+                        vertices[0],
+                        vertices[1],
+                        vertices[2],
+                        vertices[3]);
+                }
+                else
+                {
+                    for (int index = 1; index < vertices.Length - 1; index++)
+                    {
+                        mesh.Faces.AddFace(
+                            vertices[0],
+                            vertices[index],
+                            vertices[index + 1]);
+                    }
+                }
+            }
+
+            if (mesh.Faces.Count > 0)
+                mesh.Normals.ComputeNormals();
+            mesh.Compact();
+            return mesh;
+        }
+
+        /// <summary>
+        /// Side-by-side force-diagram placement lifted out of
+        /// <c>TnaGraphicDiagramFactory.LayoutForceGraph</c> (the Overlay
+        /// branch is dropped; Display always places the force diagram
+        /// beside the form diagram).
+        /// </summary>
+        private static Dictionary<int, Point3Dto> LayoutForceGraph(
+            IReadOnlyDictionary<int, Point3Dto> formVertices,
+            IReadOnlyDictionary<int, Point3Dto> forceVertices,
+            AnalysisPlaneDto plane,
+            double scale,
+            double gapRatio)
+        {
+            PlaneFrame frame = PlaneFrame.Create(plane);
+            Bounds2 formBounds =
+                Bounds2.From(formVertices.Values.Select(frame.Project));
+            Dictionary<int, LocalPoint> local = forceVertices.ToDictionary(
+                item => item.Key,
+                item => frame.Project(item.Value));
+            Bounds2 rawBounds = Bounds2.From(local.Values);
+            LocalPoint centre = rawBounds.Centre;
+            Dictionary<int, LocalPoint> scaled = local.ToDictionary(
+                item => item.Key,
+                item => centre + scale * (item.Value - centre));
+            Bounds2 scaledBounds = Bounds2.From(scaled.Values);
+            double reference = Math.Max(
+                Math.Max(formBounds.Width, formBounds.Height),
+                Math.Max(scaledBounds.Width, scaledBounds.Height));
+            if (reference <= 1.0e-12)
+                reference = 1.0;
+
+            double dx =
+                formBounds.MaximumX -
+                scaledBounds.MinimumX +
+                gapRatio * reference;
+            double dy = formBounds.Centre.Y - scaledBounds.Centre.Y;
+            var offset = new LocalPoint(dx, dy, 0.0);
+            return scaled.ToDictionary(
+                item => item.Key,
+                item => frame.Unproject(item.Value + offset));
+        }
+
+        private static IEnumerable<DrawLine> ToDrawLines(
+            IReadOnlyList<MemberEdge> edges,
+            string role,
+            string preset,
+            double weightScale)
+        {
+            double maximum = edges
+                .Select(edge => edge.Magnitude)
+                .DefaultIfEmpty(0.0)
+                .Max();
+            foreach (MemberEdge edge in edges)
+            {
+                double normalised = maximum > 0.0
+                    ? edge.Magnitude / maximum
+                    : 0.0;
+                double rawWeight = role == "form"
+                    ? 1.0 + 4.0 * normalised
+                    : 1.0 + 5.0 * normalised;
+                int weight = Math.Clamp(
+                    (int)Math.Round(rawWeight * weightScale),
+                    1,
+                    12);
+                yield return new DrawLine(
+                    edge.Line,
+                    RoleColour(role, edge.ForceState, preset),
+                    weight,
+                    false);
+            }
+        }
+
+        private static IEnumerable<DrawLine> ToArrowLines(
+            IReadOnlyList<Line> lines,
+            string role,
+            string preset)
+        {
+            Color colour = RoleColour(role, string.Empty, preset);
+            foreach (Line line in lines)
+                yield return new DrawLine(line, colour, 2, true);
+        }
+
+        /// <summary>
+        /// Copied and extended (with a "residual" case) from
+        /// <c>GraphicDiagramDisplayComponent.RoleColour</c>.
+        /// </summary>
+        private static Color RoleColour(
+            string role,
+            string forceState,
+            string preset)
+        {
+            if (preset == "monochrome")
+            {
+                return role switch
+                {
+                    "form" => Color.FromArgb(65, 65, 65),
+                    "load" or "reaction" or "residual" =>
+                        Color.FromArgb(105, 105, 105),
+                    _ => Color.FromArgb(25, 25, 25)
+                };
+            }
+            if (preset == "classical")
+            {
+                return role switch
+                {
+                    "form" or "thrust" => Color.FromArgb(30, 30, 30),
+                    "force" => Color.FromArgb(35, 95, 210),
+                    "load" => Color.FromArgb(238, 135, 35),
+                    "reaction" => Color.FromArgb(35, 155, 75),
+                    "residual" => Color.FromArgb(220, 30, 170),
+                    _ => Color.FromArgb(105, 105, 105)
+                };
+            }
+            return role switch
+            {
+                "form" => Color.FromArgb(105, 105, 105),
+                "load" => Color.FromArgb(238, 135, 35),
+                "reaction" => Color.FromArgb(35, 155, 75),
+                "residual" => Color.FromArgb(220, 30, 170),
+                _ => StateColour(forceState)
+            };
+        }
+
+        /// <summary>
+        /// Copied from <c>GraphicDiagramDisplayComponent.StateColour</c>.
+        /// </summary>
+        private static Color StateColour(string state) =>
+            (state ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "compression" => Color.FromArgb(35, 95, 210),
+                "tension" => Color.FromArgb(210, 45, 45),
+                "zero" => Color.FromArgb(125, 125, 125),
+                _ => Color.FromArgb(35, 155, 75)
+            };
+
+        private static double Length(Point3Dto value) =>
+            Math.Sqrt(
+                value.X * value.X + value.Y * value.Y + value.Z * value.Z);
+
+        private static Point3d Point(Point3Dto value) =>
+            new(value.X, value.Y, value.Z);
+
+        private static Vector3d Vector(Point3Dto value) =>
+            new(value.X, value.Y, value.Z);
+
+        private sealed record DrawLine(
+            Line Line,
+            Color Colour,
+            int Weight,
+            bool Arrow);
+
+        private sealed record MemberEdge(
+            Line Line,
+            double Magnitude,
+            string ForceState);
+
+        private readonly record struct LocalPoint(double X, double Y, double Z)
+        {
+            public static LocalPoint operator +(LocalPoint a, LocalPoint b) =>
+                new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+
+            public static LocalPoint operator -(LocalPoint a, LocalPoint b) =>
+                new(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+
+            public static LocalPoint operator *(
+                double scale,
+                LocalPoint value) =>
+                new(scale * value.X, scale * value.Y, scale * value.Z);
+        }
+
+        private readonly record struct Bounds2(
+            double MinimumX,
+            double MinimumY,
+            double MaximumX,
+            double MaximumY)
+        {
+            public double Width => MaximumX - MinimumX;
+            public double Height => MaximumY - MinimumY;
+            public LocalPoint Centre => new(
+                0.5 * (MinimumX + MaximumX),
+                0.5 * (MinimumY + MaximumY),
+                0.0);
+
+            public static Bounds2 From(IEnumerable<LocalPoint> values)
+            {
+                LocalPoint[] points = values.ToArray();
+                if (points.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Diagram has no vertices.");
+                }
+                return new Bounds2(
+                    points.Min(point => point.X),
+                    points.Min(point => point.Y),
+                    points.Max(point => point.X),
+                    points.Max(point => point.Y));
+            }
+        }
+
+        private readonly record struct PlaneFrame(
+            Point3Dto Origin,
+            Point3Dto XAxis,
+            Point3Dto YAxis,
+            Point3Dto ZAxis)
+        {
+            public static PlaneFrame Create(AnalysisPlaneDto plane)
+            {
+                Point3Dto x = Unit(plane.XAxis, "analysis plane X axis");
+                Point3Dto z =
+                    Unit(Cross(x, plane.YAxis), "analysis plane normal");
+                Point3Dto y = Unit(Cross(z, x), "analysis plane Y axis");
+                return new PlaneFrame(plane.Origin, x, y, z);
+            }
+
+            public LocalPoint Project(Point3Dto point)
+            {
+                Point3Dto delta = Subtract(point, Origin);
+                return new LocalPoint(
+                    Dot(delta, XAxis),
+                    Dot(delta, YAxis),
+                    Dot(delta, ZAxis));
+            }
+
+            public Point3Dto Unproject(LocalPoint point) =>
+                new(
+                    Origin.X +
+                    point.X * XAxis.X +
+                    point.Y * YAxis.X +
+                    point.Z * ZAxis.X,
+                    Origin.Y +
+                    point.X * XAxis.Y +
+                    point.Y * YAxis.Y +
+                    point.Z * ZAxis.Y,
+                    Origin.Z +
+                    point.X * XAxis.Z +
+                    point.Y * YAxis.Z +
+                    point.Z * ZAxis.Z);
+
+            private static Point3Dto Unit(Point3Dto value, string label)
+            {
+                double length = Math.Sqrt(Dot(value, value));
+                if (!double.IsFinite(length) || length <= 1.0e-12)
+                    throw new InvalidOperationException($"{label} is invalid.");
+                return new Point3Dto(
+                    value.X / length,
+                    value.Y / length,
+                    value.Z / length);
+            }
+
+            private static Point3Dto Cross(Point3Dto a, Point3Dto b) =>
+                new(
+                    a.Y * b.Z - a.Z * b.Y,
+                    a.Z * b.X - a.X * b.Z,
+                    a.X * b.Y - a.Y * b.X);
+
+            private static Point3Dto Subtract(Point3Dto a, Point3Dto b) =>
+                new(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+
+            private static double Dot(Point3Dto a, Point3Dto b) =>
+                a.X * b.X + a.Y * b.Y + a.Z * b.Z;
         }
     }
 }

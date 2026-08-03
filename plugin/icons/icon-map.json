@@ -175,6 +175,12 @@
       "label": "TA",
       "category": "90 Query",
       "filename": "tna_actions.png"
+    },
+    {
+      "key": "export",
+      "label": "DLV",
+      "category": "05 Visualisation",
+      "filename": "export.png"
     }
   ]
 }

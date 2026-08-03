@@ -1,0 +1,352 @@
+#nullable enable
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Ananke.COMPAS.Native.Contracts;
+using Grasshopper.Kernel;
+
+namespace Ananke.COMPAS.Native.Components;
+
+public sealed record ExportComponentTaskResult(
+    string? Json,
+    string? WrittenPath,
+    string? WriteError,
+    Exception? Error,
+    TimeSpan Elapsed);
+
+/// <summary>
+/// The one delivery boundary for a solved Result: Contract mode serialises
+/// the ResultDto itself (the shared wire options every codec already
+/// reuses), and COMPAS mode dispatches the worker's <c>export.compas</c>
+/// command exactly as <c>FdSolveComponent2</c> dispatches a solve, then
+/// bundles the returned strings into one JSON object. An optional Path
+/// writes that JSON to disk.
+/// </summary>
+public sealed class ExportComponent :
+    NativeTaskComponentBase<ExportComponentTaskResult>
+{
+    private static readonly ComponentValueListSpec[] ValueLists =
+    {
+        new(
+            1,
+            "Format",
+            new (string Label, string Value)[]
+            {
+                ("Contract", "contract"),
+                ("COMPAS", "compas")
+            },
+            "contract")
+    };
+
+    public ExportComponent()
+        : base(
+            "Export",
+            "Export",
+            "Serialise a solved Result as portable Contract JSON or " +
+            "native COMPAS json_dumps geometry via the worker, and " +
+            "optionally write it to disk.",
+            ComponentCategories.Delivery,
+            "export")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("f2a6c8e4-1b5d-49a3-b7e0-3c9f5d8a2617");
+
+    private protected override IReadOnlyList<ComponentValueListSpec>
+        SuggestedValueLists => ValueLists;
+
+    protected override void RegisterInputParams(
+        GH_InputParamManager parameters)
+    {
+        parameters.AddParameter(
+            new ResultParam(),
+            "Result",
+            "RES",
+            "Solved FD or TNA result to export.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Format",
+            "F",
+            "Contract (portable native JSON) or COMPAS (native " +
+            "json_dumps geometry produced by the worker's export.compas " +
+            "command).",
+            GH_ParamAccess.item,
+            "contract");
+        parameters.AddTextParameter(
+            "Path",
+            "P",
+            "Optional file path; when non-empty the JSON is also written " +
+            "to disk.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[2].Optional = true;
+    }
+
+    protected override void RegisterOutputParams(
+        GH_OutputParamManager parameters)
+    {
+        parameters.AddTextParameter(
+            "JSON",
+            "J",
+            "Exported JSON text.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Written",
+            "W",
+            "File path written to disk; empty when Path was empty or the " +
+            "write failed.",
+            GH_ParamAccess.item);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess data)
+    {
+        if (InPreSolve)
+        {
+            if (!TryReadInputs(
+                    data,
+                    out ResultDto? result,
+                    out string format,
+                    out string path))
+            {
+                return;
+            }
+            TaskList.Add(Task.Run(
+                () => ComputeAsync(
+                    ContractJson.DeepClone(result!),
+                    format,
+                    path,
+                    CancelToken),
+                CancelToken));
+            return;
+        }
+
+        ExportComponentTaskResult taskResult;
+        if (!GetSolveResults(data, out taskResult!))
+        {
+            if (!TryReadInputs(
+                    data,
+                    out ResultDto? result,
+                    out string format,
+                    out string path))
+            {
+                return;
+            }
+            taskResult = ComputeAsync(
+                    ContractJson.DeepClone(result!),
+                    format,
+                    path,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        if (taskResult.Error is not null)
+        {
+            Message = taskResult.Error is OperationCanceledException
+                ? "Cancelled"
+                : "Failed";
+            AddRuntimeMessage(
+                taskResult.Error is OperationCanceledException
+                    ? GH_RuntimeMessageLevel.Warning
+                    : GH_RuntimeMessageLevel.Error,
+                "Export: " + taskResult.Error.GetBaseException().Message);
+            return;
+        }
+        if (taskResult.Json is null)
+        {
+            Message = "Failed";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "Export produced no JSON.");
+            return;
+        }
+        if (taskResult.WriteError is not null)
+        {
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                "Export: failed to write file: " + taskResult.WriteError);
+        }
+
+        data.SetData(0, taskResult.Json);
+        data.SetData(1, taskResult.WrittenPath ?? string.Empty);
+        Message = $"{taskResult.Json.Length} chars";
+    }
+
+    /// <summary>
+    /// Read RES and this component's own Format/Path, normalising Format
+    /// and validating the Result up front so the background task never has
+    /// to report a runtime message itself.
+    /// </summary>
+    private bool TryReadInputs(
+        IGH_DataAccess data,
+        out ResultDto? result,
+        out string format,
+        out string path)
+    {
+        result = null;
+        format = "contract";
+        path = string.Empty;
+        ResultGoo? resultGoo = null;
+        string formatInput = "contract";
+        string pathInput = string.Empty;
+        if (!data.GetData(0, ref resultGoo) ||
+            resultGoo?.Value is not ResultDto resultValue)
+        {
+            return false;
+        }
+        data.GetData(1, ref formatInput);
+        data.GetData(2, ref pathInput);
+
+        string normalisedFormat = NormaliseFormat(formatInput);
+        var errors = new List<string>(resultValue.Validate());
+        if (normalisedFormat is not ("contract" or "compas"))
+            errors.Add("Format must be Contract or COMPAS.");
+        if (errors.Count > 0)
+        {
+            Message = "Invalid";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Error,
+                string.Join(" ", errors));
+            return false;
+        }
+
+        result = resultValue;
+        format = normalisedFormat;
+        path = pathInput ?? string.Empty;
+        return true;
+    }
+
+    private static async Task<ExportComponentTaskResult> ComputeAsync(
+        ResultDto result,
+        string format,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            string json = format == "compas"
+                ? await BuildCompasJsonAsync(result, cancellationToken)
+                    .ConfigureAwait(false)
+                : ContractJson.Serialize(result);
+
+            string? writtenPath = null;
+            string? writeError = null;
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                try
+                {
+                    File.WriteAllText(path, json);
+                    writtenPath = path;
+                }
+                catch (Exception writeException)
+                {
+                    writeError = writeException.Message;
+                }
+            }
+            stopwatch.Stop();
+            return new ExportComponentTaskResult(
+                json,
+                writtenPath,
+                writeError,
+                null,
+                stopwatch.Elapsed);
+        }
+        catch (Exception error)
+        {
+            stopwatch.Stop();
+            return new ExportComponentTaskResult(
+                null,
+                null,
+                null,
+                error,
+                stopwatch.Elapsed);
+        }
+    }
+
+    /// <summary>
+    /// Dispatch <c>export.compas</c> exactly as <c>FdSolveComponent2</c>
+    /// dispatches <c>fd.solve</c>: one <c>WorkerRuntime.Host.RequestAsync</c>
+    /// call. The Result has no retained raw wire JSON (checked
+    /// WorkerResultCodec/TnaWorkerResultCodec; both decode straight into
+    /// typed properties), so it is re-serialised here with the same shared
+    /// wire options every codec already reuses.
+    /// </summary>
+    private static async Task<string> BuildCompasJsonAsync(
+        ResultDto result,
+        CancellationToken cancellationToken)
+    {
+        JsonElement resultElement =
+            JsonSerializer.SerializeToElement(result, ContractJson.Options);
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["result"] = resultElement
+        };
+        JsonElement response = await WorkerRuntime.Host
+            .RequestAsync<JsonElement>(
+                "export.compas",
+                payload,
+                cancellationToken)
+            .ConfigureAwait(false);
+        return BuildCompasJson(response);
+    }
+
+    private static string BuildCompasJson(JsonElement response)
+    {
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["thrustMesh"] = OptionalString(response, "thrustMesh"),
+            ["formDiagram"] = OptionalString(response, "formDiagram"),
+            ["forceDiagram"] = OptionalString(response, "forceDiagram"),
+            ["compasVersion"] = RequiredString(response, "compasVersion")
+        };
+        return JsonSerializer.Serialize(payload, ContractJson.Options);
+    }
+
+    private static string? OptionalString(
+        JsonElement root,
+        string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out JsonElement value) ||
+            value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            throw new JsonException(
+                $"export.compas response '{propertyName}' must be a " +
+                "string or null.");
+        }
+        return value.GetString();
+    }
+
+    private static string RequiredString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out JsonElement value) ||
+            value.ValueKind != JsonValueKind.String)
+        {
+            throw new JsonException(
+                $"export.compas response '{propertyName}' must be a " +
+                "string.");
+        }
+        return value.GetString() ?? string.Empty;
+    }
+
+    private static string NormaliseFormat(string? value)
+    {
+        string format = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return format switch
+        {
+            "" => "contract",
+            "compas" or "compas.data" => "compas",
+            _ => format
+        };
+    }
+}
