@@ -67,6 +67,7 @@ studies/**/results/
 
 # CRA runs on its own Python 3.10 interpreter; see scripts/setup_cra_env.sh
 .venv-cra/
+.venv-fea/
 demo/*.png
 !demo/pavilion-result.json
 
