@@ -181,6 +181,10 @@ public static class WorkerPayloads
                     ["horizontal_alpha"] = value.HorizontalAlpha,
                     ["horizontal_iterations"] =
                         value.HorizontalIterations,
+                    ["horizontal_method"] = string.IsNullOrWhiteSpace(
+                        value.HorizontalMethod)
+                        ? "iterative"
+                        : value.HorizontalMethod.Trim().ToLowerInvariant(),
                     ["vertical_iterations"] =
                         value.VerticalIterations,
                     ["tolerance"] = value.Tolerance,

@@ -39,6 +39,7 @@ internal static class Program
             "Ananke.COMPAS.Native.Components.LoadsComponent",
             "Ananke.COMPAS.Native.Components.TnaRelaxComponent",
             "Ananke.COMPAS.Native.Components.TnaSolveComponent",
+            "Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent",
             "Ananke.COMPAS.Native.Components.FdSolveComponent",
             "Ananke.COMPAS.Native.Components.DisplayComponent"
         };
@@ -124,6 +125,12 @@ internal static class Program
                 ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = (
                     "TNA Solve",
                     "TNA Solve",
+                    "02 Form Finding",
+                    new[] { "RLX", "H", "I", "Run" },
+                    new[] { "RES", "M", "L", "S" }),
+                ["Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent"] = (
+                    "TNA Solve Algebraic",
+                    "TNA Solve A",
                     "02 Form Finding",
                     new[] { "RLX", "H", "I", "Run" },
                     new[] { "RES", "M", "L", "S" }),

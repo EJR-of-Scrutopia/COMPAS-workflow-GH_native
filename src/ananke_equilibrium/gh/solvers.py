@@ -796,6 +796,9 @@ def solve_tna(
                     if horizontal_iterations is None
                     else int(horizontal_iterations)
                 ),
+                "horizontal_method": str(
+                    get_any(config, ("horizontal_method",), "iterative")
+                ) if config is not None else "iterative",
                 "vertical_kmax": int(
                     get_any(config, ("vertical_iterations", "vertical_kmax"), 100)
                 ) if config is not None else 100,

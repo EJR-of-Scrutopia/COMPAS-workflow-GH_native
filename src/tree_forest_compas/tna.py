@@ -1870,6 +1870,178 @@ def _horizontal_fixed_form(form: FormDiagram, force: ForceDiagram, kmax: int) ->
         )
 
 
+def _horizontal_algebraic(form: FormDiagram, force: ForceDiagram) -> Dict[str, Any]:
+    """Direct horizontal equilibrium: exact force densities from the
+    equilibrium matrix, then one least-squares reciprocal fit.
+
+    With the form diagram fixed, horizontal equilibrium is linear in the
+    force densities: for every free vertex ``i``,
+    ``sum_j q_ij (xy_j - xy_i) = 0``. The best q is the minimiser of
+    ``||E q||^2`` under a scale gauge (solved with sparse LSQR on the
+    gauge-augmented system, then rescaled to mean q of one). When the
+    pattern admits an exact self-stress this is the exact reciprocal;
+    otherwise it is the mathematical floor that no parallelisation
+    iteration count can reach. The force diagram is then reconstructed by
+    a single linear fit of its vertex positions to the exact reciprocal
+    edge vectors (the same ``C^T C`` system the iterative solver
+    parallelises against), which distributes any closure error
+    least-squares-evenly. Attribute writes match the iterative solvers:
+    ``q``/``_f``/``_l``/``_a`` on form edges, ``xy``/``_l``/``_a`` on the
+    force diagram, with ``_a`` measuring the honest angle between each
+    form edge and its reconstructed dual.
+
+    Returns a diagnostics mapping with the LSQR iteration count, the
+    equilibrium residual relative to the mean edge force, and the count
+    of negative force densities (a pattern that demands tension edges to
+    balance horizontally).
+    """
+    from compas.geometry import angle_vectors_xy
+    from compas.linalg import normrow
+    from compas.matrices import connectivity_matrix
+    from numpy import asarray
+    from numpy import float64
+    from numpy import zeros
+    from scipy.sparse import coo_matrix
+    from scipy.sparse import vstack as sparse_vstack
+    from scipy.sparse.linalg import factorized as sparse_factorized
+    from scipy.sparse.linalg import lsqr as sparse_lsqr
+
+    k_i = form.vertex_index()
+    form_edges = list(form.edges_where({"_is_edge": True}))
+    edge_count = len(form_edges)
+    xy = asarray(form.vertices_attributes("xy"), dtype=float64)
+    edges_idx = [[k_i[u], k_i[v]] for u, v in form_edges]
+    C = connectivity_matrix(edges_idx, "csr")
+    uv = C.dot(xy)
+    lengths = normrow(uv)
+
+    # Horizontal equilibrium must hold at every vertex that is not a
+    # structural support. is_fixed is NOT part of this set: in the
+    # prepared pipeline it records which plan vertices were held during
+    # relaxation, and holding a vertex in plan does not exempt it from
+    # carrying balanced horizontal thrust.
+    held = {k_i[key] for key in form.supports()}
+    free = [index for index in range(xy.shape[0]) if index not in held]
+    if not free:
+        raise TNATopologyError(
+            "The algebraic horizontal solve needs at least one free vertex."
+        )
+    free_row = {vertex: index for index, vertex in enumerate(free)}
+
+    rows = []
+    cols = []
+    vals = []
+    for e, (u_idx, v_idx) in enumerate(edges_idx):
+        vec_x = float(uv[e, 0])
+        vec_y = float(uv[e, 1])
+        if u_idx in free_row:
+            base = 2 * free_row[u_idx]
+            rows.extend((base, base + 1))
+            cols.extend((e, e))
+            vals.extend((vec_x, vec_y))
+        if v_idx in free_row:
+            base = 2 * free_row[v_idx]
+            rows.extend((base, base + 1))
+            cols.extend((e, e))
+            vals.extend((-vec_x, -vec_y))
+    E = coo_matrix(
+        (vals, (rows, cols)), shape=(2 * len(free), edge_count)
+    ).tocsr()
+
+    # The gauge row breaks the scale invariance of the null-space problem;
+    # the exact scale convention is restored by renormalising afterwards,
+    # so its weight only needs to be nonzero.
+    gauge = coo_matrix(
+        ([1.0 / edge_count] * edge_count,
+         ([0] * edge_count, list(range(edge_count)))),
+        shape=(1, edge_count),
+    ).tocsr()
+    system = sparse_vstack([E, gauge]).tocsr()
+    target = zeros(2 * len(free) + 1, dtype=float64)
+    target[-1] = 1.0
+    solution = sparse_lsqr(
+        system, target, atol=1e-14, btol=1e-14, iter_lim=20 * edge_count
+    )
+    q = solution[0].reshape((-1, 1))
+    lsqr_iterations = int(solution[2])
+    q_mean = float(q.mean())
+    if not isfinite(q_mean) or abs(q_mean) < 1e-15:
+        raise TNASolveError(
+            "The algebraic horizontal solve produced a degenerate "
+            "force-density field; the pattern admits no meaningful "
+            "horizontal self-stress."
+        )
+    q = q / q_mean
+
+    residuals = (E.dot(q)).reshape((-1, 2))
+    residual_norms = normrow(residuals)
+    mean_force = float((abs(q) * lengths).mean())
+    residual_scale = mean_force if mean_force > 0 else 1.0
+    negative_count = int((q < 0).sum())
+
+    # Reconstruct the force diagram in the parallel (CCW-rotated) frame:
+    # fit its vertex positions to the exact reciprocal edge vectors.
+    _k_i = force.vertex_index()
+    _edge_keys = force.ordered_edges(form)
+    _C = connectivity_matrix(
+        [[_k_i[u], _k_i[v]] for u, v in _edge_keys], "csr"
+    )
+    _Ct = _C.transpose()
+    _fixed = sorted({_k_i[key] for key in force.fixed()} or {0})
+    _xy = asarray(force.vertices_attributes("xy"), dtype=float64)
+    _xy = _xy[:, ::-1] * asarray([-1.0, 1.0], dtype=float64)
+    _CtC = _Ct.dot(_C).tocsc()
+    fixed_set = set(_fixed)
+    unknown = [i for i in range(_xy.shape[0]) if i not in fixed_set]
+    A11 = _CtC[unknown, :][:, unknown].tocsc()
+    A12 = _CtC[unknown, :][:, _fixed]
+    b = _Ct.dot(q * uv)
+    _xy[unknown] = sparse_factorized(A11)(b[unknown] - A12.dot(_xy[_fixed]))
+
+    _uv = _C.dot(_xy)
+    _l = normrow(_uv)
+    f = q * lengths
+    angles = [
+        angle_vectors_xy(uv[index], _uv[index], deg=True)
+        for index in range(edge_count)
+    ]
+    _xy = _xy[:, ::-1] * asarray([1.0, -1.0], dtype=float64)
+
+    for index, edge in enumerate(form_edges):
+        form.edge_attributes(
+            edge,
+            ("q", "_f", "_l", "_a"),
+            (
+                float(q[index, 0]),
+                float(f[index, 0]),
+                float(lengths[index, 0]),
+                float(angles[index]),
+            ),
+        )
+    for key in force.vertices():
+        i = _k_i[key]
+        force.vertex_attributes(
+            key, "xy", [float(_xy[i, 0]), float(_xy[i, 1])]
+        )
+    for index, edge in enumerate(_edge_keys):
+        force.edge_attributes(
+            edge,
+            ("_l", "_a"),
+            (float(_l[index, 0]), float(angles[index])),
+        )
+
+    return {
+        "algebraic_lsqr_iterations": lsqr_iterations,
+        "algebraic_residual_max_relative": float(
+            residual_norms.max() / residual_scale
+        ),
+        "algebraic_residual_mean_relative": float(
+            residual_norms.mean() / residual_scale
+        ),
+        "algebraic_negative_q_count": negative_count,
+    }
+
+
 def _unoriented_angle(degrees: float) -> float:
     """Fold a form/force edge-direction difference into a 0-90 degree error.
 
@@ -1899,6 +2071,7 @@ def solve_tna_problem(
     density: float = 0.0,
     horizontal_alpha: float = 100.0,
     horizontal_kmax: Optional[int] = 100,
+    horizontal_method: str = "iterative",
     vertical_kmax: int = 100,
     vertical_tolerance: float = 1e-3,
     display: bool = False,
@@ -1908,7 +2081,11 @@ def solve_tna_problem(
 
     ``horizontal_kmax`` of ``None`` runs the auto-converging horizontal
     solve: blocks of iterations until the worst reciprocity angle falls
-    below one degree or the hard cap is reached.  ``vertical_mode`` accepts
+    below one degree or the hard cap is reached.  ``horizontal_method``
+    selects between ``"iterative"`` (the parallelisation loop) and
+    ``"algebraic"`` (exact force densities from the equilibrium matrix in
+    one sparse least-squares solve; requires ``horizontal_alpha`` 100 and
+    ignores ``horizontal_kmax``).  ``vertical_mode`` accepts
     ``"natural"`` as well: the vertical solve keeps the horizontal force
     densities exactly as they are (scale -1, compression) and reports the
     equilibrium height they produce, instead of scaling to a target crown.
@@ -2120,6 +2297,21 @@ def solve_tna_problem(
         for edge, values in force_edge_state.items():
             force.edge_attributes(edge, ("_l", "_a"), values)
 
+    method = str(horizontal_method or "iterative").strip().lower()
+    if method in ("", "iterative", "parallelise", "parallelize", "nodal"):
+        method = "iterative"
+    elif method in ("algebraic", "direct", "lsq", "least_squares"):
+        method = "algebraic"
+    else:
+        raise TNAInputError(
+            "horizontal_method must be 'iterative' or 'algebraic'."
+        )
+    if method == "algebraic" and float(horizontal_alpha) != 100.0:
+        raise TNAInputError(
+            "The algebraic horizontal method fixes the form diagram; "
+            "horizontal_alpha must be 100."
+        )
+
     # The default alpha of 100 holds the form fixed, which admits the
     # sparse fixed-form solver; any other alpha falls back to the library's
     # nodal implementation, which handles a moving form.
@@ -2151,8 +2343,15 @@ def solve_tna_problem(
     horizontal_iterations_run = 0
     horizontal_angle = 0.0
     horizontal_raw_angle = 0.0
+    algebraic_diagnostics = {}
     try:
-        if horizontal_auto:
+        if method == "algebraic":
+            algebraic_diagnostics = _horizontal_algebraic(form, force)
+            horizontal_iterations_run = int(
+                algebraic_diagnostics.get("algebraic_lsqr_iterations", 0)
+            )
+            horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
+        elif horizontal_auto:
             best_snapshot = None
             stalled_blocks = 0
             polish_deadline = None
@@ -2438,10 +2637,18 @@ def solve_tna_problem(
             "natural_selfweight_frozen": frozen_selfweight,
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
-            "horizontal_mode": "auto" if horizontal_auto else "fixed",
+            "horizontal_method": method,
+            "horizontal_mode": (
+                "algebraic"
+                if method == "algebraic"
+                else ("auto" if horizontal_auto else "fixed")
+            ),
             # Numeric twin of horizontal_mode: the native component's metric
-            # dictionary carries doubles only.
-            "horizontal_mode_is_auto": 1.0 if horizontal_auto else 0.0,
+            # dictionary carries doubles only. The algebraic method counts
+            # as auto because raising Iterations cannot improve its result.
+            "horizontal_mode_is_auto": (
+                1.0 if (horizontal_auto or method == "algebraic") else 0.0
+            ),
             "horizontal_iterations_run": horizontal_iterations_run,
             "horizontal_converged": horizontal_converged,
             "horizontal_accept_degrees": HORIZONTAL_ACCEPT_DEGREES,
@@ -2465,6 +2672,7 @@ def solve_tna_problem(
             "tension_edge_count": tension_count,
         }
     )
+    diagnostics.update(algebraic_diagnostics)
 
     session_metadata = dict(problem.metadata)
     session_metadata.update(dict(metadata or {}))
@@ -2480,6 +2688,7 @@ def solve_tna_problem(
         "q_scale": q_scale if mode == "q" else None,
         "density": density,
         "horizontal_alpha": float(horizontal_alpha),
+        "horizontal_method": method,
         "horizontal_kmax": (
             None if horizontal_auto else int(horizontal_kmax)
         ),

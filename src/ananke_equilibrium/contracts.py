@@ -411,6 +411,7 @@ class TNAConfig(Contract):
 
     horizontal_alpha: float = 100.0
     horizontal_iterations: Optional[int] = None
+    horizontal_method: str = "iterative"
     vertical_iterations: int = 100
     tolerance: float = 1.0e-3
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -427,11 +428,24 @@ class TNAConfig(Contract):
         vertical = int(self.vertical_iterations)
         if (horizontal is not None and horizontal < 1) or vertical < 1:
             raise ContractError("TNA iteration counts must be positive.")
+        method = str(self.horizontal_method or "iterative").strip().lower()
+        if method == "":
+            method = "iterative"
+        if method not in ("iterative", "algebraic"):
+            raise ContractError(
+                "horizontal_method must be 'iterative' or 'algebraic'."
+            )
+        if method == "algebraic" and alpha != 100.0:
+            raise ContractError(
+                "The algebraic horizontal method fixes the form diagram; "
+                "horizontal_alpha must be 100."
+            )
         tolerance = _finite_float(self.tolerance, "TNA tolerance")
         if tolerance <= 0.0:
             raise ContractError("TNA tolerance must be greater than zero.")
         object.__setattr__(self, "horizontal_alpha", alpha)
         object.__setattr__(self, "horizontal_iterations", horizontal)
+        object.__setattr__(self, "horizontal_method", method)
         object.__setattr__(self, "vertical_iterations", vertical)
         object.__setattr__(self, "tolerance", tolerance)
         object.__setattr__(self, "metadata", _mapping(self.metadata))

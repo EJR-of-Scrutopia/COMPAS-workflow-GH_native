@@ -21,7 +21,7 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains eleven components:
+The native v0.2 vertical slice contains twelve components:
 
 ```text
 01 Model
@@ -36,6 +36,12 @@ The native v0.2 vertical slice contains eleven components:
   TNA Solve    RLX, Height (optional),
                Iterations (optional), Run     -> RES  result + native
                                                  Mesh/Lines/Supports
+  TNA Solve A  RLX, Height (optional),
+               Iterations (unused), Run       -> RES  same surface, with
+                                                 the algebraic horizontal
+                                                 method (exact force
+                                                 densities in one sparse
+                                                 least-squares solve)
   FD Solve     PRB, ForceDensity, Run         -> RES  result (same type) +
                                                  native Lines/Supports
 

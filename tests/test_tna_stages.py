@@ -329,6 +329,84 @@ def test_staged_polar_crown_stays_funicular_and_sag_hits_target():
     assert drops[0] < drops[1] < drops[2] < drops[3]
 
 
+def test_algebraic_horizontal_method_reaches_exact_reciprocity():
+    """The algebraic sibling solves the force densities directly from the
+    equilibrium matrix: the reciprocity angle must reach numerical zero on
+    a pattern the iterative parallelisation only approximates, and the
+    solved height must agree with the iterative solver's."""
+
+    vertices, faces, edges, rim, ring_start = polar_disk()
+    free = {rim[j] for j in range(16) if j % 4 in (1, 2)}
+    supports = [key for key in rim if key not in free]
+    prepared = dispatch(request(
+        "tna.prepare",
+        {
+            "topology": {
+                "kind": "line",
+                "vertices": vertices,
+                "edges": edges,
+                "source_vertex_ids": [
+                    "disk-{}".format(index)
+                    for index in range(len(vertices))
+                ],
+                "length_unit": "m",
+            },
+            "supports": {"mode": "explicit", "node_ids": supports},
+            "settings": {
+                "force_density": 1.0,
+                "relax": True,
+                "boundary_sag": 0.15,
+                "sag_iterations": 50,
+                "sag_tolerance": 0.01,
+            },
+        },
+        "prepare-algebraic",
+    ))["result"]
+
+    def solve(method):
+        response = dispatch(request(
+            "tna.solve",
+            {
+                "prepared": prepared,
+                "load_case": {
+                    "name": "dead",
+                    "distribution": "tributary_area",
+                    "base_vector": (0.0, 0.0, -1.0),
+                },
+                "control": {
+                    "height_control": {"mode": "zmax", "value": 5.0},
+                    "settings": {
+                        "horizontal_alpha": 100.0,
+                        "horizontal_iterations": None,
+                        "horizontal_method": method,
+                        "vertical_iterations": 1000,
+                        "tolerance": 1.0e-3,
+                    },
+                },
+            },
+            "solve-algebraic-" + method,
+        ))
+        assert response["type"] == "result", response
+        return response["result"]["diagnostic_metrics"]
+
+    algebraic = solve("algebraic")
+    iterative = solve("iterative")
+
+    assert algebraic["horizontal_mode"] == "algebraic"
+    assert algebraic["horizontal_converged"] is True
+    assert algebraic["max_reciprocal_angle_deviation"] < 1.0e-4
+    assert algebraic["max_reciprocal_angle_ungated"] < 1.0e-4
+    assert algebraic["algebraic_residual_max_relative"] < 1.0e-9
+    # Exact equilibrium is honest about sign: this wide-opening fixture
+    # demands tension on some edges, and the count is surfaced instead of
+    # being clamped away.
+    assert algebraic["algebraic_negative_q_count"] >= 0
+    assert algebraic["zmax_solved"] == pytest.approx(5.0, abs=1e-2)
+    assert iterative["zmax_solved"] == pytest.approx(
+        algebraic["zmax_solved"], abs=5e-2
+    )
+
+
 def test_natural_height_with_surface_load_freezes_selfweight():
     """A blank Height with a surface load must freeze the selfweight at
     the plan geometry. The regression: the scale-free natural solve fed

@@ -487,7 +487,7 @@ public sealed record TnaSolveTaskResult(
 /// thrust network as native Grasshopper geometry, so the solved vault can
 /// be used directly, not only visualised.
 /// </summary>
-public sealed class TnaSolveComponent :
+public class TnaSolveComponent :
     NativeTaskComponentBase<TnaSolveTaskResult>
 {
     // Lazily assigned: a Mesh constructor touches Rhino's native runtime,
@@ -497,13 +497,24 @@ public sealed class TnaSolveComponent :
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
     public TnaSolveComponent()
-        : base(
+        : this(
             "TNA Solve",
             "TNA Solve",
             "Solve a Relaxed Pattern against the load case its Problem " +
             "carries. Blank Height finds the natural equilibrium height; " +
             "a number solves exactly to that crown height. Blank " +
-            "Iterations auto-converges the reciprocal diagrams.",
+            "Iterations auto-converges the reciprocal diagrams.")
+    {
+    }
+
+    protected TnaSolveComponent(
+        string name,
+        string nickname,
+        string description)
+        : base(
+            name,
+            nickname,
+            description,
             ComponentCategories.FormFinding,
             "tna_solve")
     {
@@ -513,6 +524,12 @@ public sealed class TnaSolveComponent :
                 preview.Hidden = true;
         }
     }
+
+    /// <summary>
+    /// The worker-side horizontal solver this component requests;
+    /// the algebraic sibling overrides it.
+    /// </summary>
+    protected virtual string SolveMethod => "iterative";
 
     public override Guid ComponentGuid =>
         new("9d2f4b86-7e1a-4c50-b3f7-6a8e0c9d1235");
@@ -750,6 +767,18 @@ public sealed class TnaSolveComponent :
                 $"Reciprocity stalled at {angle:F1}° on force-bearing " +
                 "edges (RhinoVault accepts under 5°). " + advice);
         }
+        if (metrics.TryGetValue(
+                "algebraic_negative_q_count",
+                out double negativeQ) &&
+            negativeQ >= 1.0)
+        {
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Warning,
+                $"{negativeQ:F0} edge(s) carry negative force density: " +
+                "exact horizontal equilibrium of this pattern demands " +
+                "tension there. Compression-only form finding needs a " +
+                "different pattern or support layout.");
+        }
         summary.Add($"{result.Elapsed.TotalMilliseconds:F0} ms");
         Message = string.Join(" · ", summary);
 
@@ -797,12 +826,13 @@ public sealed class TnaSolveComponent :
             HeightValue = hasHeight ? height : null,
             HorizontalAlpha = 100.0,
             HorizontalIterations = hasIterations ? iterations : null,
+            HorizontalMethod = SolveMethod,
             VerticalIterations = 1000,
             Tolerance = 1.0e-3,
             Provenance = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["component"] = "TNA Solve",
+                ["component"] = Name,
                 ["controls"] = "component"
             }
         };
@@ -889,6 +919,35 @@ public sealed record FdSolveTaskResult(
     ResultDto? Result,
     Exception? Error,
     TimeSpan Elapsed);
+
+/// <summary>
+/// TNA Solve with the algebraic horizontal method: exact force densities
+/// from the equilibrium matrix in one sparse least-squares solve, then a
+/// single reciprocal fit for the force diagram. Interface-identical to
+/// TNA Solve so the two can be compared side by side on one canvas;
+/// Iterations is accepted but not used, because the direct solve has no
+/// iteration knob worth turning.
+/// </summary>
+public sealed class TnaSolveAlgebraicComponent : TnaSolveComponent
+{
+    public TnaSolveAlgebraicComponent()
+        : base(
+            "TNA Solve Algebraic",
+            "TNA Solve A",
+            "Solve a Relaxed Pattern with the algebraic horizontal " +
+            "method: exact force densities from the equilibrium matrix " +
+            "in one sparse least-squares solve, reaching machine-" +
+            "precision reciprocity wherever the pattern admits it. " +
+            "Blank Height finds the natural equilibrium height; " +
+            "Iterations is not used by this method.")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("b7c3e9a1-4f6d-4a82-9c05-2d8e7b3f5a19");
+
+    protected override string SolveMethod => "algebraic";
+}
 
 /// <summary>
 /// Run whole-network COMPAS force-density form finding against a Problem's

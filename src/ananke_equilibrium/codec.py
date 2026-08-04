@@ -482,6 +482,7 @@ def decode_tna_config(value: Any) -> TNAConfig:
             "schema_version",
             "horizontal_alpha",
             "horizontal_iterations",
+            "horizontal_method",
             "vertical_iterations",
             "tolerance",
             "metadata",
@@ -490,6 +491,7 @@ def decode_tna_config(value: Any) -> TNAConfig:
     return TNAConfig(
         horizontal_alpha=data.get("horizontal_alpha", 100.0),
         horizontal_iterations=data.get("horizontal_iterations"),
+        horizontal_method=data.get("horizontal_method", "iterative"),
         vertical_iterations=data.get("vertical_iterations", 100),
         tolerance=data.get("tolerance", 1.0e-3),
         metadata=_object(

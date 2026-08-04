@@ -41,6 +41,14 @@ public sealed record TnaControlDto : ContractDto
     /// </summary>
     public int? HorizontalIterations { get; init; }
 
+    /// <summary>
+    /// "iterative" runs the parallelisation loop; "algebraic" solves the
+    /// exact force densities from the equilibrium matrix in one sparse
+    /// least-squares pass (requires HorizontalAlpha 100 and ignores
+    /// HorizontalIterations).
+    /// </summary>
+    public string HorizontalMethod { get; init; } = "iterative";
+
     public int VerticalIterations { get; init; } = 1000;
 
     public double Tolerance { get; init; } = 1.0e-3;
@@ -71,6 +79,16 @@ public sealed record TnaControlDto : ContractDto
         }
         if (HorizontalIterations is < 1)
             errors.Add("horizontalIterations must be positive when given.");
+        string method = (HorizontalMethod ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant();
+        if (method is not ("" or "iterative" or "algebraic"))
+            errors.Add(
+                "horizontalMethod must be 'iterative' or 'algebraic'.");
+        if (method == "algebraic" && HorizontalAlpha != 100.0)
+            errors.Add(
+                "the algebraic horizontal method fixes the form diagram; " +
+                "horizontalAlpha must be 100.");
         if (VerticalIterations < 1)
             errors.Add("verticalIterations must be positive.");
         if (!ContractRules.IsFinite(Tolerance) || Tolerance <= 0.0)

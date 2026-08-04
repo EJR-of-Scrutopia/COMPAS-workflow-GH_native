@@ -193,6 +193,10 @@ internal static class TnaWorkerResultCodec
             ["horizontal_iterations"] =
                 control.HorizontalIterations?.ToString(
                     CultureInfo.InvariantCulture) ?? "auto",
+            ["horizontal_method"] = string.IsNullOrWhiteSpace(
+                control.HorizontalMethod)
+                ? "iterative"
+                : control.HorizontalMethod.Trim().ToLowerInvariant(),
             ["vertical_iterations"] =
                 control.VerticalIterations.ToString(CultureInfo.InvariantCulture),
             ["tolerance"] =
