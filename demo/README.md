@@ -153,6 +153,53 @@ COMPAS DEM menu with Show Blocks, Show Contacts and Show Interactions, a
 sidebar object tree with per-object visibility checkboxes, object and camera
 settings panels, four render modes and five view presets.
 
+### 9. Structural verification
+
+`demo/09_structural_verification.py`
+
+Runs in `.venv-fea`, a third project environment beside `.venv` and
+`.venv-cra`: `compas_fea2` is pinned to a mid-2025 commit because the
+OpenSees backend it targets was last pushed before the core removed
+`BeamSection`, and that pin should not leak into the Rhino-mirroring main
+environment. Build it with `bash scripts/setup_fea_env.sh`. Like every other
+demo here, the play button hands the script to the right interpreter
+automatically if a different one is selected; from `.venv` you will see
+`Switching from ... to ...\.venv-fea\Scripts\python.exe` before it runs.
+
+The export to analyse is chosen at runtime, never hard-coded. With no
+argument, the export with the smallest equilibrium residual is picked (of
+the three shipped in `upload from grasshopper/`, that is currently the
+algebraic TNA solve, closing to 0.03 kN); name one explicitly to override:
+
+```powershell
+.venv-fea\Scripts\python.exe demo\09_structural_verification.py "Trial 2"
+```
+
+Seven sections: reads the export; solves a pin-jointed truss of the thrust
+network under the same loads and cross-checks both the global reaction and
+every member's axial force against what TNA already reported; solves the
+shell under its design load and reports peak deflection and stress
+utilisation; sweeps two load factors to find where the shell goes into
+tension; sizes a cable if it does; traces the load path by arc length
+(`StaticRiksStep` cannot be constructed at this pin, so this reports why
+rather than inventing a collapse factor); and writes everything to
+`studies/<export-name>/fea-verification.json`.
+
+Each full-mesh shell solve took under two seconds in testing, well under the
+brief's original estimate, so the shell sections plus the sweep and the cable
+sizing run in single-digit seconds. **The bar cross-check does not
+currently complete on the real vault.** Every shipped export is a pure
+quad-grid thrust network with no diagonal members at all, and a pin-jointed
+truss built from a quad grid is a mechanism: each of its 2400 quad panels can
+rack freely, which is invisible on the tiny triangulated fixture the unit
+tests use but shows up at full scale as OpenSees' Newton iteration diverging
+rather than converging (residual norm rising past 4x10^9 in ten iterations,
+confirmed by running the generated `.tcl` directly). This surfaced for the
+first time when the demo was run end to end, exactly the risk the plan for
+this piece flagged in advance. It is a limitation of `build_bar_model` in
+`ananke_fea.bars`, not of this script, and it is open rather than patched
+around.
+
 ### Every working example has its own clickable file
 
 `demo/compas_examples/` holds **24 files, one per example that runs here**.
@@ -220,6 +267,6 @@ file sets it. Multiply the vectors instead.
 | Asked for | State |
 | --- | --- |
 | Formwork load at build step k | The CRA environment is built and solves. Wiring the tessellated blocks into it is the next piece of work, not a finished demo. |
-| Deformation under load, FEA sense | `compas_fea2` registers no solver backend, and the OpenSees bridge is not published. It can express a model, not analyse one. |
+| Deformation under load, FEA sense | Demo 9 does this now, in `.venv-fea` against a pinned OpenSees backend. What is not finished is its own bar cross-check on the real vault; see demo 9's entry above. |
 | ROS robot placing blocks | Demo 5 does the placement with closed-form inverse kinematics and no ROS. What is missing is collision checking and trajectory planning, which are PyBullet and ROS with MoveIt respectively. |
 | Cross, fan and pavilion vaults | `NotImplementedError` stubs in compas_dem 0.5.0. Demo 6 names them. |

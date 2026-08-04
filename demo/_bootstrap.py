@@ -29,6 +29,12 @@ GUARD = "ANANKE_DEMO_BOOTSTRAPPED"
 # environment, built by scripts/setup_cra_env.sh.
 CRA_VENV = ".venv-cra"
 
+# Finite element analysis cannot share the main interpreter either: the
+# OpenSees backend was last pushed 2025-06-17 and imports BeamSection, which
+# the core removed on 2025-07-30, so compas_fea2 is pinned to a mid-2025
+# commit. That is not a pin the Rhino-mirroring environment should inherit.
+FEA_VENV = ".venv-fea"
+
 # Every compas_cra solver calls SolverFactory("ipopt"), so the binaries must
 # be on PATH before a solve starts. Microsoft Store Python virtualises
 # %LOCALAPPDATA%, so idaes installs them under Packages rather than where
@@ -117,6 +123,9 @@ def ensure_venv(
         if name == CRA_VENV:
             print("Build it with:")
             print("    bash scripts/setup_cra_env.sh")
+        elif name == FEA_VENV:
+            print("Build it with:")
+            print("    bash scripts/setup_fea_env.sh")
         else:
             print("Create it, then install the project:")
             print("    py -3.12 -m venv .venv")
@@ -166,11 +175,19 @@ def ensure_cra_venv(script: str) -> None:
     ensure_venv(script, name=CRA_VENV, extra_path=directory)
 
 
+def ensure_fea_venv(script: str) -> None:
+    """Hand this script to the finite element interpreter."""
+
+    ensure_venv(script, name=FEA_VENV)
+
+
 __all__ = [
     "CRA_VENV",
+    "FEA_VENV",
     "GUARD",
     "IPOPT_CANDIDATES",
     "ensure_cra_venv",
+    "ensure_fea_venv",
     "ensure_venv",
     "ipopt_directory",
     "project_root",
