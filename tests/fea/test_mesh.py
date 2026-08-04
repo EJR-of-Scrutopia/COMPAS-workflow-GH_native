@@ -27,6 +27,18 @@ def test_thrust_mesh_has_the_expected_size():
     assert surface.number_of_faces() == 2400
 
 
+def test_available_exports_finds_complete_pairs():
+    pairs = reader.available_exports(UPLOAD)
+    assert "Trial 2" in pairs
+    assert pairs["Trial 2"]["contract"].name == "Trial 2-contract.json"
+    assert pairs["Trial 2"]["geometry"].name == "Trial 2-compas.json"
+
+
+def test_an_incomplete_pair_is_not_an_export(tmp_path):
+    (tmp_path / "lonely-contract.json").write_text("{}", encoding="utf-8")
+    assert reader.available_exports(tmp_path) == {}
+
+
 def test_supports_are_read(contract):
     supports = reader.support_node_ids(contract)
     assert len(supports) == 123

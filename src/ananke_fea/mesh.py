@@ -42,6 +42,23 @@ def load_thrust_mesh(path):
     return json_loads(document["thrustMesh"])
 
 
+def available_exports(directory) -> Dict[str, Dict[str, Path]]:
+    """Map export name to its file pair, for every complete pair present.
+
+    An export is a pair "<name>-contract.json" and "<name>-compas.json" in
+    the same directory. Only names with both files count.
+    """
+
+    directory = Path(directory)
+    pairs: Dict[str, Dict[str, Path]] = {}
+    for contract in sorted(directory.glob("*-contract.json")):
+        name = contract.name[: -len("-contract.json")]
+        geometry = directory / (name + "-compas.json")
+        if geometry.is_file():
+            pairs[name] = {"contract": contract, "geometry": geometry}
+    return pairs
+
+
 def _equilibrium(contract: Mapping[str, Any]) -> Mapping[str, Any]:
     block = contract.get("equilibrium")
     if not isinstance(block, Mapping):
