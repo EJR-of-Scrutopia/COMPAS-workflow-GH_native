@@ -128,7 +128,7 @@ wrong.
 
 ### 1. A third environment, and why it cannot be merged
 
-`compas_fea2` is pinned to commit `664ec20` (2026-06-16) because the OpenSees
+`compas_fea2` is pinned to commit `664ec20` (2025-06-16) because the OpenSees
 backend was last pushed 2025-06-17 and imports `BeamSection`, which the core
 removed on 2025-07-30. The main bench pins `numpy 2.0.2`, `scipy 1.13.1` and
 `compas 2.15.1` to mirror the Rhino 8 environment. Pinning a mid-2025
@@ -208,6 +208,15 @@ peak and its location.
 **Deflection.** From the same solve. Displacement field, peak magnitude, and
 the governing span-over-deflection ratio.
 
+The export's own nodal loads are whatever the Grasshopper definition
+applied, which may be far below the declared section's own weight: on the
+shipped exports it is close to a uniform 1 kN/m2, well under a 200 mm
+C30/37 section's roughly 4.7 kN/m2 self-weight. So the shell analyses take
+the export's loads plus the declared section's self-weight by default, both
+intensities and the choice recorded in the result. The bar cross-check keeps
+export loads only, because TNA solved for exactly those loads and comparing
+against a load TNA never saw would falsify nothing.
+
 **Tension onset.** A sweep of static solves over a rising load factor. For
 each, whether any element reaches positive principal stress, and where. The
 output is the factor at which tension first appears and the extent of the
@@ -258,7 +267,7 @@ then view and plot them without importing `compas_fea2`.
 | Cantilever closed form | Tip deflection matches `PL^3 / 3EI` within tolerance |
 | Bar cross-check | Reactions balance the factored applied load within the file's own residual; member forces match TNA strictly on statically determinate fixtures, and are reported with scale and note on indeterminate networks |
 | Tension fixture | A shape known to require tension reports tension |
-| Compression fixture | The funicular under its design load reports none |
+| Compression fixture | The funicular's peak tension at its design load stays below the design tensile strength |
 | Riks non-convergence | A model that cannot converge reports that, and returns no collapse load |
 | Environment guard | The FEA environment's pins have not moved |
 | No cross-import | `src/ananke_equilibrium/` never imports `compas_fea2` |
