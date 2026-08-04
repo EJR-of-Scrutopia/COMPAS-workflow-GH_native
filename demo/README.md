@@ -189,20 +189,34 @@ rather than inventing a collapse factor); and writes everything to
 
 The cross-check's verdict is split, and both halves are printed. Reactions
 balance the factored applied load essentially exactly on every shipped
-export, which is the wiring falsifier: it is what proves loads, supports,
-units and extraction are correct, and it is what `agrees` reports. Member
-forces differ from TNA by close to 19 kN at the worst member on both Trial 2
-and the algebraic export, and that is expected rather than a fault: this
-network is statically indeterminate and admits self-stress, so TNA's member
-distribution and the elastic one are different members of the same
-equilibrium family, not a right answer and a wrong one. The result carries a
-`member_note` saying exactly this, and a separate `strict_agrees` for
-callers that want the older, stricter, reaction-and-member reading.
+export, which is the wiring falsifier: it shows the loads reached the model,
+the supports resolved, the combination factor applied once, and extraction
+is not doubling rows, and it is what `agrees` reports. It does not prove
+units: a wrong KN_TO_N cancels on both sides of this comparison, so units are
+pinned elsewhere, by the literal-value conversion tests and the cantilever
+closed form. Member forces differ from TNA by close to 19 kN at the worst
+member on both Trial 2 and the algebraic export, and that is expected rather
+than a fault: this network is statically indeterminate and admits
+self-stress, so TNA's member distribution and the elastic one are different
+members of the same equilibrium family, not a right answer and a wrong one.
+The result carries a `member_note` saying exactly this, and a separate
+`strict_agrees` for callers that want the older, stricter, reaction-and-member
+reading.
 
-Timing: the bar cross-check and the full-mesh shell solve run on the same
-order of magnitude, seconds rather than minutes each, so the whole demo
-finishes in minutes, not the roughly eight minutes the original estimate of
-124 seconds per full-mesh solve suggested.
+Timing: measured directly, this demo's own full-mesh shell solves, under its
+real per-node TNA export loads, take on the order of a couple of seconds
+each, and the whole demo runs end to end in about 11 seconds. That is not
+what `scripts/measure_mesh_density.py` reports (124.09 seconds cold, 121.28
+seconds warm) for what looks like the same mesh: that script's own benchmark
+applies one uniform load across nearly every free node in a single load
+pattern, and that pattern, not mesh size, is what makes its number large, as
+its own docstring now records. Budget from this paragraph for how long
+running this demo takes. The bar cross-check solves a separate, much
+lighter beam frame and is quick too; the tension sweep reuses the
+design-load solve as its factor-1.0 row and sweeps three further factors,
+`[1.5, 2.0, 3.0]`, rather than resolving the full mesh from scratch for
+every point on the table, which costs seconds now rather than minutes but
+keeps the same discipline of not re-solving what is already known.
 
 ### Every working example has its own clickable file
 

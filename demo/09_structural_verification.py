@@ -8,12 +8,15 @@ thin shells actually fail. This is the analysis that answers those.
 The order matters. The bar cross-check runs first: it solves a slender beam
 model of the thrust network under the same loads and compares the reacted
 load, and the member forces, against what TNA already reported. Reactions
-balancing the applied load is the wiring falsifier: it is what proves the
-loads, supports, units and extraction are correct. Member forces are
-compared too, but this network is statically indeterminate and admits
-self-stress, so TNA's member distribution and the elastic one can
-legitimately differ bar by bar even when the setup is correct; that
-difference is reported for scale, not treated as a fault.
+balancing the applied load is the wiring falsifier: it shows the loads
+reached the model, the supports resolved, the combination factor applied
+once, and extraction is not doubling rows. It does not prove units; a wrong
+KN_TO_N would cancel on both sides of this comparison, so units are pinned
+elsewhere, by the literal-value conversion tests and the cantilever closed
+form. Member forces are compared too, but this network is statically
+indeterminate and admits self-stress, so TNA's member distribution and the
+elastic one can legitimately differ bar by bar even when the setup is
+correct; that difference is reported for scale, not treated as a fault.
 
 Nothing here verifies a structure. Every output is a demand or a prediction
 from a model with stated assumptions. A vault that passes all four checks is
@@ -40,7 +43,7 @@ from ananke_fea.bars import build_bar_model, cross_check, member_axial_forces  #
 from ananke_fea.cables import size_cable  # noqa: E402
 from ananke_fea.compat import apply_patches, require_backend  # noqa: E402
 from ananke_fea.materials import PRESETS  # noqa: E402
-from ananke_fea.model import build_shell_model  # noqa: E402
+from ananke_fea.model import GRAVITY, build_shell_model, self_weight_loads  # noqa: E402
 from ananke_fea.results import deflection_summary, displacement_summary  # noqa: E402
 from ananke_fea.results import reaction_summary, stress_summary, write  # noqa: E402
 
@@ -49,6 +52,15 @@ UPLOAD = ROOT / "demo" / "upload from grasshopper"
 
 MATERIAL = "concrete"
 THICKNESS = 0.20
+# The export's own nodal loads are whatever the Grasshopper definition
+# applied to it, which this demo cannot see and must not assume: on the
+# shipped exports it comes out close to a uniform 1 kN/m2, far below the
+# roughly 4.7 kN/m2 self-weight of the declared 200 mm C30/37 section
+# (thickness x density x GRAVITY). So the shell analyses below add the
+# section's own weight to the export's loads by default, and print both
+# intensities so the choice is visible rather than assumed. Set this False
+# if the export's own loads already include self-weight.
+INCLUDE_SELF_WEIGHT = True
 # Deliberately slender: radius about 18 mm. The bar cross-check now uses
 # BeamElement, not TrussElement, because the exported thrust network is an
 # undiagonalised quad grid with a shear mechanism in every panel that a
@@ -57,10 +69,20 @@ THICKNESS = 0.20
 # mechanisms are suppressed without the check stopping being an axial one.
 BAR_AREA = 1e-3
 SPAN = 20.3
-# Two factors, not four: each solve of the full mesh takes 124 seconds, so
-# the whole demo lands near eight minutes. Add factors back deliberately
-# when the extra resolution is worth the extra minutes.
-SWEEP_FACTORS = [1.0, 2.0]
+# Four factors, three extra solves: factor 1.0 reuses section 3's already
+# solved design-load summary rather than solving the full mesh a fourth
+# time. Measured directly on this machine under this demo's real, per-node
+# TNA export loads (run_static groups them into many small load patterns,
+# not one uniform one), a full-mesh solve takes on the order of a couple of
+# seconds, and the whole five-solve demo runs end to end in about 11
+# seconds. scripts/measure_mesh_density.py separately measures about two
+# minutes (124.09s cold, 121.28s warm) for the same mesh, but that number
+# is its own benchmark's artifact: it applies one uniform load across
+# nearly every free node in a single load pattern, which this script's
+# docstring shows is what is slow, not mesh size, and not something this
+# demo's own solves do. Budget from this comment, not from that script,
+# for how long running this demo actually takes.
+SWEEP_FACTORS = [1.5, 2.0, 3.0]
 
 
 def choose_export() -> tuple:
@@ -115,8 +137,33 @@ def main() -> int:
     if residual is not None:
         print("   the solve's own residual  {:.3f} kN".format(residual / 1000.0))
 
+    export_area = surface.area()
+    export_intensity = reader.applied_total(contract) / export_area / 1000.0
+    section_intensity = THICKNESS * preset.density * GRAVITY / 1000.0
+    print("   export load intensity     {:.2f} kN/m2 over {:.1f} m2".format(
+        export_intensity, export_area))
+    print("   section self-weight       {:.2f} kN/m2 ({:.0f} mm {})".format(
+        section_intensity, THICKNESS * 1000, preset.name))
+    print("   self-weight included      {}".format(INCLUDE_SELF_WEIGHT))
+
+    weight = {}
+    if INCLUDE_SELF_WEIGHT:
+        weight = self_weight_loads(surface, THICKNESS, preset.density)
+        combined = {}
+        for key in surface.vertices():
+            ex = loads.get(key, (0.0, 0.0, 0.0))
+            sw = weight.get(key, (0.0, 0.0, 0.0))
+            combined[key] = (ex[0] + sw[0], ex[1] + sw[1], ex[2] + sw[2])
+        shell_loads = combined
+    else:
+        shell_loads = loads
+
     banner("2. Cross-check the setup against TNA")
     step("Solving the thrust network as a slender beam frame")
+    # Export loads only here, not shell_loads: this check compares against
+    # TNA, which solved for exactly the export's own loads. Adding the
+    # section's self-weight on top would compare the elastic solve against
+    # a load TNA never saw, which would falsify nothing.
     bars = build_bar_model(contract, preset, BAR_AREA)
     bar_outcome = run_static(bars, loads, name="bar_check")
     forces = member_axial_forces(
@@ -134,8 +181,12 @@ def main() -> int:
         print("   Agrees per member and in total: the setup is verified against")
         print("   TNA at member level, which this network's determinacy allows.")
     elif checked["reactions_agree"]:
-        print("   Reactions balance the applied load exactly, so loads, supports,")
-        print("   units and extraction are wired correctly. Member forces differ")
+        print("   Reactions balance the applied load exactly: the loads reached")
+        print("   the model, the supports resolved, the combination factor")
+        print("   applied once, and extraction is not doubling rows. (Units are")
+        print("   not proven here: a wrong KN_TO_N cancels on both sides of this")
+        print("   comparison; they are pinned by the conversion tests and the")
+        print("   cantilever closed form.) Member forces differ")
         print("   from TNA by up to {:.1f} kN: this network admits self-stress,".format(
             checked["max_member_difference"] / 1000.0))
         print("   so the two distributions are different members of the same")
@@ -150,7 +201,7 @@ def main() -> int:
 
     from compas_fea2.results import StressFieldResults
 
-    outcome = run_static(shell, loads, name="design",
+    outcome = run_static(shell, shell_loads, name="design",
                          outputs=(StressFieldResults,))
     displacement = displacement_summary(outcome.step)
     reactions = reaction_summary(outcome.step)
@@ -166,7 +217,18 @@ def main() -> int:
 
     banner("4. When does it go into tension")
     step("Sweeping the load factor")
-    swept = sweep_tension(shell, loads, preset, SWEEP_FACTORS)
+    # Factor 1.0 is not resolved again: it is exactly section 3's
+    # already-solved design-load case (same shell_loads, same ULS
+    # combination, scale 1.0), so its summary is reused as the sweep's
+    # first row rather than paying for a fourth full-mesh solve.
+    design_row = {
+        "factor": 1.0,
+        "peak_tension": stresses["peak_tension"],
+        "peak_compression": stresses["peak_compression"],
+        "tension_present": stresses["tension_present"],
+        "utilisation": stresses["utilisation"],
+    }
+    swept = [design_row] + sweep_tension(shell, shell_loads, preset, SWEEP_FACTORS)
     for row in swept:
         print("   factor {:>4.1f}   peak tension {:>10.3f} MPa   {}".format(
             row["factor"],
@@ -176,6 +238,11 @@ def main() -> int:
     onset = first_tension_factor(swept)
 
     banner("5. Cables, if they are needed")
+    # The full four-row table now starts at factor 1.0 (the reused design
+    # row), not at min(SWEEP_FACTORS), so "the lowest factor swept" is read
+    # from the table itself rather than assumed.
+    lowest_swept_factor = min(row["factor"] for row in swept)
+    onset_is_bounded = onset is not None and onset > lowest_swept_factor
     if onset is None:
         print("   No tension anywhere in the sweep, so no cables are required")
         print("   on strength grounds within the factors tested.")
@@ -187,7 +254,11 @@ def main() -> int:
         # sizing only, in the same discipline as demo 8's concrete sizing.
         demand = peak * THICKNESS * SPAN
         cable = size_cable(demand)
-        print("   tension first appears at factor {:.1f}".format(onset))
+        if onset_is_bounded:
+            print("   tension first appears at factor {:.1f}".format(onset))
+        else:
+            print("   tension is already present at the lowest factor swept "
+                  "({:.1f}); the onset is below the swept range".format(onset))
         print("   provisional demand    {:.1f} kN".format(demand / 1000.0))
         print("   required steel area   {:.0f} mm2".format(
             cable["required_area"] * 1e6))
@@ -198,7 +269,7 @@ def main() -> int:
 
     banner("6. Collapse by arc length")
     step("Tracing the load path, which may not converge")
-    riks = run_riks(shell, loads, max_increments=50)
+    riks = run_riks(shell, shell_loads, max_increments=50)
     if riks["converged"]:
         print("   traced {} increments".format(riks["increments_run"]))
     else:
@@ -212,6 +283,12 @@ def main() -> int:
         "material": preset.name,
         "material_assumptions": preset.assumptions,
         "thickness": THICKNESS,
+        "loads": {
+            "source": "TNA export nodal loads",
+            "export_total_newtons": reader.applied_total(contract),
+            "self_weight_included": INCLUDE_SELF_WEIGHT,
+            "self_weight_total_newtons": sum(-v[2] for v in weight.values()),
+        },
         "cross_check": checked,
         "displacement": displacement,
         "reactions": reactions,
@@ -219,6 +296,7 @@ def main() -> int:
         "stress": stresses,
         "tension_sweep": swept,
         "first_tension_factor": onset,
+        "onset_is_bounded": onset_is_bounded,
         "cable": cable,
         "buckling": riks,
     }
