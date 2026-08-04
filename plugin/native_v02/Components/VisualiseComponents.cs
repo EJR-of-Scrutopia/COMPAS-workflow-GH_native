@@ -733,27 +733,26 @@ namespace Ananke.COMPAS.Native.Components
         };
 
         private readonly List<DrawLine> _preview = new();
-        // Lazily assigned: a Mesh constructor touches Rhino's native
-        // runtime, which must not happen during component enumeration.
-        private Mesh? _previewMesh;
         private BoundingBox _clippingBox = BoundingBox.Empty;
 
         public DisplayComponent()
             : base(
                 "Display",
                 "Display",
-                "Draw a solved Result's thrust mesh and lines, the " +
+                "Draw a solved Result's element lines: thrust network, " +
                 "reciprocal force diagram, and mapped " +
                 "load/reaction/residual vectors, with one style preset, " +
-                "auto-scaling, and Elements/Metric filters.",
+                "auto-scaling, and Elements/Metric filters. The shaded " +
+                "thrust mesh is TNA Solve's preview; here it is data only.",
                 ComponentCategories.Visualise,
                 "graphic_diagram_display")
         {
-            // This component supplies its own coloured preview, mesh
-            // included: Grasshopper's default red preview material on the
-            // geometry outputs is what made the thrust surface clash with
-            // every element colour, so all geometry outputs stay hidden;
-            // their data remains available to every downstream component.
+            // This component draws element lines only. Grasshopper's
+            // default red preview material on the geometry outputs is what
+            // made the thrust surface clash with every element colour, so
+            // all geometry outputs stay hidden; their data remains
+            // available to every downstream component, and the shaded
+            // mesh preview lives on TNA Solve alone.
             for (int index = 0; index <= 4; index++)
             {
                 if (Params.Output[index] is IGH_PreviewObject preview)
@@ -873,23 +872,7 @@ namespace Ananke.COMPAS.Native.Components
         {
             base.BeforeSolveInstance();
             _preview.Clear();
-            _previewMesh = null;
             _clippingBox = BoundingBox.Empty;
-        }
-
-        public override void DrawViewportMeshes(IGH_PreviewArgs args)
-        {
-            if (Hidden ||
-                _previewMesh is null ||
-                _previewMesh.Faces.Count == 0)
-            {
-                return;
-            }
-            args.Display.DrawMeshShaded(
-                _previewMesh,
-                new Rhino.Display.DisplayMaterial(
-                    Color.FromArgb(225, 222, 215),
-                    0.35));
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -1189,7 +1172,6 @@ namespace Ananke.COMPAS.Native.Components
                     ToArrowLines(reactionLines, "reaction", preset));
                 _preview.AddRange(
                     ToArrowLines(residualLines, "residual", preset));
-                _previewMesh = thrustMesh;
 
                 Point3d[] previewPoints = _preview
                     .SelectMany(item => new[] { item.Line.From, item.Line.To })
@@ -1197,8 +1179,6 @@ namespace Ananke.COMPAS.Native.Components
                 _clippingBox = previewPoints.Length == 0
                     ? BoundingBox.Empty
                     : new BoundingBox(previewPoints);
-                if (thrustMesh.Faces.Count > 0)
-                    _clippingBox.Union(thrustMesh.GetBoundingBox(false));
 
                 report.Add(
                     $"Drawn · thrust {thrustEdges.Count}, force " +

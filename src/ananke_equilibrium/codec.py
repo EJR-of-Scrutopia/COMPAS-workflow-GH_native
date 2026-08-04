@@ -829,8 +829,22 @@ def _diagram_faces(
     face_vertices = getattr(diagram, "face_vertices", None)
     if not callable(faces) or not callable(face_vertices):
         return []
+    face_attribute = getattr(diagram, "face_attribute", None)
     records = []
-    for face_id, key in enumerate(faces()):
+    face_id = 0
+    for key in faces():
+        # FormDiagram.update_boundaries closes every unsupported opening
+        # with an unloaded face so the dual force diagram can be built.
+        # Those faces are solver scaffolding, not structure: exporting
+        # them draws a mesh across the very arches the openings sagged
+        # into. Only load-bearing faces leave the worker.
+        if callable(face_attribute):
+            try:
+                loaded = face_attribute(key, "_is_loaded")
+            except Exception:
+                loaded = None
+            if loaded is False:
+                continue
         try:
             cycle = [vertex_ids[item] for item in face_vertices(key)]
         except (KeyError, TypeError) as error:
@@ -844,6 +858,7 @@ def _diagram_faces(
                 "vertices": cycle,
             }
         )
+        face_id += 1
     return records
 
 

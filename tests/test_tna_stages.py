@@ -156,6 +156,10 @@ def test_worker_prepared_json_is_stateless_and_line_source_finishes_faced():
     assert len(prepared["pattern"]["edge_force_densities"]) == len(edges)
     assert len(prepared["form_graph"]["edges"]) == len(edges)
     assert len(prepared["force_graph"]["edges"]) == len(edges)
+    # update_boundaries closes the four corner-supported openings with
+    # unloaded scaffolding faces; the exported form graph must carry only
+    # the load-bearing faces or the thrust mesh covers the arches.
+    assert len(prepared["form_graph"]["faces"]) == len(faces)
 
     # The second dispatch reconstructs the prepared stage exclusively from its
     # finite JSON response; no live TNAPreparation object is available.
@@ -197,3 +201,4 @@ def test_worker_prepared_json_is_stateless_and_line_source_finishes_faced():
         "source_topology_kind"
     ] == "line"
     assert len(solved["edge_states"]) == len(edges)
+    assert len(solved["form_graph"]["faces"]) == len(faces)

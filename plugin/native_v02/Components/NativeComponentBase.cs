@@ -190,6 +190,66 @@ internal static class SuggestedValueListPlacement
         "\"";
 }
 
+/// <summary>
+/// Re-asserts each parameter's registered identity after a document read.
+///
+/// Grasshopper restores parameter names, nicknames, optionality, and
+/// preview visibility from the saved definition. When a component's
+/// surface changed between plugin versions (ports renamed, removed, or
+/// made optional), the archived values land on whichever current port
+/// shares the index: a required "V" appears where an optional "I" now
+/// lives, and the component errors on inputs that are meant to be blank.
+/// The registered identity, captured before the read, wins.
+/// </summary>
+internal static class ParameterIdentity
+{
+    internal readonly record struct Snapshot(
+        string Name,
+        string NickName,
+        string Description,
+        bool Optional,
+        bool? Hidden);
+
+    internal static Snapshot[] Capture(IList<IGH_Param> parameters)
+    {
+        var snapshots = new Snapshot[parameters.Count];
+        for (int index = 0; index < parameters.Count; index++)
+        {
+            IGH_Param parameter = parameters[index];
+            snapshots[index] = new Snapshot(
+                parameter.Name,
+                parameter.NickName,
+                parameter.Description,
+                parameter.Optional,
+                parameter is IGH_PreviewObject preview
+                    ? preview.Hidden
+                    : null);
+        }
+        return snapshots;
+    }
+
+    internal static void Restore(
+        IList<IGH_Param> parameters,
+        Snapshot[] snapshots)
+    {
+        int count = Math.Min(parameters.Count, snapshots.Length);
+        for (int index = 0; index < count; index++)
+        {
+            IGH_Param parameter = parameters[index];
+            Snapshot snapshot = snapshots[index];
+            parameter.Name = snapshot.Name;
+            parameter.NickName = snapshot.NickName;
+            parameter.Description = snapshot.Description;
+            parameter.Optional = snapshot.Optional;
+            if (snapshot.Hidden is bool hidden &&
+                parameter is IGH_PreviewObject preview)
+            {
+                preview.Hidden = hidden;
+            }
+        }
+    }
+}
+
 public abstract class NativeComponentBase : GH_Component
 {
     private readonly string _iconName;
@@ -223,7 +283,14 @@ public abstract class NativeComponentBase : GH_Component
     public override bool Read(GH_IReader reader)
     {
         _readFromArchive = true;
-        return base.Read(reader);
+        ParameterIdentity.Snapshot[] inputs =
+            ParameterIdentity.Capture(Params.Input);
+        ParameterIdentity.Snapshot[] outputs =
+            ParameterIdentity.Capture(Params.Output);
+        bool result = base.Read(reader);
+        ParameterIdentity.Restore(Params.Input, inputs);
+        ParameterIdentity.Restore(Params.Output, outputs);
+        return result;
     }
 
     public override void AddedToDocument(GH_Document document)
@@ -306,7 +373,14 @@ public abstract class NativeTaskComponentBase<TResult> :
     public override bool Read(GH_IReader reader)
     {
         _readFromArchive = true;
-        return base.Read(reader);
+        ParameterIdentity.Snapshot[] inputs =
+            ParameterIdentity.Capture(Params.Input);
+        ParameterIdentity.Snapshot[] outputs =
+            ParameterIdentity.Capture(Params.Output);
+        bool result = base.Read(reader);
+        ParameterIdentity.Restore(Params.Input, inputs);
+        ParameterIdentity.Restore(Params.Output, outputs);
+        return result;
     }
 
     public override void AddedToDocument(GH_Document document)

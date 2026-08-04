@@ -354,7 +354,7 @@ public sealed class TnaRelaxComponent :
             ForceDensity = q,
             Relax = true,
             BoundarySag = sagPercent / 100.0,
-            SagIterations = 10,
+            SagIterations = 50,
             SagTolerance = 0.01,
             FixedNodeIds = Array.Empty<int>(),
             Metadata = new Dictionary<string, string>(
@@ -540,6 +540,13 @@ public sealed class TnaSolveComponent :
             "whole calculation.",
             GH_ParamAccess.item);
         parameters[2].Optional = true;
+        parameters.AddBooleanParameter(
+            "Run",
+            "Run",
+            "False holds the solve so upstream edits stay responsive; " +
+            "True runs it.",
+            GH_ParamAccess.item,
+            true);
     }
 
     protected override void RegisterOutputParams(
@@ -743,6 +750,13 @@ public sealed class TnaSolveComponent :
         RelaxedGoo? relaxedGoo = null;
         double height = 0.0;
         int iterations = 0;
+        bool run = true;
+        data.GetData(3, ref run);
+        if (!run)
+        {
+            Message = "Off";
+            return false;
+        }
         if (!data.GetData(0, ref relaxedGoo) ||
             relaxedGoo?.Value is not RelaxedDto relaxedValue)
         {
@@ -904,6 +918,13 @@ public sealed class FdSolveComponent :
             GH_ParamAccess.list);
         parameters[1].DataMapping = GH_DataMapping.Flatten;
         parameters[1].Optional = true;
+        parameters.AddBooleanParameter(
+            "Run",
+            "Run",
+            "False holds the solve so upstream edits stay responsive; " +
+            "True runs it.",
+            GH_ParamAccess.item,
+            true);
     }
 
     protected override void RegisterOutputParams(
@@ -1072,6 +1093,13 @@ public sealed class FdSolveComponent :
         settings = null;
         ProblemGoo? problemGoo = null;
         var forceDensities = new List<double>();
+        bool run = true;
+        data.GetData(2, ref run);
+        if (!run)
+        {
+            Message = "Off";
+            return false;
+        }
         if (!data.GetData(0, ref problemGoo) ||
             problemGoo?.Value is not ProblemDto problemValue)
         {

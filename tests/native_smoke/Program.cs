@@ -125,13 +125,13 @@ internal static class Program
                     "TNA Solve",
                     "TNA Solve",
                     "02 Form Finding",
-                    new[] { "RLX", "H", "I" },
+                    new[] { "RLX", "H", "I", "Run" },
                     new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = (
                     "FD Solve",
                     "FD Solve",
                     "02 Form Finding",
-                    new[] { "PRB", "q" },
+                    new[] { "PRB", "q", "Run" },
                     new[] { "RES", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.StyleComponent"] = (
                     "Style",

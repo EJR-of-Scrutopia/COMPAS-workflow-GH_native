@@ -34,9 +34,9 @@ The native v0.2 vertical slice contains eleven components:
 02 Form Finding
   TNA Relax    PRB, ForceDensity, Sag%        -> RLX  relaxed state
   TNA Solve    RLX, Height (optional),
-               Iterations (optional)          -> RES  result + native
+               Iterations (optional), Run     -> RES  result + native
                                                  Mesh/Lines/Supports
-  FD Solve     PRB, ForceDensity              -> RES  result (same type) +
+  FD Solve     PRB, ForceDensity, Run         -> RES  result (same type) +
                                                  native Lines/Supports
 
 03 Visualise
