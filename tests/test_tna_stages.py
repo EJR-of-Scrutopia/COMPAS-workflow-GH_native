@@ -327,3 +327,73 @@ def test_staged_polar_crown_stays_funicular_and_sag_hits_target():
     assert all(drop > 0.0 for drop in drops)
     assert drops[0] > 0.1
     assert drops[0] < drops[1] < drops[2] < drops[3]
+
+
+def test_natural_height_with_surface_load_freezes_selfweight():
+    """A blank Height with a surface load must freeze the selfweight at
+    the plan geometry. The regression: the scale-free natural solve fed
+    geometry-dependent tributary loads back into themselves, and the vault
+    crawled toward an absurd equilibrium (hundreds of metres over a
+    twenty-metre plan) while re-evaluating loads for every one of its
+    thousand iterations."""
+
+    vertices, faces, edges, rim, ring_start = polar_disk()
+    free = {rim[j] for j in range(16) if j % 4 in (1, 2)}
+    supports = [key for key in rim if key not in free]
+    prepared = dispatch(request(
+        "tna.prepare",
+        {
+            "topology": {
+                "kind": "line",
+                "vertices": vertices,
+                "edges": edges,
+                "source_vertex_ids": [
+                    "disk-{}".format(index)
+                    for index in range(len(vertices))
+                ],
+                "length_unit": "m",
+            },
+            "supports": {"mode": "explicit", "node_ids": supports},
+            "settings": {
+                "force_density": 1.0,
+                "relax": True,
+                "boundary_sag": 0.15,
+                "sag_iterations": 50,
+                "sag_tolerance": 0.01,
+            },
+        },
+        "prepare-natural",
+    ))["result"]
+
+    solved_response = dispatch(request(
+        "tna.solve",
+        {
+            "prepared": prepared,
+            "load_case": {
+                "name": "dead",
+                "distribution": "tributary_area",
+                "base_vector": (0.0, 0.0, -1.0),
+            },
+            "control": {
+                "height_control": {"mode": "natural"},
+                "settings": {
+                    "horizontal_alpha": 100.0,
+                    "horizontal_iterations": None,
+                    "vertical_iterations": 1000,
+                    "tolerance": 1.0e-3,
+                },
+            },
+        },
+        "solve-natural",
+    ))
+    assert solved_response["type"] == "result", solved_response
+    metrics = solved_response["result"]["diagnostic_metrics"]
+    assert metrics["natural_selfweight_frozen"] is True
+    # The frozen natural height is unit-relative but stays in the same
+    # order of magnitude as the plan; the feedback loop blew far past it.
+    assert 0.0 < metrics["zmax_solved"] < 60.0
+    # The loads the result reports are the plan-evaluated selfweight the
+    # equilibrium actually satisfies: total pz is about minus the plan
+    # area, not the area of the risen surface.
+    assert metrics["effective_total_pz"] < -100.0
+    assert metrics["effective_total_pz"] > -500.0

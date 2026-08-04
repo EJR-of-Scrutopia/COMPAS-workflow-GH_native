@@ -62,9 +62,12 @@ The native v0.2 vertical slice contains eleven components:
 A blank TNA Solve `Height` finds the natural equilibrium height of the
 current force densities and reports it; a number solves so the crown lands
 exactly there. A blank `Iterations` auto-converges the horizontal solve:
-it keeps the best reciprocal state it finds, accepts when the angle
-deviation on force-bearing edges falls under five degrees (RhinoVault's
-own acceptance), and stops honestly when that angle plateaus. Edges
+it keeps the best reciprocal state it finds and keeps polishing past
+RhinoVault's five-degree acceptance until the force-bearing angle
+deviation reaches a tenth of a degree or genuinely plateaus, because
+residual reciprocity is unbalanced horizontal thrust in the exported
+result. Under five degrees reports as converged; the achieved angle is
+always reported. Edges
 carrying under one percent of the peak horizontal force are excluded from
 the acceptance metric because their force-diagram duals are near-zero
 length and their direction is numerical noise.

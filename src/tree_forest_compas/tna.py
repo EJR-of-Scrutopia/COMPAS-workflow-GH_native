@@ -46,6 +46,12 @@ Vector3 = Tuple[float, float, float]
 # is under settings.tna.horizontal_max_angle, which defaults to 5.0 degrees.
 HORIZONTAL_ACCEPT_DEGREES = 5.0
 
+# The auto loop does not stop at acceptance: every degree of residual
+# reciprocity is unbalanced horizontal thrust in the exported result, and
+# iterations are cheap under the sparse fixed-form solver. It polishes on
+# until the deviation is a tenth of a degree or stops improving.
+HORIZONTAL_POLISH_DEGREES = 0.1
+
 # Edges carrying under this fraction of the peak horizontal force have
 # force-diagram duals of near-zero length; their direction, and therefore
 # their reciprocity angle, is numerical noise rather than equilibrium error.
@@ -2135,7 +2141,7 @@ def solve_tna_problem(
     # iterations; fine blocks keep the loop from stepping over a short
     # sub-threshold dip in the non-monotone angle trajectory.
     horizontal_block = 250
-    horizontal_cap = 4000
+    horizontal_cap = 10000
     horizontal_iterations_run = 0
     horizontal_angle = 0.0
     horizontal_raw_angle = 0.0
@@ -2152,7 +2158,7 @@ def solve_tna_problem(
                 _run_horizontal(block)
                 horizontal_iterations_run += block
                 gated, raw = _reciprocity_angles()
-                improvement_floor = max(0.1, 0.02 * horizontal_angle)
+                improvement_floor = max(0.02, 0.02 * horizontal_angle)
                 if (
                     best_snapshot is None
                     or gated < horizontal_angle - improvement_floor
@@ -2163,7 +2169,12 @@ def solve_tna_problem(
                     stalled_blocks = 0
                 else:
                     stalled_blocks += 1
-                if horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES:
+                # Passing the 5-degree acceptance gate is not the finish
+                # line: residual reciprocity is unbalanced horizontal
+                # thrust in the result. Keep polishing while the best
+                # state improves; only numerical completeness (a tenth of
+                # a degree) or a genuine plateau stops the loop.
+                if horizontal_angle <= HORIZONTAL_POLISH_DEGREES:
                     break
                 # Iterations are cheap under the sparse solver, so the loop
                 # can afford patience with an oscillating trajectory before
@@ -2196,56 +2207,10 @@ def solve_tna_problem(
     if natural_height:
         mode = "q"
         q_scale = -1.0
-    vertical_scale = None
-    try:
-        if mode == "zmax":
-            zmax = float(zmax)
-            support_max = max(
-                float(form.vertex_attribute(key, "z")) for key in support_form_keys
-            )
-            if not isfinite(zmax) or zmax <= support_max:
-                raise TNAInputError(
-                    "zmax must be finite and above the highest support elevation."
-                )
-            _, vertical_scale = vertical_from_zmax(
-                form,
-                zmax=zmax,
-                kmax=int(vertical_kmax),
-                xtol=vertical_tolerance,
-                rtol=vertical_tolerance,
-                density=density,
-                display=bool(display),
-            )
-        elif mode == "q":
-            q_scale = float(q_scale)
-            if not isfinite(q_scale) or q_scale == 0:
-                raise TNAInputError("q_scale must be finite and non-zero.")
-            vertical_from_q(
-                form,
-                scale=q_scale,
-                density=density,
-                kmax=int(vertical_kmax),
-                tol=vertical_tolerance,
-                display=bool(display),
-            )
-            vertical_scale = q_scale
-        else:
-            raise TNAInputError("vertical_mode must be 'zmax' or 'q'.")
-    except TNAInputError:
-        raise
-    except Exception as error:
-        raise TNASolveError(
-            "COMPAS TNA {} vertical solve failed: {}: {}".format(
-                mode, type(error).__name__, error
-            )
-        ) from error
 
-    if density != 0.0:
-        # COMPAS TNA's LoadUpdater computes the selfweight inside the
-        # solver but never writes the final effective loads back to the
-        # form. Recompute them once from the solved geometry and persist
-        # them, so the reported loads, reactions, and global equilibrium
-        # checks describe the loads the solve actually applied.
+    def _persist_selfweight_loads() -> None:
+        """Evaluate the selfweight at the form's current geometry and
+        persist it into the nodal pz attributes."""
         from numpy import array as _np_array
 
         from compas_tna.loads import LoadUpdater
@@ -2265,7 +2230,7 @@ def solve_tna_problem(
             ],
             dtype=float,
         )
-        solved_xyz = _np_array(
+        current_xyz = _np_array(
             [form.vertex_coordinates(key) for key in vertex_order],
             dtype=float,
         )
@@ -2275,9 +2240,77 @@ def solve_tna_problem(
             point_loads,
             thickness=thickness,
             density=density,
-        )(effective, solved_xyz)
+        )(effective, current_xyz)
         for index, key in enumerate(vertex_order):
             form.vertex_attribute(key, "pz", float(effective[index, 2]))
+
+    # The natural-height solve is scale-free: it lets the given force
+    # densities find their own height. Geometry-dependent selfweight makes
+    # that a positive feedback loop (a taller surface carries more
+    # tributary load, which pushes it taller still), which either runs
+    # away or crawls toward an absurd equilibrium while re-evaluating the
+    # loads every iteration. Freeze the selfweight at the plan geometry
+    # instead: the reported natural height answers "what height do these
+    # force densities give under the pattern's own plan-evaluated weight",
+    # and a Height input remains the way to run true selfweight physics.
+    frozen_selfweight = natural_height and density != 0.0
+    if frozen_selfweight:
+        _persist_selfweight_loads()
+    vertical_density = 0.0 if frozen_selfweight else density
+    vertical_scale = None
+    try:
+        if mode == "zmax":
+            zmax = float(zmax)
+            support_max = max(
+                float(form.vertex_attribute(key, "z")) for key in support_form_keys
+            )
+            if not isfinite(zmax) or zmax <= support_max:
+                raise TNAInputError(
+                    "zmax must be finite and above the highest support elevation."
+                )
+            _, vertical_scale = vertical_from_zmax(
+                form,
+                zmax=zmax,
+                kmax=int(vertical_kmax),
+                xtol=vertical_tolerance,
+                rtol=vertical_tolerance,
+                density=vertical_density,
+                display=bool(display),
+            )
+        elif mode == "q":
+            q_scale = float(q_scale)
+            if not isfinite(q_scale) or q_scale == 0:
+                raise TNAInputError("q_scale must be finite and non-zero.")
+            vertical_from_q(
+                form,
+                scale=q_scale,
+                density=vertical_density,
+                kmax=int(vertical_kmax),
+                tol=vertical_tolerance,
+                display=bool(display),
+            )
+            vertical_scale = q_scale
+        else:
+            raise TNAInputError("vertical_mode must be 'zmax' or 'q'.")
+    except TNAInputError:
+        raise
+    except Exception as error:
+        raise TNASolveError(
+            "COMPAS TNA {} vertical solve failed: {}: {}".format(
+                mode, type(error).__name__, error
+            )
+        ) from error
+
+    if density != 0.0 and not frozen_selfweight:
+        # COMPAS TNA's LoadUpdater computes the selfweight inside the
+        # solver but never writes the final effective loads back to the
+        # form. Recompute them once from the solved geometry and persist
+        # them, so the reported loads, reactions, and global equilibrium
+        # checks describe the loads the solve actually applied. The frozen
+        # natural path already persisted its plan-evaluated loads before
+        # the solve; recomputing at the solved geometry would misreport
+        # the equilibrium it found.
+        _persist_selfweight_loads()
 
     edge_q = {}
     edge_forces = {}
@@ -2385,6 +2418,7 @@ def solve_tna_problem(
                 "load_sum + reaction_sum = 0"
             ),
             "vertical_mode": "natural" if natural_height else mode,
+            "natural_selfweight_frozen": frozen_selfweight,
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
             "horizontal_mode": "auto" if horizontal_auto else "fixed",
@@ -2394,6 +2428,7 @@ def solve_tna_problem(
             "horizontal_iterations_run": horizontal_iterations_run,
             "horizontal_converged": horizontal_converged,
             "horizontal_accept_degrees": HORIZONTAL_ACCEPT_DEGREES,
+            "horizontal_polish_degrees": HORIZONTAL_POLISH_DEGREES,
             "horizontal_force_gate_fraction": HORIZONTAL_FORCE_GATE_FRACTION,
             "zmin_solved": min(heights),
             "zmax_solved": max(heights),

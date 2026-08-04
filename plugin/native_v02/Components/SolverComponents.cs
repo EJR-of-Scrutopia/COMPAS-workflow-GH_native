@@ -545,8 +545,9 @@ public sealed class TnaSolveComponent :
             "I",
             "Optional horizontal iteration count. Blank auto-converges: " +
             "the worker keeps the best reciprocal state it finds and " +
-            "stops when the force-bearing angle deviation is under five " +
-            "degrees (RhinoVault's own acceptance) or stops improving. " +
+            "polishes until the force-bearing angle deviation reaches a " +
+            "tenth of a degree or stops improving; under five degrees " +
+            "(RhinoVault's own acceptance) counts as converged. " +
             "Tolerance is fixed through the whole calculation.",
             GH_ParamAccess.item);
         parameters[2].Optional = true;
