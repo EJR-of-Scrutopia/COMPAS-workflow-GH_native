@@ -51,7 +51,8 @@ The native v0.2 vertical slice contains eleven components:
 07 Delivery
   Export       RES,
                Format (contract | compas),
-               Path (optional), Write         -> JSON text, written file path
+               Path (optional), Write,
+               Name (optional)                -> JSON text, written file path
 
 90 System
   Backend Health                              -> ready, packages,

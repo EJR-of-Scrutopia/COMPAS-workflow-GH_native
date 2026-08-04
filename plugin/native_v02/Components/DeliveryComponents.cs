@@ -101,6 +101,17 @@ public sealed class ExportComponent :
             "JSON output itself is always live.",
             GH_ParamAccess.item,
             false);
+        parameters.AddTextParameter(
+            "Name",
+            "N",
+            "Optional file name for the write. Keep it to bake over the " +
+            "same file; change it to bake a new one. Applied inside a " +
+            "folder Path, or replacing the file name of a file Path; " +
+            ".json is appended when no extension is given. Blank uses " +
+            "ananke-export-<format>.json.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[4].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -130,6 +141,7 @@ public sealed class ExportComponent :
                     out string format,
                     out _,
                     out _,
+                    out _,
                     report: false))
             {
                 return;
@@ -151,7 +163,8 @@ public sealed class ExportComponent :
                 out ResultDto? postResult,
                 out string postFormat,
                 out string path,
-                out bool write))
+                out bool write,
+                out string name))
         {
             return;
         }
@@ -202,7 +215,7 @@ public sealed class ExportComponent :
         {
             try
             {
-                string resolved = ResolveWritePath(path, postFormat);
+                string resolved = ResolveWritePath(path, postFormat, name);
                 File.WriteAllText(resolved, taskResult.Json);
                 _lastWrittenPath = resolved;
                 _lastWrittenAt = DateTime.Now;
@@ -229,14 +242,25 @@ public sealed class ExportComponent :
     /// A Path may name a file or a folder: canvas path pickers commonly
     /// hand over a directory when the target file does not exist yet. A
     /// directory (existing, or spelled with a trailing separator) receives
-    /// a deterministic per-format file name inside it, so the Contract and
-    /// COMPAS exports of one definition never overwrite each other; a file
-    /// path is used as given, with its parent directory created when
-    /// missing.
+    /// the Name input inside it, or a deterministic per-format file name
+    /// when Name is blank, so the Contract and COMPAS exports of one
+    /// definition never overwrite each other; a file path is used as
+    /// given unless Name overrides its file name. Parent directories are
+    /// created when missing, and .json is appended to a Name given
+    /// without an extension.
     /// </summary>
-    private static string ResolveWritePath(string path, string format)
+    private static string ResolveWritePath(
+        string path,
+        string format,
+        string name)
     {
         string trimmed = path.Trim();
+        string fileName = name.Trim();
+        if (fileName.Length > 0 &&
+            string.IsNullOrEmpty(Path.GetExtension(fileName)))
+        {
+            fileName += ".json";
+        }
         bool looksLikeDirectory =
             trimmed.EndsWith(
                 Path.DirectorySeparatorChar.ToString(),
@@ -249,11 +273,16 @@ public sealed class ExportComponent :
         {
             Directory.CreateDirectory(trimmed);
             return Path.Combine(
-                trimmed, $"ananke-export-{format}.json");
+                trimmed,
+                fileName.Length > 0
+                    ? fileName
+                    : $"ananke-export-{format}.json");
         }
         string? parent = Path.GetDirectoryName(trimmed);
         if (!string.IsNullOrEmpty(parent))
             Directory.CreateDirectory(parent);
+        if (fileName.Length > 0)
+            return Path.Combine(parent ?? string.Empty, fileName);
         return trimmed;
     }
 
@@ -269,16 +298,19 @@ public sealed class ExportComponent :
         out string format,
         out string path,
         out bool write,
+        out string name,
         bool report = true)
     {
         result = null;
         format = "contract";
         path = string.Empty;
         write = false;
+        name = string.Empty;
         ResultGoo? resultGoo = null;
         string formatInput = "contract";
         string pathInput = string.Empty;
         bool writeInput = false;
+        string nameInput = string.Empty;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -287,6 +319,7 @@ public sealed class ExportComponent :
         data.GetData(1, ref formatInput);
         data.GetData(2, ref pathInput);
         data.GetData(3, ref writeInput);
+        data.GetData(4, ref nameInput);
 
         string normalisedFormat = NormaliseFormat(formatInput);
         var errors = new List<string>(resultValue.Validate());
@@ -312,6 +345,7 @@ public sealed class ExportComponent :
         format = normalisedFormat;
         path = pathInput ?? string.Empty;
         write = writeInput;
+        name = nameInput ?? string.Empty;
         return true;
     }
 
