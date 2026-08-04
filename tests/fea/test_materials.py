@@ -36,3 +36,17 @@ def test_elastic_isotropic_round_trips_the_numbers():
     assert material.E == pytest.approx(preset.modulus)
     assert material.v == pytest.approx(preset.poisson)
     assert material.density == pytest.approx(preset.density)
+
+
+def test_concrete_design_strengths_reconstruct_from_their_stated_factors():
+    """The assumptions text must describe the arithmetic that made the numbers."""
+
+    concrete = PRESETS["concrete"]
+    assert concrete.compressive_strength == pytest.approx(0.8 * 30e6 / 1.5, rel=1e-3)
+    assert concrete.tensile_strength == pytest.approx(0.8 * 2.0e6 / 1.5, rel=1e-3)
+
+
+def test_timber_design_strengths_reconstruct_from_their_stated_factors():
+    timber = PRESETS["timber"]
+    assert timber.compressive_strength == pytest.approx(0.8 * 24e6 / 1.25, rel=1e-3)
+    assert timber.tensile_strength == pytest.approx(0.8 * 19.2e6 / 1.25, rel=1e-3)

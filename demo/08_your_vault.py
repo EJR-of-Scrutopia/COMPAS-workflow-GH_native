@@ -59,9 +59,9 @@ TMAX = 0.35
 TOLERANCE = 5e-3
 MINIMUM_AREA = 1e-3
 
-# Provisional sizing. C30/37 unreinforced, a conservative design compressive
-# strength once partial factors and a long-term factor are applied.
-CONCRETE_FCD_MPA = 13.6
+# Provisional sizing. C30/37 unreinforced, design compressive strength from
+# the plain concrete route of EN 1992-1-1 clause 12.
+CONCRETE_FCD_MPA = 16.0
 TRIAL_WIDTH_M = 0.30
 TRIAL_DEPTH_M = 0.30
 
@@ -102,7 +102,7 @@ def size_in_concrete(result) -> None:
     print("   trial section           {:.0f} x {:.0f} mm".format(
         TRIAL_WIDTH_M * 1000, TRIAL_DEPTH_M * 1000))
     print("   axial stress            {:.3f} MPa".format(stress_mpa))
-    print("   assumed design strength {:.1f} MPa (C30/37, factored)".format(
+    print("   assumed design strength {:.1f} MPa (C30/37, clause 12)".format(
         CONCRETE_FCD_MPA))
     print("   utilisation             {:.1%}".format(utilisation))
     print("")
