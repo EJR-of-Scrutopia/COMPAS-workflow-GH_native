@@ -15,7 +15,11 @@ EXAMPLE = Path(__file__).resolve().parents[1] / "studies" / "example-arch"
 
 def copy_example(tmp_path):
     target = tmp_path / "example-arch"
-    shutil.copytree(EXAMPLE, target)
+    # Exclude results/: a previous run in the real studies directory leaves one
+    # behind, and copying it would let the "no result written on failure" test
+    # pass on a copied file rather than on the behaviour it means to check.
+    shutil.copytree(EXAMPLE, target, ignore=shutil.ignore_patterns("results"))
+    assert not (target / "results").exists()
     return target / "problem.json"
 
 
