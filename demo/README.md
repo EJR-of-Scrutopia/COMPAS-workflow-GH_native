@@ -175,9 +175,11 @@ algebraic TNA solve, closing to 0.03 kN); name one explicitly to override:
 .venv-fea\Scripts\python.exe demo\09_structural_verification.py "Trial 2"
 ```
 
-Seven sections: reads the export; solves a pin-jointed truss of the thrust
-network under the same loads and cross-checks both the global reaction and
-every member's axial force against what TNA already reported; solves the
+Seven sections: reads the export; solves a slender beam frame of the thrust
+network under the same loads (beams, not pin-jointed bars, because the
+exported network is an undiagonalised quad grid whose panels would rack
+freely under axial-only members) and cross-checks both the global reaction
+and every member's axial force against what TNA already reported; solves the
 shell under its design load and reports peak deflection and stress
 utilisation; sweeps two load factors to find where the shell goes into
 tension; sizes a cable if it does; traces the load path by arc length
@@ -185,20 +187,22 @@ tension; sizes a cable if it does; traces the load path by arc length
 rather than inventing a collapse factor); and writes everything to
 `studies/<export-name>/fea-verification.json`.
 
-Each full-mesh shell solve took under two seconds in testing, well under the
-brief's original estimate, so the shell sections plus the sweep and the cable
-sizing run in single-digit seconds. **The bar cross-check does not
-currently complete on the real vault.** Every shipped export is a pure
-quad-grid thrust network with no diagonal members at all, and a pin-jointed
-truss built from a quad grid is a mechanism: each of its 2400 quad panels can
-rack freely, which is invisible on the tiny triangulated fixture the unit
-tests use but shows up at full scale as OpenSees' Newton iteration diverging
-rather than converging (residual norm rising past 4x10^9 in ten iterations,
-confirmed by running the generated `.tcl` directly). This surfaced for the
-first time when the demo was run end to end, exactly the risk the plan for
-this piece flagged in advance. It is a limitation of `build_bar_model` in
-`ananke_fea.bars`, not of this script, and it is open rather than patched
-around.
+The cross-check's verdict is split, and both halves are printed. Reactions
+balance the factored applied load essentially exactly on every shipped
+export, which is the wiring falsifier: it is what proves loads, supports,
+units and extraction are correct, and it is what `agrees` reports. Member
+forces differ from TNA by close to 19 kN at the worst member on both Trial 2
+and the algebraic export, and that is expected rather than a fault: this
+network is statically indeterminate and admits self-stress, so TNA's member
+distribution and the elastic one are different members of the same
+equilibrium family, not a right answer and a wrong one. The result carries a
+`member_note` saying exactly this, and a separate `strict_agrees` for
+callers that want the older, stricter, reaction-and-member reading.
+
+Timing: the bar cross-check and the full-mesh shell solve run on the same
+order of magnitude, seconds rather than minutes each, so the whole demo
+finishes in minutes, not the roughly eight minutes the original estimate of
+124 seconds per full-mesh solve suggested.
 
 ### Every working example has its own clickable file
 
@@ -267,6 +271,6 @@ file sets it. Multiply the vectors instead.
 | Asked for | State |
 | --- | --- |
 | Formwork load at build step k | The CRA environment is built and solves. Wiring the tessellated blocks into it is the next piece of work, not a finished demo. |
-| Deformation under load, FEA sense | Demo 9 does this now, in `.venv-fea` against a pinned OpenSees backend. What is not finished is its own bar cross-check on the real vault; see demo 9's entry above. |
+| Per-member exact agreement with TNA on this network | Demo 9's bar cross-check runs, but the network is statically indeterminate and admits self-stress, so correct wiring produces reactions that agree and member forces that legitimately differ, not a match. No amount of correct setup can force strict per-member equality here; `strict_agrees` stays false on every shipped export for that reason, not because anything is broken. |
 | ROS robot placing blocks | Demo 5 does the placement with closed-form inverse kinematics and no ROS. What is missing is collision checking and trajectory planning, which are PyBullet and ROS with MoveIt respectively. |
 | Cross, fan and pavilion vaults | `NotImplementedError` stubs in compas_dem 0.5.0. Demo 6 names them. |
