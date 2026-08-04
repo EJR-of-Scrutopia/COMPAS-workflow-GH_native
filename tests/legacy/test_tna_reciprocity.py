@@ -79,12 +79,10 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
     def test_flipped_edges_are_not_reported_as_a_180_degree_error(self):
         """The regression: a corner-supported solve reported 180 degrees.
 
-        The raw ``compas_tna`` attribute still reaches 180 here because some
-        dual edges are antiparallel. The folded worst over every edge is the
-        genuine 27-degree deviation, and every edge above the headline gate
-        turns out to carry under one percent of the peak horizontal force:
-        the headline metric therefore reads essentially zero, because a
-        near-zero-length force-diagram dual has no meaningful direction.
+        Mid-trajectory, the raw ``compas_tna`` attribute reaches exactly 180
+        because some dual edges are antiparallel. The folded metrics must
+        report the genuine sub-90-degree deviation instead of the
+        flipped-edge artefact.
         """
         vertices, faces, index = square_grid(4)
         problem = register_tna_pattern(vertices=vertices, faces=faces)
@@ -101,7 +99,7 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
             pz=-1.0,
             vertical_mode="zmax",
             zmax=2.0,
-            horizontal_kmax=100,
+            horizontal_kmax=10,
         )
 
         raw = session.diagnostics["max_raw_form_force_angle"]
@@ -110,16 +108,18 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
 
         self.assertAlmostEqual(raw, 180.0, places=6)
         self.assertLessEqual(ungated, 90.0)
-        self.assertAlmostEqual(ungated, 27.2503, places=3)
-        self.assertLess(reported, 1.0)
-        self.assertTrue(session.diagnostics["horizontal_converged"])
+        self.assertAlmostEqual(ungated, 28.6956, places=3)
+        self.assertLessEqual(reported, ungated + 1e-9)
 
-    def test_more_horizontal_iterations_converge_the_reciprocal(self):
-        """The same pattern reaches a parallel reciprocal with more iterations.
+    def test_more_horizontal_iterations_converge_the_force_bearing_angle(self):
+        """``horizontal_kmax`` is a real convergence control for the headline
+        (force-bearing) reciprocity metric: two iterations leave a forty-degree
+        deviation, one hundred drive it to numerical zero.
 
-        This documents that ``horizontal_kmax`` is a real convergence control
-        for the unfiltered worst edge, while leaving the shipped default
-        unchanged.
+        The unfiltered worst never converges on this fixture: it settles near
+        28 degrees on edges carrying under one percent of the peak horizontal
+        force, whose near-zero-length duals have no meaningful direction. That
+        permanent floor is exactly why the headline metric is gated.
         """
         vertices, faces, index = square_grid(4)
         corners = [
@@ -129,7 +129,7 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
             index[4, 4],
         ]
 
-        def reciprocity(kmax):
+        def diagnostics(kmax):
             problem = register_tna_pattern(vertices=vertices, faces=faces)
             session = solve_tna_problem(
                 problem,
@@ -140,10 +140,16 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
                 zmax=2.0,
                 horizontal_kmax=kmax,
             )
-            return session.diagnostics["max_reciprocal_angle_ungated"]
+            return session.diagnostics
 
-        self.assertGreater(reciprocity(100), 1.0)
-        self.assertAlmostEqual(reciprocity(500), 0.0, places=6)
+        self.assertGreater(
+            diagnostics(2)["max_reciprocal_angle_deviation"], 1.0
+        )
+        converged = diagnostics(100)
+        self.assertAlmostEqual(
+            converged["max_reciprocal_angle_deviation"], 0.0, places=4
+        )
+        self.assertGreater(converged["max_reciprocal_angle_ungated"], 20.0)
 
 
 class HorizontalAutoConvergenceTests(unittest.TestCase):

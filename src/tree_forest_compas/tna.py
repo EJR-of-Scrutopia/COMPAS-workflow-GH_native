@@ -251,28 +251,58 @@ def _merge_source_points(
     Dict[Hashable, int],
     Dict[int, Tuple[Hashable, ...]],
 ]:
-    """Merge points deterministically, preserving first-seen canonical IDs."""
+    """Merge points deterministically, preserving first-seen canonical IDs.
+
+    A spatial hash with cell size equal to the weld tolerance keeps this
+    O(n): any point within tolerance of a canonical point lies in one of
+    the 27 neighbouring cells. The canonical assignment matches the former
+    all-pairs scan exactly, because among several candidates within
+    tolerance the earliest-registered one wins.
+    """
     canonical_points = {}  # type: Dict[int, Point3]
     source_to_canonical = {}  # type: Dict[Hashable, int]
     canonical_sources = {}  # type: Dict[int, List[Hashable]]
     tolerance_squared = tolerance * tolerance
+    grid = {}  # type: Dict[Tuple[int, int, int], List[int]]
+    exact = {}  # type: Dict[Point3, int]
+
+    def _cell_of(point: Point3) -> Tuple[int, int, int]:
+        return (
+            int(point[0] // tolerance),
+            int(point[1] // tolerance),
+            int(point[2] // tolerance),
+        )
 
     for source_key, original_point in source_items:
         point = _rounded_point(original_point, precision)
         found = None
-        for canonical_key, canonical_point in canonical_points.items():
-            if tolerance > 0:
-                if _distance_squared(point, canonical_point) <= tolerance_squared:
-                    found = canonical_key
-                    break
-            elif point == canonical_point:
-                found = canonical_key
-                break
+        if tolerance > 0:
+            cx, cy, cz = _cell_of(point)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for candidate in grid.get(
+                            (cx + dx, cy + dy, cz + dz), ()
+                        ):
+                            if (
+                                _distance_squared(
+                                    point, canonical_points[candidate]
+                                )
+                                <= tolerance_squared
+                                and (found is None or candidate < found)
+                            ):
+                                found = candidate
+        else:
+            found = exact.get(point)
 
         if found is None:
             found = len(canonical_points)
             canonical_points[found] = point
             canonical_sources[found] = []
+            if tolerance > 0:
+                grid.setdefault(_cell_of(point), []).append(found)
+            else:
+                exact[point] = found
 
         source_to_canonical[source_key] = found
         canonical_sources[found].append(source_key)
@@ -1585,6 +1615,121 @@ def _solver_vector(form: FormDiagram, key: int) -> Vector3:
     return tuple(float(value or 0.0) for value in values)  # type: ignore
 
 
+def _horizontal_fixed_form(form: FormDiagram, force: ForceDiagram, kmax: int) -> None:
+    """Fixed-form horizontal equilibrium via the global parallelisation
+    formulation ``C^T C xy = C^T t`` of ``compas_tna``'s
+    ``horizontal_numpy``, specialised to alpha = 100 (form fixed).
+
+    Two reasons this local specialisation exists instead of calling the
+    library function:
+
+    * ``horizontal_numpy`` routes every sparse solve through
+      ``compas.linalg.lufactorized``, which memoises the factorisation
+      under the constant keys ``"CtC"``/``"_Ct_C"`` for the life of the
+      process. In this persistent worker the second pattern solved in a
+      session would silently reuse the first pattern's factorisation.
+    * The pure-python ``horizontal_nodal`` costs milliseconds per
+      iteration at canvas scale, which turned a capped auto-convergence
+      run into tens of seconds. Here the force system is factorised once
+      per call and each iteration is one cached sparse solve.
+
+    The attribute writes (``q``, ``_f``, ``_l``, ``_a`` on form edges;
+    ``xy``, ``_l``, ``_a`` on the force diagram) match the library
+    implementations exactly. Edge length/force bounds (``lmin``/``hmax``
+    and friends) are not consulted because this pipeline never sets them;
+    force lengths are clamped to the library's own default bounds.
+    """
+    from compas.geometry import angle_vectors_xy
+    from compas.linalg import normalizerow
+    from compas.linalg import normrow
+    from compas.matrices import connectivity_matrix
+    from numpy import asarray
+    from numpy import float64
+    from scipy.sparse.linalg import factorized as sparse_factorized
+
+    k_i = form.vertex_index()
+    form_edges = list(form.edges_where({"_is_edge": True}))
+    flip = asarray(
+        [
+            -1.0 if form.edge_attribute(edge, "_is_tension") else 1.0
+            for edge in form_edges
+        ],
+        dtype=float64,
+    ).reshape((-1, 1))
+    xy = asarray(form.vertices_attributes("xy"), dtype=float64)
+    C = connectivity_matrix([[k_i[u], k_i[v]] for u, v in form_edges], "csr")
+
+    _k_i = force.vertex_index()
+    _fixed = sorted({_k_i[key] for key in force.fixed()} or {0})
+    _xy = asarray(force.vertices_attributes("xy"), dtype=float64)
+    _edge_keys = force.ordered_edges(form)
+    _C = connectivity_matrix(
+        [[_k_i[u], _k_i[v]] for u, v in _edge_keys], "csr"
+    )
+    _Ct = _C.transpose()
+    _CtC = _Ct.dot(_C).tocsc()
+
+    # Rotate the force diagram 90 degrees CCW so its edges run parallel to
+    # the form during parallelisation, exactly as the library does.
+    _xy = _xy[:, ::-1] * asarray([-1.0, 1.0], dtype=float64)
+
+    # With the form fixed, the targets are its unit edge directions and
+    # never change across iterations.
+    targets = normalizerow(flip * C.dot(xy))
+
+    fixed_set = set(_fixed)
+    unknown = [i for i in range(_xy.shape[0]) if i not in fixed_set]
+    A11 = _CtC[unknown, :][:, unknown].tocsc()
+    A12 = _CtC[unknown, :][:, _fixed]
+    solve = sparse_factorized(A11)
+    x_known = _xy[_fixed]
+
+    for _ in range(int(kmax)):
+        _l = normrow(_C.dot(_xy))
+        _l[_l < 1e-7] = 1e-7
+        _l[_l > 1e7] = 1e7
+        b = _Ct.dot(_l * targets)
+        _xy[unknown] = solve(b[unknown] - A12.dot(x_known))
+
+    uv = C.dot(xy)
+    _uv = _C.dot(_xy)
+    l = normrow(uv)  # noqa: E741
+    _l = normrow(_uv)
+    f = flip * _l
+    q = (f / l).astype(float64)
+    # Angle deviations compare directions in the parallel (rotated) frame,
+    # as both library implementations do, before rotating back.
+    angles = [
+        angle_vectors_xy(uv[index], _uv[index], deg=True)
+        for index in range(len(form_edges))
+    ]
+    _xy = _xy[:, ::-1] * asarray([1.0, -1.0], dtype=float64)
+
+    # The form never moves at alpha = 100, so only its edge state updates.
+    for index, edge in enumerate(form_edges):
+        form.edge_attributes(
+            edge,
+            ("q", "_f", "_l", "_a"),
+            (
+                float(q[index, 0]),
+                float(f[index, 0]),
+                float(l[index, 0]),
+                float(angles[index]),
+            ),
+        )
+    for key in force.vertices():
+        i = _k_i[key]
+        force.vertex_attributes(
+            key, "xy", [float(_xy[i, 0]), float(_xy[i, 1])]
+        )
+    for index, edge in enumerate(_edge_keys):
+        force.edge_attributes(
+            edge,
+            ("_l", "_a"),
+            (float(_l[index, 0]), float(angles[index])),
+        )
+
+
 def _unoriented_angle(degrees: float) -> float:
     """Fold a form/force edge-direction difference into a 0-90 degree error.
 
@@ -1835,8 +1980,24 @@ def solve_tna_problem(
         for edge, values in force_edge_state.items():
             force.edge_attributes(edge, ("_l", "_a"), values)
 
-    # The nodal parallelisation is not monotone: more iterations can worsen
-    # the reciprocity of an individual state. The auto loop therefore keeps
+    # The default alpha of 100 holds the form fixed, which admits the
+    # sparse fixed-form solver; any other alpha falls back to the library's
+    # nodal implementation, which handles a moving form.
+    use_fixed_form = float(horizontal_alpha) == 100.0
+
+    def _run_horizontal(block_kmax: int) -> None:
+        if use_fixed_form:
+            _horizontal_fixed_form(form, force, block_kmax)
+        else:
+            horizontal_nodal(
+                form,
+                force,
+                alpha=float(horizontal_alpha),
+                kmax=block_kmax,
+            )
+
+    # The parallelisation is not monotone: more iterations can worsen the
+    # reciprocity of an individual state. The auto loop therefore keeps
     # the best state seen so far, accepts at RhinoVault's own 5-degree gate,
     # and stops once two successive blocks fail to improve that best state
     # (a plateau no amount of iteration will pass).
@@ -1860,12 +2021,7 @@ def solve_tna_problem(
                     if horizontal_iterations_run == 0
                     else horizontal_block
                 )
-                horizontal_nodal(
-                    form,
-                    force,
-                    alpha=float(horizontal_alpha),
-                    kmax=block,
-                )
+                _run_horizontal(block)
                 horizontal_iterations_run += block
                 gated, raw = _reciprocity_angles()
                 improvement_floor = max(0.1, 0.02 * horizontal_angle)
@@ -1881,23 +2037,21 @@ def solve_tna_problem(
                     stalled_blocks += 1
                 if horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES:
                     break
-                if stalled_blocks >= 2:
+                # Iterations are cheap under the sparse solver, so the loop
+                # can afford patience with an oscillating trajectory before
+                # calling the plateau.
+                if stalled_blocks >= 4:
                     break
             if best_snapshot is not None:
                 _restore_horizontal(best_snapshot)
         else:
-            horizontal_nodal(
-                form,
-                force,
-                alpha=float(horizontal_alpha),
-                kmax=int(horizontal_kmax),
-            )
+            _run_horizontal(int(horizontal_kmax))
             horizontal_iterations_run = int(horizontal_kmax)
             horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
     except Exception as error:
         raise TNASolveError(
-            "COMPAS TNA horizontal_nodal failed for the registered whole pattern: "
-            "{}: {}".format(type(error).__name__, error)
+            "The COMPAS TNA horizontal solve failed for the registered "
+            "whole pattern: {}: {}".format(type(error).__name__, error)
         ) from error
     horizontal_converged = horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES
 
