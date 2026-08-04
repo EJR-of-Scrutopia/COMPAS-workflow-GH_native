@@ -106,6 +106,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional figure title.",
     )
+    view = subparsers.add_parser(
+        "view",
+        help="Open a solved result in the interactive 3D viewer.",
+    )
+    view.add_argument("result", type=Path, help="Path to a result JSON file")
+    view.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what the scene would contain without opening a window.",
+    )
     sweep = subparsers.add_parser(
         "sweep",
         help="Solve one study under several load cases and compare them.",
@@ -294,6 +304,28 @@ def _slug(name: str) -> str:
     return slug.strip("-") or "case"
 
 
+def _view(path: Path, dry_run: bool) -> int:
+    """Open the 3D viewer, or report what it would show."""
+
+    from .view import ViewerUnavailableError
+    from .view import scene_report
+    from .view import view_result
+
+    try:
+        result = load_result(path)
+    except ResultError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    if dry_run:
+        print(scene_report(result))
+        return 0
+    try:
+        return view_result(result)
+    except ViewerUnavailableError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+
+
 def _sweep(path: Path, cases_path: Optional[Path], out: Optional[Path]) -> int:
     """Solve one study under every case and print the comparison."""
 
@@ -343,6 +375,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _describe(args.result, args.tolerance, args.strict)
     if args.command == "plot":
         return _plot(args.result, args.out, args.title)
+    if args.command == "view":
+        return _view(args.result, args.dry_run)
     if args.command == "sweep":
         return _sweep(args.problem, args.cases, args.out)
     if args.command == "health":
