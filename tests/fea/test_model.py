@@ -45,3 +45,19 @@ def test_nodes_are_keyed_by_vertex_not_by_insertion_order(barrel):
 def test_an_unknown_support_key_is_rejected_loudly(barrel):
     with pytest.raises(ValueError, match="not a vertex"):
         build_shell_model(barrel, PRESETS["concrete"], 0.15, [10**6])
+
+
+def test_a_face_with_five_vertices_is_rejected_not_triangulated():
+    """The brief's one named behaviour: never silently change the topology."""
+
+    from compas.datastructures import Mesh
+
+    pentagon = Mesh()
+    keys = [
+        pentagon.add_vertex(x=x, y=y, z=0.0)
+        for x, y in [(0, 0), (2, 0), (3, 1.5), (1, 3), (-1, 1.5)]
+    ]
+    pentagon.add_face(keys)
+
+    with pytest.raises(ValueError, match="5 vertices"):
+        build_shell_model(pentagon, PRESETS["concrete"], 0.15, [])
