@@ -1834,25 +1834,41 @@ def test_riks_returns_a_verdict_either_way(plate):
     outcome = run_riks(built, loads, max_increments=5)
     assert set(outcome) >= {"converged", "collapse_factor", "message"}
     assert isinstance(outcome["converged"], bool)
+    assert outcome["message"]
 
 
-def test_no_collapse_load_is_reported_when_it_does_not_converge(plate):
-    """The failure mode that matters: never pass off a partial trace as an
-    answer."""
+def test_a_collapse_factor_is_only_ever_present_with_a_limit_point(plate):
+    """The invariant the spec is built on, asserted unconditionally.
 
-    built, loads = plate
-    # One increment with a large arc length cannot trace to a limit point.
-    outcome = run_riks(built, loads, arc_length=(1e3, 1e3, 1), max_increments=1)
-    if not outcome["converged"]:
-        assert outcome["collapse_factor"] is None
-        assert outcome["message"]
+    Written as an implication rather than behind an `if`, so that it cannot
+    pass vacuously whichever way this geometry happens to behave. A number
+    may only be reported when the trace actually turned over.
+    """
 
-
-def test_the_message_never_claims_success_without_a_factor(plate):
     built, loads = plate
     outcome = run_riks(built, loads, max_increments=5)
-    if outcome["collapse_factor"] is None:
-        assert outcome["converged"] is False
+    assert outcome["limit_point_found"] or outcome["collapse_factor"] is None
+
+
+def test_a_trace_that_cannot_reach_a_limit_point_reports_none(plate):
+    """One increment with a huge arc length cannot turn over, so there is no
+    collapse load to report and the code must say so."""
+
+    built, loads = plate
+    outcome = run_riks(built, loads, arc_length=(1e3, 1e3, 1), max_increments=1)
+    assert outcome["collapse_factor"] is None
+    assert outcome["limit_point_found"] is False
+    assert outcome["message"]
+
+
+def test_increments_run_is_never_passed_off_as_a_load_factor(plate):
+    """The specific dishonesty the spec forbids: reporting the increment
+    count as though it were the answer."""
+
+    built, loads = plate
+    outcome = run_riks(built, loads, max_increments=5)
+    if outcome["collapse_factor"] is not None:
+        assert outcome["collapse_factor"] != outcome["increments_run"]
 ```
 
 - [ ] **Step 2: Run and watch it fail**
@@ -1913,63 +1929,74 @@ def run_riks(
 
     directory = Path(path) if path else Path(tempfile.mkdtemp(prefix="ananke_riks_")) / name
 
+    def outcome(converged, message, increments=0, limit_point=False, factor=None):
+        """One shape for every exit, so no path can invent a collapse load.
+
+        collapse_factor stays None unless a limit point was actually
+        detected. The increment count is reported separately and never
+        stands in for a load factor: the spec forbids passing off the last
+        converged increment as the answer, and an arc-length trace that ran
+        to its increment cap without turning over has not found anything.
+        """
+
+        return {
+            "converged": converged,
+            "limit_point_found": limit_point,
+            "collapse_factor": factor,
+            "increments_run": increments,
+            "message": message,
+            "path": str(directory),
+        }
+
     try:
         analyse(problem, directory)
     except Exception as error:
-        return {
-            "converged": False,
-            "collapse_factor": None,
-            "increments_run": 0,
-            "message": "the arc-length solve raised {}: {}".format(
-                type(error).__name__, error
-            ),
-            "path": str(directory),
-        }
+        return outcome(
+            False,
+            "the arc-length solve raised {}: {}".format(type(error).__name__, error),
+        )
 
     try:
         results = list(step.displacement_field.results)
     except Exception as error:
-        return {
-            "converged": False,
-            "collapse_factor": None,
-            "increments_run": 0,
-            "message": (
-                "the solve ran but produced no readable displacement field, "
-                "which means it did not complete an increment: {}: {}".format(
-                    type(error).__name__, error
-                )
+        return outcome(
+            False,
+            "the solve ran but produced no readable displacement field, which "
+            "means it did not complete an increment: {}: {}".format(
+                type(error).__name__, error
             ),
-            "path": str(directory),
-        }
+        )
 
     if not results:
-        return {
-            "converged": False,
-            "collapse_factor": None,
-            "increments_run": 0,
-            "message": (
-                "no increments converged, so there is no load path to read a "
-                "collapse load from. Try a smaller arc length."
-            ),
-            "path": str(directory),
-        }
+        return outcome(
+            False,
+            "no increments converged, so there is no load path to read a "
+            "collapse load from. Try a smaller arc length.",
+        )
 
     peak = max(result.magnitude for result in results)
-    return {
-        "converged": True,
-        "collapse_factor": float(max_increments),
-        "increments_run": max_increments,
-        "peak_displacement": float(peak),
-        "message": (
-            "traced {} increments by arc length. The collapse factor is the "
-            "load multiple reached, and is only meaningful if the trace "
-            "actually turned over at a limit point.".format(max_increments)
-        ),
-        "path": str(directory),
-    }
+    return outcome(
+        True,
+        "traced the load path by arc length to the increment cap of {} "
+        "without detecting a limit point, so no collapse load is reported. "
+        "Detecting one needs the load factor per increment, which this "
+        "backend does not record; treat the peak displacement of {:.4e} m as "
+        "a trace result only.".format(max_increments, peak),
+        increments=max_increments,
+        limit_point=False,
+        factor=None,
+    )
 ```
 
 Add `Any` and `Dict` to the `typing` import line if not already present.
+
+**Why `collapse_factor` is always None here.** The honest position, and the
+one the spec demands. Detecting a limit point needs the load factor at each
+increment, and the OpenSees backend records only displacements. Returning
+the increment cap as a collapse factor would be exactly the dishonesty the
+spec rules out. The key stays in the contract, set to None, so that a later
+task can fill it in if per-increment load factors become available, and so
+that consumers do not have to change shape when it does.
 
 - [ ] **Step 4: Run the tests**
 
