@@ -63,6 +63,15 @@ fab = [
 patterns = [
     "compas_skeleton==2.0.1",
 ]
+# Headless diagrams. matplotlib only; no display server needed.
+plot = [
+    "matplotlib>=3.8",
+]
+# Interactive 3D. PySide6 is large and Rhino never imports it, so it is
+# opt-in and must not move the pinned numpy, scipy, or compas.
+viz = [
+    "compas_viewer==2.0.2",
+]
 dev = [
     "build>=1.2,<2",
     "numpy==2.0.2",

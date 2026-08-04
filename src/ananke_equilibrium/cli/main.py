@@ -19,9 +19,14 @@ from ..codec import decode_tna_prepare_payload
 from ..contracts import ContractError
 from ..worker import dispatch
 from ..worker import health_payload
+from .results import ResultError
+from .results import load_result
 from .study import StudyError
 from .study import build_request
 from .study import load_study
+from .summary import format_summary
+from .summary import is_balanced
+from .summary import summarise
 
 
 _DECODERS = {
@@ -63,6 +68,38 @@ def build_parser() -> argparse.ArgumentParser:
         "--archive",
         action="store_true",
         help="Also write a timestamped copy beside the result.",
+    )
+    describe = subparsers.add_parser(
+        "describe",
+        help="Summarise a solved result and check global equilibrium.",
+    )
+    describe.add_argument("result", type=Path, help="Path to a result JSON file")
+    describe.add_argument(
+        "--tolerance",
+        type=float,
+        default=1e-6,
+        help="Residual magnitude accepted as balanced. Default 1e-6.",
+    )
+    describe.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 when the global equilibrium residual exceeds tolerance.",
+    )
+    plot = subparsers.add_parser(
+        "plot",
+        help="Draw form and force diagrams from a result file.",
+    )
+    plot.add_argument("result", type=Path, help="Path to a result JSON file")
+    plot.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Image path. Defaults to the result path with a .png suffix.",
+    )
+    plot.add_argument(
+        "--title",
+        default=None,
+        help="Optional figure title.",
     )
     return parser
 
@@ -172,6 +209,51 @@ def solve_study(
     return 0
 
 
+def _describe(path: Path, tolerance: float, strict: bool) -> int:
+    """Print the structural summary of one result file."""
+
+    try:
+        summary = summarise(load_result(path))
+    except ResultError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    print(format_summary(summary, tolerance=tolerance))
+    if strict and not is_balanced(summary, tolerance=tolerance):
+        print(
+            "{}: global equilibrium residual exceeds {}.".format(path, tolerance),
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def _plot(path: Path, out: Optional[Path], title: Optional[str]) -> int:
+    """Draw the diagrams for one result file.
+
+    matplotlib is imported here rather than at module scope so that solving,
+    checking, describing, and health reporting all work in an environment
+    that has no plotting stack.
+    """
+
+    try:
+        from .plot import plot_result
+    except ImportError as error:
+        print(
+            "{}: plotting needs matplotlib. Install the plot extra: "
+            'python -m pip install -e ".[plot]"  ({})'.format(path, error),
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        result = load_result(path)
+        written = plot_result(result, out or path.with_suffix(".png"), title=title)
+    except ResultError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    print("{} -> {}".format(path, written))
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run one CLI invocation and return its process exit code."""
 
@@ -184,6 +266,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return solve_study(args.problem, out=args.out, archive=args.archive)
     if args.command == "check":
         return _check(args.problem)
+    if args.command == "describe":
+        return _describe(args.result, args.tolerance, args.strict)
+    if args.command == "plot":
+        return _plot(args.result, args.out, args.title)
     if args.command == "health":
         print(_format_health(health_payload()))
         return 0
