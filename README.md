@@ -36,8 +36,7 @@ The native v0.2 vertical slice contains twelve components:
   TNA Solve    RLX, Height (optional),
                Iterations (optional), Run     -> RES  result + native
                                                  Mesh/Lines/Supports
-  TNA Solve A  RLX, Height (optional),
-               Iterations (unused), Run       -> RES  same surface, with
+  TNA Solve A  RLX, Height (optional), Run    -> RES  same surface, with
                                                  the algebraic horizontal
                                                  method (exact force
                                                  densities in one sparse

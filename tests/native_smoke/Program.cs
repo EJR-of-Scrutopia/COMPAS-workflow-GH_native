@@ -132,7 +132,7 @@ internal static class Program
                     "TNA Solve Algebraic",
                     "TNA Solve A",
                     "02 Form Finding",
-                    new[] { "RLX", "H", "I", "Run" },
+                    new[] { "RLX", "H", "Run" },
                     new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = (
                     "FD Solve",

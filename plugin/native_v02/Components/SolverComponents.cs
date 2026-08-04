@@ -531,6 +531,13 @@ public class TnaSolveComponent :
     /// </summary>
     protected virtual string SolveMethod => "iterative";
 
+    /// <summary>
+    /// Whether the component carries the Iterations input. The algebraic
+    /// sibling has no iteration knob worth exposing, so it drops the port
+    /// and Run moves up one index.
+    /// </summary>
+    protected virtual bool HasIterationsInput => true;
+
     public override Guid ComponentGuid =>
         new("9d2f4b86-7e1a-4c50-b3f7-6a8e0c9d1235");
 
@@ -557,17 +564,21 @@ public class TnaSolveComponent :
             "so the highest point lands exactly there.",
             GH_ParamAccess.item);
         parameters[1].Optional = true;
-        parameters.AddIntegerParameter(
-            "Iterations",
-            "I",
-            "Optional horizontal iteration count. Blank auto-converges: " +
-            "the worker keeps the best reciprocal state it finds and " +
-            "polishes within a bounded budget beyond acceptance, " +
-            "stopping earlier at a tenth of a degree or on a plateau; " +
-            "under five degrees (RhinoVault's own acceptance) counts as " +
-            "converged. Tolerance is fixed through the whole calculation.",
-            GH_ParamAccess.item);
-        parameters[2].Optional = true;
+        if (HasIterationsInput)
+        {
+            parameters.AddIntegerParameter(
+                "Iterations",
+                "I",
+                "Optional horizontal iteration count. Blank " +
+                "auto-converges: the worker keeps the best reciprocal " +
+                "state it finds and polishes within a bounded budget " +
+                "beyond acceptance, stopping earlier at a tenth of a " +
+                "degree or on a plateau; under five degrees " +
+                "(RhinoVault's own acceptance) counts as converged. " +
+                "Tolerance is fixed through the whole calculation.",
+                GH_ParamAccess.item);
+            parameters[2].Optional = true;
+        }
         parameters.AddBooleanParameter(
             "Run",
             "Run",
@@ -772,12 +783,22 @@ public class TnaSolveComponent :
                 out double negativeQ) &&
             negativeQ >= 1.0)
         {
+            // Information, not failure: the exact solve names the edges
+            // that need ties, where the iterative solver expresses the
+            // same fact as residual unbalanced thrust. Only a pattern
+            // that leans heavily on tension escalates to a warning.
+            int edgeCount = Math.Max(1, result.Result.EdgeStates.Count);
+            double share = negativeQ / edgeCount;
             AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Warning,
-                $"{negativeQ:F0} edge(s) carry negative force density: " +
-                "exact horizontal equilibrium of this pattern demands " +
-                "tension there. Compression-only form finding needs a " +
-                "different pattern or support layout.");
+                share > 0.05
+                    ? GH_RuntimeMessageLevel.Warning
+                    : GH_RuntimeMessageLevel.Remark,
+                $"{negativeQ:F0} of {edgeCount} edges " +
+                $"({share:P1}) need tension for exact horizontal " +
+                "equilibrium; the iterative solver expresses the same " +
+                "fact as residual unbalanced thrust. Place ties there, " +
+                "or adjust the pattern/supports if strict " +
+                "compression-only is required.");
         }
         summary.Add($"{result.Elapsed.TotalMilliseconds:F0} ms");
         Message = string.Join(" · ", summary);
@@ -806,7 +827,7 @@ public class TnaSolveComponent :
         double height = 0.0;
         int iterations = 0;
         bool run = true;
-        data.GetData(3, ref run);
+        data.GetData(HasIterationsInput ? 3 : 2, ref run);
         if (!run)
         {
             Message = "Off";
@@ -818,7 +839,8 @@ public class TnaSolveComponent :
             return false;
         }
         bool hasHeight = data.GetData(1, ref height);
-        bool hasIterations = data.GetData(2, ref iterations);
+        bool hasIterations =
+            HasIterationsInput && data.GetData(2, ref iterations);
 
         var controlValue = new TnaControlDto
         {
@@ -923,9 +945,8 @@ public sealed record FdSolveTaskResult(
 /// <summary>
 /// TNA Solve with the algebraic horizontal method: exact force densities
 /// from the equilibrium matrix in one sparse least-squares solve, then a
-/// single reciprocal fit for the force diagram. Interface-identical to
-/// TNA Solve so the two can be compared side by side on one canvas;
-/// Iterations is accepted but not used, because the direct solve has no
+/// single reciprocal fit for the force diagram. Same surface as TNA
+/// Solve minus the Iterations input, because the direct solve has no
 /// iteration knob worth turning.
 /// </summary>
 public sealed class TnaSolveAlgebraicComponent : TnaSolveComponent
@@ -938,8 +959,7 @@ public sealed class TnaSolveAlgebraicComponent : TnaSolveComponent
             "method: exact force densities from the equilibrium matrix " +
             "in one sparse least-squares solve, reaching machine-" +
             "precision reciprocity wherever the pattern admits it. " +
-            "Blank Height finds the natural equilibrium height; " +
-            "Iterations is not used by this method.")
+            "Blank Height finds the natural equilibrium height.")
     {
     }
 
@@ -947,6 +967,8 @@ public sealed class TnaSolveAlgebraicComponent : TnaSolveComponent
         new("b7c3e9a1-4f6d-4a82-9c05-2d8e7b3f5a19");
 
     protected override string SolveMethod => "algebraic";
+
+    protected override bool HasIterationsInput => false;
 }
 
 /// <summary>
