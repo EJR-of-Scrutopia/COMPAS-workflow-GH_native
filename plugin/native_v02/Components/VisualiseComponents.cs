@@ -51,11 +51,11 @@ namespace Ananke.COMPAS.Native.Contracts
         }
 
         /// <summary>
-        /// Copied from <c>GraphicDiagramDisplayComponent.NormaliseStyle</c>
-        /// (that component is untouched) so this contract accepts the same
-        /// preset spellings without a contract referencing a component.
-        /// Unlike the source, an unrecognised value is returned as-is rather
-        /// than thrown, so callers can decide whether to treat it as a
+        /// Copied from the deleted <c>GraphicDiagramDisplayComponent</c>'s
+        /// <c>NormaliseStyle</c> so this contract accepts the same preset
+        /// spellings without a contract referencing a component. Unlike the
+        /// source, an unrecognised value is returned as-is rather than
+        /// thrown, so callers can decide whether to treat it as a
         /// validation error or a runtime exception.
         /// </summary>
         public static string NormalisePreset(string? value)
@@ -576,12 +576,11 @@ namespace Ananke.COMPAS.Native.Components
     }
 
     /// <summary>
-    /// Bundles the display preset, weight scale, and vector scale that Task
-    /// 11's Display component consumes as <c>STY</c>, so a style choice can
-    /// be authored once and wired to several Display calls. Preset names
-    /// are read out of <c>GraphicDiagramDisplayComponent</c>'s own value
-    /// list so both components stay in lockstep without one referencing the
-    /// other.
+    /// Bundles the display preset, weight scale, and vector scale that
+    /// Display consumes as <c>STY</c>, so a style choice can be authored
+    /// once and wired to several Display calls. Preset names are copied
+    /// from the deleted <c>GraphicDiagramDisplayComponent</c>'s own value
+    /// list, kept aligned with Display's own preset spellings.
     /// </summary>
     public sealed class StyleComponent : NativeComponentBase
     {
@@ -685,13 +684,13 @@ namespace Ananke.COMPAS.Native.Components
 
     /// <summary>
     /// The one native viewport boundary for a solved Result: lifts the
-    /// side-by-side reciprocal layout out of <c>TnaReciprocalComponent</c>,
-    /// the styled line weights/colours out of
-    /// <c>GraphicDiagramDisplayComponent</c>, and the load/reaction/residual
-    /// vector drawing out of <c>EquilibriumPreviewComponent</c>, so drawing
-    /// now happens in one current place. Every one of those older
-    /// display-capable components stays untouched and still compiles; their
-    /// logic is copied here, not called.
+    /// side-by-side reciprocal layout out of the deleted
+    /// <c>TnaReciprocalComponent</c>, the styled line weights/colours out of
+    /// the deleted <c>GraphicDiagramDisplayComponent</c>, and the
+    /// load/reaction/residual vector drawing out of the deleted
+    /// <c>EquilibriumPreviewComponent</c>, so drawing now happens in one
+    /// current place. Each of those older display-capable components' logic
+    /// was copied here, not called, before all three were deleted.
     /// </summary>
     public sealed class DisplayComponent : NativePreviewComponentBase
     {

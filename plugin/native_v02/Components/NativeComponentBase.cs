@@ -47,7 +47,7 @@ internal static class ComponentCategories
     // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
     public const string Delivery = "07 Delivery";
 
-    // Result extraction. No backend.
+    // Backend Health and other diagnostics. No solver backend of its own.
     public const string System = "90 System";
 }
 
@@ -101,7 +101,7 @@ internal static class SuggestedValueListPlacement
             if (spec.CheckList)
             {
                 // Split DefaultValue on comma, trim, collect for matching
-                var selectedValues = spec.DefaultValue
+                var selectedValues = (spec.DefaultValue ?? string.Empty)
                     .Split(',')
                     .Select(v => v.Trim())
                     .ToList();

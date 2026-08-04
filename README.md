@@ -40,11 +40,12 @@ The native v0.2 vertical slice contains twelve components:
                Weight, VectorScale, Gap       -> viewport + ThrustMesh,
                                                  Form/Force/Load/Reaction
                                                  lines, Report
-  Style        Preset, LineWeights, Colours   -> STY  display preset
+  Style        Preset, Weight Scale,
+               Vector Scale                   -> STY  display preset
   Deconstruct  RES                            -> every data stream
 
 07 Delivery
-  Export       RES or any typed object,
+  Export       RES,
                Format (contract | compas),
                Path (optional)                -> JSON text, written file path
 

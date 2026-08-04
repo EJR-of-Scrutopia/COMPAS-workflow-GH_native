@@ -9,7 +9,7 @@ parameters.
 
 | Family | Contract | Purpose |
 | --- | --- | --- |
-| Registration | `TnaPatternDto` | One registered Pattern: topology (nodes, edges, optional faces, source mapping), pattern mode, weld tolerance, and provenance. |
+| Registration | `TnaPatternDto` | One registered Pattern: topology (nodes, edges, optional faces, source mapping), pattern mode, resolution, weld tolerance, and provenance. |
 | Anchoring | `AnchoredPatternDto` | The Pattern with explicit anchor node IDs and snap tolerance resolved by Supports. |
 | Problem | `ProblemDto` | The Anchored Pattern bundled with one load case; the shared input both solvers take. |
 | Relaxation | `RelaxedDto` (wraps `TnaPreparedDto`) | Relaxed pattern, boundary-opening records, form graph, and unbalanced topological force graph, paired with the Problem it will be solved against. |

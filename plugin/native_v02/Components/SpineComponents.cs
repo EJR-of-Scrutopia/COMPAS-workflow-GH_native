@@ -386,6 +386,15 @@ public sealed class SupportsComponent : NativePreviewComponentBase
                     "Supports requires at least two distinct snapped " +
                     "anchor nodes.");
             }
+            if (!HasNonCollinearAnchors(topology, nodeIds, snapped.Tolerance))
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "All anchor nodes are collinear in the Pattern XY plane. " +
+                    "This can be valid for an arch or strip, but a general " +
+                    "two-dimensional mesh may remain singular; the downstream " +
+                    "solve will perform the topology-specific check.");
+            }
 
             var anchored = new AnchoredPatternDto
             {
@@ -453,6 +462,35 @@ public sealed class SupportsComponent : NativePreviewComponentBase
         _clippingBox = TnaWorkflowPreview.Box(
             _previewEdges,
             _previewSupports);
+    }
+
+    /// <summary>
+    /// Recovered verbatim from the deleted <c>TnaSupportsComponent</c>
+    /// (git history: <c>TnaWorkflowComponents.cs</c> before the twelve-
+    /// component redesign). Collinear anchors reach the downstream solver
+    /// and fail there as an opaque backend error instead of a canvas
+    /// warning; this cheap planar check catches the common case early.
+    /// </summary>
+    private static bool HasNonCollinearAnchors(
+        TopologyDto topology,
+        IReadOnlyList<int> nodeIds,
+        double tolerance)
+    {
+        if (nodeIds.Count < 3)
+            return false;
+        Point3Dto first = topology.Vertices[nodeIds[0]];
+        for (int left = 1; left < nodeIds.Count - 1; left++)
+        for (int right = left + 1; right < nodeIds.Count; right++)
+        {
+            Point3Dto a = topology.Vertices[nodeIds[left]];
+            Point3Dto b = topology.Vertices[nodeIds[right]];
+            double twiceArea =
+                (a.X - first.X) * (b.Y - first.Y) -
+                (a.Y - first.Y) * (b.X - first.X);
+            if (Math.Abs(twiceArea) > tolerance * tolerance)
+                return true;
+        }
+        return false;
     }
 
     private static void EnsureValid(ContractDto contract)
