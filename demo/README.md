@@ -90,6 +90,44 @@ environment built by `scripts/setup_cra_env.sh`, because `compas_cra` pins
 `pyomo 6.4.2`, which cannot coexist with the NumPy 2 this project pins to
 mirror Rhino 8.
 
+### 5. A robot placing the vault
+
+`demo/05_robot_placing.py`
+
+Loads a UR5 from the compas_fab library (offline, with geometry, in under a
+second), scales the tessellated vault down into the arm's reach, solves
+closed-form inverse kinematics for all 28 block positions, and animates the
+arm building it from springing to crown.
+
+Say what it is: **analytical inverse kinematics**. Exact, instant, no solver,
+no simulator, and no ROS anywhere. Eight arm postures come back per target
+and the script picks the one nearest the current pose so the motion stays
+continuous.
+
+Say what it is not: no collision checking and no trajectory planning.
+Reaching a frame and moving safely between frames are different questions,
+and only the first is answered here. Collision checking is PyBullet;
+planning around obstacles is ROS with MoveIt.
+
+One incompatibility worth knowing if anyone asks why the robot is drawn by
+hand: `compas_robots` 1.0.1's own viewer object crashes against
+`compas_viewer` 2.0.2 with `MeshObject() got multiple values for keyword
+argument 'name'`. `demo/_robot.py` bypasses it by transforming the link
+meshes directly.
+
+### 6. The COMPAS masonry template gallery
+
+`demo/06_masonry_gallery.py`
+
+Builds the parametric masonry typologies that compas_dem ships: an arch (24
+blocks), a barrel vault (58 blocks, 145 contacts) and a dome (240 blocks),
+and shows them side by side.
+
+It also prints what is **not** available in compas_dem 0.5.0: `WallTemplate`
+raises, and cross vault, fan vault, pavilion vault, NURBS surface and stack
+are all `NotImplementedError` stubs. Better to say so than to quietly show
+three and imply seven.
+
 ## Bringing your own pavilion from Grasshopper
 
 Build the vault on the canvas, run it through
