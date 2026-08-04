@@ -56,7 +56,7 @@ internal static class Program
 
         ValidateTopologyRegistration();
         ValidateRequiredDiscriminators();
-        ValidateTnaContractsAndCodec();
+        ValidateTnaSolvePayloadShape();
         ValidateResultEnvelopeCodec();
         await ValidateRealStagedTnaWorker(host).ConfigureAwait(false);
         await ValidateRealTnaWorker(host).ConfigureAwait(false);
@@ -195,18 +195,18 @@ internal static class Program
         JsonElement response = await host.RequestAsync<JsonElement>(
             TnaSolveCommand,
             problem.ToTnaSolvePayload(control)).ConfigureAwait(false);
-        TnaResultDto result = DecodeTna(
+        ResultDto result = DecodeTnaResult(
             response,
             problem,
             control);
         RequireValid(result);
         Require(
-            result.FormGraph.Edges.Count == 4 &&
-            result.ForceGraph.Edges.Count == 4 &&
+            result.FormGraph!.Edges.Count == 4 &&
+            result.ForceGraph!.Edges.Count == 4 &&
             result.EdgeStates.Count == 4,
             "Real TNA worker did not return four aligned reciprocal edges.");
         Require(
-            result.FormGraph.Vertices
+            result.FormGraph!.Vertices
                 .SelectMany(vertex => vertex.SourceVertexIds)
                 .Any(value =>
                     value.ValueKind == JsonValueKind.String &&
@@ -214,12 +214,10 @@ internal static class Program
                         "grid-",
                         StringComparison.Ordinal) == true),
             "Real TNA string source-vertex IDs did not survive native decoding.");
-        GraphicDiagramDto diagram = BuildTnaGraphicDiagram(result);
-        RequireValid(diagram);
         Require(
-            diagram.LoadEdges.Count > 0 &&
-            diagram.ReactionEdges.Count > 0,
-            "Real TNA graphic diagram omitted loads or reactions.");
+            result.Mappings!.Loads.Count > 0 &&
+            result.Mappings!.Reactions.Count > 0,
+            "Real TNA solve mapped no loads or reactions.");
         Console.WriteLine(
             "PASS tna.solve: real COMPAS TNA reciprocal state decoded natively.");
     }
@@ -361,7 +359,7 @@ internal static class Program
         Require(
             analysisProblem.Topology?.NetworkKind == "faced",
             "Staged TNA analysis problem was not promoted to faced topology.");
-        TnaResultDto result = DecodeTna(
+        ResultDto result = DecodeTnaResult(
             solveResponse,
             analysisProblem,
             control);
@@ -370,8 +368,6 @@ internal static class Program
             result.Equilibrium?.Problem?.Topology?.Provenance
                 .ContainsKey("source_topology_hash") == true,
             "Staged TNA result lost original source-topology provenance.");
-        GraphicDiagramDto diagram = BuildTnaGraphicDiagram(result);
-        RequireValid(diagram);
         Console.WriteLine(
             "PASS tna.prepare -> tna.solve: native prepared Goo persisted, " +
             "reconstructed, solved, and decoded.");
@@ -455,7 +451,7 @@ internal static class Program
             sourceKind == "line",
             "Staged Lines mode did not promote the derived pattern with " +
             "line-source provenance.");
-        TnaResultDto lineResult = DecodeTna(
+        ResultDto lineResult = DecodeTnaResult(
             lineSolveResponse,
             lineAnalysisProblem,
             control);
@@ -684,7 +680,17 @@ internal static class Program
         return (problem, settings);
     }
 
-    private static void ValidateTnaContractsAndCodec()
+    /// <summary>
+    /// The v0.2 <c>tna_result</c> fixture/decode path and its graphic-diagram
+    /// checks were removed in the component-surface redesign (Task 12) along
+    /// with <c>TnaResultDto</c>, <c>GraphicDiagramDto</c>, and the legacy
+    /// <c>TnaWorkerResultCodec.Decode</c> entry point; <see
+    /// cref="ValidateResultEnvelopeCodec"/> below covers the same decode
+    /// surface through the unified envelope. This method keeps the one
+    /// assertion that never touched those deleted types: the outgoing
+    /// <c>tna.solve</c> request payload nests its height control correctly.
+    /// </summary>
+    private static void ValidateTnaSolvePayloadShape()
     {
         (EquilibriumProblemDto problem, TnaControlDto control) =
             BuildTnaProblem();
@@ -700,78 +706,15 @@ internal static class Program
                 out JsonElement heightJson) &&
             heightJson.GetProperty("mode").GetString() == "zmax",
             "Native TNA payload did not preserve nested height control.");
-
-        JsonElement fixture = BuildTnaResultFixture();
-        TnaResultDto result = DecodeTna(
-            fixture,
-            problem,
-            control);
-        RequireValid(result);
-        Require(
-            result.HorizontalScale == -0.375,
-            "Signed physical force-diagram scale was not preserved.");
-        Require(
-            result.EdgeStates.Count == 3 &&
-            result.Mappings.FormEdgeToForceEdge.Count == 3,
-            "TNA reciprocal edge mappings were not decoded.");
-        TnaEdgeStateDto[] duplicateFormStates =
-            result.EdgeStates.ToArray();
-        duplicateFormStates[1] = duplicateFormStates[1] with
-        {
-            FormEdgeId = duplicateFormStates[0].FormEdgeId
-        };
-        TnaResultDto unsafeCorrespondence = result with
-        {
-            EdgeStates = duplicateFormStates
-        };
-        Require(
-            unsafeCorrespondence.Validate().Any(error =>
-                error.Contains(
-                    "duplicates a form edge",
-                    StringComparison.Ordinal)),
-            "TNA contract accepted ambiguous reciprocal correspondence.");
-        Require(
-            result.Equilibrium?.SolverSettings["load_case_name"] ==
-            "vault-dead",
-            "Named TNA load-case provenance was not preserved.");
-
-        GraphicDiagramDto diagram = BuildTnaGraphicDiagram(result);
-        RequireValid(diagram);
-        Require(
-            diagram.ThrustEdges.Count == 3 &&
-            diagram.FormEdges.Count == 3 &&
-            diagram.ForceEdges.Count == 3,
-            "TNA Reciprocal did not preserve all three mapped diagrams.");
-        Require(
-            diagram.ForceEdges.All(edge =>
-                edge.FormEdgeId.HasValue &&
-                edge.ForceEdgeId.HasValue &&
-                edge.EquilibriumEdgeId.HasValue),
-            "Graphic diagram lost form/force/thrust correspondence.");
-        GraphicEdgeDto firstForceEdge = diagram.ForceEdges[0];
-        double displayedLength = Distance(
-            firstForceEdge.Start,
-            firstForceEdge.End);
-        Require(
-            Math.Abs(displayedLength - 0.75) <= 1.0e-12,
-            "TNA Reciprocal did not apply the signed physical horizontal scale.");
-        Require(
-            diagram.LoadEdges.Count == 1 &&
-            diagram.ReactionEdges.Count == 2,
-            "TNA Reciprocal did not preserve loads and reactions.");
         Console.WriteLine(
-            "PASS tna contracts: named case, reciprocal mappings, signed scale, "
-            + "and compact graphic diagram.");
+            "PASS tna.solve payload shape: nested height control preserved.");
     }
 
     /// <summary>
     /// Exercises <c>TnaWorkerResultCodec.DecodeResult</c>, the unified
-    /// envelope decode path the real worker now speaks (<c>kind:
-    /// "Result"</c>, <c>solver: "tna"</c>, <c>resultSchema: "0.2"</c> on
-    /// top of the same TNA payload). Kept separate from
-    /// <see cref="ValidateTnaContractsAndCodec"/> so the older
-    /// <c>tna_result</c> fixture and decode path there keep exercising the
-    /// still-compiling legacy codec unchanged.
+    /// envelope decode path the real worker speaks (<c>kind: "Result"</c>,
+    /// <c>solver: "tna"</c>, <c>resultSchema: "0.2"</c> on top of the same
+    /// TNA payload the legacy <c>tna_result</c> shape used).
     /// </summary>
     private static void ValidateResultEnvelopeCodec()
     {
@@ -896,19 +839,11 @@ internal static class Program
         return (problem, control);
     }
 
-    private static JsonElement BuildTnaResultFixture()
-    {
-        return JsonSerializer.SerializeToElement(
-            BuildTnaResultFixtureDictionary(),
-            ContractJson.Options);
-    }
-
     /// <summary>
-    /// The same fixture as <see cref="BuildTnaResultFixture"/>, but wrapped
-    /// in the unified worker envelope (<c>kind: "Result"</c>, <c>solver:
-    /// "tna"</c>, <c>resultSchema: "0.2"</c>) the way the real worker now
-    /// answers <c>tna.solve</c>, for exercising
-    /// <c>TnaWorkerResultCodec.DecodeResult</c>.
+    /// Wraps the shared TNA solve fixture in the unified worker envelope
+    /// (<c>kind: "Result"</c>, <c>solver: "tna"</c>, <c>resultSchema:
+    /// "0.2"</c>) the way the real worker now answers <c>tna.solve</c>, for
+    /// exercising <c>TnaWorkerResultCodec.DecodeResult</c>.
     /// </summary>
     private static JsonElement BuildTnaResultEnvelopeFixture()
     {
@@ -1161,40 +1096,6 @@ internal static class Program
         return fixture;
     }
 
-    private static TnaResultDto DecodeTna(
-        JsonElement response,
-        EquilibriumProblemDto problem,
-        TnaControlDto control)
-    {
-        Assembly nativeAssembly = typeof(WorkerHost).Assembly;
-        Type codecType = nativeAssembly.GetType(
-            "Ananke.COMPAS.Native.Components.TnaWorkerResultCodec",
-            throwOnError: true)
-            ?? throw new InvalidOperationException(
-                "Native TnaWorkerResultCodec type was not found.");
-        MethodInfo decodeMethod = codecType.GetMethod(
-            "Decode",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                "TnaWorkerResultCodec.Decode was not found.");
-        try
-        {
-            object? value = decodeMethod.Invoke(
-                null,
-                new object[] { response, problem, control, 0 });
-            return value as TnaResultDto
-                ?? throw new InvalidOperationException(
-                    "TnaWorkerResultCodec.Decode returned the wrong type.");
-        }
-        catch (TargetInvocationException error)
-            when (error.InnerException is not null)
-        {
-            throw new InvalidOperationException(
-                "TnaWorkerResultCodec.Decode rejected the fixture.",
-                error.InnerException);
-        }
-    }
-
     private static ResultDto DecodeTnaResult(
         JsonElement response,
         EquilibriumProblemDto problem,
@@ -1227,54 +1128,6 @@ internal static class Program
                 "TnaWorkerResultCodec.DecodeResult rejected the fixture.",
                 error.InnerException);
         }
-    }
-
-    private static GraphicDiagramDto BuildTnaGraphicDiagram(
-        TnaResultDto result)
-    {
-        Assembly nativeAssembly = typeof(WorkerHost).Assembly;
-        Type factoryType = nativeAssembly.GetType(
-            "Ananke.COMPAS.Native.Components.TnaGraphicDiagramFactory",
-            throwOnError: true)
-            ?? throw new InvalidOperationException(
-                "Native TnaGraphicDiagramFactory type was not found.");
-        MethodInfo buildMethod = factoryType.GetMethod(
-            "Build",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                "TnaGraphicDiagramFactory.Build was not found.");
-        try
-        {
-            object? value = buildMethod.Invoke(
-                null,
-                new object[]
-                {
-                    result,
-                    "side_by_side",
-                    "natural",
-                    1.0,
-                    1.0,
-                    0.15
-                });
-            return value as GraphicDiagramDto
-                ?? throw new InvalidOperationException(
-                    "TnaGraphicDiagramFactory.Build returned the wrong type.");
-        }
-        catch (TargetInvocationException error)
-            when (error.InnerException is not null)
-        {
-            throw new InvalidOperationException(
-                "TnaGraphicDiagramFactory.Build rejected the fixture.",
-                error.InnerException);
-        }
-    }
-
-    private static double Distance(Point3Dto a, Point3Dto b)
-    {
-        double dx = b.X - a.X;
-        double dy = b.Y - a.Y;
-        double dz = b.Z - a.Z;
-        return Math.Sqrt(dx * dx + dy * dy + dz * dz);
     }
 
     private static void ValidateNativeSafetyContracts(TopologyDto topology)

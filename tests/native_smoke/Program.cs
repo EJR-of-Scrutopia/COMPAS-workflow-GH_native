@@ -22,126 +22,36 @@ internal static class Program
     private static readonly IReadOnlyDictionary<string, int[]> FlattenedInputs =
         new Dictionary<string, int[]>(StringComparer.Ordinal)
         {
-            ["Ananke.COMPAS.Native.Components.NetworkComponent"] =
-                new[] { 0 },
-            ["Ananke.COMPAS.Native.Components.SupportSetComponent"] =
-                new[] { 1, 2 },
-            ["Ananke.COMPAS.Native.Components.LoadCaseComponent"] =
-                new[] { 1, 2, 3 },
-            ["Ananke.COMPAS.Native.Components.EquilibriumProblemComponent"] =
-                new[] { 2 },
-            ["Ananke.COMPAS.Native.Components.FDSettingsComponent"] =
-                new[] { 0 },
-            ["Ananke.COMPAS.Native.Components.TnaPatternComponent"] =
-                new[] { 0 },
-            ["Ananke.COMPAS.Native.Components.TnaSupportsComponent"] =
-                new[] { 1 },
             ["Ananke.COMPAS.Native.Components.PatternComponent"] =
                 new[] { 0 },
             ["Ananke.COMPAS.Native.Components.SupportsComponent"] =
                 new[] { 1 },
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
                 new[] { 2 },
-            ["Ananke.COMPAS.Native.Components.FdSolveComponent2"] =
+            ["Ananke.COMPAS.Native.Components.FdSolveComponent"] =
                 new[] { 1 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
         {
-            "Ananke.COMPAS.Native.Components.TnaSolveComponent",
-            "Ananke.COMPAS.Native.Components.TnaReciprocalComponent",
-            "Ananke.COMPAS.Native.Components.GraphicDiagramDisplayComponent",
-            "Ananke.COMPAS.Native.Components.TnaPatternComponent",
-            "Ananke.COMPAS.Native.Components.TnaSupportsComponent",
-            "Ananke.COMPAS.Native.Components.TnaRelaxBoundariesComponent",
-            "Ananke.COMPAS.Native.Components.TnaEquilibriumComponent",
             "Ananke.COMPAS.Native.Components.PatternComponent",
             "Ananke.COMPAS.Native.Components.SupportsComponent",
-            "Ananke.COMPAS.Native.Components.TnaRelaxComponent"
+            "Ananke.COMPAS.Native.Components.TnaRelaxComponent",
+            "Ananke.COMPAS.Native.Components.DisplayComponent"
         };
     private static readonly HashSet<string> NativeVisibilityGuardComponents =
         new(StringComparer.Ordinal)
         {
-            "Ananke.COMPAS.Native.Components.TnaReciprocalComponent",
-            "Ananke.COMPAS.Native.Components.GraphicDiagramDisplayComponent",
-            "Ananke.COMPAS.Native.Components.TnaPatternComponent",
-            "Ananke.COMPAS.Native.Components.TnaSupportsComponent",
-            "Ananke.COMPAS.Native.Components.EquilibriumPreviewComponent",
-            "Ananke.COMPAS.Native.Components.TnaActionsComponent",
             "Ananke.COMPAS.Native.Components.PatternComponent",
-            "Ananke.COMPAS.Native.Components.SupportsComponent"
+            "Ananke.COMPAS.Native.Components.SupportsComponent",
+            "Ananke.COMPAS.Native.Components.DisplayComponent"
         };
-    private static readonly IReadOnlyDictionary<
-        string,
-        (string[] Inputs, string[] Outputs)> TnaWorkflowContracts =
-            new Dictionary<
-                string,
-                (string[] Inputs, string[] Outputs)>(StringComparer.Ordinal)
-            {
-                ["Ananke.COMPAS.Native.Components.TnaPatternComponent"] = (
-                    new[]
-                    {
-                        "Geometry",
-                        "Mode",
-                        "Resolution",
-                        "Weld Tolerance"
-                    },
-                    new[] { "Pattern", "Topology" }),
-                ["Ananke.COMPAS.Native.Components.TnaSupportsComponent"] = (
-                    new[] { "Pattern", "Anchor Points", "Snap Tolerance" },
-                    new[] { "Pattern" }),
-                ["Ananke.COMPAS.Native.Components." +
-                 "TnaRelaxBoundariesComponent"] = (
-                    new[] { "Pattern", "Force Density", "Boundary Sag" },
-                    new[] { "Prepared" }),
-                ["Ananke.COMPAS.Native.Components.TnaEquilibriumComponent"] = (
-                    new[] { "Prepared", "Load Case", "Mode", "Value", "Control" },
-                    new[] { "TNA Result" })
-            };
-    private static readonly IReadOnlyDictionary<
-        string,
-        (string[] Inputs, string[] Outputs)> TnaQueryContracts =
-            new Dictionary<
-                string,
-                (string[] Inputs, string[] Outputs)>(StringComparer.Ordinal)
-            {
-                ["Ananke.COMPAS.Native.Components.TnaGeometryComponent"] = (
-                    new[] { "TNA Result" },
-                    new[]
-                    {
-                        "Thrust Mesh",
-                        "Thrust Edges",
-                        "Form Edges",
-                        "Equilibrium"
-                    }),
-                ["Ananke.COMPAS.Native.Components.TnaMembersComponent"] = (
-                    new[] { "TNA Result" },
-                    new[]
-                    {
-                        "Member IDs",
-                        "Thrust Lines",
-                        "Force Density",
-                        "Horizontal Force",
-                        "Axial Force",
-                        "Force State",
-                        "Source Edge IDs"
-                    }),
-                ["Ananke.COMPAS.Native.Components.TnaActionsComponent"] = (
-                    new[] { "TNA Result", "Vector Scale" },
-                    new[]
-                    {
-                        "Support Points",
-                        "Load Points",
-                        "Load Vectors",
-                        "Reaction Points",
-                        "Reaction Vectors"
-                    })
-            };
     /// <summary>
-    /// Task 10's Deconstruct component replaces the four query components
-    /// above with one merged extraction surface over the unified
-    /// <c>ResultDto</c>. Checked the same way: full parameter Names, in
-    /// registration order, against the plan's fixed output list.
+    /// Deconstruct is the one merged extraction surface over the unified
+    /// <c>ResultDto</c>, replacing the four deleted v0.2 query components
+    /// (TNA Geometry, TNA Members, TNA Actions, Result Breakdown). Checked
+    /// the same way those were: full parameter Names, in registration
+    /// order, against the plan's fixed output list.
     /// </summary>
     private static readonly IReadOnlyDictionary<
         string,
@@ -213,13 +123,13 @@ internal static class Program
                     "02 Form Finding",
                     new[] { "PRB", "q", "Sag %" },
                     new[] { "RLX" }),
-                ["Ananke.COMPAS.Native.Components.TnaSolveComponent2"] = (
+                ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = (
                     "TNA Solve",
                     "TNA Solve",
                     "02 Form Finding",
                     new[] { "RLX", "M", "V", "CTL" },
                     new[] { "RES" }),
-                ["Ananke.COMPAS.Native.Components.FdSolveComponent2"] = (
+                ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = (
                     "FD Solve",
                     "FD Solve",
                     "02 Form Finding",
@@ -346,10 +256,7 @@ internal static class Program
                 ValidateFlattenedInputs(instance, componentType);
                 ValidatePreviewCapability(instance, componentType);
                 ValidateNativePreviewVisibilityGuard(instance, componentType);
-                ValidateGraphicDisplayContract(instance, componentType);
-                ValidateTnaQueryContract(instance, componentType);
                 ValidateVisualiseContract(instance, componentType);
-                ValidateTnaWorkflowContract(instance, componentType);
                 ValidateSpineComponentContract(instance, componentType);
                 ValidateIcon(instance, componentType);
                 RecordDocumentGuid(
@@ -407,10 +314,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 17)
+        if (parameterTypes.Length != 12)
         {
             failures.Add(
-                $"Expected 17 public persistent contract parameters, found " +
+                $"Expected 12 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
@@ -725,182 +632,12 @@ internal static class Program
         hiddenProperty.SetValue(instance, false);
     }
 
-    private static void ValidateGraphicDisplayContract(
-        object instance,
-        Type componentType)
-    {
-        const string DisplayType =
-            "Ananke.COMPAS.Native.Components." +
-            "GraphicDiagramDisplayComponent";
-        string typeName = componentType.FullName ?? componentType.Name;
-        if (!string.Equals(typeName, DisplayType, StringComparison.Ordinal))
-            return;
-
-        object parameters = componentType
-            .GetProperty("Params")
-            ?.GetValue(instance)
-            ?? throw new InvalidOperationException(
-                "Could not inspect Graphic Diagram Display parameters.");
-        IList inputs = parameters
-            .GetType()
-            .GetProperty("Input")
-            ?.GetValue(parameters) as IList
-            ?? throw new InvalidOperationException(
-                "Could not inspect Graphic Diagram Display inputs.");
-        IList outputs = parameters
-            .GetType()
-            .GetProperty("Output")
-            ?.GetValue(parameters) as IList
-            ?? throw new InvalidOperationException(
-                "Could not inspect Graphic Diagram Display outputs.");
-
-        string[] expectedInputs =
-        {
-            "Diagram",
-            "Style",
-            "Show Form",
-            "Show Thrust",
-            "Show Force",
-            "Show Loads",
-            "Show Reactions",
-            "Weight Scale"
-        };
-        string[] expectedOutputs =
-        {
-            "Form Lines",
-            "Thrust Lines",
-            "Force Lines",
-            "Load Lines",
-            "Reaction Lines",
-            "Report"
-        };
-        ValidateParameterNames(
-            inputs,
-            expectedInputs,
-            "Graphic Diagram Display",
-            "input");
-        ValidateParameterNames(
-            outputs,
-            expectedOutputs,
-            "Graphic Diagram Display",
-            "output");
-
-        for (int index = 0; index < 5; index++)
-        {
-            object output = outputs[index]
-                ?? throw new InvalidOperationException(
-                    $"Graphic Diagram Display output {index} is null.");
-            string outputType = output.GetType().FullName ?? string.Empty;
-            if (!string.Equals(
-                    outputType,
-                    "Grasshopper.Kernel.Parameters.Param_Line",
-                    StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"Graphic Diagram Display output {index} must expose " +
-                    $"ordinary Rhino lines; received {outputType}.");
-            }
-            object? hidden = output
-                .GetType()
-                .GetProperty("Hidden")
-                ?.GetValue(output);
-            if (hidden is not true)
-            {
-                throw new InvalidOperationException(
-                    $"Graphic Diagram Display line output {index} must hide " +
-                    "its duplicate default preview.");
-            }
-        }
-    }
-
-    private static void ValidateTnaQueryContract(
-        object instance,
-        Type componentType)
-    {
-        string typeName = componentType.FullName ?? componentType.Name;
-        if (!TnaQueryContracts.TryGetValue(
-                typeName,
-                out (string[] Inputs, string[] Outputs) contract))
-        {
-            return;
-        }
-
-        object parameters = componentType
-            .GetProperty("Params")
-            ?.GetValue(instance)
-            ?? throw new InvalidOperationException(
-                $"Could not inspect {componentType.Name} parameters.");
-        IList inputs = parameters
-            .GetType()
-            .GetProperty("Input")
-            ?.GetValue(parameters) as IList
-            ?? throw new InvalidOperationException(
-                $"Could not inspect {componentType.Name} inputs.");
-        IList outputs = parameters
-            .GetType()
-            .GetProperty("Output")
-            ?.GetValue(parameters) as IList
-            ?? throw new InvalidOperationException(
-                $"Could not inspect {componentType.Name} outputs.");
-        ValidateParameterNames(
-            inputs,
-            contract.Inputs,
-            componentType.Name,
-            "input");
-        ValidateParameterNames(
-            outputs,
-            contract.Outputs,
-            componentType.Name,
-            "output");
-    }
-
     private static void ValidateVisualiseContract(
         object instance,
         Type componentType)
     {
         string typeName = componentType.FullName ?? componentType.Name;
         if (!VisualiseContracts.TryGetValue(
-                typeName,
-                out (string[] Inputs, string[] Outputs) contract))
-        {
-            return;
-        }
-
-        object parameters = componentType
-            .GetProperty("Params")
-            ?.GetValue(instance)
-            ?? throw new InvalidOperationException(
-                $"Could not inspect {componentType.Name} parameters.");
-        IList inputs = parameters
-            .GetType()
-            .GetProperty("Input")
-            ?.GetValue(parameters) as IList
-            ?? throw new InvalidOperationException(
-                $"Could not inspect {componentType.Name} inputs.");
-        IList outputs = parameters
-            .GetType()
-            .GetProperty("Output")
-            ?.GetValue(parameters) as IList
-            ?? throw new InvalidOperationException(
-                $"Could not inspect {componentType.Name} outputs.");
-        ValidateParameterNames(
-            inputs,
-            contract.Inputs,
-            componentType.Name,
-            "input");
-        ValidateParameterNames(
-            outputs,
-            contract.Outputs,
-            componentType.Name,
-            "output");
-    }
-
-    private static void ValidateTnaWorkflowContract(
-        object instance,
-        Type componentType)
-    {
-        string typeName = componentType.FullName ?? componentType.Name;
-        if (!TnaWorkflowContracts.TryGetValue(
                 typeName,
                 out (string[] Inputs, string[] Outputs) contract))
         {

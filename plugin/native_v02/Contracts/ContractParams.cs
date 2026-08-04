@@ -79,35 +79,6 @@ public sealed class LoadCaseParam : ContractParam<LoadCaseGoo>
         new("7c0dd117-2c80-40ee-b515-2c17d8e105fc");
 }
 
-public sealed class EquilibriumProblemParam :
-    ContractParam<EquilibriumProblemGoo>
-{
-    public EquilibriumProblemParam()
-        : base(
-            "Ananke Equilibrium Problem",
-            "Problem",
-            "Topology, supports and loads bundled for FD or TNA.")
-    {
-    }
-
-    public override Guid ComponentGuid =>
-        new("d1e37db4-1afd-4656-b946-edcb6bd83c0b");
-}
-
-public sealed class FDSettingsParam : ContractParam<FDSettingsGoo>
-{
-    public FDSettingsParam()
-        : base(
-            "Ananke FD Settings",
-            "FD Settings",
-            "Force-density values and sign convention.")
-    {
-    }
-
-    public override Guid ComponentGuid =>
-        new("f24994b8-5cf1-475b-b876-fa590dd46abf");
-}
-
 public sealed class DiagnosticParam : ContractParam<DiagnosticGoo>
 {
     public DiagnosticParam()
@@ -120,21 +91,6 @@ public sealed class DiagnosticParam : ContractParam<DiagnosticGoo>
 
     public override Guid ComponentGuid =>
         new("b53722d4-c09e-4f37-b98b-ace25793cc33");
-}
-
-public sealed class EquilibriumResultParam :
-    ContractParam<EquilibriumResultGoo>
-{
-    public EquilibriumResultParam()
-        : base(
-            "Ananke Equilibrium Result",
-            "Result",
-            "A complete immutable FD or TNA result with provenance.")
-    {
-    }
-
-    public override Guid ComponentGuid =>
-        new("fbbfa975-0b0d-4362-8bce-7636b7be1c40");
 }
 
 public sealed class TnaControlParam : ContractParam<TnaControlGoo>
@@ -151,31 +107,3 @@ public sealed class TnaControlParam : ContractParam<TnaControlGoo>
         new("99e438f7-d28f-4198-a3f2-ff7ed98bf4c0");
 }
 
-public sealed class TnaResultParam : ContractParam<TnaResultGoo>
-{
-    public TnaResultParam()
-        : base(
-            "Ananke TNA Result",
-            "TNA Result",
-            "A solved thrust network with reciprocal form and force diagrams.")
-    {
-    }
-
-    public override Guid ComponentGuid =>
-        new("28312b79-af59-4f56-9536-5a0ff81e07e4");
-}
-
-public sealed class GraphicDiagramParam :
-    ContractParam<GraphicDiagramGoo>
-{
-    public GraphicDiagramParam()
-        : base(
-            "Ananke Graphic Diagram",
-            "Graphic Diagram",
-            "A compact renderer-neutral graphic-statics diagram bundle.")
-    {
-    }
-
-    public override Guid ComponentGuid =>
-        new("fb4e1d1c-caf6-44f0-9e58-b499ae25d64c");
-}

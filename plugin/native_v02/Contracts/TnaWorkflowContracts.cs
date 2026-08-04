@@ -11,7 +11,7 @@ namespace Ananke.COMPAS.Native.Contracts;
 
 /// <summary>
 /// Contract discriminators for the staged RhinoVault-style TNA canvas.
-/// These are deliberately separate from a solved <see cref="TnaResultDto"/>:
+/// These are deliberately separate from a solved <see cref="ResultDto"/>:
 /// a prepared topological dual is not an equilibrium result.
 /// </summary>
 public static class TnaWorkflowContractKinds

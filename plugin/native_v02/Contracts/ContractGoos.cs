@@ -276,67 +276,6 @@ public sealed class LoadCaseGoo : ContractGoo<LoadCaseDto>
     }
 }
 
-public sealed class EquilibriumProblemGoo :
-    ContractGoo<EquilibriumProblemDto>
-{
-    public EquilibriumProblemGoo()
-    {
-    }
-
-    public EquilibriumProblemGoo(EquilibriumProblemDto value)
-        : base(value)
-    {
-    }
-
-    protected override string ExpectedKind => ContractKinds.EquilibriumProblem;
-    public override string TypeName => "Ananke Equilibrium Problem";
-    public override string TypeDescription =>
-        "Topology, supports and load cases bundled for FD or TNA.";
-
-    protected override ContractGoo<EquilibriumProblemDto> Create(
-        EquilibriumProblemDto? value) =>
-        value is null
-            ? new EquilibriumProblemGoo()
-            : new EquilibriumProblemGoo(value);
-
-    protected override string Format(EquilibriumProblemDto value)
-    {
-        TopologyDto? topology = value.Topology;
-        return topology is null
-            ? $"Problem · {value.Name} · incomplete"
-            : $"Problem · {value.Name} · {topology.NetworkKind} · " +
-              $"{topology.Edges.Count} members · {value.LoadCases.Count} case(s)";
-    }
-}
-
-public sealed class FDSettingsGoo : ContractGoo<FDSettingsDto>
-{
-    public FDSettingsGoo()
-    {
-    }
-
-    public FDSettingsGoo(FDSettingsDto value)
-        : base(value)
-    {
-    }
-
-    protected override string ExpectedKind => ContractKinds.FDSettings;
-    public override string TypeName => "Ananke FD Settings";
-    public override string TypeDescription =>
-        "Force-density values and sign convention for an FD solve.";
-
-    protected override ContractGoo<FDSettingsDto> Create(FDSettingsDto? value) =>
-        value is null ? new FDSettingsGoo() : new FDSettingsGoo(value);
-
-    protected override string Format(FDSettingsDto value)
-    {
-        string density = value.ForceDensities.Count == 1
-            ? $"q={value.ForceDensities[0]:G6}"
-            : $"{value.ForceDensities.Count} q values";
-        return $"FD Settings · {density} · {value.SignConvention}";
-    }
-}
-
 public sealed class DiagnosticGoo : ContractGoo<DiagnosticDto>
 {
     public DiagnosticGoo()
@@ -358,40 +297,6 @@ public sealed class DiagnosticGoo : ContractGoo<DiagnosticDto>
 
     protected override string Format(DiagnosticDto value) =>
         $"[{value.Severity.ToUpperInvariant()}] {value.Code}: {value.Message}";
-}
-
-public sealed class EquilibriumResultGoo :
-    ContractGoo<EquilibriumResultDto>
-{
-    public EquilibriumResultGoo()
-    {
-    }
-
-    public EquilibriumResultGoo(EquilibriumResultDto value)
-        : base(value)
-    {
-    }
-
-    protected override string ExpectedKind => ContractKinds.EquilibriumResult;
-    public override string TypeName => "Ananke Equilibrium Result";
-    public override string TypeDescription =>
-        "A complete immutable FD or TNA result with provenance.";
-
-    protected override ContractGoo<EquilibriumResultDto> Create(
-        EquilibriumResultDto? value) =>
-        value is null
-            ? new EquilibriumResultGoo()
-            : new EquilibriumResultGoo(value);
-
-    protected override string Format(EquilibriumResultDto value)
-    {
-        int warningCount = value.Diagnostics.Count(item =>
-            item.Severity.Equals("warning", StringComparison.OrdinalIgnoreCase) ||
-            item.Severity.Equals("error", StringComparison.OrdinalIgnoreCase));
-        return $"{value.Solver.ToUpperInvariant()} Result · " +
-            $"{value.Vertices.Count}V/{value.Edges.Count}E · " +
-            $"{warningCount} warning(s) · #{ShortHash(value.TopologyHash)}";
-    }
 }
 
 public sealed class TnaControlGoo : ContractGoo<TnaControlDto>
@@ -418,62 +323,3 @@ public sealed class TnaControlGoo : ContractGoo<TnaControlDto>
         $"{value.HeightValue:G6} · α={value.HorizontalAlpha:G4}";
 }
 
-public sealed class TnaResultGoo : ContractGoo<TnaResultDto>
-{
-    public TnaResultGoo()
-    {
-    }
-
-    public TnaResultGoo(TnaResultDto value)
-        : base(value)
-    {
-    }
-
-    protected override string ExpectedKind => ContractKinds.TnaResult;
-    public override string TypeName => "Ananke TNA Result";
-    public override string TypeDescription =>
-        "A solved thrust network with its reciprocal form and force diagrams.";
-
-    protected override ContractGoo<TnaResultDto> Create(TnaResultDto? value) =>
-        value is null ? new TnaResultGoo() : new TnaResultGoo(value);
-
-    protected override string Format(TnaResultDto value)
-    {
-        string loadCase = value.Equilibrium?.SolverSettings.TryGetValue(
-            "load_case_name",
-            out string? name) == true
-                ? name
-                : "unknown case";
-        return $"TNA Result · {value.EdgeStates.Count} states · " +
-            $"{loadCase} · #{ShortHash(value.Equilibrium?.TopologyHash)}";
-    }
-}
-
-public sealed class GraphicDiagramGoo :
-    ContractGoo<GraphicDiagramDto>
-{
-    public GraphicDiagramGoo()
-    {
-    }
-
-    public GraphicDiagramGoo(GraphicDiagramDto value)
-        : base(value)
-    {
-    }
-
-    protected override string ExpectedKind => ContractKinds.GraphicDiagram;
-    public override string TypeName => "Ananke Graphic Diagram";
-    public override string TypeDescription =>
-        "A compact renderer-neutral graphic-statics diagram bundle.";
-
-    protected override ContractGoo<GraphicDiagramDto> Create(
-        GraphicDiagramDto? value) =>
-        value is null
-            ? new GraphicDiagramGoo()
-            : new GraphicDiagramGoo(value);
-
-    protected override string Format(GraphicDiagramDto value) =>
-        $"Graphic Diagram · T/F/R " +
-        $"{value.ThrustEdges.Count}/{value.FormEdges.Count}/" +
-        $"{value.ForceEdges.Count} · {value.Layout}";
-}

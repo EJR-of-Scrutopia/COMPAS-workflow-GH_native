@@ -17,88 +17,13 @@ namespace Ananke.COMPAS.Native.Components;
 /// </summary>
 internal static class TnaWorkerResultCodec
 {
-    public static TnaResultDto Decode(
-        JsonElement root,
-        EquilibriumProblemDto problem,
-        TnaControlDto control,
-        int loadCaseIndex)
-    {
-        RequireObject(root, "TNA result");
-        string schemaVersion = RequiredString(root, "schema_version");
-        if (!string.Equals(
-                schemaVersion,
-                WorkerProtocol.CompatibleWorkerSchema,
-                StringComparison.Ordinal))
-        {
-            throw new JsonException(
-                $"TNA result schema '{schemaVersion}' is not supported; " +
-                $"expected '{WorkerProtocol.CompatibleWorkerSchema}'.");
-        }
-        string kind = RequiredString(root, "kind");
-        if (!string.Equals(kind, "tna_result", StringComparison.Ordinal))
-            throw new JsonException($"Expected tna_result, received '{kind}'.");
-
-        AnalysisPlaneDto plane = Plane(
-            RequiredObject(root, "analysis_plane"),
-            "analysis_plane");
-        TnaDiagramGraphDto form = Graph(
-            RequiredObject(root, "form_graph"),
-            "form_graph");
-        TnaDiagramGraphDto force = Graph(
-            RequiredObject(root, "force_graph"),
-            "force_graph");
-        TnaEdgeStateDto[] states = RequiredArray(root, "edge_states")
-            .EnumerateArray()
-            .Select((value, index) => EdgeState(
-                value,
-                $"edge_states[{index}]"))
-            .ToArray();
-        TnaMappingsDto mappings = Mappings(
-            RequiredObject(root, "mappings"));
-        DiagnosticDto[] diagnostics = Diagnostics(root);
-        JsonElement equilibriumJson =
-            RequiredObject(root, "equilibrium");
-        EquilibriumResultDto equilibrium = DecodeEquilibrium(
-            equilibriumJson,
-            problem,
-            control,
-            loadCaseIndex,
-            states,
-            mappings,
-            diagnostics);
-
-        var provenance = StringMap(root, "provenance");
-        provenance["transport"] = "persistent-python-worker";
-        var result = new TnaResultDto
-        {
-            Equilibrium = equilibrium,
-            Control = control,
-            AnalysisPlane = plane,
-            FormGraph = form,
-            ForceGraph = force,
-            EdgeStates = states,
-            HorizontalScale = RequiredDouble(root, "horizontal_scale"),
-            Mappings = mappings,
-            Diagnostics = diagnostics,
-            Report = OptionalString(root, "report"),
-            Provenance = provenance
-        };
-        IReadOnlyList<string> errors = result.Validate();
-        if (errors.Count > 0)
-        {
-            throw new JsonException(
-                "The TNA worker result failed its native contract: " +
-                string.Join(" ", errors));
-        }
-        return result;
-    }
-
     /// <summary>
     /// Decode a unified-envelope TNA result (<c>kind == "Result"</c>,
-    /// <c>solver == "tna"</c>) into <see cref="ResultDto"/>. The envelope
-    /// only adds the discriminator keys on top of the same TNA payload
-    /// shape <see cref="Decode"/> reads, so the field-by-field mapping is
-    /// identical; only the wrapping kind check and target type differ.
+    /// <c>solver == "tna"</c>) into <see cref="ResultDto"/>. The worker's
+    /// TNA payload shape only adds the discriminator keys on top of the
+    /// same fields the equilibrium/graph/mapping decoders below already
+    /// map field-by-field; only the wrapping kind check and target type
+    /// belong to this method itself.
     /// </summary>
     public static ResultDto DecodeResult(
         JsonElement root,

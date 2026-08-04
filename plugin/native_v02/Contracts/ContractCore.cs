@@ -30,8 +30,6 @@ public static class ContractKinds
     public const string TnaControl = "ananke.tna_control";
     public const string Diagnostic = "ananke.diagnostic";
     public const string EquilibriumResult = "ananke.equilibrium_result";
-    public const string TnaResult = "ananke.tna_result";
-    public const string GraphicDiagram = "ananke.graphic_diagram";
     public const string Result = "Result";
     public const string AnchoredPattern = "AnchoredPattern";
     public const string Problem = "Problem";

@@ -566,7 +566,7 @@ public sealed class TnaRelaxComponent :
     }
 }
 
-public sealed record TnaSolveComponent2TaskResult(
+public sealed record TnaSolveTaskResult(
     ResultDto? Result,
     Exception? Error,
     TimeSpan Elapsed,
@@ -579,8 +579,8 @@ public sealed record TnaSolveComponent2TaskResult(
 /// separate Load Case input and no default-load fallback, because RLX's
 /// Problem already guarantees one.
 /// </summary>
-public sealed class TnaSolveComponent2 :
-    NativeTaskComponentBase<TnaSolveComponent2TaskResult>
+public sealed class TnaSolveComponent :
+    NativeTaskComponentBase<TnaSolveTaskResult>
 {
     private static readonly ComponentValueListSpec[] ValueLists =
     {
@@ -595,7 +595,7 @@ public sealed class TnaSolveComponent2 :
             "zmax")
     };
 
-    public TnaSolveComponent2()
+    public TnaSolveComponent()
         : base(
             "TNA Solve",
             "TNA Solve",
@@ -682,7 +682,7 @@ public sealed class TnaSolveComponent2 :
             return;
         }
 
-        TnaSolveComponent2TaskResult result;
+        TnaSolveTaskResult result;
         if (!GetSolveResults(data, out result!))
         {
             if (!TryReadInputs(
@@ -816,7 +816,7 @@ public sealed class TnaSolveComponent2 :
         return true;
     }
 
-    private static async Task<TnaSolveComponent2TaskResult> ComputeAsync(
+    private static async Task<TnaSolveTaskResult> ComputeAsync(
         RelaxedDto relaxed,
         TnaControlDto control,
         CancellationToken cancellationToken)
@@ -847,7 +847,7 @@ public sealed class TnaSolveComponent2 :
                 0);
             solved = solved with { Problem = relaxed.Problem };
             stopwatch.Stop();
-            return new TnaSolveComponent2TaskResult(
+            return new TnaSolveTaskResult(
                 solved,
                 null,
                 stopwatch.Elapsed,
@@ -856,7 +856,7 @@ public sealed class TnaSolveComponent2 :
         catch (Exception error)
         {
             stopwatch.Stop();
-            return new TnaSolveComponent2TaskResult(
+            return new TnaSolveTaskResult(
                 null,
                 error,
                 stopwatch.Elapsed,
@@ -888,10 +888,10 @@ public sealed record FdSolveTaskResult(
 /// fd.solve worker command expects internally from the shared Problem/RLX
 /// spine rather than requiring one wired in from upstream.
 /// </summary>
-public sealed class FdSolveComponent2 :
+public sealed class FdSolveComponent :
     NativeTaskComponentBase<FdSolveTaskResult>
 {
-    public FdSolveComponent2()
+    public FdSolveComponent()
         : base(
             "FD Solve",
             "FD Solve",

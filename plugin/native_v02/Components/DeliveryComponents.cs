@@ -24,7 +24,7 @@ public sealed record ExportComponentTaskResult(
 /// The one delivery boundary for a solved Result: Contract mode serialises
 /// the ResultDto itself (the shared wire options every codec already
 /// reuses), and COMPAS mode dispatches the worker's <c>export.compas</c>
-/// command exactly as <c>FdSolveComponent2</c> dispatches a solve, then
+/// command exactly as <c>FdSolveComponent</c> dispatches a solve, then
 /// bundles the returned strings into one JSON object. An optional Path
 /// writes that JSON to disk.
 /// </summary>
@@ -302,7 +302,7 @@ public sealed class ExportComponent :
     }
 
     /// <summary>
-    /// Dispatch <c>export.compas</c> exactly as <c>FdSolveComponent2</c>
+    /// Dispatch <c>export.compas</c> exactly as <c>FdSolveComponent</c>
     /// dispatches <c>fd.solve</c>: one <c>WorkerRuntime.Host.RequestAsync</c>
     /// call. When the Result carries <see cref="ResultDto.RawWire"/> (every
     /// Result produced by a live TNA/FD Solve this session does; both
