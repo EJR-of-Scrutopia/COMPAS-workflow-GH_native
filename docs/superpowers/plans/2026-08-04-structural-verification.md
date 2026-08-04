@@ -2103,7 +2103,7 @@ git commit -m "feat(fea): arc-length collapse trace, honest about non-convergenc
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `size_cable(tension, grade=1770e6, partial_factor=1.15) -> dict` with keys `tension`, `design_strength`, `required_area`, `diameter`, `caveats`.
+- Produces: `size_cable(tension, grade=1770e6, partial_factor=1.15) -> dict` with keys `tension`, `grade`, `partial_factor`, `design_strength`, `required_area`, `diameter`, `caveats`. The inputs are echoed back so the result carries the assumptions it was computed under.
 
 - [ ] **Step 1: Write the failing tests**
 
