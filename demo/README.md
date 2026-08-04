@@ -181,7 +181,7 @@ exported network is an undiagonalised quad grid whose panels would rack
 freely under axial-only members) and cross-checks both the global reaction
 and every member's axial force against what TNA already reported; solves the
 shell under its design load and reports peak deflection and stress
-utilisation; sweeps two load factors to find where the shell goes into
+utilisation; sweeps four load factors to find where the shell goes into
 tension; sizes a cable if it does; traces the load path by arc length
 (`StaticRiksStep` cannot be constructed at this pin, so this reports why
 rather than inventing a collapse factor); and writes everything to
