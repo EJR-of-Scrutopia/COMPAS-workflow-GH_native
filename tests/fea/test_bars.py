@@ -143,3 +143,31 @@ def test_cross_check_rejects_wrong_member_forces(solved_tripod):
     wrong = [f * 3.0 for f in reader.member_forces(contract)]
     checked = cross_check(contract, outcome, axial_forces=wrong)
     assert checked["members_agree"] is False
+
+
+def test_cross_check_rejects_a_length_mismatch(solved_tripod):
+    """zip would silently truncate; this must fail loudly instead."""
+
+    contract, built, outcome = solved_tripod
+    with pytest.raises(ValueError, match="axial_forces has 2 members"):
+        cross_check(contract, outcome, axial_forces=[0.0, 0.0])
+
+
+def test_member_scaling_holds_at_uls(solved_tripod):
+    """At ULS the FEA forces carry 1.35 and the TNA forces do not. A flipped
+    scaling direction is invisible at SLS and off by 1.82x here, so this is
+    the test that pins the direction."""
+
+    contract, _, _ = solved_tripod
+    built = build_bar_model(contract, PRESETS["concrete"], 0.01)
+    outcome = run_static(
+        built, reader.node_loads(contract), combination="ULS", name="tripod_uls"
+    )
+    forces = member_axial_forces(
+        built, contract, outcome, area=0.01, modulus=PRESETS["concrete"].modulus
+    )
+    for got, want in zip(forces, reader.member_forces(contract)):
+        assert got == pytest.approx(want * 1.35, rel=1e-3)
+
+    checked = cross_check(contract, outcome, axial_forces=forces)
+    assert checked["members_agree"] is True

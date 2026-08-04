@@ -142,7 +142,9 @@ def cross_check(
     axial_forces
         Per-member axial force in newtons, in the same order as
         mesh.edges(contract), typically from member_axial_forces. Optional:
-        without it, only the global reaction check runs.
+        without it, only the global reaction check runs. Must have the same
+        length as mesh.member_forces(contract); a mismatch raises ValueError
+        rather than silently comparing a truncated pair via zip.
     """
 
     residual = reader.residual_norm(contract)
@@ -172,19 +174,33 @@ def cross_check(
     }
 
     if axial_forces is not None:
+        tna_forces = reader.member_forces(contract)
+        if len(axial_forces) != len(tna_forces):
+            raise ValueError(
+                "axial_forces has {} members but the contract reports {}".format(
+                    len(axial_forces), len(tna_forces)
+                )
+            )
+
         # The TNA forces in the file are unfactored: they close equilibrium
         # at the real applied load. run_static's combination factor scales
         # the solved response the same way it scales the reactions above
         # (applied_magnitude is the unfactored contract total times factor,
         # for the same reason), so the TNA side is scaled up here rather
         # than the solved side scaled down.
-        expected = [force * factor for force in reader.member_forces(contract)]
+        expected = [force * factor for force in tna_forces]
         differences = [
             abs(got - want) for got, want in zip(axial_forces, expected)
         ]
         member_count = len(differences)
         max_difference = max(differences) if differences else 0.0
         mean_difference = sum(differences) / member_count if member_count else 0.0
+        # Reusing the same tolerance as the global reaction check is
+        # deliberately generous for a single member: the file's residual is
+        # a whole-network force-balance error, spread over every member in
+        # the mesh, so it is a loose bound on any one member's difference.
+        # Task 10's consumer of this dict should read members_agree with
+        # that in mind rather than treating it as a tight per-member check.
         members_agree = max_difference <= tolerance
 
         result["member_count"] = member_count
