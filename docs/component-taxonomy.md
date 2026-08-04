@@ -9,57 +9,60 @@ parameters.
 
 | Family | Contract | Purpose |
 | --- | --- | --- |
-| Registration | `TopologyBundle` | One registered object: nodes, edges, optional faces, source mapping, groups, tolerances, and topology diagnostics. |
-| Staged TNA | `TnaPattern`, `TnaPrepared` | Stable source pattern with explicit anchors, then the relaxed pattern, boundary-opening records, form graph, topological force graph, mappings, and preparation diagnostics. |
-| Actions | `LoadCase` | Named nodal loads, load metadata, and the mapping back to registered nodes. |
-| Solver settings | `FDConfig`, `HeightControl`, `TNAConfig` | Explicit, serialisable controls for force-density or thrust-network solving. |
-| Results | `SolvedCase`, `TnaResult` | Immutable solved geometry, edge forces, reactions, residuals, provenance, units, and solver diagnostics. `TnaResult` additionally preserves the reciprocal form/force pair and stable correspondence. |
-| Display | `DiagramStyle`, `DiagramBundle`, `GraphicDiagram` | Display policy and Rhino-ready preview payloads kept separate from solver data. `GraphicDiagram` is the compact native TNA reciprocal bundle. |
+| Registration | `TnaPatternDto` | One registered Pattern: topology (nodes, edges, optional faces, source mapping), pattern mode, weld tolerance, and provenance. |
+| Anchoring | `AnchoredPatternDto` | The Pattern with explicit anchor node IDs and snap tolerance resolved by Supports. |
+| Problem | `ProblemDto` | The Anchored Pattern bundled with one load case; the shared input both solvers take. |
+| Relaxation | `RelaxedDto` (wraps `TnaPreparedDto`) | Relaxed pattern, boundary-opening records, form graph, and unbalanced topological force graph, paired with the Problem it will be solved against. |
+| Solver settings | `TnaControlDto` | Explicit, serialisable horizontal/vertical solve controls shared by TNA Solve and, for provenance only, FD Solve. |
+| Results | `ResultDto` | One unified solved-result envelope for both FD and TNA: geometry, edge forces, reactions, residuals, provenance, units, and diagnostics, with an optional reciprocal block (form/force graphs, mappings, edge states) present only for TNA. `TnaResultDto` and `EquilibriumResultDto` merged into this one contract as part of the redesign. |
+| Display | `StyleDto` | Display-only preset, weight scale, and vector scale kept separate from solved data. |
 | Design extensions | `BranchDesign` | Later response-field, branch-layout, and Steiner-junction decisions. |
 | Delivery extensions | `StructuralDefinition`, `FEAResult`, `IFCPackage` | Later structural modelling, analysis, and IFC hand-off contracts. |
 
-The precise Python definitions are the source of truth. The table above
-describes their responsibilities, not an invitation to duplicate them inside
-Rhino-specific code.
+The precise C# definitions under `plugin/native_v02/Contracts` are the
+source of truth for what crosses onto the canvas; the table above describes
+their responsibilities, not an invitation to duplicate them inside
+Rhino-specific code. The Python worker's own dataclasses in
+`src/ananke_equilibrium/contracts.py` (`TopologyBundle`, `SupportSet`,
+`LoadCase`, `FDConfig`, `HeightControl`, `TNAConfig`, `SolvedCase`,
+`DiagramStyle`, `DiagramBundle`, and others) sit behind the worker protocol
+and were not touched by this redesign; the C# contracts above wrap and adapt
+them for the canvas.
 
 ## Native v0.2 component surface
 
-The compiled native slice has twenty components. The C# classes under
+The compiled native slice has twelve components. The C# classes under
 `plugin/native_v02/Components` are authoritative for their current ports;
 `plugin/components.toml` records the preserved script-backed v0.1 surface.
+Every stage takes one primary typed object and returns it enriched, and a
+nickname names the type carried on that port, not the word "input": `PAT`,
+`SUP`, `PRB`, `RLX`, `RES`, `CTL`, and `STY` appear on exactly the ports that
+carry those types, on both sides of every wire.
 
 | Category | Component | Inputs | Outputs | Responsibility |
 | --- | --- | --- | --- | --- |
-| `01 Model` | **Network** | geometry, kind, weld tolerance, length unit | `Topology` | Weld lines, polylines, or mesh edges into one registered topology, preserve faces and source IDs, and diagnose the whole object. |
-| `01 Model` | **Support Set** | topology, points or node IDs, mode, snap tolerance | `Supports` | Bind form-finding supports to the registered topology without defining FEA restraint degrees of freedom. |
-| `01 Model` | **Load Case** | topology, points or node IDs, vectors, distribution, name, factor, force unit, snap tolerance | `Load Case` | Assign one named load case to the topology without embedding solver assumptions. |
-| `01 Model` | **Equilibrium Problem** | topology, support set, load-case list, name | `Problem` | Validate and bundle the shared solver input. |
-| `02 Form Finding` | **FD Settings** | scalar or member-aligned force densities | `Settings` | Keep force-density values separate from loads and drawing controls. |
-| `02 Form Finding` | **FD Solve** | problem, settings, load-case index | `Result` | Run whole-network COMPAS force-density form finding. |
-| `02 Form Finding` | **TNA Pattern** | geometry, mode, resolution, weld tolerance | `Pattern`, source `Topology` | Register a mesh or already-split planar line pattern. Surface, grid, triangulation, and skeleton modes fail explicitly until their generators exist. |
-| `02 Form Finding` | **TNA Supports** | pattern, explicit anchor points, optional snap tolerance | supported `Pattern` | Bind only the true structural anchors; intermediate boundary vertices remain free for relaxation. |
-| `02 Form Finding` | **TNA Relax + Boundaries** | supported pattern, nominal plan force density, target boundary sag | `Prepared` | Run planar FDM relaxation, target support-to-support opening sag, and retain the conditioned form plus unbalanced topological force graph. |
-| `02 Form Finding` | **TNA Equilibrium** | prepared state, optional load case, crown-height/signed-q mode and value | `TnaResult` | Run horizontal and vertical TNA with compact controls and preserve the complete solved reciprocal state. |
-| `02 Form Finding` | **TNA Control** | height mode/value, horizontal alpha, horizontal/vertical iterations, tolerance | `Control` | Bundle crown-height or force-scale control and numerical TNA settings. |
-| `02 Form Finding` | **TNA Solve** | problem, control, load-case selector | `Result` (`TnaResult`) | Retained one-shot faced-pattern compatibility solve. |
-| `03 Graphic Statics` | **TNA Reciprocal** | TNA result, layout, metric, force scale, vector scale, gap ratio | `Diagram` (`GraphicDiagram`) | Construct and preview the linked thrust/form/force diagram without rerunning the solver. |
-| `03 Graphic Statics` | **Graphic Diagram Display** | graphic diagram, style, role visibility, weight scale | form/thrust/force/load/reaction lines, report | Provide the explicit styled viewport boundary and expose ordinary Rhino lines for downstream drawing operations. |
-| `05 Visualisation` | **Equilibrium Preview** | equilibrium result, force weight, vector scale | member colours/lines and load, reaction, residual lines | Preview the current FD equilibrium result in the Rhino viewport. |
-| `90 Query` | **TNA Geometry** | TNA result | thrust mesh, thrust edges, form edges, equilibrium bridge | Reconstruct the resolved Rhino thrust mesh and provide a compatibility bridge to generic equilibrium consumers. |
-| `90 Query` | **TNA Members** | TNA result | member IDs, thrust lines, `q`, `H`, `F`, state, source-edge tree | Extract only the aligned member demand/provenance table needed for force-flow and later branch-design operations. |
-| `90 Query` | **TNA Actions** | TNA result, vector scale | supports, load points/vectors, reaction points/vectors | Extract paired nodal actions and provide a focused arrow preview. |
-| `90 Query` | **Result Breakdown** | generic equilibrium result | aligned member geometry/forces/densities, vectors, source IDs, supports, diagnostics, report | Preserve the legacy full FD-oriented deconstruction surface. It does not directly accept a `TnaResult`. |
-| `90 Query` | **Backend Health** | none | ready, Python, packages, capabilities, report | Verify the persistent Python worker, package environment, and protocol. |
+| `01 Model` | **Pattern** | Geometry `G`, Mode `M`, Resolution `R`, Weld Tolerance `Tol` | Pattern `PAT` | Register a stable Rhino mesh or already-split planar line pattern as the shared spine's source geometry. Surface, Grid, Triangulation, and Skeleton modes fail explicitly until their generators exist. |
+| `01 Model` | **Supports** | Pattern `PAT`, Anchor Points `A`, Snap Tolerance `Tol` (optional) | Anchored Pattern `SUP` | Snap explicit structural anchors to a registered Pattern; intermediate boundary vertices stay free for relaxation. |
+| `01 Model` | **Loads** | Anchored Pattern `SUP`, Vector `V`, Node IDs `ID` (optional), Factor `F` | Problem `PRB` | Apply one load vector to every node or an explicit subset, producing the Problem both solvers take. |
+| `02 Form Finding` | **TNA Relax** | Problem `PRB`, Force Density `q`, Boundary Sag `Sag %` | Relaxed `RLX` | Relax the Problem's plan Pattern, match unsupported-boundary sag, and build an inspectable unbalanced topological force dual. |
+| `02 Form Finding` | **TNA Solve** | Relaxed `RLX`, Mode `M`, Value `V`, Control `CTL` (optional) | Result `RES` | Solve a Relaxed Pattern by crown height or signed q scale against the load case its Problem carries; returns the unified Result envelope. |
+| `02 Form Finding` | **FD Solve** | Problem `PRB`, Force Density `q` (list, optional), Control `CTL` (optional, provenance only) | Result `RES` | Run whole-network COMPAS force-density form finding against the Problem's load case. |
+| `02 Form Finding` | **Control** | Horizontal Alpha `Alpha`, Horizontal Iterations `HI`, Vertical Iterations `VI`, Tolerance `Tol` | Control `CTL` | Bundle the horizontal/vertical reciprocal solve controls shared by TNA Solve; carried through FD Solve for provenance only. |
+| `03 Visualise` | **Display** | Result `RES`, Style `STY` (optional), Elements `E` (optional), Metric `M`, Weight `W`, Vector Scale `VS`, Gap `G` | Thrust Mesh `TM`, Form Lines `FL`, Thrust Lines `TL`, Force Lines `FCL`, Load Lines `LL`, Reaction Lines `RL`, Report | Draw a solved Result's reciprocal form/thrust/force lines, mapped load/reaction/residual vectors, and thrust mesh, with one style preset, auto-scaling, and Elements/Metric filters. |
+| `03 Visualise` | **Style** | Preset, Weight Scale `Weight`, Vector Scale `Vector` | Style `STY` | Bundle a display preset, weight scale, and vector scale for Display. |
+| `03 Visualise` | **Deconstruct** | Result `RES` | Thrust Mesh `TM`, Member Lines `M`, Form Lines `FL`, `q`, `H`, `F`, Force State `S`, Member IDs `MID`, Node IDs `NID`, Support Points `SP`, Load Points `LP`, Load Vectors `LV`, Reaction Points `RP`, Reaction Vectors `RV`, Residuals `E`, Diagnostics `D`, Report | Extract thrust/form geometry, member forces, and nodal actions from one solved FD or TNA Result in one component. Reciprocal-only streams (Thrust Mesh, Form Lines, `H`) come out empty for FD. |
+| `07 Delivery` | **Export** | Result `RES`, Format `F` (contract \| compas), Path `P` (optional) | JSON `J`, Written `W` | Serialise a solved Result as portable Contract JSON or native COMPAS `json_dumps` geometry via the worker, and optionally write it to disk. |
+| `90 System` | **Backend Health** | none | Ready `R`, Python `Py`, Packages `Pkg`, Capabilities `Cap`, Report `Out` | Verify the persistent Python worker, package environment, and protocol. |
 
 ### Port rules
 
 - Components accept a primary typed bundle rather than parallel lists whose
   indices can silently drift.
-- A solver returns one `SolvedCase`; downstream visualisation or export reads
-  that same result rather than rerunning the solver.
-- Rich TNA state is queried by responsibility. Geometry, member demand, and
-  nodal actions are separate components instead of one oversized bank of
-  unrelated parallel outputs.
+- A solver returns one `Result`; Display, Deconstruct, and Export all read
+  that same envelope rather than rerunning the solver.
+- Rich TNA and FD state is queried by one grouped component, `Deconstruct`,
+  rather than several narrow ones whose outputs a definition must remember
+  to wire in the right combination.
 - Status is concise and human-readable. Structured warnings and numerical
   diagnostics remain on the bundle.
 - Rhino geometry conversion happens in the Grasshopper adapter layer.
@@ -109,14 +112,17 @@ Nothing is hidden behind a silent fallback.
 | Tab | COMPAS family | Packages | Capability | Extra | State |
 | --- | --- | --- | --- | --- | --- |
 | `01 Model` | core | `compas` | always | none | **Built** |
-| `02 Form Finding` | Form Finding | `compas_fd`, `compas_tna` | `fd.solve`, `tna.solve` | `equilibrium` | **Built** |
-| `03 Graphic Statics` | Form Finding | `compas_ags` | `ags.solve` | `equilibrium` | **Built** |
+| `02 Form Finding` | Form Finding | `compas_fd`, `compas_tna` (`compas_ags` reserved) | `fd.solve`, `tna.solve` (`ags.solve` reserved) | `equilibrium` | **Built** |
+| `03 Visualise` | none | none | always | none | **Built** |
 | `04 Masonry` | Masonry | `compas_dem`, `compas_assembly`, `compas_cra` | `masonry` | `masonry` | Packages installed, components pending |
-| `05 Visualisation` | none | none | always | none | **Built** |
-| `06 Engineering` | Engineering | `compas_fea2` plus a solver | `fea` | `fea` | Package installed, **no solver backend** |
-| `07 Fabrication` | Digital Fabrication | `compas_fab`, `compas_robots` | `fab` | `fab` | Packages installed, components pending |
-| `08 Delivery` | Data Modelling | `compas_model`, `compas_ifc` | `model`, `ifc` | `model`, `ifc` | Packages installed, components pending |
-| `90 Query` | none | none | always | none | **Built** |
+| `05 Engineering` | Engineering | `compas_fea2` plus a solver | `fea` | `fea` | Package installed, **no solver backend** |
+| `06 Fabrication` | Digital Fabrication | `compas_fab`, `compas_robots` | `fab` | `fab` | Packages installed, components pending |
+| `07 Delivery` | Data Modelling | `compas_model`, `compas_ifc` | `model`, `ifc` | `model`, `ifc` | Export **built**; `compas_model`/`compas_ifc` components pending |
+| `90 System` | none | none | always | none | **Built** |
+
+Capability flags and pyproject extras keep the names they already had before
+this redesign; only the tab numbers and the components sitting under them
+changed.
 
 ### The Engineering flag is deliberately stricter than the others
 
@@ -138,27 +144,32 @@ fea            a backend is present, so an analysis can genuinely run
 promise the design rules make everywhere else: package detection is not a claim
 that the workflow exists.
 
-`04 Masonry` fills the gap deliberately left between `03` and `05`, so no
-existing subcategory string changes. Subcategory is display grouping only and
-component identity is the GUID, so regrouping never invalidates a saved
-definition; the versioning policy's breaking-change rules govern ports and
-semantics, not tabs.
+The tab sequence is renumbered and compacted from the constants the surface
+used before this redesign (which read 04/06/07/08 with a gap): `03 Graphic
+Statics` disappears because its display half folds into `Display` and a
+future AGS solver belongs in `02 Form Finding`, which is where COMPAS
+classifies `compas_ags` anyway; `05 Visualisation` becomes `03 Visualise`,
+now hosting `Display`, `Style`, and `Deconstruct`; the reserved families close
+up to `04 Masonry`, `05 Engineering`, and `06 Fabrication`, with `Delivery` at
+`07`. Subcategory is display grouping only and component identity is the
+GUID, so regrouping never invalidates a saved definition; the versioning
+policy's breaking-change rules govern ports and semantics, not tabs.
 
 ### Why TNA is not its own tab
 
 TNA is a method inside Form Finding, which is how COMPAS itself classifies it
 alongside `compas_fd`, `compas_dr` and `compas_ags`. Giving it a tab would
 break the alignment above and would separate it from the shared registration
-spine it depends on. `02 Form Finding` is the fullest tab at eight components,
-and if it becomes crowded the answer is a naming prefix (`TNA ...`, `FD ...`,
-which the components already use) rather than a new tab that implies a new
-backend.
+spine it depends on. `02 Form Finding` holds four components (`TNA Relax`,
+`TNA Solve`, `FD Solve`, `Control`), and if it becomes crowded the answer is a
+naming prefix (`TNA ...`, `FD ...`, which the components already use) rather
+than a new tab that implies a new backend.
 
 ### The Patterns family already has a home
 
 COMPAS lists Patterns (`compas_skeleton`, `compas_singular`) as its own family,
 but in this plugin it is not a tab. It is the missing backend for modes that
-already exist and already fail honestly: `TNA Pattern` offers `Surface`,
+already exist and already fail honestly: `Pattern` offers `Surface`,
 `Grid`, `Triangulation` and `Skeleton`, and rejects all four with an actionable
 error because no generator exists. `compas_skeleton` 2.0.1 is COMPAS 2
 compatible and is the natural implementation of the `Skeleton` mode.
@@ -170,7 +181,7 @@ patterning. Adopting them fills in existing modes rather than adding a tab.
 Sketched to the same rule the built tabs follow: a stage returns one typed
 bundle, and downstream components read that bundle rather than recomputing.
 
-**`04 Masonry`.** `Block Tessellation` turning a `TnaResult` into intrados and
+**`04 Masonry`.** `Block Tessellation` turning a `Result` into intrados and
 extrados block geometry with interface frames; `Assembly` binding those blocks
 into a contact graph; `Stability` running the coupled rigid-block solve for a
 chosen build stage; `Formwork Reaction` extracting the load history the
@@ -178,18 +189,20 @@ falsework carries across the whole sequence. The last of these is the one that
 does not exist anywhere else in the pipeline, because a thrust network
 describes only the completed vault.
 
-**`06 Engineering`.** `Structural Model` and `FEA Solve`, consuming the
+**`05 Engineering`.** `Structural Model` and `FEA Solve`, consuming the
 existing `StructuralAnalysisCase`. The current `StructuralHandoff` already
 reports exactly which material, section, restraint and load-combination inputs
 are still missing, so this tab has a specified entry contract already.
 
-**`07 Fabrication`.** `Robot` loading a `compas_robots` model, `Place Sequence`
+**`06 Fabrication`.** `Robot` loading a `compas_robots` model, `Place Sequence`
 ordering block placement from the assembly, and `Inverse Kinematics` returning
 joint configurations per target frame. Analytical IK needs no backend beyond
 `compas_fab` itself, so this tab can be useful before any ROS decision is made.
 
-**`08 Delivery`.** `Compas Model` and `IFC Export`, wrapping formulations that
-`structural.py` already builds and deliberately does not auto-save.
+**`07 Delivery`.** `Export` already serialises a solved Result as portable
+Contract JSON or native COMPAS JSON; `Compas Model` and `IFC Export` are the
+reserved additions, wrapping formulations that `structural.py` already builds
+and deliberately does not auto-save.
 
 ### Sequence across tabs
 
@@ -197,21 +210,20 @@ Left to right on the ribbon is close to the real workflow, which is the second
 reason for the numbering:
 
 ```text
-01 Model -> 02 Form Finding -> 04 Masonry -> 07 Fabrication
+01 Model -> 02 Form Finding -> 04 Masonry -> 06 Fabrication
                 |                  |              |
-                +-> 03 Graphic Statics            |
-                +-> 06 Engineering                |
-                +-> 08 Delivery <-----------------+
+                +-> 05 Engineering                |
+                +-> 07 Delivery <-----------------+
 
-05 Visualisation and 90 Query read any stage without advancing it.
+03 Visualise and 90 System read any stage without advancing it.
 ```
 
 ## Roadmap components
 
 These are separate stages, not extra modes hidden inside the initial solvers.
-The compact RhinoVault-style authoring surface is now implemented as
-`TNA Pattern -> TNA Supports -> TNA Relax + Boundaries -> TNA Equilibrium`;
-`TNA Solve` remains the one-shot compatibility macro. See
+The compact RhinoVault-style authoring surface is now implemented as the
+shared spine itself: `Pattern -> Supports -> Loads -> TNA Relax ->
+TNA Solve`, with `FD Solve` branching off the same `Problem`. See
 [`architecture/rhinovault-native-stages.md`](architecture/rhinovault-native-stages.md)
 for the exact implemented boundary and later design-by-statics work.
 
@@ -236,23 +248,22 @@ keeps generative design decisions distinct from equilibrium solving.
 
 ## Whole-object registration
 
-`Network` registers all supplied geometry in one pass:
+`Pattern` registers all supplied geometry in one pass:
 
 1. Extract nodes and candidate edges from lines, polylines, or mesh topology.
 2. Weld coincident endpoints using the supplied tolerance.
 3. Retain a mapping from every source item to registered node and edge IDs.
 4. Identify connected components, boundaries, supports, faces where available,
    non-manifold conditions, duplicates, and zero-length members.
-5. Return one `TopologyBundle`, even when diagnostics reveal several connected
-   components.
+5. Return one registered `Pattern`, even when diagnostics reveal several
+   connected components.
 
 This is what lets TNA or FD act on the object as a network instead of solving
-each input line independently. TNA additionally needs an admissible pattern
-with the topology, faces, boundary conditions, loads, and height/force controls
-required by its solver; an arbitrary collection of curves is not automatically
-a funicular form.
+each input line independently. `Supports` and `Loads` then carry that
+registered Pattern into the shared `Problem` both solvers take; an arbitrary
+collection of curves is not automatically a funicular form.
 
-`Network` exposes `mm`, `cm`, `m`, `in`, and `ft` as canonical coordinate
+`Pattern` exposes `mm`, `cm`, `m`, `in`, and `ft` as canonical coordinate
 units. These are explicit dimensional metadata, not an implicit scale
 operation: coordinates remain in the supplied unit, load vectors remain in
 the selected force unit, and FD force density has units of force/length. A
@@ -276,53 +287,47 @@ A single cable or arch under parallel loads often produces the familiar
 triangular outer force polygon with a fan of rays. A branching frame generally
 has several joint polygons or reciprocal cells and should not be forced into
 one decorative triangle. `AGS Solve` and the directional graphic-statics
-stages therefore own any new reciprocal construction; display components only
-draw structured solver or construction results.
+stages therefore own any new reciprocal construction; `Display` only draws
+structured solver or construction results, gaining a renderer for each new
+diagram kind rather than a new display component.
 
-For staged TNA, `TNA Relax + Boundaries` already serialises the initial
-topological force graph beside its form graph in `TnaPrepared`; that graph is
-not yet horizontally balanced. `TNA Equilibrium` returns the solved
-reciprocal force diagram as part of `TnaResult`. A native `TNA Reciprocal`
-component packages and previews that final state without rerunning AGS.
-`Graphic Diagram Display` is the explicit presentation/deconstruction
-boundary: it applies a visual preset and exposes the five diagram roles as
-ordinary Rhino lines. A classical dashed load-line/pole construction is
+For TNA, `TNA Relax` already serialises the initial topological force graph
+beside its form graph in the `Relaxed` state; that graph is not yet
+horizontally balanced. `TNA Solve` returns the solved reciprocal force
+diagram as part of the unified `Result`. `Display` packages and previews that
+final state directly from the `Result`, without a separate
+reciprocal-construction step: it applies a visual preset (via `Style`) and
+exposes the diagram roles (form, thrust, force, loads, reactions) as ordinary
+Rhino lines, while `Deconstruct` is the explicit data-extraction boundary for
+the same `Result`. A classical dashed load-line/pole construction is
 extracted separately from an ordered directional path.
 
 Before vertical calibration fixes the physical scale, horizontal-equilibrium
 `q` and `H` are relative quantities; the final spatial `F` follows the lifted
-thrust geometry. In a final `TnaResult`, `q`, `H`, and `F` are equilibrium
+thrust geometry. In a final `Result`, `q`, `H`, and `F` are equilibrium
 demands in the selected scale, not material capacity or utilisation. See
 [`architecture/tna-graphic-statics-columns.md`](architecture/tna-graphic-statics-columns.md).
 
 ## Focused result queries
 
-Use the smallest component that matches the downstream operation:
+`Deconstruct` replaced the four old query components (`TNA Geometry`,
+`TNA Members`, `TNA Actions`, `Result Breakdown`) with one component that
+reads either solver's unified `Result`:
 
 ```text
-TNA Equilibrium.TNA Result
-    +--> TNA Geometry --> Thrust Mesh / Thrust Edges / Form Edges
-    +--> TNA Members  --> IDs / Lines / q / H / F / State / Source IDs
-    +--> TNA Actions  --> Supports / Loads / Reactions
-    +--> TNA Reciprocal --> Graphic Diagram Display
+TNA Solve.Result  or  FD Solve.Result
+    --> Deconstruct --> Thrust Mesh / Member Lines / Form Lines /
+                         q / H / F / Force State / Member IDs / Node IDs /
+                         Support Points / Load Points / Load Vectors /
+                         Reaction Points / Reaction Vectors / Residuals /
+                         Diagnostics / Report
 ```
 
-`Result Breakdown` is intentionally retained for legacy definitions built
-around the generic `EquilibriumResult`, particularly FD workflows. A
-`TnaResult` is a richer and different Grasshopper type, so connecting it
-directly is a type error. Where an old downstream definition cannot yet be
-migrated, `TNA Geometry.Equilibrium` exposes the embedded generic result as a
-compatibility bridge:
-
-```text
-TNA Equilibrium.TNA Result
-    --> TNA Geometry.Equilibrium
-    --> Result Breakdown.Result
-```
-
-New TNA definitions should not use that bridge as their normal data model;
-they should preserve `TnaResult` and query only the geometry, member, action,
-or diagram information actually needed.
+There is no separate bridge component or generic intermediate type:
+`Deconstruct` accepts the same `Result` envelope both solvers return.
+Reciprocal-only streams (Thrust Mesh, Form Lines, `H`) come out empty for an
+FD result, and Deconstruct's Report states that explicitly rather than
+erroring.
 
 ## Naming policy
 
