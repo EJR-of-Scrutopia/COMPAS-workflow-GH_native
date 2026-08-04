@@ -51,15 +51,29 @@ def find_executable(start: Path):
     return None
 
 
-def write_env(executable: Path) -> None:
-    """Write the .env file compas_fea2_opensees reads via load_dotenv."""
+# compas_fea2/__init__.py reads all four of these with no fallback, calling
+# .lower() and float() on the results, so a missing one is an AttributeError
+# at import rather than a helpful message. The values are the defaults from
+# its own init_fea2().
+FEA2_DEFAULTS = (
+    ("VERBOSE", "False"),
+    ("POINT_OVERLAP", "True"),
+    ("GLOBAL_TOLERANCE", "1"),
+    ("PRECISION", "3"),
+)
 
+
+def write_env(executable: Path) -> None:
+    """Write the .env file compas_fea2 and its backend read via load_dotenv."""
+
+    lines = ["{}={}".format(key, value) for key, value in FEA2_DEFAULTS]
     # Forward slashes: the backend interpolates this into a shell command,
     # and backslashes in a .env value are an escaping hazard.
-    line = "EXE={}\n".format(str(executable).replace("\\", "/"))
-    ENV_FILE.write_text(line, encoding="utf-8")
+    lines.append("EXE={}".format(str(executable).replace("\\", "/")))
+    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("wrote {}".format(ENV_FILE))
-    print("  {}".format(line.strip()))
+    for line in lines:
+        print("  {}".format(line))
 
 
 def check_backend() -> int:

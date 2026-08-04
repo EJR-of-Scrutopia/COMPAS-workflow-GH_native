@@ -23,12 +23,21 @@
 #    because pinning the core to a mid-2025 commit is not something the
 #    Rhino-mirroring environment should inherit.
 #
-# What is still outstanding after this script runs: the backend shells out to
-# a standalone OpenSees executable, and `openseespy` only provides
-# `opensees.pyd`, a Python extension module. The executable has to be
-# downloaded separately from https://opensees.berkeley.edu/ and its path put
-# in a .env file as EXE. Until then the backend raises NotImplementedError on
-# import, from its own platform-detection branch, not from a missing feature.
+# After this script, one manual step remains: the backend shells out to a
+# standalone OpenSees executable, and `openseespy` only provides
+# `opensees.pyd`, a Python extension module. Download OpenSees from
+# https://opensees.berkeley.edu/ (the page drives it through JavaScript, so it
+# cannot be scripted), then run:
+#
+#     .venv/Scripts/python.exe scripts/install_opensees.py <extracted folder>
+#
+# That writes the .env the backend reads. compas_fea2 needs four more keys
+# there besides EXE (VERBOSE, POINT_OVERLAP, GLOBAL_TOLERANCE, PRECISION);
+# it reads them with no fallback and raises AttributeError on a missing one.
+#
+# Registration is explicit. Importing the backend is not enough:
+#
+#     compas_fea2.set_backend("compas_fea2_opensees")
 set -euo pipefail
 
 ENV_DIR="${1:-.venv-fea}"
