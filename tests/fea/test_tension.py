@@ -8,11 +8,28 @@ from ananke_fea.analyses import sweep_tension
 from ananke_fea.compat import apply_patches, require_backend
 from ananke_fea.materials import PRESETS
 from ananke_fea.model import build_shell_model
-from ananke_fea.results import deflection_summary, surface_principal_stresses
+from ananke_fea.results import (
+    _parse_resultants,
+    deflection_summary,
+    surface_principal_stresses,
+)
 
 # sweep_tension solves through OpenSees for real, so its tests below need
 # compat.apply_patches() to have replaced OpenseesStressFieldResults'
 # broken jobdata before the solve happens. The plate fixture calls it.
+
+
+def test_a_short_stress_row_is_rejected_not_dropped(tmp_path):
+    """One truncated element must fail loudly, not vanish from the field."""
+
+    target = tmp_path / "s.out"
+    target.write_text(
+        "1 " + " ".join(["10.0"] * 32) + "\n"
+        "2 10.0 10.0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="element 2"):
+        _parse_resultants(target)
 
 
 def test_pure_bending_gives_equal_and_opposite_surface_stresses():

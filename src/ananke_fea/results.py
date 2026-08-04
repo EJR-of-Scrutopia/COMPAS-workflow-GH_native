@@ -109,12 +109,9 @@ def stress_summary(step, preset) -> Dict[str, Any]:
 def _element_resultants(step) -> Dict[int, list]:
     """Per-element averaged shell resultants from the raw s.out dump.
 
-    Each line is "eleTag v1 v2 ..." where the values are groups of 8 per
-    integration point, element local frame, order Nxx Nyy Nxy Mxx Myy Mxy
-    Vxz Vyz, per unit length. Averaging over integration points matches the
-    dormant s2d branch upstream (compas_fea2_opensees/problem/problem.py).
-    The group count is inferred rather than assumed to be 4 so triangular
-    shells do not corrupt the reshape.
+    Thin wrapper over _parse_resultants that derives the file path from a
+    solved step, kept separate so the parser itself can be tested directly
+    against a synthetic file rather than a real solve.
     """
 
     path = Path(step.problem.path) / "s.out"
@@ -123,18 +120,40 @@ def _element_resultants(step) -> Dict[int, list]:
             "no s.out beside the analysis: was StressFieldResults requested "
             "and apply_patches() called before the solve?"
         )
+    return _parse_resultants(path)
+
+
+def _parse_resultants(path) -> Dict[int, list]:
+    """Parse a raw s.out dump into per-element averaged shell resultants.
+
+    Each line is "eleTag v1 v2 ..." where the values are groups of 8 per
+    integration point, element local frame, order Nxx Nyy Nxy Mxx Myy Mxy
+    Vxz Vyz, per unit length. Averaging over integration points matches the
+    dormant s2d branch upstream (compas_fea2_opensees/problem/problem.py).
+    The group count is inferred rather than assumed to be 4 so triangular
+    shells do not corrupt the reshape.
+
+    A line with no columns at all (the trailing blank line every text file
+    ends with) is skipped as not-a-row. A line that does have an element tag
+    but a short or malformed value count is not skipped: it fails loudly,
+    naming the element, rather than silently vanishing from the resultants.
+    An element quietly missing from the tension check is exactly the kind
+    of incomplete-but-successful-looking result this package exists to
+    catch.
+    """
+
     resultants: Dict[int, list] = {}
-    for line in path.read_text().split("\n"):
+    for line in Path(path).read_text().split("\n"):
         columns = line.split()
-        if len(columns) < 9:
+        if not columns:
             continue
         tag = int(columns[0])
         values = [float(v) for v in columns[1:]]
-        if len(values) % 8:
+        if not values or len(values) % 8:
             raise ValueError(
-                "element {} returned {} stress values, not a multiple of 8; "
-                "the response layout assumption does not hold for this "
-                "element type".format(tag, len(values))
+                "element {} returned {} stress values, not a positive "
+                "multiple of 8; the response layout assumption does not "
+                "hold for this element".format(tag, len(values))
             )
         groups = [values[i : i + 8] for i in range(0, len(values), 8)]
         resultants[tag] = [sum(col) / len(groups) for col in zip(*groups)]
