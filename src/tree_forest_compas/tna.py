@@ -1060,6 +1060,163 @@ def _relax_pattern(
     _assert_finite_pattern(form, "Pattern relaxation")
 
 
+def _run_sag_round(
+    pattern: FormDiagram,
+    fixed: Sequence[int],
+    segment_paths: Sequence[Tuple[Any, Any, Sequence[int]]],
+    target_sags: Sequence[float],
+    sag_iterations: int,
+    sag_tolerance: float,
+    force_density: float,
+    pre_relax: bool,
+) -> int:
+    """One widen round of FDM relaxation plus compas-RV sag matching.
+
+    Runs the identical sequence to calling ``_relax_pattern`` around every
+    sag pass (one exact FDM solve per pass, the compas-RV update rule
+    between passes), but builds ``compas_fd``'s numerical data once per
+    round instead of re-marshalling the whole pattern every pass: each
+    pass is the library's own ``update_forcedensities`` plus the two solve
+    lines of ``fd_numpy``. The force-density method is linear, so per-pass
+    solutions depend only on the fixed positions, the loads, and the
+    current q field; the results match the per-pass version exactly.
+    Coordinates and the scaled chain force densities are written back to
+    the pattern before returning.
+    """
+    from compas_fd.solvers.fd_numerical_data import FDNumericalData
+    from numpy import isfinite as np_isfinite
+    from scipy.sparse.linalg import spsolve
+
+    if not fixed:
+        raise TNATopologyError(
+            "Pattern relaxation requires at least one support or fixed plan vertex."
+        )
+
+    k_i = pattern.vertex_index()
+    i_k = {index: key for key, index in k_i.items()}
+    vertex_keys = list(pattern.vertices())
+    edge_keys = list(pattern.edges())
+    edge_position = {}
+    for position, (u, v) in enumerate(edge_keys):
+        edge_position[(int(u), int(v))] = position
+        edge_position[(int(v), int(u))] = position
+    numdata = FDNumericalData.from_params(
+        [
+            [float(value) for value in coords]
+            for coords in pattern.vertices_attributes("xyz")
+        ],
+        [k_i[key] for key in fixed],
+        [(k_i[u], k_i[v]) for u, v in edge_keys],
+        [float(value) for value in pattern.edges_attribute("q")],
+        [
+            [float(value or 0.0) for value in row]
+            for row in pattern.vertices_attributes(("px", "py", "pz"))
+        ],
+    )
+    xyz = numdata.xyz
+    path_indices = [
+        [k_i[key] for key in path] for _, _, path in segment_paths
+    ]
+    touched_q = set()
+
+    def _solve() -> None:
+        try:
+            b = numdata.p[numdata.free] - numdata.Af.dot(
+                numdata.xyz[numdata.fixed]
+            )
+            numdata.xyz[numdata.free] = spsolve(numdata.Ai, b)
+        except Exception as error:
+            raise TNASolveError(
+                "COMPAS FDM Pattern relaxation failed: {}: {}".format(
+                    type(error).__name__, error
+                )
+            ) from error
+        finite_rows = np_isfinite(numdata.xyz).all(axis=1)
+        if not bool(finite_rows.all()):
+            bad_index = int(finite_rows.argmin())
+            raise TNASolveError(
+                "Pattern relaxation produced a non-finite Pattern vertex "
+                "at {!r}. Check that the selected supports constrain every "
+                "connected part of the pattern.".format(i_k[bad_index])
+            )
+
+    def _sag_of(path: Sequence[int]) -> float:
+        start = xyz[path[0]]
+        end = xyz[path[-1]]
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        span = sqrt(dx * dx + dy * dy)
+        if span <= 1e-15:
+            raise TNATopologyError(
+                "A support-to-support boundary segment has zero plan span."
+            )
+        rise = max(
+            (
+                abs(
+                    dx * (start[1] - xyz[index][1])
+                    - (start[0] - xyz[index][0]) * dy
+                )
+                / span
+                for index in path[1:-1]
+            ),
+            default=0.0,
+        )
+        return rise / span
+
+    iterations_run = 0
+    if pre_relax:
+        _solve()
+    for _ in range(int(sag_iterations)):
+        current_sags = [_sag_of(path) for path in path_indices]
+        if all(
+            abs(current - float(target)) < sag_tolerance
+            for current, target in zip(current_sags, target_sags)
+        ):
+            break
+        pass_updates = {}
+        for current, target, (_, _, path) in zip(
+            current_sags, target_sags, segment_paths
+        ):
+            # The compas-RV/RhinoVault update rule, with the per-round
+            # factor clamped so a saturated apron cannot drive q to zero
+            # (and rim vertices onto their neighbours) before the apron
+            # widens, and a floor on the chain q so a geometrically
+            # unreachable target degrades into the sag warning instead of
+            # a folded pattern that collapses faces downstream. If a
+            # perfectly straight input has not yet moved, avoid zeroing q
+            # and let the next FDM pass establish curvature.
+            scale = current / float(target)
+            if scale <= 1e-12:
+                scale = 1.0
+            scale = min(max(scale, 0.2), 5.0)
+            q_floor = 1e-4 * force_density
+            for index, u in enumerate(path[:-1]):
+                v = path[index + 1]
+                position = edge_position[(int(u), int(v))]
+                pass_updates[position] = max(
+                    scale * float(numdata.q[position, 0]), q_floor
+                )
+                touched_q.add(position)
+        if pass_updates:
+            positions = sorted(pass_updates)
+            numdata.update_forcedensities(
+                positions,
+                [[pass_updates[position]] for position in positions],
+            )
+        _solve()
+        iterations_run += 1
+
+    for key in vertex_keys:
+        pattern.vertex_attributes(
+            key, "xyz", [float(value) for value in xyz[k_i[key]]]
+        )
+    for position in sorted(touched_q):
+        pattern.edge_attribute(
+            edge_keys[position], "q", float(numdata.q[position, 0])
+        )
+    return iterations_run
+
+
 def _active_source_edge_mappings(
     problem: TNAProblem,
     form: FormDiagram,
@@ -1237,48 +1394,19 @@ def prepare_tna_problem(
                 if int(key) not in free_vertices
             ]
         )
-        if relax and free_vertices:
-            _relax_pattern(pattern, relaxation_fixed)
-
         if boundary_sag is not None and segment_paths and sag_iterations:
-            for iteration in range(sag_iterations):
-                current_sags = [
-                    _boundary_sag(pattern, path)
-                    for _, _, path in segment_paths
-                ]
-                if all(
-                    abs(current - float(target)) < sag_tolerance
-                    for current, target in zip(current_sags, target_sags)
-                ):
-                    break
-                for current, target, (_, _, path) in zip(
-                    current_sags, target_sags, segment_paths
-                ):
-                    # This is the compas-RV/RhinoVault update rule, with
-                    # the per-round factor clamped so a saturated apron
-                    # cannot drive q to zero (and rim vertices onto their
-                    # neighbours) before the apron widens, and a floor on
-                    # the chain q so a geometrically unreachable target
-                    # degrades into the sag warning instead of a folded
-                    # pattern that collapses faces downstream. If a
-                    # perfectly straight input has not yet moved, avoid
-                    # zeroing q and let the next FDM pass establish
-                    # curvature.
-                    scale = current / float(target)
-                    if scale <= 1e-12:
-                        scale = 1.0
-                    scale = min(max(scale, 0.2), 5.0)
-                    q_floor = 1e-4 * force_density
-                    for index, u in enumerate(path[:-1]):
-                        v = path[index + 1]
-                        q = float(pattern.edge_attribute((u, v), "q"))
-                        pattern.edge_attribute(
-                            (u, v),
-                            "q",
-                            max(scale * q, q_floor),
-                        )
-                _relax_pattern(pattern, relaxation_fixed)
-                sag_iterations_run += 1
+            sag_iterations_run += _run_sag_round(
+                pattern,
+                relaxation_fixed,
+                segment_paths,
+                target_sags,
+                sag_iterations,
+                sag_tolerance,
+                force_density,
+                pre_relax=bool(relax and free_vertices),
+            )
+        elif relax and free_vertices:
+            _relax_pattern(pattern, relaxation_fixed)
 
         if boundary_sag is None or not segment_paths or not sag_iterations:
             break

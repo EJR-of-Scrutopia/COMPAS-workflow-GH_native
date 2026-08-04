@@ -16,6 +16,7 @@ import struct
 from typing import Any
 from typing import BinaryIO
 from typing import Dict
+from typing import List
 from typing import Optional
 from typing import Tuple
 
@@ -78,10 +79,50 @@ def _json_mapping(value: Mapping[Any, Any]) -> Dict[str, Any]:
     }
 
 
+def _json_sequence(value: Any) -> List[Any]:
+    """Encode a list/tuple with an exact-type fast path for the scalars
+    that dominate geometry payloads; anything else recurses as before."""
+
+    result = []
+    append = result.append
+    for item in value:
+        kind = type(item)
+        if kind is float:
+            if not isfinite(item):
+                raise CodecError(
+                    "Non-finite floating-point values are not permitted."
+                )
+            append(item)
+        elif kind is int or kind is str or kind is bool or item is None:
+            append(item)
+        elif kind is list or kind is tuple:
+            append(_json_sequence(item))
+        else:
+            append(to_json_value(item))
+    return result
+
+
 def to_json_value(value: Any) -> Any:
     """Convert a stable contract value to finite JSON-compatible data."""
 
-    if value is None or isinstance(value, (bool, str)):
+    # Exact-type fast paths first: contract payloads are overwhelmingly
+    # plain floats, ints, strings, lists, and dicts, and the ABC
+    # isinstance checks below are measurably expensive at result scale.
+    # Subclasses and everything unusual fall through to the full chain
+    # with unchanged semantics.
+    kind = type(value)
+    if kind is float:
+        if not isfinite(value):
+            raise CodecError("Non-finite floating-point values are not permitted.")
+        return value
+    if kind is str or kind is bool or value is None or kind is int:
+        return value
+    if kind is list or kind is tuple:
+        return _json_sequence(value)
+    if kind is dict:
+        return _json_mapping(value)
+
+    if isinstance(value, (bool, str)):
         return value
     if isinstance(value, int):
         return value
@@ -92,7 +133,7 @@ def to_json_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return _json_mapping(value)
     if isinstance(value, (list, tuple)):
-        return [to_json_value(item) for item in value]
+        return _json_sequence(value)
     if hasattr(value, "to_data") and callable(value.to_data):
         return to_json_value(value.to_data())
     if all(hasattr(value, axis) for axis in ("X", "Y", "Z")):
