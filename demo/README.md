@@ -1,6 +1,6 @@
 # Demo runbook
 
-Six scripts. Each prints its analysis to the terminal and then opens a
+Seven scripts. Each prints its analysis to the terminal and then opens a
 compas_viewer window. Close the window to end the script.
 
 ## Before you start
@@ -30,7 +30,7 @@ Three ways, all equivalent. Use whichever reads best on the day.
 
 To run a script without opening a window, set `ANANKE_DEMO_NO_SHOW=1`.
 
-## The six demos
+## The seven demos
 
 ### 1. Solve the pavilion
 
@@ -109,11 +109,12 @@ Reaching a frame and moving safely between frames are different questions,
 and only the first is answered here. Collision checking is PyBullet;
 planning around obstacles is ROS with MoveIt.
 
-One incompatibility worth knowing if anyone asks why the robot is drawn by
-hand: `compas_robots` 1.0.1's own viewer object crashes against
-`compas_viewer` 2.0.2 with `MeshObject() got multiple values for keyword
-argument 'name'`. `demo/_robot.py` bypasses it by transforming the link
-meshes directly.
+The robot is drawn by compas_robots' own `RobotModelObject` and moved with
+`update_joints`, which is the pattern in the upstream compas_viewer robot
+example. One detail: `scene.add(model, ...)` must be called **without** a
+`name` keyword, because RobotModelObject passes its own name through to the
+meshes it builds and a supplied one collides with it, raising
+`MeshObject() got multiple values for keyword argument 'name'`.
 
 ### 6. The COMPAS masonry template gallery
 
@@ -127,6 +128,36 @@ It also prints what is **not** available in compas_dem 0.5.0: `WallTemplate`
 raises, and cross vault, fan vault, pavilion vault, NURBS surface and stack
 are all `NotImplementedError` stubs. Better to say so than to quietly show
 three and imply seven.
+
+### 7. COMPAS's own examples
+
+`demo/07_compas_official.py`
+
+Run with no argument for a menu of 32 unmodified example files taken from the
+COMPAS repositories. Run one by name or number:
+
+```powershell
+.venv\Scripts\python.exe demo_compas_official.py dem_vault_cross
+.venv\Scripts\python.exe demo_compas_official.py robot
+```
+
+These are richer than the demos above, and worth showing for two reasons.
+
+**Real case-study geometry.** `dem_vault_cross` loads 184 individual
+voussoirs from an OBJ and finds 488 contacts, with supports identified by
+graph degree. `dem_armadillo`, `dem_dome` and `dem_wall` are the same idea.
+None of it is parametric: it is measured geometry.
+
+**A proper application, not a viewport.** These use `DEMViewer`, which adds a
+COMPAS DEM menu with Show Blocks, Show Contacts and Show Interactions, a
+sidebar object tree with per-object visibility checkboxes, object and camera
+settings panels, four render modes and five view presets.
+
+The examples are cloned into `upstream/` by
+`scripts/fetch_compas_examples.sh`, and nothing in them is edited. The
+launcher only selects one, points the interpreter and working directory at
+it, and runs it, because they load data by paths relative to their own
+repositories.
 
 ## Bringing your own pavilion from Grasshopper
 

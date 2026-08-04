@@ -5,19 +5,23 @@ UR5's reach. For each block the script solves closed-form inverse kinematics,
 picks the arm posture nearest the current one so the motion stays continuous,
 and animates the arm placing them from springing to crown.
 
-What this is: analytical inverse kinematics, which is exact, instant, and
-needs no solver, no ROS, and no simulator.
+The robot is drawn by compas_robots' own ``RobotModelObject`` and moved with
+``update_joints``, which is the pattern in the upstream compas_viewer robot
+example (see ``upstream/compas_viewer/scripts/robot.py``, or run
+``demo/07_compas_official.py robot``). Note that ``scene.add`` is called
+without a ``name`` keyword: RobotModelObject passes its own name through to
+the meshes it creates, and supplying one collides with it.
 
-What this is not: it does not check for collisions, it does not plan a
-trajectory around obstacles, and it does not know the arm's dynamics. Those
-are planning problems, and they are where PyBullet or ROS with MoveIt would
-come in. Reaching a frame and moving safely between frames are different
-questions, and only the first is answered here.
+What this is: analytical inverse kinematics, exact, instant, needing no
+solver, no ROS and no simulator.
+
+What this is not: no collision checking and no trajectory planning. Reaching
+a frame and moving safely between frames are different questions, and only
+the first is answered here.
 """
 
 from __future__ import annotations
 
-import json
 import math
 import sys
 from pathlib import Path
@@ -30,9 +34,8 @@ from _bootstrap import ensure_venv  # noqa: E402
 
 ensure_venv(__file__)
 
-from _common import BLOCK, COMPRESSION, DEMO, PAVILION, SURFACE  # noqa: E402
+from _common import BLOCK, PAVILION, SURFACE  # noqa: E402
 from _common import add, banner, open_viewer, require, show, step  # noqa: E402
-from _robot import RobotDrawing, best_solution, interpolate  # noqa: E402
 
 from compas.datastructures import Mesh  # noqa: E402
 from compas.geometry import Frame, Point, Scale, Translation  # noqa: E402
@@ -75,8 +78,40 @@ def mini_vault_targets(result):
         point = mesh.face_centroid(face)
         centres.append([float(point[0]), float(point[1]), float(point[2])])
     # Build from the springing upward, which is how a vault actually goes up.
-    centres.sort(key=lambda p: (round(p[2], 4), math.hypot(p[0] - BASE_OFFSET[0], p[1])))
+    centres.sort(
+        key=lambda p: (round(p[2], 4), math.hypot(p[0] - BASE_OFFSET[0], p[1]))
+    )
     return mesh, centres[:MAX_BLOCKS]
+
+
+def nearest(solutions, reference):
+    """Pick the inverse-kinematics posture closest to the current one.
+
+    Analytical inverse kinematics returns up to eight valid arm postures.
+    Choosing the nearest keeps the motion continuous instead of letting the
+    arm flip between configurations from one placement to the next.
+    """
+
+    candidates = [list(item) for item in (solutions or []) if item is not None]
+    if not candidates:
+        return None
+    if reference is None:
+        return candidates[0]
+    return min(
+        candidates,
+        key=lambda candidate: sum(
+            (a - b) ** 2 for a, b in zip(candidate, reference)
+        ),
+    )
+
+
+def interpolate(start, end, steps):
+    """Straight-line joint interpolation between two configurations."""
+
+    return [
+        [a + (b - a) * (step / float(steps)) for a, b in zip(start, end)]
+        for step in range(1, steps + 1)
+    ]
 
 
 def main() -> int:
@@ -108,7 +143,6 @@ def main() -> int:
     configurations = []
     placed_points = []
     reference = None
-    reachable = 0
     for point in centres:
         # Tool pointing straight down at the block position.
         frame = Frame(point, [1.0, 0.0, 0.0], [0.0, -1.0, 0.0])
@@ -116,14 +150,14 @@ def main() -> int:
             solutions = kinematics.inverse(frame)
         except Exception:
             solutions = None
-        choice = best_solution(solutions, reference)
+        choice = nearest(solutions, reference)
         if choice is None:
             continue
         reference = choice
         configurations.append(choice)
         placed_points.append(point)
-        reachable += 1
-    print("   reachable       {} of {} positions".format(reachable, len(centres)))
+    print("   reachable       {} of {} positions".format(
+        len(configurations), len(centres)))
     if not configurations:
         print("   Nothing was reachable; adjust BASE_OFFSET or TARGET_FOOTPRINT.")
         return 1
@@ -143,7 +177,15 @@ def main() -> int:
     )
 
     start = model.zero_configuration()
-    robot = RobotDrawing(viewer.scene, model, start, colour=(0.35, 0.38, 0.42))
+    # No name keyword here: RobotModelObject names the meshes it builds, and
+    # passing one raises "MeshObject() got multiple values for keyword
+    # argument 'name'". This is the upstream example's own call signature.
+    robot_object = viewer.scene.add(
+        model,
+        show_lines=False,
+        show_points=False,
+        configuration=start,
+    )
 
     markers = []
     for index, point in enumerate(placed_points):
@@ -187,7 +229,7 @@ def main() -> int:
         if index >= len(path):
             return
         configuration.joint_values = path[index]
-        robot.move(configuration)
+        robot_object.update_joints(configuration)
         if index in reveal_at:
             marker = markers[reveal_at[index]]
             if marker is not None:

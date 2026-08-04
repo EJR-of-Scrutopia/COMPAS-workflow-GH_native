@@ -69,3 +69,6 @@ studies/**/results/
 .venv-cra/
 demo/*.png
 !demo/pavilion-result.json
+
+# Upstream COMPAS example repos, fetched by scripts/fetch_compas_examples.sh
+upstream/
