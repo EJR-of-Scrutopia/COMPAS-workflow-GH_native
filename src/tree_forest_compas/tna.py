@@ -52,6 +52,12 @@ HORIZONTAL_ACCEPT_DEGREES = 5.0
 # until the deviation is a tenth of a degree or stops improving.
 HORIZONTAL_POLISH_DEGREES = 0.1
 
+# The polish phase is bounded: the improvement decays geometrically, so a
+# fixed budget of further iterations after first passing the acceptance
+# gate captures the steep part of the descent without letting a long
+# asymptotic tail of tiny improvements hold the canvas for seconds.
+HORIZONTAL_POLISH_BUDGET = 2000
+
 # Edges carrying under this fraction of the peak horizontal force have
 # force-diagram duals of near-zero length; their direction, and therefore
 # their reciprocity angle, is numerical noise rather than equilibrium error.
@@ -2149,6 +2155,7 @@ def solve_tna_problem(
         if horizontal_auto:
             best_snapshot = None
             stalled_blocks = 0
+            polish_deadline = None
             while horizontal_iterations_run < horizontal_cap:
                 block = (
                     horizontal_first_block
@@ -2172,10 +2179,20 @@ def solve_tna_problem(
                 # Passing the 5-degree acceptance gate is not the finish
                 # line: residual reciprocity is unbalanced horizontal
                 # thrust in the result. Keep polishing while the best
-                # state improves; only numerical completeness (a tenth of
-                # a degree) or a genuine plateau stops the loop.
+                # state improves, but within a bounded budget so an
+                # asymptotic tail of tiny improvements cannot hold the
+                # canvas; numerical completeness (a tenth of a degree) or
+                # a genuine plateau stops the loop earlier.
                 if horizontal_angle <= HORIZONTAL_POLISH_DEGREES:
                     break
+                if horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES:
+                    if polish_deadline is None:
+                        polish_deadline = (
+                            horizontal_iterations_run
+                            + HORIZONTAL_POLISH_BUDGET
+                        )
+                    elif horizontal_iterations_run >= polish_deadline:
+                        break
                 # Iterations are cheap under the sparse solver, so the loop
                 # can afford patience with an oscillating trajectory before
                 # calling the plateau.

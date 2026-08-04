@@ -106,8 +106,10 @@ public sealed class ExportComponent :
             "N",
             "Optional file name for the write. Keep it to bake over the " +
             "same file; change it to bake a new one. Applied inside a " +
-            "folder Path, or replacing the file name of a file Path; " +
-            ".json is appended when no extension is given. Blank uses " +
+            "folder Path, or replacing the file name of a file Path. " +
+            "Without an extension, -contract.json or -compas.json is " +
+            "appended so both exports of one geometry sit side by side; " +
+            "an explicit extension is used verbatim. Blank uses " +
             "ananke-export-<format>.json.",
             GH_ParamAccess.item,
             string.Empty);
@@ -259,7 +261,10 @@ public sealed class ExportComponent :
         if (fileName.Length > 0 &&
             string.IsNullOrEmpty(Path.GetExtension(fileName)))
         {
-            fileName += ".json";
+            // One geometry is routinely exported in both formats with the
+            // same Name; the format suffix keeps them side by side. A Name
+            // spelled with an explicit extension is used verbatim.
+            fileName += $"-{format}.json";
         }
         bool looksLikeDirectory =
             trimmed.EndsWith(

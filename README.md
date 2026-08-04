@@ -63,11 +63,12 @@ A blank TNA Solve `Height` finds the natural equilibrium height of the
 current force densities and reports it; a number solves so the crown lands
 exactly there. A blank `Iterations` auto-converges the horizontal solve:
 it keeps the best reciprocal state it finds and keeps polishing past
-RhinoVault's five-degree acceptance until the force-bearing angle
-deviation reaches a tenth of a degree or genuinely plateaus, because
-residual reciprocity is unbalanced horizontal thrust in the exported
-result. Under five degrees reports as converged; the achieved angle is
-always reported. Edges
+RhinoVault's five-degree acceptance, because residual reciprocity is
+unbalanced horizontal thrust in the exported result. The polish is
+bounded (about two thousand further iterations after acceptance) and
+stops earlier at a tenth of a degree or on a genuine plateau. Under
+five degrees reports as converged; the achieved angle is always
+reported. Edges
 carrying under one percent of the peak horizontal force are excluded from
 the acceptance metric because their force-diagram duals are near-zero
 length and their direction is numerical noise.
