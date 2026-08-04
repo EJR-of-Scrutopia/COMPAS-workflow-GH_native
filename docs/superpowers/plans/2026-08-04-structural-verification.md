@@ -18,8 +18,65 @@
 - **Never map results by index.** `Part` stores nodes in a set; node tags are not insertion order. Map by node object identity.
 - **`ananke_fea` must never be imported by `src/ananke_equilibrium/`.** The two sides exchange JSON on disk.
 - Contract exports are `lengthUnit: "m"`, `forceUnit: "kN"`, `signConvention: "positive_tension"`. `compas_fea2` works in SI base units, so **forces convert by ×1000** and material moduli are in Pa.
+- **The source export is chosen at runtime, never hard-coded.** More than one solve of the same vault exists and they differ in ways that matter, so nothing may assume a particular file. Discover the available pairs and select by name.
+- **Nothing may assume the thrust network is wholly compressive.** It is true of some solves and false of others. Any assertion about the sign of member forces is a property of one export fixture, not of the format.
+- Solve time on the exported 2400-face mesh is **124 seconds**, measured in Task 4. Budget accordingly: this is not a suite you run in a loop.
 - No em dashes in any prose, comment, or docstring.
 - Commit after every task.
+
+### Amendment, after Task 4
+
+Two facts arrived after the plan was written and they bind Tasks 6, 7 and 10.
+
+**The exports available now differ in kind, not just in quality.** The
+upload folder holds three pairs of the same 2521-vertex, 2400-face vault:
+
+| Export | Force error | Reciprocal deviation | Peak member force |
+| --- | --- | --- | --- |
+| `Trial 2` | 2.4063 kN | 3.017 deg | -0.6061 kN, wholly compressive |
+| `Standard TNA method` | 2.4063 kN | 3.017 deg | identical solve to Trial 2 |
+| `Algebraic TNA method` | 0.0266 kN | 0.000 deg | **+0.6626 kN, some members in tension** |
+
+The algebraic solve closes the horizontal equilibrium the spec recorded as
+open, with a residual ninety times smaller. But under the export's
+`positive_tension` convention its peak member force is positive, so that
+solve is not funicular everywhere. Both are legitimate inputs, and the
+package supports both, selected at runtime.
+
+This matters most to the bar cross-check. Its tolerance reads the file's own
+`global_force_error_norm`, so on Trial 2 it is about 2.5 per cent of applied
+load and on the algebraic export about 0.03 per cent. The second genuinely
+tests the FEA setup; the first barely constrains it.
+
+**Solve time is 124 seconds at full density**, with build at 0.23 seconds,
+measured by Task 4 on the real mesh. That is within the spec's threshold, so
+no coarsening is introduced and every result comes from the mesh as
+exported. The demo's tension sweep is cut from four load factors to two,
+`[1.0, 2.0]`, to keep its end-to-end run near eight minutes.
+
+Task 5 gains a small discovery helper in `mesh.py` so the selection is one
+function rather than paths scattered through demos and tests:
+
+```python
+def available_exports(directory) -> Dict[str, Dict[str, Path]]:
+    """Map export name to its file pair, for every complete pair present.
+
+    An export is a pair "<name>-contract.json" and "<name>-compas.json" in
+    the same directory. Only names with both files count.
+    """
+
+    directory = Path(directory)
+    pairs: Dict[str, Dict[str, Path]] = {}
+    for contract in sorted(directory.glob("*-contract.json")):
+        name = contract.name[: -len("-contract.json")]
+        geometry = directory / (name + "-compas.json")
+        if geometry.is_file():
+            pairs[name] = {"contract": contract, "geometry": geometry}
+    return pairs
+```
+
+with tests asserting that `Trial 2` appears with both paths, and that a name
+missing its geometry half does not appear at all.
 
 ---
 
@@ -2192,7 +2249,7 @@ The deliverable the user actually opens. Reads Trial 2, cross-checks the bar mod
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `demo/_bootstrap.py:ensure_fea_venv(script)`, and `studies/trial-2/fea-*.json` result files.
+- Produces: `demo/_bootstrap.py:ensure_fea_venv(script)`, and `studies/<export-name>/fea-verification.json` result files, one directory per export analysed.
 
 - [ ] **Step 1: Add `ensure_fea_venv` to `demo/_bootstrap.py`**
 
@@ -2263,7 +2320,7 @@ from _bootstrap import ensure_fea_venv  # noqa: E402
 
 ensure_fea_venv(__file__)
 
-from _common import banner, require, step  # noqa: E402
+from _common import banner, step  # noqa: E402
 
 from ananke_fea import mesh as reader  # noqa: E402
 from ananke_fea.analyses import first_tension_factor, run_riks  # noqa: E402
@@ -2278,28 +2335,59 @@ from ananke_fea.results import reaction_summary, stress_summary, write  # noqa: 
 
 ROOT = Path(__file__).resolve().parent.parent
 UPLOAD = ROOT / "demo" / "upload from grasshopper"
-CONTRACT = UPLOAD / "Trial 2-contract.json"
-GEOMETRY = UPLOAD / "Trial 2-compas.json"
-STUDY = ROOT / "studies" / "trial-2"
 
 MATERIAL = "concrete"
 THICKNESS = 0.20
 BAR_AREA = 0.09
 SPAN = 20.3
-SWEEP_FACTORS = [1.0, 1.5, 2.0, 3.0]
+# Two factors, not four: each solve of the full mesh takes 124 seconds, so
+# the whole demo lands near eight minutes. Add factors back deliberately
+# when the extra resolution is worth the extra minutes.
+SWEEP_FACTORS = [1.0, 2.0]
+
+
+def choose_export() -> tuple:
+    """Pick the export to analyse: argv name, or the smallest residual.
+
+    More than one solve of this vault exists and they differ in kind. The
+    standard solve is wholly compressive but leaves a 2.4 kN residual; the
+    algebraic solve closes equilibrium to 0.03 kN but puts some members in
+    tension. Run `demo/09_structural_verification.py "Trial 2"` to name one
+    explicitly; with no argument the best-closing solve is analysed.
+    """
+
+    pairs = reader.available_exports(UPLOAD)
+    if not pairs:
+        raise SystemExit(
+            "no export pairs in {}. Export from Grasshopper in both Contract "
+            "and COMPAS modes with matching names.".format(UPLOAD)
+        )
+    if len(sys.argv) > 1:
+        name = sys.argv[1]
+        if name not in pairs:
+            raise SystemExit("no export named {!r}. Available: {}".format(
+                name, ", ".join(sorted(pairs))))
+    else:
+        def residual_of(item):
+            value = reader.residual_norm(reader.load_contract(item[1]["contract"]))
+            return value if value is not None else float("inf")
+
+        name = min(pairs.items(), key=residual_of)[0]
+    print("Analysing export: {}   (of {})".format(name, ", ".join(sorted(pairs))))
+    return name, pairs[name]
 
 
 def main() -> int:
-    require(CONTRACT, "Export Trial 2 in Contract mode to {}".format(CONTRACT))
-    require(GEOMETRY, "Export Trial 2 in COMPAS mode to {}".format(GEOMETRY))
+    name, pair = choose_export()
+    study = ROOT / "studies" / name.lower().replace(" ", "-")
 
     require_backend()
     apply_patches()
     preset = PRESETS[MATERIAL]
 
     banner("1. Read the export")
-    contract = reader.load_contract(CONTRACT)
-    surface = reader.load_thrust_mesh(GEOMETRY)
+    contract = reader.load_contract(pair["contract"])
+    surface = reader.load_thrust_mesh(pair["geometry"])
     loads = reader.node_loads(contract)
     supports = reader.support_node_ids(contract)
     residual = reader.residual_norm(contract)
@@ -2378,7 +2466,8 @@ def main() -> int:
 
     banner("7. Written out")
     payload = {
-        "source": CONTRACT.name,
+        "source": pair["contract"].name,
+        "export": name,
         "material": preset.name,
         "material_assumptions": preset.assumptions,
         "thickness": THICKNESS,
@@ -2391,7 +2480,7 @@ def main() -> int:
         "cable": cable,
         "buckling": riks,
     }
-    target = write(STUDY / "fea-verification.json", payload)
+    target = write(study / "fea-verification.json", payload)
     print("   {}".format(target))
     return 0
 
@@ -2404,7 +2493,7 @@ if __name__ == "__main__":
 
 Run: `.venv-fea/Scripts/python.exe demo/09_structural_verification.py`
 
-Expected: all seven sections print, and `studies/trial-2/fea-verification.json` is written. If the cross-check does not agree, stop and diagnose before touching anything else; that is precisely the signal it exists to give.
+Expected: all seven sections print, and `studies/<export-name>/fea-verification.json` is written for the chosen export. Run it twice, once with no argument (best-closing export) and once as `... 09_structural_verification.py "Trial 2"`, and confirm each writes its own study directory. If the cross-check does not agree, stop and diagnose before touching anything else; that is precisely the signal it exists to give.
 
 - [ ] **Step 4: Check the play button works from a different interpreter**
 
