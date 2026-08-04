@@ -80,3 +80,13 @@ except NotImplementedError:
 except Exception as error:
     print('backend failed:', type(error).__name__, error)
 " || true
+
+echo "=== Installing the project and pytest into ${ENV_DIR} ==="
+# dependencies = [] in pyproject, so --no-deps adds nothing and cannot
+# disturb the pins. This is what makes ananke_fea and ananke_equilibrium
+# importable in this environment.
+uv pip install --link-mode=copy --python "${ENV_DIR}" --no-deps -e .
+uv pip install --link-mode=copy --python "${ENV_DIR}" "pytest>=8,<10"
+
+echo "=== Running the closed-form check ==="
+"${ENV_DIR}/Scripts/python.exe" -m pytest tests/fea/test_cantilever.py -q || true
