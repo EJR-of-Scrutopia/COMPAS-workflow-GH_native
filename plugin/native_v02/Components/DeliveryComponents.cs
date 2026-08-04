@@ -87,7 +87,9 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Path",
             "P",
-            "Optional file path for the Write trigger.",
+            "Optional target for the Write trigger: a file path, or a " +
+            "folder to receive ananke-export-<format>.json. Missing " +
+            "parent folders are created.",
             GH_ParamAccess.item,
             string.Empty);
         parameters[2].Optional = true;
@@ -195,8 +197,9 @@ public sealed class ExportComponent :
         {
             try
             {
-                File.WriteAllText(path, taskResult.Json);
-                _lastWrittenPath = path;
+                string resolved = ResolveWritePath(path, postFormat);
+                File.WriteAllText(resolved, taskResult.Json);
+                _lastWrittenPath = resolved;
                 _lastWrittenAt = DateTime.Now;
             }
             catch (Exception writeException)
@@ -215,6 +218,38 @@ public sealed class ExportComponent :
             : $"{taskResult.Json.Length} chars · wrote " +
               $"{Path.GetFileName(_lastWrittenPath)} " +
               $"{_lastWrittenAt:HH:mm:ss}";
+    }
+
+    /// <summary>
+    /// A Path may name a file or a folder: canvas path pickers commonly
+    /// hand over a directory when the target file does not exist yet. A
+    /// directory (existing, or spelled with a trailing separator) receives
+    /// a deterministic per-format file name inside it, so the Contract and
+    /// COMPAS exports of one definition never overwrite each other; a file
+    /// path is used as given, with its parent directory created when
+    /// missing.
+    /// </summary>
+    private static string ResolveWritePath(string path, string format)
+    {
+        string trimmed = path.Trim();
+        bool looksLikeDirectory =
+            trimmed.EndsWith(
+                Path.DirectorySeparatorChar.ToString(),
+                StringComparison.Ordinal) ||
+            trimmed.EndsWith(
+                Path.AltDirectorySeparatorChar.ToString(),
+                StringComparison.Ordinal) ||
+            Directory.Exists(trimmed);
+        if (looksLikeDirectory)
+        {
+            Directory.CreateDirectory(trimmed);
+            return Path.Combine(
+                trimmed, $"ananke-export-{format}.json");
+        }
+        string? parent = Path.GetDirectoryName(trimmed);
+        if (!string.IsNullOrEmpty(parent))
+            Directory.CreateDirectory(parent);
+        return trimmed;
     }
 
     /// <summary>
