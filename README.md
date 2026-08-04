@@ -99,9 +99,13 @@ either solver's `Result` in one place, and `Deconstruct` extracts the same
 information as data: member IDs, thrust lines, `q`/`H`/`F`, force state,
 support/load/reaction points and vectors, residuals, and diagnostics.
 
-The current TNA solver accepts nodal loads along analysis Z only. It rejects
+The current TNA solver accepts loads along analysis Z only. It rejects
 nonzero analysis-X/Y components instead of silently discarding them; use the
-FD workflow for general spatial load vectors.
+FD workflow for general spatial load vectors. A surface load (Loads without
+Node IDs) is applied selfweight-style: the vertical solve recomputes each
+vertex load from its current three-dimensional tributary area every
+iteration, which is RhinoVault's loading model and what pulls a deep vault
+taut instead of inflating it.
 
 The displayed force density `q`, horizontal force `H`, and spatial axial force
 `F` are equilibrium demands, never member capacities. Before a vertical

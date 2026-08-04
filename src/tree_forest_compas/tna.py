@@ -1142,76 +1142,120 @@ def prepare_tna_problem(
     # The Pattern's plan is the design: a whole-plan relaxation shrinks
     # dense regions (a polar hub halves its ring radius), loading their
     # short edges with high force density and flattening or dipping the
-    # crown. But an opening cannot sag alone either: with only the rim row
-    # free, the q-scaling loop drags each rim vertex onto its single
-    # interior neighbour and the downstream weld collapses faces. So the
-    # relaxation frees each unsupported boundary opening plus a local
-    # interior apron scaled to the opening's span, and holds everything
-    # else, the crown included.
+    # crown. But an opening cannot sag alone either: the held interior
+    # behind it acts as a spring that bounds how far the boundary can
+    # move, no matter how soft its chain becomes, and forcing further
+    # drags rim vertices onto their neighbours until the downstream weld
+    # collapses faces. So the relaxation starts from a minimal apron
+    # around each unsupported opening and widens it only when the sag
+    # target cannot be reached, up to RhinoVault's whole-mesh freedom as
+    # the limit. Shallow sags never touch the crown; deep sags recruit
+    # exactly as much interior as they need.
     held_always = selected_support_set | set(fixed_form_keys)
-    free_vertices: set = set()
-    for _, _, path in _boundary_support_segments(pattern, selected_supports):
-        seeds = [
-            int(key) for key in path if int(key) not in held_always
-        ]
-        if not seeds:
-            continue
-        depth = min(12, max(2, (len(seeds) + 1) // 2))
-        frontier = set(seeds)
-        reached = set(seeds)
-        for _ in range(depth):
-            next_frontier = set()
-            for key in frontier:
-                for neighbour in pattern.vertex_neighbors(key):
-                    neighbour = int(neighbour)
-                    if neighbour in reached or neighbour in held_always:
-                        continue
-                    next_frontier.add(neighbour)
-            reached |= next_frontier
-            frontier = next_frontier
-        free_vertices |= reached
-    relaxation_fixed = _unique(
-        [
-            int(key)
-            for key in pattern.vertices()
-            if int(key) not in free_vertices
-        ]
-    )
+    segment_paths = _boundary_support_segments(pattern, selected_supports)
+
+    def _apron_free_vertices(widen_round: int) -> set:
+        free: set = set()
+        for _, _, path in segment_paths:
+            seeds = [
+                int(key) for key in path if int(key) not in held_always
+            ]
+            if not seeds:
+                continue
+            depth = max(2, (len(seeds) + 1) // 2) * (2**widen_round)
+            frontier = set(seeds)
+            reached = set(seeds)
+            for _ in range(depth):
+                next_frontier = set()
+                for key in frontier:
+                    for neighbour in pattern.vertex_neighbors(key):
+                        neighbour = int(neighbour)
+                        if neighbour in reached or neighbour in held_always:
+                            continue
+                        next_frontier.add(neighbour)
+                if not next_frontier:
+                    break
+                reached |= next_frontier
+                frontier = next_frontier
+            free |= reached
+        return free
 
     pattern.edges_attribute("q", force_density)
-    if relax and free_vertices:
-        _relax_pattern(pattern, relaxation_fixed)
 
-    segment_paths = _boundary_support_segments(pattern, selected_supports)
     initial_sags = [_boundary_sag(pattern, path) for _, _, path in segment_paths]
     target_sags = [boundary_sag for _ in initial_sags]
 
     sag_iterations_run = 0
-    if boundary_sag is not None and segment_paths and sag_iterations:
-        for iteration in range(sag_iterations):
-            current_sags = [
-                _boundary_sag(pattern, path) for _, _, path in segment_paths
+    widen_round = 0
+    relaxation_fixed = _unique(list(pattern.vertices()))
+    while True:
+        free_vertices = _apron_free_vertices(widen_round)
+        relaxation_fixed = _unique(
+            [
+                int(key)
+                for key in pattern.vertices()
+                if int(key) not in free_vertices
             ]
-            if all(
-                abs(current - float(target)) < sag_tolerance
-                for current, target in zip(current_sags, target_sags)
-            ):
-                break
-            for current, target, (_, _, path) in zip(
-                current_sags, target_sags, segment_paths
-            ):
-                # This is the exact compas-RV/RhinoVault update rule.
-                # If a perfectly straight input has not yet moved, avoid
-                # zeroing q and let the next FDM pass establish curvature.
-                scale = current / float(target)
-                if scale <= 1e-12:
-                    scale = 1.0
-                for index, u in enumerate(path[:-1]):
-                    v = path[index + 1]
-                    q = float(pattern.edge_attribute((u, v), "q"))
-                    pattern.edge_attribute((u, v), "q", scale * q)
+        )
+        if relax and free_vertices:
             _relax_pattern(pattern, relaxation_fixed)
-            sag_iterations_run = iteration + 1
+
+        if boundary_sag is not None and segment_paths and sag_iterations:
+            for iteration in range(sag_iterations):
+                current_sags = [
+                    _boundary_sag(pattern, path)
+                    for _, _, path in segment_paths
+                ]
+                if all(
+                    abs(current - float(target)) < sag_tolerance
+                    for current, target in zip(current_sags, target_sags)
+                ):
+                    break
+                for current, target, (_, _, path) in zip(
+                    current_sags, target_sags, segment_paths
+                ):
+                    # This is the compas-RV/RhinoVault update rule, with
+                    # the per-round factor clamped so a saturated apron
+                    # cannot drive q to zero (and rim vertices onto their
+                    # neighbours) before the apron widens, and a floor on
+                    # the chain q so a geometrically unreachable target
+                    # degrades into the sag warning instead of a folded
+                    # pattern that collapses faces downstream. If a
+                    # perfectly straight input has not yet moved, avoid
+                    # zeroing q and let the next FDM pass establish
+                    # curvature.
+                    scale = current / float(target)
+                    if scale <= 1e-12:
+                        scale = 1.0
+                    scale = min(max(scale, 0.2), 5.0)
+                    q_floor = 1e-4 * force_density
+                    for index, u in enumerate(path[:-1]):
+                        v = path[index + 1]
+                        q = float(pattern.edge_attribute((u, v), "q"))
+                        pattern.edge_attribute(
+                            (u, v),
+                            "q",
+                            max(scale * q, q_floor),
+                        )
+                _relax_pattern(pattern, relaxation_fixed)
+                sag_iterations_run += 1
+
+        if boundary_sag is None or not segment_paths or not sag_iterations:
+            break
+        worst_error = max(
+            abs(_boundary_sag(pattern, path) - float(target))
+            for target, (_, _, path) in zip(target_sags, segment_paths)
+        )
+        if worst_error < sag_tolerance:
+            break
+        all_movable = {
+            int(key)
+            for key in pattern.vertices()
+            if int(key) not in held_always
+        }
+        if free_vertices >= all_movable:
+            break
+        widen_round += 1
 
     final_sags = [_boundary_sag(pattern, path) for _, _, path in segment_paths]
     boundary_segments = []
@@ -1368,6 +1412,11 @@ def prepare_tna_problem(
             "boundary_segment_count": len(boundary_segments),
             "boundary_sag_target": boundary_sag,
             "sag_iterations_run": sag_iterations_run,
+            "relaxation_widen_rounds": widen_round,
+            "relaxation_free_vertex_count": len(
+                set(int(key) for key in pattern.vertices())
+                - set(relaxation_fixed)
+            ),
             "max_boundary_sag_error": max(
                 (
                     abs(segment.actual_sag - float(segment.target_sag))
@@ -1577,11 +1626,13 @@ def solve_tna_problem(
     ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
     into world coordinates using its recorded ``analysis_plane`` metadata.
 
-    Selfweight through the upstream ``density`` argument is intentionally
-    disabled. In COMPAS TNA 0.7.0, ``LoadUpdater`` adds positive selfweight to
-    ``pz`` while ``FormDiagram.vertex_selfweight`` reports it with the opposite
-    analysis-Z sign, and the final effective load array is not written back to
-    the form. Discretise selfweight into explicit negative ``pz`` values for now.
+    Selfweight through ``density`` follows RhinoVault's loading model: the
+    vertical solve recomputes each vertex load from its CURRENT
+    three-dimensional tributary area every iteration. Under this wrapper's
+    signed analysis-Z convention a downward surface load is a NEGATIVE
+    density (mirroring negative nodal ``pz``); the final effective loads
+    are written back to the form after the solve so reporting stays
+    truthful.
     """
     # Grasshopper may retain a problem created before a Python module refresh.
     # Accept that equivalent contract while still rejecting arbitrary objects.
@@ -1608,14 +1659,14 @@ def solve_tna_problem(
     density = float(density)
     if not isfinite(density):
         raise TNAInputError("density must be finite.")
-    if density != 0.0:
-        raise TNAInputError(
-            "density/selfweight is disabled for this COMPAS TNA 0.7.0 wrapper "
-            "because the upstream LoadUpdater uses a conflicting vertical sign "
-            "and does not persist its final effective loads on the form. Convert "
-            "selfweight to explicit signed nodal pz values (negative analysis Z) "
-            "and solve with density=0.0."
-        )
+    # Non-zero density enables COMPAS TNA's LoadUpdater: the vertical solve
+    # recomputes each vertex's load from the CURRENT three-dimensional
+    # tributary area every iteration (area x thickness t x density), which
+    # is exactly RhinoVault's loading model. Under this wrapper's signed
+    # analysis-Z convention a downward surface load is a NEGATIVE density,
+    # mirroring negative nodal pz. The updater never writes its final
+    # effective loads back to the form, so this wrapper persists them
+    # itself after the solve; see the post-solve block below.
 
     form = problem.form.copy()
     form.dual = None
@@ -1819,6 +1870,45 @@ def solve_tna_problem(
                 mode, type(error).__name__, error
             )
         ) from error
+
+    if density != 0.0:
+        # COMPAS TNA's LoadUpdater computes the selfweight inside the
+        # solver but never writes the final effective loads back to the
+        # form. Recompute them once from the solved geometry and persist
+        # them, so the reported loads, reactions, and global equilibrium
+        # checks describe the loads the solve actually applied.
+        from numpy import array as _np_array
+
+        from compas_tna.loads import LoadUpdater
+
+        vertex_order = list(form.vertices())
+        point_loads = _np_array(
+            [
+                form.vertex_attributes(key, ["px", "py", "pz"])
+                for key in vertex_order
+            ],
+            dtype=float,
+        )
+        thickness = _np_array(
+            [
+                [float(form.vertex_attribute(key, "t") or 1.0)]
+                for key in vertex_order
+            ],
+            dtype=float,
+        )
+        solved_xyz = _np_array(
+            [form.vertex_coordinates(key) for key in vertex_order],
+            dtype=float,
+        )
+        effective = point_loads.copy()
+        LoadUpdater(
+            form,
+            point_loads,
+            thickness=thickness,
+            density=density,
+        )(effective, solved_xyz)
+        for index, key in enumerate(vertex_order):
+            form.vertex_attribute(key, "pz", float(effective[index, 2]))
 
     edge_q = {}
     edge_forces = {}

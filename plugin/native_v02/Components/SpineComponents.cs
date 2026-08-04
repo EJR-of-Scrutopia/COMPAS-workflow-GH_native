@@ -531,9 +531,11 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         parameters.AddVectorParameter(
             "Vector",
             "V",
-            "Load vector. Without Node IDs it acts per unit of plan area " +
-            "(surface load); with Node IDs it acts directly on each " +
-            "listed node.",
+            "Load vector. Without Node IDs it is a surface load: the TNA " +
+            "solve applies it selfweight-style to the built surface's " +
+            "own tributary areas, updating as the shape rises (RhinoVault's " +
+            "loading model); FD approximates it on plan areas. With Node " +
+            "IDs it acts directly on each listed node.",
             GH_ParamAccess.item,
             new Vector3d(0.0, 0.0, -1.0));
         parameters.AddIntegerParameter(

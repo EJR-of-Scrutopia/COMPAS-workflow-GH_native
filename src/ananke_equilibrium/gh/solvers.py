@@ -642,12 +642,40 @@ def solve_tna(
     if not faces:
         raise AdapterError("TNA Solve requires registered faces, not isolated lines.")
     support_ids = _support_ids(source_topology, supports)
-    pz = _tna_pz(
-        source_topology,
-        load_case,
-        vertices_override=vertices if prepared is not None else None,
-        faces_override=faces if prepared is not None else None,
-    )
+    distribution = str(
+        get_any(load_case, ("distribution",), "point")
+    ).lower()
+    if distribution in ("tributary_area", "self_weight"):
+        # RhinoVault's loading model: the vertical solve recomputes each
+        # vertex load from its CURRENT three-dimensional tributary area
+        # every iteration, so the funicular shape follows the built
+        # surface, not the plan mesh. The base vector's signed Z becomes
+        # the (negative, downward) area density.
+        base_vector = get_any(load_case, ("base_vector",), None)
+        if base_vector is None:
+            raise AdapterError("Surface loading requires one base vector.")
+        if (
+            abs(float(base_vector[0])) > 1e-12
+            or abs(float(base_vector[1])) > 1e-12
+        ):
+            raise AdapterError(
+                "TNA v0.1 accepts loads along analysis-plane Z only. Use FD "
+                "for a general spatial load vector."
+            )
+        load_density = float(base_vector[2])
+        if abs(load_density) <= 1e-12:
+            raise AdapterError(
+                "Surface loading requires a non-zero vertical vector."
+            )
+        pz = 0.0
+    else:
+        load_density = 0.0
+        pz = _tna_pz(
+            source_topology,
+            load_case,
+            vertices_override=vertices if prepared is not None else None,
+            faces_override=faces if prepared is not None else None,
+        )
     result_topology = source_topology
     result_supports = supports
     result_load_case = load_case
@@ -759,7 +787,7 @@ def solve_tna(
                     if vertical_mode == "q" and height_value is not None
                     else -1.0
                 ),
-                "density": 0.0,
+                "density": load_density,
                 "horizontal_alpha": float(
                     get_any(config, ("horizontal_alpha", "alpha"), 100.0)
                 ) if config is not None else 100.0,

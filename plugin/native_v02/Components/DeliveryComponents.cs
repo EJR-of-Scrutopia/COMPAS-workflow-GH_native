@@ -189,7 +189,10 @@ public sealed class ExportComponent :
 
         data.SetData(0, taskResult.Json);
         data.SetData(1, taskResult.WrittenPath ?? string.Empty);
-        Message = $"{taskResult.Json.Length} chars";
+        Message = taskResult.WrittenPath is null
+            ? $"{taskResult.Json.Length} chars · not written"
+            : $"{taskResult.Json.Length} chars · wrote " +
+              Path.GetFileName(taskResult.WrittenPath);
     }
 
     /// <summary>
