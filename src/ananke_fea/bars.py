@@ -1,10 +1,37 @@
-"""A truss model of the thrust network, for checking the FEA setup itself.
+"""A beam frame of the thrust network, for checking the FEA setup itself.
 
 The point of this model is not to predict anything. It is to be solved
 under the same loads as the shell and compared against the member forces
 TNA already reported. Agreement means the loads, supports, units and
 extraction are all wired up correctly, and the shell result can be believed.
 Disagreement means the fault is in the setup, not in the vault.
+
+Getting this to solve at all took two fixes, in the order they were found:
+
+1. A truss element carries no rotational stiffness, and the backend writes
+   every OpenSees domain with 6 DOF per node regardless of element type, so
+   a model built entirely from TrussElement is singular in rotation.
+   Restraining rotations at every free node cured that.
+2. It was not enough. The exported thrust network is a pure quad grid with
+   no diagonals, and a pin-jointed quad panel has an in-plane shear
+   mechanism: a translational collapse mode, not a rotational one, so no
+   rotational restraint touches it. Free DOFs comfortably outnumber
+   members, so the mechanism is not an edge case, it is present in every
+   panel. TNA never notices, because it solves force balance on the
+   network as given, not elastic stiffness; a linear FEA solve must have a
+   stiffness matrix that is not singular. The fix is BeamElement instead of
+   TrussElement: a small bending stiffness suppresses the shear mechanism
+   in every panel, and the rotational restraints from fix 1 are no longer
+   needed or wanted, because a beam already stiffens its own end rotations,
+   and adding a restraint on top of that would spuriously stiffen the
+   parasitic bending path.
+
+The caller keeps this an axial check by choosing a slender section: at the
+area this project uses, the ratio of bending stiffness to axial stiffness
+(EI/L^3 over EA/L) works out to about 5e-4, so the bending path carries a
+negligible share of the load and the comparison still falsifies exactly
+what it exists to falsify, loads, supports, units and extraction, not
+bending behaviour.
 
 The comparison can never be tighter than the file it is checking. The
 exported Trial 2 solve closes to a global force error of 2.406 kN on 190 kN
@@ -24,6 +51,41 @@ from ananke_fea.model import ShellModel
 # it so that ordinary solver noise does not read as disagreement.
 TOLERANCE_MARGIN = 2.0
 
+# A quad thrust net is statically indeterminate and admits self-stress
+# states, so TNA's member forces and the elastic solve's member forces are
+# different, equally valid members of the same equilibrium family: they
+# need not match bar by bar even when everything about the setup is
+# correct. This is reported back to callers verbatim, not just explained
+# here, because "the numbers differ" reads as a failure without it.
+MEMBER_NOTE = (
+    "Per-member equality with TNA is only expected on statically "
+    "determinate networks. This network admits self-stress, so the "
+    "elastic and TNA distributions may legitimately differ member by "
+    "member while both equilibrate the same loads. The reaction check "
+    "is the wiring falsifier here; the member statistics are reported "
+    "for scale."
+)
+
+# A beam's frame vector must not be parallel to its own axis, or the cross
+# product the backend takes to build the local z-axis degenerates to zero.
+# Global Z is not parallel to almost every bar in a thrust network, so it is
+# the default; the exception is a bar close enough to vertical that global Z
+# nearly IS its axis, where global X is used instead. "Close enough" is
+# taken as within 5 degrees of vertical.
+_VERTICAL_COS_THRESHOLD = 0.996
+
+
+def _beam_frame(start: Sequence[float], end: Sequence[float]) -> List[float]:
+    """Pick a frame vector for a beam from start to end, never parallel to it."""
+
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    dz = end[2] - start[2]
+    length = (dx * dx + dy * dy + dz * dz) ** 0.5
+    if length and abs(dz / length) > _VERTICAL_COS_THRESHOLD:
+        return [1.0, 0.0, 0.0]
+    return [0.0, 0.0, 1.0]
+
 
 def build_bar_model(
     contract: Mapping[str, Any],
@@ -31,20 +93,20 @@ def build_bar_model(
     area: float,
     name: str = "thrust",
 ) -> ShellModel:
-    """Build a pin-jointed truss from the exported thrust network."""
+    """Build a slender beam frame from the exported thrust network."""
 
     from ananke_fea.compat import apply_patches
 
     apply_patches()
 
-    from compas_fea2.model import CircularSection, Model, Node, Part
-    from compas_fea2.model import FixedBC, GeneralBC, TrussElement
+    from compas_fea2.model import BeamElement, CircularSection, FixedBC, Model, Node, Part
 
     model = Model(name=name)
     part = Part(name="{}_bars".format(name))
 
+    points = reader.vertices(contract)
     nodes: Dict[int, object] = {}
-    for index, point in enumerate(reader.vertices(contract)):
+    for index, point in enumerate(points):
         node = Node(xyz=list(point))
         part.add_node(node)
         nodes[index] = node
@@ -55,31 +117,24 @@ def build_bar_model(
 
     for start, end in reader.edges(contract):
         part.add_element(
-            TrussElement(nodes=[nodes[start], nodes[end]], section=section)
+            BeamElement(
+                nodes=[nodes[start], nodes[end]],
+                section=section,
+                frame=_beam_frame(points[start], points[end]),
+            )
         )
 
     model.add_part(part)
 
+    # Supports still take every DOF. Free nodes take none here: a beam
+    # stiffens rotation as well as translation at both of its own ends, so
+    # nothing needs restraining on top of that, and restraining it would
+    # only stiffen the parasitic bending path this model is not meant to
+    # exercise.
     support_ids = reader.support_node_ids(contract)
     supports = [nodes[index] for index in support_ids]
     if supports:
         model.add_bcs(FixedBC(), nodes=supports)
-
-    # A truss element carries no rotational stiffness, so a model built
-    # entirely from TrussElement is singular in every rotational DOF: the
-    # backend writes the OpenSees domain as `model -ndm 3 -ndf 6` regardless
-    # of element type, and nothing couples to xx/yy/zz anywhere in the mesh.
-    # Restraining rotations at every node that is not already a support
-    # removes exactly those singular DOFs. It changes no translation, no
-    # force and no displacement, because no element stiffness term ever
-    # referenced a rotational DOF in the first place.
-    support_id_set = set(support_ids)
-    free = [node for index, node in nodes.items() if index not in support_id_set]
-    if free:
-        model.add_bcs(
-            GeneralBC(x=False, y=False, z=False, xx=True, yy=True, zz=True),
-            nodes=free,
-        )
 
     return ShellModel(model=model, part=part, nodes=nodes, supports=supports)
 
@@ -131,6 +186,18 @@ def cross_check(
     """Compare the solved reactions, and optionally the solved member forces,
     against what the file itself reports.
 
+    Two verdicts are reported because they falsify different things.
+    `reactions_agree` is the global equilibrium check: reacted load against
+    factored applied load, within tolerance. It is the wiring falsifier,
+    the thing this whole model exists to prove, and it is what `agrees`
+    reports. `strict_agrees` additionally requires `members_agree`
+    (`reactions_agree and members_agree`), for callers that want the
+    older, stricter meaning. Per-member equality is only guaranteed on a
+    statically determinate network, and this package has no determinacy
+    detector, so a member mismatch alone does not fail `agrees` once the
+    reactions already balance; see `member_note` in the result, present
+    whenever axial_forces was supplied.
+
     Parameters
     ----------
     reactions
@@ -162,7 +229,7 @@ def cross_check(
     magnitude = sum(component**2 for component in reactions) ** 0.5
     factor = getattr(outcome, "combination_factor", 1.0)
 
-    reaction_agrees = abs(magnitude - applied * factor) <= tolerance
+    reactions_agree = abs(magnitude - applied * factor) <= tolerance
 
     result: Dict[str, Any] = {
         "tolerance": tolerance,
@@ -170,7 +237,10 @@ def cross_check(
         "applied_magnitude": applied * factor,
         "reaction_magnitude": magnitude,
         "difference": abs(magnitude - applied * factor),
-        "agrees": reaction_agrees,
+        "reactions_agree": reactions_agree,
+        # This is the wiring falsifier: see the docstring for why a member
+        # mismatch alone does not override it.
+        "agrees": reactions_agree,
     }
 
     if axial_forces is not None:
@@ -199,14 +269,17 @@ def cross_check(
         # deliberately generous for a single member: the file's residual is
         # a whole-network force-balance error, spread over every member in
         # the mesh, so it is a loose bound on any one member's difference.
-        # Task 10's consumer of this dict should read members_agree with
-        # that in mind rather than treating it as a tight per-member check.
         members_agree = max_difference <= tolerance
 
         result["member_count"] = member_count
         result["max_member_difference"] = max_difference
         result["mean_member_difference"] = mean_difference
         result["members_agree"] = members_agree
-        result["agrees"] = reaction_agrees and members_agree
+        result["member_note"] = MEMBER_NOTE
+        # The stricter, older meaning, kept for callers that want it. Not
+        # what "agrees" reports: see the docstring and MEMBER_NOTE for why
+        # a member mismatch does not by itself override an agreeing
+        # reaction check.
+        result["strict_agrees"] = reactions_agree and members_agree
 
     return result

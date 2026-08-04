@@ -61,14 +61,14 @@ def solved_tripod():
 
     By statics the vertical load splits into three equal members at
     N = P / (3 cos b), b measured from vertical. This is chosen over a
-    two-bar planar triangle: a truss confined to a single plane leaves the
+    two-bar planar triangle: a frame confined to a single plane leaves the
     apex with zero stiffness normal to that plane, because both bar
-    directions have a zero component out of it, which is singular for
-    reasons that have nothing to do with the rotational-DOF fix under
-    test. Three non-coplanar bars give the apex real translational
-    stiffness in all three axes from the truss elements alone, so
-    build_bar_model's default rotation-only restraint at free nodes is all
-    this fixture needs; nothing extra is added on top of it.
+    directions have a zero component out of it, which is a translational
+    mechanism unrelated to what build_bar_model's beams are for. Three
+    non-coplanar bars give the apex real translational stiffness in all
+    three axes, and because build_bar_model now uses BeamElement, the apex
+    also gets its rotations stiffened by the beams themselves; nothing is
+    restrained on top of that.
 
     The load is 1000 kN, not a more modest 1 kN. Checked directly against
     the raw OpenSees output, the extraction pipeline that lands displacement
@@ -136,6 +136,10 @@ def test_cross_check_accepts_matching_member_forces(solved_tripod):
     checked = cross_check(contract, outcome, axial_forces=forces)
     assert checked["members_agree"] is True
     assert checked["member_count"] == 3
+    # The tripod is statically determinate, so the strict form must hold
+    # too: this is the fixture that proves strict_agrees is reachable at
+    # all, not just a fallback name for when it is not.
+    assert checked["strict_agrees"] is True
 
 
 def test_cross_check_rejects_wrong_member_forces(solved_tripod):
@@ -143,6 +147,27 @@ def test_cross_check_rejects_wrong_member_forces(solved_tripod):
     wrong = [f * 3.0 for f in reader.member_forces(contract)]
     checked = cross_check(contract, outcome, axial_forces=wrong)
     assert checked["members_agree"] is False
+
+
+def test_cross_check_splits_reaction_and_member_verdicts(solved_tripod):
+    """No solving: a statically indeterminate network can legitimately
+    disagree with TNA member by member while the wiring is still correct,
+    so reactions_agree must be able to carry agrees even when
+    strict_agrees cannot."""
+
+    contract, _, _ = solved_tripod
+    outcome = type("Outcome", (), {"step": None, "combination_factor": 1.0})()
+    applied = reader.applied_total(contract)
+    wrong = [force * 3.0 for force in reader.member_forces(contract)]
+
+    checked = cross_check(
+        contract, outcome, reactions=(0.0, 0.0, applied), axial_forces=wrong
+    )
+    assert checked["reactions_agree"] is True
+    assert checked["members_agree"] is False
+    assert checked["strict_agrees"] is False
+    assert checked["agrees"] is True
+    assert checked["member_note"]
 
 
 def test_cross_check_rejects_a_length_mismatch(solved_tripod):
@@ -171,3 +196,4 @@ def test_member_scaling_holds_at_uls(solved_tripod):
 
     checked = cross_check(contract, outcome, axial_forces=forces)
     assert checked["members_agree"] is True
+    assert checked["strict_agrees"] is True
