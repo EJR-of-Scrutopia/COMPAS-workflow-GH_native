@@ -133,8 +133,17 @@ public sealed class TnaRelaxComponent :
         }
 
         TnaRelaxTaskResult result;
-        if (!GetSolveResults(data, out result!))
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
         {
+            // A background task cancelled by a mid-drag solution race is
+            // not a verdict on the current inputs, and Grasshopper does
+            // not always follow a late cancellation with another
+            // solution: the canvas stayed on "Cancelled" with an empty
+            // output and no boundary preview until something forced a
+            // re-solve. Recompute synchronously for the solution that is
+            // actually completing.
             result = ComputeAsync(
                     ContractJson.DeepClone(fallbackPattern!),
                     fallbackConfig!,
@@ -635,8 +644,14 @@ public sealed class TnaSolveComponent :
         }
 
         TnaSolveTaskResult result;
-        if (!GetSolveResults(data, out result!))
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
         {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; recompute synchronously so a
+            // late cancellation cannot strand the canvas on "Cancelled"
+            // with empty outputs and a stale preview.
             if (!TryReadInputs(
                     data,
                     out RelaxedDto? relaxed,
@@ -1007,8 +1022,14 @@ public sealed class FdSolveComponent :
         }
 
         FdSolveTaskResult result;
-        if (!GetSolveResults(data, out result!))
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
         {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; recompute synchronously so a
+            // late cancellation cannot strand the canvas on "Cancelled"
+            // with empty outputs.
             if (!TryReadInputs(
                     data,
                     out ProblemDto? problem,

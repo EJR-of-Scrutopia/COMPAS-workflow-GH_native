@@ -156,8 +156,13 @@ public sealed class ExportComponent :
             return;
         }
         ExportComponentTaskResult taskResult;
-        if (!GetSolveResults(data, out taskResult!))
+        bool haveTaskResult = GetSolveResults(data, out taskResult!);
+        if (!haveTaskResult ||
+            taskResult.Error is OperationCanceledException)
         {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; recompute synchronously so a
+            // late cancellation cannot strand the canvas on "Cancelled".
             taskResult = ComputeAsync(
                     CloneResult(postResult!),
                     postFormat,
