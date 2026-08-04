@@ -672,7 +672,6 @@ and are less trustworthy.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
 
 @dataclass(frozen=True)
@@ -732,7 +731,7 @@ TIMBER_GL24H = MaterialPreset(
     ),
 )
 
-PRESETS: Dict[str, MaterialPreset] = {
+PRESETS: dict[str, MaterialPreset] = {
     "concrete": CONCRETE_C30_37,
     "timber": TIMBER_GL24H,
 }
@@ -754,7 +753,7 @@ def elastic_isotropic(preset: MaterialPreset):
 - [ ] **Step 4: Run the tests**
 
 Run: `.venv-fea/Scripts/python.exe -m pytest tests/fea/test_materials.py -v`
-Expected: 7 passed.
+Expected: 9 passed.
 
 - [ ] **Step 5: Commit**
 
