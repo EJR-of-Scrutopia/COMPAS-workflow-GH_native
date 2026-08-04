@@ -80,8 +80,11 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
         """The regression: a corner-supported solve reported 180 degrees.
 
         The raw ``compas_tna`` attribute still reaches 180 here because some
-        dual edges are antiparallel. The reported reciprocity error must be the
-        genuine 27-degree non-convergence, not the flipped-edge artefact.
+        dual edges are antiparallel. The folded worst over every edge is the
+        genuine 27-degree deviation, and every edge above the headline gate
+        turns out to carry under one percent of the peak horizontal force:
+        the headline metric therefore reads essentially zero, because a
+        near-zero-length force-diagram dual has no meaningful direction.
         """
         vertices, faces, index = square_grid(4)
         problem = register_tna_pattern(vertices=vertices, faces=faces)
@@ -102,17 +105,21 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
         )
 
         raw = session.diagnostics["max_raw_form_force_angle"]
+        ungated = session.diagnostics["max_reciprocal_angle_ungated"]
         reported = session.diagnostics["max_reciprocal_angle_deviation"]
 
         self.assertAlmostEqual(raw, 180.0, places=6)
-        self.assertLessEqual(reported, 90.0)
-        self.assertAlmostEqual(reported, 27.2503, places=3)
+        self.assertLessEqual(ungated, 90.0)
+        self.assertAlmostEqual(ungated, 27.2503, places=3)
+        self.assertLess(reported, 1.0)
+        self.assertTrue(session.diagnostics["horizontal_converged"])
 
     def test_more_horizontal_iterations_converge_the_reciprocal(self):
         """The same pattern reaches a parallel reciprocal with more iterations.
 
-        This documents that ``horizontal_kmax`` is a real convergence control,
-        while leaving the shipped default unchanged.
+        This documents that ``horizontal_kmax`` is a real convergence control
+        for the unfiltered worst edge, while leaving the shipped default
+        unchanged.
         """
         vertices, faces, index = square_grid(4)
         corners = [
@@ -133,10 +140,94 @@ class ReciprocityDiagnosticTests(unittest.TestCase):
                 zmax=2.0,
                 horizontal_kmax=kmax,
             )
-            return session.diagnostics["max_reciprocal_angle_deviation"]
+            return session.diagnostics["max_reciprocal_angle_ungated"]
 
         self.assertGreater(reciprocity(100), 1.0)
         self.assertAlmostEqual(reciprocity(500), 0.0, places=6)
+
+
+class HorizontalAutoConvergenceTests(unittest.TestCase):
+    """The blank-Iterations loop keeps the best reciprocal state it finds,
+    accepts at RhinoVault's five-degree gate, and stops on a plateau instead
+    of burning its iteration cap. The regression: a pattern whose held
+    interior is not in horizontal equilibrium ran the full 20000-iteration
+    cap (about thirty seconds on a real canvas) chasing direction noise on
+    near-zero-force edges."""
+
+    def test_equilibrated_pattern_accepts_after_the_first_block(self):
+        vertices, faces, index = square_grid(4)
+        problem = register_tna_pattern(vertices=vertices, faces=faces)
+        corners = [
+            index[0, 0],
+            index[0, 4],
+            index[4, 0],
+            index[4, 4],
+        ]
+        session = solve_tna_problem(
+            problem,
+            support_mode="keys",
+            support_keys=corners,
+            pz=-1.0,
+            vertical_mode="zmax",
+            zmax=2.0,
+            horizontal_kmax=None,
+        )
+
+        diagnostics = session.diagnostics
+        self.assertEqual(diagnostics["horizontal_mode"], "auto")
+        self.assertEqual(diagnostics["horizontal_mode_is_auto"], 1.0)
+        self.assertTrue(diagnostics["horizontal_converged"])
+        self.assertEqual(diagnostics["horizontal_iterations_run"], 100)
+        self.assertLessEqual(
+            diagnostics["max_reciprocal_angle_deviation"],
+            diagnostics["horizontal_accept_degrees"],
+        )
+
+    def test_non_equilibrium_interior_stalls_early_and_honestly(self):
+        import random
+
+        vertices, faces, index = square_grid(4)
+        rng = random.Random(11)
+        interior = {
+            index[row, column]
+            for row in range(1, 4)
+            for column in range(1, 4)
+        }
+        vertices = {
+            key: (
+                (x + rng.uniform(-0.3, 0.3), y + rng.uniform(-0.3, 0.3), z)
+                if key in interior
+                else (x, y, z)
+            )
+            for key, (x, y, z) in vertices.items()
+        }
+        problem = register_tna_pattern(vertices=vertices, faces=faces)
+        corners = [
+            index[0, 0],
+            index[0, 4],
+            index[4, 0],
+            index[4, 4],
+        ]
+        session = solve_tna_problem(
+            problem,
+            support_mode="keys",
+            support_keys=corners,
+            pz=-1.0,
+            vertical_mode="zmax",
+            zmax=2.0,
+            horizontal_kmax=None,
+        )
+
+        diagnostics = session.diagnostics
+        # The loop must stop well before the old 20000-iteration burn, and
+        # report whichever verdict the gate reached rather than hang.
+        self.assertLessEqual(diagnostics["horizontal_iterations_run"], 4000)
+        self.assertIn("horizontal_converged", diagnostics)
+        self.assertIn("max_reciprocal_angle_ungated", diagnostics)
+        self.assertLessEqual(
+            diagnostics["max_reciprocal_angle_deviation"],
+            diagnostics["max_reciprocal_angle_ungated"] + 1e-9,
+        )
 
 
 if __name__ == "__main__":

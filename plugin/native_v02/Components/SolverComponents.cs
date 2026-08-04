@@ -535,9 +535,10 @@ public sealed class TnaSolveComponent :
             "Iterations",
             "I",
             "Optional horizontal iteration count. Blank auto-converges: " +
-            "the worker iterates until the reciprocity angle falls below " +
-            "one degree or its hard cap. Tolerance is fixed through the " +
-            "whole calculation.",
+            "the worker keeps the best reciprocal state it finds and " +
+            "stops when the force-bearing angle deviation is under five " +
+            "degrees (RhinoVault's own acceptance) or stops improving. " +
+            "Tolerance is fixed through the whole calculation.",
             GH_ParamAccess.item);
         parameters[2].Optional = true;
         parameters.AddBooleanParameter(
@@ -718,11 +719,20 @@ public sealed class TnaSolveComponent :
                 out double converged) &&
             converged < 0.5)
         {
+            bool autoMode = metrics.TryGetValue(
+                    "horizontal_mode_is_auto",
+                    out double isAuto) &&
+                isAuto >= 0.5;
+            string advice = autoMode
+                ? "More iterations will not pass the gate: the held " +
+                  "pattern interior is not in horizontal equilibrium. " +
+                  "Smooth the pattern or accept the residual."
+                : "Raise Iterations, or leave the input blank for " +
+                  "auto-convergence.";
             AddRuntimeMessage(
                 GH_RuntimeMessageLevel.Warning,
-                "The horizontal solve did not reach reciprocity; the " +
-                "reported angle is still above one degree. Raise " +
-                "Iterations or leave it blank for auto-convergence.");
+                $"Reciprocity stalled at {angle:F1}° on force-bearing " +
+                "edges (RhinoVault accepts under 5°). " + advice);
         }
         summary.Add($"{result.Elapsed.TotalMilliseconds:F0} ms");
         Message = string.Join(" · ", summary);

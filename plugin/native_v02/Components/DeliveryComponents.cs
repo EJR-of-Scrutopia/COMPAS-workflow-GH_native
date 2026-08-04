@@ -14,8 +14,6 @@ namespace Ananke.COMPAS.Native.Components;
 
 public sealed record ExportComponentTaskResult(
     string? Json,
-    string? WrittenPath,
-    string? WriteError,
     string? Warning,
     Exception? Error,
     TimeSpan Elapsed);
@@ -31,6 +29,13 @@ public sealed record ExportComponentTaskResult(
 public sealed class ExportComponent :
     NativeTaskComponentBase<ExportComponentTaskResult>
 {
+    // A Button feeding Write is only True for the press solve; the release
+    // immediately triggers a second solve with Write false. Latching the
+    // last successful write keeps the evidence of the one-shot write on the
+    // component instead of wiping it milliseconds after it happened.
+    private string? _lastWrittenPath;
+    private DateTime _lastWrittenAt;
+
     private static readonly ComponentValueListSpec[] ValueLists =
     {
         new(
@@ -107,8 +112,9 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Written",
             "W",
-            "File path written to disk; empty when Path was empty or the " +
-            "write failed.",
+            "Most recent file path this component wrote this session, so " +
+            "a one-shot Button write stays visible after release; empty " +
+            "until a write happens.",
             GH_ParamAccess.item);
     }
 
@@ -120,7 +126,9 @@ public sealed class ExportComponent :
                     data,
                     out ResultDto? result,
                     out string format,
-                    out string path))
+                    out _,
+                    out _,
+                    report: false))
             {
                 return;
             }
@@ -128,27 +136,29 @@ public sealed class ExportComponent :
                 () => ComputeAsync(
                     CloneResult(result!),
                     format,
-                    path,
                     CancelToken),
                 CancelToken));
             return;
         }
 
+        // The post phase re-reads Write and Path itself: the disk write is
+        // a side effect and belongs on this thread, where a Button's
+        // release re-solve cannot cancel it mid-flight.
+        if (!TryReadInputs(
+                data,
+                out ResultDto? postResult,
+                out string postFormat,
+                out string path,
+                out bool write))
+        {
+            return;
+        }
         ExportComponentTaskResult taskResult;
         if (!GetSolveResults(data, out taskResult!))
         {
-            if (!TryReadInputs(
-                    data,
-                    out ResultDto? result,
-                    out string format,
-                    out string path))
-            {
-                return;
-            }
             taskResult = ComputeAsync(
-                    CloneResult(result!),
-                    format,
-                    path,
+                    CloneResult(postResult!),
+                    postFormat,
                     CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
@@ -180,39 +190,55 @@ public sealed class ExportComponent :
                 GH_RuntimeMessageLevel.Warning,
                 "Export: " + taskResult.Warning);
         }
-        if (taskResult.WriteError is not null)
+
+        if (write && !string.IsNullOrWhiteSpace(path))
         {
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Error,
-                "Export: failed to write file: " + taskResult.WriteError);
+            try
+            {
+                File.WriteAllText(path, taskResult.Json);
+                _lastWrittenPath = path;
+                _lastWrittenAt = DateTime.Now;
+            }
+            catch (Exception writeException)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    "Export: failed to write file: " +
+                    writeException.Message);
+            }
         }
 
         data.SetData(0, taskResult.Json);
-        data.SetData(1, taskResult.WrittenPath ?? string.Empty);
-        Message = taskResult.WrittenPath is null
+        data.SetData(1, _lastWrittenPath ?? string.Empty);
+        Message = _lastWrittenPath is null
             ? $"{taskResult.Json.Length} chars · not written"
             : $"{taskResult.Json.Length} chars · wrote " +
-              Path.GetFileName(taskResult.WrittenPath);
+              $"{Path.GetFileName(_lastWrittenPath)} " +
+              $"{_lastWrittenAt:HH:mm:ss}";
     }
 
     /// <summary>
-    /// Read RES and this component's own Format/Path, normalising Format
-    /// and validating the Result up front so the background task never has
-    /// to report a runtime message itself.
+    /// Read RES and this component's own Format/Path/Write, normalising
+    /// Format and validating the Result up front so the background task
+    /// never has to report a runtime message itself. The write itself
+    /// happens in the post phase; this only gathers and validates.
     /// </summary>
     private bool TryReadInputs(
         IGH_DataAccess data,
         out ResultDto? result,
         out string format,
-        out string path)
+        out string path,
+        out bool write,
+        bool report = true)
     {
         result = null;
         format = "contract";
         path = string.Empty;
+        write = false;
         ResultGoo? resultGoo = null;
         string formatInput = "contract";
         string pathInput = string.Empty;
-        bool write = false;
+        bool writeInput = false;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -220,26 +246,32 @@ public sealed class ExportComponent :
         }
         data.GetData(1, ref formatInput);
         data.GetData(2, ref pathInput);
-        data.GetData(3, ref write);
+        data.GetData(3, ref writeInput);
 
         string normalisedFormat = NormaliseFormat(formatInput);
         var errors = new List<string>(resultValue.Validate());
         if (normalisedFormat is not ("contract" or "compas"))
             errors.Add("Format must be Contract or COMPAS.");
-        if (write && string.IsNullOrWhiteSpace(pathInput))
+        if (writeInput && string.IsNullOrWhiteSpace(pathInput))
             errors.Add("Write requires a Path to write to.");
         if (errors.Count > 0)
         {
-            Message = "Invalid";
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Error,
-                string.Join(" ", errors));
+            // The pre phase reads quietly; the post phase repeats the read
+            // and owns the reporting, so invalid inputs surface once.
+            if (report)
+            {
+                Message = "Invalid";
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    string.Join(" ", errors));
+            }
             return false;
         }
 
         result = resultValue;
         format = normalisedFormat;
-        path = write ? pathInput ?? string.Empty : string.Empty;
+        path = pathInput ?? string.Empty;
+        write = writeInput;
         return true;
     }
 
@@ -259,7 +291,6 @@ public sealed class ExportComponent :
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
         string format,
-        string path,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -278,26 +309,9 @@ public sealed class ExportComponent :
             {
                 json = ContractJson.Serialize(result);
             }
-
-            string? writtenPath = null;
-            string? writeError = null;
-            if (!string.IsNullOrWhiteSpace(path))
-            {
-                try
-                {
-                    File.WriteAllText(path, json);
-                    writtenPath = path;
-                }
-                catch (Exception writeException)
-                {
-                    writeError = writeException.Message;
-                }
-            }
             stopwatch.Stop();
             return new ExportComponentTaskResult(
                 json,
-                writtenPath,
-                writeError,
                 warning,
                 null,
                 stopwatch.Elapsed);
@@ -306,8 +320,6 @@ public sealed class ExportComponent :
         {
             stopwatch.Stop();
             return new ExportComponentTaskResult(
-                null,
-                null,
                 null,
                 null,
                 error,

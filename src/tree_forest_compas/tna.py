@@ -41,6 +41,16 @@ Point3 = Tuple[float, float, float]
 Edge = Tuple[int, int]
 Vector3 = Tuple[float, float, float]
 
+# RhinoVault's own horizontal acceptance: its RV_tna_horizontal command runs
+# one horizontal_nodal pass and reports success when the worst angle deviation
+# is under settings.tna.horizontal_max_angle, which defaults to 5.0 degrees.
+HORIZONTAL_ACCEPT_DEGREES = 5.0
+
+# Edges carrying under this fraction of the peak horizontal force have
+# force-diagram duals of near-zero length; their direction, and therefore
+# their reciprocity angle, is numerical noise rather than equilibrium error.
+HORIZONTAL_FORCE_GATE_FRACTION = 0.01
+
 
 class TNAError(RuntimeError):
     """Base exception for the headless TNA workflow."""
@@ -1769,34 +1779,112 @@ def solve_tna_problem(
             )
         )
 
-    def _worst_reciprocity_angle() -> float:
-        return max(
-            (
-                _unoriented_angle(
-                    abs(float(form.edge_attribute((u, v), "_a") or 0.0))
+    def _reciprocity_angles() -> "tuple[float, float]":
+        """(gated worst, raw worst) folded reciprocity angles in degrees.
+
+        The gated value ignores edges carrying under
+        ``HORIZONTAL_FORCE_GATE_FRACTION`` of the peak horizontal force:
+        their force-diagram duals are near-zero length, so their direction
+        is numerical noise, not an equilibrium error. Chasing that noise is
+        what used to drive the auto loop to its iteration cap.
+        """
+        samples = []
+        for u, v in form.edges_where({"_is_edge": True}):
+            folded = _unoriented_angle(
+                abs(float(form.edge_attribute((u, v), "_a") or 0.0))
+            )
+            magnitude = abs(float(form.edge_attribute((u, v), "_f") or 0.0))
+            samples.append((folded, magnitude))
+        if not samples:
+            return 0.0, 0.0
+        raw_worst = max(angle for angle, _ in samples)
+        gate = HORIZONTAL_FORCE_GATE_FRACTION * max(f for _, f in samples)
+        gated = [angle for angle, f in samples if f >= gate]
+        return (max(gated) if gated else 0.0), raw_worst
+
+    def _snapshot_horizontal():
+        return (
+            {
+                key: tuple(form.vertex_attributes(key, "xy"))
+                for key in form.vertices()
+            },
+            {
+                (u, v): tuple(
+                    form.edge_attributes((u, v), ("q", "_f", "_l", "_a"))
                 )
                 for u, v in form.edges_where({"_is_edge": True})
-            ),
-            default=0.0,
+            },
+            {
+                key: tuple(force.vertex_attributes(key, "xy"))
+                for key in force.vertices()
+            },
+            {
+                tuple(edge): tuple(force.edge_attributes(edge, ("_l", "_a")))
+                for edge in force.edges()
+            },
         )
 
+    def _restore_horizontal(snapshot) -> None:
+        form_xy, form_edge_state, force_xy, force_edge_state = snapshot
+        for key, xy in form_xy.items():
+            form.vertex_attributes(key, "xy", xy)
+        for edge, values in form_edge_state.items():
+            form.edge_attributes(edge, ("q", "_f", "_l", "_a"), values)
+        for key, xy in force_xy.items():
+            force.vertex_attributes(key, "xy", xy)
+        for edge, values in force_edge_state.items():
+            force.edge_attributes(edge, ("_l", "_a"), values)
+
+    # The nodal parallelisation is not monotone: more iterations can worsen
+    # the reciprocity of an individual state. The auto loop therefore keeps
+    # the best state seen so far, accepts at RhinoVault's own 5-degree gate,
+    # and stops once two successive blocks fail to improve that best state
+    # (a plateau no amount of iteration will pass).
     horizontal_auto = horizontal_kmax is None
-    horizontal_block = 500
-    horizontal_cap = 20000
-    horizontal_threshold_degrees = 1.0
+    horizontal_first_block = 100  # RhinoVault's own default single run
+    # Checking often costs one O(edges) sweep against 250 O(edges)
+    # iterations; fine blocks keep the loop from stepping over a short
+    # sub-threshold dip in the non-monotone angle trajectory.
+    horizontal_block = 250
+    horizontal_cap = 4000
     horizontal_iterations_run = 0
+    horizontal_angle = 0.0
+    horizontal_raw_angle = 0.0
     try:
         if horizontal_auto:
+            best_snapshot = None
+            stalled_blocks = 0
             while horizontal_iterations_run < horizontal_cap:
+                block = (
+                    horizontal_first_block
+                    if horizontal_iterations_run == 0
+                    else horizontal_block
+                )
                 horizontal_nodal(
                     form,
                     force,
                     alpha=float(horizontal_alpha),
-                    kmax=horizontal_block,
+                    kmax=block,
                 )
-                horizontal_iterations_run += horizontal_block
-                if _worst_reciprocity_angle() <= horizontal_threshold_degrees:
+                horizontal_iterations_run += block
+                gated, raw = _reciprocity_angles()
+                improvement_floor = max(0.1, 0.02 * horizontal_angle)
+                if (
+                    best_snapshot is None
+                    or gated < horizontal_angle - improvement_floor
+                ):
+                    horizontal_angle = gated
+                    horizontal_raw_angle = raw
+                    best_snapshot = _snapshot_horizontal()
+                    stalled_blocks = 0
+                else:
+                    stalled_blocks += 1
+                if horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES:
                     break
+                if stalled_blocks >= 2:
+                    break
+            if best_snapshot is not None:
+                _restore_horizontal(best_snapshot)
         else:
             horizontal_nodal(
                 form,
@@ -1805,14 +1893,13 @@ def solve_tna_problem(
                 kmax=int(horizontal_kmax),
             )
             horizontal_iterations_run = int(horizontal_kmax)
+            horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
     except Exception as error:
         raise TNASolveError(
             "COMPAS TNA horizontal_nodal failed for the registered whole pattern: "
             "{}: {}".format(type(error).__name__, error)
         ) from error
-    horizontal_converged = (
-        _worst_reciprocity_angle() <= horizontal_threshold_degrees
-    )
+    horizontal_converged = horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES
 
     vertical_tolerance = float(vertical_tolerance)
     if not isfinite(vertical_tolerance) or vertical_tolerance <= 0:
@@ -1980,7 +2067,6 @@ def solve_tna_problem(
         abs(float(form.edge_attribute((u, v), "_a") or 0.0))
         for u, v in form.edges_where({"_is_edge": True})
     ]
-    angles = [_unoriented_angle(value) for value in raw_angles]
     heights = [float(form.vertex_attribute(key, "z")) for key in form.vertices()]
     removed_sources = [
         source for source, form_key in active_source_to_form.items() if form_key is None
@@ -2020,8 +2106,13 @@ def solve_tna_problem(
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
             "horizontal_mode": "auto" if horizontal_auto else "fixed",
+            # Numeric twin of horizontal_mode: the native component's metric
+            # dictionary carries doubles only.
+            "horizontal_mode_is_auto": 1.0 if horizontal_auto else 0.0,
             "horizontal_iterations_run": horizontal_iterations_run,
             "horizontal_converged": horizontal_converged,
+            "horizontal_accept_degrees": HORIZONTAL_ACCEPT_DEGREES,
+            "horizontal_force_gate_fraction": HORIZONTAL_FORCE_GATE_FRACTION,
             "zmin_solved": min(heights),
             "zmax_solved": max(heights),
             "max_free_residual": max_free_residual,
@@ -2029,7 +2120,12 @@ def solve_tna_problem(
             "reaction_sum": reaction_sum,
             "global_force_error": global_force_error,
             "global_force_error_norm": _vector_norm(global_force_error),
-            "max_reciprocal_angle_deviation": max(angles or [0.0]),
+            # The headline reciprocity metric is the force-gated worst angle
+            # captured at the end of the horizontal phase, while _f still
+            # holds the horizontal force of the reciprocal state. The
+            # unfiltered worst (noise edges included) stays available.
+            "max_reciprocal_angle_deviation": horizontal_angle,
+            "max_reciprocal_angle_ungated": horizontal_raw_angle,
             "max_raw_form_force_angle": max(raw_angles or [0.0]),
             "compression_edge_count": compression_count,
             "tension_edge_count": tension_count,
