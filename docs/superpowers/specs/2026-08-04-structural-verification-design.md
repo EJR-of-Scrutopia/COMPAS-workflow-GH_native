@@ -29,29 +29,64 @@ Every claim here was run, not recalled.
 | --- | --- |
 | OpenSees executable | Runs a Tcl script and returns. Installed from the Berkeley download at `OpenSees3.8.0/bin/OpenSees.exe` |
 | Backend registration | `compas_fea2.set_backend("compas_fea2_opensees")` gives `BACKEND = compas_fea2_opensees` |
-| End-to-end solve | A five-node cantilever with `ElasticIsotropic`, `RectangularSection`, `PinnedBC` and a tip load completed: `Analysis in progress | Analysis completed! Done!` |
-| Buckling by eigenvalue | **Does not exist.** No buckling step in the core or the backend |
-| Buckling by arc length | `OpenseesStaticRiksStep` is fully implemented, 105 lines, with arc-length control parameters |
+| End-to-end solve | A nine-node cantilever returns a tip deflection **0.9998 of `PL^3/3EI`**, with reactions summing to the applied load |
+| Buckling by eigenvalue | Class exists, **implementation is a stub**: `OpenseesBucklingAnalysis.jobdata()` emits the bare token `buckling`, which is not valid Tcl |
+| Buckling by arc length | `OpenseesStaticRiksStep` is fully implemented, with `integrator ArcLength` and control parameters |
 | Materials | `ElasticIsotropic`, `Concrete`, `ConcreteSmearedCrack`, `ConcreteDamagedPlasticity`, `Timber`, `Steel` all present |
 | Elements | `ShellElement`, `TrussElement`, `BeamElement`, `SolidSection`, `ShellSection` all present |
 
-### Five API details that cost time to find
+### Nine API details that cost time to find
 
-None of these are documented upstream, and each one stops the run dead.
+None of these are documented upstream. The first four each produce a run
+that **reports success and returns zeros**, which is far more dangerous than
+a crash.
 
-1. `compas_fea2.set_backend()` is required. Importing the backend leaves
+1. **`Node.loads` does not exist at the pinned commit, and must be shimmed.**
+   `model/nodes.py` sets `self._loads` but leaves the public `loads`
+   property commented out, while `problem/steps/step.py:117` calls
+   `node.loads`. Applying any load a combination recognises therefore raises
+   `AttributeError: 'OpenseesNode' object has no attribute 'loads'`. One
+   property closes it: `Node.loads = property(lambda self: self._loads)`.
+2. **The load case name must be `DL`, `SDL` or `LL`.** `LoadCombination.ULS()`
+   carries `{"DL": 1.35, "SDL": 1.35, "LL": 1.35}`, and
+   `LoadCombination.node_load` skips every load field whose case is not a key
+   of that dict, without warning. A load case named anything else is silently
+   discarded, the generated Tcl carries no `pattern` block at all, and
+   OpenSees happily solves an unloaded model and reports
+   `Analysis completed!`. Note that ULS also multiplies by 1.35, so a
+   closed-form check must include the factor.
+3. **Field outputs must be requested explicitly**, with
+   `step.add_output(DisplacementFieldResults)` and
+   `step.add_output(ReactionFieldResults)`. Without them the only recorder
+   emitted is a dummy reaction one, the results database is written at zero
+   bytes, and reading any field raises
+   `sqlite3.OperationalError: no such table: u`.
+4. **Never use `problem.analyse_and_extract()`.** It runs extraction twice
+   and inserts every row twice, so a nine-node model returns eighteen
+   results and reactions sum to exactly double the applied load. `max()`
+   survives this; every sum is wrong. Use `problem.analyse(path=...)`
+   followed by `problem.extract_results()`, which gives nine rows and the
+   correct total.
+5. `compas_fea2.set_backend()` is required. Importing the backend leaves
    `BACKENDS` empty.
-2. The `.env` needs five keys, not one: `EXE`, `VERBOSE`, `POINT_OVERLAP`,
+6. The `.env` needs five keys, not one: `EXE`, `VERBOSE`, `POINT_OVERLAP`,
    `GLOBAL_TOLERANCE`, `PRECISION`. `compas_fea2` reads the last four with no
    fallback and calls `.lower()` on them, so a missing key is an
    `AttributeError` at import.
-3. Nodal loads are `step.add_uniform_node_load(...)`, not `add_node_pattern`.
-4. A step needs `step.combination = LoadCombination.ULS()`. Without it the
-   job writer raises `AttributeError: 'NoneType' object has no attribute
-   'node_load'` while generating the loads section.
-5. `problem.analyse(path=...)` calls `input()` if the output directory
+7. Nodal loads are `step.add_uniform_node_load(...)`, not `add_node_pattern`.
+   A step also needs `step.combination`, or the job writer raises
+   `AttributeError: 'NoneType' object has no attribute 'node_load'`.
+8. `problem.analyse(path=...)` calls `input()` if the output directory
    already exists, which hangs a non-interactive run. Always analyse into a
    fresh directory.
+9. **Node tags are not insertion order.** `Part` stores nodes in a set, so
+   the first node added came out as tag 0 at x=1.5 while the node at the
+   origin became tag 1. Map results back by node identity, never by index.
+   `step.get_total_reaction()` is separately broken: it reads
+   `self.steps_order` on a step, which does not exist.
+
+`StaticRiksStep` imports from `compas_fea2.problem.steps`, not from
+`compas_fea2.problem`, which does not re-export it.
 
 ### The imported geometry, and its residual
 
