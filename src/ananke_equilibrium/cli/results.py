@@ -96,6 +96,30 @@ def solver_name(result: Mapping[str, Any]) -> str:
     return "unknown"
 
 
+def point(value: Any) -> Optional[List[float]]:
+    """Read a point written either as an array or as an x/y/z object.
+
+    The Python worker emits ``[x, y, z]``. The Grasshopper Export component
+    serialises the C# ``Point3Dto`` as ``{"x": .., "y": .., "z": ..}``. Both
+    mean the same thing, so both are accepted.
+    """
+
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        coordinates = [_lookup(value, axis) for axis in ("x", "y", "z")]
+        if coordinates[0] is None or coordinates[1] is None:
+            return None
+        return [float(item or 0.0) for item in coordinates]
+    try:
+        coordinates = [float(item) for item in value]
+    except (TypeError, ValueError):
+        return None
+    if len(coordinates) == 2:
+        coordinates.append(0.0)
+    return coordinates[:3] if len(coordinates) >= 3 else None
+
+
 def thrust_vertices(result: Mapping[str, Any]) -> List[List[float]]:
     """Return the solved 3D vertices, TNA-nested or FD-flat."""
 
@@ -105,7 +129,8 @@ def thrust_vertices(result: Mapping[str, Any]) -> List[List[float]]:
         vertices = _lookup(result, "vertices")
     if not vertices:
         return []
-    return [[float(value) for value in point] for point in vertices]
+    read = [point(item) for item in vertices]
+    return [item for item in read if item is not None]
 
 
 def thrust_faces(result: Mapping[str, Any]) -> List[List[int]]:
@@ -141,13 +166,13 @@ def diagram(
         return None
     points = []
     for vertex in vertices:
-        point = _lookup(vertex, "point")
-        if point is None:
+        coordinates = point(_lookup(vertex, "point"))
+        if coordinates is None:
             continue
         points.append(
             {
                 "id": int(_lookup(vertex, "id")),
-                "point": [float(value) for value in point],
+                "point": coordinates,
             }
         )
     edges = []
@@ -184,11 +209,23 @@ def member_forces(result: Mapping[str, Any]) -> List[float]:
 
 
 def loads(result: Mapping[str, Any]) -> List[List[float]]:
-    """Return the applied nodal load vectors."""
+    """Return the applied nodal load vectors.
+
+    The worker writes bare vectors; the Grasshopper Contract export writes
+    ``{"nodeId": .., "point": {..}, "vector": {..}}`` records. Both are read.
+    """
 
     equilibrium = _as_mapping(_lookup(result, "equilibrium"))
-    vectors = _lookup(equilibrium, "loads") or _lookup(result, "loads") or []
-    return [[float(value) for value in vector] for vector in vectors]
+    records = _lookup(equilibrium, "loads") or _lookup(result, "loads") or []
+    out = []
+    for record in records:
+        if isinstance(record, Mapping):
+            vector = point(_lookup(record, "vector"))
+        else:
+            vector = point(record)
+        if vector is not None:
+            out.append(vector)
+    return out
 
 
 def force_states(result: Mapping[str, Any]) -> List[str]:
@@ -210,17 +247,17 @@ def reactions(result: Mapping[str, Any]) -> List[Dict[str, Any]]:
     out = []
     for record in records:
         if isinstance(record, Mapping):
-            vector = _lookup(record, "vector", "reaction")
+            vector = point(_lookup(record, "vector", "reaction"))
             node = _lookup(record, "node_id", "node", "id")
         else:
-            vector = record
+            vector = point(record)
             node = None
         if vector is None:
             continue
         out.append(
             {
                 "node": int(node) if node is not None else None,
-                "vector": [float(value) for value in vector],
+                "vector": vector,
             }
         )
     return out
@@ -235,6 +272,7 @@ __all__ = [
     "load_result",
     "loads",
     "member_forces",
+    "point",
     "reactions",
     "solver_name",
     "thrust_faces",
