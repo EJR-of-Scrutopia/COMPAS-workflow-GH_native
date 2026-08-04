@@ -52,8 +52,8 @@ COMPAS_GEOMETRY = UPLOAD / "ananke-export-compas.json"
 # Tessellation. Brick, because that is what was asked for; the density knobs
 # are pattern_u and pattern_v, and 60 makes shapely fall over on this mesh.
 PATTERN = "Brick"
-PATTERN_U = 40
-PATTERN_V = 40
+PATTERN_U = 60
+PATTERN_V = 60
 TMIN = 0.20
 TMAX = 0.35
 TOLERANCE = 5e-3
