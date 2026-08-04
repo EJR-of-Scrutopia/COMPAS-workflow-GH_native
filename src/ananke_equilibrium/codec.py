@@ -423,9 +423,10 @@ def decode_height_control(value: Any) -> HeightControl:
             "control.height_control.metadata",
         ),
     )
-    if control.mode not in ("zmax", "q"):
+    if control.mode not in ("zmax", "q", "natural"):
         raise CodecError(
-            "control.height_control.mode must be 'zmax' or 'q' for tna.solve."
+            "control.height_control.mode must be 'zmax', 'q', or 'natural' "
+            "for tna.solve."
         )
     return control
 
@@ -447,7 +448,7 @@ def decode_tna_config(value: Any) -> TNAConfig:
     )
     return TNAConfig(
         horizontal_alpha=data.get("horizontal_alpha", 100.0),
-        horizontal_iterations=data.get("horizontal_iterations", 100),
+        horizontal_iterations=data.get("horizontal_iterations"),
         vertical_iterations=data.get("vertical_iterations", 100),
         tolerance=data.get("tolerance", 1.0e-3),
         metadata=_object(

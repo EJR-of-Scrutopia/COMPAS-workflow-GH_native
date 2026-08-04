@@ -1514,13 +1514,20 @@ def solve_tna_problem(
     q_scale: float = -1.0,
     density: float = 0.0,
     horizontal_alpha: float = 100.0,
-    horizontal_kmax: int = 100,
+    horizontal_kmax: Optional[int] = 100,
     vertical_kmax: int = 100,
     vertical_tolerance: float = 1e-3,
     display: bool = False,
     metadata: Optional[Mapping] = None,
 ) -> TNASession:
     """Solve a registered whole TNA pattern and return all downstream state.
+
+    ``horizontal_kmax`` of ``None`` runs the auto-converging horizontal
+    solve: blocks of iterations until the worst reciprocity angle falls
+    below one degree or the hard cap is reached.  ``vertical_mode`` accepts
+    ``"natural"`` as well: the vertical solve keeps the horizontal force
+    densities exactly as they are (scale -1, compression) and reports the
+    equilibrium height they produce, instead of scaling to a target crown.
 
     Notes
     -----
@@ -1671,30 +1678,67 @@ def solve_tna_problem(
             )
         )
 
-    try:
-        horizontal_nodal(
-            form,
-            force,
-            alpha=float(horizontal_alpha),
-            kmax=int(horizontal_kmax),
+    def _worst_reciprocity_angle() -> float:
+        return max(
+            (
+                _unoriented_angle(
+                    abs(float(form.edge_attribute((u, v), "_a") or 0.0))
+                )
+                for u, v in form.edges_where({"_is_edge": True})
+            ),
+            default=0.0,
         )
+
+    horizontal_auto = horizontal_kmax is None
+    horizontal_block = 500
+    horizontal_cap = 20000
+    horizontal_threshold_degrees = 1.0
+    horizontal_iterations_run = 0
+    try:
+        if horizontal_auto:
+            while horizontal_iterations_run < horizontal_cap:
+                horizontal_nodal(
+                    form,
+                    force,
+                    alpha=float(horizontal_alpha),
+                    kmax=horizontal_block,
+                )
+                horizontal_iterations_run += horizontal_block
+                if _worst_reciprocity_angle() <= horizontal_threshold_degrees:
+                    break
+        else:
+            horizontal_nodal(
+                form,
+                force,
+                alpha=float(horizontal_alpha),
+                kmax=int(horizontal_kmax),
+            )
+            horizontal_iterations_run = int(horizontal_kmax)
     except Exception as error:
         raise TNASolveError(
             "COMPAS TNA horizontal_nodal failed for the registered whole pattern: "
             "{}: {}".format(type(error).__name__, error)
         ) from error
+    horizontal_converged = (
+        _worst_reciprocity_angle() <= horizontal_threshold_degrees
+    )
 
     vertical_tolerance = float(vertical_tolerance)
     if not isfinite(vertical_tolerance) or vertical_tolerance <= 0:
         raise TNAInputError("vertical_tolerance must be finite and greater than zero.")
 
     mode = str(vertical_mode or "").strip().lower()
+    if mode == "zmax" and zmax is None:
+        # A blank height is a request for the natural equilibrium height of
+        # the current force densities, not an invitation to invent a target.
+        mode = "natural"
+    natural_height = mode == "natural"
+    if natural_height:
+        mode = "q"
+        q_scale = -1.0
     vertical_scale = None
     try:
         if mode == "zmax":
-            if zmax is None:
-                base = max(float(form.vertex_attribute(key, "z")) for key in support_form_keys)
-                zmax = base + 0.25 * _plan_diagonal(form)
             zmax = float(zmax)
             support_max = max(
                 float(form.vertex_attribute(key, "z")) for key in support_form_keys
@@ -1842,9 +1886,12 @@ def solve_tna_problem(
                 "signed analysis XYZ support force; "
                 "load_sum + reaction_sum = 0"
             ),
-            "vertical_mode": mode,
+            "vertical_mode": "natural" if natural_height else mode,
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
+            "horizontal_mode": "auto" if horizontal_auto else "fixed",
+            "horizontal_iterations_run": horizontal_iterations_run,
+            "horizontal_converged": horizontal_converged,
             "zmin_solved": min(heights),
             "zmax_solved": max(heights),
             "max_free_residual": max_free_residual,
@@ -1868,12 +1915,15 @@ def solve_tna_problem(
     session_metadata["solve"] = {
         "support_mode": support_mode,
         "fixed_keys": tuple(fixed_keys or ()),
-        "vertical_mode": mode,
+        "vertical_mode": "natural" if natural_height else mode,
         "zmax": zmax if mode == "zmax" else None,
         "q_scale": q_scale if mode == "q" else None,
         "density": density,
         "horizontal_alpha": float(horizontal_alpha),
-        "horizontal_kmax": int(horizontal_kmax),
+        "horizontal_kmax": (
+            None if horizontal_auto else int(horizontal_kmax)
+        ),
+        "horizontal_iterations_run": horizontal_iterations_run,
         "vertical_kmax": int(vertical_kmax),
         "vertical_tolerance": vertical_tolerance,
     }
@@ -1922,7 +1972,7 @@ def solve_tna_pattern(
     q_scale: float = -1.0,
     density: float = 0.0,
     horizontal_alpha: float = 100.0,
-    horizontal_kmax: int = 100,
+    horizontal_kmax: Optional[int] = 100,
     vertical_kmax: int = 100,
     vertical_tolerance: float = 1e-3,
     display: bool = False,

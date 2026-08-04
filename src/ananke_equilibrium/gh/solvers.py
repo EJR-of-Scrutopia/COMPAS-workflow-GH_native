@@ -108,8 +108,41 @@ def _support_ids(
     return node_ids
 
 
-def _load_records(topology: Any, load_case: Any) -> tuple[tuple[int, tuple[float, float, float]], ...]:
-    _, vertices, _, _ = _topology_data(topology)
+def _plan_tributary_areas(
+    vertices: tuple,
+    faces: tuple,
+) -> tuple[float, ...]:
+    """Plan (XY) tributary area per vertex: each face shares its shoelace
+    area equally between its corners, the same discretisation RhinoVault
+    uses to turn a surface load into nodal loads."""
+    areas = [0.0] * len(vertices)
+    for face in faces:
+        corners = [vertices[int(index)] for index in face]
+        doubled = 0.0
+        for position in range(1, len(corners) - 1):
+            ax = corners[position][0] - corners[0][0]
+            ay = corners[position][1] - corners[0][1]
+            bx = corners[position + 1][0] - corners[0][0]
+            by = corners[position + 1][1] - corners[0][1]
+            doubled += abs(ax * by - ay * bx)
+        share = doubled / (2.0 * len(face))
+        for index in face:
+            areas[int(index)] += share
+    return tuple(areas)
+
+
+def _load_records(
+    topology: Any,
+    load_case: Any,
+    *,
+    vertices_override: Any = None,
+    faces_override: Any = None,
+) -> tuple[tuple[int, tuple[float, float, float]], ...]:
+    _, vertices, _, faces = _topology_data(topology)
+    if vertices_override is not None:
+        vertices = tuple(vertices_override)
+    if faces_override is not None:
+        faces = tuple(faces_override)
     distribution = str(
         get_any(load_case, ("distribution",), "point")
     ).lower()
@@ -136,6 +169,18 @@ def _load_records(topology: Any, load_case: Any) -> tuple[tuple[int, tuple[float
         vectors = vectors * len(node_ids)
     if len(vectors) != len(node_ids):
         raise AdapterError("Load vectors do not align with resolved load nodes.")
+
+    if distribution in ("tributary_area", "self_weight"):
+        if not faces:
+            raise AdapterError(
+                "Tributary-area loading needs registered faces to measure "
+                "plan areas. Use uniform_nodes for a pure edge network."
+            )
+        areas = _plan_tributary_areas(vertices, faces)
+        vectors = tuple(
+            tuple(float(component) * areas[int(node)] for component in vector)
+            for node, vector in zip(node_ids, vectors)
+        )
 
     accumulated: dict[int, list[float]] = {}
     for node, vector in zip(node_ids, vectors):
@@ -470,15 +515,31 @@ def solve_fd(
     )
 
 
-def _tna_pz(topology: Any, load_case: Any) -> Any:
-    records = _load_records(topology, load_case)
+def _tna_pz(
+    topology: Any,
+    load_case: Any,
+    *,
+    vertices_override: Any = None,
+    faces_override: Any = None,
+) -> Any:
+    records = _load_records(
+        topology,
+        load_case,
+        vertices_override=vertices_override,
+        faces_override=faces_override,
+    )
     if any(abs(vector[0]) > 1e-12 or abs(vector[1]) > 1e-12 for _, vector in records):
         raise AdapterError(
             "TNA v0.1 accepts loads along analysis-plane Z only. Use FD for a "
             "general spatial load vector."
         )
     values = {node: float(vector[2]) for node, vector in records}
-    if len(set(values.values())) == 1 and len(values) == len(_topology_data(topology)[1]):
+    vertex_count = (
+        len(tuple(vertices_override))
+        if vertices_override is not None
+        else len(_topology_data(topology)[1])
+    )
+    if len(set(values.values())) == 1 and len(values) == vertex_count:
         return next(iter(values.values()))
     return values
 
@@ -581,7 +642,12 @@ def solve_tna(
     if not faces:
         raise AdapterError("TNA Solve requires registered faces, not isolated lines.")
     support_ids = _support_ids(source_topology, supports)
-    pz = _tna_pz(source_topology, load_case)
+    pz = _tna_pz(
+        source_topology,
+        load_case,
+        vertices_override=vertices if prepared is not None else None,
+        faces_override=faces if prepared is not None else None,
+    )
     result_topology = source_topology
     result_supports = supports
     result_load_case = load_case
@@ -659,29 +725,49 @@ def solve_tna(
                 ("value", "height", "zmax", "force_scale", "q_scale"),
                 None,
             )
+            if height_mode in ("q", "force_scale"):
+                vertical_mode = "q"
+            elif (
+                height_mode in ("natural", "auto", "equilibrium")
+                or height_value is None
+            ):
+                vertical_mode = "natural"
+            else:
+                vertical_mode = "zmax"
+            horizontal_iterations = (
+                get_any(
+                    config,
+                    ("horizontal_iterations", "horizontal_kmax"),
+                    None,
+                )
+                if config is not None
+                else None
+            )
             solve_kwargs = {
                 "support_mode": "keys",
                 "support_keys": support_ids,
                 "fixed_keys": fixed_ids,
                 "pz": pz,
-                "vertical_mode": "q" if height_mode in ("q", "force_scale") else "zmax",
+                "vertical_mode": vertical_mode,
                 "zmax": (
                     float(height_value)
-                    if height_mode not in ("q", "force_scale") and height_value is not None
+                    if vertical_mode == "zmax"
                     else None
                 ),
                 "q_scale": (
                     float(height_value)
-                    if height_mode in ("q", "force_scale") and height_value is not None
+                    if vertical_mode == "q" and height_value is not None
                     else -1.0
                 ),
                 "density": 0.0,
                 "horizontal_alpha": float(
                     get_any(config, ("horizontal_alpha", "alpha"), 100.0)
                 ) if config is not None else 100.0,
-                "horizontal_kmax": int(
-                    get_any(config, ("horizontal_iterations", "horizontal_kmax"), 100)
-                ) if config is not None else 100,
+                "horizontal_kmax": (
+                    None
+                    if horizontal_iterations is None
+                    else int(horizontal_iterations)
+                ),
                 "vertical_kmax": int(
                     get_any(config, ("vertical_iterations", "vertical_kmax"), 100)
                 ) if config is not None else 100,
