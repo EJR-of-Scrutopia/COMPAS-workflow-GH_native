@@ -53,6 +53,7 @@ def run_static(
     name: str = "static",
     path: Optional[Path] = None,
     scale: float = 1.0,
+    outputs: Tuple = (),
 ) -> StaticOutcome:
     """Apply nodal loads and solve one static step.
 
@@ -66,6 +67,12 @@ def run_static(
         ULS applies 1.35 to the loads, SLS applies 1.0.
     scale
         An extra multiplier on every load, used by the tension sweep.
+    outputs
+        Extra field output classes to request on the step, beyond the
+        displacement and reaction fields requested unconditionally. Using
+        StressFieldResults requires compat.apply_patches() to have been
+        called first, since the upstream jobdata for it is otherwise
+        invalid Tcl; see compat.py's module docstring.
     """
 
     factor = COMBINATION_FACTORS.get(combination)
@@ -102,9 +109,72 @@ def run_static(
     step.combination = _combination(combination)
     step.add_output(DisplacementFieldResults)
     step.add_output(ReactionFieldResults)
+    for output in outputs:
+        step.add_output(output)
     problem.add_step(step)
     built.model.add_problem(problem)
 
     directory = Path(path) if path else Path(tempfile.mkdtemp(prefix="ananke_fea_")) / name
     analyse(problem, directory)
     return StaticOutcome(step=step, path=directory, combination_factor=factor)
+
+
+def sweep_tension(
+    built: ShellModel,
+    loads: Mapping[int, Vector],
+    preset,
+    factors,
+    combination: str = "ULS",
+) -> list:
+    """Solve at a rising load factor and report where tension appears.
+
+    This is the direct answer to whether the vault needs cables. Each factor
+    gets its own fresh analysis directory, because compas_fea2 prompts on
+    stdin if asked to write into one that already exists.
+
+    Requesting StressFieldResults only produces something usable because
+    ananke_fea.compat.apply_patches() replaces
+    OpenseesStressFieldResults.jobdata() with a real Tcl export loop; the
+    upstream version returns the bare string "S", which is invalid Tcl and
+    aborts the run (the same defect class Task 6 found for
+    SectionForcesFieldResults on truss elements, "SF"). results.stress_summary
+    reads the raw eleResponse dump that patch produces and does its own
+    plate-theory conversion; it does not go through step.stress_field, whose
+    DB path the patch deliberately leaves unfed. See compat.py's module
+    docstring and task-7-report.md for the full trace of the original defect.
+    """
+
+    from compas_fea2.results import StressFieldResults
+
+    from ananke_fea.results import stress_summary
+
+    rows = []
+    for factor in factors:
+        outcome = run_static(
+            built,
+            loads,
+            combination=combination,
+            name="sweep_{:g}".format(factor).replace(".", "_"),
+            scale=factor,
+            outputs=(StressFieldResults,),
+        )
+        summary = stress_summary(outcome.step, preset)
+        rows.append(
+            {
+                "factor": factor,
+                "peak_tension": summary["peak_tension"],
+                "peak_compression": summary["peak_compression"],
+                "tension_present": summary["tension_present"],
+                "utilisation": summary["utilisation"],
+            }
+        )
+    return rows
+
+
+def first_tension_factor(rows) -> Optional[float]:
+    """The lowest swept factor at which tension appeared, if any did."""
+
+    for row in sorted(rows, key=lambda item: item["factor"]):
+        if row["tension_present"]:
+            return row["factor"]
+    return None

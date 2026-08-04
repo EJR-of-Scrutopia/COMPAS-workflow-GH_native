@@ -8,6 +8,14 @@ problem/steps/step.py:117 calls node.loads when a combination is assigned.
 The result is that applying any load a combination recognises raises
 AttributeError. One property closes it.
 
+A second, unrelated patch lives here for the same reason: OpenseesStress-
+FieldResults.jobdata() returns the bare string "S" (its own input_name)
+instead of Tcl, which OpenSees rejects with "invalid command name \"S\""
+and aborts the whole run, silently, because the wrapper's own error
+detection only matches the literal word "error". The patch replaces it
+with a real export loop, matching the pattern the working displacement and
+reaction outputs already use.
+
 This module is the only place that reaches into upstream internals, and
 every patch is announced by name so a future version bump can drop it.
 """
@@ -46,6 +54,35 @@ def apply_patches() -> List[str]:
     if not hasattr(Node, "loads"):
         Node.loads = property(lambda self: self._loads)
         newly.append("Node.loads")
+
+    from compas_fea2_opensees.results.fields import OpenseesStressFieldResults
+
+    def _stress_jobdata(self):
+        # The upstream stub returns the bare token "S", which is invalid Tcl
+        # and aborts the run while the wrapper still reports success. This
+        # emits the same export-loop pattern the working displacement and
+        # reaction outputs use: the raw eleResponse "stresses" per element,
+        # which for shells is 8 resultants per integration point in the
+        # element local frame. The conversion to surface stresses happens in
+        # ananke_fea.results, not here.
+        return (
+            'set stressFile [open "{}.out" "w"]\n'
+            "set allElements [getEleTags]\n"
+            "foreach eleTag $allElements {{\n"
+            '    set eleStresses [eleResponse $eleTag "stresses"]\n'
+            '    puts $stressFile "$eleTag $eleStresses"\n'
+            "}}\n"
+            "close $stressFile\n"
+        ).format(self.field_name)
+
+    # Marker attribute, not identity: the closure above is rebuilt every
+    # call, so it would never equal whatever was assigned last time even
+    # once already patched. The marker is what makes a second apply_patches()
+    # call a no-op.
+    _stress_jobdata._ananke_patch = True
+    if not getattr(OpenseesStressFieldResults.jobdata, "_ananke_patch", False):
+        OpenseesStressFieldResults.jobdata = _stress_jobdata
+        newly.append("OpenseesStressFieldResults.jobdata")
 
     _applied.extend(newly)
     return newly

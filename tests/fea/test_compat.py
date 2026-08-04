@@ -24,16 +24,19 @@ def test_apply_patches_gives_nodes_a_public_loads_mapping():
 def test_apply_patches_is_idempotent():
     require_backend()
 
-    # Node.loads is a class-level patch, so it outlives this test once any
-    # other test (or module) has already called apply_patches() in this
-    # process. Clear it first so "first call" here means what it says,
-    # regardless of what ran before it.
+    # Node.loads and OpenseesStressFieldResults.jobdata are both class-level
+    # patches, so they outlive this test once any other test (or module) has
+    # already called apply_patches() in this process. Clear both first so
+    # "first call" here means what it says, regardless of what ran before it.
     from compas_fea2.model import Node
+    from compas_fea2_opensees.results.fields import OpenseesStressFieldResults
 
     if "loads" in Node.__dict__:
         del Node.loads
+    if getattr(OpenseesStressFieldResults.jobdata, "_ananke_patch", False):
+        del OpenseesStressFieldResults.jobdata
 
     first = apply_patches()
     second = apply_patches()
-    assert first == ["Node.loads"]
+    assert first == ["Node.loads", "OpenseesStressFieldResults.jobdata"]
     assert second == []
