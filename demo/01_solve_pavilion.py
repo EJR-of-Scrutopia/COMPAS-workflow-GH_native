@@ -1,11 +1,4 @@
-"""Demo 1: solve the pavilion, check it, and look at it.
-
-Run this file. It reads the study definition, solves the thrust network
-through the same worker Grasshopper drives, prints a structural summary
-including a global equilibrium check, and opens the 3D viewer.
-
-The point of this one: the geometry and the check both come from the
-terminal, and the answer is verifiable rather than merely produced.
+"""Demo 1: solve the pavilion.
 """
 
 from __future__ import annotations
@@ -14,6 +7,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Hand this script to the project interpreter before importing anything
+# that needs it, so the play button works whatever VS Code has selected.
+from _bootstrap import ensure_venv  # noqa: E402
+
+ensure_venv(__file__)
 
 from _common import PAVILION, SURFACE, COMPRESSION, SUPPORT  # noqa: E402
 from _common import add, banner, open_viewer, require, show, step  # noqa: E402

@@ -16,6 +16,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# Hand this script to the project interpreter before importing anything
+# that needs it, so the play button works whatever VS Code has selected.
+from _bootstrap import ensure_venv  # noqa: E402
+
+ensure_venv(__file__)
+
 from _common import COMPRESSION, DEMO, PAVILION, SURFACE, TENSION  # noqa: E402
 from _common import add, banner, open_viewer, require, show, step  # noqa: E402
 
