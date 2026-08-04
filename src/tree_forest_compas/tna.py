@@ -1055,7 +1055,9 @@ def prepare_tna_problem(
 
     1. flatten the registered Pattern into its analysis plane;
     2. identify structural supports and independent plan-fixed vertices;
-    3. run a uniform-q FDM relaxation;
+    3. run a uniform-q FDM relaxation of the unsupported boundary
+       openings plus a local interior apron scaled to each opening's
+       span, with the rest of the plan held (the Pattern is the design);
     4. split boundaries at structural supports and iteratively scale their
        edge q values to match a requested rise/span sag;
     5. create the conditioned FormDiagram and its topological-dual
@@ -1136,10 +1138,48 @@ def prepare_tna_problem(
         problem, fixed_keys, "fixed plan"
     )
     pattern.vertices_attribute("is_fixed", True, keys=fixed_form_keys)
-    relaxation_fixed = _unique(selected_supports + fixed_form_keys)
+
+    # The Pattern's plan is the design: a whole-plan relaxation shrinks
+    # dense regions (a polar hub halves its ring radius), loading their
+    # short edges with high force density and flattening or dipping the
+    # crown. But an opening cannot sag alone either: with only the rim row
+    # free, the q-scaling loop drags each rim vertex onto its single
+    # interior neighbour and the downstream weld collapses faces. So the
+    # relaxation frees each unsupported boundary opening plus a local
+    # interior apron scaled to the opening's span, and holds everything
+    # else, the crown included.
+    held_always = selected_support_set | set(fixed_form_keys)
+    free_vertices: set = set()
+    for _, _, path in _boundary_support_segments(pattern, selected_supports):
+        seeds = [
+            int(key) for key in path if int(key) not in held_always
+        ]
+        if not seeds:
+            continue
+        depth = min(12, max(2, (len(seeds) + 1) // 2))
+        frontier = set(seeds)
+        reached = set(seeds)
+        for _ in range(depth):
+            next_frontier = set()
+            for key in frontier:
+                for neighbour in pattern.vertex_neighbors(key):
+                    neighbour = int(neighbour)
+                    if neighbour in reached or neighbour in held_always:
+                        continue
+                    next_frontier.add(neighbour)
+            reached |= next_frontier
+            frontier = next_frontier
+        free_vertices |= reached
+    relaxation_fixed = _unique(
+        [
+            int(key)
+            for key in pattern.vertices()
+            if int(key) not in free_vertices
+        ]
+    )
 
     pattern.edges_attribute("q", force_density)
-    if relax:
+    if relax and free_vertices:
         _relax_pattern(pattern, relaxation_fixed)
 
     segment_paths = _boundary_support_segments(pattern, selected_supports)

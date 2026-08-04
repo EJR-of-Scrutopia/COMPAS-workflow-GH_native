@@ -202,3 +202,128 @@ def test_worker_prepared_json_is_stateless_and_line_source_finishes_faced():
     ] == "line"
     assert len(solved["edge_states"]) == len(edges)
     assert len(solved["form_graph"]["faces"]) == len(faces)
+
+
+def polar_disk(rings=6, spokes=16, radius=10.0):
+    from math import cos, pi, sin
+
+    vertices = [(0.0, 0.0, 0.0)]
+    ring_start = {}
+    for ring in range(1, rings + 1):
+        ring_start[ring] = len(vertices)
+        r = radius * ring / rings
+        for j in range(spokes):
+            a = 2.0 * pi * j / spokes
+            vertices.append((r * cos(a), r * sin(a), 0.0))
+    faces = []
+    for j in range(spokes):
+        faces.append(
+            [0, ring_start[1] + j, ring_start[1] + (j + 1) % spokes]
+        )
+    for ring in range(1, rings):
+        a0, b0 = ring_start[ring], ring_start[ring + 1]
+        for j in range(spokes):
+            jn = (j + 1) % spokes
+            faces.append([a0 + j, b0 + j, b0 + jn, a0 + jn])
+    edges = []
+    seen = set()
+    for face in faces:
+        for index, u in enumerate(face):
+            v = face[(index + 1) % len(face)]
+            key = tuple(sorted((u, v)))
+            if key not in seen:
+                seen.add(key)
+                edges.append(list(key))
+    rim = list(range(ring_start[rings], ring_start[rings] + spokes))
+    return vertices, faces, edges, rim, ring_start
+
+
+def test_staged_polar_crown_stays_funicular_and_sag_hits_target():
+    """The relaxation must hold the interior plan: a whole-plan FDM pass
+    halves a polar hub's ring radius, loads its short edges with high
+    force density, and flattens or dips the crown that RhinoVault
+    resolves properly. Openings still need their local apron free or the
+    sag saturates and the downstream weld collapses faces."""
+
+    vertices, faces, edges, rim, ring_start = polar_disk()
+    free = {rim[j] for j in range(16) if j % 4 in (1, 2)}
+    supports = [key for key in rim if key not in free]
+    prepared_response = dispatch(request(
+        "tna.prepare",
+        {
+            "topology": {
+                "kind": "line",
+                "vertices": vertices,
+                "edges": edges,
+                "source_vertex_ids": [
+                    "disk-{}".format(index)
+                    for index in range(len(vertices))
+                ],
+                "length_unit": "m",
+            },
+            "supports": {"mode": "explicit", "node_ids": supports},
+            "settings": {
+                "force_density": 1.0,
+                "relax": True,
+                "boundary_sag": 0.20,
+                "sag_iterations": 50,
+                "sag_tolerance": 0.01,
+            },
+        },
+        "prepare-polar",
+    ))
+    assert prepared_response["type"] == "result", prepared_response
+    prepared = prepared_response["result"]
+
+    segments = prepared["boundary_segments"]
+    assert len(segments) == 4
+    for segment in segments:
+        assert segment["actual_sag"] == pytest.approx(0.20, abs=0.01)
+
+    # The hub must not shrink: ring-1 keeps its source plan radius.
+    relaxed = prepared["pattern"]["vertices"]
+    ring_one = relaxed[ring_start[1]]
+    assert (ring_one[0] ** 2 + ring_one[1] ** 2) ** 0.5 == pytest.approx(
+        10.0 / 6.0, rel=1e-6
+    )
+
+    solved_response = dispatch(request(
+        "tna.solve",
+        {
+            "prepared": prepared,
+            "load_case": {
+                "name": "dead",
+                "distribution": "tributary_area",
+                "base_vector": (0.0, 0.0, -1.0),
+            },
+            "control": {
+                "height_control": {"mode": "zmax", "value": 5.0},
+                "settings": {
+                    "horizontal_alpha": 100.0,
+                    "horizontal_iterations": None,
+                    "vertical_iterations": 1000,
+                    "tolerance": 1.0e-3,
+                },
+            },
+        },
+        "solve-polar",
+    ))
+    assert solved_response["type"] == "result", solved_response
+    solved = solved_response["result"]
+    heights = {
+        index: point[2]
+        for index, point in enumerate(solved["equilibrium"]["vertices"])
+    }
+    profile = [heights[0]] + [
+        heights[ring_start[ring]] for ring in range(1, 5)
+    ]
+    drops = [
+        profile[index] - profile[index + 1]
+        for index in range(len(profile) - 1)
+    ]
+    # Proper funicular curvature: the crown falls away monotonically and
+    # each ring drops more than the one before it. A flat or dipped cap
+    # fails the first drop.
+    assert all(drop > 0.0 for drop in drops)
+    assert drops[0] > 0.1
+    assert drops[0] < drops[1] < drops[2] < drops[3]
