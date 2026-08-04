@@ -3,10 +3,159 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Ananke.COMPAS.Native.Contracts;
 using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components;
+
+/// <summary>
+/// Native Rhino geometry and solve metrics recovered from a unified
+/// Result, shared by the solver components' outputs/previews. The mesh
+/// construction mirrors the worker's own export: form-graph faces over
+/// equilibrium vertices, index-aligned by construction.
+/// </summary>
+internal static class TnaResultGeometry
+{
+    internal static Mesh ThrustMesh(ResultDto result)
+    {
+        var mesh = new Mesh();
+        EquilibriumResultDto? equilibrium = result.Equilibrium;
+        TnaDiagramGraphDto? formGraph = result.FormGraph;
+        TnaMappingsDto? mappings = result.Mappings;
+        if (equilibrium is null || formGraph is null || mappings is null)
+            return mesh;
+
+        var formToEquilibrium = new Dictionary<int, int>();
+        foreach (TnaSourceVertexMappingDto item in
+                 mappings.SourceVertexToFormVertex)
+        {
+            if (item.FormVertexId.HasValue && item.EquilibriumVertexId.HasValue)
+                formToEquilibrium[item.FormVertexId.Value] =
+                    item.EquilibriumVertexId.Value;
+        }
+
+        var formToMesh = new Dictionary<int, int>();
+        foreach (TnaGraphVertexDto vertex in
+                 formGraph.Vertices.OrderBy(item => item.Id))
+        {
+            if (!formToEquilibrium.TryGetValue(vertex.Id, out int equilibriumId) ||
+                equilibriumId < 0 ||
+                equilibriumId >= equilibrium.Vertices.Count)
+            {
+                return new Mesh();
+            }
+            formToMesh[vertex.Id] = mesh.Vertices.Add(
+                TnaWorkflowPreview.Point(equilibrium.Vertices[equilibriumId]));
+        }
+
+        foreach (TnaGraphFaceDto face in formGraph.Faces.OrderBy(item => item.Id))
+        {
+            int[] corners = new int[face.Vertices.Count];
+            for (int index = 0; index < face.Vertices.Count; index++)
+            {
+                if (!formToMesh.TryGetValue(face.Vertices[index], out int meshId))
+                    return new Mesh();
+                corners[index] = meshId;
+            }
+            if (corners.Length == 3)
+                mesh.Faces.AddFace(corners[0], corners[1], corners[2]);
+            else if (corners.Length == 4)
+                mesh.Faces.AddFace(corners[0], corners[1], corners[2], corners[3]);
+            else
+                for (int index = 1; index < corners.Length - 1; index++)
+                    mesh.Faces.AddFace(
+                        corners[0], corners[index], corners[index + 1]);
+        }
+
+        if (mesh.Faces.Count > 0)
+            mesh.Normals.ComputeNormals();
+        mesh.Compact();
+        return mesh;
+    }
+
+    internal static List<Line> MemberLines(ResultDto result)
+    {
+        var lines = new List<Line>();
+        EquilibriumResultDto? equilibrium = result.Equilibrium;
+        if (equilibrium is null)
+            return lines;
+        foreach (EdgeDto edge in equilibrium.Edges)
+        {
+            lines.Add(new Line(
+                TnaWorkflowPreview.Point(equilibrium.Vertices[edge.U]),
+                TnaWorkflowPreview.Point(equilibrium.Vertices[edge.V])));
+        }
+        return lines;
+    }
+
+    internal static List<Point3d> SupportPoints(ResultDto result)
+    {
+        var points = new List<Point3d>();
+        EquilibriumResultDto? equilibrium = result.Equilibrium;
+        if (equilibrium is null)
+            return points;
+        if (result.Mappings is not null)
+        {
+            foreach (TnaSupportMappingDto item in result.Mappings.Reactions)
+            {
+                int id = item.EquilibriumVertexId;
+                if (id >= 0 && id < equilibrium.Vertices.Count)
+                    points.Add(TnaWorkflowPreview.Point(
+                        equilibrium.Vertices[id]));
+            }
+            return points;
+        }
+        foreach (NodalVectorDto item in equilibrium.Reactions)
+            points.Add(TnaWorkflowPreview.Point(item.Point));
+        return points;
+    }
+
+    /// <summary>
+    /// Solve metrics parsed out of the worker's own response payload. The
+    /// native contract deliberately does not mirror the free-form
+    /// diagnostic_metrics dictionary, but the raw wire retains it exactly.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, double> Metrics(
+        ResultDto result)
+    {
+        var metrics = new Dictionary<string, double>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(result.RawWire))
+            return metrics;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(result.RawWire);
+            if (!document.RootElement.TryGetProperty(
+                    "diagnostic_metrics",
+                    out JsonElement element) ||
+                element.ValueKind != JsonValueKind.Object)
+            {
+                return metrics;
+            }
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (property.Value.ValueKind == JsonValueKind.Number &&
+                    property.Value.TryGetDouble(out double number))
+                {
+                    metrics[property.Name] = number;
+                }
+                else if (property.Value.ValueKind == JsonValueKind.True)
+                {
+                    metrics[property.Name] = 1.0;
+                }
+                else if (property.Value.ValueKind == JsonValueKind.False)
+                {
+                    metrics[property.Name] = 0.0;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // The message line degrades gracefully without metrics.
+        }
+        return metrics;
+    }
+}
 
 internal static class TnaWorkflowPreview
 {

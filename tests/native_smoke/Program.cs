@@ -36,7 +36,10 @@ internal static class Program
         {
             "Ananke.COMPAS.Native.Components.PatternComponent",
             "Ananke.COMPAS.Native.Components.SupportsComponent",
+            "Ananke.COMPAS.Native.Components.LoadsComponent",
             "Ananke.COMPAS.Native.Components.TnaRelaxComponent",
+            "Ananke.COMPAS.Native.Components.TnaSolveComponent",
+            "Ananke.COMPAS.Native.Components.FdSolveComponent",
             "Ananke.COMPAS.Native.Components.DisplayComponent"
         };
     private static readonly HashSet<string> NativeVisibilityGuardComponents =
@@ -44,6 +47,7 @@ internal static class Program
         {
             "Ananke.COMPAS.Native.Components.PatternComponent",
             "Ananke.COMPAS.Native.Components.SupportsComponent",
+            "Ananke.COMPAS.Native.Components.LoadsComponent",
             "Ananke.COMPAS.Native.Components.DisplayComponent"
         };
     /// <summary>
@@ -111,12 +115,6 @@ internal static class Program
                     "01 Model",
                     new[] { "SUP", "V", "ID", "F" },
                     new[] { "PRB" }),
-                ["Ananke.COMPAS.Native.Components.ControlComponent"] = (
-                    "Control",
-                    "Control",
-                    "02 Form Finding",
-                    new[] { "Alpha", "HI", "VI", "Tol" },
-                    new[] { "CTL" }),
                 ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = (
                     "TNA Relax",
                     "TNA Relax",
@@ -127,14 +125,14 @@ internal static class Program
                     "TNA Solve",
                     "TNA Solve",
                     "02 Form Finding",
-                    new[] { "RLX", "M", "V", "CTL" },
-                    new[] { "RES" }),
+                    new[] { "RLX", "H", "I" },
+                    new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = (
                     "FD Solve",
                     "FD Solve",
                     "02 Form Finding",
-                    new[] { "PRB", "q", "CTL" },
-                    new[] { "RES" }),
+                    new[] { "PRB", "q" },
+                    new[] { "RES", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.StyleComponent"] = (
                     "Style",
                     "Style",

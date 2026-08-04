@@ -329,6 +329,7 @@ public sealed record LoadCaseDto : ContractDto
         {
             "point",
             "uniform_nodes",
+            "tributary_area",
             "custom"
         };
         if (!permitted.Contains(distribution, StringComparer.Ordinal))
@@ -384,14 +385,14 @@ public sealed record LoadCaseDto : ContractDto
             if (BaseVector is not null)
                 errors.Add($"{distribution} loads cannot use baseVector.");
         }
-        else if (distribution == "uniform_nodes")
+        else if (distribution is "uniform_nodes" or "tributary_area")
         {
             if (nodeCount > 0)
-                errors.Add("uniform_nodes selects every node; nodeIds must be empty.");
+                errors.Add($"{distribution} selects every node; nodeIds must be empty.");
             if (vectorCount > 0)
-                errors.Add("uniform_nodes requires baseVector, not vectors.");
+                errors.Add($"{distribution} requires baseVector, not vectors.");
             if (BaseVector is null)
-                errors.Add("uniform_nodes requires one baseVector.");
+                errors.Add($"{distribution} requires one baseVector.");
         }
 
         if (!ContractRules.IsFinite(Factor) || Factor != 1.0)

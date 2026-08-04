@@ -24,3 +24,11 @@ Saved definitions referencing these GUIDs lose those components on open.
 | TNA Members | f543cb90-bef4-46ea-8510-7aa075c57279 |
 | TNA Actions | 0ed716a8-744c-45dc-bc47-98b9e41d2f65 |
 | Result Breakdown | c80b2201-c11b-4364-895e-5600ff6bcf01 |
+
+Deleted 2026-08-04 in the canvas-feedback round: TNA Solve absorbed the
+iteration control as one optional input with an auto-converging default,
+so a settings-bundle component no longer earns its canvas space.
+
+| Component | GUID |
+| --- | --- |
+| Control | a6d19e73-5f2b-4c8e-b0a4-9c3e7d1f5b28 |

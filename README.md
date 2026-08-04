@@ -21,24 +21,28 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains twelve components:
+The native v0.2 vertical slice contains eleven components:
 
 ```text
 01 Model
   Pattern      Geometry, Mode, Tol            -> PAT  registered pattern
   Supports     PAT, Points, Tol               -> SUP  anchored pattern
-  Loads        SUP, Vector, NodeIDs, Factor   -> PRB  problem
+  Loads        SUP, Vector, NodeIDs, Factor   -> PRB  problem (surface load
+                                                 by default, point loads
+                                                 with NodeIDs)
 
 02 Form Finding
   TNA Relax    PRB, ForceDensity, Sag%        -> RLX  relaxed state
-  TNA Solve    RLX, Mode, Value, CTL          -> RES  result
-  FD Solve     PRB, ForceDensity, CTL         -> RES  result (same type)
-  Control      Alpha, HIter, VIter, Tol       -> CTL  solver settings
+  TNA Solve    RLX, Height (optional),
+               Iterations (optional)          -> RES  result + native
+                                                 Mesh/Lines/Supports
+  FD Solve     PRB, ForceDensity              -> RES  result (same type) +
+                                                 native Lines/Supports
 
 03 Visualise
   Display      RES, STY, Elements, Metric,
                Weight, VectorScale, Gap       -> viewport + ThrustMesh,
-                                                 Form/Force/Load/Reaction
+                                                 Thrust/Force/Load/Reaction
                                                  lines, Report
   Style        Preset, Weight Scale,
                Vector Scale                   -> STY  display preset
@@ -47,12 +51,17 @@ The native v0.2 vertical slice contains twelve components:
 07 Delivery
   Export       RES,
                Format (contract | compas),
-               Path (optional)                -> JSON text, written file path
+               Path (optional), Write         -> JSON text, written file path
 
 90 System
   Backend Health                              -> ready, packages,
                                                  capabilities, report
 ```
+
+A blank TNA Solve `Height` finds the natural equilibrium height of the
+current force densities and reports it; a number solves so the crown lands
+exactly there. A blank `Iterations` auto-converges the horizontal solve
+until the reciprocity angle falls below one degree.
 
 Every stage takes one primary typed object and returns it enriched, so the
 wire is the workflow. See [Component taxonomy](docs/component-taxonomy.md)
@@ -65,7 +74,7 @@ Geometry -> Pattern -> Supports -> Loads = Problem
 Problem -> TNA Relax -> TNA Solve -> Result
 Problem -> FD Solve ------------------> Result (same type)
 Result -> Display / Deconstruct / Export
-Control and Style feed the solvers and Display.
+Style feeds Display.
 ```
 
 FD and TNA now share one spine end to end. The recommended path is
@@ -121,8 +130,9 @@ will not be hidden behind one ambiguous solver.
 The implemented RhinoVault-style authoring path groups its inspectable
 operations into the spine itself: `Pattern -> Supports -> Loads -> TNA Relax
 -> TNA Solve`. `TNA Relax` carries both form and topological-force graphs;
-`TNA Solve` combines horizontal and vertical solving behind `Control`'s
-numerical settings and its own crown-height/force-scale target. The
+`TNA Solve` combines horizontal and vertical solving behind two optional
+inputs: `Height` (blank finds the natural equilibrium height) and
+`Iterations` (blank auto-converges the reciprocal diagrams). The
 implemented surface and later design-by-statics roadmap are detailed in
 [RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md).
 

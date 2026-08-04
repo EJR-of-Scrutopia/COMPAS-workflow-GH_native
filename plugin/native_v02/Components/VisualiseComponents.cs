@@ -149,6 +149,16 @@ namespace Ananke.COMPAS.Native.Components
                 ComponentCategories.Visualise,
                 "result_breakdown")
         {
+            // Deconstruct is a data boundary, not a renderer: Display owns
+            // the viewport. Grasshopper's default red preview on these
+            // geometry outputs is what clashed with Display's element
+            // colours, so previews start hidden; each output can still be
+            // re-enabled from its own context menu.
+            foreach (IGH_Param output in Params.Output)
+            {
+                if (output is IGH_PreviewObject preview)
+                    preview.Hidden = true;
+            }
         }
 
         public override Guid ComponentGuid =>
@@ -701,7 +711,6 @@ namespace Ananke.COMPAS.Native.Components
                 "Elements",
                 new (string Label, string Value)[]
                 {
-                    ("Form", "form"),
                     ("Thrust", "thrust"),
                     ("Force", "force"),
                     ("Loads", "loads"),
@@ -724,25 +733,28 @@ namespace Ananke.COMPAS.Native.Components
         };
 
         private readonly List<DrawLine> _preview = new();
+        // Lazily assigned: a Mesh constructor touches Rhino's native
+        // runtime, which must not happen during component enumeration.
+        private Mesh? _previewMesh;
         private BoundingBox _clippingBox = BoundingBox.Empty;
 
         public DisplayComponent()
             : base(
                 "Display",
                 "Display",
-                "Draw a solved Result's reciprocal form/thrust/force lines, " +
-                "mapped load/reaction/residual vectors, and thrust mesh, " +
-                "with one style preset, auto-scaling, and Elements/Metric " +
-                "filters.",
+                "Draw a solved Result's thrust mesh and lines, the " +
+                "reciprocal force diagram, and mapped " +
+                "load/reaction/residual vectors, with one style preset, " +
+                "auto-scaling, and Elements/Metric filters.",
                 ComponentCategories.Visualise,
                 "graphic_diagram_display")
         {
-            // This component supplies its own coloured/weighted line
-            // preview, so the duplicate default Grasshopper preview on the
-            // five line outputs stays hidden; their data remains available
-            // to every downstream component. The mesh output (index 0) and
-            // the report (index 6) keep Grasshopper's own default preview.
-            for (int index = 1; index <= 5; index++)
+            // This component supplies its own coloured preview, mesh
+            // included: Grasshopper's default red preview material on the
+            // geometry outputs is what made the thrust surface clash with
+            // every element colour, so all geometry outputs stay hidden;
+            // their data remains available to every downstream component.
+            for (int index = 0; index <= 4; index++)
             {
                 if (Params.Output[index] is IGH_PreviewObject preview)
                     preview.Hidden = true;
@@ -778,10 +790,9 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddTextParameter(
                 "Elements",
                 "E",
-                "Which streams to build and draw: form, thrust, force, " +
-                "loads, reactions, residuals. Residuals draw in the " +
-                "viewport only; every other selected stream also feeds " +
-                "its output.",
+                "Which streams to build and draw: thrust, force, loads, " +
+                "reactions, residuals. Residuals draw in the viewport " +
+                "only; every other selected stream also feeds its output.",
                 GH_ParamAccess.list);
             parameters[2].Optional = true;
             parameters.AddTextParameter(
@@ -826,12 +837,6 @@ namespace Ananke.COMPAS.Native.Components
                 "thrust on a TNA result.",
                 GH_ParamAccess.item);
             parameters.AddLineParameter(
-                "Form Lines",
-                "FL",
-                "Planar form-diagram edges. Empty unless Elements " +
-                "includes form on a TNA result.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
                 "Thrust Lines",
                 "TL",
                 "Spatial thrust-network edges (or FD member axes). Empty " +
@@ -868,7 +873,23 @@ namespace Ananke.COMPAS.Native.Components
         {
             base.BeforeSolveInstance();
             _preview.Clear();
+            _previewMesh = null;
             _clippingBox = BoundingBox.Empty;
+        }
+
+        public override void DrawViewportMeshes(IGH_PreviewArgs args)
+        {
+            if (Hidden ||
+                _previewMesh is null ||
+                _previewMesh.Faces.Count == 0)
+            {
+                return;
+            }
+            args.Display.DrawMeshShaded(
+                _previewMesh,
+                new Rhino.Display.DisplayMaterial(
+                    Color.FromArgb(225, 222, 215),
+                    0.35));
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -901,10 +922,11 @@ namespace Ananke.COMPAS.Native.Components
                     errors.AddRange(style.Validate());
 
                 HashSet<string> elements = NormaliseElements(elementsInput);
+                elements.Remove("form");
                 foreach (string element in elements)
                 {
                     if (element is not (
-                            "form" or "thrust" or "force" or
+                            "thrust" or "force" or
                             "loads" or "reactions" or "residuals"))
                     {
                         errors.Add(
@@ -971,9 +993,11 @@ namespace Ananke.COMPAS.Native.Components
                         .Select(item => Length(item.Vector))
                         .Concat(equilibrium.Reactions
                             .Select(item => Length(item.Vector)));
+                // Metre-scale default: the largest action vector draws at
+                // one-and-a-half percent of the model's bounding diagonal.
                 double maxAction = actionMagnitudes.DefaultIfEmpty(0.0).Max();
                 double autoVectorScale = maxAction > 1.0e-12
-                    ? 0.15 * diag / maxAction
+                    ? 0.015 * diag / maxAction
                     : 1.0;
 
                 double effectiveVectorScale;
@@ -998,7 +1022,6 @@ namespace Ananke.COMPAS.Native.Components
                     $"{vectorScaleSource} x{effectiveVectorScale:G4} " +
                     $"(diagonal {diag:G4}, max action {maxAction:G4}).");
 
-                var formEdges = new List<MemberEdge>();
                 var thrustEdges = new List<MemberEdge>();
                 var forceEdges = new List<MemberEdge>();
                 var loadLines = new List<Line>();
@@ -1023,23 +1046,6 @@ namespace Ananke.COMPAS.Native.Components
                                 state.ForceState));
                         }
                     }
-                    if (elements.Contains("form"))
-                    {
-                        Dictionary<int, TnaGraphEdgeDto> formGraphEdges =
-                            result.FormGraph!.Edges
-                                .ToDictionary(edge => edge.Id);
-                        Dictionary<int, Point3Dto> formPoints =
-                            result.FormGraph!.Vertices.ToDictionary(
-                                vertex => vertex.Id,
-                                vertex => vertex.Point);
-                        foreach (TnaEdgeStateDto state in states)
-                        {
-                            formEdges.Add(new MemberEdge(
-                                FormLine(state, formGraphEdges, formPoints),
-                                DisplayMagnitude(state, "form", metric),
-                                state.ForceState));
-                        }
-                    }
                     if (elements.Contains("force"))
                     {
                         Dictionary<int, TnaGraphEdgeDto> forceGraphEdges =
@@ -1058,7 +1064,7 @@ namespace Ananke.COMPAS.Native.Components
                                 formVerticesForLayout,
                                 forceVertices,
                                 result.AnalysisPlane!,
-                                result.HorizontalScale,
+                                0.35,
                                 gap);
                         foreach (TnaEdgeStateDto state in states)
                         {
@@ -1167,8 +1173,6 @@ namespace Ananke.COMPAS.Native.Components
                 }
 
                 _preview.AddRange(
-                    ToDrawLines(formEdges, "form", preset, effectiveWeight));
-                _preview.AddRange(
                     ToDrawLines(
                         thrustEdges,
                         "thrust",
@@ -1185,6 +1189,7 @@ namespace Ananke.COMPAS.Native.Components
                     ToArrowLines(reactionLines, "reaction", preset));
                 _preview.AddRange(
                     ToArrowLines(residualLines, "residual", preset));
+                _previewMesh = thrustMesh;
 
                 Point3d[] previewPoints = _preview
                     .SelectMany(item => new[] { item.Line.From, item.Line.To })
@@ -1192,21 +1197,21 @@ namespace Ananke.COMPAS.Native.Components
                 _clippingBox = previewPoints.Length == 0
                     ? BoundingBox.Empty
                     : new BoundingBox(previewPoints);
+                if (thrustMesh.Faces.Count > 0)
+                    _clippingBox.Union(thrustMesh.GetBoundingBox(false));
 
                 report.Add(
-                    $"Drawn · form {formEdges.Count}, thrust " +
-                    $"{thrustEdges.Count}, force {forceEdges.Count}, " +
-                    $"loads {loadLines.Count}, reactions " +
-                    $"{reactionLines.Count}, residuals " +
+                    $"Drawn · thrust {thrustEdges.Count}, force " +
+                    $"{forceEdges.Count}, loads {loadLines.Count}, " +
+                    $"reactions {reactionLines.Count}, residuals " +
                     $"{residualLines.Count}.");
 
                 data.SetData(0, thrustMesh);
-                data.SetDataList(1, formEdges.Select(edge => edge.Line));
-                data.SetDataList(2, thrustEdges.Select(edge => edge.Line));
-                data.SetDataList(3, forceEdges.Select(edge => edge.Line));
-                data.SetDataList(4, loadLines);
-                data.SetDataList(5, reactionLines);
-                data.SetData(6, string.Join(Environment.NewLine, report));
+                data.SetDataList(1, thrustEdges.Select(edge => edge.Line));
+                data.SetDataList(2, forceEdges.Select(edge => edge.Line));
+                data.SetDataList(3, loadLines);
+                data.SetDataList(4, reactionLines);
+                data.SetData(5, string.Join(Environment.NewLine, report));
                 Message = $"{result.Solver.ToUpperInvariant()} · {preset}";
             }
             catch (Exception error)
@@ -1284,16 +1289,6 @@ namespace Ananke.COMPAS.Native.Components
             return new Line(
                 Point(equilibrium.Vertices[edge.U]),
                 Point(equilibrium.Vertices[edge.V]));
-        }
-
-        /// <summary>Copied from <c>DeconstructComponent.FormLine</c>.</summary>
-        private static Line FormLine(
-            TnaEdgeStateDto state,
-            IReadOnlyDictionary<int, TnaGraphEdgeDto> edges,
-            IReadOnlyDictionary<int, Point3Dto> points)
-        {
-            TnaGraphEdgeDto edge = edges[state.FormEdgeId];
-            return new Line(Point(points[edge.U]), Point(points[edge.V]));
         }
 
         /// <summary>Copied from <c>DeconstructComponent.MemberLines</c>.</summary>
@@ -1416,13 +1411,16 @@ namespace Ananke.COMPAS.Native.Components
         /// Side-by-side force-diagram placement lifted out of
         /// <c>TnaGraphicDiagramFactory.LayoutForceGraph</c> (the Overlay
         /// branch is dropped; Display always places the force diagram
-        /// beside the form diagram).
+        /// beside the form diagram). The force diagram is normalised to
+        /// <paramref name="fitFraction"/> of the form diagram's larger
+        /// span: its edge lengths are ratios to read, and at natural
+        /// scale it regularly dwarfed the model in metre units.
         /// </summary>
         private static Dictionary<int, Point3Dto> LayoutForceGraph(
             IReadOnlyDictionary<int, Point3Dto> formVertices,
             IReadOnlyDictionary<int, Point3Dto> forceVertices,
             AnalysisPlaneDto plane,
-            double scale,
+            double fitFraction,
             double gapRatio)
         {
             PlaneFrame frame = PlaneFrame.Create(plane);
@@ -1432,6 +1430,13 @@ namespace Ananke.COMPAS.Native.Components
                 item => item.Key,
                 item => frame.Project(item.Value));
             Bounds2 rawBounds = Bounds2.From(local.Values);
+            double formSpan = Math.Max(
+                formBounds.Width,
+                formBounds.Height);
+            double rawSpan = Math.Max(rawBounds.Width, rawBounds.Height);
+            double scale = rawSpan > 1.0e-12 && formSpan > 1.0e-12
+                ? fitFraction * formSpan / rawSpan
+                : 1.0;
             LocalPoint centre = rawBounds.Centre;
             Dictionary<int, LocalPoint> scaled = local.ToDictionary(
                 item => item.Key,
@@ -1469,9 +1474,7 @@ namespace Ananke.COMPAS.Native.Components
                 double normalised = maximum > 0.0
                     ? edge.Magnitude / maximum
                     : 0.0;
-                double rawWeight = role == "form"
-                    ? 1.0 + 4.0 * normalised
-                    : 1.0 + 5.0 * normalised;
+                double rawWeight = 1.0 + 2.0 * normalised;
                 int weight = Math.Clamp(
                     (int)Math.Round(rawWeight * weightScale),
                     1,
@@ -1491,7 +1494,7 @@ namespace Ananke.COMPAS.Native.Components
         {
             Color colour = RoleColour(role, string.Empty, preset);
             foreach (Line line in lines)
-                yield return new DrawLine(line, colour, 2, true);
+                yield return new DrawLine(line, colour, 1, true);
         }
 
         /// <summary>

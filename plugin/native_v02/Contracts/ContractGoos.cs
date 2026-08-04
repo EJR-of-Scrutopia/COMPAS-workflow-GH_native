@@ -329,8 +329,13 @@ public sealed class TnaControlGoo : ContractGoo<TnaControlDto>
     protected override ContractGoo<TnaControlDto> Create(TnaControlDto? value) =>
         value is null ? new TnaControlGoo() : new TnaControlGoo(value);
 
-    protected override string Format(TnaControlDto value) =>
-        $"TNA Control · {TnaControlDto.NormaliseHeightMode(value.HeightMode)}=" +
-        $"{value.HeightValue:G6} · α={value.HorizontalAlpha:G4}";
+    protected override string Format(TnaControlDto value)
+    {
+        string mode = TnaControlDto.NormaliseHeightMode(value.HeightMode);
+        string height = value.HeightValue is double target
+            ? $"{mode}={target:G6}"
+            : mode;
+        return $"TNA Control · {height} · α={value.HorizontalAlpha:G4}";
+    }
 }
 

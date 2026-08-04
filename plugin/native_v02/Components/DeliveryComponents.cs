@@ -82,11 +82,18 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Path",
             "P",
-            "Optional file path; when non-empty the JSON is also written " +
-            "to disk.",
+            "Optional file path for the Write trigger.",
             GH_ParamAccess.item,
             string.Empty);
         parameters[2].Optional = true;
+        parameters.AddBooleanParameter(
+            "Write",
+            "W",
+            "Push the export to disk: while True, the JSON is written to " +
+            "Path on every solve. Wire a button for one-shot writes. The " +
+            "JSON output itself is always live.",
+            GH_ParamAccess.item,
+            false);
     }
 
     protected override void RegisterOutputParams(
@@ -202,6 +209,7 @@ public sealed class ExportComponent :
         ResultGoo? resultGoo = null;
         string formatInput = "contract";
         string pathInput = string.Empty;
+        bool write = false;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -209,11 +217,14 @@ public sealed class ExportComponent :
         }
         data.GetData(1, ref formatInput);
         data.GetData(2, ref pathInput);
+        data.GetData(3, ref write);
 
         string normalisedFormat = NormaliseFormat(formatInput);
         var errors = new List<string>(resultValue.Validate());
         if (normalisedFormat is not ("contract" or "compas"))
             errors.Add("Format must be Contract or COMPAS.");
+        if (write && string.IsNullOrWhiteSpace(pathInput))
+            errors.Add("Write requires a Path to write to.");
         if (errors.Count > 0)
         {
             Message = "Invalid";
@@ -225,7 +236,7 @@ public sealed class ExportComponent :
 
         result = resultValue;
         format = normalisedFormat;
-        path = pathInput ?? string.Empty;
+        path = write ? pathInput ?? string.Empty : string.Empty;
         return true;
     }
 

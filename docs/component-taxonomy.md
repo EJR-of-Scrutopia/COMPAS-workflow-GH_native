@@ -13,7 +13,7 @@ parameters.
 | Anchoring | `AnchoredPatternDto` | The Pattern with explicit anchor node IDs and snap tolerance resolved by Supports. |
 | Problem | `ProblemDto` | The Anchored Pattern bundled with one load case; the shared input both solvers take. |
 | Relaxation | `RelaxedDto` (wraps `TnaPreparedDto`) | Relaxed pattern, boundary-opening records, form graph, and unbalanced topological force graph, paired with the Problem it will be solved against. |
-| Solver settings | `TnaControlDto` | Explicit, serialisable horizontal/vertical solve controls shared by TNA Solve and, for provenance only, FD Solve. |
+| Solver settings | `TnaControlDto` | Explicit, serialisable height/iteration solve settings built internally by TNA Solve from its Height and Iterations inputs, and carried on the Result for provenance. |
 | Results | `ResultDto` | One unified solved-result envelope for both FD and TNA: geometry, edge forces, reactions, residuals, provenance, units, and diagnostics, with an optional reciprocal block (form/force graphs, mappings, edge states) present only for TNA. `TnaResultDto` and `EquilibriumResultDto` merged into this one contract as part of the redesign. |
 | Display | `StyleDto` | Display-only preset, weight scale, and vector scale kept separate from solved data. |
 | Design extensions | `BranchDesign` | Later response-field, branch-layout, and Steiner-junction decisions. |
@@ -36,22 +36,21 @@ The compiled native slice has twelve components. The C# classes under
 `plugin/components.toml` records the preserved script-backed v0.1 surface.
 Every stage takes one primary typed object and returns it enriched, and a
 nickname names the type carried on that port, not the word "input": `PAT`,
-`SUP`, `PRB`, `RLX`, `RES`, `CTL`, and `STY` appear on exactly the ports that
+`SUP`, `PRB`, `RLX`, `RES`, and `STY` appear on exactly the ports that
 carry those types, on both sides of every wire.
 
 | Category | Component | Inputs | Outputs | Responsibility |
 | --- | --- | --- | --- | --- |
 | `01 Model` | **Pattern** | Geometry `G`, Mode `M`, Resolution `R`, Weld Tolerance `Tol` | Pattern `PAT` | Register a stable Rhino mesh or already-split planar line pattern as the shared spine's source geometry. Surface, Grid, Triangulation, and Skeleton modes fail explicitly until their generators exist. |
 | `01 Model` | **Supports** | Pattern `PAT`, Anchor Points `A`, Snap Tolerance `Tol` (optional) | Anchored Pattern `SUP` | Snap explicit structural anchors to a registered Pattern; intermediate boundary vertices stay free for relaxation. |
-| `01 Model` | **Loads** | Anchored Pattern `SUP`, Vector `V`, Node IDs `ID` (optional), Factor `F` | Problem `PRB` | Apply one load vector to every node or an explicit subset, producing the Problem both solvers take. |
+| `01 Model` | **Loads** | Anchored Pattern `SUP`, Vector `V`, Node IDs `ID` (optional), Factor `F` | Problem `PRB` | Apply one load vector as a tributary-area surface load (no Node IDs) or as point loads on explicit nodes, producing the Problem both solvers take. Previews magnitude-scaled load arrows. |
 | `02 Form Finding` | **TNA Relax** | Problem `PRB`, Force Density `q`, Boundary Sag `Sag %` | Relaxed `RLX` | Relax the Problem's plan Pattern, match unsupported-boundary sag, and build an inspectable unbalanced topological force dual. |
-| `02 Form Finding` | **TNA Solve** | Relaxed `RLX`, Mode `M`, Value `V`, Control `CTL` (optional) | Result `RES` | Solve a Relaxed Pattern by crown height or signed q scale against the load case its Problem carries; returns the unified Result envelope. |
-| `02 Form Finding` | **FD Solve** | Problem `PRB`, Force Density `q` (list, optional), Control `CTL` (optional, provenance only) | Result `RES` | Run whole-network COMPAS force-density form finding against the Problem's load case. |
-| `02 Form Finding` | **Control** | Horizontal Alpha `Alpha`, Horizontal Iterations `HI`, Vertical Iterations `VI`, Tolerance `Tol` | Control `CTL` | Bundle the horizontal/vertical reciprocal solve controls shared by TNA Solve; carried through FD Solve for provenance only. |
-| `03 Visualise` | **Display** | Result `RES`, Style `STY` (optional), Elements `E` (optional), Metric `M`, Weight `W`, Vector Scale `VS`, Gap `G` | Thrust Mesh `TM`, Form Lines `FL`, Thrust Lines `TL`, Force Lines `FCL`, Load Lines `LL`, Reaction Lines `RL`, Report | Draw a solved Result's reciprocal form/thrust/force lines, mapped load/reaction/residual vectors, and thrust mesh, with one style preset, auto-scaling, and Elements/Metric filters. |
+| `02 Form Finding` | **TNA Solve** | Relaxed `RLX`, Height `H` (optional), Iterations `I` (optional) | Result `RES`, Thrust Mesh `M`, Thrust Lines `L`, Supports `S` | Solve a Relaxed Pattern against the load case its Problem carries. Blank Height finds the natural equilibrium height; a number solves exactly to that crown height. Blank Iterations auto-converges the reciprocal diagrams. Returns the unified Result plus native geometry, and previews the solved shape. |
+| `02 Form Finding` | **FD Solve** | Problem `PRB`, Force Density `q` (list, optional) | Result `RES`, Member Lines `L`, Supports `S` | Run whole-network COMPAS force-density form finding against the Problem's load case; returns the unified Result plus native geometry, and previews the solved network. |
+| `03 Visualise` | **Display** | Result `RES`, Style `STY` (optional), Elements `E` (optional), Metric `M`, Weight `W`, Vector Scale `VS`, Gap `G` | Thrust Mesh `TM`, Thrust Lines `TL`, Force Lines `FCL`, Load Lines `LL`, Reaction Lines `RL`, Report | Draw a solved Result's thrust mesh and lines, the reciprocal force diagram (auto-fit beside the model), and mapped load/reaction/residual vectors, with one style preset, auto-scaling, and Elements/Metric filters. The mesh renders in a neutral material; nothing draws in Grasshopper's default red. |
 | `03 Visualise` | **Style** | Preset, Weight Scale `Weight`, Vector Scale `Vector` | Style `STY` | Bundle a display preset, weight scale, and vector scale for Display. |
 | `03 Visualise` | **Deconstruct** | Result `RES` | Thrust Mesh `TM`, Member Lines `M`, Form Lines `FL`, `q`, `H`, `F`, Force State `S`, Member IDs `MID`, Node IDs `NID`, Support Points `SP`, Load Points `LP`, Load Vectors `LV`, Reaction Points `RP`, Reaction Vectors `RV`, Residuals `E`, Diagnostics `D`, Report | Extract thrust/form geometry, member forces, and nodal actions from one solved FD or TNA Result in one component. Reciprocal-only streams (Thrust Mesh, Form Lines, `H`) come out empty for FD. |
-| `07 Delivery` | **Export** | Result `RES`, Format `F` (contract \| compas), Path `P` (optional) | JSON `J`, Written `W` | Serialise a solved Result as portable Contract JSON or native COMPAS `json_dumps` geometry via the worker, and optionally write it to disk. |
+| `07 Delivery` | **Export** | Result `RES`, Format `F` (contract \| compas), Path `P` (optional), Write `W` | JSON `J`, Written `W` | Serialise a solved Result as portable Contract JSON or native COMPAS `json_dumps` geometry via the worker. The JSON output is always live; the file is written only while the Write trigger is true. |
 | `90 System` | **Backend Health** | none | Ready `R`, Python `Py`, Packages `Pkg`, Capabilities `Cap`, Report `Out` | Verify the persistent Python worker, package environment, and protocol. |
 
 ### Port rules
@@ -160,8 +159,8 @@ policy's breaking-change rules govern ports and semantics, not tabs.
 TNA is a method inside Form Finding, which is how COMPAS itself classifies it
 alongside `compas_fd`, `compas_dr` and `compas_ags`. Giving it a tab would
 break the alignment above and would separate it from the shared registration
-spine it depends on. `02 Form Finding` holds four components (`TNA Relax`,
-`TNA Solve`, `FD Solve`, `Control`), and if it becomes crowded the answer is a
+spine it depends on. `02 Form Finding` holds three components (`TNA Relax`,
+`TNA Solve`, `FD Solve`), and if it becomes crowded the answer is a
 naming prefix (`TNA ...`, `FD ...`, which the components already use) rather
 than a new tab that implies a new backend.
 

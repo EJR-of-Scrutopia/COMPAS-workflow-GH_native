@@ -22,35 +22,55 @@ public sealed record TnaControlDto : ContractDto
     [JsonIgnore]
     public override string ExpectedKind => ContractKinds.TnaControl;
 
-    public string HeightMode { get; init; } = "zmax";
+    /// <summary>
+    /// "natural" solves to the equilibrium height of the current force
+    /// densities (no value); "zmax" scales to an exact crown height;
+    /// "q" applies a signed force-density scale directly.
+    /// </summary>
+    public string HeightMode { get; init; } = "natural";
 
-    public double HeightValue { get; init; } = 5.0;
+    /// <summary>Null in natural mode; the target in zmax/q mode.</summary>
+    public double? HeightValue { get; init; }
 
     public double HorizontalAlpha { get; init; } = 100.0;
 
-    public int HorizontalIterations { get; init; } = 100;
+    /// <summary>
+    /// Null runs the worker's auto-converging horizontal solve: blocks of
+    /// iterations until the reciprocity angle falls below one degree or
+    /// the hard cap is reached. A number fixes the iteration count.
+    /// </summary>
+    public int? HorizontalIterations { get; init; }
 
-    public int VerticalIterations { get; init; } = 100;
+    public int VerticalIterations { get; init; } = 1000;
 
     public double Tolerance { get; init; } = 1.0e-3;
 
     protected override void ValidatePayload(List<string> errors)
     {
         string mode = NormaliseHeightMode(HeightMode);
-        if (mode is not ("zmax" or "q"))
-            errors.Add("heightMode must be 'zmax' or 'q'.");
-        if (!ContractRules.IsFinite(HeightValue))
-            errors.Add("heightValue must be finite.");
-        else if (mode == "q" && Math.Abs(HeightValue) <= 1.0e-12)
+        if (mode is not ("zmax" or "q" or "natural"))
+            errors.Add("heightMode must be 'zmax', 'q', or 'natural'.");
+        if (mode == "natural")
+        {
+            if (HeightValue is not null)
+                errors.Add("natural height control carries no heightValue.");
+        }
+        else if (HeightValue is null || !ContractRules.IsFinite(HeightValue.Value))
+        {
+            errors.Add($"{mode} height control requires a finite heightValue.");
+        }
+        else if (mode == "q" && Math.Abs(HeightValue.Value) <= 1.0e-12)
+        {
             errors.Add("q height control requires a non-zero heightValue.");
+        }
         if (!ContractRules.IsFinite(HorizontalAlpha) ||
             HorizontalAlpha < 0.0 ||
             HorizontalAlpha > 100.0)
         {
             errors.Add("horizontalAlpha must be between 0 and 100.");
         }
-        if (HorizontalIterations < 1)
-            errors.Add("horizontalIterations must be positive.");
+        if (HorizontalIterations is < 1)
+            errors.Add("horizontalIterations must be positive when given.");
         if (VerticalIterations < 1)
             errors.Add("verticalIterations must be positive.");
         if (!ContractRules.IsFinite(Tolerance) || Tolerance <= 0.0)
@@ -67,6 +87,7 @@ public sealed record TnaControlDto : ContractDto
         {
             "crown_height" or "height" => "zmax",
             "force_scale" or "q_scale" => "q",
+            "" or "auto" or "equilibrium" => "natural",
             _ => mode
         };
     }
