@@ -1890,10 +1890,28 @@ def _horizontal_algebraic(form: FormDiagram, force: ForceDiagram) -> Dict[str, A
     force diagram, with ``_a`` measuring the honest angle between each
     form edge and its reconstructed dual.
 
+    The equilibrium matrix generally admits a whole family of exact
+    self-stresses, and picking an arbitrary member changes the vault's
+    flank character even though every member is exactly balanced. The
+    classic parallelisation (this plugin's iterative solver, and
+    RhinoVault's) converges toward one particular member determined by
+    its centroid-dual seed, and that member is the look designers
+    calibrate against. The solve therefore runs a short parallelisation
+    warm-up first, then PROJECTS the warmed-up force densities onto the
+    self-stress space: minimise ``||q - q0||`` subject to
+    ``E (q0 - d) = 0`` via the minimal-norm LSQR solution of
+    ``E d = E q0``. The result keeps the classic solver's character and
+    is exactly balanced, instead of being merely the nearest equilibrium
+    to an arbitrary gauge. When the projection degenerates (the pattern
+    admits no self-stress with any weight near the warmed-up state), the
+    solve falls back to the gauge-normalised optimum and says so in the
+    diagnostics.
+
     Returns a diagnostics mapping with the LSQR iteration count, the
-    equilibrium residual relative to the mean edge force, and the count
-    of negative force densities (a pattern that demands tension edges to
-    balance horizontally).
+    equilibrium residual relative to the mean edge force, the count of
+    negative force densities (a pattern that demands tension edges to
+    balance horizontally), and the relative distance the projection had
+    to move the prepared force densities.
     """
     from compas.geometry import angle_vectors_xy
     from compas.linalg import normrow
@@ -1905,6 +1923,12 @@ def _horizontal_algebraic(form: FormDiagram, force: ForceDiagram) -> Dict[str, A
     from scipy.sparse import vstack as sparse_vstack
     from scipy.sparse.linalg import factorized as sparse_factorized
     from scipy.sparse.linalg import lsqr as sparse_lsqr
+
+    # Warm up with the classic parallelisation so the projection target
+    # carries the attractor the iterative solver (and RhinoVault) would
+    # converge to; 100 iterations is RhinoVault's own default run and
+    # costs a few tens of milliseconds under the sparse solver.
+    _horizontal_fixed_form(form, force, 100)
 
     k_i = form.vertex_index()
     form_edges = list(form.edges_where({"_is_edge": True}))
@@ -1948,36 +1972,76 @@ def _horizontal_algebraic(form: FormDiagram, force: ForceDiagram) -> Dict[str, A
         (vals, (rows, cols)), shape=(2 * len(free), edge_count)
     ).tocsr()
 
-    # The gauge row breaks the scale invariance of the null-space problem;
-    # the exact scale convention is restored by renormalising afterwards,
-    # so its weight only needs to be nonzero.
-    gauge = coo_matrix(
-        ([1.0 / edge_count] * edge_count,
-         ([0] * edge_count, list(range(edge_count)))),
-        shape=(1, edge_count),
-    ).tocsr()
-    system = sparse_vstack([E, gauge]).tocsr()
-    target = zeros(2 * len(free) + 1, dtype=float64)
-    target[-1] = 1.0
-    solution = sparse_lsqr(
-        system, target, atol=1e-14, btol=1e-14, iter_lim=20 * edge_count
+    # The projection target: the warmed-up force densities, carrying both
+    # the prepared design intent (interior force_density, sag-matched
+    # boundary chains) and the classic solver's attractor character.
+    q0 = asarray(
+        [
+            float(form.edge_attribute(edge, "q") or 1.0)
+            for edge in form_edges
+        ],
+        dtype=float64,
+    ).reshape((-1, 1))
+    q0_norm = float((q0 * q0).sum()) ** 0.5
+    if q0_norm < 1e-15:
+        q0 = zeros((edge_count, 1), dtype=float64) + 1.0
+        q0_norm = float(edge_count) ** 0.5
+
+    # Project the intent onto the self-stress space: the minimal-norm
+    # correction d solving E d = E q0 leaves q = q0 - d exactly balanced
+    # and as close to the intent as equilibrium allows.
+    correction = sparse_lsqr(
+        E,
+        E.dot(q0).ravel(),
+        atol=1e-14,
+        btol=1e-14,
+        iter_lim=20 * edge_count,
     )
-    q = solution[0].reshape((-1, 1))
-    lsqr_iterations = int(solution[2])
-    q_mean = float(q.mean())
-    if not isfinite(q_mean) or abs(q_mean) < 1e-15:
-        raise TNASolveError(
-            "The algebraic horizontal solve produced a degenerate "
-            "force-density field; the pattern admits no meaningful "
-            "horizontal self-stress."
+    q = q0 - correction[0].reshape((-1, 1))
+    lsqr_iterations = int(correction[2])
+    intent_deviation = (
+        float(((q - q0) ** 2).sum()) ** 0.5 / q0_norm
+    )
+    projection_degenerate = False
+    q_scale_norm = float((q * q).sum()) ** 0.5
+    if not isfinite(q_scale_norm) or q_scale_norm < 1e-6 * q0_norm:
+        # The intent is (numerically) orthogonal to the self-stress
+        # space; fall back to the gauge-normalised optimum so the solve
+        # still returns the best exact reciprocal available.
+        projection_degenerate = True
+        gauge = coo_matrix(
+            ([1.0 / edge_count] * edge_count,
+             ([0] * edge_count, list(range(edge_count)))),
+            shape=(1, edge_count),
+        ).tocsr()
+        system = sparse_vstack([E, gauge]).tocsr()
+        target = zeros(2 * len(free) + 1, dtype=float64)
+        target[-1] = 1.0
+        solution = sparse_lsqr(
+            system, target, atol=1e-14, btol=1e-14,
+            iter_lim=20 * edge_count,
         )
-    q = q / q_mean
+        q = solution[0].reshape((-1, 1))
+        lsqr_iterations += int(solution[2])
+        q_mean = float(q.mean())
+        if not isfinite(q_mean) or abs(q_mean) < 1e-15:
+            raise TNASolveError(
+                "The algebraic horizontal solve produced a degenerate "
+                "force-density field; the pattern admits no meaningful "
+                "horizontal self-stress."
+            )
+        q = q / q_mean
+        intent_deviation = 1.0
 
     residuals = (E.dot(q)).reshape((-1, 2))
     residual_norms = normrow(residuals)
     mean_force = float((abs(q) * lengths).mean())
     residual_scale = mean_force if mean_force > 0 else 1.0
-    negative_count = int((q < 0).sum())
+    # Count only structurally meaningful tension: an edge whose negative
+    # force density is under a thousandth of the mean magnitude is a
+    # numerical zero on a slack edge, not a tie.
+    mean_abs_q = float(abs(q).mean())
+    negative_count = int((q < -1e-3 * mean_abs_q).sum())
 
     # Reconstruct the force diagram in the parallel (CCW-rotated) frame:
     # fit its vertex positions to the exact reciprocal edge vectors.
@@ -2039,6 +2103,8 @@ def _horizontal_algebraic(form: FormDiagram, force: ForceDiagram) -> Dict[str, A
             residual_norms.mean() / residual_scale
         ),
         "algebraic_negative_q_count": negative_count,
+        "algebraic_intent_deviation": intent_deviation,
+        "algebraic_projection_degenerate": projection_degenerate,
     }
 
 
