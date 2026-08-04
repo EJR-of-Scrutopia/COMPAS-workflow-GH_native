@@ -11,11 +11,43 @@ import json
 from pathlib import Path
 from typing import Any
 from typing import Dict
+from typing import List
 from typing import Mapping
 
 
 PROTOCOL_VERSION = 1
 STUDY_KEYS = ("$schema", "study", "command", "payload")
+
+
+def factor_warnings(payload: Mapping[str, Any]) -> List[str]:
+    """Warn about payload fields the worker decodes but never applies.
+
+    ``LoadCase.factor`` is the live example. ``gh.loads.build_load_case``
+    multiplies the vectors by the factor, but ``codec.decode_load_case``
+    stores the raw vectors and the factor side by side, and no solver reads
+    the factor afterwards. The Grasshopper Loads component sidesteps this by
+    pre-multiplying and sending ``Factor = 1.0``. A hand-written study file
+    has no such protection, and this bench exists to invite hand-writing, so
+    it says so rather than quietly solving the wrong load.
+    """
+
+    load_case = payload.get("load_case")
+    if not isinstance(load_case, Mapping):
+        return []
+    factor = load_case.get("factor")
+    if factor is None:
+        return []
+    try:
+        value = float(factor)
+    except (TypeError, ValueError):
+        return []
+    if abs(value - 1.0) < 1e-12:
+        return []
+    return [
+        "load_case.factor is {} but the worker does not apply it. The solve "
+        "will use the vectors exactly as written. Multiply the vectors "
+        "instead.".format(value)
+    ]
 
 
 class StudyError(ValueError):
@@ -96,6 +128,7 @@ def build_request(study: Mapping[str, Any]) -> Dict[str, Any]:
 
 __all__ = [
     "PROTOCOL_VERSION",
+    "factor_warnings",
     "STUDY_KEYS",
     "StudyError",
     "build_request",

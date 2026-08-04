@@ -1,0 +1,116 @@
+[
+  {
+    "name": "self weight",
+    "patch": {}
+  },
+  {
+    "name": "self weight x1.5",
+    "patch": {
+      "load_case": {
+        "vectors": [
+          [
+            0.0,
+            0.0,
+            -1.5
+          ]
+        ],
+        "distribution": "uniform_nodes",
+        "name": "self weight x1.5"
+      }
+    }
+  },
+  {
+    "name": "self weight x3",
+    "patch": {
+      "load_case": {
+        "vectors": [
+          [
+            0.0,
+            0.0,
+            -3.0
+          ]
+        ],
+        "distribution": "uniform_nodes",
+        "name": "self weight x3.0"
+      }
+    }
+  },
+  {
+    "name": "snow, windward half",
+    "patch": {
+      "load_case": {
+        "name": "snow windward",
+        "distribution": "point",
+        "node_ids": [
+          0,
+          1,
+          2,
+          7,
+          8,
+          9,
+          14,
+          15,
+          16,
+          21,
+          22,
+          23,
+          28,
+          29,
+          30,
+          35,
+          36,
+          37,
+          42,
+          43,
+          44
+        ],
+        "vectors": [
+          [
+            0.0,
+            0.0,
+            -2.5
+          ]
+        ]
+      }
+    }
+  },
+  {
+    "name": "point load at crown",
+    "patch": {
+      "load_case": {
+        "name": "crown point",
+        "distribution": "point",
+        "node_ids": [
+          24
+        ],
+        "vectors": [
+          [
+            0.0,
+            0.0,
+            -25.0
+          ]
+        ]
+      }
+    }
+  },
+  {
+    "name": "shallower rise 1.5m",
+    "patch": {
+      "control": {
+        "height_control": {
+          "value": 1.5
+        }
+      }
+    }
+  },
+  {
+    "name": "steeper rise 5m",
+    "patch": {
+      "control": {
+        "height_control": {
+          "value": 5.0
+        }
+      }
+    }
+  }
+]

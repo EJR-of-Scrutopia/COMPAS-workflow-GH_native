@@ -23,10 +23,15 @@ from .results import ResultError
 from .results import load_result
 from .study import StudyError
 from .study import build_request
+from .study import factor_warnings
 from .study import load_study
 from .summary import format_summary
 from .summary import is_balanced
 from .summary import summarise
+from .sweep import SweepError
+from .sweep import format_sweep
+from .sweep import load_cases
+from .sweep import run_cases
 
 
 _DECODERS = {
@@ -101,6 +106,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional figure title.",
     )
+    sweep = subparsers.add_parser(
+        "sweep",
+        help="Solve one study under several load cases and compare them.",
+    )
+    sweep.add_argument("problem", type=Path, help="Path to problem.json")
+    sweep.add_argument(
+        "--cases",
+        type=Path,
+        default=None,
+        help="Case file. Defaults to cases.json beside the study.",
+    )
+    sweep.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="Directory for each case's result JSON. Defaults to results/cases.",
+    )
     return parser
 
 
@@ -163,6 +185,8 @@ def _check(path: Path) -> int:
     except (CodecError, ContractError) as error:
         print("{}: {}".format(path, error), file=sys.stderr)
         return 1
+    for warning in factor_warnings(request["payload"]):
+        print("{}: warning: {}".format(path, warning), file=sys.stderr)
     print("{}: valid {} study".format(path, request["command"]))
     return 0
 
@@ -179,7 +203,10 @@ def solve_study(
     except StudyError as error:
         print("{}: {}".format(path, error), file=sys.stderr)
         return 1
-    response = dispatch(build_request(study))
+    request = build_request(study)
+    for warning in factor_warnings(request["payload"]):
+        print("{}: warning: {}".format(path, warning), file=sys.stderr)
+    response = dispatch(request)
     if response.get("type") == "error":
         error = response.get("error", {})
         print(
@@ -254,6 +281,52 @@ def _plot(path: Path, out: Optional[Path], title: Optional[str]) -> int:
     return 0
 
 
+def _slug(name: str) -> str:
+    """Turn a case name into a filename-safe slug."""
+
+    kept = [
+        character.lower() if character.isalnum() else "-"
+        for character in name
+    ]
+    slug = "".join(kept)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "case"
+
+
+def _sweep(path: Path, cases_path: Optional[Path], out: Optional[Path]) -> int:
+    """Solve one study under every case and print the comparison."""
+
+    try:
+        study = load_study(path)
+    except StudyError as error:
+        print("{}: {}".format(path, error), file=sys.stderr)
+        return 1
+    source = cases_path or (path.parent / "cases.json")
+    try:
+        cases = load_cases(source)
+    except SweepError as error:
+        print("{}: {}".format(source, error), file=sys.stderr)
+        return 1
+
+    outcomes = run_cases(study, cases)
+    print(format_sweep(outcomes))
+
+    destination = out or (path.parent / "results" / "cases")
+    destination.mkdir(parents=True, exist_ok=True)
+    for outcome in outcomes:
+        if not outcome["ok"]:
+            continue
+        target = destination / "{}.json".format(_slug(outcome["name"]))
+        target.write_text(
+            json.dumps(outcome["result"], indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    print("")
+    print("results -> {}".format(destination))
+    return 0 if all(outcome["ok"] for outcome in outcomes) else 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run one CLI invocation and return its process exit code."""
 
@@ -270,6 +343,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return _describe(args.result, args.tolerance, args.strict)
     if args.command == "plot":
         return _plot(args.result, args.out, args.title)
+    if args.command == "sweep":
+        return _sweep(args.problem, args.cases, args.out)
     if args.command == "health":
         print(_format_health(health_payload()))
         return 0
