@@ -31,7 +31,7 @@ Every claim here was run, not recalled.
 | Backend registration | `compas_fea2.set_backend("compas_fea2_opensees")` gives `BACKEND = compas_fea2_opensees` |
 | End-to-end solve | A nine-node cantilever returns a tip deflection **0.9998 of `PL^3/3EI`**, with reactions summing to the applied load |
 | Buckling by eigenvalue | Class exists, **implementation is a stub**: `OpenseesBucklingAnalysis.jobdata()` emits the bare token `buckling`, which is not valid Tcl |
-| Buckling by arc length | `OpenseesStaticRiksStep` is fully implemented, with `integrator ArcLength` and control parameters |
+| Buckling by arc length | `OpenseesStaticRiksStep.jobdata()` is fully implemented, with `integrator ArcLength` and control parameters. **But the step cannot be constructed at this pin**: the core `StaticRiksStep.__init__` ends in an unconditional `raise NotImplementedError`, the backend never registers its subclass, and the subclass's own `super().__init__` call passes a positional argument the core does not take. Found during implementation, not this survey. The analysis therefore reports construction failure through the same honest outcome shape as non-convergence, and no collapse load is ever reported. Reviving it upstream needs three fixes; overriding a constructor upstream deliberately disabled was judged worse than reporting the truth |
 | Materials | `ElasticIsotropic`, `Concrete`, `ConcreteSmearedCrack`, `ConcreteDamagedPlasticity`, `Timber`, `Steel` all present |
 | Elements | `ShellElement`, `TrussElement`, `BeamElement`, `SolidSection`, `ShellSection` all present |
 
