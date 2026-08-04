@@ -177,11 +177,27 @@ Grasshopper export (COMPAS mode: thrust mesh; Contract mode: forces, supports)
                           +-- cross-check: FEA axial vs TNA member forces
 ```
 
-The cross-check is the reason to build the bar model at all. If a truss model
-of the thrust network, solved under the same loads, reproduces the TNA member
-forces within the file's own residual, the FEA setup is trustworthy and the
-shell result can be believed. If it does not, the fault is in the model
-setup, not the vault. Without that check the shell numbers are unfalsifiable.
+The cross-check is the reason to build the bar model at all. Without it the
+shell numbers are unfalsifiable.
+
+**Correction, from running it on the real vault.** The paragraph that stood
+here claimed that a mismatch in member forces always means a fault in the
+model setup. The measurements falsified that in two steps. First, the thrust
+network is a pure quad grid, so as a pin-jointed truss it is a mechanism
+(thousands of in-plane panel modes) and cannot be solved linearly at all;
+the bars are modelled as slender beams whose bending stiffness is about
+5e-4 of their axial stiffness, enough to suppress the mechanisms without
+changing what the check measures. Second, the network is statically
+indeterminate with self-stress states, so the TNA distribution and the
+elastic distribution are different members of the same equilibrium family:
+per-member equality is only attainable on determinate networks, and no
+correctness of wiring can force it here. The check therefore reports two
+verdicts. The reaction balance is the wiring falsifier, exact to twelve
+digits on the real vault. The member comparison is strict on determinate
+fixtures, where the tripod matches statics to one part in a thousand, and
+is reported with its scale and an explanatory note on indeterminate
+networks, where the mean deviation on the real vault is about 0.4 per cent
+of applied load.
 
 ### 4. The four analyses
 
@@ -240,7 +256,7 @@ then view and plot them without importing `compas_fea2`.
 | Test | Asserts |
 | --- | --- |
 | Cantilever closed form | Tip deflection matches `PL^3 / 3EI` within tolerance |
-| Bar cross-check | Truss axial forces match TNA member forces within the file's own residual |
+| Bar cross-check | Reactions balance the factored applied load within the file's own residual; member forces match TNA strictly on statically determinate fixtures, and are reported with scale and note on indeterminate networks |
 | Tension fixture | A shape known to require tension reports tension |
 | Compression fixture | The funicular under its design load reports none |
 | Riks non-convergence | A model that cannot converge reports that, and returns no collapse load |
