@@ -78,24 +78,26 @@ def edges(contract: Mapping[str, Any]) -> List[Tuple[int, int]]:
     ]
 
 
-def node_loads(contract: Mapping[str, Any]) -> Dict[int, Vector]:
-    """Applied load per node id, in newtons."""
+def _vector_map(contract: Mapping[str, Any], key: str) -> Dict[int, Vector]:
+    """Helper to extract and convert vector maps from contract."""
 
     result: Dict[int, Vector] = {}
-    for entry in _equilibrium(contract).get("loads", []):
+    for entry in _equilibrium(contract).get(key, []):
         x, y, z = _vector(entry, "vector")
         result[int(entry["nodeId"])] = (x * KN_TO_N, y * KN_TO_N, z * KN_TO_N)
     return result
+
+
+def node_loads(contract: Mapping[str, Any]) -> Dict[int, Vector]:
+    """Applied load per node id, in newtons."""
+
+    return _vector_map(contract, "loads")
 
 
 def reactions(contract: Mapping[str, Any]) -> Dict[int, Vector]:
     """Support reaction per node id, in newtons."""
 
-    result: Dict[int, Vector] = {}
-    for entry in _equilibrium(contract).get("reactions", []):
-        x, y, z = _vector(entry, "vector")
-        result[int(entry["nodeId"])] = (x * KN_TO_N, y * KN_TO_N, z * KN_TO_N)
-    return result
+    return _vector_map(contract, "reactions")
 
 
 def member_forces(contract: Mapping[str, Any]) -> List[float]:
