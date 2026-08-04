@@ -12,7 +12,7 @@ from __future__ import annotations
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from ananke_fea.compat import analyse
 from ananke_fea.model import ShellModel
@@ -178,3 +178,128 @@ def first_tension_factor(rows) -> Optional[float]:
         if row["tension_present"]:
             return row["factor"]
     return None
+
+
+def run_riks(
+    built: ShellModel,
+    loads: Mapping[int, Vector],
+    arc_length: Tuple[float, float, float] = (1.0e-2, 1.0e-4, 10),
+    max_increments: int = 100,
+    name: str = "riks",
+    path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Trace the load path by arc length, to a limit point if there is one.
+
+    Eigenvalue buckling is not an option: OpenseesBucklingAnalysis exists but
+    its jobdata emits the bare token `buckling`, which OpenSees cannot read.
+    StaticRiksStep is genuinely implemented and emits `integrator ArcLength`.
+
+    Arc length needs tuning per model and often will not converge. When it
+    does not, this returns collapse_factor None and says why. It never
+    reports the last converged increment as though it were the answer.
+    """
+
+    # StaticRiksStep is not re-exported from compas_fea2.problem.
+    from compas_fea2.problem import LoadCombination, Problem
+    from compas_fea2.problem.steps import StaticRiksStep
+    from compas_fea2.results import DisplacementFieldResults
+
+    directory = Path(path) if path else Path(tempfile.mkdtemp(prefix="ananke_riks_")) / name
+
+    def outcome(converged, message, increments=0, limit_point=False, factor=None):
+        """One shape for every exit, so no path can invent a collapse load.
+
+        collapse_factor stays None unless a limit point was actually
+        detected. The increment count is reported separately and never
+        stands in for a load factor: the spec forbids passing off the last
+        converged increment as the answer, and an arc-length trace that ran
+        to its increment cap without turning over has not found anything.
+        """
+
+        return {
+            "converged": converged,
+            "limit_point_found": limit_point,
+            "collapse_factor": factor,
+            "increments_run": increments,
+            "message": message,
+            "path": str(directory),
+        }
+
+    # StaticRiksStep's own __init__ is unconditionally broken at this pin:
+    # compas_fea2_opensees never registers backend[StaticRiksStep], so this
+    # constructs the abstract base class instead of OpenseesStaticRiksStep,
+    # and that base class's __init__ ends with a bare `raise
+    # NotImplementedError`. This is a construction-time failure, not a
+    # convergence failure, but it gets the same honest treatment: no step
+    # means no trace, so there is no collapse load to report, and the
+    # message says exactly what happened rather than pretending the call
+    # never had a chance to run.
+    problem = Problem(name=name)
+    try:
+        step = StaticRiksStep(
+            max_increments=max_increments,
+            ArcLength=list(arc_length),
+            nlgeom=True,
+        )
+    except Exception as error:
+        return outcome(
+            False,
+            "the arc-length step could not be constructed, so no solve was "
+            "attempted: {}: {}".format(type(error).__name__, error),
+        )
+
+    grouped: Dict[Vector, list] = {}
+    for key, vector in loads.items():
+        node = built.nodes.get(key)
+        if node is None:
+            raise ValueError("load given for {} which is not a node".format(key))
+        grouped.setdefault(vector, []).append(node)
+
+    for vector, nodes in grouped.items():
+        step.add_uniform_node_load(
+            nodes=nodes, x=vector[0], y=vector[1], z=vector[2], load_case=LOAD_CASE
+        )
+
+    step.combination = LoadCombination.ULS()
+    step.add_output(DisplacementFieldResults)
+    problem.add_step(step)
+    built.model.add_problem(problem)
+
+    try:
+        analyse(problem, directory)
+    except Exception as error:
+        return outcome(
+            False,
+            "the arc-length solve raised {}: {}".format(type(error).__name__, error),
+        )
+
+    try:
+        results = list(step.displacement_field.results)
+    except Exception as error:
+        return outcome(
+            False,
+            "the solve ran but produced no readable displacement field, which "
+            "means it did not complete an increment: {}: {}".format(
+                type(error).__name__, error
+            ),
+        )
+
+    if not results:
+        return outcome(
+            False,
+            "no increments converged, so there is no load path to read a "
+            "collapse load from. Try a smaller arc length.",
+        )
+
+    peak = max(result.magnitude for result in results)
+    return outcome(
+        True,
+        "traced the load path by arc length to the increment cap of {} "
+        "without detecting a limit point, so no collapse load is reported. "
+        "Detecting one needs the load factor per increment, which this "
+        "backend does not record; treat the peak displacement of {:.4e} m as "
+        "a trace result only.".format(max_increments, peak),
+        increments=max_increments,
+        limit_point=False,
+        factor=None,
+    )
