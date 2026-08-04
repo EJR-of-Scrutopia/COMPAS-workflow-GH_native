@@ -1,6 +1,6 @@
 # Demo runbook
 
-Four scripts. Each prints its analysis to the terminal and then opens a
+Six scripts. Each prints its analysis to the terminal and then opens a
 compas_viewer window. Close the window to end the script.
 
 ## Before you start
@@ -30,7 +30,7 @@ Three ways, all equivalent. Use whichever reads best on the day.
 
 To run a script without opening a window, set `ANANKE_DEMO_NO_SHOW=1`.
 
-## The four demos
+## The six demos
 
 ### 1. Solve the pavilion
 
@@ -166,4 +166,5 @@ file sets it. Multiply the vectors instead.
 | --- | --- |
 | Formwork load at build step k | The CRA environment is built and solves. Wiring the tessellated blocks into it is the next piece of work, not a finished demo. |
 | Deformation under load, FEA sense | `compas_fea2` registers no solver backend, and the OpenSees bridge is not published. It can express a model, not analyse one. |
-| ROS robot placing blocks | `compas_fab` is installed and analytical inverse kinematics needs no ROS, but there is no robot model or placement sequence yet. |
+| ROS robot placing blocks | Demo 5 does the placement with closed-form inverse kinematics and no ROS. What is missing is collision checking and trajectory planning, which are PyBullet and ROS with MoveIt respectively. |
+| Cross, fan and pavilion vaults | `NotImplementedError` stubs in compas_dem 0.5.0. Demo 6 names them. |
