@@ -350,6 +350,20 @@ internal static class Program
             failures.Add($"Spine contracts: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateResultGooRawWireSnapshot(plugin);
+            Console.WriteLine(
+                "PASS  ResultGoo RawWire snapshot: construction and " +
+                "Duplicate() both preserve RawWire, and Contract-mode " +
+                "serialisation still excludes it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ResultGoo RawWire snapshot: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -920,6 +934,92 @@ internal static class Program
         RequireValidationErrors(
             invalidTna,
             "Invalid TNA ResultDto without reciprocal graphs");
+    }
+
+    /// <summary>
+    /// <c>ResultDto.RawWire</c> is <c>[JsonIgnore]</c>, so the shared
+    /// <c>ContractJson.DeepClone</c> round trip every other snapshot
+    /// boundary relies on would silently drop it. <c>ResultGoo</c>
+    /// overrides <c>ContractGoo{TContract}.Snapshot</c> to reattach it;
+    /// this exercises the exact paths the whole-branch review flagged as
+    /// broken: the public constructor (what
+    /// <c>SolverComponents.cs</c>'s <c>new ResultGoo(result.Result)</c>
+    /// calls on every live solve) and <c>Duplicate()</c> (what a
+    /// Grasshopper wire fan-out calls) must both preserve RawWire, while
+    /// Contract-mode serialisation (<c>ContractJson.Serialize</c>) must
+    /// still exclude it from the persisted contract.
+    /// </summary>
+    private static void ValidateResultGooRawWireSnapshot(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type resultGooType = RequireContractType(plugin, "ResultGoo");
+        const string rawWire = "{\"worker\":\"raw\"}";
+
+        object result = CreateResultDto(
+            resultType,
+            solver: "fd",
+            equilibrium: CreateInstance(equilibriumType),
+            formGraph: null,
+            forceGraph: null);
+        SetContractProperty(result, resultType, "RawWire", rawWire);
+
+        object goo = Activator.CreateInstance(resultGooType, result)
+            ?? throw new InvalidOperationException(
+                $"Could not construct {resultGooType.FullName}.");
+        RequireRawWire(goo, resultType, rawWire, "Constructed ResultGoo");
+
+        MethodInfo duplicateMethod = resultGooType.GetMethod("Duplicate")
+            ?? throw new InvalidOperationException(
+                "ResultGoo.Duplicate() was not found.");
+        object duplicated = duplicateMethod.Invoke(goo, null)
+            ?? throw new InvalidOperationException(
+                "ResultGoo.Duplicate() returned null.");
+        RequireRawWire(duplicated, resultType, rawWire, "Duplicated ResultGoo");
+
+        Type contractJsonType = RequireContractType(plugin, "ContractJson");
+        MethodInfo serializeMethod = contractJsonType.GetMethod(
+            "Serialize",
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ContractJson.Serialize was not found.");
+        string serialized =
+            serializeMethod.MakeGenericMethod(resultType)
+                .Invoke(null, new object[] { result }) as string
+            ?? throw new InvalidOperationException(
+                "ContractJson.Serialize returned an unexpected type.");
+        if (serialized.Contains("rawWire", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Contract-mode serialisation must exclude RawWire, but the " +
+                "serialised ResultDto contains it.");
+        }
+    }
+
+    private static void RequireRawWire(
+        object goo,
+        Type resultType,
+        string expected,
+        string label)
+    {
+        PropertyInfo valueProperty = goo.GetType().GetProperty("Value")
+            ?? throw new InvalidOperationException(
+                $"{goo.GetType().FullName} does not expose Value.");
+        object? value = valueProperty.GetValue(goo);
+        if (value is null || !resultType.IsInstanceOfType(value))
+        {
+            throw new InvalidOperationException(
+                $"{label} lost its ResultDto payload.");
+        }
+
+        string? rawWire =
+            resultType.GetProperty("RawWire")?.GetValue(value) as string;
+        if (!string.Equals(rawWire, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{label} lost RawWire; expected '{expected}', found " +
+                $"'{rawWire ?? "<null>"}'.");
+        }
     }
 
     private static object CreateResultDto(

@@ -106,6 +106,19 @@ public sealed class ResultGoo : ContractGoo<ResultDto>
     public override string TypeDescription =>
         "A solved FD or TNA result carried in the unified Result envelope.";
 
+    /// <summary>
+    /// <see cref="ResultDto.RawWire"/> is <c>[JsonIgnore]</c>, so the base
+    /// <see cref="ContractJson.DeepClone"/> round trip that every other
+    /// snapshot boundary relies on (the constructor, <c>Duplicate()</c>,
+    /// <c>CastFrom</c>, and <c>CastTo</c>) would otherwise silently strip
+    /// it on every construction, duplication, and cast. Reattach it after
+    /// the clone; a string needs no isolation of its own, it is immutable
+    /// already. Null-safe: an already-empty <c>RawWire</c> just copies
+    /// null across.
+    /// </summary>
+    protected override ResultDto Snapshot(ResultDto value) =>
+        ContractJson.DeepClone(value) with { RawWire = value.RawWire };
+
     protected override ContractGoo<ResultDto> Create(ResultDto? value) =>
         value is null ? new ResultGoo() : new ResultGoo(value);
 

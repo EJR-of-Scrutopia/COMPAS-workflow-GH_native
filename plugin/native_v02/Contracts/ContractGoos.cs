@@ -24,9 +24,9 @@ public abstract class ContractGoo<TContract> : GH_Goo<TContract>
     }
 
     protected ContractGoo(TContract value)
-        : base(ContractJson.DeepClone(
-            value ?? throw new ArgumentNullException(nameof(value))))
     {
+        Value = Snapshot(
+            value ?? throw new ArgumentNullException(nameof(value)));
     }
 
     protected abstract string ExpectedKind { get; }
@@ -34,6 +34,17 @@ public abstract class ContractGoo<TContract> : GH_Goo<TContract>
     protected abstract ContractGoo<TContract> Create(TContract? value);
 
     protected abstract string Format(TContract value);
+
+    /// <summary>
+    /// Deep-clones <paramref name="value"/> for storage inside this Goo.
+    /// Every public construction and duplication boundary routes through
+    /// this hook rather than calling <see cref="ContractJson.DeepClone"/>
+    /// directly, so a subclass can override it to reattach transport-only
+    /// fields (marked <c>[JsonIgnore]</c>) that a plain JSON round trip
+    /// would otherwise silently drop.
+    /// </summary>
+    protected virtual TContract Snapshot(TContract value) =>
+        ContractJson.DeepClone(value);
 
     public override bool IsValid => ValidationErrors().Count == 0;
 
@@ -44,7 +55,7 @@ public abstract class ContractGoo<TContract> : GH_Goo<TContract>
     {
         return Value is null
             ? Create(null)
-            : Create(ContractJson.DeepClone(Value));
+            : Create(Snapshot(Value));
     }
 
     public override bool CastFrom(object source)
@@ -54,11 +65,11 @@ public abstract class ContractGoo<TContract> : GH_Goo<TContract>
             switch (source)
             {
                 case TContract contract:
-                    Value = ContractJson.DeepClone(contract);
+                    Value = Snapshot(contract);
                     _readError = null;
                     return IsValid;
                 case ContractGoo<TContract> goo when goo.Value is not null:
-                    Value = ContractJson.DeepClone(goo.Value);
+                    Value = Snapshot(goo.Value);
                     _readError = null;
                     return IsValid;
                 case string json when !string.IsNullOrWhiteSpace(json):
@@ -87,7 +98,7 @@ public abstract class ContractGoo<TContract> : GH_Goo<TContract>
 
         if (typeof(Q).IsAssignableFrom(typeof(TContract)))
         {
-            object boxed = ContractJson.DeepClone(Value);
+            object boxed = Snapshot(Value);
             target = (Q)boxed;
             return true;
         }
