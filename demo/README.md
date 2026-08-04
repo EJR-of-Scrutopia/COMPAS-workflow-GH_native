@@ -153,11 +153,35 @@ COMPAS DEM menu with Show Blocks, Show Contacts and Show Interactions, a
 sidebar object tree with per-object visibility checkboxes, object and camera
 settings panels, four render modes and five view presets.
 
-The examples are cloned into `upstream/` by
-`scripts/fetch_compas_examples.sh`, and nothing in them is edited. The
-launcher only selects one, points the interpreter and working directory at
-it, and runs it, because they load data by paths relative to their own
-repositories.
+### Every working example has its own clickable file
+
+`demo/compas_examples/` holds **24 files, one per example that runs here**.
+Open any of them and press play. Each is a wrapper: the example itself stays
+unmodified in `upstream/`, and the wrapper only points the interpreter and
+working directory at it, because these examples load data by paths relative
+to their own repository.
+
+The masonry case studies are the ones to show:
+
+| File | What it is |
+| --- | --- |
+| `dem_vault_cross.py` | 184 voussoirs from an OBJ, 488 contacts |
+| `dem_armadillo.py` | The armadillo vault, a large freeform assembly |
+| `dem_dome.py` | A masonry dome from measured geometry |
+| `dem_vault_barrel.py` | A barrel vault with its interfaces |
+| `dem_arch.py`, `dem_stack.py`, `dem_wall.py` | Smaller assemblies |
+
+The `viewer_*.py` files demonstrate the viewer itself: `viewer_treeform.py`
+for the scene tree, `viewer_sidedock.py` for the side panel,
+`viewer_dynamic_scene.py` for animation, `viewer_camera.py` for view presets.
+
+**Eight of the 32 do not run here**, and the reasons are worth knowing:
+`robot`, `model`, `test_ui`, `scene` and `nurbscurve` need an older
+compas_viewer API or an uninstalled plugin; `dem_new_features` and
+`dem_new_features_RBE` hit the same pyomo 6.4.2 against NumPy 2 wall as
+compas_cra; and `extract_robot_package_from_ros` needs a live ROS
+connection. They are listed by `demo/07_compas_official.py` rather than
+hidden.
 
 ## Bringing your own pavilion from Grasshopper
 

@@ -75,11 +75,16 @@ def show_menu(examples):
             current = package
         print("    {:>2}  {}".format(index, script.stem))
     print("")
-    print("Run one with:")
-    print("    python demo/07_compas_official.py <number or name>")
+    print("Every one of these that runs has a clickable file of its own in:")
+    print("    demo/compas_examples/")
     print("")
-    print("For example:")
+    print("Open one and press play. Or run one from here by number or name:")
     print("    python demo/07_compas_official.py {}".format(DEFAULT))
+    print("")
+    print("Known not to run in this environment:")
+    print("    robot, model, test_ui, scene, nurbscurve   compas_viewer API or plugin")
+    print("    dem_new_features, dem_new_features_RBE     pyomo 6.4.2 vs numpy 2")
+    print("    extract_robot_package_from_ros             needs a live ROS connection")
 
 
 def resolve(examples, wanted):

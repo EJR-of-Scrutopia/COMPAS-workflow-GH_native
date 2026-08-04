@@ -20,12 +20,21 @@ from pathlib import Path
 GUARD = "ANANKE_DEMO_BOOTSTRAPPED"
 
 
-def venv_python(start: Path) -> Path:
-    """Return the project's interpreter, wherever the demo was run from."""
+def project_root(start: Path) -> Path:
+    """Walk up from a script until a directory containing .venv is found."""
 
-    root = Path(start).resolve().parent
-    if root.name == "demo":
-        root = root.parent
+    here = Path(start).resolve().parent
+    for candidate in [here] + list(here.parents):
+        if (candidate / ".venv").is_dir():
+            return candidate
+    # Nothing found: fall back to the repository layout, demo/ under the root.
+    return here.parent if here.name == "demo" else here
+
+
+def venv_python(start: Path) -> Path:
+    """Return the project's interpreter, wherever the script sits."""
+
+    root = project_root(start)
     if os.name == "nt":
         return root / ".venv" / "Scripts" / "python.exe"
     return root / ".venv" / "bin" / "python"
@@ -87,4 +96,4 @@ def ensure_venv(script: str) -> None:
     raise SystemExit(completed.returncode)
 
 
-__all__ = ["GUARD", "ensure_venv", "venv_python"]
+__all__ = ["GUARD", "ensure_venv", "project_root", "venv_python"]
