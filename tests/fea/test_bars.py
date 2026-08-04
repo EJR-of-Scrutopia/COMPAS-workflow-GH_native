@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from ananke_fea import mesh as reader
-from ananke_fea.bars import build_bar_model, cross_check
+from ananke_fea.analyses import run_static
+from ananke_fea.bars import build_bar_model, cross_check, member_axial_forces
 from ananke_fea.compat import apply_patches, require_backend
 from ananke_fea.materials import PRESETS
 
@@ -52,3 +53,93 @@ def test_agreement_is_reported_against_that_tolerance(contract):
 
     way_off = cross_check(contract, outcome, reactions=(0.0, 0.0, applied * 2))
     assert way_off["agrees"] is False
+
+
+@pytest.fixture(scope="module")
+def solved_tripod():
+    """Three bars from a triangle of supports to one apex, solved.
+
+    By statics the vertical load splits into three equal members at
+    N = P / (3 cos b), b measured from vertical. This is chosen over a
+    two-bar planar triangle: a truss confined to a single plane leaves the
+    apex with zero stiffness normal to that plane, because both bar
+    directions have a zero component out of it, which is singular for
+    reasons that have nothing to do with the rotational-DOF fix under
+    test. Three non-coplanar bars give the apex real translational
+    stiffness in all three axes from the truss elements alone, so
+    build_bar_model's default rotation-only restraint at free nodes is all
+    this fixture needs; nothing extra is added on top of it.
+
+    The load is 1000 kN, not a more modest 1 kN. Checked directly against
+    the raw OpenSees output, the extraction pipeline that lands displacement
+    values in the results database rounds to 6 decimal places, not 6
+    significant figures: a true apex displacement of -0.0000028 m came back
+    from the database as exactly -0.000003, a 6% error. At 1000 kN the same
+    model deflects in the low millimetres, where 6 decimal places of
+    absolute precision is far more digits than this test's rel=1e-3 needs.
+    """
+
+    require_backend()
+    apply_patches()
+
+    contract = {
+        "equilibrium": {
+            "vertices": [
+                {"x": 1.0, "y": 0.0, "z": 0.0},
+                {"x": -0.5, "y": 0.8660254037844386, "z": 0.0},
+                {"x": -0.5, "y": -0.8660254037844386, "z": 0.0},
+                {"x": 0.0, "y": 0.0, "z": 2.0},
+            ],
+            "edges": [
+                {"u": 0, "v": 3},
+                {"u": 1, "v": 3},
+                {"u": 2, "v": 3},
+            ],
+            "memberForces": [
+                -372.67799624996496,
+                -372.67799624996496,
+                -372.67799624996496,
+            ],
+            "loads": [
+                {"nodeId": 3, "vector": {"x": 0.0, "y": 0.0, "z": -1000.0}},
+            ],
+            "reactions": [],
+            "resolvedSupportNodeIds": [0, 1, 2],
+            "diagnostics": [
+                {"code": "global_force_error_norm", "value": 0.1},
+            ],
+        }
+    }
+    built = build_bar_model(contract, PRESETS["concrete"], 0.01)
+    outcome = run_static(
+        built, reader.node_loads(contract), combination="SLS", name="tripod"
+    )
+    return contract, built, outcome
+
+
+def test_the_tripod_matches_statics(solved_tripod):
+    contract, built, outcome = solved_tripod
+    forces = member_axial_forces(
+        built, contract, outcome, area=0.01, modulus=PRESETS["concrete"].modulus
+    )
+    expected = reader.member_forces(contract)
+    assert len(forces) == len(expected)
+    for got, want in zip(forces, expected):
+        assert got == pytest.approx(want, rel=1e-3)
+
+
+def test_cross_check_accepts_matching_member_forces(solved_tripod):
+    contract, built, outcome = solved_tripod
+    forces = member_axial_forces(
+        built, contract, outcome, area=0.01, modulus=PRESETS["concrete"].modulus
+    )
+    checked = cross_check(contract, outcome, axial_forces=forces)
+    assert checked["members_agree"] is True
+    assert checked["member_count"] == 3
+
+
+def test_cross_check_rejects_wrong_member_forces(solved_tripod):
+    contract, built, outcome = solved_tripod
+    wrong = [f * 3.0 for f in reader.member_forces(contract)]
+    checked = cross_check(contract, outcome, axial_forces=wrong)
+    assert checked["members_agree"] is False

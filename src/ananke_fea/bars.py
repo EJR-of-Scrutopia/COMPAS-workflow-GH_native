@@ -14,7 +14,7 @@ rather than hard-coded.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ananke_fea import mesh as reader
 from ananke_fea.materials import MaterialPreset, elastic_isotropic
@@ -38,7 +38,7 @@ def build_bar_model(
     apply_patches()
 
     from compas_fea2.model import CircularSection, Model, Node, Part
-    from compas_fea2.model import PinnedBC, TrussElement
+    from compas_fea2.model import FixedBC, GeneralBC, TrussElement
 
     model = Model(name=name)
     part = Part(name="{}_bars".format(name))
@@ -60,11 +60,65 @@ def build_bar_model(
 
     model.add_part(part)
 
-    supports = [nodes[index] for index in reader.support_node_ids(contract)]
+    support_ids = reader.support_node_ids(contract)
+    supports = [nodes[index] for index in support_ids]
     if supports:
-        model.add_bcs(PinnedBC(), nodes=supports)
+        model.add_bcs(FixedBC(), nodes=supports)
+
+    # A truss element carries no rotational stiffness, so a model built
+    # entirely from TrussElement is singular in every rotational DOF: the
+    # backend writes the OpenSees domain as `model -ndm 3 -ndf 6` regardless
+    # of element type, and nothing couples to xx/yy/zz anywhere in the mesh.
+    # Restraining rotations at every node that is not already a support
+    # removes exactly those singular DOFs. It changes no translation, no
+    # force and no displacement, because no element stiffness term ever
+    # referenced a rotational DOF in the first place.
+    support_id_set = set(support_ids)
+    free = [node for index, node in nodes.items() if index not in support_id_set]
+    if free:
+        model.add_bcs(
+            GeneralBC(x=False, y=False, z=False, xx=True, yy=True, zz=True),
+            nodes=free,
+        )
 
     return ShellModel(model=model, part=part, nodes=nodes, supports=supports)
+
+
+def member_axial_forces(
+    built: ShellModel,
+    contract: Mapping[str, Any],
+    outcome,
+    area: float,
+    modulus: float,
+) -> List[float]:
+    """Axial force per member from the solved displacement field, in newtons.
+
+    The backend cannot record truss section forces: requesting
+    SectionForcesFieldResults never gets a recorder written into the Tcl,
+    and the stress XML comes back with empty Data for Truss elements. What
+    does extract reliably is nodal displacement, and for a linear truss
+    N = (E A / L) x axial elongation is exact, not an approximation, so
+    that is the channel used here. Negative is compression, matching the
+    export's positive_tension convention.
+    """
+
+    displacements: Dict[object, Tuple[float, float, float]] = {}
+    for result in outcome.step.displacement_field.results:
+        displacements[result.node] = tuple(float(v) for v in result.vector)
+
+    points = reader.vertices(contract)
+    forces: List[float] = []
+    for start, end in reader.edges(contract):
+        ax, ay, az = points[start]
+        bx, by, bz = points[end]
+        dx, dy, dz = bx - ax, by - ay, bz - az
+        length = (dx * dx + dy * dy + dz * dz) ** 0.5
+        ux, uy, uz = dx / length, dy / length, dz / length
+        da = displacements[built.nodes[start]]
+        db = displacements[built.nodes[end]]
+        elongation = (db[0] - da[0]) * ux + (db[1] - da[1]) * uy + (db[2] - da[2]) * uz
+        forces.append(modulus * area / length * elongation)
+    return forces
 
 
 def cross_check(
@@ -72,8 +126,10 @@ def cross_check(
     outcome,
     tolerance: Optional[float] = None,
     reactions: Optional[Tuple[float, float, float]] = None,
+    axial_forces: Optional[Sequence[float]] = None,
 ) -> Dict[str, Any]:
-    """Compare the solved reactions against the applied load.
+    """Compare the solved reactions, and optionally the solved member forces,
+    against what the file itself reports.
 
     Parameters
     ----------
@@ -83,6 +139,10 @@ def cross_check(
     tolerance
         Newtons. Defaults to the file's own global force error, widened by
         TOLERANCE_MARGIN.
+    axial_forces
+        Per-member axial force in newtons, in the same order as
+        mesh.edges(contract), typically from member_axial_forces. Optional:
+        without it, only the global reaction check runs.
     """
 
     residual = reader.residual_norm(contract)
@@ -100,11 +160,37 @@ def cross_check(
     magnitude = sum(component**2 for component in reactions) ** 0.5
     factor = getattr(outcome, "combination_factor", 1.0)
 
-    return {
+    reaction_agrees = abs(magnitude - applied * factor) <= tolerance
+
+    result: Dict[str, Any] = {
         "tolerance": tolerance,
         "residual_from_file": residual,
         "applied_magnitude": applied * factor,
         "reaction_magnitude": magnitude,
         "difference": abs(magnitude - applied * factor),
-        "agrees": abs(magnitude - applied * factor) <= tolerance,
+        "agrees": reaction_agrees,
     }
+
+    if axial_forces is not None:
+        # The TNA forces in the file are unfactored: they close equilibrium
+        # at the real applied load. run_static's combination factor scales
+        # the solved response the same way it scales the reactions above
+        # (applied_magnitude is the unfactored contract total times factor,
+        # for the same reason), so the TNA side is scaled up here rather
+        # than the solved side scaled down.
+        expected = [force * factor for force in reader.member_forces(contract)]
+        differences = [
+            abs(got - want) for got, want in zip(axial_forces, expected)
+        ]
+        member_count = len(differences)
+        max_difference = max(differences) if differences else 0.0
+        mean_difference = sum(differences) / member_count if member_count else 0.0
+        members_agree = max_difference <= tolerance
+
+        result["member_count"] = member_count
+        result["max_member_difference"] = max_difference
+        result["mean_member_difference"] = mean_difference
+        result["members_agree"] = members_agree
+        result["agrees"] = reaction_agrees and members_agree
+
+    return result
