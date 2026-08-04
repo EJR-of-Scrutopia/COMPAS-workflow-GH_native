@@ -13,6 +13,24 @@ from typing import Dict, Iterable, List
 
 from ananke_fea.materials import MaterialPreset, elastic_isotropic
 
+GRAVITY = 9.80665
+
+
+def self_weight_loads(mesh, thickness, density):
+    """Nodal self-weight of the shell, in newtons, z downward.
+
+    COMPAS vertex areas partition the surface, so the sum of these loads is
+    the exact weight of the declared section. Whether to apply them depends
+    on what the export's own loads already represent, which only the
+    Grasshopper definition knows; the demo discloses both intensities and
+    the choice it made.
+    """
+
+    return {
+        key: (0.0, 0.0, -mesh.vertex_area(key) * thickness * density * GRAVITY)
+        for key in mesh.vertices()
+    }
+
 
 @dataclass
 class ShellModel:

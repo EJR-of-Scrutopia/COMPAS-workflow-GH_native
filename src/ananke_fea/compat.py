@@ -16,6 +16,14 @@ detection only matches the literal word "error". The patch replaces it
 with a real export loop, matching the pattern the working displacement and
 reaction outputs already use.
 
+A third defect is documented here rather than patched: at this pin,
+`extract_results` rounds displacements to six decimal places, not six
+significant figures, before writing them to SQLite, so any sub-micron
+component quantises to zero. Fixtures in this project load-scale well
+above that floor and vault-scale results are unaffected, but member-force
+statistics computed from displacements (see bars.member_axial_forces)
+carry a noise floor on the order of EA/L times 1e-6.
+
 This module is the only place that reaches into upstream internals, and
 every patch is announced by name so a future version bump can drop it.
 """
@@ -91,9 +99,10 @@ def apply_patches() -> List[str]:
 def analyse(problem, path) -> None:
     """Solve and extract, avoiding the double-extraction bug.
 
-    problem.analyse_and_extract() runs extraction twice and inserts every
-    result row twice, so sums come out doubled while max() looks correct.
-    Splitting the call gives one row per node.
+    The double-extracting convenience wrapper that Problem offers runs
+    extraction twice and inserts every result row twice, so sums come out
+    doubled while max() looks correct. Splitting the call into analyse()
+    then extract_results() gives one row per node instead.
 
     The directory must not already exist: compas_fea2 calls input() on an
     existing path, which hangs a non-interactive run.

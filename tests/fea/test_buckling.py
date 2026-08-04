@@ -43,14 +43,31 @@ def test_a_collapse_factor_is_only_ever_present_with_a_limit_point(plate):
 
 
 def test_a_trace_that_cannot_reach_a_limit_point_reports_none(plate):
-    """One increment with a huge arc length cannot turn over, so there is no
-    collapse load to report and the code must say so."""
+    """The arc_length and max_increments here describe what this test would
+    pin once StaticRiksStep can be constructed upstream: one increment with
+    a huge arc length that cannot turn over, so there is no collapse load
+    to report. At this pin the class cannot be constructed at all, so every
+    call, including this one, exits through the construction-failure branch
+    before either parameter has any effect on what gets solved; the
+    assertions below hold either way, which is exactly why this test cannot
+    yet tell the two situations apart."""
 
     built, loads = plate
     outcome = run_riks(built, loads, arc_length=(1e3, 1e3, 1), max_increments=1)
     assert outcome["collapse_factor"] is None
     assert outcome["limit_point_found"] is False
     assert outcome["message"]
+
+
+def test_run_riks_rejects_empty_loads(plate):
+    """The same guard run_static has: an unloaded model must not solve and
+    report success. Placed before StaticRiksStep construction, so this
+    fails on the loads check today and keeps meaning once construction is
+    fixed upstream."""
+
+    built, _ = plate
+    with pytest.raises(ValueError, match="no loads"):
+        run_riks(built, {})
 
 
 def test_increments_run_is_never_passed_off_as_a_load_factor(plate):

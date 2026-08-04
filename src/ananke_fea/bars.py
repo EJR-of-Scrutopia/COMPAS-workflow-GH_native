@@ -148,13 +148,15 @@ def member_axial_forces(
 ) -> List[float]:
     """Axial force per member from the solved displacement field, in newtons.
 
-    The backend cannot record truss section forces: requesting
+    The backend cannot record section forces reliably here: requesting
     SectionForcesFieldResults never gets a recorder written into the Tcl,
-    and the stress XML comes back with empty Data for Truss elements. What
-    does extract reliably is nodal displacement, and for a linear truss
-    N = (E A / L) x axial elongation is exact, not an approximation, so
-    that is the channel used here. Negative is compression, matching the
-    export's positive_tension convention.
+    and the stress XML comes back with empty Data for these elements. What
+    does extract reliably is nodal displacement. The model is slender beams,
+    not a pin-jointed truss, but axial and bending are uncoupled in the
+    linear local frame, so along the member axis N = (E A / L) x axial
+    elongation is exact, not an approximation, and the bending the section
+    also carries does not enter this arithmetic at all. Negative is
+    compression, matching the export's positive_tension convention.
     """
 
     displacements: Dict[object, Tuple[float, float, float]] = {}

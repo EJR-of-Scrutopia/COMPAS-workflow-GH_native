@@ -66,8 +66,23 @@ def _equilibrium(contract: Mapping[str, Any]) -> Mapping[str, Any]:
     return block
 
 
-def _vector(entry: Mapping[str, Any], key: str) -> Vector:
-    raw = entry.get(key) or {}
+def _vector(entry: Mapping[str, Any], key: str, node_id: Any = None) -> Vector:
+    """Read a vector sub-object off an entry, failing loudly if it is absent.
+
+    A missing or null "vector"/"point" entry used to default to (0, 0, 0),
+    which is exactly the silently-zeroed load this package exists to catch:
+    a node that should carry a real force reads as unloaded instead, and
+    the run still reports success. Raising here, naming the node and the
+    key, matches the fail-loud style the rest of this module already uses
+    for a missing equilibrium block or a length mismatch.
+    """
+
+    raw = entry.get(key)
+    if raw is None:
+        raise ValueError(
+            "node {!r} has no {!r} entry; a missing vector must not "
+            "silently become a zero load".format(node_id, key)
+        )
     return (
         float(raw.get("x", 0.0)),
         float(raw.get("y", 0.0)),
@@ -100,8 +115,9 @@ def _vector_map(contract: Mapping[str, Any], key: str) -> Dict[int, Vector]:
 
     result: Dict[int, Vector] = {}
     for entry in _equilibrium(contract).get(key, []):
-        x, y, z = _vector(entry, "vector")
-        result[int(entry["nodeId"])] = (x * KN_TO_N, y * KN_TO_N, z * KN_TO_N)
+        node_id = int(entry["nodeId"])
+        x, y, z = _vector(entry, "vector", node_id=node_id)
+        result[node_id] = (x * KN_TO_N, y * KN_TO_N, z * KN_TO_N)
     return result
 
 

@@ -70,22 +70,23 @@ def test_analyse_refuses_a_directory_that_would_make_it_prompt(tmp_path):
 def test_analyse_and_extract_is_not_used_anywhere():
     """It double-inserts every result row, so every sum comes out doubled.
 
-    compat.py and results.py are excluded from the scan: both name
-    analyse_and_extract only in prose, to document why they avoid it
-    (compat.py's module docstring explains the double-insert bug;
-    results.py's explains why it goes through compat.analyse instead).
-    Neither calls it.
+    Matches the call pattern .analyse_and_extract( rather than the bare
+    word, so prose describing the defect cannot retrip this guard. That is
+    what lets compat.py and results.py talk about the wrapper in their own
+    docstrings (as "the double-extracting convenience wrapper") without
+    being excluded from the scan: every file under src/ananke_fea is
+    scanned, none excluded, and neither of them calls it.
     """
 
+    import re
     from pathlib import Path
 
+    pattern = re.compile(r"\.analyse_and_extract\s*\(")
     source = Path(__file__).resolve().parents[2] / "src" / "ananke_fea"
-    documenting_only = {"compat.py", "results.py"}
     offenders = [
         str(module.name)
         for module in source.rglob("*.py")
-        if "analyse_and_extract" in module.read_text(encoding="utf-8")
-        and module.name not in documenting_only
+        if pattern.search(module.read_text(encoding="utf-8"))
     ]
     assert offenders == []
 
@@ -95,18 +96,37 @@ def test_no_production_code_reads_the_garbage_stress_table():
     is meaningless for shells. Nothing of ours may read it: the honest
     route is the raw file via results._parse_resultants.
 
-    results.py itself is excluded from the scan: its stress_summary
-    docstring names step.stress_field.results only to explain why the
-    function deliberately bypasses it, not because it reads it.
+    Matches the attribute pattern stress_field.results rather than the bare
+    words, so results.py's own docstring, which explains why
+    stress_summary deliberately bypasses that attribute (calling it "the
+    step's stress field attribute" instead of naming it), cannot retrip
+    this guard. Every file under src/ananke_fea is scanned, none excluded.
     """
 
+    import re
     from pathlib import Path
 
+    pattern = re.compile(r"stress_field\.results")
     source = Path(__file__).resolve().parents[2] / "src" / "ananke_fea"
     offenders = [
         module.name
         for module in source.rglob("*.py")
-        if "stress_field.results" in module.read_text(encoding="utf-8")
-        and module.name != "results.py"
+        if pattern.search(module.read_text(encoding="utf-8"))
     ]
     assert offenders == []
+
+
+def test_the_fea_environment_pin_has_not_moved():
+    """The backend imports BeamSection, which core removed after 664ec20.
+    A moved pin fails at import in confusing ways; this fails plainly."""
+
+    import json
+    from importlib.metadata import distribution
+
+    direct = json.loads(
+        distribution("compas_fea2").read_text("direct_url.json") or "{}"
+    )
+    commit = direct.get("vcs_info", {}).get("commit_id", "")
+    assert commit.startswith("664ec20"), (
+        "compas_fea2 is installed from commit {!r}, not the 664ec20 pin".format(commit)
+    )

@@ -192,12 +192,23 @@ def run_riks(
 
     Eigenvalue buckling is not an option: OpenseesBucklingAnalysis exists but
     its jobdata emits the bare token `buckling`, which OpenSees cannot read.
-    StaticRiksStep is genuinely implemented and emits `integrator ArcLength`.
+    Only StaticRiksStep's jobdata is genuinely implemented, emitting
+    `integrator ArcLength`; the class itself cannot be constructed at this
+    pin, because the core `StaticRiksStep.__init__` hard-raises
+    NotImplementedError and the backend never registers its subclass. So
+    every call here currently exits through the honest construction-failure
+    outcome below, not a trace: see the try/except around its construction.
 
     Arc length needs tuning per model and often will not converge. When it
     does not, this returns collapse_factor None and says why. It never
     reports the last converged increment as though it were the answer.
     """
+
+    if not loads:
+        raise ValueError(
+            "no loads given: an unloaded model solves and reports success, "
+            "which is the failure mode this package exists to catch"
+        )
 
     # StaticRiksStep is not re-exported from compas_fea2.problem.
     from compas_fea2.problem import LoadCombination, Problem

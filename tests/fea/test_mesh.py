@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -66,3 +65,11 @@ def test_residual_is_read_from_the_files_own_diagnostic(contract):
 
 def test_a_missing_diagnostic_gives_none():
     assert reader.residual_norm({"equilibrium": {"diagnostics": []}}) is None
+
+
+def test_a_load_entry_without_a_vector_raises_naming_the_node():
+    """A missing vector must fail loudly, not silently become a zero load."""
+
+    synthetic = {"equilibrium": {"loads": [{"nodeId": 7}]}}
+    with pytest.raises(ValueError, match="7"):
+        reader.node_loads(synthetic)

@@ -2,9 +2,10 @@
 
 Everything here reads from the step's field results, which only exist
 because the step requested field outputs before solving and because the
-solve went through ananke_fea.compat.analyse rather than
-analyse_and_extract. Without the first there is no results table at all;
-without the second every row appears twice and every sum is doubled.
+solve went through ananke_fea.compat.analyse rather than the
+double-extracting convenience wrapper that Problem also offers. Without the
+first there is no results table at all; without the second every row
+appears twice and every sum is doubled.
 """
 
 from __future__ import annotations
@@ -69,14 +70,14 @@ def stress_summary(step, preset) -> Dict[str, Any]:
     tension at all; anything else is the signal the cable sizing responds to.
 
     The API this was originally written against does not exist: at this
-    compas_fea2_opensees pin, `step.stress_field.results` is fed by the
-    core's global-tensor DB path (table "s", 6 columns), which
+    compas_fea2_opensees pin, the step's stress field attribute is fed by
+    the core's global-tensor DB path (table "s", 6 columns), which
     compat.apply_patches() deliberately does not feed correctly (see its
     docstring). There is no exploratory attribute-chasing route to a real
     shell stress here; the backend exposes nothing usable for it. This
     reads the raw eleResponse dump apply_patches() causes OpenSees to write
     (s.out) and does the plate-theory surface-stress conversion itself,
-    bypassing step.stress_field entirely.
+    bypassing that attribute entirely.
     """
 
     part = next(iter(step.problem.model.parts))
