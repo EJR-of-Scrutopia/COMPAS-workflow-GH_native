@@ -72,6 +72,12 @@ def run_static(
     if factor is None:
         raise ValueError("unknown combination {!r}: use ULS or SLS".format(combination))
 
+    if not loads:
+        raise ValueError(
+            "no loads given: an unloaded model solves and reports success, "
+            "which is the failure mode this package exists to catch"
+        )
+
     from compas_fea2.problem import Problem, StaticStep
     from compas_fea2.results import DisplacementFieldResults, ReactionFieldResults
 

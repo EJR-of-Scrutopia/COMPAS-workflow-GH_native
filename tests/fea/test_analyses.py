@@ -58,6 +58,12 @@ def test_an_unknown_combination_is_rejected(solved_plate):
         run_static(built, loads, combination="nonsense")
 
 
+def test_an_empty_loads_mapping_is_rejected(solved_plate):
+    built, _, _ = solved_plate
+    with pytest.raises(ValueError, match="no loads"):
+        run_static(built, {})
+
+
 def test_write_round_trips(tmp_path):
     target = write(tmp_path / "out.json", {"a": 1})
     assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}

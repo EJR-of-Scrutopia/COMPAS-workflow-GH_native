@@ -106,3 +106,4 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["slow: solves the full exported mesh"]

@@ -59,3 +59,14 @@ def write(path, payload: Mapping[str, Any]) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return target
+
+
+def deflection_summary(displacement: Mapping[str, Any], span: float) -> Dict[str, Any]:
+    """Peak deflection expressed as a span ratio."""
+
+    peak = float(displacement["peak_magnitude"])
+    return {
+        "peak_magnitude": peak,
+        "span": span,
+        "span_over_deflection": (span / peak) if peak > 0.0 else None,
+    }
