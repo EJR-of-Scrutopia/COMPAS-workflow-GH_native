@@ -46,4 +46,10 @@ print('compas_cra.equilibrium imports OK')
 print('solvers:', [n for n in dir(eq) if n.endswith('_solve')])
 "
 
+echo "=== Note on the viewer ==="
+echo "compas_cra ships a viewer built on compas_view2, which imports"
+echo "compas.robots, a module COMPAS 2 removed. It cannot run here, and"
+echo "installing Qt into this environment breaks pyomo. The demo wrappers"
+echo "replace the drawing step with a printed summary instead."
+
 echo "=== Done. IPOPT must be on PATH for a solve; see scripts/ipopt_path.txt ==="
