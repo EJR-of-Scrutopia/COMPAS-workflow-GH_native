@@ -17,6 +17,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "ananke_equilibrium"
 
 IMPORT_PATTERN = re.compile(
@@ -56,13 +58,22 @@ def test_the_rhino_mirroring_pins_have_not_moved():
     never move are the pins themselves, whoever's install moved them.
     """
 
-    from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
     pins = {"numpy": "2.0.2", "scipy": "1.13.1", "compas": "2.15.1"}
+    installed = {}
+    for name in pins:
+        try:
+            installed[name] = version(name)
+        except PackageNotFoundError:
+            pytest.skip(
+                "{} is not installed here; the pin guard applies to "
+                "environments that carry the Rhino-mirroring stack".format(name)
+            )
     moved = {
-        name: version(name)
-        for name, expected in pins.items()
-        if version(name) != expected
+        name: found
+        for name, found in installed.items()
+        if found != pins[name]
     }
     assert moved == {}, (
         "the Rhino 8 mirroring pins have moved: {}".format(moved)

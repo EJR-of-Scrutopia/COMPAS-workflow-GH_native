@@ -182,6 +182,7 @@ def test_describe_strict_exits_one_on_an_unbalanced_result(tmp_path):
 
 
 def test_plot_writes_an_image(tmp_path):
+    pytest.importorskip("matplotlib")
     from ananke_equilibrium.cli.plot import plot_result
 
     out = plot_result(SNAKE, tmp_path / "diagrams.png")
@@ -190,6 +191,7 @@ def test_plot_writes_an_image(tmp_path):
 
 
 def test_plot_rejects_a_result_without_diagrams(tmp_path):
+    pytest.importorskip("matplotlib")
     from ananke_equilibrium.cli.plot import plot_result
 
     with pytest.raises(ResultError, match="no reciprocal diagrams"):
