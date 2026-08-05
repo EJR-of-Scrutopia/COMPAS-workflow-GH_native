@@ -46,13 +46,24 @@ def test_ananke_equilibrium_never_imports_ananke_fea():
     assert offenders == []
 
 
-def test_ananke_fea_is_not_importable_from_the_main_environment():
-    """A guard against someone adding it to the main install by accident."""
+def test_the_rhino_mirroring_pins_have_not_moved():
+    """The hazard, guarded directly rather than by proxy.
 
-    import importlib.util
+    An earlier version asserted compas_fea2 was absent from this
+    environment. That was the wrong invariant: the repository's own "fea"
+    extra installs compas_fea2 0.2.1 here for the worker's capability
+    reporting, and measurement showed it leaves every pin intact. What must
+    never move are the pins themselves, whoever's install moved them.
+    """
 
-    spec = importlib.util.find_spec("compas_fea2")
-    assert spec is None, (
-        "compas_fea2 is installed in the main environment, which will move "
-        "the numpy and compas pins that mirror Rhino 8"
+    from importlib.metadata import version
+
+    pins = {"numpy": "2.0.2", "scipy": "1.13.1", "compas": "2.15.1"}
+    moved = {
+        name: version(name)
+        for name, expected in pins.items()
+        if version(name) != expected
+    }
+    assert moved == {}, (
+        "the Rhino 8 mirroring pins have moved: {}".format(moved)
     )
