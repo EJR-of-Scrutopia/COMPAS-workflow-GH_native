@@ -102,7 +102,7 @@ def test_a_zero_deflection_does_not_divide_by_zero():
     assert summary["span_over_deflection"] is None
 
 
-UPLOAD = Path(__file__).resolve().parents[2] / "demo" / "upload from grasshopper"
+UPLOAD = Path(__file__).resolve().parents[2] / "bench" / "demo" / "upload from grasshopper"
 CONTRACT = UPLOAD / "Trial 2-contract.json"
 GEOMETRY = UPLOAD / "Trial 2-compas.json"
 

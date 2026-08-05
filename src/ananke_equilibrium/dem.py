@@ -4,7 +4,7 @@ This is the geometric half of the masonry pipeline: it turns a continuous
 thrust surface into blocks with contact interfaces. It says nothing about
 whether the assembly stands up. Stability under friction is coupled
 rigid-block analysis, which runs in a separate Python 3.10 environment
-because compas_cra pins pyomo 6.4.2. See scripts/setup_cra_env.sh.
+because compas_cra pins pyomo 6.4.2. See bench/scripts/setup_cra_env.sh.
 
 Contact detection tolerance matters more than it looks. Tessellated blocks
 meet along faces that are only nearly coincident, so the default tolerance

@@ -6,6 +6,9 @@
 # demo/07_compas_official.py runs those files as they are.
 set -euo pipefail
 
+# Anchor to the bench directory so upstream/ lands beside demo/ no
+# matter where the caller runs this from.
+cd "$(dirname "$0")/.."
 mkdir -p upstream
 cd upstream
 for repo in \
@@ -22,4 +25,4 @@ do
     echo "cloning ${repo}"
     git clone --depth 1 --quiet "https://github.com/${repo}.git" "${name}"
 done
-echo "Done. List the examples with: python demo/07_compas_official.py"
+echo "Done. List the examples with: python bench/demo/07_compas_official.py"

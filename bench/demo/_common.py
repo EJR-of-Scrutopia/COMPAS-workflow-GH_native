@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from typing import Optional
 
+# parents[1] is the bench directory; studies and demo data live beside us.
 REPO = Path(__file__).resolve().parents[1]
 STUDIES = REPO / "studies"
 DEMO = REPO / "demo"

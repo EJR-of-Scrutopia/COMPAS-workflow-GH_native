@@ -9,7 +9,7 @@ story; these documents go deeper.
 - [The Bench](BENCH.md) is the guide to the VS Code side: the three
   environments and why they exist, the `ananke` terminal tool, the demos,
   the structural verification strand, and where results land.
-- The [demo runbook](../demo/README.md) documents every clickable demo.
+- The [demo runbook](../bench/demo/README.md) documents every clickable demo.
 
 ## The Workflow
 

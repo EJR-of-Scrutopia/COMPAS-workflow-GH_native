@@ -6,7 +6,7 @@ import pytest
 
 from ananke_fea import mesh as reader
 
-UPLOAD = Path(__file__).resolve().parents[2] / "demo" / "upload from grasshopper"
+UPLOAD = Path(__file__).resolve().parents[2] / "bench" / "demo" / "upload from grasshopper"
 CONTRACT = UPLOAD / "Trial 2-contract.json"
 GEOMETRY = UPLOAD / "Trial 2-compas.json"
 

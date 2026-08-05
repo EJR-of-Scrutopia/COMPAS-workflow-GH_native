@@ -23,7 +23,7 @@ The Export component writes two files per design, and the bench uses both:
   thrust mesh as a real Mesh with faces, plus the form and force graphs.
   Tessellation and shell modelling start from here.
 
-Drop both into `demo/upload from grasshopper/`. Anything that analyses an
+Drop both into `bench/demo/upload from grasshopper/`. Anything that analyses an
 export discovers the available pairs at runtime and never hard-codes a
 file name; with no argument, the verification demo picks the export whose
 own solver residual is smallest.
@@ -38,17 +38,17 @@ git commit. So there are three, each built by a script:
 | Environment | Python | Built by | Holds |
 | --- | --- | --- | --- |
 | `.venv` | 3.12 | `pip install -e ".[...]"` per the root README | numpy 2.0.2, scipy 1.13.1, compas 2.15.1, compas_fd, compas_tna, compas_dem, viewers |
-| `.venv-cra` | 3.10 | `scripts/setup_cra_env.sh` | compas_cra, pyomo 6.4.2, IPOPT via idaes |
-| `.venv-fea` | 3.12 | `scripts/setup_fea_env.sh` then `scripts/install_opensees.py` | compas_fea2 @ 664ec20, compas_fea2_opensees, OpenSees 3.8 |
+| `.venv-cra` | 3.10 | `bench/scripts/setup_cra_env.sh` | compas_cra, pyomo 6.4.2, IPOPT via idaes |
+| `.venv-fea` | 3.12 | `bench/scripts/setup_fea_env.sh` then `bench/scripts/install_opensees.py` | compas_fea2 @ 664ec20, compas_fea2_opensees, OpenSees 3.8 |
 
 You never pick the interpreter yourself: every demo hands itself to the
-environment it needs through `demo/_bootstrap.py`, so the VS Code play
+environment it needs through `bench/demo/_bootstrap.py`, so the VS Code play
 button works whatever the editor has selected. The FEA test suite collects
 only where the OpenSees backend is installed, so `pytest` in the wrong
 environment skips it rather than failing.
 
 The FEA environment also needs a `.env` at the repository root pointing at
-the OpenSees executable; `scripts/install_opensees.py` writes it.
+the OpenSees executable; `bench/scripts/install_opensees.py` writes it.
 
 ## The `ananke` terminal tool
 
@@ -70,8 +70,8 @@ which tells you how far to trust everything downstream.
 
 ## The demos
 
-`demo/` holds nine clickable demos plus a gallery of upstream COMPAS
-examples; the [demo runbook](../demo/README.md) documents each one. The
+`bench/demo/` holds nine clickable demos plus a gallery of upstream COMPAS
+examples; the [demo runbook](../bench/demo/README.md) documents each one. The
 short map:
 
 ```text
@@ -107,7 +107,7 @@ stands up. It runs only in `.venv-fea`. The demo, in order:
 6. Attempts the arc-length collapse trace and reports plainly that the
    backend cannot construct it at the current pin, rather than inventing
    a number.
-7. Writes `studies/<export-name>/fea-verification.json`.
+7. Writes `bench/studies/<export-name>/fea-verification.json`.
 
 Every claim in the strand is backed by a measurement one level simpler
 than itself: the solver chain is proven against a cantilever's closed
@@ -121,7 +121,7 @@ the strand.
 
 ## Outputs
 
-Analysis results land in `studies/`, one folder per export name, as plain
+Analysis results land in `bench/studies/`, one folder per export name, as plain
 JSON the main environment can read without any FEA packages. Every result
 carries its own assumptions: material sources and factors, load
 provenance, whether self weight was included, and notes on what each

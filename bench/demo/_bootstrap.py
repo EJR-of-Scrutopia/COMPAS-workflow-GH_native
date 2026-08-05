@@ -26,7 +26,7 @@ GUARD = "ANANKE_DEMO_BOOTSTRAPPED"
 # Coupled rigid-block analysis cannot share the main interpreter: compas_cra
 # pins pyomo 6.4.2, which needs Python 3.10 or lower and numpy below 2, while
 # this project pins numpy 2.0.2 to mirror Rhino 8. It gets its own
-# environment, built by scripts/setup_cra_env.sh.
+# environment, built by bench/scripts/setup_cra_env.sh.
 CRA_VENV = ".venv-cra"
 
 # Finite element analysis cannot share the main interpreter either: the
@@ -56,8 +56,9 @@ def project_root(start: Path) -> Path:
     for candidate in [here] + list(here.parents):
         if (candidate / ".venv").is_dir():
             return candidate
-    # Nothing found: fall back to the repository layout, demo/ under the root.
-    return here.parent if here.name == "demo" else here
+    # Nothing found: fall back to the repository layout, bench/demo/ under
+    # the root.
+    return here.parents[1] if here.name == "demo" else here
 
 
 def venv_python(start: Path, name: str = ".venv") -> Path:
@@ -122,10 +123,10 @@ def ensure_venv(
         print("")
         if name == CRA_VENV:
             print("Build it with:")
-            print("    bash scripts/setup_cra_env.sh")
+            print("    bash bench/scripts/setup_cra_env.sh")
         elif name == FEA_VENV:
             print("Build it with:")
-            print("    bash scripts/setup_fea_env.sh")
+            print("    bash bench/scripts/setup_fea_env.sh")
         else:
             print("Create it, then install the project:")
             print("    py -3.12 -m venv .venv")

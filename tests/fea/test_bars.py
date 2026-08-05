@@ -10,7 +10,7 @@ from ananke_fea.bars import build_bar_model, cross_check, member_axial_forces
 from ananke_fea.compat import apply_patches, require_backend
 from ananke_fea.materials import PRESETS
 
-UPLOAD = Path(__file__).resolve().parents[2] / "demo" / "upload from grasshopper"
+UPLOAD = Path(__file__).resolve().parents[2] / "bench" / "demo" / "upload from grasshopper"
 CONTRACT = UPLOAD / "Trial 2-contract.json"
 
 pytestmark = pytest.mark.skipif(

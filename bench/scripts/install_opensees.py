@@ -13,7 +13,7 @@ is a manual step, and this script is everything after it.
 Download ``OpenSees3.8.0-x64.exe`` from that page. It is a self-extracting
 archive that produces a folder containing ``bin/OpenSees.exe``. Then run:
 
-    .venv/Scripts/python.exe scripts/install_opensees.py <path>
+    .venv/Scripts/python.exe bench/scripts/install_opensees.py <path>
 
 where <path> is either OpenSees.exe itself or any folder above it. The
 script finds the executable, writes the .env file that compas_fea2_opensees
@@ -27,7 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FEA_VENV = ROOT / ".venv-fea"
 ENV_FILE = ROOT / ".env"
 
@@ -83,7 +83,7 @@ def check_backend() -> int:
     if not python.is_file():
         print("")
         print("The FEA environment is missing. Build it with:")
-        print("    bash scripts/setup_fea_env.sh")
+        print("    bash bench/scripts/setup_fea_env.sh")
         return 1
     probe = (
         "import compas_fea2_opensees as b;"

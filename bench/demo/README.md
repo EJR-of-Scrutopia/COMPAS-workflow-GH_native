@@ -36,7 +36,7 @@ To run a script without opening a window, set `ANANKE_DEMO_NO_SHOW=1`.
 
 `demo/01_solve_pavilion.py`
 
-Reads `studies/pavilion/problem.json`, solves the thrust network through the
+Reads `bench/studies/pavilion/problem.json`, solves the thrust network through the
 same worker Grasshopper drives, and reports span, rise, member force range,
 and a global equilibrium check.
 
@@ -62,7 +62,7 @@ edge length in the force diagram is a force magnitude in the form diagram.
 
 `demo/03_load_cases.py`
 
-Seven load cases from `studies/pavilion/cases.json`, solved in one command,
+Seven load cases from `bench/studies/pavilion/cases.json`, solved in one command,
 compared in one table, and shown side by side in the viewer.
 
 This is the argument for the bench. Read down the table:
@@ -86,7 +86,7 @@ interfaces, and shows the assembly against the translucent thrust surface.
 Say plainly what this is: **geometry**. Blocks and interfaces, not stability.
 Whether the assembly stands up, and what the falsework carries at each build
 step, is coupled rigid-block analysis. That runs in a separate Python 3.10
-environment built by `scripts/setup_cra_env.sh`, because `compas_cra` pins
+environment built by `bench/scripts/setup_cra_env.sh`, because `compas_cra` pins
 `pyomo 6.4.2`, which cannot coexist with the NumPy 2 this project pins to
 mirror Rhino 8.
 
@@ -161,7 +161,7 @@ Runs in `.venv-fea`, a third project environment beside `.venv` and
 `.venv-cra`: `compas_fea2` is pinned to a mid-2025 commit because the
 OpenSees backend it targets was last pushed before the core removed
 `BeamSection`, and that pin should not leak into the Rhino-mirroring main
-environment. Build it with `bash scripts/setup_fea_env.sh`. Like every other
+environment. Build it with `bash bench/scripts/setup_fea_env.sh`. Like every other
 demo here, the play button hands the script to the right interpreter
 automatically if a different one is selected; from `.venv` you will see
 `Switching from ... to ...\.venv-fea\Scripts\python.exe` before it runs.
@@ -185,7 +185,7 @@ utilisation; sweeps four load factors to find where the shell goes into
 tension; sizes a cable if it does; traces the load path by arc length
 (`StaticRiksStep` cannot be constructed at this pin, so this reports why
 rather than inventing a collapse factor); and writes everything to
-`studies/<export-name>/fea-verification.json`.
+`bench/studies/<export-name>/fea-verification.json`.
 
 The cross-check's verdict is split, and both halves are printed. Reactions
 balance the factored applied load essentially exactly on every shipped
@@ -206,7 +206,7 @@ reading.
 Timing: measured directly, this demo's own full-mesh shell solves, under its
 real per-node TNA export loads, take on the order of a couple of seconds
 each, and the whole demo runs end to end in about 11 seconds. That is not
-what `scripts/measure_mesh_density.py` reports (124.09 seconds cold, 121.28
+what `bench/scripts/measure_mesh_density.py` reports (124.09 seconds cold, 121.28
 seconds warm) for what looks like the same mesh: that script's own benchmark
 applies one uniform load across nearly every free node in a single load
 pattern, and that pattern, not mesh size, is what makes its number large, as

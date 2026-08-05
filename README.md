@@ -24,22 +24,22 @@ boundary honest in both directions.
 2 Export    Export component, once with Format=contract and once with
             Format=compas -> "<name>-contract.json" (the solved numbers)
             and "<name>-compas.json" (real COMPAS geometry).
-            Drop both into demo/upload from grasshopper/.
+            Drop both into bench/demo/upload from grasshopper/.
 3 Inspect   Bench: `ananke describe` and `ananke check` report units,
             supports, the solver's own residual, and whether loads and
             reactions cancel, before anything heavier runs.
-4 Verify    demo/09_structural_verification.py answers the engineer's
-            question: a bar model cross-checked against the TNA solve,
+4 Verify    bench/demo/09_structural_verification.py answers the
+            engineer's question: a bar model cross-checked against TNA,
             then shell stress utilisation, deflection, tension onset
             under rising load, provisional cable sizing where tension
             appears, and an honest report where the toolchain cannot
             answer (buckling at the current pin).
 5 Explore   demos 01 to 08: diagrams, load cases, masonry tessellation,
             coupled rigid-block stability, robot placement, viewers.
-6 Record    studies/<export-name>/fea-verification.json. Every number
-            carries the assumptions it was computed under: material
-            sources, load provenance, whether self weight was included,
-            what the checks can and cannot falsify.
+6 Record    bench/studies/<export-name>/fea-verification.json. Every
+            number carries the assumptions it was computed under:
+            material sources, load provenance, whether self weight was
+            included, what the checks can and cannot falsify.
 7 Decide    Back to Grasshopper: thicken, add the sized cable, change
             the pattern, re-form-find, export again.
 ```
@@ -207,18 +207,18 @@ troubleshooting.
 
 Everything after Export happens here, without Rhino running. The bench is
 documented in depth in [docs/BENCH.md](docs/BENCH.md) and the
-[demo runbook](demo/README.md); the short version:
+[demo runbook](bench/demo/README.md); the short version:
 
 ```text
 src/ananke_equilibrium/cli/  the `ananke` terminal tool: health, check,
                              describe, solve, plot, view, sweep
 src/ananke_fea/              structural verification: shell and bar models
                              through OpenSees, tension onset, cable sizing
-demo/                        clickable demos 01 to 09, each self-bootstraps
+bench/demo/                  clickable demos 01 to 09, each self-bootstraps
                              into the interpreter it needs
-demo/upload from grasshopper/  where exported JSON pairs land
-studies/                     analysis outputs, one folder per export
-scripts/                     environment setup and measurement scripts
+bench/demo/upload from grasshopper/  where exported JSON pairs land
+bench/studies/               analysis outputs, one folder per export
+bench/scripts/               environment setup and measurement scripts
 ```
 
 Three Python environments, because the ecosystem's pins are irreconcilable
@@ -231,8 +231,8 @@ in one interpreter:
 | `.venv-fea` | 3.12 | Finite elements (compas_fea2 pinned to a git commit + OpenSees) |
 
 The demos pick their own interpreter at launch, so the play button works
-whatever VS Code has selected. Setup is scripted: `scripts/setup_cra_env.sh`,
-`scripts/setup_fea_env.sh`, `scripts/install_opensees.py`.
+whatever VS Code has selected. Setup is scripted: `bench/scripts/setup_cra_env.sh`,
+`bench/scripts/setup_fea_env.sh`, `bench/scripts/install_opensees.py`.
 
 ## Working copies
 
@@ -250,7 +250,7 @@ VS code/COMPAS-Workflow-bench/  linked worktree
 
 Same repository underneath, so commits made in either appear in both after
 a merge. Grasshopper exports land in the bench checkout's
-`demo/upload from grasshopper/` folder.
+`bench/demo/upload from grasshopper/` folder.
 
 ## Python development setup
 
@@ -286,10 +286,11 @@ src/ananke_equilibrium/          public contracts, adapters, codec, and worker
 src/ananke_equilibrium/cli/      the `ananke` bench terminal tool
 src/ananke_fea/                  structural verification (runs in .venv-fea)
 src/tree_forest_compas/          compatibility solver namespace
-demo/                            clickable bench demos 01 to 09
-demo/upload from grasshopper/    exported JSON pairs from the plugin
-studies/                         bench analysis outputs, one folder per export
-scripts/                         bench environment setup and measurement
+bench/demo/                      clickable bench demos 01 to 09
+bench/demo/upload from grasshopper/  exported JSON pairs from the plugin
+bench/studies/                   analysis outputs, one folder per export
+bench/scripts/                   environment setup and measurement
+scripts/                         Rhino-side diagnostic scripts
 tests/                           headless contract, worker, and solver tests
 tests/fea/                       FEA suite; collects only where the OpenSees
                                  backend is installed (.venv-fea)

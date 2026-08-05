@@ -63,13 +63,13 @@ scripts/rhino_environment.txt
 scripts/rhino_smoke_fd.txt
 
 # Study results are build products; the problem file is the source.
-studies/**/results/
+bench/studies/**/results/
 
 # CRA runs on its own Python 3.10 interpreter; see scripts/setup_cra_env.sh
 .venv-cra/
 .venv-fea/
-demo/*.png
-!demo/pavilion-result.json
+bench/demo/*.png
+!bench/demo/pavilion-result.json
 
 # Upstream COMPAS example repos, fetched by scripts/fetch_compas_examples.sh
 upstream/

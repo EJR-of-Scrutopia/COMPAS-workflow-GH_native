@@ -4,7 +4,7 @@ The exported vault is 2521 vertices and 2400 faces. Whether that solves in
 seconds or in hours decides whether the rest of this package works on the
 mesh as exported or on a coarsened one. Run this before relying on either.
 
-    .venv-fea/Scripts/python.exe scripts/measure_mesh_density.py
+    .venv-fea/Scripts/python.exe bench/scripts/measure_mesh_density.py
 
 Measured 2026-08-04, OpenSees backend, this machine:
 
@@ -69,8 +69,8 @@ from ananke_fea.materials import PRESETS
 from ananke_fea.mesh import load_thrust_mesh
 from ananke_fea.model import build_shell_model
 
-ROOT = Path(__file__).resolve().parents[1]
-GEOMETRY = ROOT / "demo" / "upload from grasshopper" / "Trial 2-compas.json"
+ROOT = Path(__file__).resolve().parents[2]
+GEOMETRY = ROOT / "bench" / "demo" / "upload from grasshopper" / "Trial 2-compas.json"
 THICKNESS = 0.20
 
 

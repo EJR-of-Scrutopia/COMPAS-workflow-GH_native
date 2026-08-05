@@ -47,8 +47,9 @@ from ananke_fea.model import GRAVITY, build_shell_model, self_weight_loads  # no
 from ananke_fea.results import deflection_summary, displacement_summary  # noqa: E402
 from ananke_fea.results import reaction_summary, stress_summary, write  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-UPLOAD = ROOT / "demo" / "upload from grasshopper"
+# parent.parent is the bench directory, which holds demo/ and studies/.
+BENCH = Path(__file__).resolve().parent.parent
+UPLOAD = BENCH / "demo" / "upload from grasshopper"
 
 MATERIAL = "concrete"
 THICKNESS = 0.20
@@ -75,7 +76,7 @@ SPAN = 20.3
 # TNA export loads (run_static groups them into many small load patterns,
 # not one uniform one), a full-mesh solve takes on the order of a couple of
 # seconds, and the whole five-solve demo runs end to end in about 11
-# seconds. scripts/measure_mesh_density.py separately measures about two
+# seconds. bench/scripts/measure_mesh_density.py separately measures about two
 # minutes (124.09s cold, 121.28s warm) for the same mesh, but that number
 # is its own benchmark's artifact: it applies one uniform load across
 # nearly every free node in a single load pattern, which this script's
@@ -118,7 +119,7 @@ def choose_export() -> tuple:
 
 def main() -> int:
     name, pair = choose_export()
-    study = ROOT / "studies" / name.lower().replace(" ", "-")
+    study = BENCH / "studies" / name.lower().replace(" ", "-")
 
     require_backend()
     apply_patches()

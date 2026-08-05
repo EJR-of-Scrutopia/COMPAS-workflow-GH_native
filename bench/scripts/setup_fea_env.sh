@@ -29,7 +29,7 @@
 # https://opensees.berkeley.edu/ (the page drives it through JavaScript, so it
 # cannot be scripted), then run:
 #
-#     .venv/Scripts/python.exe scripts/install_opensees.py <extracted folder>
+#     .venv/Scripts/python.exe bench/scripts/install_opensees.py <extracted folder>
 #
 # That writes the .env the backend reads. compas_fea2 needs four more keys
 # there besides EXE (VERBOSE, POINT_OVERLAP, GLOBAL_TOLERANCE, PRECISION);
