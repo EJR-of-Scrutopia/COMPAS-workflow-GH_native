@@ -364,10 +364,15 @@ class HeightControl(Contract):
             "force_scale": "q",
             "q_scale": "q",
             "target_surface": "target",
+            "auto": "natural",
+            "equilibrium": "natural",
+            "": "natural",
         }
         mode = aliases.get(mode, mode)
-        if mode not in ("zmax", "q", "target"):
-            raise ContractError("Height mode must be Crown Height, Force Scale, or Target.")
+        if mode not in ("zmax", "q", "target", "natural"):
+            raise ContractError(
+                "Height mode must be Crown Height, Force Scale, Natural, or Target."
+            )
         value = (
             _finite_float(self.value, "Height control value")
             if self.value is not None
@@ -375,6 +380,11 @@ class HeightControl(Contract):
         )
         if mode in ("zmax", "q") and value is None:
             raise ContractError("{} height control requires a value.".format(mode))
+        if mode == "natural" and value is not None:
+            raise ContractError(
+                "Natural height control carries no value; it solves to the "
+                "equilibrium height of the current force densities."
+            )
         if mode == "target" and self.target is None:
             raise ContractError("Target height control requires target geometry.")
         object.__setattr__(self, "mode", mode)
@@ -392,10 +402,16 @@ class HeightControl(Contract):
 
 @dataclass(frozen=True)
 class TNAConfig(Contract):
-    """Horizontal and vertical TNA iteration controls."""
+    """Horizontal and vertical TNA iteration controls.
+
+    ``horizontal_iterations`` of ``None`` requests the auto-converging
+    horizontal solve: the worker iterates in blocks until the reciprocity
+    angle falls below its threshold or the hard cap is reached.
+    """
 
     horizontal_alpha: float = 100.0
-    horizontal_iterations: int = 100
+    horizontal_iterations: Optional[int] = None
+    horizontal_method: str = "iterative"
     vertical_iterations: int = 100
     tolerance: float = 1.0e-3
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -404,15 +420,32 @@ class TNAConfig(Contract):
         alpha = _finite_float(self.horizontal_alpha, "horizontal_alpha")
         if not 0.0 <= alpha <= 100.0:
             raise ContractError("horizontal_alpha must be between 0 and 100.")
-        horizontal = int(self.horizontal_iterations)
+        horizontal = (
+            int(self.horizontal_iterations)
+            if self.horizontal_iterations is not None
+            else None
+        )
         vertical = int(self.vertical_iterations)
-        if horizontal < 1 or vertical < 1:
+        if (horizontal is not None and horizontal < 1) or vertical < 1:
             raise ContractError("TNA iteration counts must be positive.")
+        method = str(self.horizontal_method or "iterative").strip().lower()
+        if method == "":
+            method = "iterative"
+        if method not in ("iterative", "algebraic"):
+            raise ContractError(
+                "horizontal_method must be 'iterative' or 'algebraic'."
+            )
+        if method == "algebraic" and alpha != 100.0:
+            raise ContractError(
+                "The algebraic horizontal method fixes the form diagram; "
+                "horizontal_alpha must be 100."
+            )
         tolerance = _finite_float(self.tolerance, "TNA tolerance")
         if tolerance <= 0.0:
             raise ContractError("TNA tolerance must be greater than zero.")
         object.__setattr__(self, "horizontal_alpha", alpha)
         object.__setattr__(self, "horizontal_iterations", horizontal)
+        object.__setattr__(self, "horizontal_method", method)
         object.__setattr__(self, "vertical_iterations", vertical)
         object.__setattr__(self, "tolerance", tolerance)
         object.__setattr__(self, "metadata", _mapping(self.metadata))

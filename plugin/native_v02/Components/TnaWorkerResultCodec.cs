@@ -185,11 +185,18 @@ internal static class TnaWorkerResultCodec
             ["height_mode"] =
                 TnaControlDto.NormaliseHeightMode(control.HeightMode),
             ["height_value"] =
-                control.HeightValue.ToString("R", CultureInfo.InvariantCulture),
+                control.HeightValue?.ToString(
+                    "R",
+                    CultureInfo.InvariantCulture) ?? "natural",
             ["horizontal_alpha"] =
                 control.HorizontalAlpha.ToString("R", CultureInfo.InvariantCulture),
             ["horizontal_iterations"] =
-                control.HorizontalIterations.ToString(CultureInfo.InvariantCulture),
+                control.HorizontalIterations?.ToString(
+                    CultureInfo.InvariantCulture) ?? "auto",
+            ["horizontal_method"] = string.IsNullOrWhiteSpace(
+                control.HorizontalMethod)
+                ? "iterative"
+                : control.HorizontalMethod.Trim().ToLowerInvariant(),
             ["vertical_iterations"] =
                 control.VerticalIterations.ToString(CultureInfo.InvariantCulture),
             ["tolerance"] =

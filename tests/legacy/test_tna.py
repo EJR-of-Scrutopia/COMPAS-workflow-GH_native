@@ -295,21 +295,40 @@ class SolveTnaProblemTests(unittest.TestCase):
                 tuple(float(value) for value in stored_residual),
             )
 
-    def test_nonzero_density_is_rejected_until_selfweight_sign_is_safe(self):
+    def test_nonzero_density_runs_selfweight_and_persists_effective_loads(self):
+        """RhinoVault-parity selfweight: a negative density recomputes each
+        vertex load from its current 3D tributary area during the vertical
+        solve, and the final effective loads are written back to the form
+        so the reported loads and global equilibrium stay truthful."""
+
         vertices, faces = grid_vertices_faces(n=3)
         problem = register_tna_pattern(vertices=vertices, faces=faces)
 
-        with self.assertRaisesRegex(
-            TNAInputError,
-            "explicit signed nodal pz",
-        ):
-            solve_tna_problem(
-                problem,
-                pz={4: -1.0},
-                vertical_mode="q",
-                q_scale=-1.0,
-                density=1.0,
-            )
+        session = solve_tna_problem(
+            problem,
+            pz=0.0,
+            vertical_mode="q",
+            q_scale=-1.0,
+            density=-1.0,
+        )
+
+        total_load = sum(
+            vector[2] for vector in session.effective_form_loads.values()
+        )
+        self.assertLess(total_load, -0.5)
+        # With geometry-dependent selfweight the persisted loads come from
+        # the final geometry while the residuals come from the last solver
+        # iterate, so global balance closes to the vertical tolerance, not
+        # machine precision.
+        self.assertAlmostEqual(
+            sum(
+                vector[2]
+                for vector in session.support_reactions_by_form.values()
+            ),
+            -total_load,
+            delta=1e-2,
+        )
+        self.assertLess(session.diagnostics["global_force_error_norm"], 1e-2)
 
     def test_q_mode_reports_effective_scaled_q(self):
         problem = register_tna_pattern(

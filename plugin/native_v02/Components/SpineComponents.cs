@@ -404,22 +404,6 @@ public sealed class SupportsComponent : NativePreviewComponentBase
             };
             EnsureValid(anchored);
 
-            var supportSet = nodeIds.ToHashSet();
-            int heldEdges = topology.Edges.Count(
-                edge =>
-                    supportSet.Contains(edge.U) &&
-                    supportSet.Contains(edge.V));
-            if (heldEdges > 0)
-            {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    $"{heldEdges} source edge(s) have anchors at both ends. " +
-                    "Those are held boundary segments, not unsupported " +
-                    "openings, so they cannot receive the requested sag. " +
-                    "Anchor only the true structural supports; intermediate " +
-                    "boundary vertices should stay free so openings can sag.");
-            }
-
             SetPreview(topology, nodeIds);
             Message = $"{nodeIds.Length} explicit anchors";
             data.SetData(0, new AnchoredPatternGoo(anchored));
@@ -445,7 +429,7 @@ public sealed class SupportsComponent : NativePreviewComponentBase
             args.Display.DrawPoint(
                 point,
                 PointStyle.RoundControlPoint,
-                7,
+                4,
                 Color.FromArgb(30, 165, 85));
         }
     }
@@ -502,19 +486,27 @@ public sealed class SupportsComponent : NativePreviewComponentBase
 }
 
 /// <summary>
-/// Close the shared spine's setup: one load vector applied to every node or
-/// an explicit subset, bundled with the Anchored Pattern into the Problem
-/// both solvers take. Radical simplicity is the point: one vector, optional
-/// node ids, one factor. Units are metadata already carried on the Pattern.
+/// Close the shared spine's setup: one load vector, bundled with the
+/// Anchored Pattern into the Problem both solvers take. Without node IDs
+/// the vector is a surface load: the worker weights it by each node's plan
+/// tributary area, so the funicular shape does not depend on how finely
+/// the pattern happens to be meshed (the same discretisation RhinoVault
+/// uses for selfweight). Explicit node IDs apply the vector directly as
+/// point loads. Radical simplicity is still the point: one vector,
+/// optional node ids, one factor.
 /// </summary>
-public sealed class LoadsComponent : NativeComponentBase
+public sealed class LoadsComponent : NativePreviewComponentBase
 {
+    private readonly List<Line> _previewArrows = new();
+    private BoundingBox _clippingBox = BoundingBox.Empty;
+
     public LoadsComponent()
         : base(
             "Loads",
             "Loads",
-            "Apply one load vector to every node or an explicit subset, " +
-            "producing the Problem the solvers take.",
+            "Apply one load vector as a tributary-area surface load, or " +
+            "as point loads on explicit nodes, producing the Problem the " +
+            "solvers take.",
             ComponentCategories.Model,
             "load_case")
     {
@@ -522,6 +514,10 @@ public sealed class LoadsComponent : NativeComponentBase
 
     public override Guid ComponentGuid =>
         new("3f9b7d21-6c84-4e0a-b5d9-8a1c2e4f6072");
+
+    public override bool IsPreviewCapable => true;
+
+    public override BoundingBox ClippingBox => _clippingBox;
 
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
@@ -535,14 +531,19 @@ public sealed class LoadsComponent : NativeComponentBase
         parameters.AddVectorParameter(
             "Vector",
             "V",
-            "Load vector applied to every target node.",
+            "Load vector. Without Node IDs it is a surface load: the TNA " +
+            "solve applies it selfweight-style to the built surface's " +
+            "own tributary areas, updating as the shape rises (RhinoVault's " +
+            "loading model); FD approximates it on plan areas. With Node " +
+            "IDs it acts directly on each listed node.",
             GH_ParamAccess.item,
             new Vector3d(0.0, 0.0, -1.0));
         parameters.AddIntegerParameter(
             "Node IDs",
             "ID",
-            "Explicit zero-based topology node IDs to load. Empty applies " +
-            "the Vector to every node.",
+            "Explicit zero-based topology node IDs to load as point " +
+            "loads. Empty applies the Vector as an area-weighted surface " +
+            "load over the whole pattern.",
             GH_ParamAccess.list);
         parameters.AddNumberParameter(
             "Factor",
@@ -608,20 +609,20 @@ public sealed class LoadsComponent : NativeComponentBase
                     "The factored load vector must remain finite.");
             }
 
-            bool everyNode = nodeIds.Count == 0;
+            bool surfaceLoad = nodeIds.Count == 0;
             var loadCase = new LoadCaseDto
             {
                 TopologyHash = topology.TopologyHash,
                 Name = "load",
-                Distribution = everyNode ? "uniform_nodes" : "point",
+                Distribution = surfaceLoad ? "tributary_area" : "point",
                 Points = Array.Empty<Point3Dto>(),
-                NodeIds = everyNode
+                NodeIds = surfaceLoad
                     ? Array.Empty<int>()
                     : nodeIds.ToArray(),
-                Vectors = everyNode
+                Vectors = surfaceLoad
                     ? Array.Empty<Point3Dto>()
                     : new[] { factored },
-                BaseVector = everyNode ? factored : null,
+                BaseVector = surfaceLoad ? factored : null,
                 Factor = 1.0,
                 CoordinateSystem = "world",
                 Provenance = new Dictionary<string, string>
@@ -637,7 +638,10 @@ public sealed class LoadsComponent : NativeComponentBase
             var problem = new ProblemDto { Anchored = sup, Load = loadCase };
             EnsureValid(problem);
 
-            Message = everyNode ? "every node" : $"{nodeIds.Count} node(s)";
+            SetPreview(topology, nodeIds, factored);
+            Message = surfaceLoad
+                ? "surface load"
+                : $"{nodeIds.Count} node(s)";
             data.SetData(0, new ProblemGoo(problem));
         }
         catch (Exception error)
@@ -645,6 +649,56 @@ public sealed class LoadsComponent : NativeComponentBase
             Message = "Invalid";
             ReportException("Loads failed", error);
         }
+    }
+
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        _previewArrows.Clear();
+        _clippingBox = BoundingBox.Empty;
+    }
+
+    protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
+    {
+        foreach (Line arrow in _previewArrows)
+            args.Display.DrawArrow(arrow, Color.FromArgb(238, 135, 35));
+    }
+
+    /// <summary>
+    /// One arrow per loaded node, pointing along the load vector into the
+    /// node. Arrow length is proportional to the vector's magnitude: one
+    /// force unit draws at three percent of the pattern's plan diagonal,
+    /// capped at fifteen percent so a heavy case cannot swallow the model.
+    /// </summary>
+    private void SetPreview(
+        TopologyDto topology,
+        IReadOnlyList<int> nodeIds,
+        Point3Dto factored)
+    {
+        _previewArrows.Clear();
+        var vector = new Vector3d(factored.X, factored.Y, factored.Z);
+        double magnitude = vector.Length;
+        if (magnitude <= 1.0e-12 || topology.Vertices.Count == 0)
+        {
+            _clippingBox = BoundingBox.Empty;
+            return;
+        }
+
+        Point3d[] points = topology.Vertices
+            .Select(TnaWorkflowPreview.Point)
+            .ToArray();
+        double diagonal = new BoundingBox(points).Diagonal.Length;
+        double length = Math.Min(
+            magnitude * 0.03 * diagonal,
+            0.15 * diagonal);
+        Vector3d offset = vector * (length / magnitude);
+
+        IEnumerable<int> targets = nodeIds.Count > 0
+            ? nodeIds
+            : Enumerable.Range(0, topology.Vertices.Count);
+        foreach (int id in targets)
+            _previewArrows.Add(new Line(points[id] - offset, points[id]));
+        _clippingBox = TnaWorkflowPreview.Box(_previewArrows);
     }
 
     private static void EnsureValid(ContractDto contract)

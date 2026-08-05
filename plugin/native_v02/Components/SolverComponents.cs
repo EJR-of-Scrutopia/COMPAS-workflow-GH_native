@@ -16,112 +16,6 @@ using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components;
 
-/// <summary>
-/// Bundle the shared reciprocal solve settings both the staged and one-shot
-/// TNA Solve paths take. Crown height/force-scale mode and value stay on TNA
-/// Solve itself; only the numerical controls live here so one Control can
-/// feed either path without carrying design decisions that belong upstream.
-/// </summary>
-public sealed class ControlComponent : NativeComponentBase
-{
-    public ControlComponent()
-        : base(
-            "Control",
-            "Control",
-            "Bundle the horizontal/vertical reciprocal solve controls " +
-            "shared by staged and one-shot TNA solving. Radial and other " +
-            "high-valence patterns need far more horizontal iterations " +
-            "than a quad grid; raise them until the reported reciprocity " +
-            "angle falls to near zero.",
-            ComponentCategories.FormFinding,
-            "tna_control")
-    {
-    }
-
-    public override Guid ComponentGuid =>
-        new("a6d19e73-5f2b-4c8e-b0a4-9c3e7d1f5b28");
-
-    protected override void RegisterInputParams(
-        GH_InputParamManager parameters)
-    {
-        parameters.AddNumberParameter(
-            "Horizontal Alpha",
-            "Alpha",
-            "Horizontal reciprocal update factor from 0 to 100.",
-            GH_ParamAccess.item,
-            100.0);
-        parameters.AddIntegerParameter(
-            "Horizontal Iterations",
-            "HI",
-            "Maximum horizontal reciprocal iterations.",
-            GH_ParamAccess.item,
-            100);
-        parameters.AddIntegerParameter(
-            "Vertical Iterations",
-            "VI",
-            "Maximum vertical equilibrium iterations.",
-            GH_ParamAccess.item,
-            100);
-        parameters.AddNumberParameter(
-            "Tolerance",
-            "Tol",
-            "Positive vertical solve tolerance.",
-            GH_ParamAccess.item,
-            1.0e-3);
-    }
-
-    protected override void RegisterOutputParams(
-        GH_OutputParamManager parameters)
-    {
-        parameters.AddParameter(
-            new TnaControlParam(),
-            "Control",
-            "CTL",
-            "Typed TNA numerical controls shared by staged and one-shot " +
-            "TNA solving.",
-            GH_ParamAccess.item);
-    }
-
-    protected override void SolveInstance(IGH_DataAccess data)
-    {
-        double alpha = 100.0;
-        int horizontalIterations = 100;
-        int verticalIterations = 100;
-        double tolerance = 1.0e-3;
-        data.GetData(0, ref alpha);
-        data.GetData(1, ref horizontalIterations);
-        data.GetData(2, ref verticalIterations);
-        data.GetData(3, ref tolerance);
-
-        var control = new TnaControlDto
-        {
-            HorizontalAlpha = alpha,
-            HorizontalIterations = horizontalIterations,
-            VerticalIterations = verticalIterations,
-            Tolerance = tolerance,
-            Provenance = new Dictionary<string, string>
-            {
-                ["component"] = "Control"
-            }
-        };
-        IReadOnlyList<string> errors = control.Validate();
-        if (errors.Count > 0)
-        {
-            Message = "Invalid";
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Error,
-                string.Join(" ", errors));
-            return;
-        }
-
-        Message =
-            $"α={control.HorizontalAlpha:G4} · " +
-            $"HI={control.HorizontalIterations} · " +
-            $"VI={control.VerticalIterations}";
-        data.SetData(0, new TnaControlGoo(control));
-    }
-}
-
 public sealed record TnaRelaxTaskResult(
     TnaPreparedDto? Prepared,
     Exception? Error,
@@ -239,8 +133,17 @@ public sealed class TnaRelaxComponent :
         }
 
         TnaRelaxTaskResult result;
-        if (!GetSolveResults(data, out result!))
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
         {
+            // A background task cancelled by a mid-drag solution race is
+            // not a verdict on the current inputs, and Grasshopper does
+            // not always follow a late cancellation with another
+            // solution: the canvas stayed on "Cancelled" with an empty
+            // output and no boundary preview until something forced a
+            // re-solve. Recompute synchronously for the solution that is
+            // actually completing.
             result = ComputeAsync(
                     ContractJson.DeepClone(fallbackPattern!),
                     fallbackConfig!,
@@ -460,7 +363,7 @@ public sealed class TnaRelaxComponent :
             ForceDensity = q,
             Relax = true,
             BoundarySag = sagPercent / 100.0,
-            SagIterations = 10,
+            SagIterations = 50,
             SagTolerance = 0.01,
             FixedNodeIds = Array.Empty<int>(),
             Metadata = new Dictionary<string, string>(
@@ -575,42 +478,72 @@ public sealed record TnaSolveTaskResult(
 /// <summary>
 /// Solve a Relaxed stage's prepared Pattern against the load case its own
 /// Problem always carries, and decode the worker's unified envelope into
-/// the shared Result contract. This is the redesigned TNA Equilibrium: no
-/// separate Load Case input and no default-load fallback, because RLX's
-/// Problem already guarantees one.
+/// the shared Result contract. A blank Height solves to the natural
+/// equilibrium height of the current force densities and reports it; a
+/// number solves the vertical scale so the crown lands exactly there. A
+/// blank Iterations runs the worker's auto-converging horizontal solve,
+/// so radial and other slow-converging patterns no longer need a manually
+/// tuned count. Alongside the Result envelope the component returns the
+/// thrust network as native Grasshopper geometry, so the solved vault can
+/// be used directly, not only visualised.
 /// </summary>
-public sealed class TnaSolveComponent :
+public class TnaSolveComponent :
     NativeTaskComponentBase<TnaSolveTaskResult>
 {
-    private static readonly ComponentValueListSpec[] ValueLists =
-    {
-        new(
-            1,
-            "Equilibrium Mode",
-            new (string Label, string Value)[]
-            {
-                ("Crown Height", "zmax"),
-                ("Force Scale (signed q)", "q")
-            },
-            "zmax")
-    };
+    // Lazily assigned: a Mesh constructor touches Rhino's native runtime,
+    // which must not happen while Grasshopper merely enumerates components.
+    private Mesh? _previewMesh;
+    private readonly List<Point3d> _previewSupports = new();
+    private BoundingBox _clippingBox = BoundingBox.Empty;
 
     public TnaSolveComponent()
+        : this(
+            "TNA Solve",
+            "TNA Solve",
+            "Solve a Relaxed Pattern against the load case its Problem " +
+            "carries. Blank Height finds the natural equilibrium height; " +
+            "a number solves exactly to that crown height. Blank " +
+            "Iterations auto-converges the reciprocal diagrams.")
+    {
+    }
+
+    protected TnaSolveComponent(
+        string name,
+        string nickname,
+        string description)
         : base(
-            "TNA Solve",
-            "TNA Solve",
-            "Solve a Relaxed Pattern by crown height or signed q scale " +
-            "against the load case its Problem carries.",
+            name,
+            nickname,
+            description,
             ComponentCategories.FormFinding,
             "tna_solve")
     {
+        for (int index = 1; index < Params.Output.Count; index++)
+        {
+            if (Params.Output[index] is IGH_PreviewObject preview)
+                preview.Hidden = true;
+        }
     }
+
+    /// <summary>
+    /// The worker-side horizontal solver this component requests;
+    /// the algebraic sibling overrides it.
+    /// </summary>
+    protected virtual string SolveMethod => "iterative";
+
+    /// <summary>
+    /// Whether the component carries the Iterations input. The algebraic
+    /// sibling has no iteration knob worth exposing, so it drops the port
+    /// and Run moves up one index.
+    /// </summary>
+    protected virtual bool HasIterationsInput => true;
 
     public override Guid ComponentGuid =>
         new("9d2f4b86-7e1a-4c50-b3f7-6a8e0c9d1235");
 
-    private protected override IReadOnlyList<ComponentValueListSpec>
-        SuggestedValueLists => ValueLists;
+    public override bool IsPreviewCapable => true;
+
+    public override BoundingBox ClippingBox => _clippingBox;
 
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
@@ -622,33 +555,37 @@ public sealed class TnaSolveComponent :
             "Relaxed Pattern paired with the Problem carrying its load " +
             "case, from TNA Relax.",
             GH_ParamAccess.item);
-        parameters.AddTextParameter(
-            "Mode",
-            "M",
-            "Crown Height (zmax), or Force Scale as a signed q scale with " +
-            "force/length units. Under positive=tension, compression uses " +
-            "negative q; this is not a direct kN member force.",
-            GH_ParamAccess.item,
-            "zmax");
         parameters.AddNumberParameter(
-            "Value",
-            "V",
-            "Target crown Z in Crown Height mode; signed q scale in Force " +
-            "Scale mode.",
-            GH_ParamAccess.item,
-            5.0);
-        parameters.AddParameter(
-            new TnaControlParam(),
-            "Control",
-            "CTL",
-            "Optional solver controls from Control. Empty uses alpha 100 " +
-            "with 100 horizontal and vertical iterations. Radial and other " +
-            "high-valence patterns need far more horizontal iterations than " +
-            "a quad grid; raise them until the reported reciprocity angle " +
-            "falls to near zero. Mode and Value on this component override " +
-            "the ones carried by Control.",
+            "Height",
+            "H",
+            "Optional target crown height. Blank solves to the natural " +
+            "equilibrium height of the current force densities and " +
+            "reports it below the component; a number scales the solve " +
+            "so the highest point lands exactly there.",
             GH_ParamAccess.item);
-        parameters[3].Optional = true;
+        parameters[1].Optional = true;
+        if (HasIterationsInput)
+        {
+            parameters.AddIntegerParameter(
+                "Iterations",
+                "I",
+                "Optional horizontal iteration count. Blank " +
+                "auto-converges: the worker keeps the best reciprocal " +
+                "state it finds and polishes within a bounded budget " +
+                "beyond acceptance, stopping earlier at a tenth of a " +
+                "degree or on a plateau; under five degrees " +
+                "(RhinoVault's own acceptance) counts as converged. " +
+                "Tolerance is fixed through the whole calculation.",
+                GH_ParamAccess.item);
+            parameters[2].Optional = true;
+        }
+        parameters.AddBooleanParameter(
+            "Run",
+            "Run",
+            "False holds the solve so upstream edits stay responsive; " +
+            "True runs it.",
+            GH_ParamAccess.item,
+            true);
     }
 
     protected override void RegisterOutputParams(
@@ -660,6 +597,59 @@ public sealed class TnaSolveComponent :
             "RES",
             "Solved thrust network carried in the unified Result envelope.",
             GH_ParamAccess.item);
+        parameters.AddMeshParameter(
+            "Thrust Mesh",
+            "M",
+            "The solved funicular shape as a native mesh.",
+            GH_ParamAccess.item);
+        parameters.AddLineParameter(
+            "Thrust Lines",
+            "L",
+            "The solved thrust-network members as native lines.",
+            GH_ParamAccess.list);
+        parameters.AddPointParameter(
+            "Supports",
+            "S",
+            "The structural support nodes as native points.",
+            GH_ParamAccess.list);
+    }
+
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        _previewMesh = null;
+        _previewSupports.Clear();
+        _clippingBox = BoundingBox.Empty;
+    }
+
+    public override void DrawViewportMeshes(IGH_PreviewArgs args)
+    {
+        if (Hidden || _previewMesh is null || _previewMesh.Faces.Count == 0)
+            return;
+        args.Display.DrawMeshShaded(
+            _previewMesh,
+            new DisplayMaterial(Color.FromArgb(225, 222, 215), 0.35));
+    }
+
+    public override void DrawViewportWires(IGH_PreviewArgs args)
+    {
+        if (Hidden)
+            return;
+        base.DrawViewportWires(args);
+        if (_previewMesh is not null && _previewMesh.Faces.Count > 0)
+        {
+            args.Display.DrawMeshWires(
+                _previewMesh,
+                Color.FromArgb(95, 95, 100));
+        }
+        foreach (Point3d point in _previewSupports)
+        {
+            args.Display.DrawPoint(
+                point,
+                PointStyle.RoundControlPoint,
+                4,
+                Color.FromArgb(30, 165, 85));
+        }
     }
 
     protected override void SolveInstance(IGH_DataAccess data)
@@ -683,8 +673,14 @@ public sealed class TnaSolveComponent :
         }
 
         TnaSolveTaskResult result;
-        if (!GetSolveResults(data, out result!))
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
         {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; recompute synchronously so a
+            // late cancellation cannot strand the canvas on "Cancelled"
+            // with empty outputs and a stale preview.
             if (!TryReadInputs(
                     data,
                     out RelaxedDto? relaxed,
@@ -741,17 +737,84 @@ public sealed class TnaSolveComponent :
             }
         }
 
-        Message =
-            $"{result.Mode} - {result.Result.EdgeStates.Count} edges - " +
-            $"{result.Elapsed.TotalMilliseconds:F0} ms";
+        Mesh thrustMesh = TnaResultGeometry.ThrustMesh(result.Result);
+        List<Line> thrustLines = TnaResultGeometry.MemberLines(result.Result);
+        List<Point3d> supports = TnaResultGeometry.SupportPoints(result.Result);
+        _previewMesh = thrustMesh;
+        _previewSupports.Clear();
+        _previewSupports.AddRange(supports);
+        _clippingBox = thrustMesh.Faces.Count > 0
+            ? thrustMesh.GetBoundingBox(false)
+            : TnaWorkflowPreview.Box(thrustLines, supports);
+
+        IReadOnlyDictionary<string, double> metrics =
+            TnaResultGeometry.Metrics(result.Result);
+        var summary = new List<string>();
+        if (metrics.TryGetValue("zmax_solved", out double solvedHeight))
+            summary.Add($"z {solvedHeight:G4}");
+        if (metrics.TryGetValue(
+                "max_reciprocal_angle_deviation",
+                out double angle))
+        {
+            summary.Add($"angle {angle:F1}°");
+        }
+        if (metrics.TryGetValue(
+                "horizontal_converged",
+                out double converged) &&
+            converged < 0.5)
+        {
+            bool autoMode = metrics.TryGetValue(
+                    "horizontal_mode_is_auto",
+                    out double isAuto) &&
+                isAuto >= 0.5;
+            string advice = autoMode
+                ? "More iterations will not pass the gate: the held " +
+                  "pattern interior is not in horizontal equilibrium. " +
+                  "Smooth the pattern or accept the residual."
+                : "Raise Iterations, or leave the input blank for " +
+                  "auto-convergence.";
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Warning,
+                $"Reciprocity stalled at {angle:F1}° on force-bearing " +
+                "edges (RhinoVault accepts under 5°). " + advice);
+        }
+        if (metrics.TryGetValue(
+                "algebraic_negative_q_count",
+                out double negativeQ) &&
+            negativeQ >= 1.0)
+        {
+            // Information, not failure: the exact solve names the edges
+            // that need ties, where the iterative solver expresses the
+            // same fact as residual unbalanced thrust. Only a pattern
+            // that leans heavily on tension escalates to a warning.
+            int edgeCount = Math.Max(1, result.Result.EdgeStates.Count);
+            double share = negativeQ / edgeCount;
+            AddRuntimeMessage(
+                share > 0.05
+                    ? GH_RuntimeMessageLevel.Warning
+                    : GH_RuntimeMessageLevel.Remark,
+                $"{negativeQ:F0} of {edgeCount} edges " +
+                $"({share:P1}) need tension for exact horizontal " +
+                "equilibrium; the iterative solver expresses the same " +
+                "fact as residual unbalanced thrust. Place ties there, " +
+                "or adjust the pattern/supports if strict " +
+                "compression-only is required.");
+        }
+        summary.Add($"{result.Elapsed.TotalMilliseconds:F0} ms");
+        Message = string.Join(" · ", summary);
+
         data.SetData(0, new ResultGoo(result.Result));
+        data.SetData(1, thrustMesh);
+        data.SetDataList(2, thrustLines);
+        data.SetDataList(3, supports);
     }
 
     /// <summary>
-    /// Read RLX plus this component's own Mode/Value, merging any supplied
-    /// Control's numerical settings over the previous hardcoded defaults.
-    /// Mode and Value stay on this component because they are the design
-    /// decision; Control only ever supplies the solver's numerical knobs.
+    /// Read RLX plus this component's own optional Height and Iterations.
+    /// Absence is meaningful on both: no Height means the natural
+    /// equilibrium height, no Iterations means the auto-converging
+    /// horizontal solve. Alpha and tolerance are fixed; they were knobs
+    /// nobody needed to turn.
     /// </summary>
     private bool TryReadInputs(
         IGH_DataAccess data,
@@ -761,47 +824,44 @@ public sealed class TnaSolveComponent :
         relaxed = null;
         control = null;
         RelaxedGoo? relaxedGoo = null;
-        string modeInput = "zmax";
-        double value = 5.0;
+        double height = 0.0;
+        int iterations = 0;
+        bool run = true;
+        data.GetData(HasIterationsInput ? 3 : 2, ref run);
+        if (!run)
+        {
+            Message = "Off";
+            return false;
+        }
         if (!data.GetData(0, ref relaxedGoo) ||
             relaxedGoo?.Value is not RelaxedDto relaxedValue)
         {
             return false;
         }
-        data.GetData(1, ref modeInput);
-        data.GetData(2, ref value);
+        bool hasHeight = data.GetData(1, ref height);
+        bool hasIterations =
+            HasIterationsInput && data.GetData(2, ref iterations);
 
-        TnaControlGoo? controlGoo = null;
-        TnaControlDto? suppliedControl =
-            data.GetData(3, ref controlGoo) ? controlGoo?.Value : null;
-
-        string mode = TnaControlDto.NormaliseHeightMode(modeInput);
         var controlValue = new TnaControlDto
         {
-            HeightMode = mode,
-            HeightValue = value,
-            HorizontalAlpha = suppliedControl?.HorizontalAlpha ?? 100.0,
-            HorizontalIterations = suppliedControl?.HorizontalIterations ?? 100,
-            VerticalIterations = suppliedControl?.VerticalIterations ?? 100,
-            Tolerance = suppliedControl?.Tolerance ?? 1.0e-3,
+            HeightMode = hasHeight ? "zmax" : "natural",
+            HeightValue = hasHeight ? height : null,
+            HorizontalAlpha = 100.0,
+            HorizontalIterations = hasIterations ? iterations : null,
+            HorizontalMethod = SolveMethod,
+            VerticalIterations = 1000,
+            Tolerance = 1.0e-3,
             Provenance = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
-                ["component"] = "TNA Solve",
-                ["controls"] = suppliedControl is null ? "defaults" : "Control",
-                ["force_scale_semantics"] =
-                    "signed_q_force_per_length_positive_tension"
+                ["component"] = Name,
+                ["controls"] = "component"
             }
         };
 
         var errors = new List<string>();
         errors.AddRange(relaxedValue.Validate());
         errors.AddRange(controlValue.Validate());
-        if (mode is not ("zmax" or "q"))
-        {
-            errors.Add(
-                "Mode must be Crown Height (zmax) or Force Scale (q).");
-        }
         if (errors.Count > 0)
         {
             Message = "Invalid";
@@ -883,6 +943,35 @@ public sealed record FdSolveTaskResult(
     TimeSpan Elapsed);
 
 /// <summary>
+/// TNA Solve with the algebraic horizontal method: exact force densities
+/// from the equilibrium matrix in one sparse least-squares solve, then a
+/// single reciprocal fit for the force diagram. Same surface as TNA
+/// Solve minus the Iterations input, because the direct solve has no
+/// iteration knob worth turning.
+/// </summary>
+public sealed class TnaSolveAlgebraicComponent : TnaSolveComponent
+{
+    public TnaSolveAlgebraicComponent()
+        : base(
+            "TNA Solve Algebraic",
+            "TNA Solve A",
+            "Solve a Relaxed Pattern with the algebraic horizontal " +
+            "method: exact force densities from the equilibrium matrix " +
+            "in one sparse least-squares solve, reaching machine-" +
+            "precision reciprocity wherever the pattern admits it. " +
+            "Blank Height finds the natural equilibrium height.")
+    {
+    }
+
+    public override Guid ComponentGuid =>
+        new("b7c3e9a1-4f6d-4a82-9c05-2d8e7b3f5a19");
+
+    protected override string SolveMethod => "algebraic";
+
+    protected override bool HasIterationsInput => false;
+}
+
+/// <summary>
 /// Run whole-network COMPAS force-density form finding against a Problem's
 /// own load case, building the solver-neutral EquilibriumProblemDto the
 /// fd.solve worker command expects internally from the shared Problem/RLX
@@ -891,6 +980,10 @@ public sealed record FdSolveTaskResult(
 public sealed class FdSolveComponent :
     NativeTaskComponentBase<FdSolveTaskResult>
 {
+    private readonly List<Line> _previewLines = new();
+    private readonly List<Point3d> _previewSupports = new();
+    private BoundingBox _clippingBox = BoundingBox.Empty;
+
     public FdSolveComponent()
         : base(
             "FD Solve",
@@ -900,10 +993,19 @@ public sealed class FdSolveComponent :
             ComponentCategories.FormFinding,
             "fd_solve")
     {
+        for (int index = 1; index < Params.Output.Count; index++)
+        {
+            if (Params.Output[index] is IGH_PreviewObject preview)
+                preview.Hidden = true;
+        }
     }
 
     public override Guid ComponentGuid =>
         new("4b8c6e0a-3d9f-47b2-95c1-e7a2d8f4b096");
+
+    public override bool IsPreviewCapable => true;
+
+    public override BoundingBox ClippingBox => _clippingBox;
 
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
@@ -923,15 +1025,13 @@ public sealed class FdSolveComponent :
             GH_ParamAccess.list);
         parameters[1].DataMapping = GH_DataMapping.Flatten;
         parameters[1].Optional = true;
-        parameters.AddParameter(
-            new TnaControlParam(),
-            "Control",
-            "CTL",
-            "Optional controls carried through to the Result for " +
-            "provenance. FD's direct linear solve has no iterative knobs " +
-            "of its own, so nothing here changes the solve itself.",
-            GH_ParamAccess.item);
-        parameters[2].Optional = true;
+        parameters.AddBooleanParameter(
+            "Run",
+            "Run",
+            "False holds the solve so upstream edits stay responsive; " +
+            "True runs it.",
+            GH_ParamAccess.item,
+            true);
     }
 
     protected override void RegisterOutputParams(
@@ -944,6 +1044,41 @@ public sealed class FdSolveComponent :
             "Stable COMPAS FD result carried in the unified Result " +
             "envelope.",
             GH_ParamAccess.item);
+        parameters.AddLineParameter(
+            "Member Lines",
+            "L",
+            "The solved network members as native lines.",
+            GH_ParamAccess.list);
+        parameters.AddPointParameter(
+            "Supports",
+            "S",
+            "The support nodes as native points.",
+            GH_ParamAccess.list);
+    }
+
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        _previewLines.Clear();
+        _previewSupports.Clear();
+        _clippingBox = BoundingBox.Empty;
+    }
+
+    public override void DrawViewportWires(IGH_PreviewArgs args)
+    {
+        if (Hidden)
+            return;
+        base.DrawViewportWires(args);
+        foreach (Line line in _previewLines)
+            args.Display.DrawLine(line, Color.FromArgb(95, 95, 100), 1);
+        foreach (Point3d point in _previewSupports)
+        {
+            args.Display.DrawPoint(
+                point,
+                PointStyle.RoundControlPoint,
+                4,
+                Color.FromArgb(30, 165, 85));
+        }
     }
 
     protected override void SolveInstance(IGH_DataAccess data)
@@ -954,8 +1089,7 @@ public sealed class FdSolveComponent :
                     data,
                     out ProblemDto? problem,
                     out EquilibriumProblemDto? equilibriumProblem,
-                    out FDSettingsDto? settings,
-                    out TnaControlDto? control))
+                    out FDSettingsDto? settings))
             {
                 return;
             }
@@ -964,21 +1098,25 @@ public sealed class FdSolveComponent :
                     ContractJson.DeepClone(problem!),
                     ContractJson.DeepClone(equilibriumProblem!),
                     ContractJson.DeepClone(settings!),
-                    control is null ? null : ContractJson.DeepClone(control),
                     CancelToken),
                 CancelToken));
             return;
         }
 
         FdSolveTaskResult result;
-        if (!GetSolveResults(data, out result!))
+        bool haveTaskResult = GetSolveResults(data, out result!);
+        if (!haveTaskResult ||
+            result.Error is OperationCanceledException)
         {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; recompute synchronously so a
+            // late cancellation cannot strand the canvas on "Cancelled"
+            // with empty outputs.
             if (!TryReadInputs(
                     data,
                     out ProblemDto? problem,
                     out EquilibriumProblemDto? equilibriumProblem,
-                    out FDSettingsDto? settings,
-                    out TnaControlDto? control))
+                    out FDSettingsDto? settings))
             {
                 return;
             }
@@ -986,7 +1124,6 @@ public sealed class FdSolveComponent :
                     ContractJson.DeepClone(problem!),
                     ContractJson.DeepClone(equilibriumProblem!),
                     ContractJson.DeepClone(settings!),
-                    control is null ? null : ContractJson.DeepClone(control),
                     CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
@@ -1036,10 +1173,20 @@ public sealed class FdSolveComponent :
             }
         }
 
+        List<Line> memberLines = TnaResultGeometry.MemberLines(result.Result);
+        List<Point3d> supports = TnaResultGeometry.SupportPoints(result.Result);
+        _previewLines.Clear();
+        _previewLines.AddRange(memberLines);
+        _previewSupports.Clear();
+        _previewSupports.AddRange(supports);
+        _clippingBox = TnaWorkflowPreview.Box(memberLines, supports);
+
         Message =
             $"{result.Result.Equilibrium.Edges.Count} members - " +
             $"{result.Elapsed.TotalMilliseconds:F0} ms";
         data.SetData(0, new ResultGoo(result.Result));
+        data.SetDataList(1, memberLines);
+        data.SetDataList(2, supports);
     }
 
     /// <summary>
@@ -1052,15 +1199,20 @@ public sealed class FdSolveComponent :
         IGH_DataAccess data,
         out ProblemDto? problem,
         out EquilibriumProblemDto? equilibriumProblem,
-        out FDSettingsDto? settings,
-        out TnaControlDto? control)
+        out FDSettingsDto? settings)
     {
         problem = null;
         equilibriumProblem = null;
         settings = null;
-        control = null;
         ProblemGoo? problemGoo = null;
         var forceDensities = new List<double>();
+        bool run = true;
+        data.GetData(2, ref run);
+        if (!run)
+        {
+            Message = "Off";
+            return false;
+        }
         if (!data.GetData(0, ref problemGoo) ||
             problemGoo?.Value is not ProblemDto problemValue)
         {
@@ -1069,10 +1221,6 @@ public sealed class FdSolveComponent :
         data.GetDataList(1, forceDensities);
         if (forceDensities.Count == 0)
             forceDensities.Add(1.0);
-
-        TnaControlGoo? controlGoo = null;
-        TnaControlDto? suppliedControl =
-            data.GetData(2, ref controlGoo) ? controlGoo?.Value : null;
 
         var settingsValue = new FDSettingsDto
         {
@@ -1087,8 +1235,6 @@ public sealed class FdSolveComponent :
 
         var errors = new List<string>(problemValue.Validate());
         errors.AddRange(settingsValue.Validate());
-        if (suppliedControl is not null)
-            errors.AddRange(suppliedControl.Validate());
         if (errors.Count > 0)
         {
             Message = "Invalid";
@@ -1143,7 +1289,6 @@ public sealed class FdSolveComponent :
         problem = problemValue;
         equilibriumProblem = equilibriumProblemValue;
         settings = settingsValue;
-        control = suppliedControl;
         return true;
     }
 
@@ -1151,7 +1296,6 @@ public sealed class FdSolveComponent :
         ProblemDto problem,
         EquilibriumProblemDto equilibriumProblem,
         FDSettingsDto settings,
-        TnaControlDto? control,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -1170,11 +1314,7 @@ public sealed class FdSolveComponent :
                 equilibriumProblem,
                 settings,
                 0);
-            solved = solved with
-            {
-                Problem = problem,
-                Control = control
-            };
+            solved = solved with { Problem = problem };
             stopwatch.Stop();
             return new FdSolveTaskResult(solved, null, stopwatch.Elapsed);
         }

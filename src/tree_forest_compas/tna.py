@@ -41,6 +41,28 @@ Point3 = Tuple[float, float, float]
 Edge = Tuple[int, int]
 Vector3 = Tuple[float, float, float]
 
+# RhinoVault's own horizontal acceptance: its RV_tna_horizontal command runs
+# one horizontal_nodal pass and reports success when the worst angle deviation
+# is under settings.tna.horizontal_max_angle, which defaults to 5.0 degrees.
+HORIZONTAL_ACCEPT_DEGREES = 5.0
+
+# The auto loop does not stop at acceptance: every degree of residual
+# reciprocity is unbalanced horizontal thrust in the exported result, and
+# iterations are cheap under the sparse fixed-form solver. It polishes on
+# until the deviation is a tenth of a degree or stops improving.
+HORIZONTAL_POLISH_DEGREES = 0.1
+
+# The polish phase is bounded: the improvement decays geometrically, so a
+# fixed budget of further iterations after first passing the acceptance
+# gate captures the steep part of the descent without letting a long
+# asymptotic tail of tiny improvements hold the canvas for seconds.
+HORIZONTAL_POLISH_BUDGET = 2000
+
+# Edges carrying under this fraction of the peak horizontal force have
+# force-diagram duals of near-zero length; their direction, and therefore
+# their reciprocity angle, is numerical noise rather than equilibrium error.
+HORIZONTAL_FORCE_GATE_FRACTION = 0.01
+
 
 class TNAError(RuntimeError):
     """Base exception for the headless TNA workflow."""
@@ -241,28 +263,58 @@ def _merge_source_points(
     Dict[Hashable, int],
     Dict[int, Tuple[Hashable, ...]],
 ]:
-    """Merge points deterministically, preserving first-seen canonical IDs."""
+    """Merge points deterministically, preserving first-seen canonical IDs.
+
+    A spatial hash with cell size equal to the weld tolerance keeps this
+    O(n): any point within tolerance of a canonical point lies in one of
+    the 27 neighbouring cells. The canonical assignment matches the former
+    all-pairs scan exactly, because among several candidates within
+    tolerance the earliest-registered one wins.
+    """
     canonical_points = {}  # type: Dict[int, Point3]
     source_to_canonical = {}  # type: Dict[Hashable, int]
     canonical_sources = {}  # type: Dict[int, List[Hashable]]
     tolerance_squared = tolerance * tolerance
+    grid = {}  # type: Dict[Tuple[int, int, int], List[int]]
+    exact = {}  # type: Dict[Point3, int]
+
+    def _cell_of(point: Point3) -> Tuple[int, int, int]:
+        return (
+            int(point[0] // tolerance),
+            int(point[1] // tolerance),
+            int(point[2] // tolerance),
+        )
 
     for source_key, original_point in source_items:
         point = _rounded_point(original_point, precision)
         found = None
-        for canonical_key, canonical_point in canonical_points.items():
-            if tolerance > 0:
-                if _distance_squared(point, canonical_point) <= tolerance_squared:
-                    found = canonical_key
-                    break
-            elif point == canonical_point:
-                found = canonical_key
-                break
+        if tolerance > 0:
+            cx, cy, cz = _cell_of(point)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        for candidate in grid.get(
+                            (cx + dx, cy + dy, cz + dz), ()
+                        ):
+                            if (
+                                _distance_squared(
+                                    point, canonical_points[candidate]
+                                )
+                                <= tolerance_squared
+                                and (found is None or candidate < found)
+                            ):
+                                found = candidate
+        else:
+            found = exact.get(point)
 
         if found is None:
             found = len(canonical_points)
             canonical_points[found] = point
             canonical_sources[found] = []
+            if tolerance > 0:
+                grid.setdefault(_cell_of(point), []).append(found)
+            else:
+                exact[point] = found
 
         source_to_canonical[source_key] = found
         canonical_sources[found].append(source_key)
@@ -1020,6 +1072,163 @@ def _relax_pattern(
     _assert_finite_pattern(form, "Pattern relaxation")
 
 
+def _run_sag_round(
+    pattern: FormDiagram,
+    fixed: Sequence[int],
+    segment_paths: Sequence[Tuple[Any, Any, Sequence[int]]],
+    target_sags: Sequence[float],
+    sag_iterations: int,
+    sag_tolerance: float,
+    force_density: float,
+    pre_relax: bool,
+) -> int:
+    """One widen round of FDM relaxation plus compas-RV sag matching.
+
+    Runs the identical sequence to calling ``_relax_pattern`` around every
+    sag pass (one exact FDM solve per pass, the compas-RV update rule
+    between passes), but builds ``compas_fd``'s numerical data once per
+    round instead of re-marshalling the whole pattern every pass: each
+    pass is the library's own ``update_forcedensities`` plus the two solve
+    lines of ``fd_numpy``. The force-density method is linear, so per-pass
+    solutions depend only on the fixed positions, the loads, and the
+    current q field; the results match the per-pass version exactly.
+    Coordinates and the scaled chain force densities are written back to
+    the pattern before returning.
+    """
+    from compas_fd.solvers.fd_numerical_data import FDNumericalData
+    from numpy import isfinite as np_isfinite
+    from scipy.sparse.linalg import spsolve
+
+    if not fixed:
+        raise TNATopologyError(
+            "Pattern relaxation requires at least one support or fixed plan vertex."
+        )
+
+    k_i = pattern.vertex_index()
+    i_k = {index: key for key, index in k_i.items()}
+    vertex_keys = list(pattern.vertices())
+    edge_keys = list(pattern.edges())
+    edge_position = {}
+    for position, (u, v) in enumerate(edge_keys):
+        edge_position[(int(u), int(v))] = position
+        edge_position[(int(v), int(u))] = position
+    numdata = FDNumericalData.from_params(
+        [
+            [float(value) for value in coords]
+            for coords in pattern.vertices_attributes("xyz")
+        ],
+        [k_i[key] for key in fixed],
+        [(k_i[u], k_i[v]) for u, v in edge_keys],
+        [float(value) for value in pattern.edges_attribute("q")],
+        [
+            [float(value or 0.0) for value in row]
+            for row in pattern.vertices_attributes(("px", "py", "pz"))
+        ],
+    )
+    xyz = numdata.xyz
+    path_indices = [
+        [k_i[key] for key in path] for _, _, path in segment_paths
+    ]
+    touched_q = set()
+
+    def _solve() -> None:
+        try:
+            b = numdata.p[numdata.free] - numdata.Af.dot(
+                numdata.xyz[numdata.fixed]
+            )
+            numdata.xyz[numdata.free] = spsolve(numdata.Ai, b)
+        except Exception as error:
+            raise TNASolveError(
+                "COMPAS FDM Pattern relaxation failed: {}: {}".format(
+                    type(error).__name__, error
+                )
+            ) from error
+        finite_rows = np_isfinite(numdata.xyz).all(axis=1)
+        if not bool(finite_rows.all()):
+            bad_index = int(finite_rows.argmin())
+            raise TNASolveError(
+                "Pattern relaxation produced a non-finite Pattern vertex "
+                "at {!r}. Check that the selected supports constrain every "
+                "connected part of the pattern.".format(i_k[bad_index])
+            )
+
+    def _sag_of(path: Sequence[int]) -> float:
+        start = xyz[path[0]]
+        end = xyz[path[-1]]
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        span = sqrt(dx * dx + dy * dy)
+        if span <= 1e-15:
+            raise TNATopologyError(
+                "A support-to-support boundary segment has zero plan span."
+            )
+        rise = max(
+            (
+                abs(
+                    dx * (start[1] - xyz[index][1])
+                    - (start[0] - xyz[index][0]) * dy
+                )
+                / span
+                for index in path[1:-1]
+            ),
+            default=0.0,
+        )
+        return rise / span
+
+    iterations_run = 0
+    if pre_relax:
+        _solve()
+    for _ in range(int(sag_iterations)):
+        current_sags = [_sag_of(path) for path in path_indices]
+        if all(
+            abs(current - float(target)) < sag_tolerance
+            for current, target in zip(current_sags, target_sags)
+        ):
+            break
+        pass_updates = {}
+        for current, target, (_, _, path) in zip(
+            current_sags, target_sags, segment_paths
+        ):
+            # The compas-RV/RhinoVault update rule, with the per-round
+            # factor clamped so a saturated apron cannot drive q to zero
+            # (and rim vertices onto their neighbours) before the apron
+            # widens, and a floor on the chain q so a geometrically
+            # unreachable target degrades into the sag warning instead of
+            # a folded pattern that collapses faces downstream. If a
+            # perfectly straight input has not yet moved, avoid zeroing q
+            # and let the next FDM pass establish curvature.
+            scale = current / float(target)
+            if scale <= 1e-12:
+                scale = 1.0
+            scale = min(max(scale, 0.2), 5.0)
+            q_floor = 1e-4 * force_density
+            for index, u in enumerate(path[:-1]):
+                v = path[index + 1]
+                position = edge_position[(int(u), int(v))]
+                pass_updates[position] = max(
+                    scale * float(numdata.q[position, 0]), q_floor
+                )
+                touched_q.add(position)
+        if pass_updates:
+            positions = sorted(pass_updates)
+            numdata.update_forcedensities(
+                positions,
+                [[pass_updates[position]] for position in positions],
+            )
+        _solve()
+        iterations_run += 1
+
+    for key in vertex_keys:
+        pattern.vertex_attributes(
+            key, "xyz", [float(value) for value in xyz[k_i[key]]]
+        )
+    for position in sorted(touched_q):
+        pattern.edge_attribute(
+            edge_keys[position], "q", float(numdata.q[position, 0])
+        )
+    return iterations_run
+
+
 def _active_source_edge_mappings(
     problem: TNAProblem,
     form: FormDiagram,
@@ -1055,7 +1264,9 @@ def prepare_tna_problem(
 
     1. flatten the registered Pattern into its analysis plane;
     2. identify structural supports and independent plan-fixed vertices;
-    3. run a uniform-q FDM relaxation;
+    3. run a uniform-q FDM relaxation of the unsupported boundary
+       openings plus a local interior apron scaled to each opening's
+       span, with the rest of the plan held (the Pattern is the design);
     4. split boundaries at structural supports and iteratively scale their
        edge q values to match a requested rise/span sag;
     5. create the conditioned FormDiagram and its topological-dual
@@ -1136,42 +1347,95 @@ def prepare_tna_problem(
         problem, fixed_keys, "fixed plan"
     )
     pattern.vertices_attribute("is_fixed", True, keys=fixed_form_keys)
-    relaxation_fixed = _unique(selected_supports + fixed_form_keys)
+
+    # The Pattern's plan is the design: a whole-plan relaxation shrinks
+    # dense regions (a polar hub halves its ring radius), loading their
+    # short edges with high force density and flattening or dipping the
+    # crown. But an opening cannot sag alone either: the held interior
+    # behind it acts as a spring that bounds how far the boundary can
+    # move, no matter how soft its chain becomes, and forcing further
+    # drags rim vertices onto their neighbours until the downstream weld
+    # collapses faces. So the relaxation starts from a minimal apron
+    # around each unsupported opening and widens it only when the sag
+    # target cannot be reached, up to RhinoVault's whole-mesh freedom as
+    # the limit. Shallow sags never touch the crown; deep sags recruit
+    # exactly as much interior as they need.
+    held_always = selected_support_set | set(fixed_form_keys)
+    segment_paths = _boundary_support_segments(pattern, selected_supports)
+
+    def _apron_free_vertices(widen_round: int) -> set:
+        free: set = set()
+        for _, _, path in segment_paths:
+            seeds = [
+                int(key) for key in path if int(key) not in held_always
+            ]
+            if not seeds:
+                continue
+            depth = max(2, (len(seeds) + 1) // 2) * (2**widen_round)
+            frontier = set(seeds)
+            reached = set(seeds)
+            for _ in range(depth):
+                next_frontier = set()
+                for key in frontier:
+                    for neighbour in pattern.vertex_neighbors(key):
+                        neighbour = int(neighbour)
+                        if neighbour in reached or neighbour in held_always:
+                            continue
+                        next_frontier.add(neighbour)
+                if not next_frontier:
+                    break
+                reached |= next_frontier
+                frontier = next_frontier
+            free |= reached
+        return free
 
     pattern.edges_attribute("q", force_density)
-    if relax:
-        _relax_pattern(pattern, relaxation_fixed)
 
-    segment_paths = _boundary_support_segments(pattern, selected_supports)
     initial_sags = [_boundary_sag(pattern, path) for _, _, path in segment_paths]
     target_sags = [boundary_sag for _ in initial_sags]
 
     sag_iterations_run = 0
-    if boundary_sag is not None and segment_paths and sag_iterations:
-        for iteration in range(sag_iterations):
-            current_sags = [
-                _boundary_sag(pattern, path) for _, _, path in segment_paths
+    widen_round = 0
+    relaxation_fixed = _unique(list(pattern.vertices()))
+    while True:
+        free_vertices = _apron_free_vertices(widen_round)
+        relaxation_fixed = _unique(
+            [
+                int(key)
+                for key in pattern.vertices()
+                if int(key) not in free_vertices
             ]
-            if all(
-                abs(current - float(target)) < sag_tolerance
-                for current, target in zip(current_sags, target_sags)
-            ):
-                break
-            for current, target, (_, _, path) in zip(
-                current_sags, target_sags, segment_paths
-            ):
-                # This is the exact compas-RV/RhinoVault update rule.
-                # If a perfectly straight input has not yet moved, avoid
-                # zeroing q and let the next FDM pass establish curvature.
-                scale = current / float(target)
-                if scale <= 1e-12:
-                    scale = 1.0
-                for index, u in enumerate(path[:-1]):
-                    v = path[index + 1]
-                    q = float(pattern.edge_attribute((u, v), "q"))
-                    pattern.edge_attribute((u, v), "q", scale * q)
+        )
+        if boundary_sag is not None and segment_paths and sag_iterations:
+            sag_iterations_run += _run_sag_round(
+                pattern,
+                relaxation_fixed,
+                segment_paths,
+                target_sags,
+                sag_iterations,
+                sag_tolerance,
+                force_density,
+                pre_relax=bool(relax and free_vertices),
+            )
+        elif relax and free_vertices:
             _relax_pattern(pattern, relaxation_fixed)
-            sag_iterations_run = iteration + 1
+
+        if boundary_sag is None or not segment_paths or not sag_iterations:
+            break
+        worst_error = max(
+            abs(_boundary_sag(pattern, path) - float(target))
+            for target, (_, _, path) in zip(target_sags, segment_paths)
+        )
+        if worst_error < sag_tolerance:
+            break
+        all_movable = {
+            int(key)
+            for key in pattern.vertices()
+            if int(key) not in held_always
+        }
+        if free_vertices >= all_movable:
+            break
+        widen_round += 1
 
     final_sags = [_boundary_sag(pattern, path) for _, _, path in segment_paths]
     boundary_segments = []
@@ -1328,6 +1592,11 @@ def prepare_tna_problem(
             "boundary_segment_count": len(boundary_segments),
             "boundary_sag_target": boundary_sag,
             "sag_iterations_run": sag_iterations_run,
+            "relaxation_widen_rounds": widen_round,
+            "relaxation_free_vertex_count": len(
+                set(int(key) for key in pattern.vertices())
+                - set(relaxation_fixed)
+            ),
             "max_boundary_sag_error": max(
                 (
                     abs(segment.actual_sag - float(segment.target_sag))
@@ -1486,6 +1755,359 @@ def _solver_vector(form: FormDiagram, key: int) -> Vector3:
     return tuple(float(value or 0.0) for value in values)  # type: ignore
 
 
+def _horizontal_fixed_form(form: FormDiagram, force: ForceDiagram, kmax: int) -> None:
+    """Fixed-form horizontal equilibrium via the global parallelisation
+    formulation ``C^T C xy = C^T t`` of ``compas_tna``'s
+    ``horizontal_numpy``, specialised to alpha = 100 (form fixed).
+
+    Two reasons this local specialisation exists instead of calling the
+    library function:
+
+    * ``horizontal_numpy`` routes every sparse solve through
+      ``compas.linalg.lufactorized``, which memoises the factorisation
+      under the constant keys ``"CtC"``/``"_Ct_C"`` for the life of the
+      process. In this persistent worker the second pattern solved in a
+      session would silently reuse the first pattern's factorisation.
+    * The pure-python ``horizontal_nodal`` costs milliseconds per
+      iteration at canvas scale, which turned a capped auto-convergence
+      run into tens of seconds. Here the force system is factorised once
+      per call and each iteration is one cached sparse solve.
+
+    The attribute writes (``q``, ``_f``, ``_l``, ``_a`` on form edges;
+    ``xy``, ``_l``, ``_a`` on the force diagram) match the library
+    implementations exactly. Edge length/force bounds (``lmin``/``hmax``
+    and friends) are not consulted because this pipeline never sets them;
+    force lengths are clamped to the library's own default bounds.
+    """
+    from compas.geometry import angle_vectors_xy
+    from compas.linalg import normalizerow
+    from compas.linalg import normrow
+    from compas.matrices import connectivity_matrix
+    from numpy import asarray
+    from numpy import float64
+    from scipy.sparse.linalg import factorized as sparse_factorized
+
+    k_i = form.vertex_index()
+    form_edges = list(form.edges_where({"_is_edge": True}))
+    flip = asarray(
+        [
+            -1.0 if form.edge_attribute(edge, "_is_tension") else 1.0
+            for edge in form_edges
+        ],
+        dtype=float64,
+    ).reshape((-1, 1))
+    xy = asarray(form.vertices_attributes("xy"), dtype=float64)
+    C = connectivity_matrix([[k_i[u], k_i[v]] for u, v in form_edges], "csr")
+
+    _k_i = force.vertex_index()
+    _fixed = sorted({_k_i[key] for key in force.fixed()} or {0})
+    _xy = asarray(force.vertices_attributes("xy"), dtype=float64)
+    _edge_keys = force.ordered_edges(form)
+    _C = connectivity_matrix(
+        [[_k_i[u], _k_i[v]] for u, v in _edge_keys], "csr"
+    )
+    _Ct = _C.transpose()
+    _CtC = _Ct.dot(_C).tocsc()
+
+    # Rotate the force diagram 90 degrees CCW so its edges run parallel to
+    # the form during parallelisation, exactly as the library does.
+    _xy = _xy[:, ::-1] * asarray([-1.0, 1.0], dtype=float64)
+
+    # With the form fixed, the targets are its unit edge directions and
+    # never change across iterations.
+    targets = normalizerow(flip * C.dot(xy))
+
+    fixed_set = set(_fixed)
+    unknown = [i for i in range(_xy.shape[0]) if i not in fixed_set]
+    A11 = _CtC[unknown, :][:, unknown].tocsc()
+    A12 = _CtC[unknown, :][:, _fixed]
+    solve = sparse_factorized(A11)
+    x_known = _xy[_fixed]
+
+    for _ in range(int(kmax)):
+        _l = normrow(_C.dot(_xy))
+        _l[_l < 1e-7] = 1e-7
+        _l[_l > 1e7] = 1e7
+        b = _Ct.dot(_l * targets)
+        _xy[unknown] = solve(b[unknown] - A12.dot(x_known))
+
+    uv = C.dot(xy)
+    _uv = _C.dot(_xy)
+    l = normrow(uv)  # noqa: E741
+    _l = normrow(_uv)
+    f = flip * _l
+    q = (f / l).astype(float64)
+    # Angle deviations compare directions in the parallel (rotated) frame,
+    # as both library implementations do, before rotating back.
+    angles = [
+        angle_vectors_xy(uv[index], _uv[index], deg=True)
+        for index in range(len(form_edges))
+    ]
+    _xy = _xy[:, ::-1] * asarray([1.0, -1.0], dtype=float64)
+
+    # The form never moves at alpha = 100, so only its edge state updates.
+    for index, edge in enumerate(form_edges):
+        form.edge_attributes(
+            edge,
+            ("q", "_f", "_l", "_a"),
+            (
+                float(q[index, 0]),
+                float(f[index, 0]),
+                float(l[index, 0]),
+                float(angles[index]),
+            ),
+        )
+    for key in force.vertices():
+        i = _k_i[key]
+        force.vertex_attributes(
+            key, "xy", [float(_xy[i, 0]), float(_xy[i, 1])]
+        )
+    for index, edge in enumerate(_edge_keys):
+        force.edge_attributes(
+            edge,
+            ("_l", "_a"),
+            (float(_l[index, 0]), float(angles[index])),
+        )
+
+
+def _horizontal_algebraic(form: FormDiagram, force: ForceDiagram) -> Dict[str, Any]:
+    """Direct horizontal equilibrium: exact force densities from the
+    equilibrium matrix, then one least-squares reciprocal fit.
+
+    With the form diagram fixed, horizontal equilibrium is linear in the
+    force densities: for every free vertex ``i``,
+    ``sum_j q_ij (xy_j - xy_i) = 0``. The best q is the minimiser of
+    ``||E q||^2`` under a scale gauge (solved with sparse LSQR on the
+    gauge-augmented system, then rescaled to mean q of one). When the
+    pattern admits an exact self-stress this is the exact reciprocal;
+    otherwise it is the mathematical floor that no parallelisation
+    iteration count can reach. The force diagram is then reconstructed by
+    a single linear fit of its vertex positions to the exact reciprocal
+    edge vectors (the same ``C^T C`` system the iterative solver
+    parallelises against), which distributes any closure error
+    least-squares-evenly. Attribute writes match the iterative solvers:
+    ``q``/``_f``/``_l``/``_a`` on form edges, ``xy``/``_l``/``_a`` on the
+    force diagram, with ``_a`` measuring the honest angle between each
+    form edge and its reconstructed dual.
+
+    The equilibrium matrix generally admits a whole family of exact
+    self-stresses, and picking an arbitrary member changes the vault's
+    flank character even though every member is exactly balanced. The
+    classic parallelisation (this plugin's iterative solver, and
+    RhinoVault's) converges toward one particular member determined by
+    its centroid-dual seed, and that member is the look designers
+    calibrate against. The solve therefore runs a short parallelisation
+    warm-up first, then PROJECTS the warmed-up force densities onto the
+    self-stress space: minimise ``||q - q0||`` subject to
+    ``E (q0 - d) = 0`` via the minimal-norm LSQR solution of
+    ``E d = E q0``. The result keeps the classic solver's character and
+    is exactly balanced, instead of being merely the nearest equilibrium
+    to an arbitrary gauge. When the projection degenerates (the pattern
+    admits no self-stress with any weight near the warmed-up state), the
+    solve falls back to the gauge-normalised optimum and says so in the
+    diagnostics.
+
+    Returns a diagnostics mapping with the LSQR iteration count, the
+    equilibrium residual relative to the mean edge force, the count of
+    negative force densities (a pattern that demands tension edges to
+    balance horizontally), and the relative distance the projection had
+    to move the prepared force densities.
+    """
+    from compas.geometry import angle_vectors_xy
+    from compas.linalg import normrow
+    from compas.matrices import connectivity_matrix
+    from numpy import asarray
+    from numpy import float64
+    from numpy import zeros
+    from scipy.sparse import coo_matrix
+    from scipy.sparse import vstack as sparse_vstack
+    from scipy.sparse.linalg import factorized as sparse_factorized
+    from scipy.sparse.linalg import lsqr as sparse_lsqr
+
+    # Warm up with the classic parallelisation so the projection target
+    # carries the attractor the iterative solver (and RhinoVault) would
+    # converge to; 100 iterations is RhinoVault's own default run and
+    # costs a few tens of milliseconds under the sparse solver.
+    _horizontal_fixed_form(form, force, 100)
+
+    k_i = form.vertex_index()
+    form_edges = list(form.edges_where({"_is_edge": True}))
+    edge_count = len(form_edges)
+    xy = asarray(form.vertices_attributes("xy"), dtype=float64)
+    edges_idx = [[k_i[u], k_i[v]] for u, v in form_edges]
+    C = connectivity_matrix(edges_idx, "csr")
+    uv = C.dot(xy)
+    lengths = normrow(uv)
+
+    # Horizontal equilibrium must hold at every vertex that is not a
+    # structural support. is_fixed is NOT part of this set: in the
+    # prepared pipeline it records which plan vertices were held during
+    # relaxation, and holding a vertex in plan does not exempt it from
+    # carrying balanced horizontal thrust.
+    held = {k_i[key] for key in form.supports()}
+    free = [index for index in range(xy.shape[0]) if index not in held]
+    if not free:
+        raise TNATopologyError(
+            "The algebraic horizontal solve needs at least one free vertex."
+        )
+    free_row = {vertex: index for index, vertex in enumerate(free)}
+
+    rows = []
+    cols = []
+    vals = []
+    for e, (u_idx, v_idx) in enumerate(edges_idx):
+        vec_x = float(uv[e, 0])
+        vec_y = float(uv[e, 1])
+        if u_idx in free_row:
+            base = 2 * free_row[u_idx]
+            rows.extend((base, base + 1))
+            cols.extend((e, e))
+            vals.extend((vec_x, vec_y))
+        if v_idx in free_row:
+            base = 2 * free_row[v_idx]
+            rows.extend((base, base + 1))
+            cols.extend((e, e))
+            vals.extend((-vec_x, -vec_y))
+    E = coo_matrix(
+        (vals, (rows, cols)), shape=(2 * len(free), edge_count)
+    ).tocsr()
+
+    # The projection target: the warmed-up force densities, carrying both
+    # the prepared design intent (interior force_density, sag-matched
+    # boundary chains) and the classic solver's attractor character.
+    q0 = asarray(
+        [
+            float(form.edge_attribute(edge, "q") or 1.0)
+            for edge in form_edges
+        ],
+        dtype=float64,
+    ).reshape((-1, 1))
+    q0_norm = float((q0 * q0).sum()) ** 0.5
+    if q0_norm < 1e-15:
+        q0 = zeros((edge_count, 1), dtype=float64) + 1.0
+        q0_norm = float(edge_count) ** 0.5
+
+    # Project the intent onto the self-stress space: the minimal-norm
+    # correction d solving E d = E q0 leaves q = q0 - d exactly balanced
+    # and as close to the intent as equilibrium allows.
+    correction = sparse_lsqr(
+        E,
+        E.dot(q0).ravel(),
+        atol=1e-14,
+        btol=1e-14,
+        iter_lim=20 * edge_count,
+    )
+    q = q0 - correction[0].reshape((-1, 1))
+    lsqr_iterations = int(correction[2])
+    intent_deviation = (
+        float(((q - q0) ** 2).sum()) ** 0.5 / q0_norm
+    )
+    projection_degenerate = False
+    q_scale_norm = float((q * q).sum()) ** 0.5
+    if not isfinite(q_scale_norm) or q_scale_norm < 1e-6 * q0_norm:
+        # The intent is (numerically) orthogonal to the self-stress
+        # space; fall back to the gauge-normalised optimum so the solve
+        # still returns the best exact reciprocal available.
+        projection_degenerate = True
+        gauge = coo_matrix(
+            ([1.0 / edge_count] * edge_count,
+             ([0] * edge_count, list(range(edge_count)))),
+            shape=(1, edge_count),
+        ).tocsr()
+        system = sparse_vstack([E, gauge]).tocsr()
+        target = zeros(2 * len(free) + 1, dtype=float64)
+        target[-1] = 1.0
+        solution = sparse_lsqr(
+            system, target, atol=1e-14, btol=1e-14,
+            iter_lim=20 * edge_count,
+        )
+        q = solution[0].reshape((-1, 1))
+        lsqr_iterations += int(solution[2])
+        q_mean = float(q.mean())
+        if not isfinite(q_mean) or abs(q_mean) < 1e-15:
+            raise TNASolveError(
+                "The algebraic horizontal solve produced a degenerate "
+                "force-density field; the pattern admits no meaningful "
+                "horizontal self-stress."
+            )
+        q = q / q_mean
+        intent_deviation = 1.0
+
+    residuals = (E.dot(q)).reshape((-1, 2))
+    residual_norms = normrow(residuals)
+    mean_force = float((abs(q) * lengths).mean())
+    residual_scale = mean_force if mean_force > 0 else 1.0
+    # Count only structurally meaningful tension: an edge whose negative
+    # force density is under a thousandth of the mean magnitude is a
+    # numerical zero on a slack edge, not a tie.
+    mean_abs_q = float(abs(q).mean())
+    negative_count = int((q < -1e-3 * mean_abs_q).sum())
+
+    # Reconstruct the force diagram in the parallel (CCW-rotated) frame:
+    # fit its vertex positions to the exact reciprocal edge vectors.
+    _k_i = force.vertex_index()
+    _edge_keys = force.ordered_edges(form)
+    _C = connectivity_matrix(
+        [[_k_i[u], _k_i[v]] for u, v in _edge_keys], "csr"
+    )
+    _Ct = _C.transpose()
+    _fixed = sorted({_k_i[key] for key in force.fixed()} or {0})
+    _xy = asarray(force.vertices_attributes("xy"), dtype=float64)
+    _xy = _xy[:, ::-1] * asarray([-1.0, 1.0], dtype=float64)
+    _CtC = _Ct.dot(_C).tocsc()
+    fixed_set = set(_fixed)
+    unknown = [i for i in range(_xy.shape[0]) if i not in fixed_set]
+    A11 = _CtC[unknown, :][:, unknown].tocsc()
+    A12 = _CtC[unknown, :][:, _fixed]
+    b = _Ct.dot(q * uv)
+    _xy[unknown] = sparse_factorized(A11)(b[unknown] - A12.dot(_xy[_fixed]))
+
+    _uv = _C.dot(_xy)
+    _l = normrow(_uv)
+    f = q * lengths
+    angles = [
+        angle_vectors_xy(uv[index], _uv[index], deg=True)
+        for index in range(edge_count)
+    ]
+    _xy = _xy[:, ::-1] * asarray([1.0, -1.0], dtype=float64)
+
+    for index, edge in enumerate(form_edges):
+        form.edge_attributes(
+            edge,
+            ("q", "_f", "_l", "_a"),
+            (
+                float(q[index, 0]),
+                float(f[index, 0]),
+                float(lengths[index, 0]),
+                float(angles[index]),
+            ),
+        )
+    for key in force.vertices():
+        i = _k_i[key]
+        force.vertex_attributes(
+            key, "xy", [float(_xy[i, 0]), float(_xy[i, 1])]
+        )
+    for index, edge in enumerate(_edge_keys):
+        force.edge_attributes(
+            edge,
+            ("_l", "_a"),
+            (float(_l[index, 0]), float(angles[index])),
+        )
+
+    return {
+        "algebraic_lsqr_iterations": lsqr_iterations,
+        "algebraic_residual_max_relative": float(
+            residual_norms.max() / residual_scale
+        ),
+        "algebraic_residual_mean_relative": float(
+            residual_norms.mean() / residual_scale
+        ),
+        "algebraic_negative_q_count": negative_count,
+        "algebraic_intent_deviation": intent_deviation,
+        "algebraic_projection_degenerate": projection_degenerate,
+    }
+
+
 def _unoriented_angle(degrees: float) -> float:
     """Fold a form/force edge-direction difference into a 0-90 degree error.
 
@@ -1514,13 +2136,25 @@ def solve_tna_problem(
     q_scale: float = -1.0,
     density: float = 0.0,
     horizontal_alpha: float = 100.0,
-    horizontal_kmax: int = 100,
+    horizontal_kmax: Optional[int] = 100,
+    horizontal_method: str = "iterative",
     vertical_kmax: int = 100,
     vertical_tolerance: float = 1e-3,
     display: bool = False,
     metadata: Optional[Mapping] = None,
 ) -> TNASession:
     """Solve a registered whole TNA pattern and return all downstream state.
+
+    ``horizontal_kmax`` of ``None`` runs the auto-converging horizontal
+    solve: blocks of iterations until the worst reciprocity angle falls
+    below one degree or the hard cap is reached.  ``horizontal_method``
+    selects between ``"iterative"`` (the parallelisation loop) and
+    ``"algebraic"`` (exact force densities from the equilibrium matrix in
+    one sparse least-squares solve; requires ``horizontal_alpha`` 100 and
+    ignores ``horizontal_kmax``).  ``vertical_mode`` accepts
+    ``"natural"`` as well: the vertical solve keeps the horizontal force
+    densities exactly as they are (scale -1, compression) and reports the
+    equilibrium height they produce, instead of scaling to a target crown.
 
     Notes
     -----
@@ -1530,11 +2164,13 @@ def solve_tna_problem(
     ``effective_form_loads`` directly. A Rhino adapter may rotate these vectors
     into world coordinates using its recorded ``analysis_plane`` metadata.
 
-    Selfweight through the upstream ``density`` argument is intentionally
-    disabled. In COMPAS TNA 0.7.0, ``LoadUpdater`` adds positive selfweight to
-    ``pz`` while ``FormDiagram.vertex_selfweight`` reports it with the opposite
-    analysis-Z sign, and the final effective load array is not written back to
-    the form. Discretise selfweight into explicit negative ``pz`` values for now.
+    Selfweight through ``density`` follows RhinoVault's loading model: the
+    vertical solve recomputes each vertex load from its CURRENT
+    three-dimensional tributary area every iteration. Under this wrapper's
+    signed analysis-Z convention a downward surface load is a NEGATIVE
+    density (mirroring negative nodal ``pz``); the final effective loads
+    are written back to the form after the solve so reporting stays
+    truthful.
     """
     # Grasshopper may retain a problem created before a Python module refresh.
     # Accept that equivalent contract while still rejecting arbitrary objects.
@@ -1561,14 +2197,14 @@ def solve_tna_problem(
     density = float(density)
     if not isfinite(density):
         raise TNAInputError("density must be finite.")
-    if density != 0.0:
-        raise TNAInputError(
-            "density/selfweight is disabled for this COMPAS TNA 0.7.0 wrapper "
-            "because the upstream LoadUpdater uses a conflicting vertical sign "
-            "and does not persist its final effective loads on the form. Convert "
-            "selfweight to explicit signed nodal pz values (negative analysis Z) "
-            "and solve with density=0.0."
-        )
+    # Non-zero density enables COMPAS TNA's LoadUpdater: the vertical solve
+    # recomputes each vertex's load from the CURRENT three-dimensional
+    # tributary area every iteration (area x thickness t x density), which
+    # is exactly RhinoVault's loading model. Under this wrapper's signed
+    # analysis-Z convention a downward surface load is a NEGATIVE density,
+    # mirroring negative nodal pz. The updater never writes its final
+    # effective loads back to the form, so this wrapper persists them
+    # itself after the solve; see the post-solve block below.
 
     form = problem.form.copy()
     form.dual = None
@@ -1671,30 +2307,241 @@ def solve_tna_problem(
             )
         )
 
-    try:
-        horizontal_nodal(
-            form,
-            force,
-            alpha=float(horizontal_alpha),
-            kmax=int(horizontal_kmax),
+    def _reciprocity_angles() -> "tuple[float, float]":
+        """(gated worst, raw worst) folded reciprocity angles in degrees.
+
+        The gated value ignores edges carrying under
+        ``HORIZONTAL_FORCE_GATE_FRACTION`` of the peak horizontal force:
+        their force-diagram duals are near-zero length, so their direction
+        is numerical noise, not an equilibrium error. Chasing that noise is
+        what used to drive the auto loop to its iteration cap.
+        """
+        samples = []
+        for u, v in form.edges_where({"_is_edge": True}):
+            folded = _unoriented_angle(
+                abs(float(form.edge_attribute((u, v), "_a") or 0.0))
+            )
+            magnitude = abs(float(form.edge_attribute((u, v), "_f") or 0.0))
+            samples.append((folded, magnitude))
+        if not samples:
+            return 0.0, 0.0
+        raw_worst = max(angle for angle, _ in samples)
+        gate = HORIZONTAL_FORCE_GATE_FRACTION * max(f for _, f in samples)
+        gated = [angle for angle, f in samples if f >= gate]
+        return (max(gated) if gated else 0.0), raw_worst
+
+    def _snapshot_horizontal():
+        return (
+            {
+                key: tuple(form.vertex_attributes(key, "xy"))
+                for key in form.vertices()
+            },
+            {
+                (u, v): tuple(
+                    form.edge_attributes((u, v), ("q", "_f", "_l", "_a"))
+                )
+                for u, v in form.edges_where({"_is_edge": True})
+            },
+            {
+                key: tuple(force.vertex_attributes(key, "xy"))
+                for key in force.vertices()
+            },
+            {
+                tuple(edge): tuple(force.edge_attributes(edge, ("_l", "_a")))
+                for edge in force.edges()
+            },
         )
+
+    def _restore_horizontal(snapshot) -> None:
+        form_xy, form_edge_state, force_xy, force_edge_state = snapshot
+        for key, xy in form_xy.items():
+            form.vertex_attributes(key, "xy", xy)
+        for edge, values in form_edge_state.items():
+            form.edge_attributes(edge, ("q", "_f", "_l", "_a"), values)
+        for key, xy in force_xy.items():
+            force.vertex_attributes(key, "xy", xy)
+        for edge, values in force_edge_state.items():
+            force.edge_attributes(edge, ("_l", "_a"), values)
+
+    method = str(horizontal_method or "iterative").strip().lower()
+    if method in ("", "iterative", "parallelise", "parallelize", "nodal"):
+        method = "iterative"
+    elif method in ("algebraic", "direct", "lsq", "least_squares"):
+        method = "algebraic"
+    else:
+        raise TNAInputError(
+            "horizontal_method must be 'iterative' or 'algebraic'."
+        )
+    if method == "algebraic" and float(horizontal_alpha) != 100.0:
+        raise TNAInputError(
+            "The algebraic horizontal method fixes the form diagram; "
+            "horizontal_alpha must be 100."
+        )
+
+    # The default alpha of 100 holds the form fixed, which admits the
+    # sparse fixed-form solver; any other alpha falls back to the library's
+    # nodal implementation, which handles a moving form.
+    use_fixed_form = float(horizontal_alpha) == 100.0
+
+    def _run_horizontal(block_kmax: int) -> None:
+        if use_fixed_form:
+            _horizontal_fixed_form(form, force, block_kmax)
+        else:
+            horizontal_nodal(
+                form,
+                force,
+                alpha=float(horizontal_alpha),
+                kmax=block_kmax,
+            )
+
+    # The parallelisation is not monotone: more iterations can worsen the
+    # reciprocity of an individual state. The auto loop therefore keeps
+    # the best state seen so far, accepts at RhinoVault's own 5-degree gate,
+    # and stops once two successive blocks fail to improve that best state
+    # (a plateau no amount of iteration will pass).
+    horizontal_auto = horizontal_kmax is None
+    horizontal_first_block = 100  # RhinoVault's own default single run
+    # Checking often costs one O(edges) sweep against 250 O(edges)
+    # iterations; fine blocks keep the loop from stepping over a short
+    # sub-threshold dip in the non-monotone angle trajectory.
+    horizontal_block = 250
+    horizontal_cap = 10000
+    horizontal_iterations_run = 0
+    horizontal_angle = 0.0
+    horizontal_raw_angle = 0.0
+    algebraic_diagnostics = {}
+    try:
+        if method == "algebraic":
+            algebraic_diagnostics = _horizontal_algebraic(form, force)
+            horizontal_iterations_run = int(
+                algebraic_diagnostics.get("algebraic_lsqr_iterations", 0)
+            )
+            horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
+        elif horizontal_auto:
+            best_snapshot = None
+            stalled_blocks = 0
+            polish_deadline = None
+            while horizontal_iterations_run < horizontal_cap:
+                block = (
+                    horizontal_first_block
+                    if horizontal_iterations_run == 0
+                    else horizontal_block
+                )
+                _run_horizontal(block)
+                horizontal_iterations_run += block
+                gated, raw = _reciprocity_angles()
+                improvement_floor = max(0.02, 0.02 * horizontal_angle)
+                if (
+                    best_snapshot is None
+                    or gated < horizontal_angle - improvement_floor
+                ):
+                    horizontal_angle = gated
+                    horizontal_raw_angle = raw
+                    best_snapshot = _snapshot_horizontal()
+                    stalled_blocks = 0
+                else:
+                    stalled_blocks += 1
+                # Passing the 5-degree acceptance gate is not the finish
+                # line: residual reciprocity is unbalanced horizontal
+                # thrust in the result. Keep polishing while the best
+                # state improves, but within a bounded budget so an
+                # asymptotic tail of tiny improvements cannot hold the
+                # canvas; numerical completeness (a tenth of a degree) or
+                # a genuine plateau stops the loop earlier.
+                if horizontal_angle <= HORIZONTAL_POLISH_DEGREES:
+                    break
+                if horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES:
+                    if polish_deadline is None:
+                        polish_deadline = (
+                            horizontal_iterations_run
+                            + HORIZONTAL_POLISH_BUDGET
+                        )
+                    elif horizontal_iterations_run >= polish_deadline:
+                        break
+                # Iterations are cheap under the sparse solver, so the loop
+                # can afford patience with an oscillating trajectory before
+                # calling the plateau.
+                if stalled_blocks >= 4:
+                    break
+            if best_snapshot is not None:
+                _restore_horizontal(best_snapshot)
+        else:
+            _run_horizontal(int(horizontal_kmax))
+            horizontal_iterations_run = int(horizontal_kmax)
+            horizontal_angle, horizontal_raw_angle = _reciprocity_angles()
     except Exception as error:
         raise TNASolveError(
-            "COMPAS TNA horizontal_nodal failed for the registered whole pattern: "
-            "{}: {}".format(type(error).__name__, error)
+            "The COMPAS TNA horizontal solve failed for the registered "
+            "whole pattern: {}: {}".format(type(error).__name__, error)
         ) from error
+    horizontal_converged = horizontal_angle <= HORIZONTAL_ACCEPT_DEGREES
 
     vertical_tolerance = float(vertical_tolerance)
     if not isfinite(vertical_tolerance) or vertical_tolerance <= 0:
         raise TNAInputError("vertical_tolerance must be finite and greater than zero.")
 
     mode = str(vertical_mode or "").strip().lower()
+    if mode == "zmax" and zmax is None:
+        # A blank height is a request for the natural equilibrium height of
+        # the current force densities, not an invitation to invent a target.
+        mode = "natural"
+    natural_height = mode == "natural"
+    if natural_height:
+        mode = "q"
+        q_scale = -1.0
+
+    def _persist_selfweight_loads() -> None:
+        """Evaluate the selfweight at the form's current geometry and
+        persist it into the nodal pz attributes."""
+        from numpy import array as _np_array
+
+        from compas_tna.loads import LoadUpdater
+
+        vertex_order = list(form.vertices())
+        point_loads = _np_array(
+            [
+                form.vertex_attributes(key, ["px", "py", "pz"])
+                for key in vertex_order
+            ],
+            dtype=float,
+        )
+        thickness = _np_array(
+            [
+                [float(form.vertex_attribute(key, "t") or 1.0)]
+                for key in vertex_order
+            ],
+            dtype=float,
+        )
+        current_xyz = _np_array(
+            [form.vertex_coordinates(key) for key in vertex_order],
+            dtype=float,
+        )
+        effective = point_loads.copy()
+        LoadUpdater(
+            form,
+            point_loads,
+            thickness=thickness,
+            density=density,
+        )(effective, current_xyz)
+        for index, key in enumerate(vertex_order):
+            form.vertex_attribute(key, "pz", float(effective[index, 2]))
+
+    # The natural-height solve is scale-free: it lets the given force
+    # densities find their own height. Geometry-dependent selfweight makes
+    # that a positive feedback loop (a taller surface carries more
+    # tributary load, which pushes it taller still), which either runs
+    # away or crawls toward an absurd equilibrium while re-evaluating the
+    # loads every iteration. Freeze the selfweight at the plan geometry
+    # instead: the reported natural height answers "what height do these
+    # force densities give under the pattern's own plan-evaluated weight",
+    # and a Height input remains the way to run true selfweight physics.
+    frozen_selfweight = natural_height and density != 0.0
+    if frozen_selfweight:
+        _persist_selfweight_loads()
+    vertical_density = 0.0 if frozen_selfweight else density
     vertical_scale = None
     try:
         if mode == "zmax":
-            if zmax is None:
-                base = max(float(form.vertex_attribute(key, "z")) for key in support_form_keys)
-                zmax = base + 0.25 * _plan_diagonal(form)
             zmax = float(zmax)
             support_max = max(
                 float(form.vertex_attribute(key, "z")) for key in support_form_keys
@@ -1709,7 +2556,7 @@ def solve_tna_problem(
                 kmax=int(vertical_kmax),
                 xtol=vertical_tolerance,
                 rtol=vertical_tolerance,
-                density=density,
+                density=vertical_density,
                 display=bool(display),
             )
         elif mode == "q":
@@ -1719,7 +2566,7 @@ def solve_tna_problem(
             vertical_from_q(
                 form,
                 scale=q_scale,
-                density=density,
+                density=vertical_density,
                 kmax=int(vertical_kmax),
                 tol=vertical_tolerance,
                 display=bool(display),
@@ -1735,6 +2582,17 @@ def solve_tna_problem(
                 mode, type(error).__name__, error
             )
         ) from error
+
+    if density != 0.0 and not frozen_selfweight:
+        # COMPAS TNA's LoadUpdater computes the selfweight inside the
+        # solver but never writes the final effective loads back to the
+        # form. Recompute them once from the solved geometry and persist
+        # them, so the reported loads, reactions, and global equilibrium
+        # checks describe the loads the solve actually applied. The frozen
+        # natural path already persisted its plan-evaluated loads before
+        # the solve; recomputing at the solved geometry would misreport
+        # the equilibrium it found.
+        _persist_selfweight_loads()
 
     edge_q = {}
     edge_forces = {}
@@ -1806,7 +2664,6 @@ def solve_tna_problem(
         abs(float(form.edge_attribute((u, v), "_a") or 0.0))
         for u, v in form.edges_where({"_is_edge": True})
     ]
-    angles = [_unoriented_angle(value) for value in raw_angles]
     heights = [float(form.vertex_attribute(key, "z")) for key in form.vertices()]
     removed_sources = [
         source for source, form_key in active_source_to_form.items() if form_key is None
@@ -1842,9 +2699,27 @@ def solve_tna_problem(
                 "signed analysis XYZ support force; "
                 "load_sum + reaction_sum = 0"
             ),
-            "vertical_mode": mode,
+            "vertical_mode": "natural" if natural_height else mode,
+            "natural_selfweight_frozen": frozen_selfweight,
             "vertical_scale": float(vertical_scale),
             "zmax_requested": zmax if mode == "zmax" else None,
+            "horizontal_method": method,
+            "horizontal_mode": (
+                "algebraic"
+                if method == "algebraic"
+                else ("auto" if horizontal_auto else "fixed")
+            ),
+            # Numeric twin of horizontal_mode: the native component's metric
+            # dictionary carries doubles only. The algebraic method counts
+            # as auto because raising Iterations cannot improve its result.
+            "horizontal_mode_is_auto": (
+                1.0 if (horizontal_auto or method == "algebraic") else 0.0
+            ),
+            "horizontal_iterations_run": horizontal_iterations_run,
+            "horizontal_converged": horizontal_converged,
+            "horizontal_accept_degrees": HORIZONTAL_ACCEPT_DEGREES,
+            "horizontal_polish_degrees": HORIZONTAL_POLISH_DEGREES,
+            "horizontal_force_gate_fraction": HORIZONTAL_FORCE_GATE_FRACTION,
             "zmin_solved": min(heights),
             "zmax_solved": max(heights),
             "max_free_residual": max_free_residual,
@@ -1852,12 +2727,18 @@ def solve_tna_problem(
             "reaction_sum": reaction_sum,
             "global_force_error": global_force_error,
             "global_force_error_norm": _vector_norm(global_force_error),
-            "max_reciprocal_angle_deviation": max(angles or [0.0]),
+            # The headline reciprocity metric is the force-gated worst angle
+            # captured at the end of the horizontal phase, while _f still
+            # holds the horizontal force of the reciprocal state. The
+            # unfiltered worst (noise edges included) stays available.
+            "max_reciprocal_angle_deviation": horizontal_angle,
+            "max_reciprocal_angle_ungated": horizontal_raw_angle,
             "max_raw_form_force_angle": max(raw_angles or [0.0]),
             "compression_edge_count": compression_count,
             "tension_edge_count": tension_count,
         }
     )
+    diagnostics.update(algebraic_diagnostics)
 
     session_metadata = dict(problem.metadata)
     session_metadata.update(dict(metadata or {}))
@@ -1868,12 +2749,16 @@ def solve_tna_problem(
     session_metadata["solve"] = {
         "support_mode": support_mode,
         "fixed_keys": tuple(fixed_keys or ()),
-        "vertical_mode": mode,
+        "vertical_mode": "natural" if natural_height else mode,
         "zmax": zmax if mode == "zmax" else None,
         "q_scale": q_scale if mode == "q" else None,
         "density": density,
         "horizontal_alpha": float(horizontal_alpha),
-        "horizontal_kmax": int(horizontal_kmax),
+        "horizontal_method": method,
+        "horizontal_kmax": (
+            None if horizontal_auto else int(horizontal_kmax)
+        ),
+        "horizontal_iterations_run": horizontal_iterations_run,
         "vertical_kmax": int(vertical_kmax),
         "vertical_tolerance": vertical_tolerance,
     }
@@ -1922,7 +2807,7 @@ def solve_tna_pattern(
     q_scale: float = -1.0,
     density: float = 0.0,
     horizontal_alpha: float = 100.0,
-    horizontal_kmax: int = 100,
+    horizontal_kmax: Optional[int] = 100,
     vertical_kmax: int = 100,
     vertical_tolerance: float = 1e-3,
     display: bool = False,

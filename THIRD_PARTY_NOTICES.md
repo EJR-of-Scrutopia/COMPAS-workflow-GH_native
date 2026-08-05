@@ -7,6 +7,15 @@ The staged TNA boundary-opening preparation follows and adapts the
 `Pattern.match_opening_sag_targets` workflow from
 [BlockResearchGroup/compas-RV](https://github.com/BlockResearchGroup/compas-RV).
 
+## compas_tna
+
+The fixed-form horizontal solver in `tree_forest_compas.tna`
+(`_horizontal_fixed_form`) reimplements the global parallelisation
+formulation of `compas_tna.equilibrium.horizontal_numpy` from
+[BlockResearchGroup/compas_tna](https://github.com/BlockResearchGroup/compas_tna),
+specialised to a fixed form diagram and with per-call sparse
+factorisation instead of the library's process-wide memoised cache.
+
 Copyright ETH Zurich - Block Research Group.
 
 MIT License

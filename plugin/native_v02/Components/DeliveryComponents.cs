@@ -14,8 +14,6 @@ namespace Ananke.COMPAS.Native.Components;
 
 public sealed record ExportComponentTaskResult(
     string? Json,
-    string? WrittenPath,
-    string? WriteError,
     string? Warning,
     Exception? Error,
     TimeSpan Elapsed);
@@ -31,6 +29,13 @@ public sealed record ExportComponentTaskResult(
 public sealed class ExportComponent :
     NativeTaskComponentBase<ExportComponentTaskResult>
 {
+    // A Button feeding Write is only True for the press solve; the release
+    // immediately triggers a second solve with Write false. Latching the
+    // last successful write keeps the evidence of the one-shot write on the
+    // component instead of wiping it milliseconds after it happened.
+    private string? _lastWrittenPath;
+    private DateTime _lastWrittenAt;
+
     private static readonly ComponentValueListSpec[] ValueLists =
     {
         new(
@@ -82,11 +87,33 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Path",
             "P",
-            "Optional file path; when non-empty the JSON is also written " +
-            "to disk.",
+            "Optional target for the Write trigger: a file path, or a " +
+            "folder to receive ananke-export-<format>.json. Missing " +
+            "parent folders are created.",
             GH_ParamAccess.item,
             string.Empty);
         parameters[2].Optional = true;
+        parameters.AddBooleanParameter(
+            "Write",
+            "W",
+            "Push the export to disk: while True, the JSON is written to " +
+            "Path on every solve. Wire a button for one-shot writes. The " +
+            "JSON output itself is always live.",
+            GH_ParamAccess.item,
+            false);
+        parameters.AddTextParameter(
+            "Name",
+            "N",
+            "Optional file name for the write. Keep it to bake over the " +
+            "same file; change it to bake a new one. Applied inside a " +
+            "folder Path, or replacing the file name of a file Path. " +
+            "Without an extension, -contract.json or -compas.json is " +
+            "appended so both exports of one geometry sit side by side; " +
+            "an explicit extension is used verbatim. Blank uses " +
+            "ananke-export-<format>.json.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[4].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -100,8 +127,9 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Written",
             "W",
-            "File path written to disk; empty when Path was empty or the " +
-            "write failed.",
+            "Most recent file path this component wrote this session, so " +
+            "a one-shot Button write stays visible after release; empty " +
+            "until a write happens.",
             GH_ParamAccess.item);
     }
 
@@ -113,7 +141,10 @@ public sealed class ExportComponent :
                     data,
                     out ResultDto? result,
                     out string format,
-                    out string path))
+                    out _,
+                    out _,
+                    out _,
+                    report: false))
             {
                 return;
             }
@@ -121,27 +152,35 @@ public sealed class ExportComponent :
                 () => ComputeAsync(
                     CloneResult(result!),
                     format,
-                    path,
                     CancelToken),
                 CancelToken));
             return;
         }
 
-        ExportComponentTaskResult taskResult;
-        if (!GetSolveResults(data, out taskResult!))
+        // The post phase re-reads Write and Path itself: the disk write is
+        // a side effect and belongs on this thread, where a Button's
+        // release re-solve cannot cancel it mid-flight.
+        if (!TryReadInputs(
+                data,
+                out ResultDto? postResult,
+                out string postFormat,
+                out string path,
+                out bool write,
+                out string name))
         {
-            if (!TryReadInputs(
-                    data,
-                    out ResultDto? result,
-                    out string format,
-                    out string path))
-            {
-                return;
-            }
+            return;
+        }
+        ExportComponentTaskResult taskResult;
+        bool haveTaskResult = GetSolveResults(data, out taskResult!);
+        if (!haveTaskResult ||
+            taskResult.Error is OperationCanceledException)
+        {
+            // A cancelled background task is a scheduling race, not a
+            // verdict on the current inputs; recompute synchronously so a
+            // late cancellation cannot strand the canvas on "Cancelled".
             taskResult = ComputeAsync(
-                    CloneResult(result!),
-                    format,
-                    path,
+                    CloneResult(postResult!),
+                    postFormat,
                     CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
@@ -173,35 +212,110 @@ public sealed class ExportComponent :
                 GH_RuntimeMessageLevel.Warning,
                 "Export: " + taskResult.Warning);
         }
-        if (taskResult.WriteError is not null)
+
+        if (write && !string.IsNullOrWhiteSpace(path))
         {
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Error,
-                "Export: failed to write file: " + taskResult.WriteError);
+            try
+            {
+                string resolved = ResolveWritePath(path, postFormat, name);
+                File.WriteAllText(resolved, taskResult.Json);
+                _lastWrittenPath = resolved;
+                _lastWrittenAt = DateTime.Now;
+            }
+            catch (Exception writeException)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    "Export: failed to write file: " +
+                    writeException.Message);
+            }
         }
 
         data.SetData(0, taskResult.Json);
-        data.SetData(1, taskResult.WrittenPath ?? string.Empty);
-        Message = $"{taskResult.Json.Length} chars";
+        data.SetData(1, _lastWrittenPath ?? string.Empty);
+        Message = _lastWrittenPath is null
+            ? $"{taskResult.Json.Length} chars · not written"
+            : $"{taskResult.Json.Length} chars · wrote " +
+              $"{Path.GetFileName(_lastWrittenPath)} " +
+              $"{_lastWrittenAt:HH:mm:ss}";
     }
 
     /// <summary>
-    /// Read RES and this component's own Format/Path, normalising Format
-    /// and validating the Result up front so the background task never has
-    /// to report a runtime message itself.
+    /// A Path may name a file or a folder: canvas path pickers commonly
+    /// hand over a directory when the target file does not exist yet. A
+    /// directory (existing, or spelled with a trailing separator) receives
+    /// the Name input inside it, or a deterministic per-format file name
+    /// when Name is blank, so the Contract and COMPAS exports of one
+    /// definition never overwrite each other; a file path is used as
+    /// given unless Name overrides its file name. Parent directories are
+    /// created when missing, and .json is appended to a Name given
+    /// without an extension.
+    /// </summary>
+    private static string ResolveWritePath(
+        string path,
+        string format,
+        string name)
+    {
+        string trimmed = path.Trim();
+        string fileName = name.Trim();
+        if (fileName.Length > 0 &&
+            string.IsNullOrEmpty(Path.GetExtension(fileName)))
+        {
+            // One geometry is routinely exported in both formats with the
+            // same Name; the format suffix keeps them side by side. A Name
+            // spelled with an explicit extension is used verbatim.
+            fileName += $"-{format}.json";
+        }
+        bool looksLikeDirectory =
+            trimmed.EndsWith(
+                Path.DirectorySeparatorChar.ToString(),
+                StringComparison.Ordinal) ||
+            trimmed.EndsWith(
+                Path.AltDirectorySeparatorChar.ToString(),
+                StringComparison.Ordinal) ||
+            Directory.Exists(trimmed);
+        if (looksLikeDirectory)
+        {
+            Directory.CreateDirectory(trimmed);
+            return Path.Combine(
+                trimmed,
+                fileName.Length > 0
+                    ? fileName
+                    : $"ananke-export-{format}.json");
+        }
+        string? parent = Path.GetDirectoryName(trimmed);
+        if (!string.IsNullOrEmpty(parent))
+            Directory.CreateDirectory(parent);
+        if (fileName.Length > 0)
+            return Path.Combine(parent ?? string.Empty, fileName);
+        return trimmed;
+    }
+
+    /// <summary>
+    /// Read RES and this component's own Format/Path/Write, normalising
+    /// Format and validating the Result up front so the background task
+    /// never has to report a runtime message itself. The write itself
+    /// happens in the post phase; this only gathers and validates.
     /// </summary>
     private bool TryReadInputs(
         IGH_DataAccess data,
         out ResultDto? result,
         out string format,
-        out string path)
+        out string path,
+        out bool write,
+        out string name,
+        bool report = true)
     {
         result = null;
         format = "contract";
         path = string.Empty;
+        write = false;
+        name = string.Empty;
         ResultGoo? resultGoo = null;
         string formatInput = "contract";
         string pathInput = string.Empty;
+        bool writeInput = false;
+        string nameInput = string.Empty;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -209,23 +323,34 @@ public sealed class ExportComponent :
         }
         data.GetData(1, ref formatInput);
         data.GetData(2, ref pathInput);
+        data.GetData(3, ref writeInput);
+        data.GetData(4, ref nameInput);
 
         string normalisedFormat = NormaliseFormat(formatInput);
         var errors = new List<string>(resultValue.Validate());
         if (normalisedFormat is not ("contract" or "compas"))
             errors.Add("Format must be Contract or COMPAS.");
+        if (writeInput && string.IsNullOrWhiteSpace(pathInput))
+            errors.Add("Write requires a Path to write to.");
         if (errors.Count > 0)
         {
-            Message = "Invalid";
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Error,
-                string.Join(" ", errors));
+            // The pre phase reads quietly; the post phase repeats the read
+            // and owns the reporting, so invalid inputs surface once.
+            if (report)
+            {
+                Message = "Invalid";
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    string.Join(" ", errors));
+            }
             return false;
         }
 
         result = resultValue;
         format = normalisedFormat;
         path = pathInput ?? string.Empty;
+        write = writeInput;
+        name = nameInput ?? string.Empty;
         return true;
     }
 
@@ -245,7 +370,6 @@ public sealed class ExportComponent :
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
         string format,
-        string path,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -264,26 +388,9 @@ public sealed class ExportComponent :
             {
                 json = ContractJson.Serialize(result);
             }
-
-            string? writtenPath = null;
-            string? writeError = null;
-            if (!string.IsNullOrWhiteSpace(path))
-            {
-                try
-                {
-                    File.WriteAllText(path, json);
-                    writtenPath = path;
-                }
-                catch (Exception writeException)
-                {
-                    writeError = writeException.Message;
-                }
-            }
             stopwatch.Stop();
             return new ExportComponentTaskResult(
                 json,
-                writtenPath,
-                writeError,
                 warning,
                 null,
                 stopwatch.Elapsed);
@@ -292,8 +399,6 @@ public sealed class ExportComponent :
         {
             stopwatch.Stop();
             return new ExportComponentTaskResult(
-                null,
-                null,
                 null,
                 null,
                 error,

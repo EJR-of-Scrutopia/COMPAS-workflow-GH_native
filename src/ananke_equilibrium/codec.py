@@ -16,6 +16,7 @@ import struct
 from typing import Any
 from typing import BinaryIO
 from typing import Dict
+from typing import List
 from typing import Optional
 from typing import Tuple
 
@@ -78,10 +79,50 @@ def _json_mapping(value: Mapping[Any, Any]) -> Dict[str, Any]:
     }
 
 
+def _json_sequence(value: Any) -> List[Any]:
+    """Encode a list/tuple with an exact-type fast path for the scalars
+    that dominate geometry payloads; anything else recurses as before."""
+
+    result = []
+    append = result.append
+    for item in value:
+        kind = type(item)
+        if kind is float:
+            if not isfinite(item):
+                raise CodecError(
+                    "Non-finite floating-point values are not permitted."
+                )
+            append(item)
+        elif kind is int or kind is str or kind is bool or item is None:
+            append(item)
+        elif kind is list or kind is tuple:
+            append(_json_sequence(item))
+        else:
+            append(to_json_value(item))
+    return result
+
+
 def to_json_value(value: Any) -> Any:
     """Convert a stable contract value to finite JSON-compatible data."""
 
-    if value is None or isinstance(value, (bool, str)):
+    # Exact-type fast paths first: contract payloads are overwhelmingly
+    # plain floats, ints, strings, lists, and dicts, and the ABC
+    # isinstance checks below are measurably expensive at result scale.
+    # Subclasses and everything unusual fall through to the full chain
+    # with unchanged semantics.
+    kind = type(value)
+    if kind is float:
+        if not isfinite(value):
+            raise CodecError("Non-finite floating-point values are not permitted.")
+        return value
+    if kind is str or kind is bool or value is None or kind is int:
+        return value
+    if kind is list or kind is tuple:
+        return _json_sequence(value)
+    if kind is dict:
+        return _json_mapping(value)
+
+    if isinstance(value, (bool, str)):
         return value
     if isinstance(value, int):
         return value
@@ -92,7 +133,7 @@ def to_json_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return _json_mapping(value)
     if isinstance(value, (list, tuple)):
-        return [to_json_value(item) for item in value]
+        return _json_sequence(value)
     if hasattr(value, "to_data") and callable(value.to_data):
         return to_json_value(value.to_data())
     if all(hasattr(value, axis) for axis in ("X", "Y", "Z")):
@@ -423,9 +464,10 @@ def decode_height_control(value: Any) -> HeightControl:
             "control.height_control.metadata",
         ),
     )
-    if control.mode not in ("zmax", "q"):
+    if control.mode not in ("zmax", "q", "natural"):
         raise CodecError(
-            "control.height_control.mode must be 'zmax' or 'q' for tna.solve."
+            "control.height_control.mode must be 'zmax', 'q', or 'natural' "
+            "for tna.solve."
         )
     return control
 
@@ -440,6 +482,7 @@ def decode_tna_config(value: Any) -> TNAConfig:
             "schema_version",
             "horizontal_alpha",
             "horizontal_iterations",
+            "horizontal_method",
             "vertical_iterations",
             "tolerance",
             "metadata",
@@ -447,7 +490,8 @@ def decode_tna_config(value: Any) -> TNAConfig:
     )
     return TNAConfig(
         horizontal_alpha=data.get("horizontal_alpha", 100.0),
-        horizontal_iterations=data.get("horizontal_iterations", 100),
+        horizontal_iterations=data.get("horizontal_iterations"),
+        horizontal_method=data.get("horizontal_method", "iterative"),
         vertical_iterations=data.get("vertical_iterations", 100),
         tolerance=data.get("tolerance", 1.0e-3),
         metadata=_object(
@@ -828,8 +872,22 @@ def _diagram_faces(
     face_vertices = getattr(diagram, "face_vertices", None)
     if not callable(faces) or not callable(face_vertices):
         return []
+    face_attribute = getattr(diagram, "face_attribute", None)
     records = []
-    for face_id, key in enumerate(faces()):
+    face_id = 0
+    for key in faces():
+        # FormDiagram.update_boundaries closes every unsupported opening
+        # with an unloaded face so the dual force diagram can be built.
+        # Those faces are solver scaffolding, not structure: exporting
+        # them draws a mesh across the very arches the openings sagged
+        # into. Only load-bearing faces leave the worker.
+        if callable(face_attribute):
+            try:
+                loaded = face_attribute(key, "_is_loaded")
+            except Exception:
+                loaded = None
+            if loaded is False:
+                continue
         try:
             cycle = [vertex_ids[item] for item in face_vertices(key)]
         except (KeyError, TypeError) as error:
@@ -843,6 +901,7 @@ def _diagram_faces(
                 "vertices": cycle,
             }
         )
+        face_id += 1
     return records
 
 

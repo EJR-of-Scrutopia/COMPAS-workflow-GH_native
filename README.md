@@ -75,18 +75,27 @@ The native v0.2 vertical slice contains twelve components:
 01 Model
   Pattern      Geometry, Mode, Tol            -> PAT  registered pattern
   Supports     PAT, Points, Tol               -> SUP  anchored pattern
-  Loads        SUP, Vector, NodeIDs, Factor   -> PRB  problem
+  Loads        SUP, Vector, NodeIDs, Factor   -> PRB  problem (surface load
+                                                 by default, point loads
+                                                 with NodeIDs)
 
 02 Form Finding
   TNA Relax    PRB, ForceDensity, Sag%        -> RLX  relaxed state
-  TNA Solve    RLX, Mode, Value, CTL          -> RES  result
-  FD Solve     PRB, ForceDensity, CTL         -> RES  result (same type)
-  Control      Alpha, HIter, VIter, Tol       -> CTL  solver settings
+  TNA Solve    RLX, Height (optional),
+               Iterations (optional), Run     -> RES  result + native
+                                                 Mesh/Lines/Supports
+  TNA Solve A  RLX, Height (optional), Run    -> RES  same surface, with
+                                                 the algebraic horizontal
+                                                 method (exact force
+                                                 densities in one sparse
+                                                 least-squares solve)
+  FD Solve     PRB, ForceDensity, Run         -> RES  result (same type) +
+                                                 native Lines/Supports
 
 03 Visualise
   Display      RES, STY, Elements, Metric,
                Weight, VectorScale, Gap       -> viewport + ThrustMesh,
-                                                 Form/Force/Load/Reaction
+                                                 Thrust/Force/Load/Reaction
                                                  lines, Report
   Style        Preset, Weight Scale,
                Vector Scale                   -> STY  display preset
@@ -95,12 +104,27 @@ The native v0.2 vertical slice contains twelve components:
 07 Delivery
   Export       RES,
                Format (contract | compas),
-               Path (optional)                -> JSON text, written file path
+               Path (optional), Write,
+               Name (optional)                -> JSON text, written file path
 
 90 System
   Backend Health                              -> ready, packages,
                                                  capabilities, report
 ```
+
+A blank TNA Solve `Height` finds the natural equilibrium height of the
+current force densities and reports it; a number solves so the crown lands
+exactly there. A blank `Iterations` auto-converges the horizontal solve:
+it keeps the best reciprocal state it finds and keeps polishing past
+RhinoVault's five-degree acceptance, because residual reciprocity is
+unbalanced horizontal thrust in the exported result. The polish is
+bounded (about two thousand further iterations after acceptance) and
+stops earlier at a tenth of a degree or on a genuine plateau. Under
+five degrees reports as converged; the achieved angle is always
+reported. Edges
+carrying under one percent of the peak horizontal force are excluded from
+the acceptance metric because their force-diagram duals are near-zero
+length and their direction is numerical noise.
 
 Every stage takes one primary typed object and returns it enriched, so the
 wire is the workflow. See [Component taxonomy](docs/component-taxonomy.md)
@@ -113,7 +137,7 @@ Geometry -> Pattern -> Supports -> Loads = Problem
 Problem -> TNA Relax -> TNA Solve -> Result
 Problem -> FD Solve ------------------> Result (same type)
 Result -> Display / Deconstruct / Export
-Control and Style feed the solvers and Display.
+Style feeds Display.
 ```
 
 FD and TNA now share one spine end to end. The recommended path is
@@ -138,9 +162,13 @@ either solver's `Result` in one place, and `Deconstruct` extracts the same
 information as data: member IDs, thrust lines, `q`/`H`/`F`, force state,
 support/load/reaction points and vectors, residuals, and diagnostics.
 
-The current TNA solver accepts nodal loads along analysis Z only. It rejects
+The current TNA solver accepts loads along analysis Z only. It rejects
 nonzero analysis-X/Y components instead of silently discarding them; use the
-FD workflow for general spatial load vectors.
+FD workflow for general spatial load vectors. A surface load (Loads without
+Node IDs) is applied selfweight-style: the vertical solve recomputes each
+vertex load from its current three-dimensional tributary area every
+iteration, which is RhinoVault's loading model and what pulls a deep vault
+taut instead of inflating it.
 
 The displayed force density `q`, horizontal force `H`, and spatial axial force
 `F` are equilibrium demands, never member capacities. Before a vertical
@@ -169,8 +197,9 @@ will not be hidden behind one ambiguous solver.
 The implemented RhinoVault-style authoring path groups its inspectable
 operations into the spine itself: `Pattern -> Supports -> Loads -> TNA Relax
 -> TNA Solve`. `TNA Relax` carries both form and topological-force graphs;
-`TNA Solve` combines horizontal and vertical solving behind `Control`'s
-numerical settings and its own crown-height/force-scale target. The
+`TNA Solve` combines horizontal and vertical solving behind two optional
+inputs: `Height` (blank finds the natural equilibrium height) and
+`Iterations` (blank auto-converges the reciprocal diagrams). The
 implemented surface and later design-by-statics roadmap are detailed in
 [RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md).
 
