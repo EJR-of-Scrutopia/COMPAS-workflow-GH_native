@@ -1,5 +1,18 @@
 # Documentation
 
+Two surfaces share this repository: the Grasshopper plugin (the Workflow)
+and the VS Code side (the Bench). The root README tells the end-to-end
+story; these documents go deeper.
+
+## The Bench
+
+- [The Bench](BENCH.md) is the guide to the VS Code side: the three
+  environments and why they exist, the `ananke` terminal tool, the demos,
+  the structural verification strand, and where results land.
+- The [demo runbook](../demo/README.md) documents every clickable demo.
+
+## The Workflow
+
 - [Component taxonomy](component-taxonomy.md) defines the stable Grasshopper
   boundary and the staged component roadmap.
 - [Native v0.2 getting started](native-v02-getting-started.md) covers
