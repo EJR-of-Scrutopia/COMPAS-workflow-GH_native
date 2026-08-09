@@ -71,5 +71,8 @@ bench/studies/**/results/
 bench/demo/*.png
 !bench/demo/pavilion-result.json
 
+# Generated studio outputs
+bench/studies/*/studio/
+
 # Upstream COMPAS example repos, fetched by scripts/fetch_compas_examples.sh
 upstream/

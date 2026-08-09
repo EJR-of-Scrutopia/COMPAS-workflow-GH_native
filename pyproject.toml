@@ -72,6 +72,12 @@ plot = [
 viz = [
     "compas_viewer==2.0.2",
 ]
+# The Bench Studio server. Pure web stack; none of these may move the
+# pinned numpy, scipy, or compas, and the pin guard test checks that.
+studio = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+]
 dev = [
     "build>=1.2,<2",
     "numpy==2.0.2",
