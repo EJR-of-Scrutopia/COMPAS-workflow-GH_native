@@ -185,6 +185,28 @@ def surface_principal_stresses(resultants, thickness):
     return max(outcomes), min(outcomes)
 
 
+def surface_principal_stress_pairs(resultants, thickness):
+    """Principal stress pair per shell surface, for per-element field export.
+
+    Same plate theory as surface_principal_stresses, kept separate because
+    that function collapses both surfaces to a single (max, min) for the
+    tension-onset check, while the studio heatmap needs top and bottom
+    distinguished. The combined extremes of these pairs always equal that
+    function's output, and the test pins it.
+    """
+
+    nxx, nyy, nxy, mxx, myy, mxy = resultants[:6]
+    pairs = {}
+    for label, sign in (("top", 1.0), ("bottom", -1.0)):
+        sxx = nxx / thickness + sign * 6.0 * mxx / thickness**2
+        syy = nyy / thickness + sign * 6.0 * myy / thickness**2
+        sxy = nxy / thickness + sign * 6.0 * mxy / thickness**2
+        centre = (sxx + syy) / 2.0
+        radius = (((sxx - syy) / 2.0) ** 2 + sxy**2) ** 0.5
+        pairs[label] = [centre + radius, centre - radius]
+    return pairs
+
+
 def deflection_summary(displacement: Mapping[str, Any], span: float) -> Dict[str, Any]:
     """Peak deflection expressed as a span ratio."""
 
