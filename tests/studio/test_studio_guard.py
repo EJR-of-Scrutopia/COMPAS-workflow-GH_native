@@ -26,6 +26,11 @@ FORBIDDEN = re.compile(
 def test_studio_never_imports_the_solver_stacks():
     offenders = []
     for module in STUDIO.rglob("*.py"):
+        if module.name == "solve_stage.py":
+            # The one deliberate exception: it executes inside .venv-fea,
+            # never in the server process; staging.py only ever runs it as
+            # a subprocess under that interpreter.
+            continue
         if FORBIDDEN.search(module.read_text(encoding="utf-8")):
             offenders.append(str(module.relative_to(STUDIO)))
     assert offenders == [], (
