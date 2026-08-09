@@ -89,6 +89,37 @@ def test_run_lifecycle_reaches_done_and_embeds_staging(tmp_path, monkeypatch):
     assert document["staging"]["rings"] == 4
 
 
+def test_bundle_url_is_percent_encoded_for_spaced_export_names(tmp_path, monkeypatch):
+    """bundle_url must URL-encode the export path segment.
+
+    'Trial 2' is a real export name in this repo; every spaced export must
+    not leak a literal space into bundle_url, since that contradicts the
+    documented output format ('Trial%202') and breaks naive URL joining on
+    the client. This proves the encoding round-trips: the encoded bundle_url
+    actually resolves through the same TestClient.
+    """
+    client, studies = make_client(tmp_path, monkeypatch)
+    upload = tmp_path / "upload"
+    (upload / "Tiny Two-contract.json").write_text(
+        json.dumps(tiny_contract()), encoding="utf-8"
+    )
+    (upload / "Tiny Two-compas.json").write_text("{}", encoding="utf-8")
+
+    started = client.post(
+        "/api/runs", json={"export": "Tiny Two", "material": "concrete", "rings": 4}
+    )
+    assert started.status_code == 202
+    state = wait_for(client, started.json()["run"])
+    assert state["state"] == "done", state["message"]
+
+    bundle_url = state["bundle_url"]
+    assert "Tiny%20Two" in bundle_url
+    assert " " not in bundle_url
+
+    round_trip = client.get(bundle_url)
+    assert round_trip.status_code == 200
+
+
 def test_second_run_on_the_same_export_is_409(tmp_path, monkeypatch):
     import threading
 

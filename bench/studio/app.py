@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import threading
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -129,7 +130,7 @@ def create_app(runner=None) -> FastAPI:
             "state": run["state"], "stage": run["stage"], "of": run["of"],
             "message": run["message"],
             "bundle_url": "/api/studies/{}/bundle?material={}&rings={}".format(
-                run["export"], run["material"], run["rings"]),
+                urllib.parse.quote(run["export"]), run["material"], run["rings"]),
         }
 
     @app.get("/api/columns/{name}")
