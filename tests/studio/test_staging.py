@@ -172,6 +172,30 @@ def test_run_staging_with_degenerate_geometry_contracts_stages_to_occupied_rings
     assert document["stages"][0]["rings_placed"] == 1
 
 
+def test_run_staging_reports_progress_per_stage(tmp_path):
+    """on_stage fires once per occupied ring, before that stage's solve.
+
+    tiny_contract is radially degenerate (all centroids equidistant) and
+    collapses to a single occupied ring regardless of the requested rings
+    count, so it cannot exercise more than one callback. two_radius_contract
+    has two genuinely separated radii and occupies both rings at rings=2,
+    which is what this test needs to pin the per-stage callback contract.
+    """
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    seen = []
+    staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        on_stage=lambda stage, of: seen.append((stage, of)),
+    )
+    assert seen == [(1, 2), (2, 2)]
+
+
 def test_run_staging_rejects_an_unknown_material(tmp_path):
     _, _, staging = studio()
     with pytest.raises(ValueError, match="concrete"):

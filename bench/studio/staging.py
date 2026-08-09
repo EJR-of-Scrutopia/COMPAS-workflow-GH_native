@@ -116,6 +116,7 @@ def run_staging(
     out_path: Path,
     python_exe: Optional[Path] = None,
     runner: Optional[Callable[[dict], dict]] = None,
+    on_stage: Optional[Callable[[int, int], None]] = None,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -143,6 +144,8 @@ def run_staging(
 
     stages = []
     for entry, weights in zip(plan, curve):
+        if on_stage is not None:
+            on_stage(entry["stage"], len(plan))
         struck = runner({
             "contract_path": str(export_pair["contract"]),
             "geometry_path": str(export_pair["geometry"]),
