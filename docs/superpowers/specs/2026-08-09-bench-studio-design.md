@@ -112,9 +112,13 @@ One JSON the page loads per (export, material, ring count):
   faces, with a parent-face index per subdivided face and interpolated
   vertex positions. Built once in Python; the browser never subdivides.
 - `fields` per stage: full per-node displacement vectors and per-element
-  stress (top and bottom surface principal values), not just peaks.
-  Vertex fields carry to the render mesh by bilinear interpolation at
-  bundle build time; face fields inherit from the parent face.
+  stress (top and bottom surface principal values), not just peaks. Fields
+  ship once at analysis resolution; the render mesh carries a
+  vertex-sources map, and the page applies the same averaging rule the
+  Python subdivision defines (tested to preserve values at original
+  vertices), so vertex fields carry over without duplicating every field
+  at render resolution per stage. Face fields inherit from the parent
+  face.
 - `segments`: the canonical Python assignment (face index to segment id)
   for the requested ring count, plus placement order.
 - `staging`: the per-stage twin-solve results (next section).
