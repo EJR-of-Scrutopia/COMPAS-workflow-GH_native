@@ -1,0 +1,30 @@
+:root { color-scheme: dark; }
+* { margin: 0; box-sizing: border-box; }
+body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
+       background: #101114; color: #e8e8e6; }
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#panel { position: fixed; top: 0; right: 0; width: 300px; height: 100%;
+         overflow-y: auto; padding: 14px; background: rgba(16, 17, 20, 0.88);
+         backdrop-filter: blur(6px); border-left: 1px solid #2a2c31; }
+#panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em;
+            color: #9aa0a6; margin: 18px 0 8px; }
+#panel section:first-child h2 { margin-top: 0; }
+#panel label { display: block; font-size: 12px; margin: 8px 0; color: #c8c9c7; }
+#panel input[type="range"] { width: 100%; }
+#panel select, #panel button { width: 100%; margin: 4px 0; padding: 6px 8px;
+         background: #1c1e23; color: #e8e8e6; border: 1px solid #34373d;
+         border-radius: 4px; font-size: 13px; }
+#panel button:hover { border-color: #6f7074; cursor: pointer; }
+#hud { position: fixed; left: 16px; bottom: 16px; font-size: 13px;
+       line-height: 1.5; white-space: pre; pointer-events: none;
+       text-shadow: 0 1px 3px #000; }
+#banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
+          padding: 8px 14px; background: #7a2b20; border-radius: 4px;
+          font-size: 13px; z-index: 10; }
+#run-status, #record-status { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
+#data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
+              overflow: auto; background: rgba(16, 17, 20, 0.95); padding: 14px;
+              border: 1px solid #2a2c31; border-radius: 6px; z-index: 20; }
+#data-panel pre { font-size: 11px; white-space: pre-wrap; }
+.hidden { display: none; }
+#layer-toggles label { display: flex; gap: 8px; align-items: center; }
