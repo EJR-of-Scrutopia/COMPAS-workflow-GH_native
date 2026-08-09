@@ -44,60 +44,59 @@ def tiny_contract():
 def two_radius_contract():
     """Contract with two distinct radii: outer ring and inner ring.
 
-    Outer ring: 4 faces centred near radius 5.
-    Inner ring: 4 faces centred near radius 1.
+    8 faces total (no vertex sharing):
+      - Faces 0-3: outer ring, centred at radius 5, angles 0/90/180/270 degrees
+      - Faces 4-7: inner ring, centred at radius 1, angles 0/90/180/270 degrees
+    Each face is a small square (0.4 x 0.4) centred at its position with corners
+    offset by ±0.2 around the centre. Each face has area ~0.16 m^2.
+
     When segmented with rings=2:
-      - Outer (radius 5) maps to ring 0 (rim)
-      - Inner (radius 1) maps to ring 1 (crown)
+      - Outer (radius 5) maps to ring 0 (rim), placed in stage 1
+      - Inner (radius 1) maps to ring 1 (crown), added in stage 2
     This exercises the rim-to-crown cumulative placement semantic.
     """
     import math
 
     verts = []
-    # Outer ring: 4 square faces at radius ~5
-    for i in range(8):
-        angle = 2 * math.pi * i / 4
-        r = 5.0
-        x = r * math.cos(angle)
-        y = r * math.sin(angle)
-        verts.append({"x": x, "y": y, "z": 0.0})
-
-    # Inner ring: 4 square faces at radius ~1
-    for i in range(8):
-        angle = 2 * math.pi * i / 4
-        r = 1.0
-        x = r * math.cos(angle)
-        y = r * math.sin(angle)
-        verts.append({"x": x, "y": y, "z": 0.0})
-
-    # Outer ring faces (indices 0-3)
     faces = []
-    for i in range(4):
-        j = (i + 1) % 4
-        faces.append({"id": i, "vertices": [i, j, j + 4, i + 4]})
-
-    # Inner ring faces (indices 4-7)
-    for i in range(4):
-        j = (i + 1) % 4
-        faces.append(
-            {"id": i + 4, "vertices": [i + 8, j + 8, j + 12, i + 12]}
-        )
-
     edges = []
-    for i in range(4):
-        edges.append({"u": i, "v": (i + 1) % 4})
-        edges.append({"u": i + 4, "v": ((i + 1) % 4) + 4})
-        edges.append({"u": i, "v": i + 4})
-        edges.append({"u": i + 8, "v": (i + 1) % 4 + 8})
-        edges.append({"u": i + 12, "v": ((i + 1) % 4) + 12})
-        edges.append({"u": i + 8, "v": i + 12})
+    vert_idx = 0
+
+    # Build 8 faces: 4 outer (radius 5) + 4 inner (radius 1)
+    for ring_idx, (radius, start_face_id) in enumerate([(5.0, 0), (1.0, 4)]):
+        for i in range(4):
+            angle = 2 * math.pi * i / 4
+            cx = radius * math.cos(angle)
+            cy = radius * math.sin(angle)
+
+            # 4 corners of a 0.4x0.4 square around (cx, cy)
+            corners = [
+                {"x": cx - 0.2, "y": cy - 0.2, "z": 0.0},
+                {"x": cx + 0.2, "y": cy - 0.2, "z": 0.0},
+                {"x": cx + 0.2, "y": cy + 0.2, "z": 0.0},
+                {"x": cx - 0.2, "y": cy + 0.2, "z": 0.0},
+            ]
+            corner_indices = list(range(vert_idx, vert_idx + 4))
+            verts.extend(corners)
+
+            # One quad face for this square
+            faces.append({
+                "id": start_face_id + i,
+                "vertices": corner_indices,
+            })
+
+            # Edges for the square
+            for j in range(4):
+                edges.append({"u": corner_indices[j], "v": corner_indices[(j + 1) % 4]})
+
+            vert_idx += 4
 
     return {
         "equilibrium": {
             "vertices": verts,
             "edges": edges,
             "loads": [],
-            "resolvedSupportNodeIds": [0, 1, 2, 3],
+            "resolvedSupportNodeIds": [0],
         },
         "formGraph": {"faces": faces},
     }

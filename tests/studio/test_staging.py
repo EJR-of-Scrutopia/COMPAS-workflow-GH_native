@@ -39,7 +39,7 @@ def test_gravity_and_material_constants_mirror_the_fea_presets():
 def test_stage_plan_is_cumulative_rim_to_crown():
     """Stage s accumulates all rings 0..s-1, rim to crown.
 
-    two_radius_contract has outer ring at r~5 and inner at r~1.
+    two_radius_contract has outer ring at r~5 (faces 0-3) and inner at r~1 (faces 4-7).
     With rings=2: outer (ring 0) in stage 1, inner (ring 1) added in stage 2.
     """
     g, seg, staging = studio()
@@ -55,6 +55,13 @@ def test_stage_plan_is_cumulative_rim_to_crown():
     assert plan[0]["rings_placed"] == 1
     assert plan[1]["stage"] == 2
     assert plan[1]["rings_placed"] == 2
+
+    # Pin placement order by face identity: outer (rim) faces first
+    assert set(plan[0]["faces"]) == {0, 1, 2, 3}, "outer ring (r~5) should be in stage 1"
+    # Inner (crown) faces added in stage 2
+    assert (
+        set(plan[1]["faces"]) - set(plan[0]["faces"]) == {4, 5, 6, 7}
+    ), "inner ring (r~1) should be added in stage 2"
     # All faces placed by stage 2
     assert set(plan[1]["faces"]) == set(range(len(arrays["faces"])))
     # Cumulative: stage 2 has at least as many faces as stage 1
