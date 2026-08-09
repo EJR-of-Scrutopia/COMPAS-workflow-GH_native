@@ -4,6 +4,8 @@ import json
 import math
 from pathlib import Path
 
+import pytest
+
 from conftest_data import tiny_contract
 
 REPO = Path(__file__).resolve().parents[2]
@@ -107,3 +109,38 @@ def test_the_committed_parity_fixtures_still_hold():
         result = seg.segment_faces(centroids, rings=rings)
         assert result["assignment"] == expected["assignment"]
         assert result["wedge_counts"] == expected["wedge_counts"]
+
+
+def test_rings_must_be_at_least_one():
+    """RING_MIN/RING_MAX bounds are enforced by the API layer, not here.
+
+    This function accepts any rings >= 1. Values outside the UI range
+    [RING_MIN=4, RING_MAX=16] should be rejected by the server-side validator.
+    """
+
+    _, seg = studio()
+    points = ring_centroids()
+
+    with pytest.raises(ValueError, match="rings must be at least 1"):
+        seg.segment_faces(points, rings=0)
+
+    with pytest.raises(ValueError, match="rings must be at least 1"):
+        seg.segment_faces(points, rings=-1)
+
+
+def test_rings_outside_ui_range_are_accepted_at_this_layer():
+    """rings=3 and rings=20 are outside [RING_MIN=4, RING_MAX=16], but accepted here.
+
+    API-layer validation enforces the UI bounds; this function just needs rings >= 1.
+    """
+
+    _, seg = studio()
+    points = ring_centroids()
+
+    result = seg.segment_faces(points, rings=3)
+    assert result["rings"] == 3
+    assert len(result["assignment"]) == len(points)
+
+    result = seg.segment_faces(points, rings=20)
+    assert result["rings"] == 20
+    assert len(result["assignment"]) == len(points)

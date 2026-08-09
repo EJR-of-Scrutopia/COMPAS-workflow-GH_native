@@ -32,7 +32,10 @@ def segment_key(ring: int, wedge: int) -> str:
 
 
 def segment_faces(centroids: List[list], rings: int) -> Dict[str, object]:
-    """Assign every face centroid to a (ring, wedge) segment cell."""
+    """Assign every face centroid to a (ring, wedge) segment cell.
+
+    RING_MIN and RING_MAX bounds (4 to 16) are enforced by the API layer (server-side validator), not here.
+    """
 
     if not centroids:
         raise ValueError("no centroids to segment")
