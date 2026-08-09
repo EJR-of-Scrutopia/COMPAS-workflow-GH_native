@@ -56,7 +56,20 @@ def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
     return plan
 
 
-def formwork_curve(vertices, faces, plan, material) -> List[Dict]:
+def formwork_curve(
+    vertices: List[Dict], faces: List[list], plan: List[Dict], material: str
+) -> List[Dict]:
+    """Exact formwork load by stage: cumulative weight of placed faces.
+
+    Args:
+        vertices: mesh vertices from geometry.mesh_arrays
+        faces: mesh faces from geometry.mesh_arrays
+        plan: staging plan from stage_plan()
+        material: "concrete" or "timber"
+
+    Returns:
+        list of dicts: each with stage, placed_weight_newtons, formwork_carries_newtons
+    """
     density = DENSITIES[material]
     curve = []
     for entry in plan:
@@ -104,6 +117,14 @@ def run_staging(
     python_exe: Optional[Path] = None,
     runner: Optional[Callable[[dict], dict]] = None,
 ) -> Dict:
+    """Orchestrate per-stage solves and bookkeeping.
+
+    Returns a document with requested rings count and stages carrying one entry
+    per OCCUPIED ring. For radially degenerate geometry (all centroids equidistant),
+    len(document["stages"]) can be shorter than document["rings"]: stage_plan derives
+    ring count from occupied rings in segmentation.segment_faces output, not from
+    the requested rings parameter. This behaviour is explicit and tested.
+    """
     if material not in DENSITIES:
         raise ValueError(
             "unknown material {!r}: use one of {}".format(
