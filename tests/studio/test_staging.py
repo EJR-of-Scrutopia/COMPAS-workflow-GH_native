@@ -206,3 +206,37 @@ def test_run_staging_rejects_an_unknown_material(tmp_path):
             out_path=tmp_path / "o.json",
             runner=lambda request: {},
         )
+
+
+def test_thickness_flows_into_every_runner_request_and_the_curve(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Tiny-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Tiny-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    seen = []
+
+    def stub(request):
+        seen.append(request["thickness"])
+        return {"converged": True, "message": ""}
+
+    thin = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "thin.json",
+        runner=stub, thickness=0.1,
+    )
+    assert set(seen) == {0.1}
+    thick = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "thick.json",
+        runner=stub, thickness=0.4,
+    )
+    ratio = (thick["stages"][-1]["placed_weight_newtons"]
+             / thin["stages"][-1]["placed_weight_newtons"])
+    assert ratio == pytest.approx(4.0)
+
+
+def test_default_thickness_is_unchanged():
+    _, _, staging = studio()
+    assert staging.DEFAULT_THICKNESS == 0.2
+    assert staging.THICKNESS == 0.2

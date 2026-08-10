@@ -51,14 +51,14 @@ def test_bundle_builds_without_staging_or_verification(tmp_path, monkeypatch):
     assert document["loads"]["4"] == [0.0, 0.0, -1000.0]
     assert document["reactions"] == {}
     assert len(document["segments"]["assignment"]) == 4
-    assert (studies / "tiny" / "studio" / "bundle-concrete-r4.json").is_file()
+    assert (studies / "tiny" / "studio" / "bundle-concrete-r4-t200.json").is_file()
 
 
 def test_bundle_embeds_staging_and_verification_when_present(tmp_path, monkeypatch):
     bundle, _, studies = fake_export(tmp_path, monkeypatch)
     target = studies / "tiny" / "studio"
     target.mkdir(parents=True)
-    (target / "staging-concrete-r4.json").write_text(
+    (target / "staging-concrete-r4-t200.json").write_text(
         json.dumps({"rings": 4, "stages": []}), encoding="utf-8"
     )
     (studies / "tiny" / "fea-verification.json").write_text(
@@ -72,7 +72,7 @@ def test_bundle_embeds_staging_and_verification_when_present(tmp_path, monkeypat
 def test_load_or_build_serves_the_cache_without_rebuilding(tmp_path, monkeypatch):
     bundle, _, studies = fake_export(tmp_path, monkeypatch)
     first = bundle.build_bundle("Tiny", "concrete", 4)
-    path = bundle.bundle_path("tiny", "concrete", 4)
+    path = bundle.bundle_path("tiny", "concrete", 4, 0.2)
     cached = json.loads(path.read_text(encoding="utf-8"))
     cached["generated"] = "MARKER"
     path.write_text(json.dumps(cached), encoding="utf-8")
@@ -85,3 +85,13 @@ def test_unknown_export_fails_with_the_available_names(tmp_path, monkeypatch):
     bundle, _, _ = fake_export(tmp_path, monkeypatch)
     with pytest.raises(ValueError, match="Tiny"):
         bundle.build_bundle("Nope", "concrete", 4)
+
+
+def test_bundles_are_cached_per_thickness(tmp_path, monkeypatch):
+    bundle, _, studies = fake_export(tmp_path, monkeypatch)
+    default = bundle.build_bundle("Tiny", "concrete", 4)
+    thin = bundle.build_bundle("Tiny", "concrete", 4, thickness=0.1)
+    assert default["provenance"]["thickness"] == 0.2
+    assert thin["provenance"]["thickness"] == 0.1
+    assert (studies / "tiny" / "studio" / "bundle-concrete-r4-t200.json").is_file()
+    assert (studies / "tiny" / "studio" / "bundle-concrete-r4-t100.json").is_file()

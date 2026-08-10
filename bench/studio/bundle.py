@@ -1,9 +1,10 @@
 """Assemble the one JSON the page loads: mesh, fields, sequence, provenance.
 
-A bundle is keyed by (export, material, rings) and cached on disk; an
-existing file is served without recomputation. It is buildable with no
-staging run and no verification file: those embed when they exist and are
-null when they do not, so the studio has something to show on day one.
+A bundle is keyed by (export, material, rings, thickness) and cached on
+disk; an existing file is served without recomputation. It is buildable
+with no staging run and no verification file: those embed when they exist
+and are null when they do not, so the studio has something to show on day
+one.
 """
 
 from __future__ import annotations
@@ -22,12 +23,18 @@ UPLOAD_DIR = REPO / "bench" / "demo" / "upload from grasshopper"
 STUDIES_DIR = REPO / "bench" / "studies"
 
 
-def bundle_path(slug: str, material: str, rings: int) -> Path:
-    return STUDIES_DIR / slug / "studio" / "bundle-{}-r{}.json".format(material, rings)
+def bundle_path(slug: str, material: str, rings: int, thickness: float) -> Path:
+    mm = round(thickness * 1000)
+    return STUDIES_DIR / slug / "studio" / "bundle-{}-r{}-t{}.json".format(
+        material, rings, mm
+    )
 
 
-def staging_path(slug: str, material: str, rings: int) -> Path:
-    return STUDIES_DIR / slug / "studio" / "staging-{}-r{}.json".format(material, rings)
+def staging_path(slug: str, material: str, rings: int, thickness: float) -> Path:
+    mm = round(thickness * 1000)
+    return STUDIES_DIR / slug / "studio" / "staging-{}-r{}-t{}.json".format(
+        material, rings, mm
+    )
 
 
 def _read_optional(path: Path) -> Optional[dict]:
@@ -36,7 +43,9 @@ def _read_optional(path: Path) -> Optional[dict]:
     return None
 
 
-def build_bundle(export_name: str, material: str, rings: int) -> Dict:
+def build_bundle(
+    export_name: str, material: str, rings: int, thickness: float = 0.2
+) -> Dict:
     pairs = geometry.available_exports(UPLOAD_DIR)
     if export_name not in pairs:
         raise ValueError(
@@ -69,28 +78,30 @@ def build_bundle(export_name: str, material: str, rings: int) -> Dict:
             for k, v in geometry.support_reactions_newtons(contract).items()
         },
         "segments": binned,
-        "staging": _read_optional(staging_path(slug, material, rings)),
+        "staging": _read_optional(staging_path(slug, material, rings, thickness)),
         "verification": _read_optional(
             STUDIES_DIR / slug / "fea-verification.json"
         ),
         "provenance": {
             "contract_file": pairs[export_name]["contract"].name,
-            "thickness": 0.2,
+            "thickness": thickness,
             "combination": "ULS",
             "combination_factor": 1.35,
             "note": "staging and verification are null until their runs exist",
         },
     }
-    target = bundle_path(slug, material, rings)
+    target = bundle_path(slug, material, rings, thickness)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(document), encoding="utf-8")
     return document
 
 
-def load_or_build_bundle(export_name: str, material: str, rings: int) -> Dict:
+def load_or_build_bundle(
+    export_name: str, material: str, rings: int, thickness: float = 0.2
+) -> Dict:
     cached = _read_optional(
-        bundle_path(geometry.slugify(export_name), material, rings)
+        bundle_path(geometry.slugify(export_name), material, rings, thickness)
     )
     if cached is not None:
         return cached
-    return build_bundle(export_name, material, rings)
+    return build_bundle(export_name, material, rings, thickness)

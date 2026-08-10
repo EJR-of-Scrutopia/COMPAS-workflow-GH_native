@@ -35,7 +35,7 @@ def _ffmpeg_present() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _validate(export: str, material: str, rings: int) -> None:
+def _validate(export: str, material: str, rings: int, thickness: float) -> None:
     pairs = geometry.available_exports(bundle.UPLOAD_DIR)
     if export not in pairs:
         raise HTTPException(404, "no export named {!r}. Available: {}".format(
@@ -48,6 +48,8 @@ def _validate(export: str, material: str, rings: int) -> None:
     if not segmentation.RING_MIN <= rings <= segmentation.RING_MAX:
         raise HTTPException(400, "rings must be between {} and {}".format(
             segmentation.RING_MIN, segmentation.RING_MAX))
+    if not 0.05 <= thickness <= 0.5:
+        raise HTTPException(400, "thickness must be between 0.05 and 0.5 metres")
 
 
 def create_app(runner=None) -> FastAPI:
@@ -76,16 +78,20 @@ def create_app(runner=None) -> FastAPI:
         return {"studies": rows, "columns": columns, "ffmpeg": _ffmpeg_present()}
 
     @app.get("/api/studies/{export}/bundle")
-    def get_bundle(export: str, material: str = Query(...), rings: int = Query(...)):
-        _validate(export, material, rings)
-        return bundle.load_or_build_bundle(export, material, rings)
+    def get_bundle(
+        export: str, material: str = Query(...), rings: int = Query(...),
+        thickness: float = Query(0.2),
+    ):
+        _validate(export, material, rings, thickness)
+        return bundle.load_or_build_bundle(export, material, rings, thickness)
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
         export = body.get("export", "")
         material = body.get("material", "")
         rings = int(body.get("rings", 0))
-        _validate(export, material, rings)
+        thickness = float(body.get("thickness", 0.2))
+        _validate(export, material, rings, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
             for run in RUNS.values():
@@ -94,7 +100,7 @@ def create_app(runner=None) -> FastAPI:
             run_id = uuid.uuid4().hex[:12]
             RUNS[run_id] = {
                 "id": run_id, "export": export, "slug": slug,
-                "material": material, "rings": rings,
+                "material": material, "rings": rings, "thickness": thickness,
                 "state": "queued", "stage": 0, "of": rings, "message": "",
             }
 
@@ -109,10 +115,10 @@ def create_app(runner=None) -> FastAPI:
 
                 staging.run_staging(
                     pairs[export], material, rings,
-                    bundle.staging_path(slug, material, rings),
-                    runner=runner, on_stage=on_stage,
+                    bundle.staging_path(slug, material, rings, thickness),
+                    runner=runner, on_stage=on_stage, thickness=thickness,
                 )
-                bundle.build_bundle(export, material, rings)
+                bundle.build_bundle(export, material, rings, thickness)
                 run["state"] = "done"
             except Exception as error:
                 run["state"] = "failed"
@@ -129,8 +135,9 @@ def create_app(runner=None) -> FastAPI:
         return {
             "state": run["state"], "stage": run["stage"], "of": run["of"],
             "message": run["message"],
-            "bundle_url": "/api/studies/{}/bundle?material={}&rings={}".format(
-                urllib.parse.quote(run["export"]), run["material"], run["rings"]),
+            "bundle_url": "/api/studies/{}/bundle?material={}&rings={}&thickness={}".format(
+                urllib.parse.quote(run["export"]), run["material"], run["rings"],
+                run["thickness"]),
         }
 
     @app.get("/api/columns/{name}")

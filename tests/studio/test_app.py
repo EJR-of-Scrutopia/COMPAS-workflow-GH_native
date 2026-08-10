@@ -77,7 +77,7 @@ def test_run_lifecycle_reaches_done_and_embeds_staging(tmp_path, monkeypatch):
     run_id = started.json()["run"]
     state = wait_for(client, run_id)
     assert state["state"] == "done", state["message"]
-    assert (studies / "tiny" / "studio" / "staging-concrete-r4.json").is_file()
+    assert (studies / "tiny" / "studio" / "staging-concrete-r4-t200.json").is_file()
     document = client.get(
         "/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4}
     ).json()
@@ -223,6 +223,23 @@ def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
     assert traversal_encoded.status_code in (400, 404)
     traversal_plain = client.post("/api/frames/study-..?frame=1", content=b"x")
     assert traversal_plain.status_code in (400, 404)
+
+
+def test_thickness_is_validated_and_reaches_the_bundle(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    ok = client.get("/api/studies/Tiny/bundle",
+                    params={"material": "concrete", "rings": 4, "thickness": 0.3})
+    assert ok.status_code == 200
+    assert ok.json()["provenance"]["thickness"] == 0.3
+    bad = client.get("/api/studies/Tiny/bundle",
+                     params={"material": "concrete", "rings": 4, "thickness": 0.9})
+    assert bad.status_code == 400
+    run = client.post("/api/runs", json={
+        "export": "Tiny", "material": "concrete", "rings": 4, "thickness": 0.3})
+    assert run.status_code == 202
+    state = wait_for(client, run.json()["run"])
+    assert state["state"] == "done", state["message"]
+    assert "thickness=0.3" in state["bundle_url"]
 
 
 def test_column_files_are_listed_and_path_traversal_is_rejected(tmp_path, monkeypatch):

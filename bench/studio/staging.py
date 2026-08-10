@@ -24,7 +24,8 @@ import segmentation
 
 GRAVITY = 9.80665
 DENSITIES = {"concrete": 2400.0, "timber": 385.0}
-THICKNESS = 0.2
+DEFAULT_THICKNESS = 0.2
+THICKNESS = DEFAULT_THICKNESS  # alias: tests/fea/test_studio_mirror.py reads THICKNESS
 
 REPO = Path(__file__).resolve().parents[2]
 FEA_PYTHON = REPO / ".venv-fea" / "Scripts" / "python.exe"
@@ -57,7 +58,8 @@ def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
 
 
 def formwork_curve(
-    vertices: List[Dict], faces: List[list], plan: List[Dict], material: str
+    vertices: List[Dict], faces: List[list], plan: List[Dict], material: str,
+    thickness: float = DEFAULT_THICKNESS,
 ) -> List[Dict]:
     """Exact formwork load by stage: cumulative weight of placed faces.
 
@@ -66,6 +68,7 @@ def formwork_curve(
         faces: mesh faces from geometry.mesh_arrays
         plan: staging plan from stage_plan()
         material: "concrete" or "timber"
+        thickness: shell thickness in metres
 
     Returns:
         list of dicts: each with stage, placed_weight_newtons, formwork_carries_newtons
@@ -75,7 +78,7 @@ def formwork_curve(
     for entry in plan:
         weight = sum(
             geometry.face_area(vertices, faces[i]) for i in entry["faces"]
-        ) * THICKNESS * density * GRAVITY
+        ) * thickness * density * GRAVITY
         curve.append({
             "stage": entry["stage"],
             "placed_weight_newtons": weight,
@@ -117,6 +120,7 @@ def run_staging(
     python_exe: Optional[Path] = None,
     runner: Optional[Callable[[dict], dict]] = None,
     on_stage: Optional[Callable[[int, int], None]] = None,
+    thickness: float = DEFAULT_THICKNESS,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -137,7 +141,9 @@ def run_staging(
     centroids = geometry.face_centroids(arrays["vertices"], arrays["faces"])
     binned = segmentation.segment_faces(centroids, rings=rings)
     plan = stage_plan(binned["assignment"], binned["order"])
-    curve = formwork_curve(arrays["vertices"], arrays["faces"], plan, material)
+    curve = formwork_curve(
+        arrays["vertices"], arrays["faces"], plan, material, thickness
+    )
 
     if runner is None:
         runner = _subprocess_runner(python_exe or FEA_PYTHON)
@@ -150,7 +156,7 @@ def run_staging(
             "contract_path": str(export_pair["contract"]),
             "geometry_path": str(export_pair["geometry"]),
             "material": material,
-            "thickness": THICKNESS,
+            "thickness": thickness,
             "include_export_loads": True,
             "placed_faces": sorted(entry["faces"]),
         })
