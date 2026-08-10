@@ -165,6 +165,45 @@ def test_frames_and_stitch_guardrails(tmp_path, monkeypatch):
     assert client.post("/api/frames/nonsense?frame=1", content=b"x").status_code == 404
 
 
+def test_posting_frame_one_clears_stale_frames_from_a_previous_recording(tmp_path, monkeypatch):
+    """A shorter second recording must not inherit the first take's tail.
+
+    frame-%06d.png accumulates in the same directory across recordings; if
+    frame 1 does not clear it, a longer first take leaves frame-000047.png
+    etc. behind, and ffmpeg silently stitches that stale tail into the new,
+    shorter video. Posting frame 1 again is the recording-restart signal.
+    """
+    client, studies = make_client(tmp_path, monkeypatch)
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    run_id = started.json()["run"]
+    wait_for(client, run_id)
+    frames = studies / "tiny" / "studio" / "frames"
+
+    for frame in (1, 2, 3):
+        response = client.post(
+            "/api/frames/{}?frame={}".format(run_id, frame),
+            content="first take frame {}".format(frame).encode("utf-8"),
+            headers={"content-type": "application/octet-stream"},
+        )
+        assert response.status_code == 200
+    assert sorted(p.name for p in frames.glob("frame-*.png")) == [
+        "frame-000001.png", "frame-000002.png", "frame-000003.png",
+    ]
+
+    second_take = client.post(
+        "/api/frames/{}?frame=1".format(run_id),
+        content=b"second take frame 1",
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert second_take.status_code == 200
+    assert sorted(p.name for p in frames.glob("frame-*.png")) == ["frame-000001.png"]
+    assert (frames / "frame-000001.png").read_bytes() == b"second take frame 1"
+
+    # Stitch-guard behaviour is unchanged: still 404s with no frames, still
+    # refuses when ffmpeg is missing, still stitches when both are present.
+    assert client.post("/api/frames/nonsense/stitch").status_code == 404
+
+
 def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
     client, studies = make_client(tmp_path, monkeypatch)
     client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4})

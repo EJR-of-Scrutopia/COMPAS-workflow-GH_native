@@ -159,6 +159,13 @@ def create_app(runner=None) -> FastAPI:
     async def post_frame(run_id: str, request: Request, frame: int = Query(...)):
         directory = frames_dir(run_id)
         directory.mkdir(parents=True, exist_ok=True)
+        if frame == 1:
+            # A shorter re-recording must not inherit the previous take's
+            # tail: ffmpeg globs frame-*.png in numeric order and stitches
+            # whatever is on disk, so a stale frame-000047.png from a longer
+            # first take would silently survive into the new video.
+            for stale in directory.glob("frame-*.png"):
+                stale.unlink()
         body = await request.body()
         (directory / "frame-{:06d}.png".format(frame)).write_bytes(body)
         return {"frame": frame}

@@ -12,6 +12,11 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 SOLVE_STAGE = REPO / "bench" / "studio" / "solve_stage.py"
 
+UPLOAD = REPO / "bench" / "demo" / "upload from grasshopper"
+CONTRACT = UPLOAD / "Trial 2-contract.json"
+GEOMETRY = UPLOAD / "Trial 2-compas.json"
+VERIFICATION = REPO / "bench" / "studies" / "trial-2" / "fea-verification.json"
+
 
 def tiny_export(tmp_path):
     """A 3x3-vertex, 4-quad dome-ish patch with corner supports, as files."""
@@ -111,6 +116,48 @@ def test_a_partial_with_no_support_reports_honestly_instead_of_solving():
     assert result["converged"] is False
     assert result["message"]
     assert "displacements" not in result or not result["displacements"]
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not CONTRACT.is_file() or not VERIFICATION.is_file(),
+    reason="the Trial 2 export or its verification file is not present",
+)
+def test_full_mesh_stage_matches_the_verified_pipeline(tmp_path):
+    """solve_stage.py, invoked exactly as staging.py shells to it, must
+    reproduce the already-verified pipeline's numbers when every face of
+    the real export is placed in one stage. tests above exercise a tiny
+    synthetic patch for speed; this is the promised parity check against
+    the committed bench/studies/trial-2/fea-verification.json, run as a
+    real subprocess against the real export rather than mocked."""
+
+    verification = json.loads(VERIFICATION.read_text(encoding="utf-8"))
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    request = {
+        "contract_path": str(CONTRACT),
+        "geometry_path": str(GEOMETRY),
+        "material": "concrete",
+        "thickness": 0.2,
+        "include_export_loads": True,
+        "placed_faces": list(range(2400)),
+        "workdir": str(workdir),
+    }
+    request_path = tmp_path / "request.json"
+    out_path = tmp_path / "out.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, str(SOLVE_STAGE), str(request_path), str(out_path)],
+        capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(out_path.read_text(encoding="utf-8"))
+
+    assert result["converged"] is True, result.get("message")
+    assert result["peak_displacement"] == pytest.approx(
+        verification["displacement"]["peak_magnitude"], rel=1e-3
+    )
+    assert len(result["displacements"]) == 2521
 
 
 def test_displacements_are_keyed_by_original_node_ids():
