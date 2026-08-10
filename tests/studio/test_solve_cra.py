@@ -34,6 +34,31 @@ request = json.loads(sys.argv[1])
 print(json.dumps(solve_cra.solve(request, solver_available=lambda: False)))
 """
 
+# Regression driver for the derived-tmax fix: builds two adjacent blocks
+# from the same tilted toy mesh tests/studio/test_blocks.py uses for its
+# parity coverage (TILTED_VERTICES/FACES/ASSIGNMENT/ORDER), via the real
+# blocks.segment_blocks, then runs the real detector (assembly_interfaces_
+# numpy) through solve_cra.solve. solver_available is forced True so the
+# request reaches detection regardless of whether IPOPT itself is usable
+# in this environment; the assertions below only need the interface count
+# and the isolation verdict, which are both set before cra_solve runs.
+TILTED_BLOCKS_DRIVER = """
+import json, sys
+sys.path.insert(0, {studio!r})
+import blocks
+import solve_cra
+
+TILTED_VERTICES = [[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0], [1, 1, 0.5], [2, 1, 0]]
+FACES = [[0, 1, 4, 3], [1, 2, 5, 4]]
+ASSIGNMENT = [[0, 0], [0, 1]]
+ORDER = [[0, 0], [0, 1]]
+
+specs = blocks.segment_blocks(
+    TILTED_VERTICES, FACES, ASSIGNMENT, ORDER, thickness=0.2, support_ids=[0])
+request = {{"blocks": specs, "density": 2400.0, "mu": 0.6}}
+print(json.dumps(solve_cra.solve(request, solver_available=lambda: True)))
+"""
+
 
 def cube(z0, dx=0.0, is_support=False):
     vertices = [
@@ -152,3 +177,29 @@ def test_empty_blocks_list_reports_null():
     out = run_solve({"blocks": [], "density": 2400.0, "mu": 0.6}, driver=NO_SOLVER_DRIVER)
     assert out["stands"] is None
     assert out["status"] == "empty"
+
+
+@needs_cra_venv
+@pytest.mark.slow
+def test_warped_walls_still_detect_interfaces_with_the_derived_tmax():
+    """A fixed tmax=1e-6 finds zero interfaces on warped, non-planar walls.
+
+    blocks.py offsets each vertex along its own per-vertex normal, so a
+    wall quad on non-flat geometry (like this tilted toy mesh, and every
+    real export) is warped by construction. compas_cra's interface
+    detector rejects a candidate face whose vertices sit further than
+    tmax off the base face's plane; a fixed tmax=1e-6 is planar-mesh-only
+    and finds nothing, so every stage falls through to the honest-but-
+    useless "isolated blocks" null. solve() must derive tmax from the
+    request's own worst face warp instead. Manually setting tmax back to
+    1e-6 in solve_cra.py reproduces the bug: this test then fails with
+    stands=None, status="isolated blocks", interfaces=0.
+    """
+    completed = subprocess.run(
+        [str(CRA_PYTHON), "-c", TILTED_BLOCKS_DRIVER.format(studio=str(STUDIO))],
+        capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    out = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert not (out["stands"] is None and out["status"] == "isolated blocks"), out
+    assert out["interfaces"] >= 1, out

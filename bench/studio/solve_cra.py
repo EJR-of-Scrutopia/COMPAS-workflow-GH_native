@@ -43,6 +43,66 @@ def _result(stands, status, message, blocks, interfaces, mu):
             "blocks": blocks, "interfaces": interfaces, "mu": mu}
 
 
+def _face_warp(vertices, face):
+    """Distance of a quad's 4th vertex from the plane of its first three.
+
+    Triangles are exactly planar (zero). blocks.py offsets each vertex
+    along its own vertex normal, so a wall quad whose two edges are not
+    parallel comes out non-planar; this is the same quantity compas_cra's
+    interface detector measures candidate faces against.
+    """
+
+    if len(face) < 4:
+        return 0.0
+    a, b, c, d = (vertices[face[i]] for i in range(4))
+    u = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    v = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+    n = (
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    )
+    length = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5
+    if length < 1e-15:
+        return 0.0
+    w = (d[0] - a[0], d[1] - a[1], d[2] - a[2])
+    return abs((w[0] * n[0] + w[1] * n[1] + w[2] * n[2]) / length)
+
+
+def _max_face_warp(specs):
+    """Largest wall-face-planarity deviation over every block in the request.
+
+    Only wall faces count: they are the faces that touch a neighbouring
+    block, so they are what assembly_interfaces_numpy's tmax actually
+    gates. blocks.py always builds a block's vertex list as its top half
+    followed by its bottom half in equal counts (segment_blocks), so a
+    face whose vertex indices come from both halves is a wall, and one
+    confined to a single half is a top or bottom skin face; this mirrors
+    the classification in the review probe that first measured wall warp
+    on the real export (.superpowers/sdd/2026-08-10-studio-cra-
+    feasibility/review-probe-planarity.py). Skin faces are excluded on
+    purpose: a doubly curved analysis mesh (or an adversarial test
+    fixture) can make a skin quad far more non-planar than any wall ever
+    is, without that skin quad ever forming an interface with another
+    block. Folding skin warp into tmax would loosen the tolerance for no
+    physical reason and, on at least one adversarial fixture, pushes tmax
+    high enough that compas_cra's shapely-based intersection raises a
+    GEOSException instead of returning a result.
+    """
+
+    worst = 0.0
+    for spec in specs:
+        vertices = spec["vertices"]
+        half = len(vertices) // 2
+        for face in spec["faces"]:
+            if len(face) < 4:
+                continue
+            if not (any(i < half for i in face) and any(i >= half for i in face)):
+                continue  # confined to one half: a top or bottom skin face
+            worst = max(worst, _face_warp(vertices, face))
+    return worst
+
+
 def solve(request: dict, solver_available=_ipopt_available) -> dict:
     specs = request["blocks"]
     mu = request["mu"]
@@ -74,7 +134,20 @@ def solve(request: dict, solver_available=_ipopt_available) -> dict:
     assembly.set_boundary_conditions([nodes[i] for i in supports])
     # amin's default (0.1 m2) exceeds a thin joint wall's area; 1e-4 keeps
     # every genuine joint while still rejecting point contacts.
-    assembly_interfaces_numpy(assembly, nmax=10, tmax=1e-6, amin=1e-4)
+    #
+    # tmax bounds how far a candidate face's vertices may sit off the base
+    # face's plane before compas_cra rejects the interface. blocks.py
+    # offsets each vertex along its own per-vertex normal (not a shared
+    # face normal), so a wall quad on real, non-flat geometry is warped by
+    # construction; on the Trial 2 export that warp reaches ~8e-3 m. A
+    # fixed tmax=1e-6 is planar-mesh-only and finds zero interfaces on any
+    # warped wall, so every stage falls through to the honest-but-useless
+    # "isolated blocks" null. Deriving tmax from this request's own worst
+    # wall warp (with a safety margin, and a floor so razor-flat meshes
+    # still get a workable tolerance) tracks the actual geometry instead
+    # of a constant tuned for a mesh that never ships.
+    tmax = max(1e-4, 1.5 * _max_face_warp(specs))
+    assembly_interfaces_numpy(assembly, nmax=10, tmax=tmax, amin=1e-4)
     interfaces = assembly.number_of_interfaces()
 
     # A block touching no interface gets Constraint.Skip on all six of its
