@@ -145,6 +145,8 @@ def create_app(runner=None) -> FastAPI:
     def frames_dir(run_id: str) -> Path:
         if run_id.startswith("study-"):
             slug = run_id[len("study-"):]
+            if "/" in slug or "\\" in slug or ".." in slug:
+                raise HTTPException(400, "bad study slug")
             if not (bundle.STUDIES_DIR / slug).is_dir():
                 raise HTTPException(404, "no study {}".format(slug))
             return bundle.STUDIES_DIR / slug / "studio" / "frames"

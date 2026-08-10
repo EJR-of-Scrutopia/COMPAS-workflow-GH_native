@@ -176,6 +176,14 @@ def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
     assert posted.status_code == 200
     assert (studies / "tiny" / "studio" / "frames" / "frame-000003.png").is_file()
     assert client.post("/api/frames/study-nope?frame=1", content=b"x").status_code == 404
+    # Path traversal in the slug must never resolve outside STUDIES_DIR. Either
+    # the router rejects the encoded slash before frames_dir ever runs, or
+    # frames_dir's own "/", "\\", ".." guard catches it first; both land as
+    # 400 or 404, and either is acceptable as long as the guard exists.
+    traversal_encoded = client.post("/api/frames/study-..%2F..?frame=1", content=b"x")
+    assert traversal_encoded.status_code in (400, 404)
+    traversal_plain = client.post("/api/frames/study-..?frame=1", content=b"x")
+    assert traversal_plain.status_code in (400, 404)
 
 
 def test_column_files_are_listed_and_path_traversal_is_rejected(tmp_path, monkeypatch):

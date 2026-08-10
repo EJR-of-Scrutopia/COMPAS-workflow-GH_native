@@ -11,6 +11,7 @@ const state = {
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
+  recording: false,    // Task 15: true while recordAnimation() drives the render loop
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   rings: 8,
   segments: null,      // Task 11
