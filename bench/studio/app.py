@@ -7,6 +7,7 @@ stub while the real server shells to .venv-fea.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import threading
@@ -148,6 +149,64 @@ def create_app(runner=None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "no column file {}".format(name))
         return FileResponse(path)
+
+    @app.put("/api/uploads/exports/{name}/{kind}")
+    async def upload_export(name: str, kind: str, request: Request):
+        if "/" in name or "\\" in name or ".." in name:
+            raise HTTPException(400, "bad export name")
+        if kind not in ("contract", "compas"):
+            raise HTTPException(400, "kind must be 'contract' or 'compas'")
+        body = await request.body()
+        try:
+            document = json.loads(body)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "not valid JSON")
+        if kind == "contract":
+            try:
+                geometry.mesh_arrays(document)
+                geometry.support_ids(document)
+            except Exception as error:
+                raise HTTPException(400, str(error))
+        elif not isinstance(document, dict) or "thrustMesh" not in document:
+            raise HTTPException(400, "a compas export must contain a thrustMesh key")
+
+        # bundle.UPLOAD_DIR, not a module-level copy, so make_client's
+        # monkeypatch of bundle.UPLOAD_DIR lands here too.
+        directory = bundle.UPLOAD_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        filename = "{}-{}.json".format(name, kind)
+        (directory / filename).write_text(json.dumps(document), encoding="utf-8")
+        other_kind = "compas" if kind == "contract" else "contract"
+        other = directory / "{}-{}.json".format(name, other_kind)
+        return {"stored": filename, "pair_complete": other.is_file()}
+
+    @app.put("/api/uploads/columns/{filename}")
+    async def upload_columns(filename: str, request: Request):
+        if "/" in filename or "\\" in filename or ".." in filename:
+            raise HTTPException(400, "bad column filename")
+        if not filename.endswith(".json"):
+            raise HTTPException(400, "column filename must end in .json")
+        body = await request.body()
+        try:
+            document = json.loads(body)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "not valid JSON")
+        mesh_shape = (
+            isinstance(document, dict) and "vertices" in document and "faces" in document
+        )
+        contract_shape = (
+            isinstance(document, dict)
+            and "equilibrium" in document and "formGraph" in document
+        )
+        if not (mesh_shape or contract_shape):
+            raise HTTPException(
+                400,
+                "columns file must have 'vertices'+'faces' or "
+                "'equilibrium'+'formGraph' keys",
+            )
+        COLUMNS_DIR.mkdir(parents=True, exist_ok=True)
+        (COLUMNS_DIR / filename).write_text(json.dumps(document), encoding="utf-8")
+        return {"stored": filename}
 
     def frames_dir(run_id: str) -> Path:
         if run_id.startswith("study-"):

@@ -704,6 +704,77 @@ async function boot() {
   }
 }
 
+// ---------- browser import: export pairs and columns ----------
+async function putFile(url, file) {
+  const text = await file.text();
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: text,
+  });
+  if (!response.ok) {
+    let detail = response.status;
+    try { detail = (await response.json()).detail || detail; } catch (error) { /* body wasn't JSON */ }
+    throw new Error(url + " -> " + detail);
+  }
+  return response.json();
+}
+
+async function importExportPair() {
+  const status = document.getElementById("import-status");
+  const input = document.getElementById("import-export-input");
+  const files = Array.from(input.files || []);
+  const contractFile = files.find((f) => f.name.endsWith("-contract.json"));
+  const compasFile = files.find((f) => f.name.endsWith("-compas.json"));
+  if (files.length !== 2 || !contractFile || !compasFile) {
+    status.textContent = "pick exactly a *-contract.json and *-compas.json pair";
+    return;
+  }
+  const contractPrefix = contractFile.name.slice(0, -"-contract.json".length);
+  const compasPrefix = compasFile.name.slice(0, -"-compas.json".length);
+  if (!contractPrefix || contractPrefix !== compasPrefix) {
+    status.textContent = "the two files must share the same export name prefix";
+    return;
+  }
+  status.textContent = "uploading " + contractPrefix + "...";
+  try {
+    await putFile("/api/uploads/exports/" + encodeURIComponent(contractPrefix) + "/contract", contractFile);
+    const result = await putFile("/api/uploads/exports/" + encodeURIComponent(contractPrefix) + "/compas", compasFile);
+    status.textContent = result.pair_complete
+      ? "imported " + contractPrefix
+      : "stored " + contractPrefix + "; pair incomplete";
+    input.value = "";
+    await boot();
+  } catch (error) {
+    status.textContent = "import failed: " + error.message;
+  }
+}
+
+async function importColumns() {
+  const status = document.getElementById("import-status");
+  const input = document.getElementById("import-columns-input");
+  const file = input.files && input.files[0];
+  if (!file) {
+    status.textContent = "pick a columns JSON file first";
+    return;
+  }
+  status.textContent = "uploading " + file.name + "...";
+  try {
+    await putFile("/api/uploads/columns/" + encodeURIComponent(file.name), file);
+    status.textContent = "imported " + file.name;
+    input.value = "";
+    const payload = await fetchJson("/api/studies");
+    state.studies = payload.studies;
+    if (state.objects.columns) { scene.remove(state.objects.columns); state.objects.columns = null; }
+    if (payload.columns.length) {
+      state.objects.columns = await loadColumns(payload.columns);
+      scene.add(state.objects.columns);
+    }
+  } catch (error) {
+    status.textContent = "import failed: " + error.message;
+  }
+}
+
 // ---------- UI wiring ----------
 document.getElementById("study-select").addEventListener("change", (e) => loadStudy(e.target.value));
 document.getElementById("material-select").addEventListener("change", () => {
@@ -732,6 +803,8 @@ document.getElementById("data-button").addEventListener("click", () => {
 document.getElementById("data-close").addEventListener("click", () =>
   document.getElementById("data-panel").classList.add("hidden"));
 document.getElementById("run-button").addEventListener("click", startRun);
+document.getElementById("import-export-button").addEventListener("click", importExportPair);
+document.getElementById("import-columns-button").addEventListener("click", importColumns);
 
 function watchRun(runId, exportName, status) {
   const poll = setInterval(async () => {

@@ -80,6 +80,17 @@ def test_record_mode_is_frame_indexed_not_clock_driven():
     assert "state.recording" in js
 
 
+def test_import_controls_exist_and_wire_the_uploads_endpoint():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for control_id in (
+        "import-export-input", "import-export-button",
+        "import-columns-input", "import-columns-button", "import-status",
+    ):
+        assert 'id="{}"'.format(control_id) in html, "index.html lost {}".format(control_id)
+    assert "uploads/exports" in js
+
+
 def test_thickness_control_is_wired_and_honest():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")

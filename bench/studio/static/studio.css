@@ -21,7 +21,7 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: #7a2b20; border-radius: 4px;
           font-size: 13px; z-index: 10; }
-#run-status, #record-status { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
+#run-status, #record-status, #import-status { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
 #data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
               overflow: auto; background: rgba(16, 17, 20, 0.95); padding: 14px;
               border: 1px solid #2a2c31; border-radius: 6px; z-index: 20; }

@@ -253,3 +253,47 @@ def test_column_files_are_listed_and_path_traversal_is_rejected(tmp_path, monkey
     assert client.get("/api/studies").json()["columns"] == ["piers.json"]
     assert client.get("/api/columns/piers.json").status_code == 200
     assert client.get("/api/columns/..%2Fsecrets.json").status_code in (400, 404)
+
+
+def test_export_upload_stores_a_valid_pair_and_lists_it(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    body = json.dumps(tiny_contract()).encode()
+    first = client.put("/api/uploads/exports/Fresh/contract", content=body)
+    assert first.status_code == 200
+    assert first.json()["pair_complete"] is False
+    second = client.put("/api/uploads/exports/Fresh/compas",
+                        content=b'{"thrustMesh": "{}"}')
+    assert second.json()["pair_complete"] is True
+    exports = [s["export"] for s in client.get("/api/studies").json()["studies"]]
+    assert "Fresh" in exports
+
+
+def test_export_upload_rejects_garbage_and_traversal(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    assert client.put("/api/uploads/exports/Bad/contract",
+                      content=b"not json").status_code == 400
+    assert client.put("/api/uploads/exports/Bad/contract",
+                      content=b'{"no": "equilibrium"}').status_code == 400
+    assert client.put("/api/uploads/exports/../evil/contract",
+                      content=b"{}").status_code in (400, 404)
+    assert client.put("/api/uploads/exports/Bad/nonsense",
+                      content=b"{}").status_code == 400
+    listed = [s["export"] for s in client.get("/api/studies").json()["studies"]]
+    assert "Bad" not in listed
+
+
+def test_columns_upload_validates_shape(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    import app as app_module
+
+    columns = tmp_path / "columns"
+    columns.mkdir()
+    monkeypatch.setattr(app_module, "COLUMNS_DIR", columns)
+    good = client.put("/api/uploads/columns/piers.json",
+                      content=b'{"vertices": [[0,0,0]], "faces": [[0,0,0]]}')
+    assert good.status_code == 200
+    assert (columns / "piers.json").is_file()
+    assert client.put("/api/uploads/columns/junk.json",
+                      content=b'{"nope": 1}').status_code == 400
+    assert client.put("/api/uploads/columns/..%2Fx.json",
+                      content=b"{}").status_code in (400, 404)
