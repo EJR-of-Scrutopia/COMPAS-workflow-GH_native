@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import geometry
+import pieces
 import segmentation
 import subdivision
 
@@ -79,6 +80,11 @@ def build_bundle(
         },
         "member_forces": geometry.member_forces_newtons(contract),
         "segments": binned,
+        "pieces": pieces.segment_pieces(
+            render["vertices"], render["faces"],
+            [binned["assignment"][parent] for parent in render["parent_face"]],
+            binned["order"], geometry.support_ids(contract),
+        ),
         "staging": _read_optional(staging_path(slug, material, rings, thickness)),
         "verification": _read_optional(
             STUDIES_DIR / slug / "fea-verification.json"

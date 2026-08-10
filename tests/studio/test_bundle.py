@@ -107,3 +107,20 @@ def test_bundles_are_cached_per_thickness(tmp_path, monkeypatch):
     assert thin["provenance"]["thickness"] == 0.1
     assert (studies / "tiny" / "studio" / "bundle-concrete-r4-t200.json").is_file()
     assert (studies / "tiny" / "studio" / "bundle-concrete-r4-t100.json").is_file()
+
+
+def test_the_bundle_ships_drawn_pieces_on_the_render_mesh(tmp_path, monkeypatch):
+    bundle, _, _ = fake_export(tmp_path, monkeypatch)
+    document = bundle.build_bundle("Tiny", "concrete", 4)
+    pieces = document["pieces"]
+    assert pieces, "the bundle must carry the pieces the viewer draws"
+    keys = {piece["key"] for piece in pieces}
+    assert len(keys) == len(pieces), "one piece per key on contiguous cells"
+    render_vertex_count = len(document["render_mesh"]["vertices"])
+    for piece in pieces:
+        assert len(piece["mid"]) == len(piece["normals"]) == len(piece["sources"])
+        for source in piece["sources"]:
+            assert 0 <= source < render_vertex_count, (
+                "piece vertices must index the render mesh, not the analysis mesh"
+            )
+        assert piece["faces"], "a piece needs faces"
