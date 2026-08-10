@@ -38,7 +38,7 @@ git commit. So there are three, each built by a script:
 | Environment | Python | Built by | Holds |
 | --- | --- | --- | --- |
 | `.venv` | 3.12 | `pip install -e ".[...]"` per the root README | numpy 2.0.2, scipy 1.13.1, compas 2.15.1, compas_fd, compas_tna, compas_dem, viewers |
-| `.venv-cra` | 3.10 | `bench/scripts/setup_cra_env.sh` | compas_cra, pyomo 6.4.2, IPOPT via idaes |
+| `.venv-cra` | 3.10 | `bench/scripts/setup_cra_env.sh` | compas_cra, pyomo 6.4.2, IPOPT (installed by hand, see below) |
 | `.venv-fea` | 3.12 | `bench/scripts/setup_fea_env.sh` then `bench/scripts/install_opensees.py` | compas_fea2 @ 664ec20, compas_fea2_opensees, OpenSees 3.8 |
 
 You never pick the interpreter yourself: every demo hands itself to the
@@ -164,11 +164,28 @@ does not install. The studio's CRA verdicts need it in the CRA venv:
    Ipopt-3.14.19-win64-msvs2022-md.zip).
 2. Extract it and copy everything in its bin/ directory (ipopt.exe and
    the DLLs beside it) into .venv-cra/Scripts/.
-3. Verify: .venv-cra/Scripts/python.exe -c
-   "from pyomo.opt import SolverFactory; print(SolverFactory('ipopt').available(False))"
-   must print True.
+3. Verify:
+
+   ```bash
+   .venv-cra/Scripts/python.exe -c "
+   import os, sys
+   from pathlib import Path
+   os.environ['PATH'] = str(Path(sys.executable).parent) + os.pathsep + os.environ.get('PATH', '')
+   import pyomo.environ
+   from pyomo.opt import SolverFactory
+   print(SolverFactory('ipopt').available(False))
+   "
+   ```
+
+   must print True. Both the PATH prepend and the `pyomo.environ` import
+   are load-bearing here: pyomo's solver lookup only checks the PATH
+   environment variable, not the directory holding its own python.exe,
+   and importing `pyomo.opt` on its own never registers the ipopt plugin.
+   Plain `from pyomo.opt import SolverFactory` with no PATH change prints
+   False even with the binary in place.
 
 The binary lives inside the git-ignored venv: nothing lands in the
 repository. bench/studio/solve_cra.py prepends its own Scripts directory
-to PATH, so no machine-wide configuration is needed. Without the binary,
-CRA verdicts report stands: null with a pointer back to this section.
+to PATH the same way, so no machine-wide configuration is needed. Without
+the binary, CRA verdicts report stands: null with a pointer back to this
+section.
