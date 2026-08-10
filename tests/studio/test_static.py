@@ -447,3 +447,19 @@ def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     body = js[panel_start:panel_end]
     assert "faceted" in body
     assert "planar" in body or "flat" in body
+
+
+def test_skipped_pieces_are_reported_in_data_panel_and_badge():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # Data panel must reference cra_skipped and say pieces are absent
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    panel_body = js[panel_start:panel_end]
+    assert "cra_skipped" in panel_body
+    assert "absent from the rigid-block model" in panel_body
+    # Badge must reference cra_skipped and say pieces are not modelled
+    badge_start = js.index("function updateCraBadge(")
+    badge_end = js.index("\n}", badge_start)
+    badge_body = js[badge_start:badge_end]
+    assert "cra_skipped" in badge_body
+    assert "not modelled" in badge_body

@@ -403,6 +403,10 @@ function updateCraBadge() {
     badge.classList.add("cra-unknown");
     badge.textContent = "CRA: not run (" + (verdict.message || verdict.status || "unknown") + ")";
   }
+  const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
+  if (skipped && skipped.length) {
+    badge.textContent += " (" + skipped.length + " piece(s) not modelled)";
+  }
 }
 
 function layerAvailability(name) {
@@ -885,6 +889,18 @@ function renderDataPanel(v) {
       + "piece keeps one flat planar joint face per neighbour, so its volume "
       + "and centroid differ slightly from the curved segment drawn here";
     content.appendChild(faceted);
+    const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
+    if (skipped && skipped.length) {
+      const missing = document.createElement("p");
+      missing.textContent = skipped.length + " piece(s) could not be modelled "
+        + "as a voussoir and are absent from the rigid-block model, so this "
+        + "verdict describes less than the whole vault: "
+        + skipped.map(function (entry) {
+            return "ring " + entry.ring + " wedge " + entry.wedge
+              + " (" + entry.reason + ")";
+          }).join("; ");
+      content.appendChild(missing);
+    }
   }
 
   // Verification content: early-out if no verification file.
