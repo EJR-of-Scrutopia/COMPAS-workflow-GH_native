@@ -540,7 +540,11 @@ function updateHud() {
   const lines = [state.bundle.export + "  (" + state.bundle.material + ", " + state.bundle.rings + " rings)"];
   if (v && v.stress) {
     lines.push("peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa, utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%");
-    lines.push("peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm");
+    let deflectionLine = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
+    if (v.deflection && v.deflection.span_over_deflection) {
+      deflectionLine += " (1 / " + Math.round(v.deflection.span_over_deflection) + ")";
+    }
+    lines.push(deflectionLine);
   } else {
     lines.push("no verification run embedded yet");
   }
@@ -563,6 +567,92 @@ function showBanner(text) {
   const banner = document.getElementById("banner");
   banner.textContent = text;
   banner.classList.remove("hidden");
+}
+
+// ---------- data panel ----------
+function renderDataPanel(v) {
+  const content = document.getElementById("data-content");
+  content.innerHTML = "";
+  if (!v) {
+    const p = document.createElement("p");
+    p.textContent = "no verification run embedded yet";
+    content.appendChild(p);
+    return;
+  }
+
+  const heading = document.createElement("h3");
+  heading.textContent = (v.export || "") + " -- " + (v.material || "");
+  content.appendChild(heading);
+
+  if (v.material_assumptions) {
+    const assumptions = document.createElement("p");
+    assumptions.textContent = v.material_assumptions;
+    content.appendChild(assumptions);
+  }
+
+  const cross = v.cross_check;
+  if (cross) {
+    const reactions = document.createElement("p");
+    reactions.textContent = "reactions agree: " + (cross.reactions_agree ? "yes" : "no");
+    content.appendChild(reactions);
+    const strict = document.createElement("p");
+    strict.textContent = "strict per-member agreement: " + (cross.strict_agrees ? "yes" : "no");
+    content.appendChild(strict);
+    if (cross.member_note) {
+      const note = document.createElement("p");
+      note.textContent = cross.member_note;
+      content.appendChild(note);
+    }
+  }
+
+  if (v.tension_sweep && v.tension_sweep.length) {
+    const label = document.createElement("p");
+    label.textContent = "tension sweep";
+    content.appendChild(label);
+    const table = document.createElement("table");
+    const head = document.createElement("tr");
+    for (const text of ["factor", "peak tension (MPa)", "utilisation %", "state"]) {
+      const th = document.createElement("th");
+      th.textContent = text;
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+    for (const row of v.tension_sweep) {
+      const tr = document.createElement("tr");
+      const cells = [
+        row.factor,
+        (row.peak_tension / 1e6).toFixed(2),
+        (100 * row.utilisation).toFixed(1),
+        row.tension_present ? "TENSION" : "compression",
+      ];
+      for (const value of cells) {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    content.appendChild(table);
+  }
+
+  const headline = document.createElement("ul");
+  if (v.displacement) {
+    const li = document.createElement("li");
+    li.textContent = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
+    if (v.deflection && v.deflection.span_over_deflection) {
+      li.textContent += " (1 / " + Math.round(v.deflection.span_over_deflection) + ")";
+    }
+    headline.appendChild(li);
+  }
+  if (v.stress) {
+    const compression = document.createElement("li");
+    compression.textContent = "peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa";
+    headline.appendChild(compression);
+    const utilisation = document.createElement("li");
+    utilisation.textContent = "utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%";
+    headline.appendChild(utilisation);
+  }
+  if (headline.children.length) content.appendChild(headline);
 }
 
 // ---------- data plumbing ----------
@@ -620,13 +710,26 @@ document.getElementById("exaggeration").addEventListener("input", () => recolour
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
-  document.getElementById("data-content").textContent =
-    JSON.stringify(state.bundle ? state.bundle.verification : null, null, 2);
+  renderDataPanel(state.bundle ? state.bundle.verification : null);
   panel.classList.toggle("hidden");
 });
 document.getElementById("data-close").addEventListener("click", () =>
   document.getElementById("data-panel").classList.add("hidden"));
 document.getElementById("run-button").addEventListener("click", startRun);
+
+function watchRun(runId, exportName, status) {
+  const poll = setInterval(async () => {
+    try {
+      const run = await fetchJson("/api/runs/" + runId);
+      status.textContent = run.state + " (stage " + run.stage + "/" + run.of + ") " + run.message;
+      if (run.state === "done") { clearInterval(poll); await loadStudy(exportName); }
+      if (run.state === "failed") clearInterval(poll);
+    } catch (error) {
+      clearInterval(poll);
+      status.textContent = "lost contact with the server: " + error.message;
+    }
+  }, 1000);
+}
 
 async function startRun() {
   const status = document.getElementById("run-status");
@@ -639,13 +742,12 @@ async function startRun() {
       body: JSON.stringify({ export: exportName, material, rings: state.rings }),
     });
     const body = await response.json();
-    if (response.status === 409) { status.textContent = "a run is already live"; return; }
-    const poll = setInterval(async () => {
-      const run = await fetchJson("/api/runs/" + body.run);
-      status.textContent = run.state + " (stage " + run.stage + "/" + run.of + ") " + run.message;
-      if (run.state === "done") { clearInterval(poll); await loadStudy(exportName); }
-      if (run.state === "failed") clearInterval(poll);
-    }, 1000);
+    if (response.status === 409) {
+      status.textContent = "watching the live run";
+      watchRun(body.run, exportName, status);
+      return;
+    }
+    watchRun(body.run, exportName, status);
   } catch (error) {
     status.textContent = "run failed to start: " + error.message;
   }
@@ -666,6 +768,13 @@ function rebuildTimeline() {
     autoSpin: true,
   };
   state.centre = sceneCentroid();
+  // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
+  // damped approach toward controls.target must aim at the same point, or
+  // live orbit, drag-release and the recorded camera each settle on a
+  // different seam. Sync once here, outside applyTimeline, so applyTimeline
+  // stays a pure function of t.
+  controls.target.copy(state.centre);
+  controls.update();
   buildSegmentMeshes();
   applyTimeline(0);
   recolourSegments();

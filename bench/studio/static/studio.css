@@ -25,6 +25,12 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 #data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
               overflow: auto; background: rgba(16, 17, 20, 0.95); padding: 14px;
               border: 1px solid #2a2c31; border-radius: 6px; z-index: 20; }
-#data-panel pre { font-size: 11px; white-space: pre-wrap; }
+#data-content { font-size: 12px; line-height: 1.5; }
+#data-content h3 { font-size: 13px; margin: 4px 0 8px; }
+#data-content p { margin: 0 0 10px; color: #c8c9c7; }
+#data-content ul { margin: 0 0 10px; padding-left: 18px; }
+#data-content table { width: 100%; border-collapse: collapse; margin: 0 0 10px; }
+#data-content th, #data-content td { text-align: left; padding: 2px 6px 2px 0;
+              border-bottom: 1px solid #2a2c31; }
 .hidden { display: none; }
 #layer-toggles label { display: flex; gap: 8px; align-items: center; }
