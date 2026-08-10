@@ -71,18 +71,55 @@ def test_pieces_are_closed_and_orientable_at_any_thickness():
             assert (b, a) in seen, "edge {} {} has no reverse".format(a, b)
 
 
+def _pairs_sharing_a_run(pieces_by_key):
+    """Every pair of pieces that shares a real boundary chain.
+
+    A single shared vertex is just a point touch (the fixture's centre
+    vertex sits under all four cells but is only ever a corner, never a
+    joint by itself); two or more shared vertices means the pieces share
+    at least one full run, a genuine joint whose two sides must match.
+    """
+
+    keys = sorted(pieces_by_key.keys())
+    pairs = []
+    for i in range(len(keys)):
+        for j in range(i + 1, len(keys)):
+            first, second = pieces_by_key[keys[i]], pieces_by_key[keys[j]]
+            shared = set(first["sources"]) & set(second["sources"])
+            if len(shared) >= 2:
+                pairs.append((keys[i], keys[j], shared))
+    return pairs
+
+
 def test_a_joint_run_is_flat_on_both_faces_of_the_thickness():
-    # The point of the whole wave: every vertex of a shared run, offset
-    # either way through the thickness, must lie in one plane. On a curved
-    # surface that only holds because the builder projects both positions
-    # and normals into the run's plane.
+    # A run's own plane is exact for every vertex it actually flattens:
+    # its strictly interior vertices, which belong to no other run, and
+    # whichever of its two corners the global ownership map hands it (see
+    # pieces._corner_owner_planes). For run B, the (0, 0)/(0, 1) joint
+    # with chain 2-6-10, that is vertex 6 (its only interior vertex) and
+    # vertex 10 (the corner whose smallest incident run key is run B's
+    # own). It is NOT vertex 2: vertex 2 is also a corner of cell (0, 0)'s
+    # free rim, whose run has a smaller canonical key, so the global map
+    # hands vertex 2's normal to that run instead. Neighbours still agree
+    # exactly on vertex 2 (test_neighbours_agree_on_the_shared_geometry);
+    # its residual against run B's own plane specifically is measured,
+    # not ignored, in
+    # test_a_corner_not_owned_by_the_shared_run_has_a_measured_residual.
     p = studio()
+    import blocks
+    normals = blocks.vertex_normals(VERTICES, FACES)
+    plane = p.run_plane(2, 10, [2, 6, 10], VERTICES, normals)
+    owners = p._corner_owner_planes(VERTICES, FACES, ASSIGNMENT, ORDER, normals)
+
     pieces = {(x["ring"], x["wedge"]): x for x in build()}
     first, second = pieces[(0, 0)], pieces[(0, 1)]
     shared = set(first["sources"]) & set(second["sources"])
-    assert len(shared) >= 2, "the two cells must share a boundary chain"
+    assert shared == {2, 6, 10}, "the fixture's run B chain changed"
+    owned = {6} | {corner for corner in (2, 10) if owners.get(corner) == plane}
+    assert len(owned) >= 2, "the run must own its interior vertex plus a corner"
+
     points = []
-    for source in shared:
+    for source in owned:
         index = first["sources"].index(source)
         mid, normal = first["mid"][index], first["normals"][index]
         for sign in (1.0, -1.0):
@@ -92,21 +129,74 @@ def test_a_joint_run_is_flat_on_both_faces_of_the_thickness():
     v = [c[i] - a[i] for i in range(3)]
     m = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
     length = math.hypot(*m)
-    assert length > 1e-9, "the shared run is degenerate in the fixture"
+    assert length > 1e-9, "the owned vertices are degenerate in the fixture"
     m = [component / length for component in m]
     for point in points:
         offset = sum((point[i] - a[i]) * m[i] for i in range(3))
-        assert abs(offset) < 1e-9, "joint vertex sits off the joint plane"
+        assert abs(offset) < 1e-9, "owning-run vertex sits off the joint plane"
+
+
+def test_a_corner_not_owned_by_the_shared_run_has_a_measured_residual():
+    # A corner sits at the junction of two joints, and one stored normal
+    # cannot lie in both of their planes at once (only along their line
+    # of intersection, which a third cell meeting the same corner would
+    # generally miss anyway). Vertex 2 is a corner of run B but is owned
+    # by cell (0, 0)'s free rim instead (see the test above), so its
+    # normal is not flat against run B's own plane. That is the accepted
+    # cost of exact neighbour agreement, not a bug, and this measures
+    # exactly how large it is on this fixture rather than asserting a
+    # guessed number.
+    p = studio()
+    import blocks
+    normals = blocks.vertex_normals(VERTICES, FACES)
+    origin, plane_normal = p.run_plane(2, 10, [2, 6, 10], VERTICES, normals)
+
+    pieces = {(x["ring"], x["wedge"]): x for x in build()}
+    piece = pieces[(0, 0)]
+    index = piece["sources"].index(2)
+    mid, normal = piece["mid"][index], piece["normals"][index]
+
+    residual = max(
+        abs(sum((mid[axis] + normal[axis] * 0.1 * sign - origin[axis]) * plane_normal[axis]
+                 for axis in range(3)))
+        for sign in (1.0, -1.0)
+    )
+    # Measured on this fixture, at a thickness of 0.2 (0.1 offset each
+    # way), at about 0.003 units. Bounded with headroom above that so a
+    # small change in the dome does not spuriously fail this, but capped
+    # well short of anything that would read as visibly non-planar, and
+    # floored above zero so a regression that silently drops the effect
+    # (for instance vertex 2 becoming owned by run B by accident) is
+    # caught too.
+    assert 1e-6 < residual < 0.01, "corner residual moved outside the measured band"
 
 
 def test_neighbours_agree_on_the_shared_geometry():
+    # Every pair of pieces sharing a run must agree on it exactly, same
+    # mid position and same normal, for every vertex of that run
+    # including both corners. This is what keeps two castings' joint
+    # faces coincident, and it holds regardless of which run owns a given
+    # corner's normal: both cells read that ownership from the same
+    # global map (pieces._corner_owner_planes), so they always land on
+    # the same answer independently. The fixture has four such pairs (the
+    # other two combinations only touch at the fixture's single centre
+    # vertex, not along a run), and all four are checked here, not just
+    # the one pair that happened to agree by luck of loop order before
+    # ownership was made global.
     pieces = {(x["ring"], x["wedge"]): x for x in build()}
-    first, second = pieces[(0, 0)], pieces[(0, 1)]
-    for source in set(first["sources"]) & set(second["sources"]):
-        i = first["sources"].index(source)
-        j = second["sources"].index(source)
-        assert first["mid"][i] == pytest.approx(second["mid"][j], abs=1e-12)
-        assert first["normals"][i] == pytest.approx(second["normals"][j], abs=1e-12)
+    pairs = _pairs_sharing_a_run(pieces)
+    assert len(pairs) >= 2, "the fixture needs more than one shared run to prove this"
+    for key_a, key_b, shared in pairs:
+        first, second = pieces[key_a], pieces[key_b]
+        for source in shared:
+            i = first["sources"].index(source)
+            j = second["sources"].index(source)
+            assert first["mid"][i] == pytest.approx(second["mid"][j], abs=1e-12), (
+                "{} and {} disagree on vertex {} position".format(key_a, key_b, source)
+            )
+            assert first["normals"][i] == pytest.approx(second["normals"][j], abs=1e-12), (
+                "{} and {} disagree on vertex {} normal".format(key_a, key_b, source)
+            )
 
 
 def test_interior_vertices_keep_the_true_surface():

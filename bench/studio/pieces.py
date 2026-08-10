@@ -11,6 +11,20 @@ Thickness is not applied here. Each vertex ships as a mid-surface point
 plus a unit normal, and the viewer offsets by half the thickness either
 way, which lets thickness, taper and the joint gap all be client-side.
 
+A corner sits where two joints meet, and a single stored normal can only
+lie in one of their two planes at once, not both (only along their line
+of intersection, and a third cell meeting the same corner would generally
+miss even that). So exactly one of a corner's two runs owns its normal;
+the other run is very slightly non-planar at that one point. Measured on
+the test fixture, at a thickness of 0.2, that residual is about 0.003
+units, well under a millimetre at any real scale and invisible in the
+model. What is not optional is agreement: every cell that touches a given
+corner reads the same globally agreed owner for it (see
+_corner_owner_planes), so neighbours always store the exact same position
+and normal there, and their joint faces coincide. A joint that is a
+fraction of a millimetre off flat is a modelling nicety; a joint where the
+two sides disagree on the geometry is broken.
+
 Stdlib only: the bundle imports this, and the guard test forbids solver
 stacks there.
 """
@@ -86,24 +100,71 @@ def project_direction(vector, plane):
     return flattened if flattened is not None else list(vector)
 
 
-def _run_priority(run: dict) -> Tuple[int, int, int]:
-    """Sort key that makes run ownership of a shared corner order-free.
+def _run_key(run: dict) -> Tuple[int, int]:
+    """The identity of a run's chain, independent of which side reads it.
 
-    A corner sits at the end of one run and the start of the next, so
-    projecting runs in loop order lets whichever run comes second silently
-    overwrite what the first run set there. That "second" run differs
-    between two neighbouring pieces, because each piece's own loop puts the
-    runs in a different sequence, so the two sides ended up disagreeing
-    about the same corner. Sorting by the neighbour's own (ring, wedge)
-    label first, with a free edge (label None) sorted last, gives every
-    piece touching a given corner the same answer for which run claims it,
-    independent of that piece's own loop order.
+    Two cells sharing a run see the same set of undirected edges, just
+    walked in opposite directions, so the minimum undirected edge key of
+    those edges is identical from either side. That makes it usable as a
+    global, side-free way to compare two different runs that both want to
+    claim the same corner.
     """
 
-    label = run["label"]
-    if label is None:
-        return (1, 0, 0)
-    return (0, label[0], label[1])
+    return min((min(a, b), max(a, b)) for a, b in run["edges"])
+
+
+def _corner_owner_planes(
+    vertices: Sequence[Sequence[float]],
+    faces: Sequence[Sequence[int]],
+    assignment: Sequence[Sequence[int]],
+    order: Sequence[Sequence[int]],
+    normals: Sequence[Sequence[float]],
+) -> Dict[int, tuple]:
+    """The one plane each corner vertex's normal is flattened into.
+
+    A corner sits where two runs meet, and a run's plane only ever
+    contains its own two corners by construction, so a corner's position
+    is already correct no matter which of its two runs anyone asks. Its
+    normal is a different story: a single stored direction cannot lie in
+    two different planes at once (only along their line of intersection,
+    which a third cell meeting the same corner would generally miss too),
+    so exactly one of a corner's runs has to own its normal.
+
+    That choice has to come out the same way no matter which cell is
+    asking, or two neighbours store different normals for a vertex they
+    both claim, and the joint between them stops matching. So every run
+    of every cell is built once, up front, in a single pass over the whole
+    mesh, and each corner is handed to whichever incident run has the
+    smallest `_run_key`. Both cells sharing a run compute that key
+    identically, so both land on the same owner independently, without
+    needing to compare notes or agree on an iteration order.
+    """
+
+    users = voussoirs.edge_users(faces)
+    faces_by_cell: Dict[Tuple[int, int], List[int]] = {}
+    for face_index, pair in enumerate(assignment):
+        faces_by_cell.setdefault((pair[0], pair[1]), []).append(face_index)
+
+    best_key: Dict[int, Tuple[int, int]] = {}
+    owner_plane: Dict[int, tuple] = {}
+    for ring, wedge in order:
+        cell_faces = faces_by_cell.get((ring, wedge), [])
+        if not cell_faces:
+            continue
+        labels = voussoirs.edge_labels(faces, cell_faces, assignment, users)
+        for component in voussoirs.face_components(faces, cell_faces):
+            for loop in voussoirs.component_loops(faces, component):
+                for run in voussoirs.loop_runs(loop, labels):
+                    chain = [edge[0] for edge in run["edges"]] + [run["edges"][-1][1]]
+                    plane = run_plane(chain[0], chain[-1], chain, vertices, normals)
+                    if plane is None:
+                        continue
+                    key = _run_key(run)
+                    for corner in (chain[0], chain[-1]):
+                        if corner not in best_key or key < best_key[corner]:
+                            best_key[corner] = key
+                            owner_plane[corner] = plane
+    return owner_plane
 
 
 def _piece_faces(count: int, cell_faces, index_of):
@@ -133,6 +194,12 @@ def segment_pieces(
     for face_index, pair in enumerate(assignment):
         faces_by_cell.setdefault((pair[0], pair[1]), []).append(face_index)
 
+    # Every corner's normal is resolved once, globally, before any piece is
+    # built. See _corner_owner_planes for why: a corner's normal can only
+    # lie in one of its two runs' planes, and the choice of which one has
+    # to come out the same from both cells that meet there.
+    corner_planes = _corner_owner_planes(vertices, faces, assignment, order, normals)
+
     out: List[dict] = []
     for ring, wedge in order:
         cell_faces = faces_by_cell.get((ring, wedge), [])
@@ -150,34 +217,35 @@ def segment_pieces(
             mid = {vertex: list(vertices[vertex]) for vertex in used}
             normal = {vertex: list(normals[vertex]) for vertex in used}
 
-            # Flatten every boundary run: positions and directions both, or
-            # the joint's top and bottom edges bow apart. A corner belongs
-            # to two runs, but only one may set its final position, and it
-            # has to be the same one the piece on the other side of that
-            # corner's shared run also picks, or the two sides disagree
-            # about a vertex they both claim to own. Runs are ordered by
-            # neighbour label (a free edge sorts last) and only the first
-            # run to reach a vertex is allowed to move it, so both pieces
-            # sharing a run resolve every one of its corners to that run,
-            # regardless of where that run falls in either piece's own
-            # loop.
-            all_runs: List[dict] = []
+            # A run's two corners are unaffected by projecting onto its own
+            # plane (that plane is built through them), so a corner's
+            # position is already correct and is left untouched here. A
+            # vertex strictly between a run's corners belongs to exactly
+            # one run, so its position and normal are flattened onto that
+            # run's plane without ambiguity.
+            corners: set = set()
             for loop in voussoirs.component_loops(faces, component):
-                all_runs.extend(voussoirs.loop_runs(loop, labels))
-            all_runs.sort(key=_run_priority)
+                for run in voussoirs.loop_runs(loop, labels):
+                    chain = [edge[0] for edge in run["edges"]] + [run["edges"][-1][1]]
+                    plane = run_plane(chain[0], chain[-1], chain, vertices, normals)
+                    if plane is None:
+                        continue
+                    corners.add(chain[0])
+                    corners.add(chain[-1])
+                    for vertex in chain[1:-1]:
+                        mid[vertex] = project_to_plane(mid[vertex], plane)
+                        normal[vertex] = project_direction(normal[vertex], plane)
 
-            touched: set = set()
-            for run in all_runs:
-                chain = [edge[0] for edge in run["edges"]] + [run["edges"][-1][1]]
-                plane = run_plane(chain[0], chain[-1], chain, vertices, normals)
+            # A corner's normal, on the other hand, is ambiguous (it sits
+            # on two runs), so it is not flattened onto whichever of this
+            # piece's own runs happens to touch it. It is looked up in the
+            # global map instead, so every piece that shares this corner
+            # reads the identical answer.
+            for vertex in corners:
+                plane = corner_planes.get(vertex)
                 if plane is None:
                     continue
-                for vertex in chain:
-                    if vertex in touched:
-                        continue
-                    touched.add(vertex)
-                    mid[vertex] = project_to_plane(mid[vertex], plane)
-                    normal[vertex] = project_direction(normal[vertex], plane)
+                normal[vertex] = project_direction(normal[vertex], plane)
 
             index_of = {vertex: i for i, vertex in enumerate(used)}
             count = len(used)
