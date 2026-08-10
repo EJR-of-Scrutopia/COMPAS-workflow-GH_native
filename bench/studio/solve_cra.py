@@ -2,19 +2,23 @@
 
 The one studio module besides solve_stage.py allowed to import solver
 stacks (the guard test exempts both by name). Verdicts are three-state
-and honest: stands true (the solver found an equilibrium), stands false
-(the solver proved there is none: the blocks slide or hinge apart under
-friction and no tension), stands null (the solve did not run; message
-says why). A free (non-support) block with no contact interface is an
-error, not a verdict: it gets Constraint.Skip on every equilibrium row in
-compas_cra's model, so cra_penalty_solve can return optimal while ignoring
-it entirely; reporting "stands" over a silently-ignored block would be
-meaningless, whether it is the only block in the assembly or one stray
+and honest: stands true (the solver found an equilibrium with no tension),
+stands false (the solver proved there is none, or the solution requires
+unrealistic tension at joints), stands null (the solve did not run;
+message says why). A free (non-support) block with no contact interface is
+an error, not a verdict: it gets Constraint.Skip on every equilibrium row
+in compas_cra's model, so cra_penalty_solve can return optimal while
+ignoring it entirely; reporting "stands" over a silently-ignored block would
+be meaningless, whether it is the only block in the assembly or one stray
 block floating inside an otherwise-connected one. Uses the penalty
 formulation (cra_penalty_solve) instead of the plain form (cra_solve)
 because it finishes and is decisive where the plain form stalls at maxIter
 without a verdict; the penalty form is orders of magnitude faster and
 reaches consistent verdicts at 4 to 6 blocks where the plain form does not.
+The penalty formulation prices tension (W_tension*||fn-||^2) rather than
+forbidding it, so the solver's "optimal" status alone is never the verdict;
+stands true requires both a converged solve and negligible tension in the
+returned contact forces (ratio to peak compression below TENSION_TOLERANCE).
 Self-weight only; the export loads stay the FEA's business.
 """
 
@@ -47,6 +51,13 @@ def _result(stands, status, message, blocks, interfaces, mu):
             "blocks": blocks, "interfaces": interfaces, "mu": mu}
 
 
+# cra_penalty_solve prices tension instead of forbidding it, so the solver
+# will use whatever tension is needed to reach equilibrium. A ratio of peak
+# tension to peak compression above this threshold means the assembly cannot
+# stand: masonry joints cannot carry tension.
+TENSION_TOLERANCE = 1e-3
+
+
 def _classify_termination(text):
     """Classify a pyomo termination string as "infeasible" or "other".
 
@@ -59,6 +70,23 @@ def _classify_termination(text):
     """
 
     return "infeasible" if "infeasible" in text.lower() else "other"
+
+
+def _contact_extremes(assembly):
+    """Peak tensile and compressive normal contact force over all interfaces.
+
+    compas_cra records per contact point: c_np is the compressive normal
+    component, c_nn the tensile one. Forces are not in Newtons; they come
+    out in compas_cra's own density-times-volume units.
+    """
+
+    tension = 0.0
+    compression = 0.0
+    for interface in assembly.interfaces():
+        for record in (getattr(interface, "forces", None) or []):
+            tension = max(tension, float(record.get("c_nn", 0.0)))
+            compression = max(compression, float(record.get("c_np", 0.0)))
+    return tension, compression
 
 
 def solve(request: dict, solver_available=_ipopt_available) -> dict:
@@ -143,6 +171,18 @@ def solve(request: dict, solver_available=_ipopt_available) -> dict:
     except Exception as error:
         return _result(None, "error",
                        "{}: {}".format(type(error).__name__, error),
+                       count, interfaces, mu)
+    # The penalty formulation prices tension, so "optimal" status alone does
+    # not mean the assembly can stand. Check the returned contact forces: if
+    # peak tension exceeds the threshold relative to peak compression, masonry
+    # joints cannot carry that tension and the assembly fails.
+    peak_tension, peak_compression = _contact_extremes(assembly)
+    scale = max(peak_compression, peak_tension, 1e-12)
+    ratio = peak_tension / scale
+    if ratio > TENSION_TOLERANCE:
+        return _result(False, "tension at joints",
+                       "peak joint tension is {:.1%} of the peak contact "
+                       "force; masonry joints cannot carry tension".format(ratio),
                        count, interfaces, mu)
     return _result(True, "optimal", "", count, interfaces, mu)
 

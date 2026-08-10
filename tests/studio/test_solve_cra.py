@@ -153,13 +153,10 @@ def test_a_supported_stack_stands():
 @pytest.mark.slow
 def test_a_hanging_block_does_not_stand():
     # Support the TOP cube; the bottom one hangs off a no-tension joint.
-    # NOTE: cra_penalty_solve returns True (can stand) whereas cra_solve
-    # returned False (cannot stand). The penalty formulation finds an
-    # equilibrium where the plain form did not. This is a behavioral
-    # change documented in task-2-report.md.
     out = run_solve({"blocks": [cube(0), cube(1, is_support=True)],
                      "density": 2400.0, "mu": 0.6})
-    assert out["stands"] is True
+    assert out["stands"] is False
+    assert out["status"] == "tension at joints"
 
 
 @needs_ipopt
@@ -233,6 +230,19 @@ def test_the_module_uses_the_penalty_formulation_at_a_fixed_tolerance():
     assert "cra_penalty_solve" in source
     assert "tmax=1e-6" in source
     assert "_max_face_warp" not in source, "the adaptive tmax workaround is gone"
+
+
+@needs_cra_venv
+def test_the_module_checks_tension_in_the_contact_forces():
+    # The penalty formulation prices tension instead of forbidding it, so
+    # the solver's "optimal" status alone does not mean the assembly can
+    # stand. The module must check the returned contact forces and reject
+    # any verdict that requires unrealistic tension at masonry joints
+    # (c_nn > TENSION_TOLERANCE fraction of peak compression).
+    source = (REPO / "bench" / "studio" / "solve_cra.py").read_text(encoding="utf-8")
+    assert "TENSION_TOLERANCE" in source
+    assert "_contact_extremes" in source
+    assert "c_nn" in source, "tension checking must read c_nn from force records"
 
 
 @needs_cra_venv
