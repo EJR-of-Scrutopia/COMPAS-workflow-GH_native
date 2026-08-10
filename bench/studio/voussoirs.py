@@ -208,3 +208,157 @@ def split_requests(runs: List[dict]) -> Dict[frozenset, set]:
             requests.setdefault(run_chain_key(runs[index]), set()).update(vertices)
             needed -= len(vertices)
     return requests
+
+
+def mesh_volume(
+    vertices: Sequence[Sequence[float]], faces: Sequence[Sequence[int]]
+) -> float:
+    """Signed volume of a closed mesh, fan triangulating any polygon."""
+
+    total = 0.0
+    for face in faces:
+        for i in range(1, len(face) - 1):
+            a, b, c = vertices[face[0]], vertices[face[i]], vertices[face[i + 1]]
+            total += (
+                a[0] * (b[1] * c[2] - b[2] * c[1])
+                - a[1] * (b[0] * c[2] - b[2] * c[0])
+                + a[2] * (b[0] * c[1] - b[1] * c[0])
+            ) / 6.0
+    return abs(total)
+
+
+def _solid_from_corners(corners: List[int], normals, vertices, thickness) -> dict:
+    """A closed prismatoid through the corners: caps plus one side per run."""
+
+    half = thickness / 2.0
+    count = len(corners)
+    block_vertices: List[List[float]] = []
+    for sign in (1.0, -1.0):
+        for corner in corners:
+            p, n = vertices[corner], normals[corner]
+            block_vertices.append([
+                p[0] + n[0] * half * sign,
+                p[1] + n[1] * half * sign,
+                p[2] + n[2] * half * sign,
+            ])
+
+    top = list(range(count))
+    bottom = [i + count for i in range(count)]
+    block_faces: List[List[int]] = []
+    # Caps, fanned from the first corner. The boundary loop runs
+    # anticlockwise seen from the surface's normal side, so the top fan
+    # faces outward and the bottom fan is its reverse.
+    for i in range(1, count - 1):
+        block_faces.append([top[0], top[i], top[i + 1]])
+        block_faces.append([bottom[0], bottom[i + 1], bottom[i]])
+    # One side per run, wound outward and split on the same diagonal both
+    # neighbours will choose (they traverse the run in opposite directions,
+    # so the a < b test sends them down opposite branches to the same cut).
+    for i in range(count):
+        a, b = corners[i], corners[(i + 1) % count]
+        ta, tb = top[i], top[(i + 1) % count]
+        ba, bb = bottom[i], bottom[(i + 1) % count]
+        if a < b:
+            block_faces.append([tb, ta, ba])
+            block_faces.append([tb, ba, bb])
+        else:
+            block_faces.append([ta, ba, bb])
+            block_faces.append([ta, bb, tb])
+    return {"vertices": block_vertices, "faces": block_faces}
+
+
+def segment_voussoirs(
+    vertices: Sequence[Sequence[float]],
+    faces: Sequence[Sequence[int]],
+    assignment: Sequence[Sequence[int]],
+    order: Sequence[Sequence[int]],
+    thickness: float,
+    support_ids,
+) -> Tuple[List[dict], List[dict]]:
+    """One voussoir per boundary loop of each cell, in drop order.
+
+    Returns the blocks and a list of cells that could not form a solid, so
+    a caller can report the skip instead of solving a wrong model.
+    """
+
+    normals = blocks.vertex_normals(vertices, faces)
+    support = set(support_ids)
+    users = edge_users(faces)
+    faces_by_cell: Dict[Tuple[int, int], List[int]] = {}
+    for face_index, pair in enumerate(assignment):
+        faces_by_cell.setdefault((pair[0], pair[1]), []).append(face_index)
+
+    # Phase one: every piece's runs, and the splits each piece asks for.
+    # Asking rather than splitting is the point: a chain must be split the
+    # same way by both cells that share it, so the requests are unioned
+    # before any corner is laid out.
+    pieces: List[dict] = []
+    splits: Dict[frozenset, set] = {}
+    for ring, wedge in order:
+        face_indices = faces_by_cell.get((ring, wedge), [])
+        if not face_indices:
+            continue
+        labels = edge_labels(faces, face_indices, assignment, users)
+        for component in face_components(faces, face_indices):
+            # Support is judged per piece: one patch of a split cell can
+            # reach the ground while the other floats.
+            piece_vertices = {v for i in component for v in faces[i]}
+            is_support = any(v in support for v in piece_vertices)
+            loops = component_loops(faces, component)
+            if len(loops) != 1:
+                # No loop at all is a degenerate patch. More than one loop
+                # on a SINGLE connected component means the piece has a
+                # hole, an annulus rather than a plate, and a prismatoid
+                # through one boundary cannot represent it: building one
+                # solid per loop would produce overlapping shells. Two
+                # patches that are merely separate arrive here as separate
+                # components, each with its own single loop, and are built
+                # normally. A holed piece is reported, not modelled wrong.
+                pieces.append({
+                    "ring": ring, "wedge": wedge, "is_support": is_support,
+                    "runs": None,
+                    "reason": ("piece has no boundary loop" if not loops
+                               else "piece has a hole, so no single boundary loop"),
+                })
+                continue
+            runs = loop_runs(loops[0], labels)
+            for key, wanted in split_requests(runs).items():
+                splits.setdefault(key, set()).update(wanted)
+            pieces.append({
+                "ring": ring, "wedge": wedge, "is_support": is_support,
+                "runs": runs, "reason": None,
+            })
+
+    # Phase two: lay out corners honouring every split anyone asked for.
+    built: List[dict] = []
+    skipped: List[dict] = []
+    for piece in pieces:
+        if piece["runs"] is None:
+            skipped.append({
+                "ring": piece["ring"], "wedge": piece["wedge"],
+                "reason": piece["reason"],
+            })
+            continue
+        corners: List[int] = []
+        for run in piece["runs"]:
+            corners.append(run["edges"][0][0])
+            extra = splits.get(run_chain_key(run), set())
+            for _, vertex in run["edges"][:-1]:
+                if vertex in extra:
+                    corners.append(vertex)
+        if len(corners) < 3:
+            skipped.append({
+                "ring": piece["ring"], "wedge": piece["wedge"],
+                "reason": "boundary loop has too few corners to form a solid",
+            })
+            continue
+        solid = _solid_from_corners(corners, normals, vertices, thickness)
+        built.append({
+            "vertices": solid["vertices"],
+            "faces": solid["faces"],
+            "is_support": piece["is_support"],
+            "ring": piece["ring"],
+            "wedge": piece["wedge"],
+            "corner_vertices": corners,
+        })
+    return built, skipped
