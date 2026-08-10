@@ -21,6 +21,8 @@ const state = {
   thickness: 0.2,
   segments: null,      // Task 11
   segmentIndex: null,  // Task 11
+  nodeRadius: 0.03,    // Task 6
+  wireRadius: 0.02,    // Task 6
 };
 
 const canvas = document.getElementById("view");
@@ -148,7 +150,7 @@ function meshGeometry(meshData) {
 
 function buildWiresAndNodes(bundle) {
   const { vertices, edges } = bundle.analysis_mesh;
-  const wireRadius = 0.02, nodeRadius = 0.045;
+  const wireRadius = state.wireRadius, nodeRadius = state.nodeRadius;
   const cylinder = new THREE.CylinderGeometry(wireRadius, wireRadius, 1, 8, 1, true);
   cylinder.translate(0, 0.5, 0);
   const wireMaterial = materials.steel.clone();
@@ -190,6 +192,25 @@ function buildWiresAndNodes(bundle) {
   });
   wires.castShadow = nodes.castShadow = true;
   return { wires, nodes };
+}
+
+function rebuildWiresAndNodes() {
+  if (!state.bundle) return;
+  for (const key of ["wires", "nodes"]) {
+    const object = state.objects[key];
+    if (object) {
+      scene.remove(object);
+      object.geometry.dispose();
+      object.material.dispose();
+    }
+  }
+  const { wires, nodes } = buildWiresAndNodes(state.bundle);
+  state.objects.wires = wires;
+  state.objects.nodes = nodes;
+  scene.add(wires);
+  scene.add(nodes);
+  applyWireForces();
+  if (state.timeline) applyTimeline(state.timeline.t);
 }
 
 function columnGeometryFrom(document_) {
@@ -990,6 +1011,16 @@ for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
 }
 document.getElementById("exaggeration").addEventListener("input", () => recolourSegments());
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
+document.getElementById("node-radius").addEventListener("input", (e) => {
+  state.nodeRadius = +e.target.value;
+  document.getElementById("node-radius-value").textContent = Math.round(state.nodeRadius * 1000);
+  rebuildWiresAndNodes();
+});
+document.getElementById("wire-radius").addEventListener("input", (e) => {
+  state.wireRadius = +e.target.value;
+  document.getElementById("wire-radius-value").textContent = Math.round(state.wireRadius * 1000);
+  rebuildWiresAndNodes();
+});
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
   renderDataPanel(state.bundle ? state.bundle.verification : null);

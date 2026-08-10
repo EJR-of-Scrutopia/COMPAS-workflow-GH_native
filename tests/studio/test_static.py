@@ -229,6 +229,21 @@ def test_falsework_is_a_translucent_ghost_with_a_toggle():
     assert "nodeMaterial.transparent = true" in js
 
 
+def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for control_id in ("node-radius", "wire-radius", "node-radius-value", "wire-radius-value"):
+        assert 'id="{}"'.format(control_id) in html, "index.html lost {}".format(control_id)
+    assert "state.nodeRadius" in js and "state.wireRadius" in js
+    assert "function rebuildWiresAndNodes(" in js
+    start = js.index("function rebuildWiresAndNodes(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "dispose()" in body, "a rebuild must dispose the old geometry and material"
+    assert "applyWireForces()" in body, "the forces layer must survive a rebuild"
+    assert "applyTimeline(" in body, "the strike state must survive a rebuild"
+
+
 def test_segments_are_extruded_to_the_bundles_thickness():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "fields.js" in js, "studio.js must import the pure fields module"
