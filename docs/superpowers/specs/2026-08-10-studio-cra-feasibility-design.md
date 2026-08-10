@@ -227,6 +227,13 @@ recorded in .superpowers/sdd/2026-08-10-studio-cra-feasibility/cra-diagnostics.m
   CRA_BLOCK_BUDGET (8 blocks), because both solvers blow a 300 s cap at 10.
   Rings are never merged, so stages stay whole. The document records
   cra_wedge_factor and the Data panel says when the verdict describes a
-  coarser assembly than the drawing. A coarser model is optimistic: fewer
-  joints means fewer ways to hinge, which is exactly why it is labelled
-  rather than quietly substituted.
+  coarser assembly than the drawing. A coarser model is optimistic on two
+  counts: fewer joints means fewer ways to hinge, and a merged piece counts
+  as supported if any of its merged wedges touches a support vertex. Both
+  sources of optimism are disclosed in the Data panel so the verdict is
+  labelled rather than quietly substituted.
+- When a stage has more occupied rings than CRA_BLOCK_BUDGET, wedge merging
+  cannot reduce the block count below one per ring, so the stage cannot be
+  made affordable. Such stages get an honest null verdict with a message
+  directing the user to lower the ring count, rather than hanging on a 300 s
+  timeout that would reach the same null.

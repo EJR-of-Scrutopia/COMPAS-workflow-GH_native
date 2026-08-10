@@ -391,3 +391,65 @@ def test_include_cra_false_leaves_the_wedge_factor_null(tmp_path):
         include_cra=False,
     )
     assert document["cra_wedge_factor"] is None
+
+
+def test_cra_binning_documents_the_floor_at_one_cell_per_ring():
+    """Merging is wedge-only, so the floor is the number of occupied rings.
+
+    An assignment/order with more occupied rings than CRA_BLOCK_BUDGET cannot
+    fit under budget at any factor. This documents that the floor is explicit
+    and tested, not accidental.
+    """
+    _, _, staging = studio()
+    # Create 10 rings with 1 wedge each (the minimal per-ring case)
+    assignment = [[r, 0] for r in range(10)]
+    order = [[r, 0] for r in range(10)]
+    coarse = staging.cra_binning(assignment, order, budget=8)
+    # Even at factor 12 (max), 10 rings become 10 cells (one per ring)
+    assert coarse["wedge_factor"] == 12
+    cells = {(pair[0], pair[1]) for pair in coarse["order"]}
+    assert len(cells) == 10
+    assert len(cells) > 8
+
+
+def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
+    """A stage with more occupied rings than budget gets a null verdict.
+
+    Wedge merging cannot go below one cell per ring, so a study with more
+    occupied rings than CRA_BLOCK_BUDGET cannot be made affordable. Refusing
+    here is honest and instant; letting it run would spend the timeout to
+    reach the same null. The cra_runner must NOT be called for over-budget
+    stages.
+    """
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    # Monkeypatch CRA_BLOCK_BUDGET low to trigger the over-budget check
+    monkeypatch.setattr(staging, "CRA_BLOCK_BUDGET", 1)
+
+    cra_runner_calls = []
+
+    def counting_cra_runner(request):
+        cra_runner_calls.append(request)
+        return {"stands": True, "status": "optimal", "message": "",
+                "blocks": len(request["blocks"]), "interfaces": 1,
+                "mu": request["mu"]}
+
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        cra_runner=counting_cra_runner,
+    )
+    # The second stage has 2 rings (> budget of 1), so it should get the
+    # over-budget verdict without calling cra_runner
+    stage_2_cra = document["stages"][1]["cra"]
+    assert stage_2_cra["stands"] is None
+    assert stage_2_cra["status"] == "over budget"
+    assert "blocks exceeds" in stage_2_cra["message"]
+    assert "lower the ring count" in stage_2_cra["message"]
+    # cra_runner should only have been called once (for stage 1)
+    assert len(cra_runner_calls) == 1

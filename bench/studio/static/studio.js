@@ -885,7 +885,9 @@ function renderDataPanel(v) {
       const coarse = document.createElement("p");
       coarse.textContent = "verdict computed on a coarser model than the "
         + "drawing: neighbouring wedges merged in groups of " + factor
-        + " to keep the rigid-block solve affordable";
+        + " to keep the rigid-block solve affordable. "
+        + "A coarser model is optimistic: fewer joints means fewer ways to hinge, "
+        + "and a merged piece that reaches a support counts as supported";
       content.appendChild(coarse);
     }
   }

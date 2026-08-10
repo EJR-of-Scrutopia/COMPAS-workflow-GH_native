@@ -280,11 +280,27 @@ def run_staging(
             stage_blocks = [
                 b for b in all_blocks if b["ring"] < entry["rings_placed"]
             ]
-            stage_entry["cra"] = cra_runner({
-                "blocks": stage_blocks,
-                "density": DENSITIES[material],
-                "mu": FRICTION[material],
-            })
+            if len(stage_blocks) > CRA_BLOCK_BUDGET:
+                # Wedge merging cannot go below one cell per ring, so a study
+                # with more occupied rings than the budget cannot be made
+                # affordable. Refusing here is honest and instant; letting it
+                # run would just spend the timeout to reach the same null.
+                stage_entry["cra"] = {
+                    "stands": None,
+                    "status": "over budget",
+                    "message": "{} blocks exceeds the affordable rigid-block "
+                               "budget of {}; lower the ring count for a "
+                               "verdict".format(len(stage_blocks), CRA_BLOCK_BUDGET),
+                    "blocks": len(stage_blocks),
+                    "interfaces": 0,
+                    "mu": FRICTION[material],
+                }
+            else:
+                stage_entry["cra"] = cra_runner({
+                    "blocks": stage_blocks,
+                    "density": DENSITIES[material],
+                    "mu": FRICTION[material],
+                })
         stages.append(stage_entry)
 
     document = {
