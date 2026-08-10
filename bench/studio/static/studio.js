@@ -385,6 +385,14 @@ const FRICTION_PROVENANCE = {
   "0.4": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
 };
 
+// The badge and the HUD are what a user reads during playback; the Data
+// panel, which carries the measured figures in full, is a separate view
+// they may never open. So the same caveat rides along here, short enough
+// to sit on one line: the analysis surface is up to 2.389 m from the
+// drawn one, twenty times the shell's own half thickness, and that is a
+// larger error than the volume gap the disclosure used to lead with.
+const FACETED_CAVEAT = "on a faceted model up to 2.4 m off the drawn surface";
+
 function updateCraBadge() {
   const badge = document.getElementById("cra-badge");
   if (!state.bundle) { badge.classList.add("hidden"); return; }
@@ -402,6 +410,12 @@ function updateCraBadge() {
   } else {
     badge.classList.add("cra-unknown");
     badge.textContent = "CRA: not run (" + (verdict.message || verdict.status || "unknown") + ")";
+  }
+  if (verdict) {
+    // Appended after the three-state branch above so it rides on every
+    // verdict without touching which class or which words that branch
+    // chose.
+    badge.textContent += " " + FACETED_CAVEAT;
   }
   const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
   if (skipped && skipped.length) {
@@ -837,9 +851,9 @@ function updateHud() {
       : "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result"));
     const cra = stage.cra;
     if (cra && cra.stands === true) {
-      lines.push("CRA: stands");
+      lines.push("CRA: stands, " + FACETED_CAVEAT);
     } else if (cra && cra.stands === false) {
-      lines.push("CRA: does not stand");
+      lines.push("CRA: does not stand, " + FACETED_CAVEAT);
     } else {
       lines.push("CRA: not run" + (cra && cra.message ? " (" + cra.message + ")" : ""));
     }
@@ -885,10 +899,20 @@ function renderDataPanel(v) {
       + verdict.interfaces + " contact interfaces";
     content.appendChild(counts);
     const faceted = document.createElement("p");
-    faceted.textContent = "the verdict is computed on a faceted model whose "
-      + "planar joints cut the corners off each curved piece, so its volume "
-      + "runs roughly 17.5 to 29.5 percent below the drawn segment, more "
-      + "coarsely at low ring counts";
+    faceted.textContent = "the verdict is computed on a faceted model, not on "
+      + "the surface drawn here. Position is the larger error: replacing each "
+      + "curved piece with planar joints moves the analysis surface up to "
+      + "2.389 m from the drawn one at 2 rings and 1.964 m at 4 rings, "
+      + "against a shell half thickness of 0.1 m, so the solver weighs blocks "
+      + "sitting metres from where they are shown. Volume is the smaller one: "
+      + "per piece it runs 51.3 to 17.3 percent light at 2 rings, and 63.7 "
+      + "percent light to 12.9 percent heavy at 4 rings, where 5 of 21 pieces "
+      + "come out heavier than drawn rather than lighter. A higher "
+      + "ring count improves the position error and the total volume (29.5 "
+      + "percent light at 2 rings, 17.5 at 4) because finer segmentation "
+      + "makes each joint flatter to begin with, but it widens the spread "
+      + "between individual pieces (measured on the Trial 2 export, "
+      + "docs/BENCH.md)";
     content.appendChild(faceted);
     const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
     if (skipped && skipped.length) {

@@ -447,13 +447,46 @@ def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     body = js[panel_start:panel_end]
     assert "faceted" in body
     assert "planar" in body or "flat" in body
-    # The volume gap is measured (17.5 to 29.5 percent on the Trial 2
-    # export, docs/BENCH.md), not a rounding error: "slightly" understates
-    # it and must not come back. The panel must name the measured range and
-    # that it varies with ring count.
+    # Position before volume. The analysis surface sits up to 2.389 m from
+    # the drawn one at rings=2 and 1.964 m at rings=4, against a 0.1 m
+    # shell half thickness: an error twenty times the volume gap this
+    # paragraph used to lead with, and the only one that puts a block
+    # somewhere it is not. It must be named, in metres, first.
+    assert "2.389" in body and "1.964" in body
+    assert body.index("2.389") < body.index("percent"), (
+        "position is the larger error and must come before volume")
+    # The volume gap is measured (docs/BENCH.md), not a rounding error:
+    # "slightly" understates it and must not come back. The old sentence
+    # also said every piece runs light, which is false: 5 of 21 pieces at
+    # rings=4 are HEAVIER than drawn, and a disclosure that excludes that
+    # tells a reader the error only ever goes one way.
     assert "slightly" not in body
-    assert "percent" in body
+    assert "heavy" in body or "heavier" in body
+    assert "51.3" in body and "63.7" in body and "12.9" in body
     assert "ring count" in body
+
+
+def test_the_badge_and_hud_carry_the_faceted_caveat_too():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # The Data panel is a separate view. The badge and the HUD are what a
+    # user reads during playback, so the caveat has to reach them as well
+    # or the headline verdict travels without it.
+    assert "FACETED_CAVEAT" in js
+    caveat_start = js.index("const FACETED_CAVEAT")
+    caveat = js[caveat_start:js.index("\n", caveat_start)]
+    assert "faceted" in caveat and "2.4 m" in caveat
+    badge_start = js.index("function updateCraBadge(")
+    badge_end = js.index("\n}", badge_start)
+    badge_body = js[badge_start:badge_end]
+    assert "FACETED_CAVEAT" in badge_body
+    # The three-state logic and its colour classes stay exactly as they
+    # were: the caveat is appended after the branch, never inside it.
+    for name in ("cra-stands", "cra-fails", "cra-unknown"):
+        assert name in badge_body
+    assert badge_body.index("FACETED_CAVEAT") > badge_body.index("cra-unknown")
+    hud_start = js.index("function updateHud(")
+    hud_end = js.index("\n}", hud_start)
+    assert "FACETED_CAVEAT" in js[hud_start:hud_end]
 
 
 def test_skipped_pieces_are_reported_in_data_panel_and_badge():
