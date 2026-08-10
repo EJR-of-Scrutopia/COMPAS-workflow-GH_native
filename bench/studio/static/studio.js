@@ -763,8 +763,49 @@ function applyTimeline(t) {
   applyPulse();
 }
 
+// ---------- record mode ----------
+async function recordAnimation() {
+  const status = document.getElementById("record-status");
+  if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
+  const target = "study-" + state.bundle.slug;
+  const fps = 60;
+  const total = Math.ceil(timelineDuration() * fps);
+  status.textContent = "recording " + total + " frames at 1080p (a few MB each on disk)";
+  const wasPlaying = state.timeline.playing;
+  state.timeline.playing = false;
+  renderer.setSize(1920, 1080, false);
+  camera.aspect = 1920 / 1080;
+  camera.updateProjectionMatrix();
+  state.recording = true;   // resize() must skip while this is set
+  try {
+    for (let frameIndex = 0; frameIndex < total; frameIndex++) {
+      applyTimeline(frameIndex / fps);
+      renderer.render(scene, camera);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const response = await fetch(
+        "/api/frames/" + target + "?frame=" + (frameIndex + 1),
+        { method: "POST", body: blob });
+      if (!response.ok) throw new Error("frame upload failed: " + response.status);
+      if (frameIndex % 30 === 0) status.textContent = "frame " + frameIndex + " / " + total;
+    }
+    status.textContent = "stitching...";
+    const stitched = await fetch("/api/frames/" + target + "/stitch?fps=" + fps, { method: "POST" });
+    const body = await stitched.json();
+    status.textContent = stitched.ok
+      ? "saved " + body.video
+      : "stitch failed: " + (body.detail || stitched.status);
+  } catch (error) {
+    status.textContent = "recording failed: " + error.message;
+  } finally {
+    state.recording = false;
+    state.timeline.playing = wasPlaying;
+  }
+}
+document.getElementById("record-button").addEventListener("click", recordAnimation);
+
 // ---------- render loop ----------
 function resize() {
+  if (state.recording) return;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (canvas.width !== w || canvas.height !== h) {
     renderer.setSize(w, h, false);

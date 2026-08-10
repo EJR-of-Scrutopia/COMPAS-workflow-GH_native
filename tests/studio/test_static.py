@@ -70,3 +70,11 @@ def test_the_layer_registry_has_the_agreed_names():
         assert '"{}"'.format(name) in js
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
+
+
+def test_record_mode_is_frame_indexed_not_clock_driven():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "recordAnimation" in js
+    assert "frameIndex / fps" in js, "frames must come from applyTimeline(frame/fps)"
+    assert "study-" in js
+    assert "state.recording" in js
