@@ -1280,6 +1280,20 @@ document.getElementById("play-button").addEventListener("click", () => {
   state.timeline.playing = !state.timeline.playing;
   document.getElementById("play-button").textContent = state.timeline.playing ? "Pause" : "Play";
 });
+document.getElementById("stop-button").addEventListener("click", () => {
+  if (!state.timeline) return;
+  state.timeline.playing = false;
+  applyTimeline(0);
+  scrubber.value = 0;
+  document.getElementById("play-button").textContent = "Play";
+  updateHud();
+});
+document.getElementById("restart-button").addEventListener("click", () => {
+  if (!state.timeline) return;
+  applyTimeline(0);
+  state.timeline.playing = true;
+  document.getElementById("play-button").textContent = "Pause";
+});
 
 scrubber.addEventListener("input", () => {
   if (!state.timeline) return;

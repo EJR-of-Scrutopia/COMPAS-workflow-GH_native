@@ -290,3 +290,19 @@ def test_the_legend_exists_and_tracks_the_layers():
     start = js.index("function recolourSegments(")
     end = js.index("\n}", start)
     assert "updateLegend(" in js[start:end], "recolourSegments must refresh the legend"
+
+
+def test_stop_and_restart_transport_controls():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="stop-button"' in html and 'id="restart-button"' in html
+    stop_start = js.index('getElementById("stop-button")')
+    stop_end = js.index("\n});", stop_start)
+    stop_body = js[stop_start:stop_end]
+    assert "applyTimeline(0)" in stop_body
+    assert "playing = false" in stop_body
+    restart_start = js.index('getElementById("restart-button")')
+    restart_end = js.index("\n});", restart_start)
+    restart_body = js[restart_start:restart_end]
+    assert "applyTimeline(0)" in restart_body
+    assert "playing = true" in restart_body
