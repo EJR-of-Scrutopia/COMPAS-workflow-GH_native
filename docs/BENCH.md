@@ -153,3 +153,22 @@ crown.
 Generated outputs live under `bench/studies/<slug>/studio/` and are not
 committed. The server never imports the solver stacks; a guard test holds
 it to that.
+
+## CRA solver setup (IPOPT)
+
+compas_cra solves through pyomo's ipopt solver, a native binary that pip
+does not install. The studio's CRA verdicts need it in the CRA venv:
+
+1. Download the win64 zip of the latest Ipopt 3.14.x release from
+   https://github.com/coin-or/Ipopt/releases (asset used here:
+   Ipopt-3.14.19-win64-msvs2022-md.zip).
+2. Extract it and copy everything in its bin/ directory (ipopt.exe and
+   the DLLs beside it) into .venv-cra/Scripts/.
+3. Verify: .venv-cra/Scripts/python.exe -c
+   "from pyomo.opt import SolverFactory; print(SolverFactory('ipopt').available(False))"
+   must print True.
+
+The binary lives inside the git-ignored venv: nothing lands in the
+repository. bench/studio/solve_cra.py prepends its own Scripts directory
+to PATH, so no machine-wide configuration is needed. Without the binary,
+CRA verdicts report stands: null with a pointer back to this section.
