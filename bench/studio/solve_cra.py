@@ -103,6 +103,20 @@ def _max_face_warp(specs):
     return worst
 
 
+def _classify_termination(text):
+    """Classify a pyomo termination string as "infeasible" or "other".
+
+    Upstream's cra_solve raises ValueError(termination_condition) for ANY
+    non-optimal pyomo termination, not only infeasibility: maxIterations,
+    maxTimeLimit and solverFailure all come through this same exception.
+    Only the infeasible family is evidence the rigid-block equilibrium does
+    not exist; the rest just mean the solve did not finish, which is a
+    "we don't know" null, not a "false".
+    """
+
+    return "infeasible" if "infeasible" in text.lower() else "other"
+
+
 def solve(request: dict, solver_available=_ipopt_available) -> dict:
     specs = request["blocks"]
     mu = request["mu"]
@@ -172,10 +186,19 @@ def solve(request: dict, solver_available=_ipopt_available) -> dict:
     try:
         cra_solve(assembly, mu=mu, density=request["density"])
     except ValueError as error:
-        # Upstream raises ValueError(termination_condition) when the model
-        # is infeasible: the assembly cannot stand as rigid blocks.
-        return _result(False, str(error),
-                       "no rigid-block equilibrium under friction",
+        # Upstream raises ValueError(termination_condition) for ANY
+        # non-optimal termination (infeasible, maxIterations,
+        # maxTimeLimit, solverFailure, ...), not only infeasibility.
+        # Only the infeasible family proves the assembly cannot stand;
+        # the rest mean the solve did not finish, which stays an honest
+        # null rather than a false "does not stand".
+        text = str(error)
+        if _classify_termination(text) == "infeasible":
+            return _result(False, text,
+                           "no rigid-block equilibrium under friction",
+                           count, interfaces, mu)
+        return _result(None, text,
+                       "solver terminated without a result: {}".format(text),
                        count, interfaces, mu)
     except Exception as error:
         return _result(None, "error",

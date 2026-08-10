@@ -59,6 +59,17 @@ request = {{"blocks": specs, "density": 2400.0, "mu": 0.6}}
 print(json.dumps(solve_cra.solve(request, solver_available=lambda: True)))
 """
 
+# _classify_termination is pure (no compas import), but solve_cra.py runs
+# only in .venv-cra by convention, so this stays consistent with the rest
+# of the file's subprocess-driver style rather than importing it directly
+# into the main venv's test process.
+CLASSIFY_DRIVER = """
+import sys
+sys.path.insert(0, {studio!r})
+import solve_cra
+print(solve_cra._classify_termination(sys.argv[1]))
+"""
+
 
 def cube(z0, dx=0.0, is_support=False):
     vertices = [
@@ -203,3 +214,23 @@ def test_warped_walls_still_detect_interfaces_with_the_derived_tmax():
     out = json.loads(completed.stdout.strip().splitlines()[-1])
     assert not (out["stands"] is None and out["status"] == "isolated blocks"), out
     assert out["interfaces"] >= 1, out
+
+
+@needs_cra_venv
+@pytest.mark.parametrize("text, expected", [
+    ("infeasible", "infeasible"),
+    ("Infeasible problem detected", "infeasible"),
+    ("maxIterations", "other"),
+    ("maxTimeLimit", "other"),
+])
+def test_classify_termination_only_the_infeasible_family_is_infeasible(text, expected):
+    # Upstream raises ValueError(termination_condition) for ANY non-optimal
+    # pyomo termination; only "infeasible" proves the assembly cannot
+    # stand. maxIterations and maxTimeLimit mean the solve did not finish,
+    # which must stay a null verdict, not a false "does not stand".
+    completed = subprocess.run(
+        [str(CRA_PYTHON), "-c", CLASSIFY_DRIVER.format(studio=str(STUDIO)), text],
+        capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == expected
