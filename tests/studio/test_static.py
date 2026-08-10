@@ -62,6 +62,17 @@ def test_the_timeline_is_a_pure_function_of_time():
             "applyTimeline reads {}; it must be pure in t or recording "
             "will not be deterministic".format(clock)
         )
+    # applySceneAtTime is the scene-only helper applyTimeline delegates to
+    # (setLayer and rebuildWiresAndNodes call it directly so they never move
+    # the camera); it must stay just as pure in t as applyTimeline itself.
+    helper_start = js.index("function applySceneAtTime(")
+    helper_end = js.index("\n}", helper_start)
+    helper_body = js[helper_start:helper_end]
+    for clock in ("performance.now", "Date.now", "requestAnimationFrame"):
+        assert clock not in helper_body, (
+            "applySceneAtTime reads {}; it must be pure in t or recording "
+            "will not be deterministic".format(clock)
+        )
 
 
 def test_the_layer_registry_has_the_agreed_names():
@@ -210,8 +221,12 @@ def test_load_arrows_draw_along_the_shipped_vector():
 
 
 def test_the_strike_takes_wires_nodes_and_falsework():
+    # Strike-dependent visibility lives in applySceneAtTime, the scene-only
+    # helper applyTimeline delegates to -- setLayer and rebuildWiresAndNodes
+    # call this helper directly (never applyTimeline) so a layer checkbox or
+    # a size-slider rebuild cannot also reposition the camera.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applyTimeline(")
+    start = js.index("function applySceneAtTime(")
     end = js.index("\n}", start)
     body = js[start:end]
     assert "strikeU" in body
@@ -219,6 +234,22 @@ def test_the_strike_takes_wires_nodes_and_falsework():
     assert "state.layers.wires" in body
     for name in ("wires", "nodes"):
         assert '"{}"'.format(name) in body, "the strike must drive {}".format(name)
+
+
+def test_set_layer_does_not_call_applytimeline_directly():
+    # FINDING 1 (camera snap): setLayer's wires/falsework branch used to call
+    # applyTimeline, whose autoSpin branch repositions the camera onto the
+    # orbit ring -- so ticking a layer checkbox teleported a user-positioned
+    # camera. It must call the scene-only applySceneAtTime helper instead.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function setLayer(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "applySceneAtTime(state.timeline.t)" in body
+    assert "applyTimeline(" not in body, (
+        "setLayer must never call applyTimeline directly; that would move "
+        "the camera on a layer toggle"
+    )
 
 
 def test_falsework_is_a_translucent_ghost_with_a_toggle():
@@ -239,9 +270,41 @@ def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
     start = js.index("function rebuildWiresAndNodes(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "dispose()" in body, "a rebuild must dispose the old geometry and material"
+    assert "geometry.dispose()" in body, "a rebuild must dispose the old geometry"
+    assert "material.dispose()" in body, "a rebuild must dispose the old material"
+    # FINDING 2 (GPU leak): in three 0.185, InstancedMesh.dispose() is what
+    # frees the instanceMatrix/instanceColor GPU buffers; disposing only the
+    # geometry and material leaks them on every slider drag.
+    assert "object.dispose()" in body, "a rebuild must dispose the InstancedMesh itself"
     assert "applyWireForces()" in body, "the forces layer must survive a rebuild"
-    assert "applyTimeline(" in body, "the strike state must survive a rebuild"
+    # FINDING 1 (camera snap): the rebuild must recompute strike-dependent
+    # scene state through the scene-only helper, never applyTimeline itself,
+    # or a size-slider drag would also teleport the camera.
+    assert "applySceneAtTime(" in body, "the strike state must survive a rebuild"
+    assert "applyTimeline(" not in body, (
+        "rebuildWiresAndNodes must never call applyTimeline directly; that "
+        "would move the camera on a slider drag"
+    )
+
+
+def test_node_and_wire_size_sliders_rebuild_only_on_change():
+    # FINDING 2: a drag must fire one rebuild, not dozens -- the mm label
+    # updates live on "input", the rebuild itself waits for "change" (drag
+    # release), same pattern as the thickness slider.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for control_id in ("node-radius", "wire-radius"):
+        input_start = js.index('getElementById("{}").addEventListener("input"'.format(control_id))
+        input_end = js.index("\n});", input_start)
+        input_body = js[input_start:input_end]
+        assert "rebuildWiresAndNodes()" not in input_body, (
+            "{} must not rebuild on every input event".format(control_id)
+        )
+        change_start = js.index('getElementById("{}").addEventListener("change"'.format(control_id))
+        change_end = js.index("\n});", change_start)
+        change_body = js[change_start:change_end]
+        assert "rebuildWiresAndNodes()" in change_body, (
+            "{} must rebuild on change".format(control_id)
+        )
 
 
 def test_segments_are_extruded_to_the_bundles_thickness():
@@ -290,6 +353,36 @@ def test_the_legend_exists_and_tracks_the_layers():
     start = js.index("function recolourSegments(")
     end = js.index("\n}", start)
     assert "updateLegend(" in js[start:end], "recolourSegments must refresh the legend"
+    # FINDING 3 (legend honesty): with neither staging nor verification data,
+    # stressMagnitude/deflectionMax are just floors (1 Pa / 1e-9), so the
+    # legend must hide instead of printing a fabricated "-0.00 / 0.00" scale.
+    # This mirrors layerAvailability's own stress/deflection rule: available
+    # only when a converged final stage exists or bundle.verification does.
+    legend_start = js.index("function updateLegend(")
+    legend_end = js.index("\n}", legend_start)
+    legend_body = js[legend_start:legend_end]
+    assert "state.bundle.verification" in legend_body, (
+        "updateLegend must check availability the same way layerAvailability does"
+    )
+    assert 'classList.add("hidden")' in legend_body, (
+        "updateLegend must hide the legend when the layers that are on have no data"
+    )
+
+
+def test_stress_scale_and_legend_gradient_share_the_same_hexes():
+    # FINDING 4 (ramp duplication): studio.css's #legend-bar gradient hand-
+    # mirrors STRESS_SCALE's compression/zero/tension constants in
+    # studio.js. Pin the three hexes in both files so the two cannot drift
+    # apart silently.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    for hexcode in ("2255cc", "f2efe8", "cc2211"):
+        assert hexcode in js, "STRESS_SCALE lost {}".format(hexcode)
+        assert hexcode in css, "the legend gradient lost {}".format(hexcode)
+    # Each file must name the other so a future edit to one is prompted to
+    # check the other.
+    assert "studio.css" in js, "STRESS_SCALE must point at studio.css's mirrored gradient"
+    assert "studio.js" in css, "the legend gradient must point at STRESS_SCALE in studio.js"
 
 
 def test_stop_and_restart_transport_controls():

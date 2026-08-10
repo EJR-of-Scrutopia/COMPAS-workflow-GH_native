@@ -202,6 +202,10 @@ function rebuildWiresAndNodes() {
       scene.remove(object);
       object.geometry.dispose();
       object.material.dispose();
+      // InstancedMesh.dispose() is what frees instanceMatrix/instanceColor
+      // GPU buffers in three 0.185 -- disposing the geometry and material
+      // alone leaks the instance attribute buffers on every slider drag.
+      object.dispose();
     }
   }
   const { wires, nodes } = buildWiresAndNodes(state.bundle);
@@ -210,7 +214,8 @@ function rebuildWiresAndNodes() {
   scene.add(wires);
   scene.add(nodes);
   applyWireForces();
-  if (state.timeline) applyTimeline(state.timeline.t);
+  // Scene-only recompute: a size-slider rebuild must not move the camera.
+  if (state.timeline) applySceneAtTime(state.timeline.t);
 }
 
 function columnGeometryFrom(document_) {
@@ -416,9 +421,11 @@ function setLayer(name, on) {
   state.layers[name] = on;
   if (name === "wires" || name === "falsework") {
     // Visibility during and after the strike is the timeline's call, so
-    // recompute from t instead of forcing visible here.
+    // recompute from t instead of forcing visible here. This calls the
+    // scene-only helper, not applyTimeline itself -- a layer checkbox must
+    // never reposition a user-orbited camera.
     if (state.timeline) {
-      applyTimeline(state.timeline.t);
+      applySceneAtTime(state.timeline.t);
     } else if (name === "wires") {
       state.objects.wires.visible = on;
       state.objects.nodes.visible = on;
@@ -441,7 +448,10 @@ function setLayer(name, on) {
 }
 
 const STRESS_SCALE = (() => {
-  // Diverging palette: compression blue, zero pale, tension red.
+  // Diverging palette: compression blue, zero pale, tension red. These same
+  // three hexes are hand-mirrored in studio.css's #legend-bar gradient;
+  // keep both in sync or the on-screen legend will silently drift from the
+  // scale it is meant to describe.
   const compression = new THREE.Color(0x2255cc), zero = new THREE.Color(0xf2efe8),
         tension = new THREE.Color(0xcc2211);
   return (value, magnitude) => {
@@ -615,7 +625,13 @@ function recolourSegments() {
 function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage) {
   const legend = document.getElementById("legend");
   const showStress = state.layers.stress, showDeflection = state.layers.deflection;
-  if (!state.bundle || (!showStress && !showDeflection)) {
+  // Mirrors layerAvailability("stress"/"deflection"): both layers only have
+  // real data when a converged final stage or a verification bundle is
+  // present. Without either, stressMagnitude/deflectionMax are just the
+  // 1 Pa / 1e-9 floors recolourSegments falls back to, so the legend must
+  // hide rather than print a fabricated "-0.00 / 0.00" scale.
+  const hasData = !!(stage || (state.bundle && state.bundle.verification));
+  if (!state.bundle || (!showStress && !showDeflection) || !hasData) {
     legend.classList.add("hidden");
     return;
   }
@@ -1011,12 +1027,21 @@ for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
 }
 document.getElementById("exaggeration").addEventListener("input", () => recolourSegments());
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
+// Same pattern as the thickness slider: "input" only updates the live mm
+// label, "change" (drag release) commits the value and rebuilds -- so a
+// drag fires one InstancedMesh rebuild, not dozens.
 document.getElementById("node-radius").addEventListener("input", (e) => {
+  document.getElementById("node-radius-value").textContent = Math.round(+e.target.value * 1000);
+});
+document.getElementById("node-radius").addEventListener("change", (e) => {
   state.nodeRadius = +e.target.value;
   document.getElementById("node-radius-value").textContent = Math.round(state.nodeRadius * 1000);
   rebuildWiresAndNodes();
 });
 document.getElementById("wire-radius").addEventListener("input", (e) => {
+  document.getElementById("wire-radius-value").textContent = Math.round(+e.target.value * 1000);
+});
+document.getElementById("wire-radius").addEventListener("change", (e) => {
   state.wireRadius = +e.target.value;
   document.getElementById("wire-radius-value").textContent = Math.round(state.wireRadius * 1000);
   rebuildWiresAndNodes();
@@ -1177,7 +1202,14 @@ function sceneCentroid() {
   return new THREE.Vector3(x / vertices.length, y / vertices.length, 2);
 }
 
-function applyTimeline(t) {
+// Everything that depends on the build/strike clock but not on the camera:
+// segment drop/visibility, falsework, wires/nodes strike state, and the
+// integrity pulse. setLayer's wires/falsework toggle and rebuildWiresAndNodes
+// both need to recompute this scene state after the objects they touch
+// change, but neither one should be allowed to move the camera -- only
+// applyTimeline's own scrubber/play/record callers get to do that. Kept
+// pure in t, same as applyTimeline: no clock reads here either.
+function applySceneAtTime(t) {
   state.timeline.t = t;
   const dropSeconds = state.timeline.dropSeconds;
   for (const segment of state.objects.shell.children) {
@@ -1210,6 +1242,11 @@ function applyTimeline(t) {
     object.material.opacity = 1 - strikeU;
     object.position.z = -1.5 * strikeU;
   }
+  applyPulse();
+}
+
+function applyTimeline(t) {
+  applySceneAtTime(t);
   if (state.timeline.autoSpin && !state.userDragging) {
     const centre = state.centre;
     const angle = state.timeline.orbitSpeed * t;
@@ -1217,7 +1254,6 @@ function applyTimeline(t) {
     camera.position.set(centre.x + r * Math.cos(angle), centre.y + r * Math.sin(angle), 0.55 * r);
     camera.lookAt(centre);
   }
-  applyPulse();
 }
 
 // ---------- record mode ----------

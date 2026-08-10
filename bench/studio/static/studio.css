@@ -50,6 +50,9 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 #legend-bar {
   height: 10px;
   border-radius: 3px;
+  /* These three hexes mirror STRESS_SCALE's compression/zero/tension
+     colours in studio.js; keep both in sync or the legend will silently
+     drift from the scale it is meant to describe. */
   background: linear-gradient(to right, #2255cc, #f2efe8, #cc2211);
 }
 #legend.deflection #legend-bar {
