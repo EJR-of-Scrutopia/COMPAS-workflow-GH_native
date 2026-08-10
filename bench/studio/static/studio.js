@@ -14,6 +14,7 @@ const state = {
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   rings: 8,
+  thickness: 0.2,
   segments: null,      // Task 11
   segmentIndex: null,  // Task 11
 };
@@ -538,6 +539,13 @@ function updateHud() {
   if (!state.bundle || !state.layers.overlays) { hud.textContent = ""; return; }
   const v = state.bundle.verification;
   const lines = [state.bundle.export + "  (" + state.bundle.material + ", " + state.bundle.rings + " rings)"];
+  const thicknessMm = Math.round(state.thickness * 1000);
+  let thicknessLine = "shell thickness " + thicknessMm + " mm";
+  if (v && v.thickness && Math.abs(v.thickness - state.thickness) > 1e-9) {
+    const verifiedMm = Math.round(v.thickness * 1000);
+    thicknessLine += " (verified run used " + verifiedMm + " mm)";
+  }
+  lines.push(thicknessLine);
   if (v && v.stress) {
     lines.push("peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa, utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%");
     let deflectionLine = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
@@ -665,7 +673,7 @@ async function fetchJson(url) {
 async function loadStudy(exportName) {
   const material = document.getElementById("material-select").value;
   const url = "/api/studies/" + encodeURIComponent(exportName) +
-    "/bundle?material=" + material + "&rings=" + state.rings;
+    "/bundle?material=" + material + "&rings=" + state.rings + "&thickness=" + state.thickness;
   try {
     buildScene(await fetchJson(url));
   } catch (error) {
@@ -703,6 +711,14 @@ document.getElementById("material-select").addEventListener("change", () => {
   if (select.value) loadStudy(select.value);
 });
 document.getElementById("rings-slider").addEventListener("input", (e) => rebinSegments(+e.target.value));
+document.getElementById("thickness-input").addEventListener("input", (e) => {
+  document.getElementById("thickness-value").textContent = Math.round(+e.target.value * 1000);
+});
+document.getElementById("thickness-input").addEventListener("change", (e) => {
+  state.thickness = +e.target.value;
+  const select = document.getElementById("study-select");
+  if (select.value) loadStudy(select.value);
+});
 for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
   document.getElementById(id).addEventListener("input", applyEnvironment);
 }
@@ -739,7 +755,7 @@ async function startRun() {
     const response = await fetch("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ export: exportName, material, rings: state.rings }),
+      body: JSON.stringify({ export: exportName, material, rings: state.rings, thickness: state.thickness }),
     });
     const body = await response.json();
     if (response.status === 409) {

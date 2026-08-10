@@ -78,3 +78,12 @@ def test_record_mode_is_frame_indexed_not_clock_driven():
     assert "frameIndex / fps" in js, "frames must come from applyTimeline(frame/fps)"
     assert "study-" in js
     assert "state.recording" in js
+
+
+def test_thickness_control_is_wired_and_honest():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="thickness-input"' in html and 'id="thickness-value"' in html
+    assert "state.thickness" in js
+    assert "thickness=" in js, "loadStudy must send the thickness parameter"
+    assert "verified run used" in js, "the HUD must flag a thickness mismatch"
