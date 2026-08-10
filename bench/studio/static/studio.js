@@ -202,11 +202,6 @@ function buildScene(bundle) {
   if (columns) state.objects.columns = columns;
   state.bundle = bundle;
 
-  const shell = new THREE.Mesh(meshGeometry(bundle.render_mesh), materials[bundle.material] || materials.concrete);
-  shell.castShadow = shell.receiveShadow = true;
-  state.objects.shell = shell;
-  scene.add(shell);
-
   const falsework = new THREE.Mesh(meshGeometry(bundle.analysis_mesh), materials.falsework);
   falsework.position.z = -0.02;
   state.objects.falsework = falsework;
@@ -227,6 +222,7 @@ function buildScene(bundle) {
   scene.add(ground);
 
   rebinSegments(state.rings);
+  rebuildTimeline();
   updateHud();
 }
 
@@ -268,6 +264,7 @@ function rebinSegments(rings) {
     if (entry) entry.faces.push(face);
   });
   document.getElementById("segment-count").textContent = state.segments.order.length;
+  if (state.timeline) rebuildTimeline();
 }
 
 // ---------- layers (Task 14 fills this registry) ----------
@@ -380,7 +377,117 @@ async function startRun() {
   }
 }
 
-// ---------- render loop (Task 13 adds timeline stepping here) ----------
+// ---------- placement timeline ----------
+const DROP_HEIGHT = 12, STRIKE_SECONDS = 2;
+
+function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
+
+function segmentDropOrder() {
+  return state.segments.order.map(([r, w]) => segmentKey(r, w));
+}
+
+function rebuildTimeline() {
+  const dropSeconds = +document.getElementById("drop-speed").value;
+  state.timeline = {
+    playing: false, t: 0,
+    dropSeconds,
+    orbitSpeed: +document.getElementById("orbit-speed").value,
+    orbitDistance: +document.getElementById("orbit-distance").value,
+    autoSpin: true,
+  };
+  buildSegmentMeshes();
+  applyTimeline(0);
+}
+
+function timelineDuration() {
+  const count = state.segments ? state.segments.order.length : 0;
+  return count * state.timeline.dropSeconds + state.timeline.dropSeconds + STRIKE_SECONDS;
+}
+
+function buildSegmentMeshes() {
+  if (state.objects.shell) scene.remove(state.objects.shell);
+  const group = new THREE.Group();
+  const mesh = state.bundle.render_mesh;
+  const assignment = state.segments.assignment;
+  const byKey = new Map();
+  mesh.parent_face.forEach((parent, faceIndex) => {
+    const key = segmentKey(assignment[parent][0], assignment[parent][1]);
+    if (!byKey.has(key)) byKey.set(key, { faces: [], indices: [] });
+    const bucket = byKey.get(key);
+    bucket.faces.push(mesh.faces[faceIndex]);
+    bucket.indices.push(faceIndex);
+  });
+  const material = materials[state.bundle.material] || materials.concrete;
+  for (const [key, { faces, indices }] of byKey) {
+    const positions = [], uvs = [];
+    for (const face of faces) {
+      const quad = face.map((i) => mesh.vertices[i]);
+      for (const corner of [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]]) {
+        positions.push(corner[0], corner[1], corner[2]);
+        uvs.push(corner[0] * 0.15, corner[1] * 0.15);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
+    geometry.computeVertexNormals();
+    const segment = new THREE.Mesh(geometry, material);
+    segment.castShadow = segment.receiveShadow = true;
+    segment.userData.key = key;
+    segment.userData.faces = indices;
+    group.add(segment);
+  }
+  state.objects.shell = group;
+  scene.add(group);
+}
+
+function sceneCentroid() {
+  const vertices = state.bundle.analysis_mesh.vertices;
+  let x = 0, y = 0;
+  for (const v of vertices) { x += v[0]; y += v[1]; }
+  return new THREE.Vector3(x / vertices.length, y / vertices.length, 2);
+}
+
+function applyTimeline(t) {
+  state.timeline.t = t;
+  const order = segmentDropOrder();
+  const dropSeconds = state.timeline.dropSeconds;
+  for (const segment of state.objects.shell.children) {
+    const position = state.segmentIndex.get(segment.userData.key).order;
+    const start = position * dropSeconds;
+    if (t < start) {
+      segment.visible = false;
+    } else if (t < start + dropSeconds) {
+      const u = (t - start) / dropSeconds;
+      segment.visible = true;
+      segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
+    } else {
+      segment.visible = true;
+      segment.position.z = 0;
+    }
+  }
+  const buildEnd = order.length * dropSeconds + dropSeconds;
+  const falsework = state.objects.falsework;
+  if (t <= buildEnd) {
+    falsework.visible = true;
+    falsework.material.opacity = 1;
+    falsework.position.z = -0.02;
+  } else {
+    const u = Math.min(1, (t - buildEnd) / STRIKE_SECONDS);
+    falsework.material.opacity = 1 - u;
+    falsework.position.z = -0.02 - 1.5 * u;
+    falsework.visible = u < 1;
+  }
+  if (state.timeline.autoSpin && !state.userDragging) {
+    const centre = sceneCentroid();
+    const angle = state.timeline.orbitSpeed * t;
+    const r = state.timeline.orbitDistance;
+    camera.position.set(centre.x + r * Math.cos(angle), centre.y + r * Math.sin(angle), 0.55 * r);
+    camera.lookAt(centre);
+  }
+}
+
+// ---------- render loop ----------
 function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (canvas.width !== w || canvas.height !== h) {
@@ -390,8 +497,33 @@ function resize() {
   }
 }
 
-function frame() {
+controls.addEventListener("start", () => { state.userDragging = true; });
+controls.addEventListener("end", () => { state.userDragging = false; });
+
+document.getElementById("play-button").addEventListener("click", () => {
+  if (!state.timeline) return;
+  if (state.timeline.t >= timelineDuration()) applyTimeline(0);
+  state.timeline.playing = !state.timeline.playing;
+  document.getElementById("play-button").textContent = state.timeline.playing ? "Pause" : "Play";
+});
+for (const [id, prop] of [["drop-speed", "dropSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
+  document.getElementById(id).addEventListener("input", (e) => {
+    if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
+  });
+}
+
+let lastTime = performance.now();
+function frame(now) {
+  const delta = Math.min(0.1, (now - lastTime) / 1000);
+  lastTime = now;
   resize();
+  if (state.timeline && state.timeline.playing) {
+    applyTimeline(Math.min(state.timeline.t + delta, timelineDuration()));
+    if (state.timeline.t >= timelineDuration()) {
+      state.timeline.playing = false;
+      document.getElementById("play-button").textContent = "Play";
+    }
+  }
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
@@ -400,4 +532,4 @@ function frame() {
 boot();
 requestAnimationFrame(frame);
 
-export { state, buildScene, setLayer, rebinSegments };
+export { state, buildScene, setLayer, rebinSegments, applyTimeline, timelineDuration, rebuildTimeline };

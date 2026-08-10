@@ -49,3 +49,16 @@ def test_pbr_helpers_and_column_loader_exist():
         assert name in js, "studio.js lost {}".format(name)
     assert "MeshPhysicalMaterial" in js
     assert "ACESFilmicToneMapping" in js
+
+
+def test_the_timeline_is_a_pure_function_of_time():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "applyTimeline" in js and "timelineDuration" in js
+    start = js.index("function applyTimeline")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    for clock in ("performance.now", "Date.now", "requestAnimationFrame"):
+        assert clock not in body, (
+            "applyTimeline reads {}; it must be pure in t or recording "
+            "will not be deterministic".format(clock)
+        )
