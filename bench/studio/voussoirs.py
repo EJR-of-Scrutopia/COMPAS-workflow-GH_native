@@ -116,6 +116,16 @@ def component_loops(
     return loops
 
 
+def segment_boundary_edges_for(faces, face_indices):
+    """The boundary edges of a face subset, in winding order.
+
+    A named re-export of blocks.segment_boundary_edges so callers that
+    already depend on this module do not also have to import blocks.
+    """
+
+    return blocks.segment_boundary_edges(faces, face_indices)
+
+
 def loop_pinch_vertices(loop: Sequence[Tuple[int, int]]) -> List[int]:
     """Vertices a single loop visits more than once.
 
