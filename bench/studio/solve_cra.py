@@ -5,9 +5,13 @@ stacks (the guard test exempts both by name). Verdicts are three-state
 and honest: stands true (the solver found an equilibrium), stands false
 (the solver proved there is none: the blocks slide or hinge apart under
 friction and no tension), stands null (the solve did not run; message
-says why). Zero detected interfaces on a multi-block assembly is an
-error, not a verdict: unconnected blocks would report a meaningless
-"stands". Self-weight only; the export loads stay the FEA's business.
+says why). A free (non-support) block with no contact interface is an
+error, not a verdict: it gets Constraint.Skip on every equilibrium row in
+compas_cra's model, so cra_solve can return optimal while ignoring it
+entirely; reporting "stands" over a silently-ignored block would be
+meaningless, whether it is the only block in the assembly or one stray
+block floating inside an otherwise-connected one. Self-weight only; the
+export loads stay the FEA's business.
 """
 
 from __future__ import annotations
@@ -43,8 +47,13 @@ def solve(request: dict, solver_available=_ipopt_available) -> dict:
     specs = request["blocks"]
     mu = request["mu"]
     count = len(specs)
+    if not specs:
+        # Must sit before the availability check: an empty stage is not a
+        # "no solver" situation, and checking count truthiness later would
+        # otherwise let zero blocks fall through toward cra_solve.
+        return _result(None, "empty", "no blocks in this stage", 0, 0, mu)
     supports = [i for i, spec in enumerate(specs) if spec.get("is_support")]
-    if count and len(supports) == count:
+    if len(supports) == count:
         # Every placed block rests on the ground or a foot: nothing to solve.
         return _result(True, "all blocks are supports", "", count, 0, mu)
     if not solver_available():
@@ -67,10 +76,26 @@ def solve(request: dict, solver_available=_ipopt_available) -> dict:
     # every genuine joint while still rejecting point contacts.
     assembly_interfaces_numpy(assembly, nmax=10, tmax=1e-6, amin=1e-4)
     interfaces = assembly.number_of_interfaces()
-    if count > 1 and interfaces == 0:
-        return _result(None, "no interfaces",
-                       "no contact interfaces detected between blocks; "
-                       "refusing a meaningless verdict", count, 0, mu)
+
+    # A block touching no interface gets Constraint.Skip on all six of its
+    # equilibrium rows in compas_cra's pyomo model, so cra_solve can return
+    # optimal while silently ignoring a floating free block sitting inside
+    # an otherwise-connected assembly. Checking the total interface count
+    # only catches the case where nothing is connected to anything; it
+    # misses a 3+ block assembly where one free block is isolated but the
+    # rest are fine. So: every free (non-support) block must participate
+    # in at least one interface edge, or the verdict is refused outright.
+    connected = set()
+    for u, v in assembly.edges():
+        connected.add(u)
+        connected.add(v)
+    free_nodes = [nodes[i] for i in range(count) if i not in supports]
+    isolated = [node for node in free_nodes if node not in connected]
+    if isolated:
+        return _result(None, "isolated blocks",
+                       "{} free block(s) have no contact interfaces; "
+                       "refusing a meaningless verdict".format(len(isolated)),
+                       count, interfaces, mu)
     try:
         cra_solve(assembly, mu=mu, density=request["density"])
     except ValueError as error:

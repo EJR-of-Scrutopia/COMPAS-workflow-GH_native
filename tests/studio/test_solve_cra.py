@@ -129,3 +129,26 @@ def test_disconnected_blocks_refuse_a_verdict():
                      "density": 2400.0, "mu": 0.6})
     assert out["stands"] is None
     assert "interfaces" in out["message"]
+
+
+@needs_ipopt
+@pytest.mark.slow
+def test_an_isolated_free_block_refuses_a_verdict():
+    # A supported two-cube stack that stands fine on its own, plus one
+    # FREE cube floating far away with no support and no interface to
+    # anything. Upstream gives the floating block Constraint.Skip on every
+    # equilibrium row, so cra_solve can return optimal while completely
+    # ignoring it; checking only the assembly's total interface count
+    # would miss this (the stack's own interface makes the total nonzero).
+    out = run_solve({"blocks": [cube(0, is_support=True), cube(1), cube(0, dx=5.0)],
+                     "density": 2400.0, "mu": 0.6})
+    assert out["stands"] is None
+    assert out["status"] == "isolated blocks"
+    assert "interfaces" in out["message"]
+
+
+@needs_cra_venv
+def test_empty_blocks_list_reports_null():
+    out = run_solve({"blocks": [], "density": 2400.0, "mu": 0.6}, driver=NO_SOLVER_DRIVER)
+    assert out["stands"] is None
+    assert out["status"] == "empty"
