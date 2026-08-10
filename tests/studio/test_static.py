@@ -62,3 +62,11 @@ def test_the_timeline_is_a_pure_function_of_time():
             "applyTimeline reads {}; it must be pure in t or recording "
             "will not be deterministic".format(clock)
         )
+
+
+def test_the_layer_registry_has_the_agreed_names():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires"):
+        assert '"{}"'.format(name) in js
+    assert "layerAvailability" in js
+    assert "no staging" in js or "staged run" in js, "disabled layers must say why"

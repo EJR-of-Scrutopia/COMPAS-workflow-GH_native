@@ -47,6 +47,11 @@
   <section id="layers-section">
     <h2>FEA layers</h2>
     <div id="layer-toggles"></div>
+    <label>Stress surface <select id="stress-surface">
+      <option value="worst">Worst of both</option>
+      <option value="top">Top</option>
+      <option value="bottom">Bottom</option>
+    </select></label>
     <label>Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
     <button id="data-button">Data</button>
   </section>

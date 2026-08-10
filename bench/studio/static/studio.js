@@ -7,8 +7,8 @@ import { segmentFaces, segmentKey } from "/static/binning.js";
 const state = {
   bundle: null,
   studies: [],
-  layers: {},          // Task 14 registers layer objects here
-  objects: {},         // shell, wires, nodes, falsework, columns, ground
+  layers: { wires: true, overlays: true },  // Task 14: layer visibility toggles
+  objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
@@ -224,6 +224,8 @@ function buildScene(bundle) {
   scene.add(ground);
 
   rebinSegments(state.rings);
+  buildLayerToggles();
+  updateVectorLayers();
   updateHud();
 }
 
@@ -268,15 +270,271 @@ function rebinSegments(rings) {
   rebuildTimeline();
 }
 
-// ---------- layers (Task 14 fills this registry) ----------
+// ---------- FEA layers ----------
+const LAYERS = [
+  ["stress", "Stress heatmap"],
+  ["deflection", "Deflection heatmap"],
+  ["loads", "Load vectors"],
+  ["reactions", "Reaction vectors"],
+  ["overlays", "Text overlays"],
+  ["pulse", "Integrity pulse"],
+  ["wires", "Thrust wires and nodes"],
+];
+
+function finalStage() {
+  const staging = state.bundle && state.bundle.staging;
+  if (!staging || !staging.stages || !staging.stages.length) return null;
+  const last = staging.stages[staging.stages.length - 1];
+  return last.struck_now && last.struck_now.converged ? last.struck_now : null;
+}
+
+function layerAvailability(name) {
+  const stage = finalStage();
+  const v = state.bundle && state.bundle.verification;
+  if (name === "pulse") {
+    return state.bundle && state.bundle.staging
+      ? { on: true } : { on: false, why: "run staged analysis first" };
+  }
+  if (name === "stress" || name === "deflection") {
+    if (stage) return { on: true };
+    if (v) return { on: true, why: "peaks only until a staged run exists" };
+    return { on: false, why: "no staging and no verification data" };
+  }
+  if (name === "reactions") {
+    return state.bundle && Object.keys(state.bundle.reactions).length
+      ? { on: true }
+      : { on: false, why: "this contract shipped no reaction vectors" };
+  }
+  return { on: true };
+}
+
+function buildLayerToggles() {
+  const holder = document.getElementById("layer-toggles");
+  holder.innerHTML = "";
+  for (const [name, label] of LAYERS) {
+    const availability = layerAvailability(name);
+    const wrap = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!state.layers[name];
+    box.disabled = !availability.on;
+    if (availability.why) wrap.title = availability.why;
+    box.addEventListener("change", () => setLayer(name, box.checked));
+    wrap.appendChild(box);
+    wrap.appendChild(document.createTextNode(label));
+    holder.appendChild(wrap);
+  }
+}
+
 function setLayer(name, on) {
   state.layers[name] = on;
+  if (name === "wires") {
+    state.objects.wires.visible = on;
+    state.objects.nodes.visible = on;
+  }
+  if (name === "loads" || name === "reactions") updateVectorLayers();
+  if (name === "stress" || name === "deflection") recolourSegments();
+  if (name === "pulse" && !on && state.objects.shell) {
+    // The pulse is the only thing that writes emissive on segment
+    // materials; turning it off sweeps that back to zero rather than
+    // leaving the last frame's tint stuck on the shell.
+    for (const segment of state.objects.shell.children) {
+      segment.material.emissiveIntensity = 0;
+    }
+  }
   updateHud();
+}
+
+const STRESS_SCALE = (() => {
+  // Diverging palette: compression blue, zero pale, tension red.
+  const compression = new THREE.Color(0x2255cc), zero = new THREE.Color(0xf2efe8),
+        tension = new THREE.Color(0xcc2211);
+  return (value, magnitude) => {
+    const u = Math.max(-1, Math.min(1, value / magnitude));
+    return u < 0 ? zero.clone().lerp(compression, -u) : zero.clone().lerp(tension, u);
+  };
+})();
+
+function stressValue(pair, surface, magnitude) {
+  // The signed value the heatmap colours: the picked surface's dominant
+  // principal, or the worst over both surfaces. Tension positive.
+  if (!pair) return -0.3 * magnitude;   // verification-peaks fallback tint
+  if (surface === "top" || surface === "bottom") {
+    const p = pair[surface];
+    return Math.abs(p[1]) > p[0] ? p[1] : p[0];
+  }
+  const worstTension = Math.max(pair.top[0], pair.bottom[0]);
+  const worstCompression = Math.min(pair.top[1], pair.bottom[1]);
+  return Math.abs(worstCompression) > worstTension ? worstCompression : worstTension;
+}
+
+function fieldPerRenderVertex(nodeField, fallback) {
+  // nodeField: {"nodeId": [dx,dy,dz]}. vertex_sources averages it onto the
+  // render mesh exactly as subdivision.py's interpolate_vertex_field does.
+  const sources = state.bundle.render_mesh.vertex_sources;
+  return sources.map((ids) => {
+    let x = 0, y = 0, z = 0, found = 0;
+    for (const id of ids) {
+      const v = nodeField[String(id)];
+      if (v) { x += v[0]; y += v[1]; z += v[2]; found += 1; }
+    }
+    return found ? [x / found, y / found, z / found] : fallback;
+  });
+}
+
+function recolourSegments() {
+  if (!state.bundle || !state.objects.shell) return;
+  const stage = finalStage();
+  const exaggeration = +document.getElementById("exaggeration").value;
+  const surface = document.getElementById("stress-surface").value;
+  const wantStress = state.layers.stress, wantDeflection = state.layers.deflection;
+  const mesh = state.bundle.render_mesh;
+  const v = state.bundle.verification;
+  const displacement = stage && wantDeflection
+    ? fieldPerRenderVertex(stage.displacements, [0, 0, 0]) : null;
+  const stressMagnitude = stage
+    ? Math.max(Math.abs(stage.peak_compression), stage.peak_tension, 1)
+    : (v && v.stress ? Math.max(Math.abs(v.stress.peak_compression), 1) : 1);
+  // No staging means no per-node displacement field to exaggerate the
+  // shell with, but the field sourcing rule still owes the deflection
+  // layer an honest "peaks only" tint, scaled off the verification file's
+  // peak magnitude, the same way the stress fallback above does.
+  const deflectionPeakOnly = !stage && wantDeflection && v && v.displacement
+    ? Math.max(v.displacement.peak_magnitude, 1e-9) : null;
+  let deflectionMax = 1e-9;
+  if (displacement) for (const d of displacement) {
+    deflectionMax = Math.max(deflectionMax, Math.hypot(d[0], d[1], d[2]));
+  }
+  for (const segment of state.objects.shell.children) {
+    const faces = segment.userData.faces;   // render-face indices, set in buildSegmentMeshes
+    const positions = segment.geometry.getAttribute("position");
+    const colours = new Float32Array(positions.count * 3);
+    let corner = 0;
+    for (const faceIndex of faces) {
+      const parent = mesh.parent_face[faceIndex];
+      const quad = mesh.faces[faceIndex];
+      const stressPair = stage && stage.stresses[String(parent)];
+      const faceColour = wantStress
+        ? STRESS_SCALE(stressValue(stressPair, surface, stressMagnitude), stressMagnitude)
+        : (deflectionPeakOnly ? STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly) : null);
+      for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
+        const vertexId = quad[cornerIndex];
+        const base = mesh.vertices[vertexId];
+        let colour = faceColour;
+        if (!colour && wantDeflection && displacement) {
+          const d = displacement[vertexId];
+          colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
+        }
+        if (!colour) colour = new THREE.Color(0xffffff);
+        colours[3 * corner] = colour.r; colours[3 * corner + 1] = colour.g; colours[3 * corner + 2] = colour.b;
+        if (wantDeflection && displacement) {
+          const d = displacement[vertexId];
+          positions.setXYZ(corner, base[0] + d[0] * exaggeration,
+            base[1] + d[1] * exaggeration, base[2] + d[2] * exaggeration);
+        } else {
+          positions.setXYZ(corner, base[0], base[1], base[2]);
+        }
+        corner += 1;
+      }
+    }
+    positions.needsUpdate = true;
+    segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+    segment.geometry.computeVertexNormals();
+    segment.material = (wantStress || wantDeflection)
+      ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
+      : (materials[state.bundle.material] || materials.concrete).clone();
+  }
+}
+
+// ---------- vector layers ----------
+function updateVectorLayers() {
+  for (const key of ["loadArrows", "reactionArrows"]) {
+    if (state.objects[key]) { scene.remove(state.objects[key]); state.objects[key] = null; }
+  }
+  if (!state.bundle) return;
+  const bundle = state.bundle;
+  if (state.layers.loads) {
+    state.objects.loadArrows = arrowField(
+      Object.entries(bundle.loads), 0x66aaff, -1);
+    scene.add(state.objects.loadArrows);
+  }
+  if (state.layers.reactions && Object.keys(bundle.reactions).length) {
+    // Real TNA reaction vectors from the contract, shipped in the bundle.
+    state.objects.reactionArrows = arrowField(
+      Object.entries(bundle.reactions), 0x66dd77, 1);
+    scene.add(state.objects.reactionArrows);
+  }
+}
+
+function arrowField(entries, colour, direction) {
+  // One LineSegments for every shaft plus one instanced cone set for heads:
+  // two draw calls however many nodes there are.
+  const vertices = state.bundle.analysis_mesh.vertices;
+  let magnitudeMax = 1e-9;
+  for (const [, v] of entries) magnitudeMax = Math.max(magnitudeMax, Math.hypot(v[0], v[1], v[2]));
+  const positions = [];
+  const cone = new THREE.ConeGeometry(0.06, 0.18, 8);
+  const heads = new THREE.InstancedMesh(
+    cone, new THREE.MeshBasicMaterial({ color: colour }), entries.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  const up = new THREE.Vector3(0, 1, 0);
+  entries.forEach(([id, vector], i) => {
+    const at = vertices[+id];
+    const v = new THREE.Vector3(vector[0], vector[1], vector[2]);
+    const length = 0.4 + 2.0 * (v.length() / magnitudeMax);
+    const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, direction);
+    const from = new THREE.Vector3(...at);
+    const to = from.clone().addScaledVector(dir, length * direction);
+    positions.push(from.x, from.y, from.z, to.x, to.y, to.z);
+    q.setFromUnitVectors(up, dir.clone().multiplyScalar(direction));
+    m.compose(to, q, new THREE.Vector3(1, 1, 1));
+    heads.setMatrixAt(i, m);
+  });
+  const lines = new THREE.LineSegments(
+    new THREE.BufferGeometry().setAttribute(
+      "position", new THREE.BufferAttribute(new Float32Array(positions), 3)),
+    new THREE.LineBasicMaterial({ color: colour }));
+  const group = new THREE.Group();
+  group.add(lines); group.add(heads);
+  return group;
+}
+
+// ---------- integrity pulse ----------
+function currentStageIndex() {
+  // Which build stage the timeline is inside: stages are rings, and a ring's
+  // segments occupy a contiguous run of the drop order.
+  if (!state.bundle.staging || !state.timeline) return null;
+  const stages = state.bundle.staging.stages;
+  if (!stages || !stages.length) return null;
+  const dropSeconds = state.timeline.dropSeconds;
+  const placed = Math.floor(state.timeline.t / dropSeconds);
+  let ringsDone = 0, count = 0;
+  for (const [r] of state.segments.order) {
+    count += 1;
+    if (count > placed) break;
+    ringsDone = Math.max(ringsDone, r + 1);
+  }
+  return Math.max(0, Math.min(stages.length - 1, ringsDone - 1));
+}
+
+function applyPulse() {
+  if (!state.layers.pulse || !state.bundle || !state.objects.shell) return;
+  const index = currentStageIndex();
+  if (index === null) return;
+  const stage = state.bundle.staging.stages[index];
+  const good = stage.struck_now && stage.struck_now.converged;
+  const tint = good ? 0x1a3a1a : 0x3a1a1a;
+  const pulse = 0.5 + 0.5 * Math.sin(state.timeline.t * 4);
+  for (const segment of state.objects.shell.children) {
+    if (!segment.visible) continue;
+    segment.material.emissive = new THREE.Color(tint);
+    segment.material.emissiveIntensity = 0.4 * pulse;
+  }
 }
 
 function updateHud() {
   const hud = document.getElementById("hud");
-  if (!state.bundle) { hud.textContent = ""; return; }
+  if (!state.bundle || !state.layers.overlays) { hud.textContent = ""; return; }
   const v = state.bundle.verification;
   const lines = [state.bundle.export + "  (" + state.bundle.material + ", " + state.bundle.rings + " rings)"];
   if (v && v.stress) {
@@ -284,6 +542,18 @@ function updateHud() {
     lines.push("peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm");
   } else {
     lines.push("no verification run embedded yet");
+  }
+  const staging = state.bundle.staging;
+  if (staging && staging.stages && staging.stages.length) {
+    const index = currentStageIndex();
+    const stage = staging.stages[index === null ? staging.stages.length - 1 : index];
+    lines.push("stage " + stage.stage + " of " + staging.stages.length);
+    lines.push("formwork carries " + (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN");
+    const struck = stage.struck_now;
+    lines.push(struck && struck.converged
+      ? "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
+        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)"
+      : "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result"));
   }
   hud.textContent = lines.join("\n");
 }
@@ -345,6 +615,8 @@ document.getElementById("rings-slider").addEventListener("input", (e) => rebinSe
 for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
   document.getElementById(id).addEventListener("input", applyEnvironment);
 }
+document.getElementById("exaggeration").addEventListener("input", () => recolourSegments());
+document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
   document.getElementById("data-content").textContent =
@@ -395,6 +667,7 @@ function rebuildTimeline() {
   state.centre = sceneCentroid();
   buildSegmentMeshes();
   applyTimeline(0);
+  recolourSegments();
 }
 
 function timelineDuration() {
@@ -429,7 +702,12 @@ function buildSegmentMeshes() {
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
     geometry.computeVertexNormals();
-    const segment = new THREE.Mesh(geometry, material);
+    // Each segment owns its own material instance (a clone of the shared
+    // registry entry) so the integrity pulse can write emissive per segment
+    // without tinting other segments, the falsework, the columns, or the
+    // canonical materials.concrete/materials.timber objects other code
+    // reads from. recolourSegments keeps this invariant on every rebuild.
+    const segment = new THREE.Mesh(geometry, material.clone());
     segment.castShadow = segment.receiveShadow = true;
     segment.userData.key = key;
     segment.userData.faces = indices;
@@ -482,6 +760,7 @@ function applyTimeline(t) {
     camera.position.set(centre.x + r * Math.cos(angle), centre.y + r * Math.sin(angle), 0.55 * r);
     camera.lookAt(centre);
   }
+  applyPulse();
 }
 
 // ---------- render loop ----------
