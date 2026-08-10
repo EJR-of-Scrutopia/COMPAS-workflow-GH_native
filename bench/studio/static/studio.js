@@ -218,6 +218,22 @@ async function loadColumns(names) {
   return group;
 }
 
+// M1 fix: boot() and importColumns() both need to replace the columns
+// group rather than add another one on top of it -- every re-import used
+// to call boot(), and boot() used to add a fresh group with no dispose,
+// so each re-import stacked one more copy of the columns into the scene.
+// Both call sites now share this one dispose-then-reload path.
+async function reloadColumns(names) {
+  if (state.objects.columns) {
+    scene.remove(state.objects.columns);
+    state.objects.columns = null;
+  }
+  if (names.length) {
+    state.objects.columns = await loadColumns(names);
+    scene.add(state.objects.columns);
+  }
+}
+
 function buildScene(bundle) {
   for (const key of Object.keys(state.objects)) {
     if (key === "columns") continue;
@@ -617,10 +633,16 @@ function updateHud() {
   const hud = document.getElementById("hud");
   if (!state.bundle || !state.layers.overlays) { hud.textContent = ""; return; }
   const v = state.bundle.verification;
+  // The caption must name the thickness actually on screen, which is the
+  // bundle's own provenance, not whatever the thickness control currently
+  // reads -- those two can drift apart (a mid-run slider nudge, a still
+  // loading bundle) and the HUD must never claim a thickness the shell
+  // isn't built at.
+  const provenanceThickness = state.bundle.provenance.thickness;
   const lines = [state.bundle.export + "  (" + state.bundle.material + ", " + state.bundle.rings + " rings)"];
-  const thicknessMm = Math.round(state.thickness * 1000);
+  const thicknessMm = Math.round(provenanceThickness * 1000);
   let thicknessLine = "shell thickness " + thicknessMm + " mm";
-  if (v && v.thickness && Math.abs(v.thickness - state.thickness) > 1e-9) {
+  if (v && v.thickness && Math.abs(v.thickness - provenanceThickness) > 1e-9) {
     const verifiedMm = Math.round(v.thickness * 1000);
     thicknessLine += " (verified run used " + verifiedMm + " mm)";
   }
@@ -760,24 +782,33 @@ async function loadStudy(exportName) {
   }
 }
 
-async function boot() {
+async function boot(preferredExport) {
   applyEnvironment();
   try {
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
     const select = document.getElementById("study-select");
     select.innerHTML = "";
+    const names = [];
     for (const study of payload.studies) {
       const option = document.createElement("option");
       option.value = study.export;
       option.textContent = study.export + (study.has_verification ? " (verified)" : "");
       select.appendChild(option);
+      names.push(study.export);
     }
-    if (payload.studies.length) await loadStudy(payload.studies[0].export);
-    if (payload.columns.length) {
-      state.objects.columns = await loadColumns(payload.columns);
-      scene.add(state.objects.columns);
+    // M2 fix: after an export-pair import, boot() must land on the export
+    // that was just imported, not silently fall back to studies[0]. The
+    // preferred name only wins when it actually exists in the fresh list
+    // (an incomplete pair, for instance, never appears here at all).
+    const toLoad = preferredExport && names.includes(preferredExport)
+      ? preferredExport
+      : (names.length ? names[0] : null);
+    if (toLoad) {
+      select.value = toLoad;
+      await loadStudy(toLoad);
     }
+    await reloadColumns(payload.columns);
   } catch (error) {
     showBanner("Server not reachable: " + error.message);
   }
@@ -823,7 +854,9 @@ async function importExportPair() {
       ? "imported " + contractPrefix
       : "stored " + contractPrefix + "; pair incomplete";
     input.value = "";
-    await boot();
+    // M2 fix: select and load the export that was just imported, instead
+    // of leaving boot() to fall back to studies[0].
+    await boot(contractPrefix);
   } catch (error) {
     status.textContent = "import failed: " + error.message;
   }
@@ -844,11 +877,7 @@ async function importColumns() {
     input.value = "";
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
-    if (state.objects.columns) { scene.remove(state.objects.columns); state.objects.columns = null; }
-    if (payload.columns.length) {
-      state.objects.columns = await loadColumns(payload.columns);
-      scene.add(state.objects.columns);
-    }
+    await reloadColumns(payload.columns);
   } catch (error) {
     status.textContent = "import failed: " + error.message;
   }
@@ -885,12 +914,31 @@ document.getElementById("run-button").addEventListener("click", startRun);
 document.getElementById("import-export-button").addEventListener("click", importExportPair);
 document.getElementById("import-columns-button").addEventListener("click", importColumns);
 
-function watchRun(runId, exportName, status) {
+// M5 fix: reload with the material/rings/thickness the run actually solved
+// with, not whatever the controls read when the run happens to finish. A
+// slider nudge mid-run must not orphan the run's own result -- it must show
+// up, and the controls must be set back to match so the display stays
+// honest about what's on screen.
+function applyRunParamsToControls({ material, rings, thickness }) {
+  document.getElementById("material-select").value = material;
+  document.getElementById("rings-slider").value = rings;
+  document.getElementById("rings-value").textContent = rings;
+  document.getElementById("thickness-input").value = thickness;
+  document.getElementById("thickness-value").textContent = Math.round(thickness * 1000);
+  state.rings = rings;
+  state.thickness = thickness;
+}
+
+function watchRun(runId, exportName, status, params) {
   const poll = setInterval(async () => {
     try {
       const run = await fetchJson("/api/runs/" + runId);
       status.textContent = run.state + " (stage " + run.stage + "/" + run.of + ") " + run.message;
-      if (run.state === "done") { clearInterval(poll); await loadStudy(exportName); }
+      if (run.state === "done") {
+        clearInterval(poll);
+        applyRunParamsToControls(params);
+        await loadStudy(exportName);
+      }
       if (run.state === "failed") clearInterval(poll);
     } catch (error) {
       clearInterval(poll);
@@ -903,19 +951,22 @@ async function startRun() {
   const status = document.getElementById("run-status");
   const exportName = document.getElementById("study-select").value;
   const material = document.getElementById("material-select").value;
+  // Captured now, at POST time, so a later slider nudge cannot change what
+  // this run is understood to have solved.
+  const params = { material, rings: state.rings, thickness: state.thickness };
   try {
     const response = await fetch("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ export: exportName, material, rings: state.rings, thickness: state.thickness }),
+      body: JSON.stringify({ export: exportName, material, rings: params.rings, thickness: params.thickness }),
     });
     const body = await response.json();
     if (response.status === 409) {
       status.textContent = "watching the live run";
-      watchRun(body.run, exportName, status);
+      watchRun(body.run, exportName, status, params);
       return;
     }
-    watchRun(body.run, exportName, status);
+    watchRun(body.run, exportName, status, params);
   } catch (error) {
     status.textContent = "run failed to start: " + error.message;
   }
@@ -1108,6 +1159,7 @@ scrubber.addEventListener("input", () => {
   state.timeline.playing = false;
   document.getElementById("play-button").textContent = "Play";
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
+  updateHud();
 });
 for (const [id, prop] of [["drop-speed", "dropSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
@@ -1116,6 +1168,7 @@ for (const [id, prop] of [["drop-speed", "dropSeconds"], ["orbit-speed", "orbitS
 }
 
 let lastTime = performance.now();
+let playingFrameCount = 0;
 function frame(now) {
   const delta = Math.min(0.1, (now - lastTime) / 1000);
   lastTime = now;
@@ -1126,6 +1179,12 @@ function frame(now) {
       state.timeline.playing = false;
       document.getElementById("play-button").textContent = "Play";
     }
+    // M6 fix: the HUD's stage/formwork lines track state.timeline.t, so
+    // they must refresh while playing too -- but updateHud is string work
+    // best not repeated every single frame, so it runs at a throttled
+    // cadence instead of unthrottled per frame.
+    playingFrameCount += 1;
+    if (playingFrameCount % 15 === 0) updateHud();
   }
   if (state.timeline && document.activeElement !== scrubber) {
     scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());

@@ -110,6 +110,79 @@ def test_thickness_control_is_wired_and_honest():
     assert "verified run used" in js, "the HUD must flag a thickness mismatch"
 
 
+def test_hud_captions_the_thickness_the_bundle_is_actually_built_at():
+    # M3: the HUD must caption the provenance thickness (what's on screen),
+    # not the thickness control's current value, which can drift from the
+    # loaded bundle (a mid-run slider nudge, a still-loading bundle).
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function updateHud(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "state.bundle.provenance.thickness" in body
+    assert "Math.round(state.thickness * 1000)" not in body
+
+
+def test_boot_and_import_columns_share_the_dispose_before_reload_helper():
+    # M1: boot() used to add a fresh columns group on every call with no
+    # dispose, so each export-pair re-import (which calls boot()) stacked
+    # another copy into the scene. Both call sites must route through the
+    # same dispose-then-reload helper importColumns already modelled.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "async function reloadColumns(" in js
+    boot_start = js.index("async function boot(")
+    boot_end = js.index("\n}", boot_start)
+    assert "reloadColumns(" in js[boot_start:boot_end]
+    import_start = js.index("async function importColumns(")
+    import_end = js.index("\n}", import_start)
+    assert "reloadColumns(" in js[import_start:import_end]
+
+
+def test_export_import_selects_and_loads_the_imported_study():
+    # M2: after a successful export-pair import, the studio must select and
+    # load the export that was just imported, not fall back to studies[0].
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    boot_start = js.index("async function boot(preferredExport)")
+    boot_end = js.index("\n}", boot_start)
+    boot_body = js[boot_start:boot_end]
+    assert "select.value = toLoad" in boot_body
+    import_start = js.index("async function importExportPair(")
+    import_end = js.index("\n}", import_start)
+    assert "boot(contractPrefix)" in js[import_start:import_end]
+
+
+def test_run_completion_reloads_with_the_params_captured_at_post_time():
+    # M5: a slider nudge mid-run must not orphan the run's own result --
+    # watchRun must reload with the material/rings/thickness the run was
+    # actually started with, captured at POST time, and sync the controls
+    # to match so the display stays consistent with what's on screen.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "function applyRunParamsToControls(" in js
+    assert "function watchRun(runId, exportName, status, params)" in js
+    watch_start = js.index("function watchRun(runId, exportName, status, params)")
+    watch_end = js.index("\n}", watch_start)
+    watch_body = js[watch_start:watch_end]
+    assert "applyRunParamsToControls(params)" in watch_body
+    start_start = js.index("async function startRun(")
+    start_end = js.index("\n}", start_start)
+    start_body = js[start_start:start_end]
+    assert "watchRun(body.run, exportName, status, params)" in start_body
+
+
+def test_hud_refreshes_while_scrubbing_and_throttled_while_playing():
+    # M6: the HUD's stage/formwork lines read state.timeline.t, so they must
+    # refresh as the timeline is scrubbed and while it plays -- but not on
+    # every unthrottled render frame, since updateHud is string work.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    scrub_start = js.index("scrubber.addEventListener")
+    scrub_end = js.index("\n});", scrub_start)
+    assert "updateHud()" in js[scrub_start:scrub_end]
+    frame_start = js.index("function frame(now)")
+    frame_end = js.index("\n}", frame_start)
+    frame_body = js[frame_start:frame_end]
+    assert "updateHud()" in frame_body
+    assert "% 15" in frame_body
+
+
 def test_the_scrubber_is_wired_to_the_pure_timeline():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
