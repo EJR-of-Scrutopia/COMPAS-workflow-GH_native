@@ -107,6 +107,12 @@ const materials = {
     roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
     metalness: 0.0,
   }),
+  "concrete-sprayed": new THREE.MeshPhysicalMaterial({
+    color: 0xc9c3b6, side: THREE.DoubleSide,
+    map: noiseTexture(256, 195, 34),
+    roughness: 0.97, roughnessMap: noiseTexture(256, 225, 30),
+    metalness: 0.0,
+  }),
   timber: new THREE.MeshPhysicalMaterial({
     color: 0xffffff, side: THREE.DoubleSide,
     map: grainTexture(512),

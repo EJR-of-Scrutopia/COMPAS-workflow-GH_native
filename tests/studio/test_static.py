@@ -189,3 +189,10 @@ def test_the_scrubber_is_wired_to_the_pure_timeline():
     assert 'id="timeline-scrubber"' in html
     assert "timeline-scrubber" in js
     assert "timelineDuration()" in js
+
+
+def test_sprayed_concrete_is_offered_and_styled():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'value="concrete-sprayed"' in html
+    assert '"concrete-sprayed"' in js

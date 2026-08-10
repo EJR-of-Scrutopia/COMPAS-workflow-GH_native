@@ -8,10 +8,11 @@ from ananke_fea.materials import PRESETS, elastic_isotropic
 def test_the_presets_exist():
     assert "concrete" in PRESETS
     assert "concrete-c50" in PRESETS
+    assert "concrete-sprayed" in PRESETS
     assert "timber" in PRESETS
 
 
-@pytest.mark.parametrize("key", ["concrete", "concrete-c50", "timber"])
+@pytest.mark.parametrize("key", ["concrete", "concrete-c50", "concrete-sprayed", "timber"])
 def test_every_preset_states_its_source_and_assumptions(key):
     preset = PRESETS[key]
     assert preset.source
@@ -60,3 +61,13 @@ def test_timber_design_strengths_reconstruct_from_their_stated_factors():
     timber = PRESETS["timber"]
     assert timber.compressive_strength == pytest.approx(0.8 * 24e6 / 1.25, rel=1e-3)
     assert timber.tensile_strength == pytest.approx(0.8 * 19.2e6 / 1.25, rel=1e-3)
+
+
+def test_sprayed_c25_30_design_strengths_reconstruct_from_their_stated_factors():
+    """The assumptions text must describe the arithmetic that made the numbers."""
+
+    sprayed = PRESETS["concrete-sprayed"]
+    assert sprayed.compressive_strength == pytest.approx(0.8 * 25e6 / 1.5, rel=1e-3)
+    assert sprayed.tensile_strength == pytest.approx(0.8 * 1.8e6 / 1.5, rel=1e-3)
+    assert sprayed.modulus == 31.0e9
+    assert sprayed.density == 2300.0

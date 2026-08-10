@@ -32,7 +32,10 @@ def test_gravity_and_material_constants_mirror_the_fea_presets():
 
     _, _, staging = studio()
     assert staging.GRAVITY == 9.80665
-    assert staging.DENSITIES == {"concrete": 2400.0, "concrete-c50": 2400.0, "timber": 385.0}
+    assert staging.DENSITIES == {
+        "concrete": 2400.0, "concrete-c50": 2400.0,
+        "concrete-sprayed": 2300.0, "timber": 385.0,
+    }
     assert staging.THICKNESS == 0.2
 
 

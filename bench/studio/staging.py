@@ -23,7 +23,10 @@ import geometry
 import segmentation
 
 GRAVITY = 9.80665
-DENSITIES = {"concrete": 2400.0, "concrete-c50": 2400.0, "timber": 385.0}
+DENSITIES = {
+    "concrete": 2400.0, "concrete-c50": 2400.0,
+    "concrete-sprayed": 2300.0, "timber": 385.0,
+}
 DEFAULT_THICKNESS = 0.2
 THICKNESS = DEFAULT_THICKNESS  # alias: tests/fea/test_studio_mirror.py reads THICKNESS
 

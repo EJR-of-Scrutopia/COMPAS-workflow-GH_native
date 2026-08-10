@@ -29,6 +29,7 @@ def test_staging_constants_mirror_the_ananke_fea_presets():
     assert staging.DENSITIES == {
         "concrete": PRESETS["concrete"].density,
         "concrete-c50": PRESETS["concrete-c50"].density,
+        "concrete-sprayed": PRESETS["concrete-sprayed"].density,
         "timber": PRESETS["timber"].density,
     }
     assert staging.GRAVITY == GRAVITY

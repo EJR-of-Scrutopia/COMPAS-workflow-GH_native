@@ -95,9 +95,35 @@ TIMBER_GL24H = MaterialPreset(
     ),
 )
 
+SPRAYED_C25_30 = MaterialPreset(
+    name="Sprayed concrete C25/30",
+    modulus=31.0e9,
+    poisson=0.2,
+    density=2300.0,
+    compressive_strength=13.333e6,
+    tensile_strength=0.96e6,
+    source=(
+        "EN 1992-1-1 Table 3.1 and clause 12 for C25/30; "
+        "EN 14487-1 for the sprayed application"
+    ),
+    assumptions=(
+        "Wet-mix sprayed concrete modelled as cast C25/30 through the plain "
+        "concrete route of EN 1992-1-1 clause 12: an alpha_cc,pl of 0.8 on a "
+        "characteristic cylinder strength of 25 MPa, divided by the partial "
+        "factor 1.5, giving 13.33 MPa. Design tensile strength uses an "
+        "alpha_ct,pl of 0.8 on the five per cent characteristic axial tensile "
+        "strength fctk,0.05 of 1.8 MPa, divided by the same 1.5, giving "
+        "0.96 MPa. Density is taken as 2300 kg/m3 for wet-mix spray. Spray "
+        "quality effects such as rebound, layering and nozzle workmanship "
+        "are not modelled; EN 14487 handles them through execution classes, "
+        "not through the design strengths used here."
+    ),
+)
+
 PRESETS: dict[str, MaterialPreset] = {
     "concrete": CONCRETE_C30_37,
     "concrete-c50": CONCRETE_C50_60,
+    "concrete-sprayed": SPRAYED_C25_30,
     "timber": TIMBER_GL24H,
 }
 
