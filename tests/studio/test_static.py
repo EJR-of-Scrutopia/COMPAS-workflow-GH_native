@@ -28,7 +28,7 @@ def test_index_wires_the_importmap_and_scripts():
 
 
 def test_no_external_urls_in_the_page_or_scripts():
-    for name in ("index.html", "studio.js", "studio.css"):
+    for name in ("index.html", "studio.js", "studio.css", "fields.js"):
         text = (STATIC / name).read_text(encoding="utf-8")
         assert not re.search(r"https?://", text), (
             "{} references the network; the studio must work offline".format(name)
