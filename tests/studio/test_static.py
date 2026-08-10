@@ -41,3 +41,11 @@ def test_binning_js_avoids_the_known_parity_traps():
     assert "halfUp" in js
     assert "theta < 0" in js, "JS % keeps sign; the fold to [0, 2pi) must be explicit"
     assert "WEDGES_AT_RIM = 12" in js
+
+
+def test_pbr_helpers_and_column_loader_exist():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("noiseTexture", "grainTexture", "columnGeometryFrom", "loadColumns"):
+        assert name in js, "studio.js lost {}".format(name)
+    assert "MeshPhysicalMaterial" in js
+    assert "ACESFilmicToneMapping" in js

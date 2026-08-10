@@ -50,12 +50,64 @@ function applyEnvironment() {
   scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
 }
 
-// ---------- materials (Task 12 upgrades these to full PBR) ----------
+// ---------- procedural textures: offline, no image assets ----------
+function noiseTexture(size, base, variation) {
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = canvasEl.height = size;
+  const context = canvasEl.getContext("2d");
+  const image = context.createImageData(size, size);
+  let seed = 1234567;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let i = 0; i < image.data.length; i += 4) {
+    const v = base + (random() - 0.5) * 2 * variation;
+    image.data[i] = image.data[i + 1] = image.data[i + 2] = Math.max(0, Math.min(255, v));
+    image.data[i + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvasEl);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(6, 6);
+  return texture;
+}
+
+function grainTexture(size) {
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = canvasEl.height = size;
+  const context = canvasEl.getContext("2d");
+  context.fillStyle = "#a9793f";
+  context.fillRect(0, 0, size, size);
+  let seed = 424242;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let y = 0; y < size; y += 3) {
+    const tone = 0.75 + 0.25 * random();
+    context.fillStyle = "rgba(" + Math.floor(140 * tone) + "," + Math.floor(96 * tone) + "," + Math.floor(48 * tone) + ",0.55)";
+    context.fillRect(0, y + Math.floor(3 * random()), size, 1 + Math.floor(2 * random()));
+  }
+  const texture = new THREE.CanvasTexture(canvasEl);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(3, 3);
+  return texture;
+}
+
 const materials = {
-  concrete: new THREE.MeshPhysicalMaterial({ color: 0xb8b4ac, roughness: 0.85, metalness: 0.0, side: THREE.DoubleSide }),
-  timber: new THREE.MeshPhysicalMaterial({ color: 0xa9793f, roughness: 0.6, metalness: 0.0, side: THREE.DoubleSide }),
-  steel: new THREE.MeshPhysicalMaterial({ color: 0x8d9096, roughness: 0.35, metalness: 1.0 }),
-  falsework: new THREE.MeshPhysicalMaterial({ color: 0x3a3f45, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide }),
+  concrete: new THREE.MeshPhysicalMaterial({
+    color: 0xc4c0b6, side: THREE.DoubleSide,
+    map: noiseTexture(256, 205, 14),
+    roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
+    metalness: 0.0,
+  }),
+  timber: new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, side: THREE.DoubleSide,
+    map: grainTexture(512),
+    roughness: 0.55, metalness: 0.0, sheen: 0.15, sheenColor: 0xd9b98a,
+  }),
+  steel: new THREE.MeshPhysicalMaterial({
+    color: 0xb6bac2, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.2,
+  }),
+  falsework: new THREE.MeshPhysicalMaterial({
+    color: 0x3a3f45, side: THREE.DoubleSide,
+    roughness: 0.95, metalness: 0.0, transparent: true, opacity: 1.0,
+  }),
 };
 
 // ---------- scene building ----------
@@ -65,6 +117,9 @@ function meshGeometry(meshData) {
   const index = [];
   for (const [a, b, c, d] of meshData.faces) index.push(a, b, c, a, c, d);
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const uvs = new Float32Array(meshData.vertices.length * 2);
+  meshData.vertices.forEach((v, i) => { uvs[2 * i] = v[0] * 0.15; uvs[2 * i + 1] = v[1] * 0.15; });
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   geometry.setIndex(index);
   geometry.computeVertexNormals();
   return geometry;
@@ -97,12 +152,54 @@ function buildWiresAndNodes(bundle) {
   return { wires, nodes };
 }
 
+function columnGeometryFrom(document_) {
+  // Accept either the plain {vertices, faces} shape or a contract-style
+  // export (equilibrium.vertices objects + formGraph.faces records).
+  let vertices, faces;
+  if (document_.vertices && document_.faces) {
+    vertices = document_.vertices;
+    faces = document_.faces;
+  } else if (document_.equilibrium && document_.formGraph) {
+    vertices = document_.equilibrium.vertices.map((v) => [v.x, v.y, v.z]);
+    faces = document_.formGraph.faces.map((f) => f.vertices);
+  } else {
+    throw new Error("unrecognised column JSON: need vertices+faces or a contract export");
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(vertices.flat()), 3));
+  const index = [];
+  for (const face of faces) {
+    for (let i = 1; i < face.length - 1; i++) index.push(face[0], face[i], face[i + 1]);
+  }
+  geometry.setIndex(index);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+async function loadColumns(names) {
+  const group = new THREE.Group();
+  for (const name of names) {
+    try {
+      const geometry = columnGeometryFrom(await fetchJson("/api/columns/" + encodeURIComponent(name)));
+      const mesh = new THREE.Mesh(geometry, materials.steel);
+      mesh.castShadow = mesh.receiveShadow = true;
+      group.add(mesh);
+    } catch (error) {
+      showBanner("Column file " + name + " failed to load: " + error.message);
+    }
+  }
+  return group;
+}
+
 function buildScene(bundle) {
   for (const key of Object.keys(state.objects)) {
+    if (key === "columns") continue;
     const object = state.objects[key];
     if (object) scene.remove(object);
   }
+  const columns = state.objects.columns;
   state.objects = {};
+  if (columns) state.objects.columns = columns;
   state.bundle = bundle;
 
   const shell = new THREE.Mesh(meshGeometry(bundle.render_mesh), materials[bundle.material] || materials.concrete);
@@ -231,6 +328,10 @@ async function boot() {
       select.appendChild(option);
     }
     if (payload.studies.length) await loadStudy(payload.studies[0].export);
+    if (payload.columns.length) {
+      state.objects.columns = await loadColumns(payload.columns);
+      scene.add(state.objects.columns);
+    }
   } catch (error) {
     showBanner("Server not reachable: " + error.message);
   }
