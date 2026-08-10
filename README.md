@@ -44,6 +44,10 @@ boundary honest in both directions.
             the pattern, re-form-find, export again.
 ```
 
+The studio (`bench/studio/serve.py`) presents the verified results: staged
+precast placement on the falsework, FEA layers, and a recordable animation.
+See docs/BENCH.md.
+
 Step 4 is the reason the bench exists. Thrust network analysis finds a
 surface in compression under one load case; it says nothing about bending,
 deflection, changed loads, or buckling. The bench adds those answers and

@@ -126,3 +126,30 @@ JSON the main environment can read without any FEA packages. Every result
 carries its own assumptions: material sources and factors, load
 provenance, whether self weight was included, and notes on what each
 check can and cannot falsify.
+
+## The Studio
+
+`bench/studio/serve.py` (play button or `.venv\Scripts\python.exe bench/studio/serve.py`)
+serves http://127.0.0.1:8600: the presentation surface over the bench's
+verified analysis. It reads the same export pairs as demo 09, treats the
+funicular surface as falsework, and stages precast segments onto it rim to
+crown.
+
+- Study, material (C30/37 or GL24h), and a segmentation slider (4 to 16
+  rings; wedge counts follow ring radius, staggered ring to ring).
+- Run staged analysis: per stage, the falsework bookkeeping is exact
+  arithmetic and the struck-now counterfactual is a real OpenSees solve in
+  .venv-fea; stages that find no equilibrium say so.
+- FEA layers: stress and deflection heatmaps (full per-element and
+  per-node fields), load and reaction vectors, text overlays, the
+  integrity pulse, thrust wires with node spheres.
+- Placement animation with drop, orbit speed, and orbit distance sliders;
+  the falsework strikes after the last segment lands.
+- Record 1080p writes PNG frames through the server and stitches
+  `recording.mp4` with ffmpeg.
+- Column geometry dropped into `bench/studio/columns/*.json` (either
+  `{"vertices", "faces"}` or a contract-style export) renders in steel.
+
+Generated outputs live under `bench/studies/<slug>/studio/` and are not
+committed. The server never imports the solver stacks; a guard test holds
+it to that.
