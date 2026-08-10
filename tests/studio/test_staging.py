@@ -378,3 +378,47 @@ def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
     assert "lower the ring count" in stage_2_cra["message"]
     # cra_runner should only have been called once (for stage 1)
     assert len(cra_runner_calls) == 1
+
+
+def test_run_staging_builds_voussoirs_not_mesh_following_blocks(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    seen = []
+
+    def cra_stub(request):
+        seen.append(request["blocks"])
+        return {"stands": True, "status": "optimal", "message": "",
+                "blocks": len(request["blocks"]), "interfaces": 1,
+                "mu": request["mu"]}
+
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        cra_runner=cra_stub,
+    )
+    assert document["cra_skipped"] == []
+    for request_blocks in seen:
+        for block in request_blocks:
+            # A voussoir is small: one face per neighbour plus caps, every
+            # face a triangle. A mesh following block had hundreds.
+            assert len(block["faces"]) <= 40, "block is not a voussoir"
+            assert all(len(face) == 3 for face in block["faces"])
+
+
+def test_include_cra_false_leaves_the_skip_list_null(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+    assert document["cra_skipped"] is None

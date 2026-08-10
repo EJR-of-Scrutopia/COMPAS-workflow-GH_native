@@ -112,3 +112,11 @@ same kind already applied to the friction provenance.
 - Any change to the FEA side.
 - Mould clustering, concrete versus timber A/B, robot choreography: the
   remaining wave 4 items, each with its own spec.
+
+## Built, 2026-08-10
+
+Implemented in bench/studio/voussoirs.py and wired into staging. The
+mesh-following builder in blocks.py stays: it is the reference for the
+volume comparison and it carries the node parity pin against fields.js.
+The staging document gains cra_skipped, a list of cells that could not
+form a solid, empty in the normal case and null when CRA is off.

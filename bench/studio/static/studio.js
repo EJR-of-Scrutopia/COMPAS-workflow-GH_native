@@ -880,6 +880,11 @@ function renderDataPanel(v) {
     counts.textContent = verdict.blocks + " blocks, "
       + verdict.interfaces + " contact interfaces";
     content.appendChild(counts);
+    const faceted = document.createElement("p");
+    faceted.textContent = "the verdict is computed on a faceted model: each "
+      + "piece keeps one flat planar joint face per neighbour, so its volume "
+      + "and centroid differ slightly from the curved segment drawn here";
+    content.appendChild(faceted);
   }
 
   // Verification content: early-out if no verification file.

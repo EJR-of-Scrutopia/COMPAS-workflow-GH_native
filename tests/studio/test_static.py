@@ -438,3 +438,12 @@ def test_data_panel_reports_the_cra_verdict_with_provenance():
         "CRA section must come before the verification early-return guard, "
         "or staged-but-unverified studies will never show the verdict"
     )
+
+
+def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    assert "faceted" in body
+    assert "planar" in body or "flat" in body

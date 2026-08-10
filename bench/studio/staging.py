@@ -4,9 +4,14 @@ The real case needs no solver: while the falsework stands it carries the
 placed weight, and the curve here is exact arithmetic. The counterfactual
 (struck now) is a real solve per stage, shelled to .venv-fea through
 solve_stage.py. The rigid-block counterfactual (does the placed assembly
-stand as blocks) is a second solve per stage, shelled to .venv-cra
-through solve_cra.py. This module never imports the solver stack; the
-guard test holds it to that.
+stand as voussoirs) is a second solve per stage, shelled to .venv-cra
+through solve_cra.py. Voussoirs replace each cell's full mesh boundary with
+one planar face per neighbour, so a joint is one flat face shared by exactly
+two blocks. This dramatically cuts both face count and contact point count
+at the cost of fidelity to the curved vault: the analysis runs on a faceted
+model. blocks.py remains the mesh-following model used for rendering parity
+and volume comparison. This module never imports the solver stack; the guard
+test holds it to that.
 
 GRAVITY, DENSITIES and THICKNESS duplicate ananke_fea values on purpose
 (the import is forbidden); tests/studio/test_staging.py pins them to the
@@ -24,6 +29,7 @@ from typing import Callable, Dict, List, Optional
 import blocks
 import geometry
 import segmentation
+import voussoirs
 
 GRAVITY = 9.80665
 DENSITIES = {
@@ -221,8 +227,9 @@ def run_staging(
     if include_cra and cra_runner is None:
         cra_runner = _cra_subprocess_runner(CRA_PYTHON)
     all_blocks: List[dict] = []
+    skipped: Optional[List[dict]] = None
     if include_cra:
-        all_blocks = blocks.segment_blocks(
+        all_blocks, skipped = voussoirs.segment_voussoirs(
             arrays["vertices"], arrays["faces"], binned["assignment"],
             binned["order"], thickness, set(geometry.support_ids(contract)),
         )
@@ -282,6 +289,7 @@ def run_staging(
         "segmentation": binned,
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,
+        "cra_skipped": skipped,
     }
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
