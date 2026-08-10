@@ -124,8 +124,11 @@ def segment_blocks(
             face = faces[face_index]
             block_faces.append([top_of[v] for v in face])
             block_faces.append([bottom_of[v] for v in reversed(face)])
+        # Wall quads wind outward for COMPAS volume and interface detection.
+        # This deliberately differs from fields.js, whose wall soup renders
+        # DoubleSide so winding never mattered.
         for a, b in segment_boundary_edges(faces, face_indices):
-            block_faces.append([top_of[a], top_of[b], bottom_of[b], bottom_of[a]])
+            block_faces.append([top_of[b], top_of[a], bottom_of[a], bottom_of[b]])
 
         blocks.append({
             "vertices": block_vertices,

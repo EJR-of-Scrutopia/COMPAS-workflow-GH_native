@@ -66,8 +66,17 @@ def test_each_segment_becomes_a_closed_prism():
     # One quad: 4 top + 4 bottom welded vertices, 1 top + 1 bottom + 4 wall faces.
     assert len(first["vertices"]) == 8
     assert len(first["faces"]) == 6
-    # Closed manifold: every edge is used by exactly two faces.
-    assert set(edge_use_counts(first["faces"]).values()) == {2}
+    # Closed manifold with consistent outward orientation: every directed edge
+    # appears exactly once, and its reverse also appears (no self-cycles or
+    # backwards edges). This enforces closure plus orientation.
+    directed_edges = set()
+    for face in first["faces"]:
+        for i in range(len(face)):
+            a, b = face[i], face[(i + 1) % len(face)]
+            assert (a, b) not in directed_edges, "directed edge used twice"
+            directed_edges.add((a, b))
+    for a, b in directed_edges:
+        assert (b, a) in directed_edges, f"reverse of ({a}, {b}) missing"
     # Flat mesh: top skin at +t/2, bottom at -t/2.
     tops = [v for v, s in zip(first["vertices"], first["sources"]) if s[1] == "top"]
     bottoms = [v for v, s in zip(first["vertices"], first["sources"]) if s[1] == "bottom"]
@@ -136,9 +145,28 @@ def test_python_offsets_match_fields_js(tmp_path):
                 return point
         raise AssertionError("missing vertex {} {}".format(vertex, surface))
 
-    for index, corner in enumerate(js["corners"]):
-        if corner["surface"] == "wall":
-            continue  # wall corners reuse top/bottom positions
+    # Check skin corners (top and bottom faces).
+    skin_corners = [c for c in js["corners"] if c["surface"] != "wall"]
+    for index, corner in enumerate(skin_corners):
         expected = js["positions"][3 * index: 3 * index + 3]
         assert python_position(corner["v"], corner["surface"]) == pytest.approx(
             expected, abs=1e-9)
+
+    # Check wall corners: for each boundary edge (a, b) in order, the k-th
+    # JS wall sextet should match Python positions [ta, tb, bb, ta, bb, ba].
+    boundary = blocks.segment_boundary_edges(FACES, [0])
+    wall_start_index = len(skin_corners)
+    for k, (a, b) in enumerate(boundary):
+        expected_sequence = [
+            python_position(a, "top"),
+            python_position(b, "top"),
+            python_position(b, "bottom"),
+            python_position(a, "top"),
+            python_position(b, "bottom"),
+            python_position(a, "bottom"),
+        ]
+        for offset, expected_pos in enumerate(expected_sequence):
+            corner_index = wall_start_index + k * 6 + offset
+            corner = js["corners"][corner_index]
+            actual_pos = js["positions"][3 * corner_index: 3 * corner_index + 3]
+            assert actual_pos == pytest.approx(expected_pos, abs=1e-9)
