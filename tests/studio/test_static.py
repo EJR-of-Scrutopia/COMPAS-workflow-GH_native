@@ -536,3 +536,15 @@ def test_sprayed_concrete_has_no_joints_at_all():
     assert "if (!sprayedMaterial()) own.color.offsetHSL" in body, (
         "the per piece tint must be suppressed for a continuous surface"
     )
+
+
+def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="taper"' in html and 'id="taper-value"' in html
+    assert "function taperAt(" in js
+    hud_start = js.index("function updateHud(")
+    hud_end = js.index("\n}", hud_start)
+    body = js[hud_start:hud_end]
+    assert "state.taper" in body
+    assert "uniform thickness" in body, "the HUD must say the analysis did not taper"

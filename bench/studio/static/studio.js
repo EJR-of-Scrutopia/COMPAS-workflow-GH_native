@@ -19,6 +19,7 @@ const state = {
   rings: 8,
   thickness: 0.2,
   jointGap: 0.02,
+  taper: 0,
   segments: null,      // Task 11
   segmentIndex: null,  // Task 11
   nodeRadius: 0.03,    // Task 6
@@ -833,6 +834,10 @@ function updateHud() {
     thicknessLine += " (verified run used " + verifiedMm + " mm)";
   }
   lines.push(thicknessLine);
+  if (state.taper > 0) {
+    lines.push("crown taper " + Math.round(state.taper * 100) +
+      "% (drawing only: the analysis used a uniform thickness)");
+  }
   if (v && v.stress) {
     lines.push("peak compression " + (v.stress.peak_compression / 1e6).toFixed(2) + " MPa, utilisation " + (100 * v.stress.utilisation).toFixed(1) + "%");
     let deflectionLine = "peak deflection " + (v.displacement.peak_magnitude * 1000).toFixed(2) + " mm";
@@ -1160,6 +1165,17 @@ document.getElementById("joint-gap").addEventListener("change", (e) => {
   recolourSegments();
   if (state.timeline) applySceneAtTime(state.timeline.t);
 });
+document.getElementById("taper").addEventListener("input", (e) => {
+  document.getElementById("taper-value").textContent = Math.round(+e.target.value * 100);
+});
+document.getElementById("taper").addEventListener("change", (e) => {
+  state.taper = +e.target.value;
+  if (!state.bundle) return;
+  buildPieceMeshes();
+  recolourSegments();
+  updateHud();
+  if (state.timeline) applySceneAtTime(state.timeline.t);
+});
 for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
   document.getElementById(id).addEventListener("input", applyEnvironment);
 }
@@ -1293,16 +1309,22 @@ function pieceTint(key) {
   return (offset[0] % 1) * 0.06 - 0.03;
 }
 
+function taperAt(ring) {
+  // Pieces thin toward the crown, which is where the least load arrives.
+  const rings = Math.max(1, state.bundle.rings - 1);
+  return 1 - state.taper * Math.min(1, ring / rings);
+}
+
 function buildPieceMeshes() {
   if (state.objects.shell) scene.remove(state.objects.shell);
   const group = new THREE.Group();
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.
-  const half = state.bundle.provenance.thickness / 2;
   const gap = sprayedMaterial() ? 0 : state.jointGap;
   const material = materials[state.bundle.material] || materials.concrete;
   for (const piece of state.bundle.pieces) {
     const count = piece.mid.length;
+    const half = state.bundle.provenance.thickness * taperAt(piece.ring) / 2;
     const points = [];
     for (const sign of [1, -1]) {
       for (let i = 0; i < count; i++) {
