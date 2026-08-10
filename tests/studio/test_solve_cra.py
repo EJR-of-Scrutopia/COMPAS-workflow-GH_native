@@ -59,15 +59,63 @@ request = {{"blocks": specs, "density": 2400.0, "mu": 0.6}}
 print(json.dumps(solve_cra.solve(request, solver_available=lambda: True)))
 """
 
-# _classify_termination is pure (no compas import), but solve_cra.py runs
-# only in .venv-cra by convention, so this stays consistent with the rest
-# of the file's subprocess-driver style rather than importing it directly
-# into the main venv's test process.
-CLASSIFY_DRIVER = """
-import sys
+# The arch control. A stack of cubes never exercises arching action,
+# thrust line eccentricity or joint rotation, which is exactly where a
+# rigid-block solver earns its keep and exactly where the studio's
+# geometry lives. This driver builds a semicircular arch of radial
+# voussoirs at a radius given on the command line: planar radial joints,
+# each block a closed outward wound prism. Every dimension is a multiple
+# of the radius (thickness, out-of-plane width, wedge angle), so changing
+# the radius scales the model and nothing else. No braces appear in the
+# driver body: it is a .format template, and dict(...) avoids having to
+# double every one of them.
+ARCH_DRIVER = """
+import json, math, sys
 sys.path.insert(0, {studio!r})
 import solve_cra
-print(solve_cra._classify_termination(sys.argv[1]))
+import voussoirs
+
+
+def arch(radius, ratio=0.20, count=5, width_factor=0.5):
+    thickness = ratio * radius
+    r_in = radius - thickness / 2.0
+    r_out = radius + thickness / 2.0
+    width = width_factor * radius
+
+    def p(angle, r, y):
+        return [r * math.cos(angle), y, r * math.sin(angle)]
+
+    specs = []
+    for i in range(count):
+        a1 = math.pi * i / count
+        a2 = math.pi * (i + 1) / count
+        vertices = [
+            p(a1, r_in, -width / 2.0), p(a2, r_in, -width / 2.0),
+            p(a2, r_out, -width / 2.0), p(a1, r_out, -width / 2.0),
+            p(a1, r_in, width / 2.0), p(a2, r_in, width / 2.0),
+            p(a2, r_out, width / 2.0), p(a1, r_out, width / 2.0),
+        ]
+        # Wound outward: the two caps first, then one quad per side. The
+        # test asserts the signed volume is positive, which is what proves
+        # the winding is right rather than merely consistent.
+        faces = [
+            [3, 2, 1, 0], [4, 5, 6, 7],
+            [1, 5, 4, 0], [2, 6, 5, 1], [3, 7, 6, 2], [0, 4, 7, 3],
+        ]
+        # The springers are the two end voussoirs, fixed as supports; the
+        # three between them are free and must be held by arching alone.
+        specs.append(dict(vertices=vertices, faces=faces,
+                          is_support=(i == 0 or i == count - 1),
+                          ring=0, wedge=i))
+    return specs
+
+
+specs = arch(float(sys.argv[1]))
+out = solve_cra.solve(dict(blocks=specs, density=2400.0, mu=0.6))
+out["volume"] = sum(
+    voussoirs.mesh_volume(s["vertices"], s["faces"]) for s in specs)
+out["length"] = solve_cra.characteristic_length(specs)
+print(json.dumps(out))
 """
 
 
@@ -82,6 +130,16 @@ def cube(z0, dx=0.0, is_support=False):
     ]
     return {"vertices": vertices, "faces": faces, "is_support": is_support,
             "ring": 0, "wedge": 0}
+
+
+def run_arch(radius):
+    completed = subprocess.run(
+        [str(CRA_PYTHON), "-c", ARCH_DRIVER.format(studio=str(STUDIO)),
+         repr(float(radius))],
+        capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
 def run_solve(request, driver=DRIVER):
@@ -161,6 +219,76 @@ def test_a_hanging_block_does_not_stand():
 
 @needs_ipopt
 @pytest.mark.slow
+def test_a_semicircular_arch_stands():
+    """The positive control that actually exercises arching.
+
+    A semicircular arch at t/R = 0.20 with five voussoirs, springers
+    fixed. Heyman's minimum thickness for a semicircular arch is about
+    0.11 R, so this one certainly stands, and a rigid-block solver that
+    says otherwise is reporting on itself rather than on the arch. Two
+    cubes stacked, the largest positive fixture this file used to have,
+    never puts a thrust line off centre or opens a joint in rotation, so
+    it could not have caught the solver parameterisation this control was
+    written for.
+    """
+
+    out = run_arch(2.0)
+    assert out["volume"] > 0, "arch blocks must be wound outward: {}".format(out)
+    assert out["stands"] is True, out
+    assert out["status"] == "optimal", out
+    assert out["blocks"] == 5
+    assert out["interfaces"] == 4, "four radial joints between five voussoirs"
+
+
+@needs_ipopt
+@pytest.mark.slow
+def test_the_same_arch_gives_the_same_verdict_at_every_scale():
+    """Scale invariance: the single most valuable control in this file.
+
+    Rigid-block feasibility under friction is scale invariant. Self weight
+    and the resisting moments both scale with the same power of the model,
+    so whether an arch stands cannot depend on whether it is drawn at 1 m
+    or 8 m. Any difference across these four radii is the solver's
+    parameterisation leaking into the verdict, which is exactly what
+    upstream's absolute-length d_bnd and eps defaults did: the same arch
+    returned locally infeasible at 1 m, maxIterations at 2 m and 4 m and a
+    solver error at 8 m. Reverting D_BND_FRACTION to upstream's fixed
+    1e-3 and 1e-4 in solve_cra.py reproduces that spread and fails here.
+    """
+
+    verdicts = {}
+    for radius in (1.0, 2.0, 4.0, 8.0):
+        out = run_arch(radius)
+        verdicts[radius] = (out["stands"], out["status"])
+    assert len(set(verdicts.values())) == 1, (
+        "the same arch must get the same verdict at every scale: {}".format(verdicts))
+    assert set(verdicts.values()) == {(True, "optimal")}, verdicts
+
+
+@needs_ipopt
+@pytest.mark.slow
+def test_a_local_infeasibility_is_a_null_not_a_does_not_stand():
+    """IPOPT's "infeasible" describes one solve, never the feasible set.
+
+    A run of cubes cantilevered off a single support is where IPOPT
+    reports the infeasible family. Under an interior point method on a
+    nonconvex nonlinear program that is a local convergence failure from
+    one starting point, not a proof that no rigid-block equilibrium
+    exists, and upstream's own wording on the real vault ("Problem may be
+    infeasible") is careful for the same reason. The verdict must be a
+    null carrying the solver's words. This assembly may well be unable to
+    stand; the point is that this solver output is not what proves it.
+    """
+
+    blocks = [cube(0, dx=float(i), is_support=(i == 0)) for i in range(4)]
+    out = run_solve({"blocks": blocks, "density": 2400.0, "mu": 0.6})
+    assert out["stands"] is None, out
+    assert "infeasible" in out["status"].lower(), out
+    assert "infeasible" in out["message"].lower(), out
+
+
+@needs_ipopt
+@pytest.mark.slow
 def test_disconnected_blocks_refuse_a_verdict():
     out = run_solve({"blocks": [cube(0, is_support=True), cube(0, dx=5.0)],
                      "density": 2400.0, "mu": 0.6})
@@ -193,19 +321,19 @@ def test_empty_blocks_list_reports_null():
 
 @needs_cra_venv
 @pytest.mark.slow
-def test_warped_walls_still_detect_interfaces_with_the_derived_tmax():
-    """A fixed tmax=1e-6 finds zero interfaces on warped, non-planar walls.
+def test_blocks_off_a_tilted_mesh_still_reach_the_solver_connected():
+    """Interface detection must survive geometry that is not flat.
 
-    blocks.py offsets each vertex along its own per-vertex normal, so a
-    wall quad on non-flat geometry (like this tilted toy mesh, and every
-    real export) is warped by construction. compas_cra's interface
-    detector rejects a candidate face whose vertices sit further than
-    tmax off the base face's plane; a fixed tmax=1e-6 is planar-mesh-only
-    and finds nothing, so every stage falls through to the honest-but-
-    useless "isolated blocks" null. solve() must derive tmax from the
-    request's own worst face warp instead. Manually setting tmax back to
-    1e-6 in solve_cra.py reproduces the bug: this test then fails with
-    stands=None, status="isolated blocks", interfaces=0.
+    blocks.py offsets each vertex along its own per-vertex normal, so on
+    any non-flat mesh (this tilted toy one, and every real export) the
+    two blocks either side of a joint meet on faces built independently
+    rather than on one shared face. If the detector finds nothing there,
+    every stage falls through to the honest but useless "isolated blocks"
+    null and no verdict is ever reached. This test pins the end to end
+    behaviour, that such blocks arrive at the solver connected, without
+    pinning how: the adaptive tmax that once served this is gone (its
+    sibling test asserts _max_face_warp stays gone), because planar
+    triangle walls recover every joint at the tight fixed tolerance.
     """
     completed = subprocess.run(
         [str(CRA_PYTHON), "-c", TILTED_BLOCKS_DRIVER.format(studio=str(STUDIO))],
@@ -246,20 +374,62 @@ def test_the_module_checks_tension_in_the_contact_forces():
 
 
 @needs_cra_venv
-@pytest.mark.parametrize("text, expected", [
-    ("infeasible", "infeasible"),
-    ("Infeasible problem detected", "infeasible"),
-    ("maxIterations", "other"),
-    ("maxTimeLimit", "other"),
-])
-def test_classify_termination_only_the_infeasible_family_is_infeasible(text, expected):
-    # Upstream raises ValueError(termination_condition) for ANY non-optimal
-    # pyomo termination; only "infeasible" proves the assembly cannot
-    # stand. maxIterations and maxTimeLimit mean the solve did not finish,
-    # which must stay a null verdict, not a false "does not stand".
+def test_the_tension_check_is_the_only_source_of_a_does_not_stand():
+    """No termination string may be promoted into "does not stand".
+
+    The module used to classify a pyomo termination containing
+    "infeasible" as proof that no rigid-block equilibrium exists, which
+    turned one interior point method's local convergence failure into a
+    red badge on the real vault. Termination strings are now nulls
+    without exception, so exactly one place in the module may return
+    stands=False: the tension check, reading contact forces off a
+    solution the solver converged to.
+    """
+
+    source = (REPO / "bench" / "studio" / "solve_cra.py").read_text(encoding="utf-8")
+    assert "_classify_termination" not in source, (
+        "classifying termination strings into a verdict is the defect")
+    falses = [i for i in range(len(source)) if source.startswith("_result(False", i)]
+    assert len(falses) == 1, (
+        "stands=False must have exactly one source, found {}".format(len(falses)))
+    assert "tension" in source[falses[0]:falses[0] + 200], (
+        "the one stands=False must be the tension check")
+
+
+@needs_cra_venv
+def test_the_solver_parameters_are_derived_from_the_models_own_scale():
+    # d_bnd and eps are absolute lengths in metres in compas_cra, and
+    # upstream's defaults are tuned to its unit-scale examples. Left
+    # alone they made the verdict a function of how big the model was
+    # drawn. Both must be derived from the request's own geometry.
+    source = (REPO / "bench" / "studio" / "solve_cra.py").read_text(encoding="utf-8")
+    assert "characteristic_length" in source
+    assert "d_bnd" in source and "eps" in source
+    assert "D_BND_FRACTION" in source
+
+
+@needs_cra_venv
+def test_characteristic_length_is_the_bounding_box_diagonal():
+    driver = """
+import json, sys
+sys.path.insert(0, {studio!r})
+import solve_cra
+specs = json.loads(sys.argv[1])
+print(solve_cra.characteristic_length(specs))
+"""
+    # A 3-4-12 box has a diagonal of 13, and an assembly with no extent
+    # has no scale to offer, which the solver reads as "keep upstream's
+    # defaults" rather than as zero.
+    box = [{"vertices": [[0, 0, 0], [3, 4, 12]]}]
     completed = subprocess.run(
-        [str(CRA_PYTHON), "-c", CLASSIFY_DRIVER.format(studio=str(STUDIO)), text],
+        [str(CRA_PYTHON), "-c", driver.format(studio=str(STUDIO)), json.dumps(box)],
         capture_output=True, text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == expected
+    assert abs(float(completed.stdout.strip().splitlines()[-1]) - 13.0) < 1e-9
+    empty = subprocess.run(
+        [str(CRA_PYTHON), "-c", driver.format(studio=str(STUDIO)), json.dumps([])],
+        capture_output=True, text=True,
+    )
+    assert empty.returncode == 0, empty.stderr
+    assert float(empty.stdout.strip().splitlines()[-1]) == 0.0

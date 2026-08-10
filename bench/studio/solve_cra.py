@@ -2,10 +2,14 @@
 
 The one studio module besides solve_stage.py allowed to import solver
 stacks (the guard test exempts both by name). Verdicts are three-state
-and honest: stands true (the solver found an equilibrium with no tension),
-stands false (the solver proved there is none, or the solution requires
-unrealistic tension at joints), stands null (the solve did not run;
-message says why). A free (non-support) block with no contact interface is
+and honest: stands true (the solver converged and the equilibrium it
+found needs no tension), stands false (the solver converged and the
+equilibrium it found needs tension a masonry joint cannot carry), stands
+null (no converged solution to read a verdict off; the message carries
+the solver's own words). stands false has exactly one source, the tension
+check: an interior point method on a nonconvex program cannot prove
+infeasibility, so a non-optimal termination is never a "does not stand".
+A free (non-support) block with no contact interface is
 an error, not a verdict: it gets Constraint.Skip on every equilibrium row
 in compas_cra's model, so cra_penalty_solve can return optimal while
 ignoring it entirely; reporting "stands" over a silently-ignored block would
@@ -58,18 +62,53 @@ def _result(stands, status, message, blocks, interfaces, mu):
 TENSION_TOLERANCE = 1e-3
 
 
-def _classify_termination(text):
-    """Classify a pyomo termination string as "infeasible" or "other".
+# d_bnd (the bound on the virtual displacement) and eps (the contact
+# overlap parameter) are ABSOLUTE LENGTHS IN METRES in compas_cra's
+# formulation, and upstream's defaults (1e-3 and 1e-4) are tuned for its
+# own unit-scale examples. The studio's vaults are 4 to 7 m across with
+# joints metres wide, so leaving the defaults in place made the verdict a
+# function of how big the model happened to be: a semicircular arch at
+# t/R = 0.20 (Heyman's minimum is about 0.11, so it certainly stands)
+# returned four different answers at radii 1, 2, 4 and 8 m, which is
+# impossible for a rigid-block feasibility question. Both parameters
+# therefore scale with the model's own characteristic length, which is
+# what dimensional similarity demands of a length: scale the geometry by
+# s and the whole program maps onto itself.
+#
+# The fractions are measured, not guessed. Sweeping k = d_bnd / length
+# over 0.001 to 0.5 on that arch at radii 1, 2, 4 and 8 m, the band
+# 0.045 to 0.08 is the widest one that converges at every radius; 0.05
+# sits inside it. Outside the band IPOPT fails erratically (below about
+# 0.03 it reports local infeasibility or exhausts its iterations, and
+# isolated larger values hit numerical failures), so the band, not the
+# single value, is the result. eps keeps upstream's own eps/d_bnd ratio
+# of one tenth: that ratio is dimensionless and is the parameter the
+# formulation actually cares about. See docs/BENCH.md, CRA solver setup.
+D_BND_FRACTION = 0.05
+EPS_OVER_D_BND = 0.1
 
-    Upstream's cra_solve raises ValueError(termination_condition) for ANY
-    non-optimal pyomo termination, not only infeasibility: maxIterations,
-    maxTimeLimit and solverFailure all come through this same exception.
-    Only the infeasible family is evidence the rigid-block equilibrium does
-    not exist; the rest just mean the solve did not finish, which is a
-    "we don't know" null, not a "false".
+
+def characteristic_length(specs) -> float:
+    """Diagonal of the axis aligned bounding box over every block vertex.
+
+    A length, so it scales exactly with the model and carries the
+    dimensional argument above. The whole assembly's box is used rather
+    than a single joint's edge length because a per-joint measure shrinks
+    as the segmentation refines: the solver parameters would then depend
+    on the studio's ring count rather than on the size of the thing being
+    analysed, and two ring counts of one vault would get different
+    tolerances. Returns 0.0 for an assembly with no extent at all, which
+    the caller reads as "fall back to upstream's defaults".
     """
 
-    return "infeasible" if "infeasible" in text.lower() else "other"
+    points = [v for spec in specs for v in spec["vertices"]]
+    if not points:
+        return 0.0
+    span = 0.0
+    for axis in range(3):
+        values = [p[axis] for p in points]
+        span += (max(values) - min(values)) ** 2
+    return span ** 0.5
 
 
 def _contact_extremes(assembly):
@@ -149,24 +188,36 @@ def solve(request: dict, solver_available=_ipopt_available) -> dict:
                        "{} free block(s) have no contact interfaces; "
                        "refusing a meaningless verdict".format(len(isolated)),
                        count, interfaces, mu)
+    # Scaled from the model's own size, never left at upstream's unit-scale
+    # defaults: see D_BND_FRACTION above for the measurement behind the
+    # numbers. A zero-extent assembly cannot supply a scale, so it keeps
+    # upstream's defaults rather than collapsing both parameters to zero.
+    length = characteristic_length(specs)
+    solver_scale = {}
+    if length > 0.0:
+        d_bnd = D_BND_FRACTION * length
+        solver_scale = {"d_bnd": d_bnd, "eps": d_bnd * EPS_OVER_D_BND}
     try:
-        cra_penalty_solve(assembly, mu=mu, density=request["density"])
+        cra_penalty_solve(assembly, mu=mu, density=request["density"],
+                          **solver_scale)
     except ValueError as error:
-        # Upstream raises ValueError(termination_condition) for ANY
-        # non-optimal termination (infeasible, maxIterations,
-        # maxTimeLimit, solverFailure, ...), not only infeasibility.
-        # The penalty formulation raises the same termination ValueError
-        # as the plain form, so the infeasible-versus-other classification
-        # is unchanged. Only the infeasible family proves the assembly
-        # cannot stand; the rest mean the solve did not finish, which stays
-        # an honest null rather than a false "does not stand".
+        # Upstream raises ValueError for ANY non-optimal termination
+        # (locally infeasible, maxIterations, maxTimeLimit, solverFailure,
+        # and pyomo's own "bad status" load error). None of them is a
+        # verdict. IPOPT is an interior point method on a nonconvex
+        # nonlinear program: it reports on the path it took from one
+        # starting point, not on the feasible set. Its wording on the real
+        # vault is "Converged to a locally infeasible point. Problem may
+        # be infeasible.", and the "may be" is upstream being careful for
+        # exactly this reason. So every non-optimal termination is a null
+        # carrying the solver's own words, and "does not stand" comes only
+        # from the tension check below, on a solution the solver actually
+        # converged to.
         text = str(error)
-        if _classify_termination(text) == "infeasible":
-            return _result(False, text,
-                           "no rigid-block equilibrium under friction",
-                           count, interfaces, mu)
         return _result(None, text,
-                       "solver terminated without a result: {}".format(text),
+                       "the solver did not converge to a solution, so there is "
+                       "no verdict to read: {}. A solver that stops short is "
+                       "not evidence the assembly cannot stand".format(text),
                        count, interfaces, mu)
     except Exception as error:
         return _result(None, "error",
