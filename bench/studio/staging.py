@@ -41,6 +41,14 @@ FRICTION = {
 # 0.4: literature value for dry timber on timber (Eurocode 5 gives none).
 
 REPO = Path(__file__).resolve().parents[2]
+CRA_BLOCK_BUDGET = 8
+# Measured on the real export: with clean contact detection both compas_cra
+# solvers finish 8 blocks (about a second in the penalty form, 21 s in the
+# plain one) and blow a 300 s cap at 10. Cost tracks contact polygons, so
+# merging neighbouring wedges into one larger block cuts blocks and joints
+# together. See .superpowers/sdd/2026-08-10-studio-cra-feasibility/
+# cra-diagnostics.md.
+CRA_WEDGE_FACTORS = (1, 2, 3, 4, 6, 12)
 FEA_PYTHON = REPO / ".venv-fea" / "Scripts" / "python.exe"
 SOLVE_STAGE = Path(__file__).resolve().parent / "solve_stage.py"
 
@@ -79,6 +87,37 @@ def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
             "faces": list(placed_faces),
         })
     return plan
+
+
+def cra_binning(assignment: List[list], order: List[list], budget: int) -> Dict:
+    """Merge neighbouring wedges until the block model fits the budget.
+
+    The display segmentation is what gets drawn and built; the CRA model is
+    a coarser view of the same rings, because the rigid-block solve cannot
+    afford one block per drawn cell. Merging is by wedge only: rings stay
+    intact, so a stage still places whole rings and a coarse block never
+    straddles two stages. Returns the merged assignment and drop order plus
+    the factor used, which the document records so the UI can say the
+    verdict describes a coarser assembly than the picture.
+    """
+
+    for factor in CRA_WEDGE_FACTORS:
+        cells = {(pair[0], pair[1] // factor) for pair in order}
+        if len(cells) <= budget:
+            break
+    coarse_assignment = [[pair[0], pair[1] // factor] for pair in assignment]
+    coarse_order: List[list] = []
+    seen = set()
+    for pair in order:
+        cell = (pair[0], pair[1] // factor)
+        if cell not in seen:
+            seen.add(cell)
+            coarse_order.append([cell[0], cell[1]])
+    return {
+        "assignment": coarse_assignment,
+        "order": coarse_order,
+        "wedge_factor": factor,
+    }
 
 
 def formwork_curve(
@@ -208,10 +247,13 @@ def run_staging(
     if include_cra and cra_runner is None:
         cra_runner = _cra_subprocess_runner(CRA_PYTHON)
     all_blocks: List[dict] = []
+    wedge_factor = None
     if include_cra:
+        coarse = cra_binning(binned["assignment"], binned["order"], CRA_BLOCK_BUDGET)
+        wedge_factor = coarse["wedge_factor"]
         all_blocks = blocks.segment_blocks(
-            arrays["vertices"], arrays["faces"], binned["assignment"],
-            binned["order"], thickness, set(geometry.support_ids(contract)),
+            arrays["vertices"], arrays["faces"], coarse["assignment"],
+            coarse["order"], thickness, set(geometry.support_ids(contract)),
         )
 
     stages = []
@@ -232,10 +274,11 @@ def run_staging(
             "struck_now": struck,
         }}
         if include_cra:
-            placed = set(entry["segments"])
+            # Coarse cells merge wedges only, never rings, so a stage that
+            # has placed rings 0..k-1 has placed exactly the coarse blocks
+            # in those rings.
             stage_blocks = [
-                b for b in all_blocks
-                if segmentation.segment_key(b["ring"], b["wedge"]) in placed
+                b for b in all_blocks if b["ring"] < entry["rings_placed"]
             ]
             stage_entry["cra"] = cra_runner({
                 "blocks": stage_blocks,
@@ -251,6 +294,7 @@ def run_staging(
         "segmentation": binned,
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,
+        "cra_wedge_factor": wedge_factor,
     }
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

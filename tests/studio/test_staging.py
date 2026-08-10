@@ -333,3 +333,61 @@ def test_cra_subprocess_runner_reports_a_timeout_instead_of_hanging(monkeypatch)
     assert out["blocks"] == 1
     assert out["interfaces"] == 0
     assert out["mu"] == 0.6
+
+
+def test_cra_binning_merges_wedges_until_the_block_budget_is_met():
+    _, _, staging = studio()
+    assignment = [[0, w] for w in range(12)]
+    order = [[0, w] for w in range(12)]
+    coarse = staging.cra_binning(assignment, order, budget=8)
+    assert coarse["wedge_factor"] == 2
+    assert len(coarse["order"]) == 6
+    assert coarse["assignment"][0] == [0, 0]
+    assert coarse["assignment"][3] == [0, 1]
+    # Order stays the drop order, deduplicated, no cell repeated.
+    assert len(coarse["order"]) == len({tuple(pair) for pair in coarse["order"]})
+
+
+def test_cra_binning_leaves_a_small_model_alone():
+    _, _, staging = studio()
+    assignment = [[0, 0], [0, 1], [1, 0]]
+    order = [[0, 0], [0, 1], [1, 0]]
+    coarse = staging.cra_binning(assignment, order, budget=8)
+    assert coarse["wedge_factor"] == 1
+    assert coarse["order"] == order
+    assert coarse["assignment"] == assignment
+
+
+def test_run_staging_records_the_cra_wedge_factor(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        cra_runner=lambda request: {
+            "stands": True, "status": "optimal", "message": "",
+            "blocks": len(request["blocks"]), "interfaces": 1,
+            "mu": request["mu"]},
+    )
+    assert document["cra_wedge_factor"] >= 1
+    for stage in document["stages"]:
+        assert stage["cra"]["blocks"] <= staging.CRA_BLOCK_BUDGET
+
+
+def test_include_cra_false_leaves_the_wedge_factor_null(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+    assert document["cra_wedge_factor"] is None

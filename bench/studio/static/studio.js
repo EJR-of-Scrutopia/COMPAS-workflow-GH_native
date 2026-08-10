@@ -880,6 +880,14 @@ function renderDataPanel(v) {
     counts.textContent = verdict.blocks + " blocks, "
       + verdict.interfaces + " contact interfaces";
     content.appendChild(counts);
+    const factor = state.bundle.staging && state.bundle.staging.cra_wedge_factor;
+    if (factor && factor > 1) {
+      const coarse = document.createElement("p");
+      coarse.textContent = "verdict computed on a coarser model than the "
+        + "drawing: neighbouring wedges merged in groups of " + factor
+        + " to keep the rigid-block solve affordable";
+      content.appendChild(coarse);
+    }
   }
 
   // Verification content: early-out if no verification file.

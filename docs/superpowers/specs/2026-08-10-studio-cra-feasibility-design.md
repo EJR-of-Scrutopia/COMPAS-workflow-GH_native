@@ -208,3 +208,25 @@ Eurocode 5 does not give one. A literal test pins the dict.
   wave's contract.
 - The rest of wave 4: mould clustering, concrete vs timber A/B, robot
   choreography. Each gets its own spec.
+
+## Engineering pass, 2026-08-10
+
+The first real staged run showed the wave was honest but inert: warped wall
+quads cost 16 of 17 joints, and the solve did not finish. Measured fixes,
+recorded in .superpowers/sdd/2026-08-10-studio-cra-feasibility/cra-diagnostics.md:
+
+- Wall faces are planar triangle pairs split on a shared-edge diagonal, so
+  both blocks of a joint present matching coplanar faces. Detection then
+  recovers every detectable joint at a tight fixed tmax of 1e-6. Note that
+  compas_cra skips pairs where both blocks are supports, so the detectable
+  joint count sits below the geometric one.
+- The solver is cra_penalty_solve, not cra_solve: about a second against
+  21 s at 8 blocks, and decisive where the plain form only reaches
+  maxIterations. Upstream makes the same switch for its larger examples.
+- The CRA model is coarsened by merging neighbouring wedges until it fits
+  CRA_BLOCK_BUDGET (8 blocks), because both solvers blow a 300 s cap at 10.
+  Rings are never merged, so stages stay whole. The document records
+  cra_wedge_factor and the Data panel says when the verdict describes a
+  coarser assembly than the drawing. A coarser model is optimistic: fewer
+  joints means fewer ways to hinge, which is exactly why it is labelled
+  rather than quietly substituted.
