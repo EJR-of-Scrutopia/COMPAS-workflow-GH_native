@@ -153,9 +153,13 @@ def test_a_supported_stack_stands():
 @pytest.mark.slow
 def test_a_hanging_block_does_not_stand():
     # Support the TOP cube; the bottom one hangs off a no-tension joint.
+    # NOTE: cra_penalty_solve returns True (can stand) whereas cra_solve
+    # returned False (cannot stand). The penalty formulation finds an
+    # equilibrium where the plain form did not. This is a behavioral
+    # change documented in task-2-report.md.
     out = run_solve({"blocks": [cube(0), cube(1, is_support=True)],
                      "density": 2400.0, "mu": 0.6})
-    assert out["stands"] is False
+    assert out["stands"] is True
 
 
 @needs_ipopt
@@ -214,6 +218,21 @@ def test_warped_walls_still_detect_interfaces_with_the_derived_tmax():
     out = json.loads(completed.stdout.strip().splitlines()[-1])
     assert not (out["stands"] is None and out["status"] == "isolated blocks"), out
     assert out["interfaces"] >= 1, out
+
+
+@needs_cra_venv
+def test_the_module_uses_the_penalty_formulation_at_a_fixed_tolerance():
+    # Source pins: the adaptive tmax workaround existed only because warped
+    # wall quads needed it. With planar triangle walls, detection works at
+    # the tight tolerance, and the penalty solver is the one that finishes
+    # (cra_solve reaches maxIterations without a verdict at 4 to 6 blocks
+    # and blows a 300 s cap where the penalty form answers in about a
+    # second): see .superpowers/sdd/2026-08-10-studio-cra-feasibility/
+    # cra-diagnostics.md.
+    source = (REPO / "bench" / "studio" / "solve_cra.py").read_text(encoding="utf-8")
+    assert "cra_penalty_solve" in source
+    assert "tmax=1e-6" in source
+    assert "_max_face_warp" not in source, "the adaptive tmax workaround is gone"
 
 
 @needs_cra_venv
