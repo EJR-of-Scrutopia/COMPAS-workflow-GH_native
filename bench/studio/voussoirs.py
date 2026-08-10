@@ -158,25 +158,53 @@ def loop_runs(
     return runs
 
 
-def ensure_three_runs(runs: List[dict]) -> List[dict]:
-    """Split the longest run in half until a solid can be built.
+def run_chain_key(run: dict) -> frozenset:
+    """Direction independent identity of a run's chain of edges.
 
-    Fewer than three corners cannot bound a prismatoid. Splitting keeps the
-    label, so a split run still describes the same joint; it just gives the
-    solid another corner. A loop with too few edges to reach three is
-    returned short, and the caller skips it rather than building nonsense.
+    Two cells see the same chain traversed in opposite directions, so the
+    key must ignore direction: it is the frozenset of undirected edge keys.
     """
 
-    runs = [dict(run) for run in runs]
-    while len(runs) < 3:
-        index = max(range(len(runs)), key=lambda i: len(runs[i]["edges"]))
-        edges = runs[index]["edges"]
-        if len(edges) < 2:
+    return frozenset(
+        (min(a, b), max(a, b)) for a, b in run["edges"]
+    )
+
+
+def canonical_split_vertices(run: dict, count: int) -> List[int]:
+    """Up to count interior vertices of a run, chosen the same way from
+    either direction.
+
+    Interior vertices are the junctions between consecutive edges, so both
+    cells see the same set. Picking the smallest analysis vertex ids makes
+    the choice independent of traversal direction and of build order.
+    """
+
+    interior = sorted({edge[1] for edge in run["edges"][:-1]})
+    return interior[:max(0, count)]
+
+
+def split_requests(runs: List[dict]) -> Dict[frozenset, set]:
+    """Which chains this loop needs split to reach three corners.
+
+    Fewer than three corners cannot bound a solid. A loop short of three
+    runs asks for extra corners on its longest runs first, but it only
+    ASKS: the caller unions the requests of every cell and applies them to
+    both sides of each chain, so a chain is always split identically by the
+    two cells that share it.
+    """
+
+    requests: Dict[frozenset, set] = {}
+    needed = max(0, 3 - len(runs))
+    order = sorted(range(len(runs)), key=lambda i: (-len(runs[i]["edges"]), i))
+    for index in order:
+        if needed <= 0:
             break
-        half = len(edges) // 2
-        label = runs[index]["label"]
-        runs[index:index + 1] = [
-            {"label": label, "edges": edges[:half]},
-            {"label": label, "edges": edges[half:]},
-        ]
-    return runs
+        capacity = len(runs[index]["edges"]) - 1
+        take = min(capacity, needed)
+        if take <= 0:
+            continue
+        vertices = canonical_split_vertices(runs[index], take)
+        if vertices:
+            requests.setdefault(run_chain_key(runs[index]), set()).update(vertices)
+            needed -= len(vertices)
+    return requests

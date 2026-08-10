@@ -110,19 +110,53 @@ def test_two_cells_agree_on_the_run_they_share():
     )
 
 
-def test_ensure_three_runs_splits_the_longest_run():
+def test_run_chain_key_is_direction_independent():
     v = studio()
-    runs = [
+    run = {"label": None, "edges": [(1, 4), (4, 3), (3, 0), (0, 1)]}
+    reversed_run = {"label": None, "edges": [(1, 0), (0, 3), (3, 4), (4, 1)]}
+    assert v.run_chain_key(run) == v.run_chain_key(reversed_run)
+
+
+def test_canonical_split_vertices_is_direction_independent():
+    v = studio()
+    run = {"label": None, "edges": [(1, 4), (4, 3), (3, 0), (0, 1)]}
+    reversed_run = {"label": None, "edges": [(1, 0), (0, 3), (3, 4), (4, 1)]}
+    assert v.canonical_split_vertices(run, 1) == v.canonical_split_vertices(reversed_run, 1)
+    assert v.canonical_split_vertices(run, 2) == v.canonical_split_vertices(reversed_run, 2)
+
+
+def test_canonical_split_vertices_returns_nothing_for_single_edge_run():
+    v = studio()
+    run = {"label": None, "edges": [(1, 4)]}
+    assert v.canonical_split_vertices(run, 1) == []
+
+
+def test_split_requests_on_loops():
+    v = studio()
+    one_run = [{"label": None, "edges": [(1, 4), (4, 3), (3, 0), (0, 1)]}]
+    requests = v.split_requests(one_run)
+    assert len(requests) == 1
+    vertices = list(requests.values())[0]
+    assert len(vertices) == 2
+    three_runs = [
         {"label": (0, 1), "edges": [(1, 4)]},
-        {"label": None, "edges": [(4, 3), (3, 0), (0, 1)]},
+        {"label": (1, 0), "edges": [(4, 3)]},
+        {"label": None, "edges": [(3, 0), (0, 1)]},
     ]
-    out = v.ensure_three_runs(runs)
-    assert len(out) == 3
-    assert sum(len(run["edges"]) for run in out) == 4
-    assert [run["label"] for run in out].count(None) == 2
+    requests_three = v.split_requests(three_runs)
+    assert len(requests_three) == 0
 
 
-def test_ensure_three_runs_gives_up_on_a_loop_that_is_too_small():
+def test_cross_cell_run_chain_agreement():
     v = studio()
-    runs = [{"label": None, "edges": [(0, 1)]}]
-    assert len(v.ensure_three_runs(runs)) == 1
+    users = v.edge_users(GRID_FACES)
+    first_runs = v.loop_runs(
+        v.boundary_loops(GRID_FACES, [0])[0],
+        v.edge_labels(GRID_FACES, [0], GRID_ASSIGNMENT, users))
+    second_runs = v.loop_runs(
+        v.boundary_loops(GRID_FACES, [1])[0],
+        v.edge_labels(GRID_FACES, [1], GRID_ASSIGNMENT, users))
+    shared_first = [r for r in first_runs if r["label"] == (0, 1)][0]
+    shared_second = [r for r in second_runs if r["label"] == (0, 0)][0]
+    assert v.run_chain_key(shared_first) == v.run_chain_key(shared_second)
+    assert v.canonical_split_vertices(shared_first, 1) == v.canonical_split_vertices(shared_second, 1)
