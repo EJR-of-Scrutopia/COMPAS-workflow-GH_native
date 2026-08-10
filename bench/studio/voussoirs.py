@@ -213,7 +213,12 @@ def split_requests(runs: List[dict]) -> Dict[frozenset, set]:
 def mesh_volume(
     vertices: Sequence[Sequence[float]], faces: Sequence[Sequence[int]]
 ) -> float:
-    """Signed volume of a closed mesh, fan triangulating any polygon."""
+    """Signed volume of a closed mesh, fan triangulating any polygon.
+
+    The volume is positive when the mesh is closed and wound outward from
+    the interior. A negative result signals that faces are wound inward
+    (inside out), which is a genuine orientation error.
+    """
 
     total = 0.0
     for face in faces:
@@ -224,7 +229,7 @@ def mesh_volume(
                 - a[1] * (b[0] * c[2] - b[2] * c[0])
                 + a[2] * (b[0] * c[1] - b[1] * c[0])
             ) / 6.0
-    return abs(total)
+    return total
 
 
 def _solid_from_corners(corners: List[int], normals, vertices, thickness) -> dict:

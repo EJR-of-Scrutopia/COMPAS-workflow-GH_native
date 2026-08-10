@@ -234,6 +234,20 @@ def test_thickness_drives_the_solid_and_volume_is_positive():
     assert thick_volume == pytest.approx(4.0 * thin_volume, rel=1e-9)
 
 
+def test_reversing_all_faces_flips_volume_sign():
+    v = studio()
+    built, _ = v.segment_voussoirs(
+        GRID_VERTICES, GRID_FACES, GRID_ASSIGNMENT, GRID_ORDER,
+        thickness=0.2, support_ids=[])
+    block = built[0]
+    original_volume = v.mesh_volume(block["vertices"], block["faces"])
+    # Reverse every face and check the sign flips while magnitude is preserved.
+    reversed_faces = [list(reversed(face)) for face in block["faces"]]
+    reversed_volume = v.mesh_volume(block["vertices"], reversed_faces)
+    assert reversed_volume == pytest.approx(-original_volume, rel=1e-9)
+    assert abs(reversed_volume) == pytest.approx(abs(original_volume), rel=1e-9)
+
+
 def test_support_marking_uses_every_vertex_of_the_cell():
     v = studio()
     # Vertex 0 belongs to cell (0, 0) only, and is not one of its corners
