@@ -397,7 +397,9 @@ git commit -m "feat(studio): boundary runs, one per neighbouring cell"
 - Test: `tests/studio/test_voussoirs.py`
 
 **Interfaces:**
-- Consumes: Task 1's `edge_users`, `face_components`, `component_loops`, `edge_labels`, `loop_runs`, `ensure_three_runs`; `blocks.vertex_normals(vertices, faces)`. Note the builder walks components directly rather than calling `boundary_loops`, because it needs each piece's own vertex set for support marking.
+- Consumes: Task 1's `edge_users`, `face_components`, `component_loops`, `edge_labels`, `loop_runs`, `run_chain_key`, `canonical_split_vertices`, `split_requests`; `blocks.vertex_normals(vertices, faces)`. The builder walks components directly rather than calling `boundary_loops`, because it needs each piece's own vertex set for support marking.
+
+Splitting is two-phase and that is load-bearing. A loop short of three corners can only *ask* for a chain to be split; the builder unions every cell's requests keyed by `run_chain_key` and then applies the union when laying out corners. That way a chain is always split identically by both cells sharing it, which is what keeps their joint faces coincident. A per-cell split decision would give one side a mid-joint corner the other never adds.
 - Produces, for Task 3:
   - `mesh_volume(vertices, faces) -> float` signed volume of a closed mesh, fan triangulating any polygon.
   - `segment_voussoirs(vertices, faces, assignment, order, thickness, support_ids) -> Tuple[List[dict], List[dict]]` returning `(blocks, skipped)`. Each block is `{"vertices", "faces", "is_support", "ring", "wedge", "corner_vertices"}`; each skipped entry is `{"ring", "wedge", "reason"}`. The signature mirrors `blocks.segment_blocks` except for the skip list.
@@ -513,6 +515,61 @@ def test_a_cell_of_two_touching_patches_becomes_two_voussoirs():
             assert (b, a) in set(edges)
 
 
+RING_VERTICES = [[c, r, 0] for r in range(4) for c in range(4)]
+RING_FACES = [
+    [r * 4 + c, r * 4 + c + 1, (r + 1) * 4 + c + 1, (r + 1) * 4 + c]
+    for r in range(3) for c in range(3)
+]
+
+
+def test_a_piece_with_a_hole_is_reported_not_modelled_wrong():
+    v = studio()
+    # The eight outer quads form one connected ring around the centre
+    # quad, so that piece has a hole: one component, two boundary loops. A
+    # prismatoid cannot represent it, and building one solid per loop would
+    # give overlapping shells.
+    assignment = [[0, 0]] * 9
+    assignment[4] = [0, 1]
+    built, skipped = v.segment_voussoirs(
+        RING_VERTICES, RING_FACES, assignment, [[0, 0], [0, 1]],
+        thickness=0.2, support_ids=[])
+    assert [(s["ring"], s["wedge"]) for s in skipped] == [(0, 0)]
+    assert "hole" in skipped[0]["reason"]
+    assert [(b["ring"], b["wedge"]) for b in built] == [(0, 1)]
+
+
+def test_a_split_asked_for_by_one_cell_is_honoured_by_its_neighbour():
+    v = studio()
+    # Centre quad borders cell (0, 0) on two edges and cell (0, 1) on two,
+    # so it has only two runs and must ask for a third corner. Cell (0, 0)
+    # has more than three runs of its own and asks for nothing, so it can
+    # only stay flush with the centre by honouring the centre's request.
+    assignment = [[0, 0]] * 9
+    for index in (3, 6, 7, 8):
+        assignment[index] = [0, 1]
+    assignment[4] = [1, 0]
+    built, skipped = v.segment_voussoirs(
+        RING_VERTICES, RING_FACES, assignment, [[0, 0], [0, 1], [1, 0]],
+        thickness=0.2, support_ids=[])
+    assert skipped == []
+    by_cell = {(b["ring"], b["wedge"]): b for b in built}
+    centre = by_cell[(1, 0)]
+    assert len(centre["corner_vertices"]) == 3, "the centre asked for a third corner"
+
+    def triangles(block):
+        out = set()
+        for face in block["faces"]:
+            out.add(frozenset(
+                tuple(round(c, 9) for c in block["vertices"][i]) for i in face))
+        return out
+
+    shared = triangles(centre) & triangles(by_cell[(0, 0)])
+    assert len(shared) == 4, (
+        "the split chain is two segments, so four coincident triangles, got "
+        "{}".format(len(shared))
+    )
+
+
 def test_a_cell_with_no_boundary_loop_is_skipped_not_solved():
     v = studio()
     # A degenerate face that walks the same two vertices twice has every
@@ -615,8 +672,12 @@ def segment_voussoirs(
     for face_index, pair in enumerate(assignment):
         faces_by_cell.setdefault((pair[0], pair[1]), []).append(face_index)
 
-    built: List[dict] = []
-    skipped: List[dict] = []
+    # Phase one: every piece's runs, and the splits each piece asks for.
+    # Asking rather than splitting is the point: a chain must be split the
+    # same way by both cells that share it, so the requests are unioned
+    # before any corner is laid out.
+    pieces: List[dict] = []
+    splits: Dict[frozenset, set] = {}
     for ring, wedge in order:
         face_indices = faces_by_cell.get((ring, wedge), [])
         if not face_indices:
@@ -628,30 +689,62 @@ def segment_voussoirs(
             piece_vertices = {v for i in component for v in faces[i]}
             is_support = any(v in support for v in piece_vertices)
             loops = component_loops(faces, component)
-            if not loops:
-                skipped.append({
-                    "ring": ring, "wedge": wedge,
-                    "reason": "piece has no boundary loop",
+            if len(loops) != 1:
+                # No loop at all is a degenerate patch. More than one loop
+                # on a SINGLE connected component means the piece has a
+                # hole, an annulus rather than a plate, and a prismatoid
+                # through one boundary cannot represent it: building one
+                # solid per loop would produce overlapping shells. Two
+                # patches that are merely separate arrive here as separate
+                # components, each with its own single loop, and are built
+                # normally. A holed piece is reported, not modelled wrong.
+                pieces.append({
+                    "ring": ring, "wedge": wedge, "is_support": is_support,
+                    "runs": None,
+                    "reason": ("piece has no boundary loop" if not loops
+                               else "piece has a hole, so no single boundary loop"),
                 })
                 continue
-            for loop in loops:
-                runs = ensure_three_runs(loop_runs(loop, labels))
-                if len(runs) < 3:
-                    skipped.append({
-                        "ring": ring, "wedge": wedge,
-                        "reason": "boundary loop has too few edges to give three corners",
-                    })
-                    continue
-                corners = [run["edges"][0][0] for run in runs]
-                solid = _solid_from_corners(corners, normals, vertices, thickness)
-                built.append({
-                    "vertices": solid["vertices"],
-                    "faces": solid["faces"],
-                    "is_support": is_support,
-                    "ring": ring,
-                    "wedge": wedge,
-                    "corner_vertices": corners,
-                })
+            runs = loop_runs(loops[0], labels)
+            for key, wanted in split_requests(runs).items():
+                splits.setdefault(key, set()).update(wanted)
+            pieces.append({
+                "ring": ring, "wedge": wedge, "is_support": is_support,
+                "runs": runs, "reason": None,
+            })
+
+    # Phase two: lay out corners honouring every split anyone asked for.
+    built: List[dict] = []
+    skipped: List[dict] = []
+    for piece in pieces:
+        if piece["runs"] is None:
+            skipped.append({
+                "ring": piece["ring"], "wedge": piece["wedge"],
+                "reason": piece["reason"],
+            })
+            continue
+        corners: List[int] = []
+        for run in piece["runs"]:
+            corners.append(run["edges"][0][0])
+            extra = splits.get(run_chain_key(run), set())
+            for _, vertex in run["edges"][:-1]:
+                if vertex in extra:
+                    corners.append(vertex)
+        if len(corners) < 3:
+            skipped.append({
+                "ring": piece["ring"], "wedge": piece["wedge"],
+                "reason": "boundary loop has too few corners to form a solid",
+            })
+            continue
+        solid = _solid_from_corners(corners, normals, vertices, thickness)
+        built.append({
+            "vertices": solid["vertices"],
+            "faces": solid["faces"],
+            "is_support": piece["is_support"],
+            "ring": piece["ring"],
+            "wedge": piece["wedge"],
+            "corner_vertices": corners,
+        })
     return built, skipped
 ```
 
