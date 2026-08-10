@@ -50,6 +50,7 @@ def test_bundle_builds_without_staging_or_verification(tmp_path, monkeypatch):
     assert document["supports"] == [0, 2, 6, 8]
     assert document["loads"]["4"] == [0.0, 0.0, -1000.0]
     assert document["reactions"] == {}
+    assert document["member_forces"] == []
     assert len(document["segments"]["assignment"]) == 4
     assert (studies / "tiny" / "studio" / "bundle-concrete-r4-t200.json").is_file()
 
@@ -67,6 +68,17 @@ def test_bundle_embeds_staging_and_verification_when_present(tmp_path, monkeypat
     document = bundle.build_bundle("Tiny", "concrete", 4)
     assert document["staging"] == {"rings": 4, "stages": []}
     assert document["verification"]["material"] == "C30/37 unreinforced"
+
+
+def test_bundle_ships_converted_member_forces_when_present(tmp_path, monkeypatch):
+    bundle, upload, _ = fake_export(tmp_path, monkeypatch)
+    contract = tiny_contract()
+    contract["equilibrium"]["memberForces"] = [-2.0] * 12
+    (upload / "Tiny-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    document = bundle.build_bundle("Tiny", "concrete", 4)
+    assert document["member_forces"] == [-2000.0] * 12
 
 
 def test_load_or_build_serves_the_cache_without_rebuilding(tmp_path, monkeypatch):

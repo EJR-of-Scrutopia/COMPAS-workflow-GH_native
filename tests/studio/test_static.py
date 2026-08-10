@@ -72,6 +72,13 @@ def test_the_layer_registry_has_the_agreed_names():
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
 
 
+def test_wire_forces_layer_is_registered_and_instanced():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '"forces"' in js and "Wire forces" in js
+    assert "setColorAt" in js
+    assert "member_forces" in js
+
+
 def test_record_mode_is_frame_indexed_not_clock_driven():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "recordAnimation" in js

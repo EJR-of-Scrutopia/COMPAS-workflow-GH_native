@@ -77,6 +77,7 @@ def build_bundle(
             str(k): v
             for k, v in geometry.support_reactions_newtons(contract).items()
         },
+        "member_forces": geometry.member_forces_newtons(contract),
         "segments": binned,
         "staging": _read_optional(staging_path(slug, material, rings, thickness)),
         "verification": _read_optional(

@@ -110,6 +110,30 @@ def _vector_map_newtons(
     return loads
 
 
+def member_forces_newtons(contract: Mapping[str, Any]) -> List[float]:
+    """Axial force per member, in newtons, tension positive, one per edge.
+
+    Mirrors src/ananke_fea/mesh.py:member_forces -- the kN to N conversion
+    happens exactly once, here. Returns [] when the contract carries no
+    equilibrium.memberForces. Raises ValueError naming the mismatch when
+    memberForces is present but its count differs from a non-empty
+    equilibrium.edges list (edges is the order buildWiresAndNodes builds
+    wire instances in, so the two must line up one-to-one).
+    """
+
+    equilibrium = _equilibrium(contract)
+    forces = equilibrium.get("memberForces", [])
+    if not forces:
+        return []
+    edges = equilibrium.get("edges", [])
+    if edges and len(forces) != len(edges):
+        raise ValueError(
+            "equilibrium.memberForces has {} entries but equilibrium.edges "
+            "has {}; they must be one-to-one".format(len(forces), len(edges))
+        )
+    return [float(value) * KN_TO_N for value in forces]
+
+
 def face_centroids(vertices: List[list], faces: List[list]) -> List[List[float]]:
     out = []
     for face in faces:

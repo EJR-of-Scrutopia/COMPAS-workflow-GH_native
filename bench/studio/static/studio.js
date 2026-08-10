@@ -144,6 +144,7 @@ function buildWiresAndNodes(bundle) {
   const wires = new THREE.InstancedMesh(cylinder, materials.steel.clone(), edges.length);
   const up = new THREE.Vector3(0, 1, 0);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  const baseMatrices = [];
   edges.forEach(([u, v], i) => {
     const a = new THREE.Vector3(...vertices[u]);
     const b = new THREE.Vector3(...vertices[v]);
@@ -152,7 +153,12 @@ function buildWiresAndNodes(bundle) {
     s.set(1, d.length(), 1);
     m.compose(a, q, s);
     wires.setMatrixAt(i, m);
+    baseMatrices.push(m.clone());
   });
+  // Task 6: the forces layer rebuilds instance matrices (thicker wire =
+  // bigger force) and restores them on toggle-off; the base endpoints/
+  // orientation/length live here so that restore is exact.
+  wires.userData.baseMatrices = baseMatrices;
   const sphere = new THREE.SphereGeometry(nodeRadius, 12, 8);
   const nodes = new THREE.InstancedMesh(sphere, materials.steel.clone(), vertices.length);
   vertices.forEach((v, i) => {
@@ -222,6 +228,7 @@ function buildScene(bundle) {
   state.objects.wires = wires;
   state.objects.nodes = nodes;
   scene.add(wires); scene.add(nodes);
+  applyWireForces();
 
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(60, 64),
@@ -288,6 +295,7 @@ const LAYERS = [
   ["overlays", "Text overlays"],
   ["pulse", "Integrity pulse"],
   ["wires", "Thrust wires and nodes"],
+  ["forces", "Wire forces"],
 ];
 
 function finalStage() {
@@ -313,6 +321,14 @@ function layerAvailability(name) {
     return state.bundle && Object.keys(state.bundle.reactions).length
       ? { on: true }
       : { on: false, why: "this contract shipped no reaction vectors" };
+  }
+  if (name === "forces") {
+    const bundle = state.bundle;
+    const forceCount = bundle && bundle.member_forces ? bundle.member_forces.length : 0;
+    const edgeCount = bundle ? bundle.analysis_mesh.edges.length : 0;
+    return forceCount && forceCount === edgeCount
+      ? { on: true }
+      : { on: false, why: "this contract shipped no member forces" };
   }
   return { on: true };
 }
@@ -343,6 +359,7 @@ function setLayer(name, on) {
   }
   if (name === "loads" || name === "reactions") updateVectorLayers();
   if (name === "stress" || name === "deflection") recolourSegments();
+  if (name === "forces") applyWireForces();
   if (name === "pulse" && !on && state.objects.shell) {
     // The pulse is the only thing that writes emissive on segment
     // materials; turning it off sweeps that back to zero rather than
@@ -363,6 +380,47 @@ const STRESS_SCALE = (() => {
     return u < 0 ? zero.clone().lerp(compression, -u) : zero.clone().lerp(tension, u);
   };
 })();
+
+// ---------- wire forces (Task 6) ----------
+// Colours and thickens each thrust-network wire by its own TNA member
+// force. Tension positive, same convention as STRESS_SCALE: compression
+// toward blue, tension toward red. buildWiresAndNodes stores the base
+// (endpoint/orientation/length) matrix per edge on wires.userData so this
+// can rebuild thicker/tinted matrices when on and restore the originals
+// exactly when off, without touching the "wires" visibility toggle.
+function applyWireForces() {
+  const wires = state.objects.wires;
+  const base = wires && wires.userData.baseMatrices;
+  if (!wires || !base) return;
+  const availability = layerAvailability("forces");
+  const active = !!(state.layers.forces && availability.on);
+  if (!active) {
+    for (let i = 0; i < base.length; i++) wires.setMatrixAt(i, base[i]);
+    wires.instanceMatrix.needsUpdate = true;
+    wires.material.color.copy(materials.steel.color);
+    if (wires.instanceColor) {
+      const white = new THREE.Color(0xffffff);
+      for (let i = 0; i < base.length; i++) wires.setColorAt(i, white);
+      wires.instanceColor.needsUpdate = true;
+    }
+    return;
+  }
+  const forces = state.bundle.member_forces;
+  let magnitude = 1e-9;
+  for (const force of forces) magnitude = Math.max(magnitude, Math.abs(force));
+  const position = new THREE.Vector3(), quaternion = new THREE.Quaternion(), scale = new THREE.Vector3();
+  const m = new THREE.Matrix4();
+  wires.material.color.set(0xffffff);   // tint through instance colour, not the material
+  forces.forEach((force, i) => {
+    base[i].decompose(position, quaternion, scale);
+    const radiusScale = 1 + 2 * Math.abs(force) / magnitude;
+    m.compose(position, quaternion, new THREE.Vector3(radiusScale, scale.y, radiusScale));
+    wires.setMatrixAt(i, m);
+    wires.setColorAt(i, STRESS_SCALE(force, magnitude));
+  });
+  wires.instanceMatrix.needsUpdate = true;
+  wires.instanceColor.needsUpdate = true;
+}
 
 function stressValue(pair, surface, magnitude) {
   // The signed value the heatmap colours: the picked surface's dominant

@@ -61,6 +61,17 @@ def test_support_reactions_share_the_load_reader_and_conversion():
     assert g.support_reactions_newtons(tiny_contract()) == {}
 
 
+def test_member_forces_convert_once_and_check_the_count():
+    g = studio()
+    contract = tiny_contract()
+    contract["equilibrium"]["memberForces"] = [-2.0] * 12
+    assert g.member_forces_newtons(contract) == [-2000.0] * 12
+    assert g.member_forces_newtons(tiny_contract()) == []
+    contract["equilibrium"]["memberForces"] = [-2.0] * 5
+    with pytest.raises(ValueError, match="5"):
+        g.member_forces_newtons(contract)
+
+
 def test_face_centroid_and_area_on_a_flat_unit_quad():
     g = studio()
     verts = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
