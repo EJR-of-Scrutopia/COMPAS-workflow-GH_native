@@ -18,6 +18,11 @@
 <canvas id="view"></canvas>
 <div id="hud"></div>
 <div id="banner" class="hidden"></div>
+<div id="legend" class="hidden">
+  <div id="legend-title"></div>
+  <div id="legend-bar"></div>
+  <div id="legend-labels"><span id="legend-min"></span><span id="legend-zero"></span><span id="legend-max"></span></div>
+</div>
 <aside id="panel">
   <section id="study-section">
     <h2>Study</h2>
@@ -62,6 +67,7 @@
     <h2>FEA layers</h2>
     <div id="layer-toggles"></div>
     <label>Stress surface <select id="stress-surface">
+      <option value="per" selected>Per surface</option>
       <option value="worst">Worst of both</option>
       <option value="top">Top</option>
       <option value="bottom">Bottom</option>

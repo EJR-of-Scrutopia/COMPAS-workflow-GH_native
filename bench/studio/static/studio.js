@@ -2,7 +2,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { segmentFaces, segmentKey } from "/static/binning.js";
-import { vertexNormals, extrudeSegment, boxUVs, segmentUVOffset } from "/static/fields.js";
+import {
+  vertexNormals, extrudeSegment, boxUVs, segmentUVOffset,
+  smoothStressField, interpolateScalarField,
+} from "/static/fields.js";
 
 // ---------- app state ----------
 const state = {
@@ -521,6 +524,24 @@ function recolourSegments() {
   if (displacement) for (const d of displacement) {
     deflectionMax = Math.max(deflectionMax, Math.hypot(d[0], d[1], d[2]));
   }
+  // Smooth per-vertex stress: face values averaged onto analysis vertices,
+  // then carried to render vertices through vertex_sources, the same rule
+  // the displacement field uses. Null means no adjacent face had data.
+  let topField = null, bottomField = null, worstField = null, pickedField = null;
+  if (stage && wantStress) {
+    const analysis = state.bundle.analysis_mesh;
+    const sources = mesh.vertex_sources;
+    const smooth = (which) => interpolateScalarField(
+      smoothStressField(analysis.faces, analysis.vertices.length, stage.stresses, which),
+      sources);
+    if (surface === "per") {
+      topField = smooth("top");
+      bottomField = smooth("bottom");
+      worstField = smooth("worst");
+    } else {
+      pickedField = smooth(surface);
+    }
+  }
   const white = new THREE.Color(0xffffff);
   for (const segment of state.objects.shell.children) {
     const corners = segment.userData.corners;
@@ -528,11 +549,21 @@ function recolourSegments() {
     const positions = segment.geometry.getAttribute("position");
     const colours = new Float32Array(corners.length * 3);
     corners.forEach((corner, i) => {
-      const parent = mesh.parent_face[corner.face];
-      const stressPair = stage && stage.stresses[String(parent)];
-      let colour = wantStress
-        ? STRESS_SCALE(stressValue(stressPair, surface, stressMagnitude), stressMagnitude)
-        : (deflectionPeakOnly ? STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly) : null);
+      let colour = null;
+      if (wantStress) {
+        if (pickedField || topField) {
+          const field = pickedField || (
+            corner.surface === "top" ? topField
+              : corner.surface === "bottom" ? bottomField : worstField);
+          const value = field[corner.v];
+          colour = value === null ? white : STRESS_SCALE(value, stressMagnitude);
+        } else {
+          // Verification peaks only: the flat honest tint, as before.
+          colour = STRESS_SCALE(stressValue(null, surface, stressMagnitude), stressMagnitude);
+        }
+      } else if (deflectionPeakOnly) {
+        colour = STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly);
+      }
       const d = displacement ? displacement[corner.v] : null;
       if (!colour && wantDeflection && d) {
         colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
@@ -557,6 +588,45 @@ function recolourSegments() {
       ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
       : (materials[state.bundle.material] || materials.concrete).clone();
   }
+  updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage);
+}
+
+function updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage) {
+  const legend = document.getElementById("legend");
+  const showStress = state.layers.stress, showDeflection = state.layers.deflection;
+  if (!state.bundle || (!showStress && !showDeflection)) {
+    legend.classList.add("hidden");
+    return;
+  }
+  legend.classList.remove("hidden");
+  const surface = document.getElementById("stress-surface").value;
+  const surfaceLabels = {
+    per: "top and bottom skins",
+    worst: "worst of both",
+    top: "top surface",
+    bottom: "bottom surface",
+  };
+  const title = document.getElementById("legend-title");
+  const minLabel = document.getElementById("legend-min");
+  const zeroLabel = document.getElementById("legend-zero");
+  const maxLabel = document.getElementById("legend-max");
+  if (showStress) {
+    legend.classList.remove("deflection");
+    title.textContent = stage
+      ? "stress, MPa (" + (surfaceLabels[surface] || surface) + ")"
+      : "stress, MPa (peaks only)";
+    minLabel.textContent = (-stressMagnitude / 1e6).toFixed(2);
+    zeroLabel.textContent = "0";
+    maxLabel.textContent = (stressMagnitude / 1e6).toFixed(2);
+    return;
+  }
+  legend.classList.add("deflection");
+  title.textContent = stage ? "deflection, mm" : "deflection, mm (peaks only)";
+  minLabel.textContent = "0";
+  zeroLabel.textContent = "";
+  maxLabel.textContent = stage
+    ? (deflectionMax * 1000).toFixed(2)
+    : (deflectionPeakOnly ? (deflectionPeakOnly * 1000).toFixed(2) : "");
 }
 
 // ---------- vector layers ----------

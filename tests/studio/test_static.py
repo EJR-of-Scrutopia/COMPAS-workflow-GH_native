@@ -250,3 +250,28 @@ def test_recolour_consumes_the_corner_metadata():
     body = js[start:end]
     assert "userData.corners" in body
     assert "userData.basePositions" in body
+
+
+def test_stress_smoothing_is_wired_and_per_surface_is_the_default():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '<option value="per" selected>' in html
+    assert "smoothStressField" in js and "interpolateScalarField" in js
+    start = js.index("function recolourSegments(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "corner.surface" in body, "per-surface mode must pick the field by skin"
+
+
+def test_the_legend_exists_and_tracks_the_layers():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    for element_id in ("legend", "legend-title", "legend-bar", "legend-min", "legend-zero", "legend-max"):
+        assert 'id="{}"'.format(element_id) in html, "index.html lost {}".format(element_id)
+    assert "function updateLegend(" in js
+    assert "peaks only" in js, "the fallback legend must say peaks only"
+    assert "#legend-bar" in css
+    start = js.index("function recolourSegments(")
+    end = js.index("\n}", start)
+    assert "updateLegend(" in js[start:end], "recolourSegments must refresh the legend"
