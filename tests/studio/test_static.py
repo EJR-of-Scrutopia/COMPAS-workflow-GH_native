@@ -586,3 +586,12 @@ def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     body = js[hud_start:hud_end]
     assert "state.taper" in body
     assert "uniform thickness" in body, "the HUD must say the analysis did not taper"
+
+
+def test_sprayed_concrete_grows_instead_of_dropping():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applySceneAtTime(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "sprayedMaterial()" in body
+    assert "DROP_HEIGHT" in body, "other materials still drop"

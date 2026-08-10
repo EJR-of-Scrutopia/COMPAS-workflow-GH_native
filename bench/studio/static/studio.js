@@ -1305,7 +1305,9 @@ function rebuildTimeline() {
 
 function timelineDuration() {
   const count = state.segments ? state.segments.order.length : 0;
-  return state.timeline.inflateSeconds + count * state.timeline.dropSeconds + state.timeline.dropSeconds + STRIKE_SECONDS;
+  const step = sprayedMaterial() ? state.timeline.dropSeconds / 2 : state.timeline.dropSeconds;
+  return state.timeline.inflateSeconds + count * step
+    + state.timeline.dropSeconds + STRIKE_SECONDS;
 }
 
 function pieceTint(key) {
@@ -1442,6 +1444,7 @@ function applySceneAtTime(t) {
   // inflation is complete.
   const build = Math.max(0, t - state.timeline.inflateSeconds);
   const dropSeconds = state.timeline.dropSeconds;
+  const sprayed = sprayedMaterial();
   for (const segment of state.objects.shell.children) {
     // No piece exists on screen while the net is still finding its form:
     // gate on inflation, not on the drop-window arithmetic below, or the
@@ -1453,19 +1456,28 @@ function applySceneAtTime(t) {
       continue;
     }
     const position = state.segmentIndex.get(segment.userData.key).order;
-    const start = position * dropSeconds;
+    // Sprayed concrete is not precast: pieces overlap by half a window so
+    // the shell reads as continuous build up over the formwork rather than
+    // as arrivals.
+    const step = sprayed ? dropSeconds / 2 : dropSeconds;
+    const start = position * step;
     if (build < start) {
       segment.visible = false;
-    } else if (build < start + dropSeconds) {
-      const u = (build - start) / dropSeconds;
-      segment.visible = true;
-      segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
-    } else {
-      segment.visible = true;
+      continue;
+    }
+    const u = Math.min(1, (build - start) / dropSeconds);
+    segment.visible = true;
+    if (sprayed) {
       segment.position.z = 0;
+      const grown = 0.001 + 0.999 * easeOutCubic(u);
+      segment.scale.set(1, 1, grown);
+    } else {
+      segment.scale.set(1, 1, 1);
+      segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     }
   }
-  const buildEnd = state.segments.order.length * dropSeconds + dropSeconds;
+  const step = sprayed ? dropSeconds / 2 : dropSeconds;
+  const buildEnd = state.segments.order.length * step + dropSeconds;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
   falsework.visible = !!state.layers.falsework && strikeU < 1;
