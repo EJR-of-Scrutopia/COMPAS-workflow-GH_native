@@ -23,6 +23,11 @@ REPO = Path(__file__).resolve().parents[2]
 UPLOAD_DIR = REPO / "bench" / "demo" / "upload from grasshopper"
 STUDIES_DIR = REPO / "bench" / "studies"
 
+# The bundle document shape: if a cached document lacks any of these keys,
+# it is stale and must be rebuilt. This is how the cache invalidates itself
+# as new document fields are added, without requiring manual version numbers.
+REQUIRED_BUNDLE_KEYS = ("pieces",)
+
 
 def bundle_path(slug: str, material: str, rings: int, thickness: float) -> Path:
     mm = round(thickness * 1000)
@@ -109,6 +114,6 @@ def load_or_build_bundle(
     cached = _read_optional(
         bundle_path(geometry.slugify(export_name), material, rings, thickness)
     )
-    if cached is not None:
+    if cached is not None and all(key in cached for key in REQUIRED_BUNDLE_KEYS):
         return cached
     return build_bundle(export_name, material, rings, thickness)

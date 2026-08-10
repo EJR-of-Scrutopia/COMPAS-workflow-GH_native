@@ -124,3 +124,14 @@ def test_the_bundle_ships_drawn_pieces_on_the_render_mesh(tmp_path, monkeypatch)
                 "piece vertices must index the render mesh, not the analysis mesh"
             )
         assert piece["faces"], "a piece needs faces"
+
+
+def test_stale_cached_bundles_missing_pieces_are_rebuilt(tmp_path, monkeypatch):
+    bundle, _, _ = fake_export(tmp_path, monkeypatch)
+    fresh = bundle.build_bundle("Tiny", "concrete", 4)
+    cached_path = bundle.bundle_path("tiny", "concrete", 4, 0.2)
+    stale = dict(fresh)
+    del stale["pieces"]
+    cached_path.write_text(json.dumps(stale), encoding="utf-8")
+    loaded = bundle.load_or_build_bundle("Tiny", "concrete", 4)
+    assert loaded["pieces"], "stale cached bundle without pieces must be rebuilt"
