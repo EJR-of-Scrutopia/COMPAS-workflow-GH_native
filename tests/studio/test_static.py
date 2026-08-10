@@ -538,6 +538,19 @@ def test_sprayed_concrete_has_no_joints_at_all():
     )
 
 
+def test_the_net_inflates_before_the_build():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="inflate-seconds"' in html
+    assert "function inflationFactor(" in js
+    start = js.index("function applySceneAtTime(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "inflationFactor(" in body, "inflation is part of the pure timeline"
+    for clock in ("performance.now", "Date.now", "requestAnimationFrame"):
+        assert clock not in body
+
+
 def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")

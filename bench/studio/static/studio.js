@@ -779,14 +779,16 @@ function arrowField(entries, colour) {
 }
 
 // ---------- integrity pulse ----------
-function currentStageIndex() {
+function currentStageIndex(build) {
   // Which build stage the timeline is inside: stages are rings, and a ring's
-  // segments occupy a contiguous run of the drop order.
+  // segments occupy a contiguous run of the drop order. build is elapsed
+  // time since the net finished inflating (see applySceneAtTime), so the
+  // stage reported here always matches the segments actually on screen.
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
   const dropSeconds = state.timeline.dropSeconds;
-  const placed = Math.floor(state.timeline.t / dropSeconds);
+  const placed = Math.floor(build / dropSeconds);
   let ringsDone = 0, count = 0;
   for (const [r] of state.segments.order) {
     count += 1;
@@ -796,9 +798,9 @@ function currentStageIndex() {
   return Math.max(0, Math.min(stages.length - 1, ringsDone - 1));
 }
 
-function applyPulse() {
+function applyPulse(build) {
   if (!state.layers.pulse || !state.bundle || !state.objects.shell) return;
-  const index = currentStageIndex();
+  const index = currentStageIndex(build);
   if (index === null) return;
   const stage = state.bundle.staging.stages[index];
   const cra = stage.cra;
@@ -808,7 +810,7 @@ function applyPulse() {
   const good = !!(stage.struck_now && stage.struck_now.converged
     && cra && cra.stands === true);
   const tint = good ? 0x1a3a1a : 0x3a1a1a;
-  const pulse = 0.5 + 0.5 * Math.sin(state.timeline.t * 4);
+  const pulse = 0.5 + 0.5 * Math.sin(build * 4);
   for (const segment of state.objects.shell.children) {
     if (!segment.visible) continue;
     segment.material.emissive = new THREE.Color(tint);
@@ -850,7 +852,10 @@ function updateHud() {
   }
   const staging = state.bundle.staging;
   if (staging && staging.stages && staging.stages.length) {
-    const index = currentStageIndex();
+    // Same build clock applySceneAtTime derives: the HUD's stage line must
+    // match what is actually on screen, not run ahead during inflation.
+    const build = Math.max(0, state.timeline.t - state.timeline.inflateSeconds);
+    const index = currentStageIndex(build);
     const stage = staging.stages[index === null ? staging.stages.length - 1 : index];
     lines.push("stage " + stage.stage + " of " + staging.stages.length);
     lines.push("formwork carries " + (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN");
@@ -1279,6 +1284,7 @@ function rebuildTimeline() {
   state.timeline = {
     playing: false, t: 0,
     dropSeconds,
+    inflateSeconds: +document.getElementById("inflate-seconds").value,
     orbitSpeed: +document.getElementById("orbit-speed").value,
     orbitDistance: +document.getElementById("orbit-distance").value,
     autoSpin: true,
@@ -1299,7 +1305,7 @@ function rebuildTimeline() {
 
 function timelineDuration() {
   const count = state.segments ? state.segments.order.length : 0;
-  return count * state.timeline.dropSeconds + state.timeline.dropSeconds + STRIKE_SECONDS;
+  return state.timeline.inflateSeconds + count * state.timeline.dropSeconds + state.timeline.dropSeconds + STRIKE_SECONDS;
 }
 
 function pieceTint(key) {
@@ -1394,23 +1400,55 @@ function sceneCentroid() {
   return new THREE.Vector3(x / vertices.length, y / vertices.length, 2);
 }
 
+// The opening move: the net rises from the flat form diagram into its
+// found shape before any piece is placed. inflationFactor(t) is 0 to
+// inflateSeconds in, 1 after. The formGraph the contract ships is the flat
+// form diagram itself: on the real export its xy already matches the
+// thrust surface and its z is zero throughout, so this is a straight
+// interpolation of z toward the equilibrium surface, not an invented
+// effect.
+function inflationFactor(t) {
+  // 0 is the flat form diagram, 1 the found thrust surface.
+  const seconds = state.timeline.inflateSeconds;
+  if (seconds <= 0) return 1;
+  return Math.min(1, Math.max(0, t / seconds));
+}
+
+function applyInflation(u) {
+  // The wires and nodes are instanced, so inflation moves the whole group
+  // rather than rebuilding instances: the net rises from the flat plan
+  // into form. z is scaled because the form diagram sits at z = 0 and
+  // shares the thrust surface's xy exactly.
+  for (const key of ["wires", "nodes"]) {
+    const object = state.objects[key];
+    if (object) object.scale.z = u;
+  }
+}
+
 // Everything that depends on the build/strike clock but not on the camera:
-// segment drop/visibility, falsework, wires/nodes strike state, and the
-// integrity pulse. setLayer's wires/falsework toggle and rebuildWiresAndNodes
-// both need to recompute this scene state after the objects they touch
-// change, but neither one should be allowed to move the camera -- only
-// applyTimeline's own scrubber/play/record callers get to do that. Kept
-// pure in t, same as applyTimeline: no clock reads here either.
+// inflation, segment drop/visibility, falsework, wires/nodes strike state,
+// and the integrity pulse. setLayer's wires/falsework toggle and
+// rebuildWiresAndNodes both need to recompute this scene state after the
+// objects they touch change, but neither one should be allowed to move the
+// camera -- only applyTimeline's own scrubber/play/record callers get to
+// do that. Kept pure in t, same as applyTimeline: no clock reads here
+// either.
 function applySceneAtTime(t) {
   state.timeline.t = t;
+  const inflate = inflationFactor(t);
+  applyInflation(inflate);
+  // The timeline opens with the net inflating into form; everything after
+  // it (drop, strike, pulse) runs on build time, which only starts once
+  // inflation is complete.
+  const build = Math.max(0, t - state.timeline.inflateSeconds);
   const dropSeconds = state.timeline.dropSeconds;
   for (const segment of state.objects.shell.children) {
     const position = state.segmentIndex.get(segment.userData.key).order;
     const start = position * dropSeconds;
-    if (t < start) {
+    if (build < start) {
       segment.visible = false;
-    } else if (t < start + dropSeconds) {
-      const u = (t - start) / dropSeconds;
+    } else if (build < start + dropSeconds) {
+      const u = (build - start) / dropSeconds;
       segment.visible = true;
       segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     } else {
@@ -1419,14 +1457,16 @@ function applySceneAtTime(t) {
     }
   }
   const buildEnd = state.segments.order.length * dropSeconds + dropSeconds;
-  const strikeU = t <= buildEnd ? 0 : Math.min(1, (t - buildEnd) / STRIKE_SECONDS);
+  const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
   falsework.visible = !!state.layers.falsework && strikeU < 1;
-  falsework.material.opacity = 0.3 * (1 - strikeU);
+  // The falsework fades in with the inflation as well as out with the
+  // strike, so it never appears before the net has any form to support.
+  falsework.material.opacity = 0.3 * inflate * (1 - strikeU);
   falsework.position.z = -0.02 - 1.5 * strikeU;
   // The strike takes the thrust network with it: wires and nodes fade,
   // drop and vanish on the same clock, and scrubbing back restores them
-  // because everything here is computed from t.
+  // because everything here is computed from t (by way of build).
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
@@ -1434,7 +1474,7 @@ function applySceneAtTime(t) {
     object.material.opacity = 1 - strikeU;
     object.position.z = -1.5 * strikeU;
   }
-  applyPulse();
+  applyPulse(build);
 }
 
 function applyTimeline(t) {
@@ -1530,7 +1570,7 @@ scrubber.addEventListener("input", () => {
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
   updateHud();
 });
-for (const [id, prop] of [["drop-speed", "dropSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
+for (const [id, prop] of [["drop-speed", "dropSeconds"], ["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
     if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
   });
