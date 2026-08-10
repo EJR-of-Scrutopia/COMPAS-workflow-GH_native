@@ -4,8 +4,11 @@ bench/studio runs in the main venv, which mirrors Rhino 8. Importing
 compas_fea2 there would fight the fea pin; importing ananke_fea would pull
 compat shims into an environment they were never written for; importing
 numpy, scipy or compas would couple the server to the pinned stack for no
-reason: everything the studio does is JSON and subprocess. The solver work
-is shelled to .venv-fea, so only import statements are forbidden, matching
+reason: everything the studio does is JSON and subprocess. pyomo and
+shapely are on the list for the same reason: pyomo lives in .venv-cra and
+reaches for a native IPOPT binary, shapely carries its own GEOS, and
+neither belongs in the server process. The solver work is shelled to
+.venv-fea, so only import statements are forbidden, matching
 tests/test_no_fea_cross_import.py.
 """
 
@@ -17,8 +20,10 @@ from pathlib import Path
 STUDIO = Path(__file__).resolve().parents[2] / "bench" / "studio"
 
 FORBIDDEN = re.compile(
-    r"^\s*(import\s+(compas_fea2|compas_cra|compas_assembly|ananke_fea|compas|numpy|scipy)\b"
-    r"|from\s+(compas_fea2|compas_cra|compas_assembly|ananke_fea|compas|numpy|scipy)\b)",
+    r"^\s*(import\s+(compas_fea2|compas_cra|compas_assembly|ananke_fea|compas"
+    r"|numpy|scipy|pyomo|shapely)\b"
+    r"|from\s+(compas_fea2|compas_cra|compas_assembly|ananke_fea|compas"
+    r"|numpy|scipy|pyomo|shapely)\b)",
     re.MULTILINE,
 )
 

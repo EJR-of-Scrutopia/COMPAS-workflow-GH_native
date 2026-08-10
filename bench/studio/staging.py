@@ -9,9 +9,9 @@ through solve_cra.py. Voussoirs replace each cell's full mesh boundary with
 one planar face per neighbour, so a joint is one flat face shared by exactly
 two blocks. This dramatically cuts both face count and contact point count
 at the cost of fidelity to the curved vault: the analysis runs on a faceted
-model. blocks.py remains the mesh-following model used for rendering parity
-and volume comparison. This module never imports the solver stack; the guard
-test holds it to that.
+model. blocks.py is no longer on that path at all; this module does not
+import it. This module never imports the solver stack; the guard test holds
+it to that.
 
 GRAVITY, DENSITIES and THICKNESS duplicate ananke_fea values on purpose
 (the import is forbidden); tests/studio/test_staging.py pins them to the
@@ -26,7 +26,6 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-import blocks
 import geometry
 import segmentation
 import voussoirs

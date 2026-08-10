@@ -1,9 +1,15 @@
-"""Rigid blocks for CRA: the studio's segments as closed prisms.
+"""The mesh-following block model: the studio's segments as closed prisms.
 
-Stdlib only: staging imports this module, and the guard test forbids the
-solver stacks there. Blocks are built on the analysis mesh, the canonical
-surface; adjacent blocks offset shared vertices identically because the
-normals come from the whole mesh, so joints stay closed. The offset and
+Not on the CRA path any more. voussoirs.py builds what the rigid-block
+solver sees, and staging.py no longer imports this module. It is retained
+for two jobs: it is the reference the voussoir model's volume is measured
+against (bench/scripts/cra_acceptance.py), and it is the pin that keeps
+node parity with static/fields.js honest.
+
+Stdlib only, like every studio module the server imports. Blocks are built
+on the analysis mesh, the canonical surface; adjacent blocks offset shared
+vertices identically because the normals come from the whole mesh, so
+joints stay closed. The offset and
 boundary maths mirror static/fields.js (vertexNormals,
 segmentBoundaryEdges, extrudeSegment); tests/studio/test_blocks.py proves
 the parity by running the JS side in node on the same mesh.
