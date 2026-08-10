@@ -10,6 +10,8 @@ const state = {
   layers: {},          // Task 14 registers layer objects here
   objects: {},         // shell, wires, nodes, falsework, columns, ground
   timeline: null,      // Task 13
+  userDragging: false, // Task 13
+  centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   rings: 8,
   segments: null,      // Task 11
   segmentIndex: null,  // Task 11
@@ -222,7 +224,6 @@ function buildScene(bundle) {
   scene.add(ground);
 
   rebinSegments(state.rings);
-  rebuildTimeline();
   updateHud();
 }
 
@@ -264,7 +265,7 @@ function rebinSegments(rings) {
     if (entry) entry.faces.push(face);
   });
   document.getElementById("segment-count").textContent = state.segments.order.length;
-  if (state.timeline) rebuildTimeline();
+  rebuildTimeline();
 }
 
 // ---------- layers (Task 14 fills this registry) ----------
@@ -382,10 +383,6 @@ const DROP_HEIGHT = 12, STRIKE_SECONDS = 2;
 
 function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
 
-function segmentDropOrder() {
-  return state.segments.order.map(([r, w]) => segmentKey(r, w));
-}
-
 function rebuildTimeline() {
   const dropSeconds = +document.getElementById("drop-speed").value;
   state.timeline = {
@@ -395,6 +392,7 @@ function rebuildTimeline() {
     orbitDistance: +document.getElementById("orbit-distance").value,
     autoSpin: true,
   };
+  state.centre = sceneCentroid();
   buildSegmentMeshes();
   applyTimeline(0);
 }
@@ -450,7 +448,6 @@ function sceneCentroid() {
 
 function applyTimeline(t) {
   state.timeline.t = t;
-  const order = segmentDropOrder();
   const dropSeconds = state.timeline.dropSeconds;
   for (const segment of state.objects.shell.children) {
     const position = state.segmentIndex.get(segment.userData.key).order;
@@ -466,7 +463,7 @@ function applyTimeline(t) {
       segment.position.z = 0;
     }
   }
-  const buildEnd = order.length * dropSeconds + dropSeconds;
+  const buildEnd = state.segments.order.length * dropSeconds + dropSeconds;
   const falsework = state.objects.falsework;
   if (t <= buildEnd) {
     falsework.visible = true;
@@ -479,7 +476,7 @@ function applyTimeline(t) {
     falsework.visible = u < 1;
   }
   if (state.timeline.autoSpin && !state.userDragging) {
-    const centre = sceneCentroid();
+    const centre = state.centre;
     const angle = state.timeline.orbitSpeed * t;
     const r = state.timeline.orbitDistance;
     camera.position.set(centre.x + r * Math.cos(angle), centre.y + r * Math.sin(angle), 0.55 * r);
