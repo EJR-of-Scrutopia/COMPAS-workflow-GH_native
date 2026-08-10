@@ -340,10 +340,12 @@ def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
 
     two_radius_contract at rings=2 places 4 blocks in stage 1 (outer ring
     alone) and 8 in stage 2 (outer plus inner), one block per occupied
-    display ring/wedge cell. Monkeypatching CRA_BLOCK_BUDGET to 5 lets
-    stage 1 through and puts stage 2 over budget. Refusing here is honest
-    and instant; letting it run would spend the timeout to reach the same
-    null. The cra_runner must NOT be called for the over-budget stage.
+    display ring/wedge cell. Monkeypatching CRA_BLOCK_BUDGET to 5 (well
+    below the real default; see CRA_BLOCK_BUDGET in staging.py for the
+    measured value) lets stage 1 through and puts stage 2 over budget.
+    Refusing here is honest and instant; letting it run would cost real
+    solve time to reach the same null. The cra_runner must NOT be called
+    for the over-budget stage.
     """
     g, seg, staging = studio()
     contract_path = tmp_path / "Two-radius-contract.json"

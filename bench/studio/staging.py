@@ -47,19 +47,37 @@ FRICTION = {
 # 0.4: literature value for dry timber on timber (Eurocode 5 gives none).
 
 REPO = Path(__file__).resolve().parents[2]
-CRA_BLOCK_BUDGET = 8
-# A coarse guard, not a tuned threshold. It was set on the theory that block
-# count drove the rigid-block solve's cost; a real staged run on the Trial 2
-# export (rings=2, real solvers) disproved that. The assembly needed only 6
-# blocks, well under this budget, and the stage still burned the full
-# CRA_TIMEOUT_SECONDS. The measured cost driver is mesh complexity, not
-# block count: each block is a ring/wedge patch of hundreds of analysis-mesh
-# faces (442 to 1536 vertices, 508 to 1698 faces on Trial 2), against the
-# six-face cube fixtures that solve in about a second. A real study will
-# normally exceed this budget and receive the honest refusal below, until
-# blocks are rebuilt with planar joint faces (a voussoir-style model)
-# instead of following every analysis mesh face. See
-# .superpowers/sdd/2026-08-10-studio-cra-engineering-pass/.
+CRA_BLOCK_BUDGET = 14
+# Calibrated on a measured cost curve, not a guess. The voussoir model
+# (blocks keep one planar joint face per neighbour instead of following
+# every analysis-mesh face) fixed the mesh-complexity cost this guard was
+# originally set against, but block count itself turned out to have a real
+# cost after all: real .venv-cra solves on the Trial 2 export at growing
+# block counts, 2026-08-10, concrete/mu=0.6, gave:
+#
+#   6 blocks  0.10 s  real verdict (every block a support, no solve needed)
+#   8 blocks  4.3 s   real verdict
+#   13 blocks 18.75 s real verdict
+#   14 blocks 46.45 s real verdict
+#   15 blocks 60.55 s solver gave up: maxIterations, no verdict
+#   16 blocks 55.08 s solver gave up: maxIterations, no verdict
+#   17 blocks 47.52 s solver gave up: maxIterations, no verdict
+#   19 blocks 63.21 s solver gave up: maxIterations, no verdict
+#   21 blocks 80.14 s solver gave up: maxIterations, no verdict
+#
+# The cliff is sharp, not gradual: 14 blocks converges every time it was
+# tried, 15 never did. Past 14 the nonlinear IPOPT solve exhausts its own
+# iteration cap rather than finding an answer, well inside
+# CRA_TIMEOUT_SECONDS in every case measured (the slowest failure was 80 s
+# against a 600 s backstop), so raising the timeout would not rescue those
+# stages; they fail on convergence, not on wall clock. The budget sits at
+# 14, the largest block count measured to return a real verdict on this
+# export. This is an empirical ceiling on one geometry, not a proof that
+# every 14-block assembly converges or every 15-block assembly does not;
+# CRA_TIMEOUT_SECONDS stays in place as the backstop for whatever a
+# different assembly actually does. See
+# bench/scripts/cra_acceptance.py and
+# .superpowers/sdd/2026-08-10-voussoir-blocks/task-4-report.md.
 FEA_PYTHON = REPO / ".venv-fea" / "Scripts" / "python.exe"
 SOLVE_STAGE = Path(__file__).resolve().parent / "solve_stage.py"
 
@@ -263,7 +281,10 @@ def run_staging(
                 # above), so a stage's block count is fixed by the display
                 # binning; there is no cheaper model to fall back to.
                 # Refusing here is honest and instant; letting it run would
-                # just spend the timeout to reach the same null.
+                # spend tens of seconds to reach the same null (measured:
+                # every stage past this budget failed to converge inside
+                # IPOPT's own iteration cap, not the CRA_TIMEOUT_SECONDS
+                # wall clock).
                 stage_entry["cra"] = {
                     "stands": None,
                     "status": "over budget",

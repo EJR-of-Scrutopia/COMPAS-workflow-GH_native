@@ -203,8 +203,11 @@ run can never masquerade as a cached study result. Repeat it with:
 ./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py 4
 ```
 
-Both runs measured here, 2026-08-10, no tolerances or budgets changed
-from the values above.
+Both runs measured here, 2026-08-10. The CRA_BLOCK_BUDGET recalibration
+below happened between the first and second measurement pass; the numbers
+in this section are from the second pass, with the recalibrated budget in
+place, and are what an operator repeating the two commands above gets
+today.
 
 #### Volume comparison, mesh-following block model vs voussoirs
 
@@ -222,39 +225,86 @@ rings=4, closing only because finer segmentation makes each joint flatter
 to begin with. Zero cells were skipped at either ring count. Block count
 is identical between the two models at both ring counts: it is fixed by
 the ring/wedge segmentation, not by which block-building method runs on
-top of it.
+top of it. This figure does not change with CRA_BLOCK_BUDGET; it is
+unaffected by the recalibration below.
 
-#### Staged CRA gate, per stage
+#### Budget recalibration: CRA_BLOCK_BUDGET
 
-rings=2, total wall time 8.4 s (previously: a single stage's rigid-block
-solve alone timed out at 600 s under the mesh-following model):
+The original CRA_BLOCK_BUDGET=8 was set on the theory that block count
+drove the rigid-block solve's cost, before the voussoir model existed to
+test that theory against. With voussoirs in place, this measurement pass
+found that block count does drive real cost, just not the cost the
+original guard was written against: the CRA_TIMEOUT_SECONDS wall clock.
+Real .venv-cra solves on the Trial 2 export at growing block counts,
+2026-08-10, concrete/mu=0.6, all self-contained single-stage solves (not
+gated by any budget for this measurement):
 
-| stage | blocks | verdict | status | timing |
-| --- | --- | --- | --- | --- |
-| 1 | 8 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 0.1 s, resolved by 4.4 s |
-| 2 | 13 | no verdict | over budget (13 > CRA_BLOCK_BUDGET=8) | reached at 4.4 s |
+| blocks | seconds | result |
+| --- | --- | --- |
+| 6 | 0.10 | real verdict (every block a support, no solve needed) |
+| 8 | 4.3 | real verdict: does not stand |
+| 13 | 18.75 | real verdict: does not stand |
+| 14 | 46.45 | real verdict: does not stand |
+| 15 | 60.55 | solver gave up: maxIterations, no verdict |
+| 16 | 55.08 | solver gave up: maxIterations, no verdict |
+| 17 | 47.52 | solver gave up: maxIterations, no verdict |
+| 19 | 63.21 | solver gave up: maxIterations, no verdict |
+| 21 | 80.14 | solver gave up: maxIterations, no verdict |
 
-rings=4 (the studio's minimum), total wall time 13.2 s:
+The cliff is sharp: every attempt at 14 blocks converged, no attempt at
+15 or above did. Past 14 the nonlinear IPOPT solve exhausts its own
+iteration cap rather than finding an answer, well short of the 600 s
+CRA_TIMEOUT_SECONDS backstop in every case measured (worst failure: 80 s).
+Raising the timeout would not rescue those stages; they fail on
+convergence, not on wall clock. CRA_BLOCK_BUDGET is set to 14, the
+largest block count measured to return a real verdict on this export.
+This is an empirical ceiling on one geometry, not a proof that every
+14-block assembly converges or every 15-block one fails; CRA_TIMEOUT_SECONDS
+stays in place as the backstop for whatever a different assembly actually
+does. The full measurement, including the script used, is recorded in
+`.superpowers/sdd/2026-08-10-voussoir-blocks/task-4-report.md`.
 
-| stage | blocks | verdict | status | timing |
-| --- | --- | --- | --- | --- |
-| 1 | 6 | stands (True) | all blocks are supports (trivial case) | reached at 0.1 s |
-| 2 | 13 | no verdict | over budget (13 > 8) | reached at 2.6 s |
-| 3 | 19 | no verdict | over budget (19 > 8) | reached at 5.3 s |
-| 4 | 21 | no verdict | over budget (21 > 8) | reached at 9.0 s |
+#### Staged CRA gate, per stage (recalibrated budget, CRA_BLOCK_BUDGET=14)
 
-No stage timed out in either run; the voussoir model removed the
-600-second wall entirely, and both full runs together finished in under
-22 seconds of solver and bookkeeping time combined.
+rings=2, total wall time 46.5 s:
 
-**Reading**: the voussoir facelift solved the timeout, not the study.
-On the studio's minimum configuration (rings=4) only the first stage,
-a trivial all-supports case, reaches a real verdict; the other three of
-four stages are turned away by CRA_BLOCK_BUDGET=8 before the solver ever
-runs. That budget was set when block count was believed to drive cost;
-this measurement shows mesh complexity was the real driver and the
-voussoir model fixed that, but the budget itself was never re-examined
-against the new, much cheaper cost per block and still gates every stage
-past the first ring. A real study on this export does not yet get a
-verdict end to end at the studio's minimum ring count; it gets one
-verdict and three honest refusals.
+| stage | blocks | interfaces | verdict | status | timing |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 8 | 2 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 0.1 s |
+| 2 | 13 | 17 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 4.5 s |
+
+rings=4 (the studio's minimum), total wall time 34.2 s:
+
+| stage | blocks | interfaces | verdict | status | timing |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 6 | 0 | stands (True) | all blocks are supports (trivial case) | reached at 0.1 s |
+| 2 | 13 | 10 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 2.5 s |
+| 3 | 19 | 0 | no verdict | over budget (19 > 14) | reached at 25.9 s |
+| 4 | 21 | 0 | no verdict | over budget (21 > 14) | reached at 30.1 s |
+
+No stage timed out in either run. An over-budget or all-supports stage
+reports 0 interfaces because the solver never runs (over budget) or has
+nothing to check (every block already grounded): interface detection
+happens inside the rigid-block solve itself, so a stage that never
+reaches the solver has none to count.
+
+**Reading**: recalibrating the budget on measurement, not on the original
+guess, buys real verdicts where the old budget refused untried: rings=2
+now reaches a verdict on both of its stages instead of one, and rings=4
+(the studio's minimum) reaches a verdict on two of its four stages
+instead of one. Stages 3 and 4 at rings=4 are still refused, honestly,
+because 19 and 21 blocks are past the measured convergence cliff at 14;
+raising the budget further would not buy a verdict there, only tens of
+seconds spent reaching the same null. A real study on this export still
+does not get a verdict end to end at the studio's minimum ring count, but
+it now gets two verdicts and two honest refusals instead of one and
+three. Every non-trivial real verdict obtained so far on this export,
+across every block count from 8 to 14, has been the same answer: the
+assembly does not stand. That consistency is itself worth flagging
+rather than explaining away: it may be a genuine structural reading of
+this vault staged this way, or it may be an artefact of the voussoir
+model's own volume undercount (17.5 to 29.5 percent below the drawn
+segment, see the volume comparison above) changing the weight and
+contact geometry the solver sees. This measurement does not distinguish
+between those two explanations; it only reports that every stage large
+enough to solve, and small enough to converge, has said no.

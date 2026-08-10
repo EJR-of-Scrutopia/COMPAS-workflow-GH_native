@@ -885,9 +885,10 @@ function renderDataPanel(v) {
       + verdict.interfaces + " contact interfaces";
     content.appendChild(counts);
     const faceted = document.createElement("p");
-    faceted.textContent = "the verdict is computed on a faceted model: each "
-      + "piece keeps one flat planar joint face per neighbour, so its volume "
-      + "and centroid differ slightly from the curved segment drawn here";
+    faceted.textContent = "the verdict is computed on a faceted model whose "
+      + "planar joints cut the corners off each curved piece, so its volume "
+      + "runs roughly 17.5 to 29.5 percent below the drawn segment, more "
+      + "coarsely at low ring counts";
     content.appendChild(faceted);
     const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
     if (skipped && skipped.length) {

@@ -447,6 +447,13 @@ def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     body = js[panel_start:panel_end]
     assert "faceted" in body
     assert "planar" in body or "flat" in body
+    # The volume gap is measured (17.5 to 29.5 percent on the Trial 2
+    # export, docs/BENCH.md), not a rounding error: "slightly" understates
+    # it and must not come back. The panel must name the measured range and
+    # that it varies with ring count.
+    assert "slightly" not in body
+    assert "percent" in body
+    assert "ring count" in body
 
 
 def test_skipped_pieces_are_reported_in_data_panel_and_badge():
