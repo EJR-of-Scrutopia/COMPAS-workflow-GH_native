@@ -69,7 +69,7 @@ def _validate(export: str, material: str, rings: int, thickness: float) -> None:
         raise HTTPException(400, "thickness must be between 0.05 and 0.5 metres")
 
 
-def create_app(runner=None) -> FastAPI:
+def create_app(runner=None, cra_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
     @app.get("/api/studies")
@@ -125,6 +125,7 @@ def create_app(runner=None) -> FastAPI:
             run = RUNS[run_id]
             try:
                 run["state"] = "running"
+                run["message"] = "fea + cra per stage"
                 pairs = geometry.available_exports(bundle.UPLOAD_DIR)
 
                 def on_stage(stage, of):
@@ -133,7 +134,7 @@ def create_app(runner=None) -> FastAPI:
                 staging.run_staging(
                     pairs[export], material, rings,
                     bundle.staging_path(slug, material, rings, thickness),
-                    runner=runner, on_stage=on_stage, thickness=thickness,
+                    runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
                 )
                 bundle.build_bundle(export, material, rings, thickness)
                 run["state"] = "done"

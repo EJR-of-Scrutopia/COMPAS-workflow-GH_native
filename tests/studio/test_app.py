@@ -36,7 +36,13 @@ def make_client(tmp_path, monkeypatch, runner=None):
     app_module.RUNS.clear()
     if runner is None:
         runner = lambda request: {"converged": True, "message": ""}
-    return TestClient(app_module.create_app(runner=runner)), studies
+    return TestClient(app_module.create_app(
+        runner=runner,
+        cra_runner=lambda request: {
+            "stands": True, "status": "optimal", "message": "",
+            "blocks": len(request["blocks"]), "interfaces": 1,
+            "mu": request["mu"]},
+    )), studies
 
 
 def wait_for(client, run_id, timeout=10.0):

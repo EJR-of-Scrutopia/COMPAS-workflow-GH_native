@@ -123,6 +123,7 @@ def test_run_staging_with_a_stub_runner_writes_the_document(tmp_path):
         rings=2,
         out_path=out,
         runner=stub_runner,
+        include_cra=False,
     )
     assert out.is_file()
     assert document == json.loads(out.read_text(encoding="utf-8"))
@@ -167,6 +168,7 @@ def test_run_staging_with_degenerate_geometry_contracts_stages_to_occupied_rings
         rings=4,
         out_path=out,
         runner=stub_runner,
+        include_cra=False,
     )
     # Document reports requested rings=4
     assert document["rings"] == 4
@@ -195,6 +197,7 @@ def test_run_staging_reports_progress_per_stage(tmp_path):
         material="concrete", rings=2, out_path=tmp_path / "o.json",
         runner=lambda request: {"converged": True, "message": ""},
         on_stage=lambda stage, of: seen.append((stage, of)),
+        include_cra=False,
     )
     assert seen == [(1, 2), (2, 2)]
 
@@ -227,12 +230,14 @@ def test_thickness_flows_into_every_runner_request_and_the_curve(tmp_path):
         {"contract": contract_path, "geometry": geometry_path},
         material="concrete", rings=2, out_path=tmp_path / "thin.json",
         runner=stub, thickness=0.1,
+        include_cra=False,
     )
     assert set(seen) == {0.1}
     thick = staging.run_staging(
         {"contract": contract_path, "geometry": geometry_path},
         material="concrete", rings=2, out_path=tmp_path / "thick.json",
         runner=stub, thickness=0.4,
+        include_cra=False,
     )
     ratio = (thick["stages"][-1]["placed_weight_newtons"]
              / thin["stages"][-1]["placed_weight_newtons"])
@@ -243,3 +248,61 @@ def test_default_thickness_is_unchanged():
     _, _, staging = studio()
     assert staging.DEFAULT_THICKNESS == 0.2
     assert staging.THICKNESS == 0.2
+
+
+def test_run_staging_runs_cra_per_stage_and_records_mu(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    cra_requests = []
+
+    def cra_stub(request):
+        cra_requests.append(request)
+        return {"stands": True, "status": "optimal", "message": "",
+                "blocks": len(request["blocks"]), "interfaces": 1,
+                "mu": request["mu"]}
+
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        cra_runner=cra_stub,
+    )
+    assert len(cra_requests) == 2
+    # The block set grows with the stages and carries the material's numbers.
+    assert len(cra_requests[0]["blocks"]) < len(cra_requests[1]["blocks"])
+    for request in cra_requests:
+        assert request["mu"] == 0.6
+        assert request["density"] == 2400.0
+        for block in request["blocks"]:
+            assert block["vertices"] and block["faces"]
+    assert document["cra_mu"] == 0.6
+    for stage in document["stages"]:
+        assert stage["cra"]["stands"] is True
+
+
+def test_include_cra_false_omits_cra_entirely(tmp_path):
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Two-radius-contract.json"
+    contract_path.write_text(json.dumps(two_radius_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Two-radius-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", rings=2, out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+    assert document["cra_mu"] is None
+    assert all("cra" not in stage for stage in document["stages"])
+
+
+def test_friction_constants_are_pinned():
+    _, _, staging = studio()
+    assert staging.FRICTION == {
+        "concrete": 0.6, "concrete-c50": 0.6,
+        "concrete-sprayed": 0.6, "timber": 0.4,
+    }

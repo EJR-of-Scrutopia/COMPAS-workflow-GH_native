@@ -3,7 +3,7 @@
 The real case needs no solver: while the falsework stands it carries the
 placed weight, and the curve here is exact arithmetic. The counterfactual
 (struck now) is a real solve per stage, shelled to .venv-fea through
-solve_stage.py. This module never imports the solver stack; the guard test
+solve_stage.py. The rigid-block counterfactual (does the placed assembly stand as blocks) is a second solve per stage, shelled to .venv-cra through solve_cra.py. This module never imports the solver stack; the guard test
 holds it to that.
 
 GRAVITY, DENSITIES and THICKNESS duplicate ananke_fea values on purpose
@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import blocks
 import geometry
 import segmentation
 
@@ -30,9 +31,19 @@ DENSITIES = {
 DEFAULT_THICKNESS = 0.2
 THICKNESS = DEFAULT_THICKNESS  # alias: tests/fea/test_studio_mirror.py reads THICKNESS
 
+FRICTION = {
+    "concrete": 0.6, "concrete-c50": 0.6,
+    "concrete-sprayed": 0.6, "timber": 0.4,
+}
+# 0.6: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint.
+# 0.4: literature value for dry timber on timber (Eurocode 5 gives none).
+
 REPO = Path(__file__).resolve().parents[2]
 FEA_PYTHON = REPO / ".venv-fea" / "Scripts" / "python.exe"
 SOLVE_STAGE = Path(__file__).resolve().parent / "solve_stage.py"
+
+CRA_PYTHON = REPO / ".venv-cra" / "Scripts" / "python.exe"
+SOLVE_CRA = Path(__file__).resolve().parent / "solve_cra.py"
 
 
 def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
@@ -115,6 +126,29 @@ def _subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
     return run
 
 
+def _cra_subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
+    def run(request: dict) -> dict:
+        with tempfile.TemporaryDirectory(prefix="ananke_cra_") as tmp:
+            request_path = Path(tmp) / "request.json"
+            out_path = Path(tmp) / "out.json"
+            request_path.write_text(json.dumps(request), encoding="utf-8")
+            completed = subprocess.run(
+                [str(python_exe), str(SOLVE_CRA), str(request_path), str(out_path)],
+                capture_output=True, text=True,
+            )
+            if completed.returncode != 0 or not out_path.is_file():
+                return {
+                    "stands": None, "status": "error",
+                    "message": "solve_cra exited {}: {}".format(
+                        completed.returncode, completed.stderr.strip()[-2000:]),
+                    "blocks": len(request.get("blocks", [])), "interfaces": 0,
+                    "mu": request.get("mu"),
+                }
+            return json.loads(out_path.read_text(encoding="utf-8"))
+
+    return run
+
+
 def run_staging(
     export_pair: Dict[str, Path],
     material: str,
@@ -124,6 +158,8 @@ def run_staging(
     runner: Optional[Callable[[dict], dict]] = None,
     on_stage: Optional[Callable[[int, int], None]] = None,
     thickness: float = DEFAULT_THICKNESS,
+    cra_runner: Optional[Callable[[dict], dict]] = None,
+    include_cra: bool = True,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -151,6 +187,15 @@ def run_staging(
     if runner is None:
         runner = _subprocess_runner(python_exe or FEA_PYTHON)
 
+    if include_cra and cra_runner is None:
+        cra_runner = _cra_subprocess_runner(CRA_PYTHON)
+    all_blocks: List[dict] = []
+    if include_cra:
+        all_blocks = blocks.segment_blocks(
+            arrays["vertices"], arrays["faces"], binned["assignment"],
+            binned["order"], thickness, set(geometry.support_ids(contract)),
+        )
+
     stages = []
     for entry, weights in zip(plan, curve):
         if on_stage is not None:
@@ -163,11 +208,23 @@ def run_staging(
             "include_export_loads": True,
             "placed_faces": sorted(entry["faces"]),
         })
-        stages.append({**entry, **{
+        stage_entry = {**entry, **{
             "placed_weight_newtons": weights["placed_weight_newtons"],
             "formwork_carries_newtons": weights["formwork_carries_newtons"],
             "struck_now": struck,
-        }})
+        }}
+        if include_cra:
+            placed = set(entry["segments"])
+            stage_blocks = [
+                b for b in all_blocks
+                if segmentation.segment_key(b["ring"], b["wedge"]) in placed
+            ]
+            stage_entry["cra"] = cra_runner({
+                "blocks": stage_blocks,
+                "density": DENSITIES[material],
+                "mu": FRICTION[material],
+            })
+        stages.append(stage_entry)
 
     document = {
         "material": material,
@@ -175,6 +232,7 @@ def run_staging(
         "combination": "ULS",
         "segmentation": binned,
         "stages": stages,
+        "cra_mu": FRICTION[material] if include_cra else None,
     }
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
