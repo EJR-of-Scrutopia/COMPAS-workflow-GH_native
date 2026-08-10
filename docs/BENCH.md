@@ -189,3 +189,72 @@ repository. bench/studio/solve_cra.py prepends its own Scripts directory
 to PATH the same way, so no machine-wide configuration is needed. Without
 the binary, CRA verdicts report stands: null with a pointer back to this
 section.
+
+### Acceptance measurement: Trial 2 export
+
+`bench/scripts/cra_acceptance.py` runs the real staged CRA gate on the
+Trial 2 export, with no stubs: the struck-now FEA solve shells to
+.venv-fea and the rigid-block verdict to .venv-cra, exactly as the server
+does. It writes its staging document to a temporary directory so a probe
+run can never masquerade as a cached study result. Repeat it with:
+
+```bash
+./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py 2
+./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py 4
+```
+
+Both runs measured here, 2026-08-10, no tolerances or budgets changed
+from the values above.
+
+#### Volume comparison, mesh-following block model vs voussoirs
+
+| rings | mesh-following | voussoirs | volume difference |
+| --- | --- | --- | --- |
+| 2 | 13 blocks, 6408 faces (492.9/block), 38.1737 m3 | 13 blocks, 164 faces (12.6/block), 26.9065 m3 | -29.5% |
+| 4 | 21 blocks, 7188 faces (342.3/block), 38.1737 m3 | 21 blocks, 308 faces (14.7/block), 31.4984 m3 | -17.5% |
+
+The mesh-following volume is identical at both ring counts (a partition
+of the same closed mesh sums to the same total regardless of how it is
+cut), confirming both models see the same underlying export. The voussoir
+volume is not: replacing every mesh face on a joint with one planar face
+undercounts volume, by nearly a third at rings=2 and by a sixth at
+rings=4, closing only because finer segmentation makes each joint flatter
+to begin with. Zero cells were skipped at either ring count. Block count
+is identical between the two models at both ring counts: it is fixed by
+the ring/wedge segmentation, not by which block-building method runs on
+top of it.
+
+#### Staged CRA gate, per stage
+
+rings=2, total wall time 8.4 s (previously: a single stage's rigid-block
+solve alone timed out at 600 s under the mesh-following model):
+
+| stage | blocks | verdict | status | timing |
+| --- | --- | --- | --- | --- |
+| 1 | 8 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 0.1 s, resolved by 4.4 s |
+| 2 | 13 | no verdict | over budget (13 > CRA_BLOCK_BUDGET=8) | reached at 4.4 s |
+
+rings=4 (the studio's minimum), total wall time 13.2 s:
+
+| stage | blocks | verdict | status | timing |
+| --- | --- | --- | --- | --- |
+| 1 | 6 | stands (True) | all blocks are supports (trivial case) | reached at 0.1 s |
+| 2 | 13 | no verdict | over budget (13 > 8) | reached at 2.6 s |
+| 3 | 19 | no verdict | over budget (19 > 8) | reached at 5.3 s |
+| 4 | 21 | no verdict | over budget (21 > 8) | reached at 9.0 s |
+
+No stage timed out in either run; the voussoir model removed the
+600-second wall entirely, and both full runs together finished in under
+22 seconds of solver and bookkeeping time combined.
+
+**Reading**: the voussoir facelift solved the timeout, not the study.
+On the studio's minimum configuration (rings=4) only the first stage,
+a trivial all-supports case, reaches a real verdict; the other three of
+four stages are turned away by CRA_BLOCK_BUDGET=8 before the solver ever
+runs. That budget was set when block count was believed to drive cost;
+this measurement shows mesh complexity was the real driver and the
+voussoir model fixed that, but the budget itself was never re-examined
+against the new, much cheaper cost per block and still gates every stage
+past the first ring. A real study on this export does not yet get a
+verdict end to end at the studio's minimum ring count; it gets one
+verdict and three honest refusals.
