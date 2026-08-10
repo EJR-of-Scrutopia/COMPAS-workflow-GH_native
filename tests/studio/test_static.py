@@ -595,3 +595,30 @@ def test_sprayed_concrete_grows_instead_of_dropping():
     body = js[start:end]
     assert "sprayedMaterial()" in body
     assert "DROP_HEIGHT" in body, "other materials still drop"
+
+
+def test_the_four_materials_are_visually_distinct():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    import re
+    start = js.index("const materials = {")
+    end = js.index("\n};", start)
+    body = js[start:end]
+    colours = re.findall(r"color: (0x[0-9a-fA-F]{6})", body)
+    presets = colours[:4]
+    assert len(set(presets)) == 4, "the presets must not share a colour"
+    values = [int(c, 16) for c in presets]
+
+    def luminance(v):
+        return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255)
+
+    # Overall spread is the wrong measure: today's three concretes sit
+    # within a point of each other while white timber stretches the range,
+    # so the range alone would pass. What matters is that no PAIR is close.
+    closest = min(
+        abs(luminance(values[i]) - luminance(values[j]))
+        for i in range(len(values)) for j in range(i + 1, len(values))
+    )
+    assert closest > 15, (
+        "two presets sit {:.0f} apart in luminance and will read as the "
+        "same material".format(closest)
+    )

@@ -60,6 +60,10 @@ function applyEnvironment() {
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
   const tone = +document.getElementById("background-tone").value / 100;
   scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
+  // Light concretes were clipping to white under the room environment plus
+  // filmic tone mapping, which made three different presets look identical.
+  renderer.toneMappingExposure = 0.85;
+  scene.environmentIntensity = 0.6;
 }
 
 // ---------- procedural textures: offline, no image assets ----------
@@ -103,25 +107,25 @@ function grainTexture(size) {
 
 const materials = {
   concrete: new THREE.MeshPhysicalMaterial({
-    color: 0xc4c0b6, side: THREE.DoubleSide,
+    color: 0x9a958a, side: THREE.DoubleSide,      // warm mid grey
     map: noiseTexture(256, 205, 14),
     roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
     metalness: 0.0,
   }),
   "concrete-c50": new THREE.MeshPhysicalMaterial({
-    color: 0xbdbec0, side: THREE.DoubleSide,  // Cooler grey for higher-strength concrete
+    color: 0x5d646c, side: THREE.DoubleSide,      // cooler, darker, denser
     map: noiseTexture(256, 205, 14),
-    roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
+    roughness: 0.72, roughnessMap: noiseTexture(256, 215, 40),
     metalness: 0.0,
   }),
   "concrete-sprayed": new THREE.MeshPhysicalMaterial({
-    color: 0xc9c3b6, side: THREE.DoubleSide,
-    map: noiseTexture(256, 195, 34),
-    roughness: 0.97, roughnessMap: noiseTexture(256, 225, 30),
+    color: 0xd8d2c4, side: THREE.DoubleSide,      // lighter, coarsest
+    map: noiseTexture(256, 195, 46),
+    roughness: 0.98, roughnessMap: noiseTexture(256, 225, 40),
     metalness: 0.0,
   }),
   timber: new THREE.MeshPhysicalMaterial({
-    color: 0xffffff, side: THREE.DoubleSide,
+    color: 0xb07a3c, side: THREE.DoubleSide,      // warm brown, not bare white
     map: grainTexture(512),
     roughness: 0.55, metalness: 0.0, sheen: 0.15, sheenColor: 0xd9b98a,
   }),
