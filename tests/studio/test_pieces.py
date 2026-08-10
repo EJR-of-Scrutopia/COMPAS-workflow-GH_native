@@ -110,12 +110,21 @@ def test_neighbours_agree_on_the_shared_geometry():
 
 
 def test_interior_vertices_keep_the_true_surface():
-    # Only boundary vertices are projected. An interior vertex must stay
-    # exactly where the mesh put it, or the caps stop being the vault.
+    # Only boundary vertices are projected. A vertex genuinely inside the
+    # cell must stay exactly where the mesh put it, or the caps stop being
+    # the vault. Cell membership is what matters here, not global mesh
+    # degree: a vertex can touch four faces and still sit on this cell's
+    # boundary, and those vertices are supposed to move.
+    p = studio()
+    import voussoirs
     pieces = {(x["ring"], x["wedge"]): x for x in build()}
     piece = pieces[(0, 0)]
-    interior = [s for s in piece["sources"]
-                if sum(1 for f in FACES if s in f) == 4]
+    cell_faces = [i for i, pair in enumerate(ASSIGNMENT) if pair == [0, 0]]
+    on_boundary = set()
+    for a, b in voussoirs.segment_boundary_edges_for(FACES, cell_faces):
+        on_boundary.add(a)
+        on_boundary.add(b)
+    interior = [s for s in piece["sources"] if s not in on_boundary]
     assert interior, "the fixture needs at least one interior vertex"
     for source in interior:
         index = piece["sources"].index(source)
