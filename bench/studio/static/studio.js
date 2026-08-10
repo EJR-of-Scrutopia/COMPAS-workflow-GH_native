@@ -141,9 +141,17 @@ function buildWiresAndNodes(bundle) {
   const wireRadius = 0.02, nodeRadius = 0.045;
   const cylinder = new THREE.CylinderGeometry(wireRadius, wireRadius, 1, 8, 1, true);
   cylinder.translate(0, 0.5, 0);
-  const wires = new THREE.InstancedMesh(cylinder, materials.steel.clone(), edges.length);
+  const wireMaterial = materials.steel.clone();
+  // Task 6 fix: InstancedMesh.setColorAt writes the instanceColor buffer,
+  // but per-instance colour only reaches the fragment shader when the
+  // material also opts into the vertex-colour path. vertexColors stays
+  // true for the wires' whole lifetime; every instance starts white below
+  // so the plain steel look is unchanged until applyWireForces tints it.
+  wireMaterial.vertexColors = true;
+  const wires = new THREE.InstancedMesh(cylinder, wireMaterial, edges.length);
   const up = new THREE.Vector3(0, 1, 0);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  const white = new THREE.Color(0xffffff);
   const baseMatrices = [];
   edges.forEach(([u, v], i) => {
     const a = new THREE.Vector3(...vertices[u]);
@@ -153,8 +161,10 @@ function buildWiresAndNodes(bundle) {
     s.set(1, d.length(), 1);
     m.compose(a, q, s);
     wires.setMatrixAt(i, m);
+    wires.setColorAt(i, white);
     baseMatrices.push(m.clone());
   });
+  wires.instanceColor.needsUpdate = true;
   // Task 6: the forces layer rebuilds instance matrices (thicker wire =
   // bigger force) and restores them on toggle-off; the base endpoints/
   // orientation/length live here so that restore is exact.
@@ -388,6 +398,10 @@ const STRESS_SCALE = (() => {
 // (endpoint/orientation/length) matrix per edge on wires.userData so this
 // can rebuild thicker/tinted matrices when on and restore the originals
 // exactly when off, without touching the "wires" visibility toggle.
+// buildWiresAndNodes also sets the material's vertexColors true for good:
+// setColorAt alone writes the instanceColor buffer, but per-instance
+// colour only reaches a pixel when the material opts into that path, so
+// both the on and off states below rely on it being set already.
 function applyWireForces() {
   const wires = state.objects.wires;
   const base = wires && wires.userData.baseMatrices;
@@ -395,14 +409,14 @@ function applyWireForces() {
   const availability = layerAvailability("forces");
   const active = !!(state.layers.forces && availability.on);
   if (!active) {
-    for (let i = 0; i < base.length; i++) wires.setMatrixAt(i, base[i]);
-    wires.instanceMatrix.needsUpdate = true;
-    wires.material.color.copy(materials.steel.color);
-    if (wires.instanceColor) {
-      const white = new THREE.Color(0xffffff);
-      for (let i = 0; i < base.length; i++) wires.setColorAt(i, white);
-      wires.instanceColor.needsUpdate = true;
+    const white = new THREE.Color(0xffffff);
+    for (let i = 0; i < base.length; i++) {
+      wires.setMatrixAt(i, base[i]);
+      wires.setColorAt(i, white);
     }
+    wires.instanceMatrix.needsUpdate = true;
+    wires.instanceColor.needsUpdate = true;
+    wires.material.color.copy(materials.steel.color);
     return;
   }
   const forces = state.bundle.member_forces;

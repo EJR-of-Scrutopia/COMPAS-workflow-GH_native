@@ -77,6 +77,9 @@ def test_wire_forces_layer_is_registered_and_instanced():
     assert '"forces"' in js and "Wire forces" in js
     assert "setColorAt" in js
     assert "member_forces" in js
+    # setColorAt alone never reaches the screen: InstancedMesh.instanceColor
+    # only tints pixels when the material opts into the vertex-colour path.
+    assert "vertexColors" in js
 
 
 def test_record_mode_is_frame_indexed_not_clock_driven():
