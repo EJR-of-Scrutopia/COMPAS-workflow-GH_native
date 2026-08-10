@@ -3,8 +3,10 @@
 The real case needs no solver: while the falsework stands it carries the
 placed weight, and the curve here is exact arithmetic. The counterfactual
 (struck now) is a real solve per stage, shelled to .venv-fea through
-solve_stage.py. The rigid-block counterfactual (does the placed assembly stand as blocks) is a second solve per stage, shelled to .venv-cra through solve_cra.py. This module never imports the solver stack; the guard test
-holds it to that.
+solve_stage.py. The rigid-block counterfactual (does the placed assembly
+stand as blocks) is a second solve per stage, shelled to .venv-cra
+through solve_cra.py. This module never imports the solver stack; the
+guard test holds it to that.
 
 GRAVITY, DENSITIES and THICKNESS duplicate ananke_fea values on purpose
 (the import is forbidden); tests/studio/test_staging.py pins them to the
@@ -44,6 +46,14 @@ SOLVE_STAGE = Path(__file__).resolve().parent / "solve_stage.py"
 
 CRA_PYTHON = REPO / ".venv-cra" / "Scripts" / "python.exe"
 SOLVE_CRA = Path(__file__).resolve().parent / "solve_cra.py"
+# Interface detection on a real export runs in about half a minute per
+# stage, but the nonlinear IPOPT solve that follows has no such ceiling:
+# it can take many minutes, or hang, depending on the assembly. Without a
+# timeout a stalled solve wedges the run thread forever, and the run's
+# own 409 "already running" guard then refuses every re-run of that study
+# until the server restarts. 600 s gives a real solve room to finish while
+# still bounding the worst case to a single failed stage, not a dead server.
+CRA_TIMEOUT_SECONDS = 600
 
 
 def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
@@ -132,10 +142,18 @@ def _cra_subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
             request_path = Path(tmp) / "request.json"
             out_path = Path(tmp) / "out.json"
             request_path.write_text(json.dumps(request), encoding="utf-8")
-            completed = subprocess.run(
-                [str(python_exe), str(SOLVE_CRA), str(request_path), str(out_path)],
-                capture_output=True, text=True,
-            )
+            try:
+                completed = subprocess.run(
+                    [str(python_exe), str(SOLVE_CRA), str(request_path), str(out_path)],
+                    capture_output=True, text=True, timeout=CRA_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                return {
+                    "stands": None, "status": "timeout",
+                    "message": "cra timed out after {} s".format(CRA_TIMEOUT_SECONDS),
+                    "blocks": len(request.get("blocks", [])), "interfaces": 0,
+                    "mu": request.get("mu"),
+                }
             if completed.returncode != 0 or not out_path.is_file():
                 return {
                     "stands": None, "status": "error",

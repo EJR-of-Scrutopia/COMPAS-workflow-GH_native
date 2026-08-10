@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -306,3 +307,29 @@ def test_friction_constants_are_pinned():
         "concrete": 0.6, "concrete-c50": 0.6,
         "concrete-sprayed": 0.6, "timber": 0.4,
     }
+
+
+def test_cra_subprocess_runner_reports_a_timeout_instead_of_hanging(monkeypatch):
+    """A stalled IPOPT solve must not wedge the run thread forever.
+
+    Without a subprocess timeout, a stuck solve blocks the run indefinitely
+    and the 409 "already running" guard then refuses every re-run of that
+    study until the server restarts. Monkeypatching subprocess.run to raise
+    TimeoutExpired stands in for an actual multi-minute hang.
+    """
+
+    _, _, staging = studio()
+
+    def raise_timeout(*args, **kwargs):
+        assert kwargs.get("timeout") == staging.CRA_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(cmd=args[0] if args else "solve_cra.py",
+                                         timeout=staging.CRA_TIMEOUT_SECONDS)
+
+    monkeypatch.setattr(staging.subprocess, "run", raise_timeout)
+    runner = staging._cra_subprocess_runner(staging.CRA_PYTHON)
+    out = runner({"blocks": [{"vertices": [], "faces": []}], "mu": 0.6})
+    assert out["stands"] is None
+    assert out["message"] == "cra timed out after 600 s"
+    assert out["blocks"] == 1
+    assert out["interfaces"] == 0
+    assert out["mu"] == 0.6

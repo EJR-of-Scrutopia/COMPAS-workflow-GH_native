@@ -137,10 +137,12 @@ Response, always exit 0:
   whole-vault solve exists.
 - Progress messages extend the existing on_stage strings so the run
   status line shows CRA progress per stage.
-- Runtime expectation, stated for honesty: each stage is a nonlinear
-  solve over up to roughly a hundred blocks; seconds per stage, roughly
-  half a minute added at 8 rings. Cached like everything else in the
-  staging file.
+- Runtime expectation, stated for honesty (measured on the real Trial 2
+  export, not estimated): interface detection alone runs around half a
+  minute per stage. The nonlinear IPOPT solve that follows has no such
+  ceiling: it can take many minutes, or run past the 600 s subprocess
+  timeout on larger stages, in which case the verdict is an honest null
+  rather than a hang. Cached like everything else in the staging file.
 
 Friction lives beside the densities:
 
