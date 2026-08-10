@@ -399,3 +399,34 @@ def test_stop_and_restart_transport_controls():
     restart_body = js[restart_start:restart_end]
     assert "applyTimeline(0)" in restart_body
     assert "playing = true" in restart_body
+
+
+def test_cra_badge_hud_and_pulse_are_wired():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="cra-badge"' in html
+    for class_name in ("cra-stands", "cra-fails", "cra-unknown"):
+        assert class_name in css
+    assert "function craVerdict(" in js and "function updateCraBadge(" in js
+    pulse_start = js.index("function applyPulse(")
+    pulse_end = js.index("\n}", pulse_start)
+    assert "cra.stands" in js[pulse_start:pulse_end], (
+        "the pulse must require the CRA verdict as well as the FEA solve"
+    )
+    hud_start = js.index("function updateHud(")
+    hud_end = js.index("\n}", hud_start)
+    assert "CRA:" in js[hud_start:hud_end]
+    build_start = js.index("function buildScene(")
+    build_end = js.index("\n}", build_start)
+    assert "updateCraBadge()" in js[build_start:build_end]
+
+
+def test_data_panel_reports_the_cra_verdict_with_provenance():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    assert "craVerdict()" in body
+    assert "EN 1992-1-1 clause 6.2.5" in js
+    assert "timber on timber" in js

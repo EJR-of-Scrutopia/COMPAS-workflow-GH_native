@@ -308,6 +308,7 @@ function buildScene(bundle) {
   buildLayerToggles();
   updateVectorLayers();
   updateHud();
+  updateCraBadge();
 }
 
 // ---------- segmentation (Task 11 replaces the body of rebinSegments) ----------
@@ -369,6 +370,39 @@ function finalStage() {
   if (!staging || !staging.stages || !staging.stages.length) return null;
   const last = staging.stages[staging.stages.length - 1];
   return last.struck_now && last.struck_now.converged ? last.struck_now : null;
+}
+
+function craVerdict() {
+  // The final stage's verdict is the whole-study verdict; run_staging
+  // writes one cra entry per stage and no separate whole-vault solve.
+  const staging = state.bundle && state.bundle.staging;
+  if (!staging || !staging.stages || !staging.stages.length) return null;
+  return staging.stages[staging.stages.length - 1].cra || null;
+}
+
+const FRICTION_PROVENANCE = {
+  "0.6": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "0.4": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
+};
+
+function updateCraBadge() {
+  const badge = document.getElementById("cra-badge");
+  if (!state.bundle) { badge.classList.add("hidden"); return; }
+  badge.classList.remove("hidden", "cra-stands", "cra-fails", "cra-unknown");
+  const verdict = craVerdict();
+  if (!verdict) {
+    badge.classList.add("cra-unknown");
+    badge.textContent = "CRA: no run yet";
+  } else if (verdict.stands === true) {
+    badge.classList.add("cra-stands");
+    badge.textContent = "CRA: stands (mu " + (+verdict.mu).toFixed(2) + ")";
+  } else if (verdict.stands === false) {
+    badge.classList.add("cra-fails");
+    badge.textContent = "CRA: does not stand";
+  } else {
+    badge.classList.add("cra-unknown");
+    badge.textContent = "CRA: not run (" + (verdict.message || verdict.status || "unknown") + ")";
+  }
 }
 
 function layerAvailability(name) {
@@ -743,7 +777,12 @@ function applyPulse() {
   const index = currentStageIndex();
   if (index === null) return;
   const stage = state.bundle.staging.stages[index];
-  const good = stage.struck_now && stage.struck_now.converged;
+  const cra = stage.cra;
+  // Green now means BOTH lenses pass: the struck-now FEA solve converged
+  // and the rigid-block verdict stands. A missing cra entry (old cache)
+  // reads as not passing; the HUD's "CRA: not run" line explains the red.
+  const good = !!(stage.struck_now && stage.struck_now.converged
+    && cra && cra.stands === true);
   const tint = good ? 0x1a3a1a : 0x3a1a1a;
   const pulse = 0.5 + 0.5 * Math.sin(state.timeline.t * 4);
   for (const segment of state.objects.shell.children) {
@@ -792,6 +831,14 @@ function updateHud() {
       ? "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
         " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)"
       : "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result"));
+    const cra = stage.cra;
+    if (cra && cra.stands === true) {
+      lines.push("CRA: stands");
+    } else if (cra && cra.stands === false) {
+      lines.push("CRA: does not stand");
+    } else {
+      lines.push("CRA: not run" + (cra && cra.message ? " (" + cra.message + ")" : ""));
+    }
   }
   hud.textContent = lines.join("\n");
 }
@@ -866,6 +913,32 @@ function renderDataPanel(v) {
       table.appendChild(tr);
     }
     content.appendChild(table);
+  }
+
+  const craHeading = document.createElement("h3");
+  craHeading.textContent = "CRA rigid-block verdict";
+  content.appendChild(craHeading);
+  const verdict = craVerdict();
+  if (!verdict) {
+    const none = document.createElement("p");
+    none.textContent = "no CRA run yet: run a staged analysis";
+    content.appendChild(none);
+  } else {
+    const line = document.createElement("p");
+    line.textContent = verdict.stands === true
+      ? "stands as rigid blocks under friction, self-weight only"
+      : verdict.stands === false
+        ? "does not stand as rigid blocks (" + verdict.status + ")"
+        : "not run: " + (verdict.message || verdict.status);
+    content.appendChild(line);
+    const mu = document.createElement("p");
+    mu.textContent = FRICTION_PROVENANCE[String(verdict.mu)]
+      || ("mu " + verdict.mu);
+    content.appendChild(mu);
+    const counts = document.createElement("p");
+    counts.textContent = verdict.blocks + " blocks, "
+      + verdict.interfaces + " contact interfaces";
+    content.appendChild(counts);
   }
 
   const headline = document.createElement("ul");
