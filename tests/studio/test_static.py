@@ -438,12 +438,3 @@ def test_data_panel_reports_the_cra_verdict_with_provenance():
         "CRA section must come before the verification early-return guard, "
         "or staged-but-unverified studies will never show the verdict"
     )
-
-
-def test_the_data_panel_labels_a_coarsened_cra_model():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    panel_start = js.index("function renderDataPanel(")
-    panel_end = js.index("\n}", panel_start)
-    body = js[panel_start:panel_end]
-    assert "cra_wedge_factor" in body
-    assert "coarser" in body or "coarsened" in body

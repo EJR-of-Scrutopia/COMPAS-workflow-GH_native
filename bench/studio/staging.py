@@ -42,13 +42,18 @@ FRICTION = {
 
 REPO = Path(__file__).resolve().parents[2]
 CRA_BLOCK_BUDGET = 8
-# Measured on the real export: with clean contact detection both compas_cra
-# solvers finish 8 blocks (about a second in the penalty form, 21 s in the
-# plain one) and blow a 300 s cap at 10. Cost tracks contact polygons, so
-# merging neighbouring wedges into one larger block cuts blocks and joints
-# together. See .superpowers/sdd/2026-08-10-studio-cra-feasibility/
-# cra-diagnostics.md.
-CRA_WEDGE_FACTORS = (1, 2, 3, 4, 6, 12)
+# A coarse guard, not a tuned threshold. It was set on the theory that block
+# count drove the rigid-block solve's cost; a real staged run on the Trial 2
+# export (rings=2, real solvers) disproved that. The assembly needed only 6
+# blocks, well under this budget, and the stage still burned the full
+# CRA_TIMEOUT_SECONDS. The measured cost driver is mesh complexity, not
+# block count: each block is a ring/wedge patch of hundreds of analysis-mesh
+# faces (442 to 1536 vertices, 508 to 1698 faces on Trial 2), against the
+# six-face cube fixtures that solve in about a second. A real study will
+# normally exceed this budget and receive the honest refusal below, until
+# blocks are rebuilt with planar joint faces (a voussoir-style model)
+# instead of following every analysis mesh face. See
+# .superpowers/sdd/2026-08-10-studio-cra-engineering-pass/.
 FEA_PYTHON = REPO / ".venv-fea" / "Scripts" / "python.exe"
 SOLVE_STAGE = Path(__file__).resolve().parent / "solve_stage.py"
 
@@ -87,37 +92,6 @@ def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
             "faces": list(placed_faces),
         })
     return plan
-
-
-def cra_binning(assignment: List[list], order: List[list], budget: int) -> Dict:
-    """Merge neighbouring wedges until the block model fits the budget.
-
-    The display segmentation is what gets drawn and built; the CRA model is
-    a coarser view of the same rings, because the rigid-block solve cannot
-    afford one block per drawn cell. Merging is by wedge only: rings stay
-    intact, so a stage still places whole rings and a coarse block never
-    straddles two stages. Returns the merged assignment and drop order plus
-    the factor used, which the document records so the UI can say the
-    verdict describes a coarser assembly than the picture.
-    """
-
-    for factor in CRA_WEDGE_FACTORS:
-        cells = {(pair[0], pair[1] // factor) for pair in order}
-        if len(cells) <= budget:
-            break
-    coarse_assignment = [[pair[0], pair[1] // factor] for pair in assignment]
-    coarse_order: List[list] = []
-    seen = set()
-    for pair in order:
-        cell = (pair[0], pair[1] // factor)
-        if cell not in seen:
-            seen.add(cell)
-            coarse_order.append([cell[0], cell[1]])
-    return {
-        "assignment": coarse_assignment,
-        "order": coarse_order,
-        "wedge_factor": factor,
-    }
 
 
 def formwork_curve(
@@ -247,13 +221,10 @@ def run_staging(
     if include_cra and cra_runner is None:
         cra_runner = _cra_subprocess_runner(CRA_PYTHON)
     all_blocks: List[dict] = []
-    wedge_factor = None
     if include_cra:
-        coarse = cra_binning(binned["assignment"], binned["order"], CRA_BLOCK_BUDGET)
-        wedge_factor = coarse["wedge_factor"]
         all_blocks = blocks.segment_blocks(
-            arrays["vertices"], arrays["faces"], coarse["assignment"],
-            coarse["order"], thickness, set(geometry.support_ids(contract)),
+            arrays["vertices"], arrays["faces"], binned["assignment"],
+            binned["order"], thickness, set(geometry.support_ids(contract)),
         )
 
     stages = []
@@ -274,17 +245,18 @@ def run_staging(
             "struck_now": struck,
         }}
         if include_cra:
-            # Coarse cells merge wedges only, never rings, so a stage that
-            # has placed rings 0..k-1 has placed exactly the coarse blocks
-            # in those rings.
+            # Blocks are one per display ring/wedge cell (segmentation's own
+            # binning), so a stage that has placed rings 0..k-1 has placed
+            # exactly the blocks in those rings.
             stage_blocks = [
                 b for b in all_blocks if b["ring"] < entry["rings_placed"]
             ]
             if len(stage_blocks) > CRA_BLOCK_BUDGET:
-                # Wedge merging cannot go below one cell per ring, so a study
-                # with more occupied rings than the budget cannot be made
-                # affordable. Refusing here is honest and instant; letting it
-                # run would just spend the timeout to reach the same null.
+                # No coarsening is applied (see the CRA_BLOCK_BUDGET comment
+                # above), so a stage's block count is fixed by the display
+                # binning; there is no cheaper model to fall back to.
+                # Refusing here is honest and instant; letting it run would
+                # just spend the timeout to reach the same null.
                 stage_entry["cra"] = {
                     "stands": None,
                     "status": "over budget",
@@ -310,7 +282,6 @@ def run_staging(
         "segmentation": binned,
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,
-        "cra_wedge_factor": wedge_factor,
     }
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

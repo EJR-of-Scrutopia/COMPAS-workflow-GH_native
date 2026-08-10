@@ -223,17 +223,31 @@ recorded in .superpowers/sdd/2026-08-10-studio-cra-feasibility/cra-diagnostics.m
 - The solver is cra_penalty_solve, not cra_solve: about a second against
   21 s at 8 blocks, and decisive where the plain form only reaches
   maxIterations. Upstream makes the same switch for its larger examples.
-- The CRA model is coarsened by merging neighbouring wedges until it fits
-  CRA_BLOCK_BUDGET (8 blocks), because both solvers blow a 300 s cap at 10.
-  Rings are never merged, so stages stay whole. The document records
-  cra_wedge_factor and the Data panel says when the verdict describes a
-  coarser assembly than the drawing. A coarser model is optimistic on two
-  counts: fewer joints means fewer ways to hinge, and a merged piece counts
-  as supported if any of its merged wedges touches a support vertex. Both
-  sources of optimism are disclosed in the Data panel so the verdict is
-  labelled rather than quietly substituted.
-- When a stage has more occupied rings than CRA_BLOCK_BUDGET, wedge merging
-  cannot reduce the block count below one per ring, so the stage cannot be
-  made affordable. Such stages get an honest null verdict with a message
-  directing the user to lower the ring count, rather than hanging on a 300 s
-  timeout that would reach the same null.
+- The CRA model was coarsened by merging neighbouring wedges until it fit
+  CRA_BLOCK_BUDGET (8 blocks), on the theory that block count drove the
+  rigid-block solve's cost. The acceptance gate that followed, a real
+  staged run on the Trial 2 export with real solvers, disproved that:
+  rings=2 coarsened to 6 blocks, well under budget, and the stage still
+  burned the full 600 s timeout. A probe
+  (.superpowers/sdd/2026-08-10-studio-cra-engineering-pass/probe_stage2.py)
+  showed why: each coarse block carried 442 to 1536 vertices and 508 to
+  1698 faces, because a ring/wedge cell is a patch of hundreds of
+  analysis-mesh faces. The real cost driver is mesh complexity and contact
+  point count, not block count, measured against the six-face cube
+  fixtures that solve in about a second.
+- The same probe showed the merge was also geometrically wrong: it grouped
+  cells by raw index (wedge // factor), but a ring's occupied wedges are
+  not contiguous. Trial 2's ring 0 occupies wedges 0, 2, 3, 4, 7, 8, 9, 11,
+  so cell (0, 0) merged wedges 0 and 2 across an empty wedge 1. Two of the
+  six coarse blocks on the real export were two spatially disconnected
+  patches welded into one mesh: not a valid solid and not a real precast
+  piece.
+- The coarsening was removed (cra_binning and CRA_WEDGE_FACTORS deleted).
+  CRA blocks are built one per display ring/wedge cell again, the same
+  segmentation the drawing uses; CRA_BLOCK_BUDGET stays as a coarse guard
+  and the over-budget refusal is unchanged. CRA today gives correct
+  verdicts on small assemblies and an honest over-budget refusal on real
+  studies, rather than a wrong or misleading one. Making real studies
+  affordable needs blocks rebuilt with planar joint faces, a voussoir-style
+  model, instead of blocks that follow every analysis mesh face; that is
+  separate work, not done here.
