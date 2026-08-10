@@ -853,6 +853,36 @@ function showBanner(text) {
 function renderDataPanel(v) {
   const content = document.getElementById("data-content");
   content.innerHTML = "";
+
+  // Render CRA section FIRST, before verification early-out, so it appears
+  // even on staged-but-unverified studies.
+  const craHeading = document.createElement("h3");
+  craHeading.textContent = "CRA rigid-block verdict";
+  content.appendChild(craHeading);
+  const verdict = craVerdict();
+  if (!verdict) {
+    const none = document.createElement("p");
+    none.textContent = "no CRA run yet: run a staged analysis";
+    content.appendChild(none);
+  } else {
+    const line = document.createElement("p");
+    line.textContent = verdict.stands === true
+      ? "stands as rigid blocks under friction, self-weight only"
+      : verdict.stands === false
+        ? "does not stand as rigid blocks (" + verdict.status + ")"
+        : "not run: " + (verdict.message || verdict.status);
+    content.appendChild(line);
+    const mu = document.createElement("p");
+    mu.textContent = FRICTION_PROVENANCE[String(verdict.mu)]
+      || ("mu " + verdict.mu);
+    content.appendChild(mu);
+    const counts = document.createElement("p");
+    counts.textContent = verdict.blocks + " blocks, "
+      + verdict.interfaces + " contact interfaces";
+    content.appendChild(counts);
+  }
+
+  // Verification content: early-out if no verification file.
   if (!v) {
     const p = document.createElement("p");
     p.textContent = "no verification run embedded yet";
@@ -913,32 +943,6 @@ function renderDataPanel(v) {
       table.appendChild(tr);
     }
     content.appendChild(table);
-  }
-
-  const craHeading = document.createElement("h3");
-  craHeading.textContent = "CRA rigid-block verdict";
-  content.appendChild(craHeading);
-  const verdict = craVerdict();
-  if (!verdict) {
-    const none = document.createElement("p");
-    none.textContent = "no CRA run yet: run a staged analysis";
-    content.appendChild(none);
-  } else {
-    const line = document.createElement("p");
-    line.textContent = verdict.stands === true
-      ? "stands as rigid blocks under friction, self-weight only"
-      : verdict.stands === false
-        ? "does not stand as rigid blocks (" + verdict.status + ")"
-        : "not run: " + (verdict.message || verdict.status);
-    content.appendChild(line);
-    const mu = document.createElement("p");
-    mu.textContent = FRICTION_PROVENANCE[String(verdict.mu)]
-      || ("mu " + verdict.mu);
-    content.appendChild(mu);
-    const counts = document.createElement("p");
-    counts.textContent = verdict.blocks + " blocks, "
-      + verdict.interfaces + " contact interfaces";
-    content.appendChild(counts);
   }
 
   const headline = document.createElement("ul");

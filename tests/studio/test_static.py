@@ -430,3 +430,11 @@ def test_data_panel_reports_the_cra_verdict_with_provenance():
     assert "craVerdict()" in body
     assert "EN 1992-1-1 clause 6.2.5" in js
     assert "timber on timber" in js
+    # The CRA section must render BEFORE the verification early-out, so it
+    # always appears even on staged-but-unverified studies. Verify source order.
+    cra_index = body.index("craVerdict()")
+    verify_early_out = body.index("no verification run embedded yet")
+    assert cra_index < verify_early_out, (
+        "CRA section must come before the verification early-return guard, "
+        "or staged-but-unverified studies will never show the verdict"
+    )
