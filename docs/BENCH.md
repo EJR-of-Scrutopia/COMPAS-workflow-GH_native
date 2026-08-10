@@ -190,6 +190,66 @@ to PATH the same way, so no machine-wide configuration is needed. Without
 the binary, CRA verdicts report stands: null with a pointer back to this
 section.
 
+### Solver parameters: why d_bnd and eps are derived, not defaulted
+
+`cra_penalty_solve` takes `d_bnd`, the bound on the virtual displacement,
+and `eps`, the contact overlap parameter. Both are absolute lengths in
+metres, and upstream's defaults of 1e-3 and 1e-4 are tuned for
+compas_cra's own unit-scale examples. The Trial 2 export is 14.99 by
+20.26 by 7.00 m, a bounding box diagonal of 26.2 m, with joints metres
+wide. Left at the defaults the verdict became a function of how large the
+model happened to be drawn.
+
+The control that shows it is a semicircular arch of five radial
+voussoirs at t/R = 0.20, springers fixed as supports, out-of-plane width
+0.5 R, concrete at mu = 0.6. Heyman's minimum thickness for a
+semicircular arch is about 0.11 R, so this arch certainly stands. At the
+defaults it returned three different answers:
+
+| radius | termination |
+| --- | --- |
+| 1 m | infeasible |
+| 2 m | maxIterations |
+| 4 m | maxIterations |
+| 8 m | Cannot load a SolverResults object with bad status: error |
+
+Rigid-block feasibility under friction is scale invariant, so that spread
+is the solver's parameterisation leaking into the verdict.
+
+Both parameters are lengths, so dimensional similarity requires them to
+scale with the model: scale the geometry by s, scale d_bnd and eps by s,
+and the program maps onto itself. `solve_cra.characteristic_length`
+returns the diagonal of the axis aligned bounding box over every block
+vertex in the request. The whole assembly's box is used rather than a
+representative joint edge because a per-joint measure shrinks as the
+segmentation refines: the solver parameters would then depend on the
+studio's ring count rather than on the size of the thing being analysed.
+`eps` keeps upstream's own eps/d_bnd ratio of one tenth, which is
+dimensionless and is the parameter the formulation actually cares about.
+
+`D_BND_FRACTION` is measured, not guessed. Sweeping k = d_bnd / length
+from 0.001 to 0.5 on that arch at 1, 2, 4 and 8 m, the widest contiguous
+band that converges at every radius is 0.045 to 0.08 (0.04 fails at 4 m,
+0.09 fails at 8 m); a second band runs from about 0.24 to 0.45. Below
+0.03 the solve degrades systematically, which is why upstream's implied k
+of around 3e-4 on unit-scale examples never stood a chance here. The
+band, not any single value inside it, is the result. The full sweep, at
+nine radii, is recorded in
+`.superpowers/sdd/2026-08-10-voussoir-blocks/final-fix-report.md`.
+
+Two limits are worth stating plainly. Scale invariance is restored at the
+four radii the control asserts, but not everywhere: 6 m fails at almost
+every k tried, and 12 and 16 m fail at most. Those are IPOPT numerical
+failures rather than infeasibility findings, and they are erratic in
+radius rather than monotone in k, which points at conditioning. The
+objective is not scale homogeneous even when d_bnd and eps are (the force
+terms grow as s^6 and the alpha term as s^4), and the studio passes
+density 2400 where upstream uses 1.0, so the squared objective sits
+around 5.8e8 against IPOPT's absolute tol of 1e-8. Rescaling density
+would be a legitimate conditioning move, since the feasible set maps
+linearly and the tension ratio the verdict reads is unchanged by it, but
+it has not been done.
+
 ### Acceptance measurement: Trial 2 export
 
 `bench/scripts/cra_acceptance.py` runs the real staged CRA gate on the
@@ -203,11 +263,11 @@ run can never masquerade as a cached study result. Repeat it with:
 ./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py 4
 ```
 
-Both runs measured here, 2026-08-10. The CRA_BLOCK_BUDGET recalibration
-below happened between the first and second measurement pass; the numbers
-in this section are from the second pass, with the recalibrated budget in
-place, and are what an operator repeating the two commands above gets
-today.
+Both runs re-measured 2026-08-10 after the solver-parameter fix above and
+the epistemics fix below, and these are the numbers an operator repeating
+the two commands gets today. The earlier pass in this section reported
+"does not stand" on three stages; those results are withdrawn, and the
+Reading paragraph at the end of this section explains why.
 
 #### Volume comparison, mesh-following block model vs voussoirs
 
@@ -266,45 +326,92 @@ does. The full measurement, including the script used, is recorded in
 
 #### Staged CRA gate, per stage (recalibrated budget, CRA_BLOCK_BUDGET=14)
 
-rings=2, total wall time 46.5 s:
+rings=2, total wall time 47.2 s then 44.8 s on a repeat run with
+identical verdicts:
 
 | stage | blocks | interfaces | verdict | status | timing |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 8 | 2 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 0.1 s |
-| 2 | 13 | 17 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 4.5 s |
+| 1 | 8 | 2 | no verdict (None) | maxIterations | reached at 0.1 s |
+| 2 | 13 | 17 | no verdict (None) | infeasible | reached at 9.1 s |
 
-rings=4 (the studio's minimum), total wall time 34.2 s:
+rings=4 (the studio's minimum), total wall time 21.9 s then 22.1 s on a
+repeat run with identical verdicts:
 
 | stage | blocks | interfaces | verdict | status | timing |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 6 | 0 | stands (True) | all blocks are supports (trivial case) | reached at 0.1 s |
-| 2 | 13 | 10 | does not stand (False) | infeasible, no rigid-block equilibrium under friction | reached at 2.5 s |
-| 3 | 19 | 0 | no verdict | over budget (19 > 14) | reached at 25.9 s |
-| 4 | 21 | 0 | no verdict | over budget (21 > 14) | reached at 30.1 s |
+| 2 | 13 | 10 | no verdict (None) | Cannot load a SolverResults object with bad status: error | reached at 2.7 s |
+| 3 | 19 | 0 | no verdict (None) | over budget (19 > 14) | reached at 14.1 s |
+| 4 | 21 | 0 | no verdict (None) | over budget (21 > 14) | reached at 17.7 s |
 
-No stage timed out in either run. An over-budget or all-supports stage
-reports 0 interfaces because the solver never runs (over budget) or has
-nothing to check (every block already grounded): interface detection
-happens inside the rigid-block solve itself, so a stage that never
-reaches the solver has none to count.
+No stage timed out in either run, and no cell was skipped at either ring
+count. An over-budget or all-supports stage reports 0 interfaces because
+the solver never runs (over budget) or has nothing to check (every block
+already grounded): interface detection happens inside the rigid-block
+solve itself, so a stage that never reaches the solver has none to count.
 
-**Reading**: recalibrating the budget on measurement, not on the original
-guess, buys real verdicts where the old budget refused untried: rings=2
-now reaches a verdict on both of its stages instead of one, and rings=4
-(the studio's minimum) reaches a verdict on two of its four stages
-instead of one. Stages 3 and 4 at rings=4 are still refused, honestly,
-because 19 and 21 blocks are past the measured convergence cliff at 14;
-raising the budget further would not buy a verdict there, only tens of
-seconds spent reaching the same null. A real study on this export still
-does not get a verdict end to end at the studio's minimum ring count, but
-it now gets two verdicts and two honest refusals instead of one and
-three. Every non-trivial real verdict obtained so far on this export,
-across every block count from 8 to 14, has been the same answer: the
-assembly does not stand. That consistency is itself worth flagging
-rather than explaining away: it may be a genuine structural reading of
-this vault staged this way, or it may be an artefact of the voussoir
-model's own volume undercount (17.5 to 29.5 percent below the drawn
-segment, see the volume comparison above) changing the weight and
-contact geometry the solver sees. This measurement does not distinguish
-between those two explanations; it only reports that every stage large
-enough to solve, and small enough to converge, has said no.
+**Reading**: this export now returns no structural verdict at all. The
+only True is stage 1 at rings=4, where every placed block is a support
+and no solve happens; every other stage is an honest null. That is a
+worse-looking result than the previous pass, which reported "does not
+stand" on three stages, and it is the correct one. Those earlier results
+were withdrawn for two independent reasons found by control rather than
+by argument.
+
+First, a solver parameterisation artefact. `d_bnd` and `eps` were left at
+upstream's unit-scale defaults, which are absolute lengths in metres, on
+a model 26 m across. The control is above: a semicircular arch at
+t/R = 0.20, comfortably above Heyman's minimum, returned three different
+answers at 1, 2, 4 and 8 m. Whatever the old runs on this vault were
+measuring, it was not a scale-invariant property of the assembly.
+
+Second, the "does not stand" was never a finding. It came from reading
+IPOPT's "Converged to a locally infeasible point. Problem may be
+infeasible." as proof of infeasibility. Under an interior point method on
+a nonconvex program that is one solve failing from one starting point,
+and upstream's own "may be" says so. Those stages were nulls being
+reported as failures.
+
+So the earlier uniform does-not-stand result was a solver
+parameterisation artefact on top of a positional modelling error, not a
+structural reading of the vault. The positional error is the second thing
+this pass measured and the one that had gone undisclosed: the faceted
+analysis surface sits up to 2.389 m from the drawn surface at rings=2 and
+1.964 m at rings=4, against a shell half thickness of 0.1 m. Even a
+converged verdict on this model would be a verdict about blocks sitting
+metres from where the studio draws them.
+
+What is left is a tool that refuses rather than misleads, and a vault
+that has not been assessed. Two things would move it forward, in order:
+the conditioning work noted under the solver parameters above (the
+objective is not scale homogeneous and density 2400 pushes the squared
+objective to 5.8e8 against an absolute tol of 1e-8), and a voussoir model
+whose analysis surface tracks the drawn one within something closer to
+the shell thickness. Neither is a tuning exercise on this export.
+
+One measurement should be read as a warning rather than a result. The
+same k sweep was run on this export's own stages, twelve values from 0.5
+to 0.001, on every stage inside CRA_BLOCK_BUDGET:
+
+| stage | blocks | k values reaching a verdict | the verdict |
+| --- | --- | --- | --- |
+| rings=2 stage 1 | 8 | 7 of 12 | does not stand, tension at joints, at all seven |
+| rings=2 stage 2 | 13 | 0 of 12 | none |
+| rings=4 stage 1 | 6 | 12 of 12 | stands, all supports, no solve |
+| rings=4 stage 2 | 13 | 0 of 12 | none |
+
+Two readings follow. At 13 blocks no value of k reaches a verdict, so
+those nulls are a property of the problem at that size and not an
+artefact of the k chosen. At 8 blocks whether a verdict appears does
+depend on k, but its content does not: all seven say the same thing, from
+the tension check on a converged solution rather than from a termination
+string. The shipped k = 0.05 is not one of the seven.
+
+That value was kept deliberately. It is inside the measured band and ties
+for the best robustness across the nine arch radii tested; k = 0.06 is
+also inside the band and would return the rings=2 stage 1 verdict, but it
+measures worse on the scale invariance this parameter exists to
+establish, and choosing the value that makes the real export produce an
+answer is the reasoning this whole section exists to correct. An operator
+who wants that stage assessed should treat it as a sensitivity study and
+say so, not adjust the constant.
