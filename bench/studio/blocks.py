@@ -2,17 +2,19 @@
 
 Not on the CRA path any more. voussoirs.py builds what the rigid-block
 solver sees, and staging.py no longer imports this module. It is retained
-for two jobs: it is the reference the voussoir model's volume is measured
-against (bench/scripts/cra_acceptance.py), and it is the pin that keeps
-node parity with static/fields.js honest.
+for three jobs: it is the reference the voussoir model's volume is measured
+against (bench/scripts/cra_acceptance.py), pieces.py calls vertex_normals
+directly to build the mid-surface points and normals the viewer draws, and
+its own tests in tests/studio/test_blocks.py pin the prism/offset maths.
 
 Stdlib only, like every studio module the server imports. Blocks are built
 on the analysis mesh, the canonical surface; adjacent blocks offset shared
 vertices identically because the normals come from the whole mesh, so
-joints stay closed. The offset and
-boundary maths mirror static/fields.js (vertexNormals,
-segmentBoundaryEdges, extrudeSegment); tests/studio/test_blocks.py proves
-the parity by running the JS side in node on the same mesh.
+joints stay closed. This offset and boundary maths used to be mirrored in
+static/fields.js (vertexNormals, segmentBoundaryEdges, extrudeSegment),
+with a node parity test proving the two stayed in step. The viewer no
+longer extrudes anything itself, so that JS mirror and its parity test
+were retired; this module is now the only implementation.
 """
 
 from __future__ import annotations

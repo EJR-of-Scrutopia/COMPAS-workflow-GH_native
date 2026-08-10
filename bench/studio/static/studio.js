@@ -3,8 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { segmentFaces, segmentKey } from "/static/binning.js";
 import {
-  vertexNormals, extrudeSegment, boxUVs, segmentUVOffset,
-  smoothStressField, interpolateScalarField,
+  boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -19,6 +18,7 @@ const state = {
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
   rings: 8,
   thickness: 0.2,
+  jointGap: 0.02,
   segments: null,      // Task 11
   segmentIndex: null,  // Task 11
   nodeRadius: 0.03,    // Task 6
@@ -629,18 +629,21 @@ function recolourSegments() {
   }
   const white = new THREE.Color(0xffffff);
   for (const segment of state.objects.shell.children) {
-    const corners = segment.userData.corners;
+    const sources = segment.userData.sources;
+    const surfaceOf = segment.userData.surface;
     const base = segment.userData.basePositions;
     const positions = segment.geometry.getAttribute("position");
-    const colours = new Float32Array(corners.length * 3);
-    corners.forEach((corner, i) => {
+    const colours = new Float32Array(sources.length * 3);
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+      const cornerSurface = surfaceOf[i] === 1 ? "top" : surfaceOf[i] === -1 ? "bottom" : "worst";
       let colour = null;
       if (wantStress) {
         if (pickedField || topField) {
           const field = pickedField || (
-            corner.surface === "top" ? topField
-              : corner.surface === "bottom" ? bottomField : worstField);
-          const value = field[corner.v];
+            cornerSurface === "top" ? topField
+              : cornerSurface === "bottom" ? bottomField : worstField);
+          const value = field[source];
           colour = value === null ? white : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
@@ -649,7 +652,7 @@ function recolourSegments() {
       } else if (deflectionPeakOnly) {
         colour = STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly);
       }
-      const d = displacement ? displacement[corner.v] : null;
+      const d = displacement ? displacement[source] : null;
       if (!colour && wantDeflection && d) {
         colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
       }
@@ -665,7 +668,7 @@ function recolourSegments() {
       } else {
         positions.setXYZ(i, base[3 * i], base[3 * i + 1], base[3 * i + 2]);
       }
-    });
+    }
     positions.needsUpdate = true;
     segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
     segment.geometry.computeVertexNormals();
@@ -1147,6 +1150,16 @@ document.getElementById("thickness-input").addEventListener("change", (e) => {
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
+document.getElementById("joint-gap").addEventListener("input", (e) => {
+  document.getElementById("joint-gap-value").textContent = Math.round(+e.target.value * 1000);
+});
+document.getElementById("joint-gap").addEventListener("change", (e) => {
+  state.jointGap = +e.target.value;
+  if (!state.bundle) return;
+  buildPieceMeshes();
+  recolourSegments();
+  if (state.timeline) applySceneAtTime(state.timeline.t);
+});
 for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
   document.getElementById(id).addEventListener("input", applyEnvironment);
 }
@@ -1262,7 +1275,7 @@ function rebuildTimeline() {
   // stays a pure function of t.
   controls.target.copy(state.centre);
   controls.update();
-  buildSegmentMeshes();
+  buildPieceMeshes();
   applyTimeline(0);
   recolourSegments();
   scrubber.value = 0;
@@ -1273,51 +1286,83 @@ function timelineDuration() {
   return count * state.timeline.dropSeconds + state.timeline.dropSeconds + STRIKE_SECONDS;
 }
 
-function buildSegmentMeshes() {
+function pieceTint(key) {
+  // A deterministic lightness nudge per casting, so no two pieces look
+  // identical and the same study always looks the same.
+  const offset = segmentUVOffset(key);
+  return (offset[0] % 1) * 0.06 - 0.03;
+}
+
+function buildPieceMeshes() {
   if (state.objects.shell) scene.remove(state.objects.shell);
   const group = new THREE.Group();
-  const mesh = state.bundle.render_mesh;
-  const assignment = state.segments.assignment;
-  // The thickness on screen is the thickness the bundle was solved at,
-  // never the live slider value, which can drift while a bundle loads.
-  const thickness = state.bundle.provenance.thickness;
-  const normals = vertexNormals(mesh.vertices, mesh.faces);
-  const byKey = new Map();
-  mesh.parent_face.forEach((parent, faceIndex) => {
-    const key = segmentKey(assignment[parent][0], assignment[parent][1]);
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(faceIndex);
-  });
+  // Thickness on screen is what the bundle was solved at, never the live
+  // slider, which can drift while a bundle loads.
+  const half = state.bundle.provenance.thickness / 2;
+  const gap = sprayedMaterial() ? 0 : state.jointGap;
   const material = materials[state.bundle.material] || materials.concrete;
-  for (const [key, faceIndices] of byKey) {
-    const { positions, corners } = extrudeSegment(
-      mesh.vertices, mesh.faces, faceIndices, normals, thickness);
-    let cx = 0, cy = 0, cz = 0;
-    for (let i = 0; i < positions.length; i += 3) {
-      cx += positions[i]; cy += positions[i + 1]; cz += positions[i + 2];
+  for (const piece of state.bundle.pieces) {
+    const count = piece.mid.length;
+    const points = [];
+    for (const sign of [1, -1]) {
+      for (let i = 0; i < count; i++) {
+        const m = piece.mid[i], n = piece.normals[i];
+        points.push([
+          m[0] + n[0] * half * sign,
+          m[1] + n[1] * half * sign,
+          m[2] + n[2] * half * sign,
+        ]);
+      }
     }
-    const cornerCount = positions.length / 3;
-    const centroid = [cx / cornerCount, cy / cornerCount, cz / cornerCount];
-    const uvs = boxUVs(positions, centroid, segmentUVOffset(key));
+    // The joint: shrink the whole casting toward its own centroid, so
+    // neighbours stand apart by twice the inset and the cut reads.
+    let cx = 0, cy = 0, cz = 0;
+    for (const p of points) { cx += p[0]; cy += p[1]; cz += p[2]; }
+    const centre = [cx / points.length, cy / points.length, cz / points.length];
+    let extent = 1e-9;
+    for (const p of points) {
+      extent = Math.max(extent, Math.hypot(
+        p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]));
+    }
+    const shrink = Math.max(0, 1 - (gap / 2) / extent);
+    const positions = [], sources = [], surface = [];
+    for (const face of piece.faces) {
+      for (let corner = 1; corner < face.length - 1; corner++) {
+        for (const index of [face[0], face[corner], face[corner + 1]]) {
+          const p = points[index];
+          positions.push(
+            centre[0] + (p[0] - centre[0]) * shrink,
+            centre[1] + (p[1] - centre[1]) * shrink,
+            centre[2] + (p[2] - centre[2]) * shrink);
+          sources.push(piece.sources[index % count]);
+          surface.push(index < count ? 1 : -1);
+        }
+      }
+    }
+    const uvs = boxUVs(positions, centre, segmentUVOffset(piece.key));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
     geometry.computeVertexNormals();
-    // Each segment owns its own material instance (a clone of the shared
-    // registry entry) so the integrity pulse can write emissive per segment
-    // without tinting other segments, the falsework, the columns, or the
-    // canonical materials.concrete/materials.timber objects other code
-    // reads from. recolourSegments keeps this invariant on every rebuild.
-    const segment = new THREE.Mesh(geometry, material.clone());
-    segment.castShadow = segment.receiveShadow = true;
-    segment.userData.key = key;
-    segment.userData.faces = faceIndices;
-    segment.userData.corners = corners;
-    segment.userData.basePositions = new Float32Array(positions);
-    group.add(segment);
+    // Each casting owns its material instance so the pulse can write
+    // emissive per piece, and so the per piece tint does not leak into the
+    // shared registry entry other code reads from.
+    const own = material.clone();
+    if (!sprayedMaterial()) own.color.offsetHSL(0, 0, pieceTint(piece.key));
+    const mesh = new THREE.Mesh(geometry, own);
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData.key = piece.key;
+    mesh.userData.sources = sources;
+    mesh.userData.surface = surface;
+    mesh.userData.basePositions = new Float32Array(positions);
+    group.add(mesh);
   }
   state.objects.shell = group;
   scene.add(group);
+}
+
+function sprayedMaterial() {
+  return state.bundle && state.bundle.material === "concrete-sprayed";
 }
 
 function sceneCentroid() {

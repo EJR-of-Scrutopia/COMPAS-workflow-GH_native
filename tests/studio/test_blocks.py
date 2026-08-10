@@ -1,23 +1,22 @@
 """blocks.py turns segments into closed rigid prisms for CRA.
 
-The offset and boundary maths mirror static/fields.js; the parity test at
-the bottom runs the JS side in node on the same tilted mesh and compares
-positions, the same discipline as binning.js and fields.js.
+The offset and boundary maths (vertex_normals, segment_boundary_edges) used
+to also be mirrored in static/fields.js, with a parity test at the bottom
+running the JS side in node on the same tilted mesh. The viewer no longer
+extrudes anything client-side (bench/studio/pieces.py ships mid-surface
+points and normals, and the viewer just offsets them), so that JS mirror
+was retired along with the parity test; blocks.py is now the only
+implementation of this maths, and pieces.py calls it directly.
 """
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-FIELDS = REPO / "bench" / "studio" / "static" / "fields.js"
 
 
 def studio():
@@ -149,63 +148,3 @@ def test_adjacent_blocks_split_the_shared_wall_the_same_way():
         "the shared edge 1-4 must yield exactly two identically split "
         "triangles present in both blocks, got {}".format(len(shared))
     )
-
-
-needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-
-PARITY = textwrap.dedent("""
-    import { vertexNormals, extrudeSegment } from %FIELDS%;
-    const vertices = %VERTICES%;
-    const faces = %FACES%;
-    const normals = vertexNormals(vertices, faces);
-    const out = extrudeSegment(vertices, faces, [0], normals, 0.2);
-    console.log(JSON.stringify(out));
-""")
-
-
-@needs_node
-def test_python_offsets_match_fields_js(tmp_path):
-    blocks = studio()
-    script = tmp_path / "parity.mjs"
-    script.write_text(
-        PARITY.replace("%FIELDS%", json.dumps(FIELDS.as_uri()))
-        .replace("%VERTICES%", json.dumps(TILTED_VERTICES))
-        .replace("%FACES%", json.dumps(FACES)),
-        encoding="utf-8")
-    run = subprocess.run(["node", str(script)], capture_output=True, text=True)
-    assert run.returncode == 0, run.stderr
-    js = json.loads(run.stdout)
-    block = blocks.segment_blocks(
-        TILTED_VERTICES, FACES, ASSIGNMENT, ORDER, thickness=0.2, support_ids=[])[0]
-
-    def python_position(vertex, surface):
-        for point, (source, side) in zip(block["vertices"], block["sources"]):
-            if source == vertex and side == surface:
-                return point
-        raise AssertionError("missing vertex {} {}".format(vertex, surface))
-
-    # Check skin corners (top and bottom faces).
-    skin_corners = [c for c in js["corners"] if c["surface"] != "wall"]
-    for index, corner in enumerate(skin_corners):
-        expected = js["positions"][3 * index: 3 * index + 3]
-        assert python_position(corner["v"], corner["surface"]) == pytest.approx(
-            expected, abs=1e-9)
-
-    # Check wall corners: for each boundary edge (a, b) in order, the k-th
-    # JS wall sextet should match Python positions [ta, tb, bb, ta, bb, ba].
-    boundary = blocks.segment_boundary_edges(FACES, [0])
-    wall_start_index = len(skin_corners)
-    for k, (a, b) in enumerate(boundary):
-        expected_sequence = [
-            python_position(a, "top"),
-            python_position(b, "top"),
-            python_position(b, "bottom"),
-            python_position(a, "top"),
-            python_position(b, "bottom"),
-            python_position(a, "bottom"),
-        ]
-        for offset, expected_pos in enumerate(expected_sequence):
-            corner_index = wall_start_index + k * 6 + offset
-            corner = js["corners"][corner_index]
-            actual_pos = js["positions"][3 * corner_index: 3 * corner_index + 3]
-            assert actual_pos == pytest.approx(expected_pos, abs=1e-9)

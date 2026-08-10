@@ -19,8 +19,8 @@ needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is no
 
 CHECK = textwrap.dedent("""
     import {
-      vertexNormals, segmentBoundaryEdges, extrudeSegment, segmentUVOffset,
-      boxUVs, stressValueOf, smoothStressField, interpolateScalarField,
+      segmentUVOffset, boxUVs, stressValueOf, smoothStressField,
+      interpolateScalarField,
     } from %FIELDS%;
 
     function expect(condition, message) {
@@ -31,25 +31,6 @@ CHECK = textwrap.dedent("""
     // Two flat unit quads side by side in the z = 0 plane.
     const vertices = [[0,0,0],[1,0,0],[2,0,0],[0,1,0],[1,1,0],[2,1,0]];
     const faces = [[0,1,4,3],[1,2,5,4]];
-
-    const normals = vertexNormals(vertices, faces);
-    expect(normals.length === 6, "one normal per vertex");
-    for (const n of normals) {
-      expect(near(n[0], 0) && near(n[1], 0) && near(n[2], 1), "flat mesh normals point +z");
-    }
-
-    expect(segmentBoundaryEdges(faces, [0, 1]).length === 6, "shared edge 1-4 is interior");
-    expect(segmentBoundaryEdges(faces, [0]).length === 4, "a lone quad has four boundary edges");
-
-    const extruded = extrudeSegment(vertices, faces, [0], normals, 0.2);
-    expect(extruded.corners.length === 36, "6 top + 6 bottom + 4 walls x 6 corners");
-    expect(extruded.positions.length === 108, "three coordinates per corner");
-    expect(extruded.corners[0].v === 0 && extruded.corners[0].surface === "top"
-      && extruded.corners[0].face === 0, "first corner is the top skin at vertex 0");
-    expect(near(extruded.positions[2], 0.1), "top skin offset is +t/2");
-    expect(extruded.corners[6].surface === "bottom", "the second six corners are the bottom skin");
-    expect(near(extruded.positions[6 * 3 + 2], -0.1), "bottom skin offset is -t/2");
-    expect(extruded.corners[12].surface === "wall", "walls follow the skins");
 
     const offsetA = segmentUVOffset("r0w0");
     const offsetB = segmentUVOffset("r0w0");
@@ -101,7 +82,6 @@ def test_fields_module_exists_and_is_pure():
     js = FIELDS.read_text(encoding="utf-8")
     assert 'from "three"' not in js and "THREE." not in js, "fields.js must not depend on three.js"
     assert "document." not in js and "window." not in js, "fields.js must not touch the DOM"
-    for name in ("vertexNormals", "segmentBoundaryEdges", "extrudeSegment",
-                 "segmentUVOffset", "boxUVs", "stressValueOf",
+    for name in ("segmentUVOffset", "boxUVs", "stressValueOf",
                  "smoothStressField", "interpolateScalarField"):
         assert "export function {}(".format(name) in js, "fields.js lost {}".format(name)

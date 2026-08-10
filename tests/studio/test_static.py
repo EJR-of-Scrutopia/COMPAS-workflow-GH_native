@@ -307,26 +307,27 @@ def test_node_and_wire_size_sliders_rebuild_only_on_change():
         )
 
 
-def test_segments_are_extruded_to_the_bundles_thickness():
+def test_pieces_are_built_at_the_bundles_thickness():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "fields.js" in js, "studio.js must import the pure fields module"
-    start = js.index("function buildSegmentMeshes(")
+    start = js.index("function buildPieceMeshes(")
     end = js.index("\n}", start)
     body = js[start:end]
     assert "state.bundle.provenance.thickness" in body, (
-        "extrusion must use the thickness the bundle was actually built at"
+        "pieces must be offset at the thickness the bundle was actually built at"
     )
-    for name in ("vertexNormals", "extrudeSegment", "boxUVs", "segmentUVOffset"):
-        assert name in body, "buildSegmentMeshes lost {}".format(name)
+    for name in ("boxUVs", "segmentUVOffset"):
+        assert name in body, "buildPieceMeshes lost {}".format(name)
     assert "basePositions" in body
 
 
-def test_recolour_consumes_the_corner_metadata():
+def test_recolour_consumes_the_piece_metadata():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     start = js.index("function recolourSegments(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "userData.corners" in body
+    assert "userData.sources" in body
+    assert "userData.surface" in body
     assert "userData.basePositions" in body
 
 
@@ -338,7 +339,7 @@ def test_stress_smoothing_is_wired_and_per_surface_is_the_default():
     start = js.index("function recolourSegments(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "corner.surface" in body, "per-surface mode must pick the field by skin"
+    assert "cornerSurface" in body, "per-surface mode must pick the field by skin"
 
 
 def test_the_legend_exists_and_tracks_the_layers():
@@ -503,3 +504,35 @@ def test_skipped_pieces_are_reported_in_data_panel_and_badge():
     badge_body = js[badge_start:badge_end]
     assert "cra_skipped" in badge_body
     assert "not modelled" in badge_body
+
+
+def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="joint-gap"' in html and 'id="joint-gap-value"' in html
+    assert "function buildPieceMeshes(" in js
+    assert "state.bundle.pieces" in js
+    assert "state.jointGap" in js
+    assert "function buildSegmentMeshes(" not in js, "the old extruder is retired"
+
+
+def test_each_piece_gets_its_own_tint():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function buildPieceMeshes(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "segmentUVOffset(" in body, "per piece UVs keep castings from matching"
+    assert "offsetHSL" in body or "pieceTint" in body
+
+
+def test_sprayed_concrete_has_no_joints_at_all():
+    # Sprayed concrete is monolithic, so opening a joint between pieces
+    # would be a lie about how it is built.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function buildPieceMeshes(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "sprayedMaterial() ? 0 : state.jointGap" in body
+    assert "if (!sprayedMaterial()) own.color.offsetHSL" in body, (
+        "the per piece tint must be suppressed for a continuous surface"
+    )

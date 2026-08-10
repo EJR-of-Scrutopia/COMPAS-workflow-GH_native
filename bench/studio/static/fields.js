@@ -1,85 +1,14 @@
 // Pure geometry and field helpers for the studio scene. No three.js and no
 // DOM: everything is plain arrays so tests/studio/test_fields.py can run
 // this module in node against hand-computed values.
-
-export function vertexNormals(vertices, faces) {
-  const accumulator = vertices.map(() => [0, 0, 0]);
-  for (const face of faces) {
-    for (const [a, b, c] of [[face[0], face[1], face[2]], [face[0], face[2], face[3]]]) {
-      const pa = vertices[a], pb = vertices[b], pc = vertices[c];
-      const u = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
-      const v = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
-      // The raw cross product is twice the triangle area, so summing the
-      // unnormalised crosses is exactly area weighting.
-      const n = [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-      ];
-      for (const index of [a, b, c]) {
-        accumulator[index][0] += n[0];
-        accumulator[index][1] += n[1];
-        accumulator[index][2] += n[2];
-      }
-    }
-  }
-  return accumulator.map((n) => {
-    const length = Math.hypot(n[0], n[1], n[2]);
-    return length > 1e-12 ? [n[0] / length, n[1] / length, n[2] / length] : [0, 0, 1];
-  });
-}
-
-export function segmentBoundaryEdges(faces, faceIndices) {
-  const keyOf = (a, b) => (a < b ? a + "_" + b : b + "_" + a);
-  const counts = new Map();
-  for (const faceIndex of faceIndices) {
-    const face = faces[faceIndex];
-    for (let i = 0; i < face.length; i++) {
-      const key = keyOf(face[i], face[(i + 1) % face.length]);
-      counts.set(key, (counts.get(key) || 0) + 1);
-    }
-  }
-  const boundary = [];
-  for (const faceIndex of faceIndices) {
-    const face = faces[faceIndex];
-    for (let i = 0; i < face.length; i++) {
-      const a = face[i], b = face[(i + 1) % face.length];
-      if (counts.get(keyOf(a, b)) === 1) boundary.push({ a, b, face: faceIndex });
-    }
-  }
-  return boundary;
-}
-
-export function extrudeSegment(vertices, faces, faceIndices, normals, thickness) {
-  const half = thickness / 2;
-  const offset = (i, sign) => [
-    vertices[i][0] + normals[i][0] * half * sign,
-    vertices[i][1] + normals[i][1] * half * sign,
-    vertices[i][2] + normals[i][2] * half * sign,
-  ];
-  const positions = [];
-  const corners = [];
-  const push = (point, v, surface, face) => {
-    positions.push(point[0], point[1], point[2]);
-    corners.push({ v, surface, face });
-  };
-  for (const faceIndex of faceIndices) {
-    const face = faces[faceIndex];
-    for (const corner of [0, 1, 2, 0, 2, 3]) {
-      push(offset(face[corner], 1), face[corner], "top", faceIndex);
-    }
-    for (const corner of [0, 2, 1, 0, 3, 2]) {
-      push(offset(face[corner], -1), face[corner], "bottom", faceIndex);
-    }
-  }
-  for (const { a, b, face } of segmentBoundaryEdges(faces, faceIndices)) {
-    const ta = offset(a, 1), tb = offset(b, 1);
-    const ba = offset(a, -1), bb = offset(b, -1);
-    push(ta, a, "wall", face); push(tb, b, "wall", face); push(bb, b, "wall", face);
-    push(ta, a, "wall", face); push(bb, b, "wall", face); push(ba, a, "wall", face);
-  }
-  return { positions, corners };
-}
+//
+// This module used to also carry vertexNormals, segmentBoundaryEdges and
+// extrudeSegment, a JS mirror of the offset maths in bench/studio/pieces.py
+// and bench/studio/blocks.py. The viewer no longer extrudes anything
+// itself: pieces.py ships mid-surface points and normals per piece in the
+// bundle, and studio.js's buildPieceMeshes just offsets those by half the
+// thickness. Python is now the only implementation of that maths, which is
+// the point: one fewer mirror to keep in step.
 
 export function segmentUVOffset(key) {
   let hash = 2166136261;
