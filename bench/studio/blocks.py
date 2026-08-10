@@ -124,11 +124,29 @@ def segment_blocks(
             face = faces[face_index]
             block_faces.append([top_of[v] for v in face])
             block_faces.append([bottom_of[v] for v in reversed(face)])
-        # Wall quads wind outward for COMPAS volume and interface detection.
-        # This deliberately differs from fields.js, whose wall soup renders
-        # DoubleSide so winding never mattered.
+        # Walls are triangle pairs, not quads. Each vertex is offset along
+        # its own normal, so a wall quad on curved geometry is not planar,
+        # and compas_cra's interface detector rejects candidate faces that
+        # sit off the base face's plane: warped walls cost 16 of 17 joints
+        # on the real export. Triangles are planar by construction.
+        #
+        # The wall on a shared edge is built twice, once by each adjoining
+        # block, over the same four points. Both copies must be cut along
+        # the same diagonal or the two sides present faces that do not
+        # match. The cut is chosen from the shared edge's analysis vertex
+        # ids, which both blocks see identically (they traverse the edge in
+        # opposite directions, so the a < b test picks opposite branches
+        # and lands on the same diagonal). Walls still wind outward, as the
+        # quads did.
         for a, b in segment_boundary_edges(faces, face_indices):
-            block_faces.append([top_of[b], top_of[a], bottom_of[a], bottom_of[b]])
+            ta, tb = top_of[a], top_of[b]
+            ba, bb = bottom_of[a], bottom_of[b]
+            if a < b:
+                block_faces.append([tb, ta, ba])
+                block_faces.append([tb, ba, bb])
+            else:
+                block_faces.append([ta, ba, bb])
+                block_faces.append([ta, bb, tb])
 
         blocks.append({
             "vertices": block_vertices,

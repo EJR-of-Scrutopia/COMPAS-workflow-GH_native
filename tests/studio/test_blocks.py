@@ -63,9 +63,9 @@ def test_each_segment_becomes_a_closed_prism():
         FLAT_VERTICES, FACES, ASSIGNMENT, ORDER, thickness=0.2, support_ids=[0])
     assert len(result) == 2
     first = result[0]
-    # One quad: 4 top + 4 bottom welded vertices, 1 top + 1 bottom + 4 wall faces.
+    # One quad: 4 top + 4 bottom welded vertices, 1 top + 1 bottom + 4 walls of 2 triangles each.
     assert len(first["vertices"]) == 8
-    assert len(first["faces"]) == 6
+    assert len(first["faces"]) == 10
     # Closed manifold with consistent outward orientation: every directed edge
     # appears exactly once, and its reverse also appears (no self-cycles or
     # backwards edges). This enforces closure plus orientation.
@@ -110,6 +110,45 @@ def test_shared_wall_vertices_coincide_between_adjacent_blocks():
         for surface in ("top", "bottom"):
             assert positions(result[0], vertex, surface) == pytest.approx(
                 positions(result[1], vertex, surface))
+
+
+def wall_triangles(block):
+    """The block's wall faces as frozensets of (analysis vertex, surface)."""
+
+    out = []
+    for face in block["faces"]:
+        labels = [tuple(block["sources"][i]) for i in face]
+        surfaces = {label[1] for label in labels}
+        if len(face) == 3 and len(surfaces) == 2:
+            out.append(frozenset(labels))
+    return out
+
+
+def test_wall_faces_are_planar_triangles():
+    blocks = studio()
+    result = blocks.segment_blocks(
+        TILTED_VERTICES, FACES, ASSIGNMENT, ORDER, thickness=0.2, support_ids=[])
+    for block in result:
+        for face in block["faces"]:
+            labels = [tuple(block["sources"][i]) for i in face]
+            if len({label[1] for label in labels}) == 2:
+                assert len(face) == 3, "wall faces must be triangles, not quads"
+
+
+def test_adjacent_blocks_split_the_shared_wall_the_same_way():
+    # The wall on a shared edge is built by both blocks. Detection only
+    # works if both present the SAME triangles, so the diagonal must come
+    # from the shared edge's analysis vertex ids, not from build order.
+    blocks = studio()
+    result = blocks.segment_blocks(
+        TILTED_VERTICES, FACES, ASSIGNMENT, ORDER, thickness=0.2, support_ids=[])
+    first = set(wall_triangles(result[0]))
+    second = set(wall_triangles(result[1]))
+    shared = first & second
+    assert len(shared) == 2, (
+        "the shared edge 1-4 must yield exactly two identically split "
+        "triangles present in both blocks, got {}".format(len(shared))
+    )
 
 
 needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
