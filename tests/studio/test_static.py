@@ -33,3 +33,11 @@ def test_no_external_urls_in_the_page_or_scripts():
         assert not re.search(r"https?://", text), (
             "{} references the network; the studio must work offline".format(name)
         )
+
+
+def test_binning_js_avoids_the_known_parity_traps():
+    js = (STATIC / "binning.js").read_text(encoding="utf-8")
+    assert "Math.round" not in js, "use floor(x + 0.5); Math.round differs from Python round at .5"
+    assert "halfUp" in js
+    assert "theta < 0" in js, "JS % keeps sign; the fold to [0, 2pi) must be explicit"
+    assert "WEDGES_AT_RIM = 12" in js
