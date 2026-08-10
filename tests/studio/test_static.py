@@ -98,3 +98,11 @@ def test_thickness_control_is_wired_and_honest():
     assert "state.thickness" in js
     assert "thickness=" in js, "loadStudy must send the thickness parameter"
     assert "verified run used" in js, "the HUD must flag a thickness mismatch"
+
+
+def test_the_scrubber_is_wired_to_the_pure_timeline():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="timeline-scrubber"' in html
+    assert "timeline-scrubber" in js
+    assert "timelineDuration()" in js

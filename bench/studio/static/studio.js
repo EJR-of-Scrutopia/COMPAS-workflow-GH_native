@@ -20,6 +20,7 @@ const state = {
 };
 
 const canvas = document.getElementById("view");
+const scrubber = document.getElementById("timeline-scrubber");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.shadowMap.enabled = true;
@@ -867,6 +868,7 @@ function rebuildTimeline() {
   buildSegmentMeshes();
   applyTimeline(0);
   recolourSegments();
+  scrubber.value = 0;
 }
 
 function timelineDuration() {
@@ -1022,6 +1024,13 @@ document.getElementById("play-button").addEventListener("click", () => {
   state.timeline.playing = !state.timeline.playing;
   document.getElementById("play-button").textContent = state.timeline.playing ? "Pause" : "Play";
 });
+
+scrubber.addEventListener("input", () => {
+  if (!state.timeline) return;
+  state.timeline.playing = false;
+  document.getElementById("play-button").textContent = "Play";
+  applyTimeline((+scrubber.value / 1000) * timelineDuration());
+});
 for (const [id, prop] of [["drop-speed", "dropSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
     if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
@@ -1039,6 +1048,9 @@ function frame(now) {
       state.timeline.playing = false;
       document.getElementById("play-button").textContent = "Play";
     }
+  }
+  if (state.timeline && document.activeElement !== scrubber) {
+    scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   }
   controls.update();
   renderer.render(scene, camera);
