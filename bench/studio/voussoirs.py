@@ -15,6 +15,25 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import blocks
+import geometry
+
+# A voussoir's mid surface is a polygon through the corners, so it always
+# holds less volume than the curved cell it replaces; that chord error is
+# the model's disclosed cost, not a defect. What this floor catches is a
+# piece that has stopped being a solid at all: three nearly collinear
+# corners collapse the polygon towards a line, and len(corners) < 3, the
+# only guard there used to be, does not see it. The floor is set from
+# measurement on the Trial 2 export: the smallest legitimate piece
+# measured holds 36.3 percent of its cell's extruded volume (rings=4,
+# ring 0 wedge 0, a well proportioned triangle over 33 mesh faces), so a
+# floor of 5 percent sits a factor of seven clear of anything real while
+# still catching a polygon that has collapsed. The floor deliberately
+# does NOT try to catch ordinary chord error: no threshold can, because
+# the pieces with the largest chord error at rings=2 (48.7 percent) sit
+# ABOVE ordinary pieces at rings=4 (36.3 percent), so any cut that caught
+# the first would discard six sound pieces of the second. Chord error is
+# reported to the reader in the data panel instead.
+VOLUME_FLOOR = 0.05
 
 
 def edge_users(faces: Sequence[Sequence[int]]) -> Dict[Tuple[int, int], List[int]]:
@@ -95,6 +114,29 @@ def component_loops(
             )
         loops.append(loop)
     return loops
+
+
+def loop_pinch_vertices(loop: Sequence[Tuple[int, int]]) -> List[int]:
+    """Vertices a single loop visits more than once.
+
+    component_loops walks each boundary edge on to whichever unused edge
+    leaves its end vertex. Where two boundary loops of one component touch
+    at a single vertex, that walk can cross from one loop into the other
+    and come back, chaining both into what looks like one loop. The
+    holed-piece guard counts loops, so a merge like that slips a piece
+    with a hole past it in silence and builds a prismatoid through a
+    boundary that crosses itself. A vertex visited twice is the cheap
+    signature of that crossing: a simple loop enters and leaves every
+    vertex exactly once.
+    """
+
+    seen = set()
+    repeats = []
+    for edge in loop:
+        if edge[0] in seen:
+            repeats.append(edge[0])
+        seen.add(edge[0])
+    return repeats
 
 
 def boundary_loops(
@@ -321,9 +363,18 @@ def segment_voussoirs(
                 # normally. A holed piece is reported, not modelled wrong.
                 pieces.append({
                     "ring": ring, "wedge": wedge, "is_support": is_support,
-                    "runs": None,
+                    "runs": None, "faces": component,
                     "reason": ("piece has no boundary loop" if not loops
                                else "piece has a hole, so no single boundary loop"),
+                })
+                continue
+            pinches = loop_pinch_vertices(loops[0])
+            if pinches:
+                pieces.append({
+                    "ring": ring, "wedge": wedge, "is_support": is_support,
+                    "runs": None, "faces": component,
+                    "reason": "piece pinches at {} vertex/vertices, so its "
+                              "boundary is not a simple loop".format(len(pinches)),
                 })
                 continue
             runs = loop_runs(loops[0], labels)
@@ -331,7 +382,7 @@ def segment_voussoirs(
                 splits.setdefault(key, set()).update(wanted)
             pieces.append({
                 "ring": ring, "wedge": wedge, "is_support": is_support,
-                "runs": runs, "reason": None,
+                "runs": runs, "faces": component, "reason": None,
             })
 
     # Phase two: lay out corners honouring every split anyone asked for.
@@ -358,6 +409,24 @@ def segment_voussoirs(
             })
             continue
         solid = _solid_from_corners(corners, normals, vertices, thickness)
+        # Three corners are enough to build a prismatoid but not enough to
+        # make it a solid: near collinear ones give a polygon with almost
+        # no area, and the block that comes out has almost no volume to
+        # weigh, no usable joint face and no business reaching a solver as
+        # a precast piece. Measured against what the cell would hold if it
+        # were extruded honestly, so the test is scale free and answers
+        # the right question: how much of this cell did the model keep.
+        drawn = thickness * sum(
+            geometry.face_area(vertices, faces[i]) for i in piece["faces"])
+        volume = mesh_volume(solid["vertices"], solid["faces"])
+        if drawn > 0.0 and volume < VOLUME_FLOOR * drawn:
+            skipped.append({
+                "ring": piece["ring"], "wedge": piece["wedge"],
+                "reason": "piece is degenerate: it holds {:.1%} of its cell's "
+                          "extruded volume, below the {:.0%} floor".format(
+                              volume / drawn, VOLUME_FLOOR),
+            })
+            continue
         built.append({
             "vertices": solid["vertices"],
             "faces": solid["faces"],

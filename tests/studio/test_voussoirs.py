@@ -305,10 +305,57 @@ def test_a_piece_with_a_hole_is_reported_not_modelled_wrong():
 
 def test_a_split_asked_for_by_one_cell_is_honoured_by_its_neighbour():
     v = studio()
-    # Centre quad borders cell (0, 0) on two edges and cell (0, 1) on two,
-    # so it has only two runs and must ask for a third corner. Cell (0, 0)
-    # has more than three runs of its own and asks for nothing, so it can
-    # only stay flush with the centre by honouring the centre's request.
+    # The notch quad is bordered by cell (0, 0) on three edges and free on
+    # the fourth, so it has only two runs and must ask for a third corner
+    # on the chain it SHARES. Cell (0, 0) has four runs of its own and asks
+    # for nothing, so it can only stay flush by honouring the request.
+    assignment = [[0, 0]] * 9
+    assignment[1] = [1, 0]
+    for index in (6, 7, 8):
+        assignment[index] = [0, 1]
+    built, skipped = v.segment_voussoirs(
+        RING_VERTICES, RING_FACES, assignment, [[0, 0], [0, 1], [1, 0]],
+        thickness=0.2, support_ids=[])
+    assert skipped == []
+    by_cell = {(b["ring"], b["wedge"]): b for b in built}
+    centre = by_cell[(1, 0)]
+    neighbour = by_cell[(0, 0)]
+    assert len(centre["corner_vertices"]) == 3, "the centre asked for a third corner"
+    assert set(centre["corner_vertices"]) - {1, 2} == {5}, (
+        "the corner the centre asked for is the split vertex")
+    assert 5 in neighbour["corner_vertices"], (
+        "the neighbour must carry the same split vertex, or the two pieces "
+        "cross the shared chain on different lines")
+
+    def joint_walls(block):
+        # Side walls only. The fixture is flat in z with normals along z,
+        # so a cap has all three corners on one offset plane and a wall
+        # straddles both. Caps are excluded because the fan cap of a cell
+        # that wraps a notch reaches back across it, which says nothing
+        # about whether the two pieces meet flush on the joint.
+        walls = set()
+        for face in block["faces"]:
+            points = [tuple(round(c, 9) for c in block["vertices"][i]) for i in face]
+            if len({p[2] for p in points}) > 1:
+                walls.add(frozenset(points))
+        return walls
+
+    shared = joint_walls(centre) & joint_walls(neighbour)
+    assert len(shared) == 4, (
+        "the split chain is two segments, so four coincident wall triangles, "
+        "got {}".format(len(shared))
+    )
+
+
+def test_a_piece_that_encloses_no_volume_is_reported_not_solved():
+    v = studio()
+    # Both wrapping cells here collapse. Each keeps only the corners next
+    # to the centre quad and folds its whole free boundary onto a single
+    # chord that runs back across the piece, so the corner polygons enclose
+    # zero and negative area. len(corners) < 3 never sees this: three
+    # corners are present, they are just collinear. Before the volume floor
+    # both were built and handed to the solver as precast pieces with
+    # nothing reported.
     assignment = [[0, 0]] * 9
     for index in (3, 6, 7, 8):
         assignment[index] = [0, 1]
@@ -316,23 +363,65 @@ def test_a_split_asked_for_by_one_cell_is_honoured_by_its_neighbour():
     built, skipped = v.segment_voussoirs(
         RING_VERTICES, RING_FACES, assignment, [[0, 0], [0, 1], [1, 0]],
         thickness=0.2, support_ids=[])
-    assert skipped == []
-    by_cell = {(b["ring"], b["wedge"]): b for b in built}
-    centre = by_cell[(1, 0)]
-    assert len(centre["corner_vertices"]) == 3, "the centre asked for a third corner"
+    assert [(b["ring"], b["wedge"]) for b in built] == [(1, 0)]
+    assert [(s["ring"], s["wedge"]) for s in skipped] == [(0, 0), (0, 1)]
+    for entry in skipped:
+        assert "degenerate" in entry["reason"]
+        assert "extruded volume" in entry["reason"]
 
-    def triangles(block):
-        out = set()
-        for face in block["faces"]:
-            out.add(frozenset(
-                tuple(round(c, 9) for c in block["vertices"][i]) for i in face))
-        return out
 
-    shared = triangles(centre) & triangles(by_cell[(0, 0)])
-    assert len(shared) == 4, (
-        "the split chain is two segments, so four coincident triangles, got "
-        "{}".format(len(shared))
-    )
+def test_ordinary_chord_error_is_not_treated_as_degeneracy():
+    v = studio()
+    # The floor must not swallow the model's disclosed chord error. The
+    # smallest legitimate piece measured on the real export holds 36.3
+    # percent of its cell's extruded volume, so the floor sits well under
+    # that, and this piece, which keeps half of its cell, must be built.
+    assignment = [[0, 0]] * 9
+    assignment[1] = [1, 0]
+    for index in (6, 7, 8):
+        assignment[index] = [0, 1]
+    built, _ = v.segment_voussoirs(
+        RING_VERTICES, RING_FACES, assignment, [[0, 0], [0, 1], [1, 0]],
+        thickness=0.2, support_ids=[])
+    centre = [b for b in built if (b["ring"], b["wedge"]) == (1, 0)][0]
+    volume = v.mesh_volume(centre["vertices"], centre["faces"])
+    assert 0.4 < volume / 0.2 < 0.6, "half the cell, and still a solid"
+    assert v.VOLUME_FLOOR < 0.36, (
+        "the floor must stay clear of the worst real chord error measured")
+
+
+PINCH_VERTICES = [[c, r, 0] for r in range(5) for c in range(5)]
+PINCH_FACES = [
+    [r * 5 + c, r * 5 + c + 1, (r + 1) * 5 + c + 1, (r + 1) * 5 + c]
+    for r in range(4) for c in range(4)
+]
+
+
+def test_a_piece_that_pinches_at_a_vertex_is_reported_not_modelled_wrong():
+    v = studio()
+    # This cell wraps quad (2, 1) completely but touches itself at the one
+    # vertex where its two arms meet diagonally. That vertex carries four
+    # boundary edges, so the boundary walk crosses from the loop around the
+    # enclosed quad into the outer loop and back: one component, one loop.
+    # The holed-piece guard counts loops, so it sees nothing to complain
+    # about, and the piece really does have a hole.
+    cell = [4, 5, 8, 10, 12, 13, 14]
+    components = v.face_components(PINCH_FACES, cell)
+    assert len(components) == 1, "the arms are edge connected"
+    loops = v.component_loops(PINCH_FACES, components[0])
+    assert len(loops) == 1, "the pinch merges both loops into one"
+    assert v.loop_pinch_vertices(loops[0]) == [12]
+
+    assignment = [[0, 1]] * len(PINCH_FACES)
+    for index in cell:
+        assignment[index] = [0, 0]
+    built, skipped = v.segment_voussoirs(
+        PINCH_VERTICES, PINCH_FACES, assignment, [[0, 0], [0, 1]],
+        thickness=0.2, support_ids=[])
+    pinched = [s for s in skipped if (s["ring"], s["wedge"]) == (0, 0)]
+    assert len(pinched) == 1, skipped
+    assert "pinch" in pinched[0]["reason"]
+    assert (0, 0) not in [(b["ring"], b["wedge"]) for b in built]
 
 
 def test_a_cell_with_no_boundary_loop_is_skipped_not_solved():
