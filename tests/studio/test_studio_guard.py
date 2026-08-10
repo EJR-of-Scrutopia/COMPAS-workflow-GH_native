@@ -17,8 +17,8 @@ from pathlib import Path
 STUDIO = Path(__file__).resolve().parents[2] / "bench" / "studio"
 
 FORBIDDEN = re.compile(
-    r"^\s*(import\s+(compas_fea2|ananke_fea|compas|numpy|scipy)\b"
-    r"|from\s+(compas_fea2|ananke_fea|compas|numpy|scipy)\b)",
+    r"^\s*(import\s+(compas_fea2|compas_cra|compas_assembly|ananke_fea|compas|numpy|scipy)\b"
+    r"|from\s+(compas_fea2|compas_cra|compas_assembly|ananke_fea|compas|numpy|scipy)\b)",
     re.MULTILINE,
 )
 
