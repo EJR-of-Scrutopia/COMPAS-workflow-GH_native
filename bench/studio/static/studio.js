@@ -411,10 +411,12 @@ function updateCraBadge() {
     badge.classList.add("cra-unknown");
     badge.textContent = "CRA: not run (" + (verdict.message || verdict.status || "unknown") + ")";
   }
-  if (verdict) {
-    // Appended after the three-state branch above so it rides on every
-    // verdict without touching which class or which words that branch
-    // chose.
+  if (verdict && (verdict.stands === true || verdict.stands === false)) {
+    // Appended after the three-state branch above, so it rides on every
+    // badge that makes a claim without touching which class or which
+    // words that branch chose. A null verdict makes no claim about the
+    // structure, so it needs no caveat about the model the claim would
+    // have been made on, and its message is long enough already.
     badge.textContent += " " + FACETED_CAVEAT;
   }
   const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;

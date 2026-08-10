@@ -65,9 +65,10 @@ TENSION_TOLERANCE = 1e-3
 # d_bnd (the bound on the virtual displacement) and eps (the contact
 # overlap parameter) are ABSOLUTE LENGTHS IN METRES in compas_cra's
 # formulation, and upstream's defaults (1e-3 and 1e-4) are tuned for its
-# own unit-scale examples. The studio's vaults are 4 to 7 m across with
-# joints metres wide, so leaving the defaults in place made the verdict a
-# function of how big the model happened to be: a semicircular arch at
+# own unit-scale examples. The Trial 2 export is 14.99 by 20.26 by 7.00 m,
+# a bounding box diagonal of 26.2 m, with joints metres wide, so leaving
+# the defaults in place made the verdict a function of how big the model
+# happened to be drawn: a semicircular arch at
 # t/R = 0.20 (Heyman's minimum is about 0.11, so it certainly stands)
 # returned four different answers at radii 1, 2, 4 and 8 m, which is
 # impossible for a rigid-block feasibility question. Both parameters
