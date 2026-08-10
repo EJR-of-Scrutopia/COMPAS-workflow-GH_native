@@ -36,6 +36,22 @@ def _ffmpeg_present() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def _invalidate_studio_cache(slug: str) -> None:
+    """Drop every cached bundle/staging file for a study after re-import.
+
+    A changed export must never keep serving a stale bundle built from the
+    old geometry. Frames and recording.mp4 are untouched: they belong to a
+    recording, not to a geometry snapshot.
+    """
+
+    studio_dir = bundle.STUDIES_DIR / slug / "studio"
+    if not studio_dir.is_dir():
+        return
+    for pattern in ("bundle-*.json", "staging-*.json"):
+        for stale in studio_dir.glob(pattern):
+            stale.unlink()
+
+
 def _validate(export: str, material: str, rings: int, thickness: float) -> None:
     pairs = geometry.available_exports(bundle.UPLOAD_DIR)
     if export not in pairs:
@@ -156,6 +172,11 @@ def create_app(runner=None) -> FastAPI:
             raise HTTPException(400, "bad export name")
         if kind not in ("contract", "compas"):
             raise HTTPException(400, "kind must be 'contract' or 'compas'")
+        slug = geometry.slugify(name)
+        with RUNS_LOCK:
+            for run in RUNS.values():
+                if run["slug"] == slug and run["state"] in ("queued", "running"):
+                    return JSONResponse({"run": run["id"]}, status_code=409)
         body = await request.body()
         try:
             document = json.loads(body)
@@ -165,6 +186,7 @@ def create_app(runner=None) -> FastAPI:
             try:
                 geometry.mesh_arrays(document)
                 geometry.support_ids(document)
+                geometry.member_forces_newtons(document)
             except Exception as error:
                 raise HTTPException(400, str(error))
         elif not isinstance(document, dict) or "thrustMesh" not in document:
@@ -176,6 +198,7 @@ def create_app(runner=None) -> FastAPI:
         directory.mkdir(parents=True, exist_ok=True)
         filename = "{}-{}.json".format(name, kind)
         (directory / filename).write_text(json.dumps(document), encoding="utf-8")
+        _invalidate_studio_cache(slug)
         other_kind = "compas" if kind == "contract" else "contract"
         other = directory / "{}-{}.json".format(name, other_kind)
         return {"stored": filename, "pair_complete": other.is_file()}

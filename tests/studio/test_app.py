@@ -282,6 +282,91 @@ def test_export_upload_rejects_garbage_and_traversal(tmp_path, monkeypatch):
     assert "Bad" not in listed
 
 
+def test_reupload_with_changed_geometry_invalidates_bundle_and_staging_caches(tmp_path, monkeypatch):
+    """C1: re-importing changed geometry under the same name must not keep
+    serving the old cached bundle. GET a bundle (which caches it), run a
+    staging pass (which caches that too), then re-upload the contract with
+    a moved vertex; both caches must be gone, frames/recording must survive,
+    and a fresh GET must show the new geometry."""
+    client, studies = make_client(tmp_path, monkeypatch)
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    wait_for(client, started.json()["run"])
+
+    studio_dir = studies / "tiny" / "studio"
+    bundle_cache = studio_dir / "bundle-concrete-r4-t200.json"
+    staging_cache = studio_dir / "staging-concrete-r4-t200.json"
+    assert bundle_cache.is_file()
+    assert staging_cache.is_file()
+
+    frames_dir = studio_dir / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    (frames_dir / "frame-000001.png").write_bytes(b"kept")
+    (studio_dir / "recording.mp4").write_bytes(b"kept")
+
+    contract = tiny_contract()
+    contract["equilibrium"]["vertices"][0]["z"] = 9.0
+    reupload = client.put(
+        "/api/uploads/exports/Tiny/contract", content=json.dumps(contract).encode()
+    )
+    assert reupload.status_code == 200
+
+    assert not bundle_cache.is_file()
+    assert not staging_cache.is_file()
+    assert (frames_dir / "frame-000001.png").is_file()
+    assert (studio_dir / "recording.mp4").is_file()
+
+    fresh = client.get(
+        "/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4}
+    )
+    assert fresh.status_code == 200
+    assert fresh.json()["analysis_mesh"]["vertices"][0][2] == 9.0
+
+
+def test_upload_during_a_live_run_is_409(tmp_path, monkeypatch):
+    """I1: uploading over an export name with a queued or running run must
+    409 with the live run's id, mirroring start_run's own liveness check."""
+    import threading
+
+    release = threading.Event()
+
+    def slow_runner(request):
+        release.wait(timeout=5)
+        return {"converged": True, "message": ""}
+
+    client, _ = make_client(tmp_path, monkeypatch, runner=slow_runner)
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    assert started.status_code == 202
+    run_id = started.json()["run"]
+
+    upload = client.put(
+        "/api/uploads/exports/Tiny/contract", content=json.dumps(tiny_contract()).encode()
+    )
+    assert upload.status_code == 409
+    assert upload.json()["run"] == run_id
+
+    release.set()
+    state = wait_for(client, run_id)
+    assert state["state"] == "done", state["message"]
+
+
+def test_export_upload_rejects_member_forces_edge_count_mismatch(tmp_path, monkeypatch):
+    """I2: a contract-mode upload with memberForces that do not line up
+    one-to-one with edges must be rejected 400, naming the mismatch, instead
+    of importing green and 500ing on every subsequent view."""
+    client, _ = make_client(tmp_path, monkeypatch)
+    contract = tiny_contract()
+    assert len(contract["equilibrium"]["edges"]) == 12
+    contract["equilibrium"]["memberForces"] = [-2.0] * 5
+    response = client.put(
+        "/api/uploads/exports/Mismatch/contract", content=json.dumps(contract).encode()
+    )
+    assert response.status_code == 400
+    assert "5" in response.json()["detail"]
+    assert not (tmp_path / "upload" / "Mismatch-contract.json").is_file()
+    listed = [s["export"] for s in client.get("/api/studies").json()["studies"]]
+    assert "Mismatch" not in listed
+
+
 def test_columns_upload_validates_shape(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     import app as app_module
