@@ -7,7 +7,7 @@ import { segmentFaces, segmentKey } from "/static/binning.js";
 const state = {
   bundle: null,
   studies: [],
-  layers: { wires: true, overlays: true },  // Task 14: layer visibility toggles
+  layers: { wires: true, overlays: true, falsework: true },  // Task 14: layer visibility toggles
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -123,7 +123,7 @@ const materials = {
   }),
   falsework: new THREE.MeshPhysicalMaterial({
     color: 0x3a3f45, side: THREE.DoubleSide,
-    roughness: 0.95, metalness: 0.0, transparent: true, opacity: 1.0,
+    roughness: 0.95, metalness: 0.0, transparent: true, opacity: 0.3,
   }),
 };
 
@@ -154,6 +154,7 @@ function buildWiresAndNodes(bundle) {
   // true for the wires' whole lifetime; every instance starts white below
   // so the plain steel look is unchanged until applyWireForces tints it.
   wireMaterial.vertexColors = true;
+  wireMaterial.transparent = true;
   const wires = new THREE.InstancedMesh(cylinder, wireMaterial, edges.length);
   const up = new THREE.Vector3(0, 1, 0);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
@@ -176,7 +177,9 @@ function buildWiresAndNodes(bundle) {
   // orientation/length live here so that restore is exact.
   wires.userData.baseMatrices = baseMatrices;
   const sphere = new THREE.SphereGeometry(nodeRadius, 12, 8);
-  const nodes = new THREE.InstancedMesh(sphere, materials.steel.clone(), vertices.length);
+  const nodeMaterial = materials.steel.clone();
+  nodeMaterial.transparent = true;
+  const nodes = new THREE.InstancedMesh(sphere, nodeMaterial, vertices.length);
   vertices.forEach((v, i) => {
     m.makeTranslation(v[0], v[1], v[2]);
     nodes.setMatrixAt(i, m);
@@ -328,6 +331,7 @@ const LAYERS = [
   ["pulse", "Integrity pulse"],
   ["wires", "Thrust wires and nodes"],
   ["forces", "Wire forces"],
+  ["falsework", "Falsework ghost"],
 ];
 
 function finalStage() {
@@ -385,9 +389,17 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires") {
-    state.objects.wires.visible = on;
-    state.objects.nodes.visible = on;
+  if (name === "wires" || name === "falsework") {
+    // Visibility during and after the strike is the timeline's call, so
+    // recompute from t instead of forcing visible here.
+    if (state.timeline) {
+      applyTimeline(state.timeline.t);
+    } else if (name === "wires") {
+      state.objects.wires.visible = on;
+      state.objects.nodes.visible = on;
+    } else if (state.objects.falsework) {
+      state.objects.falsework.visible = on;
+    }
   }
   if (name === "loads" || name === "reactions") updateVectorLayers();
   if (name === "stress" || name === "deflection") recolourSegments();
@@ -558,20 +570,21 @@ function updateVectorLayers() {
   const bundle = state.bundle;
   if (state.layers.loads) {
     state.objects.loadArrows = arrowField(
-      Object.entries(bundle.loads), 0x66aaff, -1);
+      Object.entries(bundle.loads), 0x66aaff);
     scene.add(state.objects.loadArrows);
   }
   if (state.layers.reactions && Object.keys(bundle.reactions).length) {
     // Real TNA reaction vectors from the contract, shipped in the bundle.
     state.objects.reactionArrows = arrowField(
-      Object.entries(bundle.reactions), 0x66dd77, 1);
+      Object.entries(bundle.reactions), 0x66dd77);
     scene.add(state.objects.reactionArrows);
   }
 }
 
-function arrowField(entries, colour, direction) {
+function arrowField(entries, colour) {
   // One LineSegments for every shaft plus one instanced cone set for heads:
-  // two draw calls however many nodes there are.
+  // two draw calls however many nodes there are. Arrows draw exactly along
+  // the shipped vector: loads arrive pointing down, reactions as exported.
   const vertices = state.bundle.analysis_mesh.vertices;
   let magnitudeMax = 1e-9;
   for (const [, v] of entries) magnitudeMax = Math.max(magnitudeMax, Math.hypot(v[0], v[1], v[2]));
@@ -585,11 +598,11 @@ function arrowField(entries, colour, direction) {
     const at = vertices[+id];
     const v = new THREE.Vector3(vector[0], vector[1], vector[2]);
     const length = 0.4 + 2.0 * (v.length() / magnitudeMax);
-    const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, direction);
+    const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, -1);
     const from = new THREE.Vector3(...at);
-    const to = from.clone().addScaledVector(dir, length * direction);
+    const to = from.clone().addScaledVector(dir, length);
     positions.push(from.x, from.y, from.z, to.x, to.y, to.z);
-    q.setFromUnitVectors(up, dir.clone().multiplyScalar(direction));
+    q.setFromUnitVectors(up, dir);
     m.compose(to, q, new THREE.Vector3(1, 1, 1));
     heads.setMatrixAt(i, m);
   });
@@ -1078,16 +1091,20 @@ function applyTimeline(t) {
     }
   }
   const buildEnd = state.segments.order.length * dropSeconds + dropSeconds;
+  const strikeU = t <= buildEnd ? 0 : Math.min(1, (t - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
-  if (t <= buildEnd) {
-    falsework.visible = true;
-    falsework.material.opacity = 1;
-    falsework.position.z = -0.02;
-  } else {
-    const u = Math.min(1, (t - buildEnd) / STRIKE_SECONDS);
-    falsework.material.opacity = 1 - u;
-    falsework.position.z = -0.02 - 1.5 * u;
-    falsework.visible = u < 1;
+  falsework.visible = !!state.layers.falsework && strikeU < 1;
+  falsework.material.opacity = 0.3 * (1 - strikeU);
+  falsework.position.z = -0.02 - 1.5 * strikeU;
+  // The strike takes the thrust network with it: wires and nodes fade,
+  // drop and vanish on the same clock, and scrubbing back restores them
+  // because everything here is computed from t.
+  for (const key of ["wires", "nodes"]) {
+    const object = state.objects[key];
+    if (!object) continue;
+    object.visible = !!state.layers.wires && strikeU < 1;
+    object.material.opacity = 1 - strikeU;
+    object.position.z = -1.5 * strikeU;
   }
   if (state.timeline.autoSpin && !state.userDragging) {
     const centre = state.centre;

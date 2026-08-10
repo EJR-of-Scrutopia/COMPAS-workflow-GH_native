@@ -66,7 +66,7 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 def test_the_layer_registry_has_the_agreed_names():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires"):
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework"):
         assert '"{}"'.format(name) in js
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
@@ -196,3 +196,34 @@ def test_sprayed_concrete_is_offered_and_styled():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert 'value="concrete-sprayed"' in html
     assert '"concrete-sprayed"' in js
+
+
+def test_load_arrows_draw_along_the_shipped_vector():
+    # The contract ships loads already pointing down (negative z). The old
+    # direction argument multiplied the vector by -1 twice over, so loads
+    # rendered upward. Arrows must draw exactly along the shipped vector.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "function arrowField(entries, colour)" in js
+    start = js.index("function arrowField(")
+    end = js.index("\n}", start)
+    assert "direction" not in js[start:end]
+
+
+def test_the_strike_takes_wires_nodes_and_falsework():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyTimeline(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "strikeU" in body
+    assert "state.layers.falsework" in body
+    assert "state.layers.wires" in body
+    for name in ("wires", "nodes"):
+        assert '"{}"'.format(name) in body, "the strike must drive {}".format(name)
+
+
+def test_falsework_is_a_translucent_ghost_with_a_toggle():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '"falsework", "Falsework ghost"' in js
+    assert "opacity: 0.3" in js
+    assert "wireMaterial.transparent = true" in js
+    assert "nodeMaterial.transparent = true" in js
