@@ -5,11 +5,13 @@ import pytest
 from ananke_fea.materials import PRESETS, elastic_isotropic
 
 
-def test_the_two_presets_the_spec_asks_for_exist():
-    assert set(PRESETS) == {"concrete", "timber"}
+def test_the_presets_exist():
+    assert "concrete" in PRESETS
+    assert "concrete-c50" in PRESETS
+    assert "timber" in PRESETS
 
 
-@pytest.mark.parametrize("key", ["concrete", "timber"])
+@pytest.mark.parametrize("key", ["concrete", "concrete-c50", "timber"])
 def test_every_preset_states_its_source_and_assumptions(key):
     preset = PRESETS[key]
     assert preset.source
@@ -38,12 +40,20 @@ def test_elastic_isotropic_round_trips_the_numbers():
     assert material.density == pytest.approx(preset.density)
 
 
-def test_concrete_design_strengths_reconstruct_from_their_stated_factors():
+def test_concrete_c30_37_design_strengths_reconstruct_from_their_stated_factors():
     """The assumptions text must describe the arithmetic that made the numbers."""
 
     concrete = PRESETS["concrete"]
     assert concrete.compressive_strength == pytest.approx(0.8 * 30e6 / 1.5, rel=1e-3)
     assert concrete.tensile_strength == pytest.approx(0.8 * 2.0e6 / 1.5, rel=1e-3)
+
+
+def test_concrete_c50_60_design_strengths_reconstruct_from_their_stated_factors():
+    """The assumptions text must describe the arithmetic that made the numbers."""
+
+    concrete = PRESETS["concrete-c50"]
+    assert concrete.compressive_strength == pytest.approx(0.8 * 50e6 / 1.5, rel=1e-3)
+    assert concrete.tensile_strength == pytest.approx(0.8 * 2.9e6 / 1.5, rel=1e-3)
 
 
 def test_timber_design_strengths_reconstruct_from_their_stated_factors():

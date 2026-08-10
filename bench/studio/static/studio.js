@@ -101,6 +101,12 @@ const materials = {
     roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
     metalness: 0.0,
   }),
+  "concrete-c50": new THREE.MeshPhysicalMaterial({
+    color: 0xbdbec0, side: THREE.DoubleSide,  // Cooler grey for higher-strength concrete
+    map: noiseTexture(256, 205, 14),
+    roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
+    metalness: 0.0,
+  }),
   timber: new THREE.MeshPhysicalMaterial({
     color: 0xffffff, side: THREE.DoubleSide,
     map: grainTexture(512),

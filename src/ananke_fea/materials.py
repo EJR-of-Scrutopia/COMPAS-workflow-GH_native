@@ -52,6 +52,29 @@ CONCRETE_C30_37 = MaterialPreset(
     ),
 )
 
+CONCRETE_C50_60 = MaterialPreset(
+    name="C50/60 unreinforced",
+    modulus=37.0e9,
+    poisson=0.2,
+    density=2400.0,
+    compressive_strength=26.667e6,
+    tensile_strength=1.547e6,
+    source="EN 1992-1-1 Table 3.1 and clause 12 for C50/60",
+    assumptions=(
+        "Design compressive strength uses the plain concrete route of "
+        "EN 1992-1-1 clause 12: an alpha_cc,pl of 0.8 on a characteristic "
+        "cylinder strength of 50 MPa, divided by the partial factor 1.5, "
+        "giving 26.67 MPa. Design tensile strength uses an alpha_ct,pl of 0.8 "
+        "on the five per cent characteristic axial tensile strength fctk,0.05 "
+        "of 2.9 MPa, divided by the same 1.5, giving 1.547 MPa. The five per "
+        "cent value is used rather than the mean because unreinforced concrete "
+        "has no reinforcement to redistribute once it cracks. In practice "
+        "unreinforced concrete in tension should be treated as having no "
+        "reliable capacity, and the value is quoted only so that tension onset "
+        "has something to report against."
+    ),
+)
+
 TIMBER_GL24H = MaterialPreset(
     name="GL24h glued laminated timber",
     modulus=11.5e9,
@@ -74,6 +97,7 @@ TIMBER_GL24H = MaterialPreset(
 
 PRESETS: dict[str, MaterialPreset] = {
     "concrete": CONCRETE_C30_37,
+    "concrete-c50": CONCRETE_C50_60,
     "timber": TIMBER_GL24H,
 }
 
