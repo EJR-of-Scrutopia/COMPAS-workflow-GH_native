@@ -143,6 +143,11 @@ def create_app(runner=None) -> FastAPI:
         return FileResponse(path)
 
     def frames_dir(run_id: str) -> Path:
+        if run_id.startswith("study-"):
+            slug = run_id[len("study-"):]
+            if not (bundle.STUDIES_DIR / slug).is_dir():
+                raise HTTPException(404, "no study {}".format(slug))
+            return bundle.STUDIES_DIR / slug / "studio" / "frames"
         run = RUNS.get(run_id)
         if run is None:
             raise HTTPException(404, "no run {}".format(run_id))

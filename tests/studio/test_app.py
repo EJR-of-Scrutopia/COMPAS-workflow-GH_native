@@ -165,6 +165,19 @@ def test_frames_and_stitch_guardrails(tmp_path, monkeypatch):
     assert client.post("/api/frames/nonsense?frame=1", content=b"x").status_code == 404
 
 
+def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
+    client, studies = make_client(tmp_path, monkeypatch)
+    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4})
+    posted = client.post(
+        "/api/frames/study-tiny?frame=3",
+        content=b"png bytes",
+        headers={"content-type": "application/octet-stream"},
+    )
+    assert posted.status_code == 200
+    assert (studies / "tiny" / "studio" / "frames" / "frame-000003.png").is_file()
+    assert client.post("/api/frames/study-nope?frame=1", content=b"x").status_code == 404
+
+
 def test_column_files_are_listed_and_path_traversal_is_rejected(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     import app as app_module
