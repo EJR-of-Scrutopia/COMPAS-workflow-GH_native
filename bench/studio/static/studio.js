@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { segmentFaces, segmentKey } from "/static/binning.js";
+import { vertexNormals, extrudeSegment, boxUVs, segmentUVOffset } from "/static/fields.js";
 
 // ---------- app state ----------
 const state = {
@@ -513,45 +514,42 @@ function recolourSegments() {
   // No staging means no per-node displacement field to exaggerate the
   // shell with, but the field sourcing rule still owes the deflection
   // layer an honest "peaks only" tint, scaled off the verification file's
-  // peak magnitude, the same way the stress fallback above does.
+  // peak magnitude, the same way the stress fallback does.
   const deflectionPeakOnly = !stage && wantDeflection && v && v.displacement
     ? Math.max(v.displacement.peak_magnitude, 1e-9) : null;
   let deflectionMax = 1e-9;
   if (displacement) for (const d of displacement) {
     deflectionMax = Math.max(deflectionMax, Math.hypot(d[0], d[1], d[2]));
   }
+  const white = new THREE.Color(0xffffff);
   for (const segment of state.objects.shell.children) {
-    const faces = segment.userData.faces;   // render-face indices, set in buildSegmentMeshes
+    const corners = segment.userData.corners;
+    const base = segment.userData.basePositions;
     const positions = segment.geometry.getAttribute("position");
-    const colours = new Float32Array(positions.count * 3);
-    let corner = 0;
-    for (const faceIndex of faces) {
-      const parent = mesh.parent_face[faceIndex];
-      const quad = mesh.faces[faceIndex];
+    const colours = new Float32Array(corners.length * 3);
+    corners.forEach((corner, i) => {
+      const parent = mesh.parent_face[corner.face];
       const stressPair = stage && stage.stresses[String(parent)];
-      const faceColour = wantStress
+      let colour = wantStress
         ? STRESS_SCALE(stressValue(stressPair, surface, stressMagnitude), stressMagnitude)
         : (deflectionPeakOnly ? STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly) : null);
-      for (const cornerIndex of [0, 1, 2, 0, 2, 3]) {
-        const vertexId = quad[cornerIndex];
-        const base = mesh.vertices[vertexId];
-        let colour = faceColour;
-        if (!colour && wantDeflection && displacement) {
-          const d = displacement[vertexId];
-          colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
-        }
-        if (!colour) colour = new THREE.Color(0xffffff);
-        colours[3 * corner] = colour.r; colours[3 * corner + 1] = colour.g; colours[3 * corner + 2] = colour.b;
-        if (wantDeflection && displacement) {
-          const d = displacement[vertexId];
-          positions.setXYZ(corner, base[0] + d[0] * exaggeration,
-            base[1] + d[1] * exaggeration, base[2] + d[2] * exaggeration);
-        } else {
-          positions.setXYZ(corner, base[0], base[1], base[2]);
-        }
-        corner += 1;
+      const d = displacement ? displacement[corner.v] : null;
+      if (!colour && wantDeflection && d) {
+        colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
       }
-    }
+      if (!colour) colour = white;
+      colours[3 * i] = colour.r;
+      colours[3 * i + 1] = colour.g;
+      colours[3 * i + 2] = colour.b;
+      if (wantDeflection && d) {
+        positions.setXYZ(i,
+          base[3 * i] + d[0] * exaggeration,
+          base[3 * i + 1] + d[1] * exaggeration,
+          base[3 * i + 2] + d[2] * exaggeration);
+      } else {
+        positions.setXYZ(i, base[3 * i], base[3 * i + 1], base[3 * i + 2]);
+      }
+    });
     positions.needsUpdate = true;
     segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
     segment.geometry.computeVertexNormals();
@@ -1029,24 +1027,27 @@ function buildSegmentMeshes() {
   const group = new THREE.Group();
   const mesh = state.bundle.render_mesh;
   const assignment = state.segments.assignment;
+  // The thickness on screen is the thickness the bundle was solved at,
+  // never the live slider value, which can drift while a bundle loads.
+  const thickness = state.bundle.provenance.thickness;
+  const normals = vertexNormals(mesh.vertices, mesh.faces);
   const byKey = new Map();
   mesh.parent_face.forEach((parent, faceIndex) => {
     const key = segmentKey(assignment[parent][0], assignment[parent][1]);
-    if (!byKey.has(key)) byKey.set(key, { faces: [], indices: [] });
-    const bucket = byKey.get(key);
-    bucket.faces.push(mesh.faces[faceIndex]);
-    bucket.indices.push(faceIndex);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(faceIndex);
   });
   const material = materials[state.bundle.material] || materials.concrete;
-  for (const [key, { faces, indices }] of byKey) {
-    const positions = [], uvs = [];
-    for (const face of faces) {
-      const quad = face.map((i) => mesh.vertices[i]);
-      for (const corner of [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]]) {
-        positions.push(corner[0], corner[1], corner[2]);
-        uvs.push(corner[0] * 0.15, corner[1] * 0.15);
-      }
+  for (const [key, faceIndices] of byKey) {
+    const { positions, corners } = extrudeSegment(
+      mesh.vertices, mesh.faces, faceIndices, normals, thickness);
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      cx += positions[i]; cy += positions[i + 1]; cz += positions[i + 2];
     }
+    const cornerCount = positions.length / 3;
+    const centroid = [cx / cornerCount, cy / cornerCount, cz / cornerCount];
+    const uvs = boxUVs(positions, centroid, segmentUVOffset(key));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
@@ -1059,7 +1060,9 @@ function buildSegmentMeshes() {
     const segment = new THREE.Mesh(geometry, material.clone());
     segment.castShadow = segment.receiveShadow = true;
     segment.userData.key = key;
-    segment.userData.faces = indices;
+    segment.userData.faces = faceIndices;
+    segment.userData.corners = corners;
+    segment.userData.basePositions = new Float32Array(positions);
     group.add(segment);
   }
   state.objects.shell = group;

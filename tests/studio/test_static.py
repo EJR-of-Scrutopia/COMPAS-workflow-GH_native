@@ -227,3 +227,26 @@ def test_falsework_is_a_translucent_ghost_with_a_toggle():
     assert "opacity: 0.3" in js
     assert "wireMaterial.transparent = true" in js
     assert "nodeMaterial.transparent = true" in js
+
+
+def test_segments_are_extruded_to_the_bundles_thickness():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "fields.js" in js, "studio.js must import the pure fields module"
+    start = js.index("function buildSegmentMeshes(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "state.bundle.provenance.thickness" in body, (
+        "extrusion must use the thickness the bundle was actually built at"
+    )
+    for name in ("vertexNormals", "extrudeSegment", "boxUVs", "segmentUVOffset"):
+        assert name in body, "buildSegmentMeshes lost {}".format(name)
+    assert "basePositions" in body
+
+
+def test_recolour_consumes_the_corner_metadata():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function recolourSegments(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert "userData.corners" in body
+    assert "userData.basePositions" in body
