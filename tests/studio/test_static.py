@@ -551,6 +551,31 @@ def test_the_net_inflates_before_the_build():
         assert clock not in body
 
 
+def test_no_piece_shows_while_the_net_is_still_inflating():
+    # Reviewer finding: build clamps to 0 for the whole inflation window, so
+    # the first casting's drop window (start 0) was already true at build 0
+    # -- it hung motionless at DROP_HEIGHT in mid-air while the net was still
+    # finding its form. The piece loop must gate on inflation being complete
+    # BEFORE the drop-window arithmetic runs, and that gate must reference
+    # the inflation factor itself, not a hardcoded number standing in for it.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applySceneAtTime(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    loop_start = body.index("for (const segment of state.objects.shell.children)")
+    arithmetic_start = body.index(
+        "const position = state.segmentIndex.get", loop_start)
+    gate = body[loop_start:arithmetic_start]
+    assert "inflate" in gate, (
+        "the piece loop must gate on the inflation factor, computed from t, "
+        "before it ever reaches the drop-window arithmetic"
+    )
+    assert "segment.visible = false" in gate, (
+        "while inflating, every piece must be hidden outright, not just "
+        "left at its default drop position"
+    )
+
+
 def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")

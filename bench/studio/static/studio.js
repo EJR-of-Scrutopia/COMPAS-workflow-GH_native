@@ -1443,6 +1443,15 @@ function applySceneAtTime(t) {
   const build = Math.max(0, t - state.timeline.inflateSeconds);
   const dropSeconds = state.timeline.dropSeconds;
   for (const segment of state.objects.shell.children) {
+    // No piece exists on screen while the net is still finding its form:
+    // gate on inflation, not on the drop-window arithmetic below, or the
+    // first casting reads build = 0 as "the very start of its drop" and
+    // hangs at DROP_HEIGHT for the whole inflation window instead of being
+    // absent. inflate reaches exactly 1 the instant build time begins.
+    if (inflate < 1) {
+      segment.visible = false;
+      continue;
+    }
     const position = state.segmentIndex.get(segment.userData.key).order;
     const start = position * dropSeconds;
     if (build < start) {
