@@ -368,6 +368,24 @@ def test_pieces_are_built_at_the_bundles_thickness():
     assert "basePositions" in body
 
 
+def test_rebuilding_the_shell_frees_what_it_replaces():
+    # The shell is rebuilt on every joint gap and taper commit, and
+    # recoloured on every layer toggle, so both paths have to free what they
+    # drop. rebuildWiresAndNodes already documents and does exactly this for
+    # the thrust network.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function buildPieceMeshes(")
+    body = js[start:js.index("\n}", start)]
+    assert "segment.geometry.dispose()" in body and "segment.material.dispose()" in body, (
+        "a shell rebuild must dispose the geometries and materials it replaces"
+    )
+    recolour_start = js.index("function recolourSegments(")
+    recolour_body = js[recolour_start:js.index("\n}", recolour_start)]
+    assert "previous.dispose()" in recolour_body, (
+        "recolouring must dispose the material it discards"
+    )
+
+
 def test_recolour_consumes_the_piece_metadata():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     start = js.index("function recolourSegments(")

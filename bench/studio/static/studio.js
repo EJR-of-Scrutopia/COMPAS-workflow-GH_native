@@ -698,9 +698,15 @@ function recolourSegments() {
     // with, tint and all: pieceMaterial recomputes it from the key rather
     // than handing back a bare registry clone, which used to discard the
     // per casting tint before the first frame was ever drawn.
+    const previous = segment.material;
     segment.material = (wantStress || wantDeflection)
       ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
       : pieceMaterial(segment.userData.key);
+    // What is discarded here is always a per piece instance, never the
+    // shared registry entry, so freeing it is safe: without this, every
+    // layer toggle and every exaggeration nudge leaked one material per
+    // casting.
+    if (previous && previous !== segment.material) previous.dispose();
   }
   updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage);
 }
@@ -1399,7 +1405,19 @@ function taperAt(ring) {
 }
 
 function buildPieceMeshes() {
-  if (state.objects.shell) scene.remove(state.objects.shell);
+  if (state.objects.shell) {
+    scene.remove(state.objects.shell);
+    // The same rule rebuildWiresAndNodes documents and follows: whatever is
+    // replaced owns GPU buffers, and the joint gap and taper sliders
+    // rebuild the whole shell on every commit. Each casting owns its
+    // geometry and a cloned material (see pieceMaterial), so both are ours
+    // to free; the textures that clone points at are shared with the
+    // registry, and Material.dispose does not touch them.
+    for (const segment of state.objects.shell.children) {
+      segment.geometry.dispose();
+      segment.material.dispose();
+    }
+  }
   const group = new THREE.Group();
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.
