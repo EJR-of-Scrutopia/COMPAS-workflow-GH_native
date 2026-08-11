@@ -114,8 +114,19 @@ def test_the_bundle_ships_drawn_pieces_on_the_render_mesh(tmp_path, monkeypatch)
     document = bundle.build_bundle("Tiny", "concrete", 4)
     pieces = document["pieces"]
     assert pieces, "the bundle must carry the pieces the viewer draws"
-    keys = {piece["key"] for piece in pieces}
-    assert len(keys) == len(pieces), "one piece per key on contiguous cells"
+    # A key is the casting's identity in the viewer: its tint, its texture
+    # offset and its entry in the placement index all hang off it. Every
+    # cell in this fixture is contiguous, so uniqueness here is nearly free
+    # and the assertion used to be fixture luck; the case that earns it, a
+    # cell holding two patches that never touch, is pinned in
+    # test_pieces.py. What this asserts is that the bundle carries the
+    # identity through unchanged, one entry per drawn casting, and that on
+    # contiguous cells the count still matches the binning.
+    keys = [piece["key"] for piece in pieces]
+    assert len(set(keys)) == len(keys), "two castings cannot share one key"
+    assert len(keys) == len(document["segments"]["order"]), (
+        "contiguous cells should give one piece each"
+    )
     render_vertex_count = len(document["render_mesh"]["vertices"])
     for piece in pieces:
         assert len(piece["mid"]) == len(piece["normals"]) == len(piece["sources"])
@@ -135,3 +146,24 @@ def test_stale_cached_bundles_missing_pieces_are_rebuilt(tmp_path, monkeypatch):
     cached_path.write_text(json.dumps(stale), encoding="utf-8")
     loaded = bundle.load_or_build_bundle("Tiny", "concrete", 4)
     assert loaded["pieces"], "stale cached bundle without pieces must be rebuilt"
+
+
+def test_cached_bundles_with_two_castings_under_one_key_are_rebuilt(
+    tmp_path, monkeypatch
+):
+    # A bundle written before pieces.py distinguished the separate patches
+    # of a split cell holds two castings under one key, and the viewer
+    # cannot tell them apart: same tint, same texture offset, one entry in
+    # the placement index. That is stale in the same sense as a missing
+    # field, so the cache has to notice it rather than serve it forever.
+    bundle, _, _ = fake_export(tmp_path, monkeypatch)
+    fresh = bundle.build_bundle("Tiny", "concrete", 4)
+    cached_path = bundle.bundle_path("tiny", "concrete", 4, 0.2)
+    stale = dict(fresh)
+    stale["pieces"] = [dict(piece) for piece in fresh["pieces"]]
+    assert len(stale["pieces"]) > 1
+    stale["pieces"][1]["key"] = stale["pieces"][0]["key"]
+    cached_path.write_text(json.dumps(stale), encoding="utf-8")
+    loaded = bundle.load_or_build_bundle("Tiny", "concrete", 4)
+    keys = [piece["key"] for piece in loaded["pieces"]]
+    assert len(set(keys)) == len(keys), "the duplicate key must be rebuilt away"

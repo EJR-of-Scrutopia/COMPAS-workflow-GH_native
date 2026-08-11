@@ -53,6 +53,42 @@ def test_a_piece_is_produced_for_every_cell():
         assert piece["key"] == "r{}w{}".format(piece["ring"], piece["wedge"])
 
 
+def test_a_split_cell_ships_two_pieces_with_distinct_keys():
+    # A ring's occupied wedges are not always contiguous, so one cell can
+    # hold two patches that never touch, and pieces.py rightly emits one
+    # casting for each. Keying both by the cell made them one identity: the
+    # viewer tints a casting from its key, offsets its texture by it and
+    # looks it up in the placement index by it, so the two shared a colour,
+    # a texture offset and a place in the drop order. Measured on the real
+    # export, rings=16 ships 67 pieces over 66 cells (r10w2 twice).
+    #
+    # Here faces 0 and 8 are opposite corners of the grid, sharing neither
+    # an edge nor a vertex, and both are given to cell (0, 0).
+    split = [[0, 1]] * len(FACES)
+    split[0] = [0, 0]
+    split[8] = [0, 0]
+    pieces = studio().segment_pieces(VERTICES, FACES, split, [[0, 0], [0, 1]], ())
+    patches = [p for p in pieces if (p["ring"], p["wedge"]) == (0, 0)]
+    assert len(patches) == 2, "the two disjoint patches are two castings"
+    keys = [p["key"] for p in patches]
+    assert len(set(keys)) == 2, "two castings, two identities: {}".format(keys)
+    for piece in patches:
+        # ring and wedge stay intact: everything that reads the cell, from
+        # the taper to the stage readout, still reads it.
+        assert (piece["ring"], piece["wedge"]) == (0, 0)
+        assert piece["key"].startswith("r0w0")
+    # Every key in the document is unique, not just the split cell's.
+    all_keys = [p["key"] for p in pieces]
+    assert len(set(all_keys)) == len(all_keys)
+
+
+def test_a_contiguous_cell_keeps_the_plain_cell_key():
+    # The patch index only appears where it has to, so the common case
+    # keeps the key it always had.
+    for piece in build():
+        assert piece["key"] == "r{}w{}".format(piece["ring"], piece["wedge"])
+
+
 def test_every_normal_is_a_unit_vector():
     for piece in build():
         for n in piece["normals"]:

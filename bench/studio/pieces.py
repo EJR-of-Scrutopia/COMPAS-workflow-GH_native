@@ -206,7 +206,8 @@ def segment_pieces(
         if not cell_faces:
             continue
         labels = voussoirs.edge_labels(faces, cell_faces, assignment, users)
-        for component in voussoirs.face_components(faces, cell_faces):
+        components = voussoirs.face_components(faces, cell_faces)
+        for patch, component in enumerate(components):
             used: List[int] = []
             seen = set()
             for face_index in component:
@@ -254,8 +255,22 @@ def segment_pieces(
                 ta, tb = index_of[a], index_of[b]
                 piece_faces.append([tb, ta, ta + count, tb + count])
 
+            # A key is an identity, not a label: the viewer tints each
+            # casting from it, offsets its texture by it and looks it up in
+            # the placement index by it. A cell can hold two patches that do
+            # not touch (measured on the Trial 2 export, rings=16 gives 67
+            # pieces over 66 cells, r10w2 twice), and two castings sharing
+            # one key share a tint, a texture offset and a place in the drop
+            # order. The cell's own key is kept wherever it means exactly
+            # one piece, which is nearly always; the patch index appears
+            # only where it has to. ring and wedge are untouched either way,
+            # so everything that reads the cell still reads it.
+            key = "r{}w{}".format(ring, wedge)
+            if len(components) > 1:
+                key += "p{}".format(patch)
+
             out.append({
-                "key": "r{}w{}".format(ring, wedge),
+                "key": key,
                 "ring": ring,
                 "wedge": wedge,
                 "mid": [mid[v] for v in used],

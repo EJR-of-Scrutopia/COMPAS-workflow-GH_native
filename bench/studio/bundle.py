@@ -108,12 +108,31 @@ def build_bundle(
     return document
 
 
+def _pieces_are_uniquely_keyed(document: Dict) -> bool:
+    """One key per drawn casting, which an older cache cannot promise.
+
+    A piece key is the casting's identity in the viewer: its tint, its
+    texture offset and its entry in the placement index all hang off it.
+    Bundles written before pieces.py distinguished the separate patches of
+    a split cell carry two castings under one key (rings=16 on the Trial 2
+    export), which makes them stale in the same way a bundle missing a
+    field is stale.
+    """
+
+    keys = [piece.get("key") for piece in document.get("pieces") or []]
+    return len(set(keys)) == len(keys)
+
+
 def load_or_build_bundle(
     export_name: str, material: str, rings: int, thickness: float = 0.2
 ) -> Dict:
     cached = _read_optional(
         bundle_path(geometry.slugify(export_name), material, rings, thickness)
     )
-    if cached is not None and all(key in cached for key in REQUIRED_BUNDLE_KEYS):
+    if (
+        cached is not None
+        and all(key in cached for key in REQUIRED_BUNDLE_KEYS)
+        and _pieces_are_uniquely_keyed(cached)
+    ):
         return cached
     return build_bundle(export_name, material, rings, thickness)

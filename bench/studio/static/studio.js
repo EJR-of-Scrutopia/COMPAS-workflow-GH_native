@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { segmentFaces, segmentKey } from "/static/binning.js";
+import { segmentFaces } from "/static/binning.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
 } from "/static/fields.js";
@@ -354,13 +354,16 @@ function rebinSegments() {
     showBanner("Segmentation mirror disagrees with Python; showing the Python binning. Fix binning.js before trusting the slider.");
   }
   state.segments = shipped;
+  // The index the timeline looks a casting up in, keyed by the PIECE's own
+  // key rather than by its cell's. pieces.py emits one casting per
+  // connected patch, and a cell can hold two patches that never touch
+  // (measured: rings=16 on Trial 2 ships 67 pieces over 66 cells), so a
+  // cell key is not an identity. The array order is the drop order.
   state.segmentIndex = new Map();
-  state.segments.order.forEach(([r, w], position) => {
-    state.segmentIndex.set(segmentKey(r, w), { faces: [], order: position });
-  });
-  state.segments.assignment.forEach((pair, face) => {
-    const entry = state.segmentIndex.get(segmentKey(pair[0], pair[1]));
-    if (entry) entry.faces.push(face);
+  state.bundle.pieces.forEach((piece, position) => {
+    state.segmentIndex.set(piece.key, {
+      ring: piece.ring, wedge: piece.wedge, order: position,
+    });
   });
   document.getElementById("segment-count").textContent = state.segments.order.length;
   rebuildTimeline();
@@ -823,11 +826,14 @@ function currentStageIndex(build) {
   // real rate had a finished sprayed vault quoting a stage still halfway
   // down the drop order and pulsing that stage's verdict over it.
   const placed = Math.floor(build / placementStep());
+  // Walked over the pieces, which are what actually drop, in the same order
+  // the index and the picture use. A split cell ships two castings, so the
+  // cell order is one placement short of the truth wherever that happens.
   let ringsDone = 0, count = 0;
-  for (const [r] of state.segments.order) {
+  for (const piece of state.bundle.pieces) {
     count += 1;
     if (count > placed) break;
-    ringsDone = Math.max(ringsDone, r + 1);
+    ringsDone = Math.max(ringsDone, piece.ring + 1);
   }
   return Math.max(0, Math.min(stages.length - 1, ringsDone - 1));
 }
@@ -1364,8 +1370,14 @@ function rebuildTimeline() {
   scrubber.value = 0;
 }
 
+// How many castings drop, which is the number of PIECES and not the number
+// of cells: a cell split into two patches ships two of them.
+function placementCount() {
+  return state.bundle && state.bundle.pieces ? state.bundle.pieces.length : 0;
+}
+
 function timelineDuration() {
-  const count = state.segments ? state.segments.order.length : 0;
+  const count = placementCount();
   const step = placementStep();
   return state.timeline.inflateSeconds + count * step
     + state.timeline.dropSeconds + STRIKE_SECONDS;
@@ -1580,7 +1592,7 @@ function applySceneAtTime(t) {
       segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     }
   }
-  const buildEnd = state.segments.order.length * step + dropSeconds;
+  const buildEnd = placementCount() * step + dropSeconds;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
   falsework.visible = !!state.layers.falsework && strikeU < 1;

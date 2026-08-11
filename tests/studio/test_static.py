@@ -352,6 +352,15 @@ def test_the_client_binning_follows_the_loaded_bundle_not_the_slider():
         "the binning must come from the loaded bundle's ring count"
     )
     assert "e.target.value" not in body
+    # The index the timeline looks a casting up in has to be keyed by the
+    # PIECE's key, not by its cell's: pieces.py emits one casting per
+    # connected patch, so a split cell ships two castings that share a ring
+    # and a wedge and must not share an identity (rings=16 on Trial 2 gives
+    # 67 pieces over 66 cells). A cell-keyed index cannot resolve them.
+    assert "state.bundle.pieces.forEach" in body
+    assert "segmentKey(" not in body, (
+        "cell keys are not piece identities; index the pieces themselves"
+    )
 
 
 def test_pieces_are_built_at_the_bundles_thickness():
