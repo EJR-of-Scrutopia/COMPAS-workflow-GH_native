@@ -312,6 +312,7 @@ function buildScene(bundle) {
   rebinSegments();
   buildLayerToggles();
   updateVectorLayers();
+  updateMaterialControls();
   updateHud();
   updateCraBadge();
 }
@@ -1497,6 +1498,22 @@ function buildPieceMeshes() {
 
 function sprayedMaterial() {
   return state.bundle && state.bundle.material === "concrete-sprayed";
+}
+
+function updateMaterialControls() {
+  // Sprayed concrete is monolithic, so buildPieceMeshes forces its joint
+  // gap to zero. Leaving the slider live and labelled in millimetres asks
+  // the reader to drag a control that does nothing, so it is disabled and
+  // says why.
+  //
+  // The crown taper is deliberately NOT here. It is applied to every
+  // material, sprayed included: sprayed concrete can be laid thinner at
+  // the crown, and taperAt has no material branch. Marking a control that
+  // works as inert would be its own dishonesty.
+  const sprayed = sprayedMaterial();
+  document.getElementById("joint-gap").disabled = !!sprayed;
+  document.getElementById("joint-gap-note").textContent =
+    sprayed ? " (sprayed concrete is monolithic: no joints to open)" : "";
 }
 
 function sceneCentroid() {

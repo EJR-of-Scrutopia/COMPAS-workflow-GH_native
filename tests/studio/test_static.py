@@ -602,6 +602,35 @@ def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
     assert "state.bundle.pieces" in js
     assert "state.jointGap" in js
     assert "function buildSegmentMeshes(" not in js, "the old extruder is retired"
+    # The shrink is proportional: a casting is scaled toward its own
+    # centroid, so only its farthest vertex moves the full half gap and
+    # everything nearer the middle moves less. A bare millimetre figure
+    # overstates what happens at the rest of the joint.
+    label = html[html.index('id="joint-gap"'):html.index("</label>", html.index('id="joint-gap"'))]
+    assert "widest" in label and "less" in label
+
+
+def test_the_joint_gap_is_marked_inert_where_it_does_nothing():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="joint-gap-note"' in html
+    start = js.index("function updateMaterialControls(")
+    body = js[start:js.index("\n}", start)]
+    assert "sprayedMaterial()" in body
+    assert 'getElementById("joint-gap").disabled' in body, (
+        "buildPieceMeshes forces the gap to zero under sprayed concrete, so "
+        "the slider must not stay live and labelled in millimetres"
+    )
+    assert "joint-gap-note" in body, "a disabled control has to say why"
+    build_start = js.index("function buildScene(")
+    assert "updateMaterialControls()" in js[build_start:js.index("\n}", build_start)], (
+        "the availability must be recomputed whenever the material changes"
+    )
+    # The crown taper is NOT disabled, and that is deliberate: taperAt has
+    # no material branch, so the taper thins crown castings under sprayed
+    # concrete exactly as it does under the precast presets. Marking a
+    # control that works as inert would be its own dishonesty.
+    assert 'getElementById("taper").disabled' not in js
 
 
 def test_each_piece_gets_its_own_tint_and_keeps_it():
@@ -816,14 +845,21 @@ def test_sprayed_concrete_grows_about_its_own_centroid():
 
 def test_the_four_materials_are_visually_distinct():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    import re
     start = js.index("const materials = {")
     end = js.index("\n};", start)
     body = js[start:end]
-    colours = re.findall(r"color: (0x[0-9a-fA-F]{6})", body)
-    presets = colours[:4]
-    assert len(set(presets)) == 4, "the presets must not share a colour"
-    values = [int(c, 16) for c in presets]
+    # Keyed on the preset names, not sliced off the front of the registry:
+    # by position, inserting a preset before timber would silently measure
+    # the wrong four and this test would go on passing.
+    values = []
+    for name in ("concrete", "concrete-c50", "concrete-sprayed", "timber"):
+        match = re.search(
+            r'"?{}"?: new THREE\.MeshPhysicalMaterial\(\{{\s*color: (0x[0-9a-fA-F]{{6}})'.format(
+                re.escape(name)),
+            body)
+        assert match, "the {} preset is missing or has no colour".format(name)
+        values.append(int(match.group(1), 16))
+    assert len(set(values)) == 4, "the presets must not share a colour"
 
     def luminance(v):
         return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255)
