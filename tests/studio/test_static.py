@@ -656,6 +656,14 @@ def test_the_net_inflates_before_the_build():
     assert "inflationFactor(" in body, "inflation is part of the pure timeline"
     for clock in ("performance.now", "Date.now", "requestAnimationFrame"):
         assert clock not in body
+    # At t = 0 exactly, a scale of 0 makes the model matrix singular and the
+    # net renders unlit, which is frame 0 of every recording. Floored the
+    # same way the sprayed growth is.
+    inflation_start = js.index("function applyInflation(")
+    inflation_body = js[inflation_start:js.index("\n}", inflation_start)]
+    assert "Math.max(0.001" in inflation_body, (
+        "the inflation scale must be floored, never exactly zero"
+    )
 
 
 def test_no_piece_shows_while_the_net_is_still_inflating():

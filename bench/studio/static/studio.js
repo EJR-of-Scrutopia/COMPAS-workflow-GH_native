@@ -1527,7 +1527,12 @@ function applyInflation(u) {
   // shares the thrust surface's xy exactly.
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
-    if (object) object.scale.z = u;
+    // Floored exactly as the sprayed growth is, and for the same reason: a
+    // scale of 0 makes the model matrix singular, three derives its normal
+    // matrix from it, and the whole net renders unlit. t = 0 is a frame
+    // every recording writes, so without the floor frame 0 of every take
+    // is wrong.
+    if (object) object.scale.z = Math.max(0.001, u);
   }
 }
 
