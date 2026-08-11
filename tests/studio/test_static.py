@@ -635,13 +635,86 @@ def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     assert "uniform thickness" in body, "the HUD must say the analysis did not taper"
 
 
-def test_sprayed_concrete_grows_instead_of_dropping():
+def _evaluate_step(expression, helper, sprayed, drop_seconds):
+    """Work out what a JS step expression comes to, with no JS runtime.
+
+    Only three forms appear: a call to the helper, the helper's own
+    sprayedMaterial() ternary, and arithmetic on state.timeline.dropSeconds.
+    Anything else is refused rather than guessed at.
+    """
+
+    text = expression.strip().rstrip(";").strip()
+    if text == "placementStep()":
+        text = helper.strip()
+    ternary = re.fullmatch(r"sprayedMaterial\(\)\s*\?\s*(.+?)\s*:\s*(.+)", text)
+    if ternary:
+        text = ternary.group(1) if sprayed else ternary.group(2)
+    text = text.replace("state.timeline.dropSeconds", repr(float(drop_seconds)))
+    assert re.fullmatch(r"[0-9.+\-*/() ]+", text), (
+        "unreadable step expression {!r}; the arithmetic pin cannot check "
+        "what it cannot evaluate".format(expression)
+    )
+    return eval(text, {"__builtins__": {}}, {})  # arithmetic only, see above
+
+
+def test_every_clock_reads_the_drop_order_at_the_same_rate():
+    # C2, and the reason the old sprayed pin missed it: that pin only
+    # string-matched sprayedMaterial() and DROP_HEIGHT inside
+    # applySceneAtTime, so halving the per-piece step in the picture while
+    # leaving currentStageIndex dividing by the full dropSeconds shipped
+    # green. Measured on Trial 2 sprayed at 8 rings (38 placements) with
+    # drop speed 0.5: the last casting lands at build 9.75 s, and the HUD
+    # read floor(9.75 / 0.5) = 19 of 38 placed, quoting stage 4 of 8 over a
+    # finished vault and pulsing stage 4's verdict at it.
+    #
+    # So this pin is arithmetic, not textual: it evaluates the step each of
+    # the three consumers actually uses and replays that scenario.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applySceneAtTime(")
-    end = js.index("\n}", start)
-    body = js[start:end]
-    assert "sprayedMaterial()" in body
-    assert "DROP_HEIGHT" in body, "other materials still drop"
+    helper_start = js.index("function placementStep()")
+    helper = re.search(r"return (.+?);", js[helper_start:js.index("\n}", helper_start)]).group(1)
+
+    def body_of(name):
+        start = js.index("function {}(".format(name))
+        return js[start:js.index("\n}", start)]
+
+    expressions = {
+        "applySceneAtTime": re.search(
+            r"const step = (.+?);", body_of("applySceneAtTime")).group(1),
+        "timelineDuration": re.search(
+            r"const step = (.+?);", body_of("timelineDuration")).group(1),
+        "currentStageIndex": re.search(
+            r"Math\.floor\(build / (.+?)\);", body_of("currentStageIndex")).group(1),
+    }
+
+    placements, drop, stages = 38, 0.5, 8
+    for sprayed in (True, False):
+        steps = {
+            name: _evaluate_step(expression, helper, sprayed, drop)
+            for name, expression in expressions.items()
+        }
+        assert len(set(steps.values())) == 1, (
+            "the three clocks disagree on the per-piece step: {}".format(steps)
+        )
+        step = steps["applySceneAtTime"]
+        assert step == (drop / 2 if sprayed else drop)
+        # The picture: the last casting starts at (n - 1) * step and takes a
+        # full drop window to land.
+        lands = (placements - 1) * step + drop
+        # The readout: how many castings currentStageIndex believes are down
+        # at that instant. It must be all of them, or the HUD quotes a stage
+        # the vault has already passed and the pulse tints a finished shell
+        # with that stage's verdict.
+        placed = int(lands // steps["currentStageIndex"])
+        assert placed >= placements, (
+            "at build {:.2f} s the last casting has landed but the stage "
+            "readout counts only {} of {} placed, so it reports stage {} of "
+            "{}".format(lands, placed, placements,
+                        min(stages, max(1, placed * stages // placements)), stages)
+        )
+        # The scrubber has to cover the picture too, or the recording stops
+        # before the vault is finished.
+        duration = placements * steps["timelineDuration"] + drop
+        assert duration >= lands
 
 
 def test_the_four_materials_are_visually_distinct():

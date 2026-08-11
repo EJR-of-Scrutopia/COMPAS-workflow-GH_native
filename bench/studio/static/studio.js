@@ -800,8 +800,11 @@ function currentStageIndex(build) {
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
-  const dropSeconds = state.timeline.dropSeconds;
-  const placed = Math.floor(build / dropSeconds);
+  // placementStep, not dropSeconds: the HUD's stage line and the integrity
+  // pulse both hang off this number, and reading the picture at half its
+  // real rate had a finished sprayed vault quoting a stage still halfway
+  // down the drop order and pulsing that stage's verdict over it.
+  const placed = Math.floor(build / placementStep());
   let ringsDone = 0, count = 0;
   for (const [r] of state.segments.order) {
     count += 1;
@@ -1305,6 +1308,17 @@ const DROP_HEIGHT = 12, STRIKE_SECONDS = 2;
 
 function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
 
+// How far apart two castings start, derived in exactly one place. Three
+// clocks read the drop order and all three have to read it the same way:
+// applySceneAtTime (what the picture does), timelineDuration (the scrubber
+// and the recorded frame count) and currentStageIndex (the HUD's stage
+// line and the integrity pulse). Sprayed concrete is not placed but built
+// up, so its castings overlap by half a window; while only two of the
+// three knew that, the picture ran at twice the rate of the readout.
+function placementStep() {
+  return sprayedMaterial() ? state.timeline.dropSeconds / 2 : state.timeline.dropSeconds;
+}
+
 function rebuildTimeline() {
   const dropSeconds = +document.getElementById("drop-speed").value;
   state.timeline = {
@@ -1331,7 +1345,7 @@ function rebuildTimeline() {
 
 function timelineDuration() {
   const count = state.segments ? state.segments.order.length : 0;
-  const step = sprayedMaterial() ? state.timeline.dropSeconds / 2 : state.timeline.dropSeconds;
+  const step = placementStep();
   return state.timeline.inflateSeconds + count * step
     + state.timeline.dropSeconds + STRIKE_SECONDS;
 }
@@ -1471,6 +1485,7 @@ function applySceneAtTime(t) {
   const build = Math.max(0, t - state.timeline.inflateSeconds);
   const dropSeconds = state.timeline.dropSeconds;
   const sprayed = sprayedMaterial();
+  const step = placementStep();
   for (const segment of state.objects.shell.children) {
     // No piece exists on screen while the net is still finding its form:
     // gate on inflation, not on the drop-window arithmetic below, or the
@@ -1484,8 +1499,7 @@ function applySceneAtTime(t) {
     const position = state.segmentIndex.get(segment.userData.key).order;
     // Sprayed concrete is not precast: pieces overlap by half a window so
     // the shell reads as continuous build up over the formwork rather than
-    // as arrivals.
-    const step = sprayed ? dropSeconds / 2 : dropSeconds;
+    // as arrivals. placementStep owns that halving for every clock at once.
     const start = position * step;
     if (build < start) {
       segment.visible = false;
@@ -1502,7 +1516,6 @@ function applySceneAtTime(t) {
       segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     }
   }
-  const step = sprayed ? dropSeconds / 2 : dropSeconds;
   const buildEnd = state.segments.order.length * step + dropSeconds;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
