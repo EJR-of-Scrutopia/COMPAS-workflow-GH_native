@@ -400,12 +400,20 @@ const FRICTION_PROVENANCE = {
 };
 
 // The badge and the HUD are what a user reads during playback; the Data
-// panel, which carries the measured figures in full, is a separate view
-// they may never open. So the same caveat rides along here, short enough
-// to sit on one line: the analysis surface is up to 2.389 m from the
-// drawn one, twenty times the shell's own half thickness, and that is a
-// larger error than the volume gap the disclosure used to lead with.
-const FACETED_CAVEAT = "on a faceted model up to 2.4 m off the drawn surface";
+// panel, which carries the disclosure in full, is a separate view they may
+// never open. So the same caveat rides along here, short enough to sit on
+// one line.
+//
+// It no longer quotes metres. The measured figures (up to 2.389 m at 2
+// rings, 1.964 m at 4) came from bench/scripts/cra_acceptance.py comparing
+// the voussoir model against blocks.segment_blocks, the mesh-following
+// prisms the viewer used to draw. This branch replaced that drawing: the
+// castings on screen are built by pieces.py, whose boundaries are already
+// projected onto flat joint planes and are then shrunk by the joint gap
+// and thinned by the crown taper, all in the one dimension those numbers
+// measured. The distance between the two models is real and undisclosed,
+// so it is named; the old number for it would be a false precision.
+const FACETED_CAVEAT = "on a faceted analysis model, not the casting drawn here";
 
 function updateCraBadge() {
   const badge = document.getElementById("cra-badge");
@@ -934,20 +942,23 @@ function renderDataPanel(v) {
       + verdict.interfaces + " contact interfaces";
     content.appendChild(counts);
     const faceted = document.createElement("p");
-    faceted.textContent = "the verdict is computed on a faceted model, not on "
-      + "the surface drawn here. Position is the larger error: replacing each "
-      + "curved piece with planar joints moves the analysis surface up to "
-      + "2.389 m from the drawn one at 2 rings and 1.964 m at 4 rings, "
-      + "against a shell half thickness of 0.1 m, so the solver weighs blocks "
-      + "sitting metres from where they are shown. Volume is the smaller one: "
-      + "per piece it runs 51.3 to 17.3 percent light at 2 rings, and 63.7 "
-      + "percent light to 12.9 percent heavy at 4 rings, where 5 of 21 pieces "
-      + "come out heavier than drawn rather than lighter. A higher "
-      + "ring count improves the position error and the total volume (29.5 "
-      + "percent light at 2 rings, 17.5 at 4) because finer segmentation "
-      + "makes each joint flatter to begin with, but it widens the spread "
-      + "between individual pieces (measured on the Trial 2 export, "
-      + "docs/BENCH.md)";
+    faceted.textContent = "the verdict is computed on a faceted model, not "
+      + "on the castings drawn here. The analysis model replaces each cell "
+      + "with a single voussoir whose faces are planar, one per neighbour, "
+      + "so its surface cuts the chord wherever the vault curves: it sits "
+      + "inside the drawn surface, carries less volume than the cell it "
+      + "stands for, and both errors grow as the segmentation coarsens. "
+      + "Position is the larger of the two, and on this vault it has been "
+      + "measured in metres against a shell half thickness of 0.1 m, so "
+      + "the solver weighs blocks that do not sit where the vault is "
+      + "shown. Neither error is quoted as a figure against what is on "
+      + "screen, and the reason is that the drawing has since moved: a "
+      + "casting here is projected onto its own flat joint planes, shrunk "
+      + "by the joint gap and thinned by the crown taper, all in the same "
+      + "dimension. The measurements in docs/BENCH.md were taken against "
+      + "the mesh-following block model this viewer no longer draws, and "
+      + "are a distance between two analysis models rather than a "
+      + "distance to these pieces";
     content.appendChild(faceted);
     const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
     if (skipped && skipped.length) {

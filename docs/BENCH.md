@@ -376,10 +376,20 @@ So the earlier uniform does-not-stand result was a solver
 parameterisation artefact on top of a positional modelling error, not a
 structural reading of the vault. The positional error is the second thing
 this pass measured and the one that had gone undisclosed: the faceted
-analysis surface sits up to 2.389 m from the drawn surface at rings=2 and
-1.964 m at rings=4, against a shell half thickness of 0.1 m. Even a
-converged verdict on this model would be a verdict about blocks sitting
-metres from where the studio draws them.
+analysis surface sits up to 2.389 m from the mesh-following block surface
+at rings=2 and 1.964 m at rings=4, against a shell half thickness of
+0.1 m. Even a converged verdict on this model would be a verdict about
+blocks sitting metres from where the studio draws them.
+
+Read that pair for what it is. Both surfaces come from the same analysis
+mesh: `voussoirs.segment_voussoirs` against `blocks.segment_blocks`, and
+at the time of the measurement the second of those was also what the
+viewer drew. It is not any more. The studio now draws `pieces.py`
+castings, whose boundaries are projected onto flat joint planes, shrunk
+by the joint gap and thinned by the crown taper, so the figures above are
+a distance between two analysis models and no longer a distance to what
+is on screen. The studio's own disclosure says so in those words rather
+than repeating these numbers.
 
 What is left is a tool that refuses rather than misleads, and a vault
 that has not been assessed. Two things would move it forward, in order:

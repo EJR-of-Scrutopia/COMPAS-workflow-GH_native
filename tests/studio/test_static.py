@@ -495,23 +495,31 @@ def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     body = js[panel_start:panel_end]
     assert "faceted" in body
     assert "planar" in body or "flat" in body
-    # Position before volume. The analysis surface sits up to 2.389 m from
-    # the drawn one at rings=2 and 1.964 m at rings=4, against a 0.1 m
-    # shell half thickness: an error twenty times the volume gap this
-    # paragraph used to lead with, and the only one that puts a block
-    # somewhere it is not. It must be named, in metres, first.
-    assert "2.389" in body and "1.964" in body
-    assert body.index("2.389") < body.index("percent"), (
-        "position is the larger error and must come before volume")
-    # The volume gap is measured (docs/BENCH.md), not a rounding error:
-    # "slightly" understates it and must not come back. The old sentence
-    # also said every piece runs light, which is false: 5 of 21 pieces at
-    # rings=4 are HEAVIER than drawn, and a disclosure that excludes that
-    # tells a reader the error only ever goes one way.
-    assert "slightly" not in body
-    assert "heavy" in body or "heavier" in body
-    assert "51.3" in body and "63.7" in body and "12.9" in body
-    assert "ring count" in body
+    # I3: every figure this paragraph used to quote came from
+    # bench/scripts/cra_acceptance.py comparing voussoirs.segment_voussoirs
+    # against blocks.segment_blocks, the mesh-following prisms the viewer
+    # drew at the time. This branch replaced the drawn piece in exactly the
+    # dimension those numbers measured: boundary vertices are projected
+    # onto flat joint planes, the casting is shrunk by the joint gap, and
+    # the crown taper can thin it by half. Quoting them as a distance to
+    # what is on screen is a precision the code can no longer support.
+    for stale in ("2.389", "1.964", "2.4 m", "51.3", "17.3", "63.7", "12.9", "29.5"):
+        assert stale not in body, (
+            "{} was measured against a drawing this branch replaced".format(stale)
+        )
+    # The disclosure itself must not quietly vanish with the numbers. It
+    # still has to name what the analysis model does to the surface, which
+    # way each error runs, that the segmentation drives both, and where the
+    # measurement that does exist was taken.
+    assert "slightly" not in body, "the gap is measured, not a rounding error"
+    assert "less volume" in body
+    assert "coarsens" in body or "ring count" in body
+    assert "joint gap" in body and "taper" in body, (
+        "the reason a figure would be false is that the drawn casting moved"
+    )
+    assert "mesh-following block model" in body and "docs/BENCH.md" in body, (
+        "the surface actually measured has to be named"
+    )
 
 
 def test_the_badge_and_hud_carry_the_faceted_caveat_too():
@@ -522,7 +530,13 @@ def test_the_badge_and_hud_carry_the_faceted_caveat_too():
     assert "FACETED_CAVEAT" in js
     caveat_start = js.index("const FACETED_CAVEAT")
     caveat = js[caveat_start:js.index("\n", caveat_start)]
-    assert "faceted" in caveat and "2.4 m" in caveat
+    assert "faceted" in caveat
+    # I3: the one-line form used to carry "up to 2.4 m off the drawn
+    # surface", a figure measured against the mesh-following block model
+    # this branch stopped drawing. The badge and HUD have room for the
+    # relationship, not for a number that is no longer true of it.
+    assert "2.4" not in caveat and "m off" not in caveat
+    assert "drawn here" in caveat or "drawn surface" not in caveat
     badge_start = js.index("function updateCraBadge(")
     badge_end = js.index("\n}", badge_start)
     badge_body = js[badge_start:badge_end]
