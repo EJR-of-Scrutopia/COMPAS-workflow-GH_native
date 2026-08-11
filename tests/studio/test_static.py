@@ -307,6 +307,53 @@ def test_node_and_wire_size_sliders_rebuild_only_on_change():
         )
 
 
+def test_the_rings_slider_reloads_the_study_rather_than_rebinning_locally():
+    # C1: the pieces the viewer draws are built server-side at the BUNDLE's
+    # ring count and are looked up in state.segmentIndex by the key that
+    # binning gave them. A client-side re-bin at the slider's count rebuilds
+    # the index around different cells, so drawn pieces are left holding
+    # keys the index has never heard of: measured on Trial 2 against an
+    # 8-ring bundle, EVERY slider value from 4 to 16 orphans keys (24 of 38
+    # pieces at 4 rings, 3 at 9, 14 at 16). applySceneAtTime then throws on
+    # a missing key, and while playing that throw escapes frame() before its
+    # trailing requestAnimationFrame, so the render loop never restarts.
+    # The slider must take the thickness slider's shape instead.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    input_start = js.index('getElementById("rings-slider").addEventListener("input"')
+    input_body = js[input_start:js.index("\n});", input_start)]
+    assert "rings-value" in input_body, "input must still move the live label"
+    for forbidden in ("rebinSegments", "loadStudy", "state.rings ="):
+        assert forbidden not in input_body, (
+            "the rings slider must not {} on every input event".format(forbidden)
+        )
+    change_start = js.index('getElementById("rings-slider").addEventListener("change"')
+    change_body = js[change_start:js.index("\n});", change_start)]
+    assert "state.rings = +e.target.value" in change_body
+    assert "loadStudy(" in change_body, (
+        "the ring count is a property of the bundle, so committing it must "
+        "reload the study and let the server rebuild the pieces"
+    )
+
+
+def test_the_client_binning_follows_the_loaded_bundle_not_the_slider():
+    # The other half of C1: even with the handler fixed, a mid-drag slider
+    # must not be able to desynchronise the segment index from the drawn
+    # pieces, so the binning is derived from the bundle itself.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "function rebinSegments()" in js, "rebinSegments must take no ring count"
+    for call in re.findall(r"rebinSegments\(([^)]*)\)", js):
+        assert call.strip() == "", (
+            "rebinSegments must never be handed a ring count; it reads the "
+            "loaded bundle's own count"
+        )
+    start = js.index("function rebinSegments()")
+    body = js[start:js.index("\n}", start)]
+    assert "state.bundle.segments.rings" in body, (
+        "the binning must come from the loaded bundle's ring count"
+    )
+    assert "e.target.value" not in body
+
+
 def test_pieces_are_built_at_the_bundles_thickness():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "fields.js" in js, "studio.js must import the pure fields module"

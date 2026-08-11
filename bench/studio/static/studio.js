@@ -309,7 +309,7 @@ function buildScene(bundle) {
   state.objects.ground = ground;
   scene.add(ground);
 
-  rebinSegments(state.rings);
+  rebinSegments();
   buildLayerToggles();
   updateVectorLayers();
   updateHud();
@@ -326,25 +326,34 @@ function faceCentroids(meshData) {
   });
 }
 
-function rebinSegments(rings) {
-  state.rings = rings;
-  document.getElementById("rings-value").textContent = rings;
+function rebinSegments() {
+  // The binning always follows the LOADED bundle's ring count, never the
+  // slider's current position. The pieces the viewer draws are built
+  // server-side at the bundle's ring count, and each one is looked up in
+  // state.segmentIndex by the key that binning gave it. Re-binning here to
+  // the slider's number instead would rebuild the index around cells the
+  // drawn pieces know nothing about: measured on Trial 2 against an
+  // 8-ring bundle, every slider value from 4 to 16 orphans keys (24 of 38
+  // pieces at 4 rings, 3 at 9, 14 at 16), and the first missing key throws
+  // inside applySceneAtTime, which while playing kills the render loop
+  // until reload. The slider asks the server for a matching bundle
+  // instead: see its change handler, which follows the thickness slider.
   if (!state.bundle) return;
+  const rings = state.bundle.segments.rings;
+  state.rings = rings;
+  document.getElementById("rings-slider").value = rings;
+  document.getElementById("rings-value").textContent = rings;
   const centroids = faceCentroids(state.bundle.analysis_mesh);
   const local = segmentFaces(centroids, rings);
-  if (rings === state.bundle.segments.rings) {
-    // Python is canonical: verify the mirror, then defer to the shipped copy.
-    const shipped = state.bundle.segments;
-    const agrees =
-      JSON.stringify(local.assignment) === JSON.stringify(shipped.assignment) &&
-      JSON.stringify(local.wedge_counts) === JSON.stringify(shipped.wedge_counts);
-    if (!agrees) {
-      showBanner("Segmentation mirror disagrees with Python; showing the Python binning. Fix binning.js before trusting the slider.");
-    }
-    state.segments = shipped;
-  } else {
-    state.segments = local;
+  // Python is canonical: verify the mirror, then defer to the shipped copy.
+  const shipped = state.bundle.segments;
+  const agrees =
+    JSON.stringify(local.assignment) === JSON.stringify(shipped.assignment) &&
+    JSON.stringify(local.wedge_counts) === JSON.stringify(shipped.wedge_counts);
+  if (!agrees) {
+    showBanner("Segmentation mirror disagrees with Python; showing the Python binning. Fix binning.js before trusting the slider.");
   }
+  state.segments = shipped;
   state.segmentIndex = new Map();
   state.segments.order.forEach(([r, w], position) => {
     state.segmentIndex.set(segmentKey(r, w), { faces: [], order: position });
@@ -1155,7 +1164,20 @@ document.getElementById("material-select").addEventListener("change", () => {
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
-document.getElementById("rings-slider").addEventListener("input", (e) => rebinSegments(+e.target.value));
+// Exactly the thickness slider's shape, and for the same reason: the ring
+// count is a property of the BUNDLE, not of the client. "input" only moves
+// the live label, "change" (drag release) commits the value and asks the
+// server for a bundle whose pieces are built at that ring count. Re-binning
+// client-side while the drawn pieces stay at the old count is what used to
+// orphan piece keys and stop the render loop.
+document.getElementById("rings-slider").addEventListener("input", (e) => {
+  document.getElementById("rings-value").textContent = e.target.value;
+});
+document.getElementById("rings-slider").addEventListener("change", (e) => {
+  state.rings = +e.target.value;
+  const select = document.getElementById("study-select");
+  if (select.value) loadStudy(select.value);
+});
 document.getElementById("thickness-input").addEventListener("input", (e) => {
   document.getElementById("thickness-value").textContent = Math.round(+e.target.value * 1000);
 });
