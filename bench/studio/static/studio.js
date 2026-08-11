@@ -1440,6 +1440,11 @@ function buildPieceMeshes() {
     const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;
+    // The casting's own centroid height. Piece geometry is in absolute
+    // world coordinates and the mesh sits at the origin, so the sprayed
+    // growth needs this to scale a piece about itself rather than about
+    // z = 0 (see applySceneAtTime).
+    mesh.userData.centreZ = centre[2];
     mesh.userData.sources = sources;
     mesh.userData.surface = surface;
     mesh.userData.basePositions = new Float32Array(positions);
@@ -1526,10 +1531,22 @@ function applySceneAtTime(t) {
     const u = Math.min(1, (build - start) / dropSeconds);
     segment.visible = true;
     if (sprayed) {
-      segment.position.z = 0;
+      // Sprayed concrete thickens on the formwork where it is sprayed, so
+      // the casting grows about its OWN centroid and stays where it will
+      // stand. Piece geometry is absolute and the mesh sits at the origin,
+      // so a bare scale.z scales about z = 0 instead: a crown casting on
+      // Trial 2, whose centroid is 6.85 m up, was drawn as a sliver lying
+      // on the ground stretching vertically through the falsework to its
+      // true height, which is a piece arriving from elsewhere, not
+      // concrete being built up. Compensating the position by
+      // centreZ * (1 - grown) pins the centroid in place while the
+      // thickness comes on.
       const grown = 0.001 + 0.999 * easeOutCubic(u);
       segment.scale.set(1, 1, grown);
+      segment.position.z = segment.userData.centreZ * (1 - grown);
     } else {
+      // Both halves reset, so switching material mid-timeline can never
+      // leave a piece carrying the other branch's growth or offset.
       segment.scale.set(1, 1, 1);
       segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     }

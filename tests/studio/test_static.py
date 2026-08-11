@@ -736,6 +736,35 @@ def test_every_clock_reads_the_drop_order_at_the_same_rate():
         assert duration >= lands
 
 
+def test_sprayed_concrete_grows_about_its_own_centroid():
+    # I2: piece geometry is in absolute world coordinates and the mesh sits
+    # at the origin, so a bare scale.z scales about z = 0. On Trial 2 the
+    # crown castings sit 6.85 m up, and they were drawn as slivers lying on
+    # the ground stretching vertically through the falsework to their true
+    # height. Sprayed concrete thickens where it is sprayed, so the growth
+    # is taken about the piece's own centroid.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    build_start = js.index("function buildPieceMeshes(")
+    build_body = js[build_start:js.index("\n}", build_start)]
+    assert "userData.centreZ" in build_body, (
+        "each piece must record its own centroid height at build time"
+    )
+    start = js.index("function applySceneAtTime(")
+    body = js[start:js.index("\n}", start)]
+    assert "sprayedMaterial()" in body
+    assert "DROP_HEIGHT" in body, "other materials still drop"
+    sprayed_branch = body[body.index("if (sprayed) {"):body.index("} else {", body.index("if (sprayed) {"))]
+    assert "userData.centreZ * (1 - grown)" in sprayed_branch, (
+        "growth must compensate the position, or the casting is dragged "
+        "down to z = 0 and stretched back up"
+    )
+    drop_branch = body[body.index("} else {", body.index("if (sprayed) {")):]
+    assert "segment.scale.set(1, 1, 1)" in drop_branch and "segment.position.z" in drop_branch, (
+        "the drop branch must reset both scale and position, so switching "
+        "material cannot leave stale growth state behind"
+    )
+
+
 def test_the_four_materials_are_visually_distinct():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     import re
