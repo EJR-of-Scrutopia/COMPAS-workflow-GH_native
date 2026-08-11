@@ -44,10 +44,79 @@ def edge_use_counts(faces):
     return counts
 
 
+# A tilted mesh whose two quads have very different areas, so the weighting
+# rule is visible in the answer. Quad [1, 2, 5, 4] is four times as long as
+# quad [0, 1, 4, 3] and lifts one corner out of the plane.
+WEIGHTED_VERTICES = [
+    [0, 0, 0], [1, 0, 0], [5, 0, 0], [0, 1, 0], [1, 1, 0], [5, 1, 1],
+]
+
+# Hand computed, triangle by triangle. vertex_normals cuts each quad
+# [a, b, c, d] into (a, b, c) and (a, c, d) and accumulates each triangle's
+# RAW cross product, whose length is twice that triangle's area, so the sum
+# is area weighted by construction. With u = pb - pa and v = pc - pa:
+#   quad [0, 1, 4, 3], flat and short
+#     (0, 1, 4): u = (1, 0, 0), v = (1, 1, 0) -> ( 0,  0, 1)
+#     (0, 4, 3): u = (1, 1, 0), v = (0, 1, 0) -> ( 0,  0, 1)
+#   quad [1, 2, 5, 4], tilted and long
+#     (1, 2, 5): u = (4, 0, 0), v = (4, 1, 1) -> ( 0, -4, 4)
+#     (1, 5, 4): u = (4, 1, 1), v = (0, 1, 0) -> (-1,  0, 4)
+# Summed per vertex over the triangles that touch it:
+WEIGHTED_ACCUMULATION = [
+    (0, 0, 2),      # 0: both triangles of the flat quad
+    (-1, -4, 9),    # 1: one flat triangle and both tilted ones
+    (0, -4, 4),     # 2: one tilted triangle
+    (0, 0, 1),      # 3: one flat triangle
+    (-1, 0, 6),     # 4: both flat triangles and one tilted
+    (-1, -4, 8),    # 5: both tilted triangles
+]
+
+
+def unit(vector):
+    length = sum(c * c for c in vector) ** 0.5
+    return [c / length for c in vector]
+
+
 def test_flat_mesh_normals_point_up():
     blocks = studio()
     for n in blocks.vertex_normals(FLAT_VERTICES, FACES):
         assert n == pytest.approx([0.0, 0.0, 1.0])
+
+
+def test_vertex_normals_are_area_weighted_on_a_tilted_mesh():
+    # Retiring the JS mirror took the node parity test with it, and that
+    # test was the only thing constraining this weighting rule: with it
+    # gone, normalising each triangle normal before accumulating (that is,
+    # removing the area weighting entirely) left the whole suite green.
+    # pieces.py calls this for every normal the viewer draws and every
+    # joint plane it projects a boundary onto, so the rule is pinned
+    # numerically here instead.
+    blocks = studio()
+    normals = blocks.vertex_normals(WEIGHTED_VERTICES, FACES)
+    for index, accumulated in enumerate(WEIGHTED_ACCUMULATION):
+        assert normals[index] == pytest.approx(unit(accumulated), abs=1e-12), (
+            "vertex {} is not the unit of the area weighted sum".format(index)
+        )
+
+
+def test_equal_weighting_would_give_a_different_answer_at_the_shared_vertex():
+    # The pin above is only worth having if the mutation it guards against
+    # is visible in the numbers. Vertex 1 carries one small flat triangle
+    # and two large tilted ones, so weighting them equally instead of by
+    # area moves its normal by about 0.15, which is many orders of
+    # magnitude outside the tolerance asserted above.
+    blocks = studio()
+    equal = [0.0, 0.0, 0.0]
+    for triangle in ((0, 0, 1), (0, -4, 4), (-1, 0, 4)):  # the three at vertex 1
+        contribution = unit(triangle)
+        equal = [equal[i] + contribution[i] for i in range(3)]
+    equal = unit(equal)
+    weighted = blocks.vertex_normals(WEIGHTED_VERTICES, FACES)[1]
+    gap = max(abs(a - b) for a, b in zip(weighted, equal))
+    assert gap > 0.1, (
+        "area weighting only moves this vertex by {:.4f}, so the numeric "
+        "pin would not catch its removal".format(gap)
+    )
 
 
 def test_boundary_edges_exclude_the_shared_edge():
