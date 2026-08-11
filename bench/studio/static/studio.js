@@ -686,9 +686,13 @@ function recolourSegments() {
     positions.needsUpdate = true;
     segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
     segment.geometry.computeVertexNormals();
+    // Off the heatmaps, the piece goes back to the material it was built
+    // with, tint and all: pieceMaterial recomputes it from the key rather
+    // than handing back a bare registry clone, which used to discard the
+    // per casting tint before the first frame was ever drawn.
     segment.material = (wantStress || wantDeflection)
       ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
-      : (materials[state.bundle.material] || materials.concrete).clone();
+      : pieceMaterial(segment.userData.key);
   }
   updateLegend(stressMagnitude, deflectionMax, deflectionPeakOnly, stage);
 }
@@ -1357,6 +1361,26 @@ function pieceTint(key) {
   return (offset[0] % 1) * 0.06 - 0.03;
 }
 
+function pieceMaterial(key) {
+  // The tint is a property of the casting, not a one-shot at build time.
+  // recolourSegments reassigns every piece's material on every call, and
+  // all three callers of buildPieceMeshes call it immediately afterwards
+  // with no heatmap layer on at first load: while that branch handed back
+  // a fresh untinted clone, the tint never once reached the screen and two
+  // castings always looked identical. Recomputed here from the piece's own
+  // key, which is deterministic, so any number of rebuilds and heatmap
+  // toggles land on the same colour.
+  //
+  // Each casting owns its instance so the pulse can write emissive per
+  // piece, and so the tint never leaks into the shared registry entry
+  // other code reads from.
+  const own = (materials[state.bundle.material] || materials.concrete).clone();
+  // Sprayed concrete is one continuous surface, so it gets no per piece
+  // variation at all.
+  if (!sprayedMaterial()) own.color.offsetHSL(0, 0, pieceTint(key));
+  return own;
+}
+
 function taperAt(ring) {
   // Pieces thin toward the crown, which is where the least load arrives.
   const rings = Math.max(1, state.bundle.rings - 1);
@@ -1369,7 +1393,6 @@ function buildPieceMeshes() {
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.
   const gap = sprayedMaterial() ? 0 : state.jointGap;
-  const material = materials[state.bundle.material] || materials.concrete;
   for (const piece of state.bundle.pieces) {
     const count = piece.mid.length;
     const half = state.bundle.provenance.thickness * taperAt(piece.ring) / 2;
@@ -1414,12 +1437,7 @@ function buildPieceMeshes() {
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
     geometry.computeVertexNormals();
-    // Each casting owns its material instance so the pulse can write
-    // emissive per piece, and so the per piece tint does not leak into the
-    // shared registry entry other code reads from.
-    const own = material.clone();
-    if (!sprayedMaterial()) own.color.offsetHSL(0, 0, pieceTint(piece.key));
-    const mesh = new THREE.Mesh(geometry, own);
+    const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;
     mesh.userData.sources = sources;

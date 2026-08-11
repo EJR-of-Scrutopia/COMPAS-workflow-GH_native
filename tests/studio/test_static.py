@@ -563,13 +563,30 @@ def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
     assert "function buildSegmentMeshes(" not in js, "the old extruder is retired"
 
 
-def test_each_piece_gets_its_own_tint():
+def test_each_piece_gets_its_own_tint_and_keeps_it():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     start = js.index("function buildPieceMeshes(")
-    end = js.index("\n}", start)
-    body = js[start:end]
+    body = js[start:js.index("\n}", start)]
     assert "segmentUVOffset(" in body, "per piece UVs keep castings from matching"
-    assert "offsetHSL" in body or "pieceTint" in body
+    assert "pieceMaterial(piece.key)" in body
+    tint_start = js.index("function pieceMaterial(")
+    tint_body = js[tint_start:js.index("\n}", tint_start)]
+    assert "pieceTint(" in tint_body and "offsetHSL" in tint_body
+    # I1: the tint used to be applied once at build time, and every caller
+    # of buildPieceMeshes calls recolourSegments straight afterwards. With
+    # no heatmap layer on at first load, recolourSegments' own branch
+    # reassigned a fresh untinted clone, so "no two castings look
+    # identical" never once reached the screen. The tint has to be a
+    # property of the piece, recomputed from its key wherever the material
+    # is handed out.
+    recolour_start = js.index("function recolourSegments(")
+    recolour_body = js[recolour_start:js.index("\n}", recolour_start)]
+    assert "pieceMaterial(segment.userData.key)" in recolour_body, (
+        "recolouring must restore the piece's own tinted material"
+    )
+    assert "materials.concrete).clone()" not in recolour_body, (
+        "a bare registry clone here discards the per casting tint"
+    )
 
 
 def test_sprayed_concrete_has_no_joints_at_all():
@@ -580,7 +597,9 @@ def test_sprayed_concrete_has_no_joints_at_all():
     end = js.index("\n}", start)
     body = js[start:end]
     assert "sprayedMaterial() ? 0 : state.jointGap" in body
-    assert "if (!sprayedMaterial()) own.color.offsetHSL" in body, (
+    tint_start = js.index("function pieceMaterial(")
+    tint_body = js[tint_start:js.index("\n}", tint_start)]
+    assert "if (!sprayedMaterial()) own.color.offsetHSL" in tint_body, (
         "the per piece tint must be suppressed for a continuous surface"
     )
 
