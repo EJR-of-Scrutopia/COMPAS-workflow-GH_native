@@ -199,8 +199,7 @@ function buildWiresAndNodes(bundle) {
   return { wires, nodes };
 }
 
-function rebuildWiresAndNodes() {
-  if (!state.bundle) return;
+function disposeWiresAndNodes() {
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (object) {
@@ -211,8 +210,32 @@ function rebuildWiresAndNodes() {
       // GPU buffers in three 0.185 -- disposing the geometry and material
       // alone leaks the instance attribute buffers on every slider drag.
       object.dispose();
+      state.objects[key] = null;
     }
   }
+}
+
+function disposeShell() {
+  const shell = state.objects.shell;
+  if (!shell) return;
+  scene.remove(shell);
+  // The same rule the thrust network follows above: whatever is replaced
+  // owns GPU buffers. The shell is rebuilt on every joint gap or taper
+  // commit and on every study load, which since the rings slider started
+  // reloading is every ring change too. Each casting owns its geometry and
+  // a cloned material (see pieceMaterial), so both are ours to free; the
+  // textures that clone points at are shared with the registry, and
+  // Material.dispose does not touch them.
+  for (const segment of shell.children) {
+    segment.geometry.dispose();
+    segment.material.dispose();
+  }
+  state.objects.shell = null;
+}
+
+function rebuildWiresAndNodes() {
+  if (!state.bundle) return;
+  disposeWiresAndNodes();
   const { wires, nodes } = buildWiresAndNodes(state.bundle);
   state.objects.wires = wires;
   state.objects.nodes = nodes;
@@ -279,6 +302,11 @@ async function reloadColumns(names) {
 }
 
 function buildScene(bundle) {
+  // A study load replaces the shell and the thrust network wholesale, so
+  // it frees them on the way out rather than leaving them to the garbage
+  // collector, which never sees the GPU side.
+  disposeShell();
+  disposeWiresAndNodes();
   for (const key of Object.keys(state.objects)) {
     if (key === "columns") continue;
     const object = state.objects[key];
@@ -1418,19 +1446,7 @@ function taperAt(ring) {
 }
 
 function buildPieceMeshes() {
-  if (state.objects.shell) {
-    scene.remove(state.objects.shell);
-    // The same rule rebuildWiresAndNodes documents and follows: whatever is
-    // replaced owns GPU buffers, and the joint gap and taper sliders
-    // rebuild the whole shell on every commit. Each casting owns its
-    // geometry and a cloned material (see pieceMaterial), so both are ours
-    // to free; the textures that clone points at are shared with the
-    // registry, and Material.dispose does not touch them.
-    for (const segment of state.objects.shell.children) {
-      segment.geometry.dispose();
-      segment.material.dispose();
-    }
-  }
+  disposeShell();
   const group = new THREE.Group();
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.

@@ -270,12 +270,23 @@ def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
     start = js.index("function rebuildWiresAndNodes(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "geometry.dispose()" in body, "a rebuild must dispose the old geometry"
-    assert "material.dispose()" in body, "a rebuild must dispose the old material"
+    # The freeing itself lives in disposeWiresAndNodes, which buildScene
+    # calls too: a study load replaces the network just as a size slider
+    # does, and since the rings slider started reloading, that is every ring
+    # change as well.
+    assert "disposeWiresAndNodes()" in body, "a rebuild must free the old network"
+    dispose_start = js.index("function disposeWiresAndNodes(")
+    dispose_body = js[dispose_start:js.index("\n}", dispose_start)]
+    assert "geometry.dispose()" in dispose_body, "a rebuild must dispose the old geometry"
+    assert "material.dispose()" in dispose_body, "a rebuild must dispose the old material"
     # FINDING 2 (GPU leak): in three 0.185, InstancedMesh.dispose() is what
     # frees the instanceMatrix/instanceColor GPU buffers; disposing only the
     # geometry and material leaks them on every slider drag.
-    assert "object.dispose()" in body, "a rebuild must dispose the InstancedMesh itself"
+    assert "object.dispose()" in dispose_body, (
+        "a rebuild must dispose the InstancedMesh itself"
+    )
+    build_start = js.index("function buildScene(")
+    assert "disposeWiresAndNodes()" in js[build_start:js.index("\n}", build_start)]
     assert "applyWireForces()" in body, "the forces layer must survive a rebuild"
     # FINDING 1 (camera snap): the rebuild must recompute strike-dependent
     # scene state through the scene-only helper, never applyTimeline itself,
@@ -383,11 +394,16 @@ def test_rebuilding_the_shell_frees_what_it_replaces():
     # drop. rebuildWiresAndNodes already documents and does exactly this for
     # the thrust network.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function buildPieceMeshes(")
+    start = js.index("function disposeShell(")
     body = js[start:js.index("\n}", start)]
     assert "segment.geometry.dispose()" in body and "segment.material.dispose()" in body, (
         "a shell rebuild must dispose the geometries and materials it replaces"
     )
+    for caller in ("function buildPieceMeshes(", "function buildScene("):
+        caller_body = js[js.index(caller):js.index("\n}", js.index(caller))]
+        assert "disposeShell()" in caller_body, (
+            "{} replaces the shell, so it must free the old one".format(caller)
+        )
     recolour_start = js.index("function recolourSegments(")
     recolour_body = js[recolour_start:js.index("\n}", recolour_start)]
     assert "previous.dispose()" in recolour_body, (
