@@ -135,11 +135,15 @@ verified analysis. It reads the same export pairs as demo 09, treats the
 funicular surface as falsework, and stages precast segments onto it rim to
 crown.
 
-- Study, material (C30/37 or GL24h), and a segmentation slider (4 to 16
-  rings; wedge counts follow ring radius, staggered ring to ring).
+- Study, material (concrete, concrete C50, sprayed concrete, timber, brick,
+  tile or stone), a pattern control, and a piece size slider (0.3 to 3.0 m;
+  the cut is rebuilt server side, not recomputed in the browser).
 - Run staged analysis: per stage, the falsework bookkeeping is exact
   arithmetic and the struck-now counterfactual is a real OpenSees solve in
-  .venv-fea; stages that find no equilibrium say so.
+  .venv-fea; stages that find no equilibrium say so, and a material with no
+  `ananke_fea` preset (brick, tile, stone) says plainly that no struck-now
+  check exists for it rather than reporting a convergence failure that
+  never happened.
 - FEA layers: stress and deflection heatmaps (full per-element and
   per-node fields), load and reaction vectors, text overlays, the
   integrity pulse, thrust wires with node spheres.
@@ -153,6 +157,71 @@ crown.
 Generated outputs live under `bench/studies/<slug>/studio/` and are not
 committed. The server never imports the solver stacks; a guard test holds
 it to that.
+
+### The cut: tessellation replaces the ring and wedge binning
+
+The studio used to bin whole analysis-mesh faces into concentric ring and
+wedge cells (4 to 16 rings, wedge counts following ring radius). A cell's
+shape was whatever the binning happened to sweep up, not a real polygon: on
+the Trial 2 export, measured before any of this landed,
+
+```text
+cell        faces   boundary edges   corner runs
+(0, 3)         70               66             4
+(0, 4)         35               30             3
+(1, 0)         66               86             3
+```
+
+A four sided voussoir has four boundary edges; these had thirty to
+eighty-six. The 2026-08-12 cutting engine wave replaced the binning with a
+real tessellation: a pattern (`bench/studio/generators.py`) or an imported
+Grasshopper cut (`bench/studio/tessellation.py`) draws polygon cells
+straight from the vault's own star shaped plan, welds them into one
+conforming cut with T junctions resolved rather than forbidden, and
+`bench/studio/pieces.py` caps each cell with a triangulated, flat jointed
+casting lifted onto the thrust surface. `bench/studio/segmentation.py`, the
+ring and wedge binning itself, is retired; the studio's own size and pattern
+controls, and `bench/scripts/cutting_measurements.py` below, are what now
+pin the cut on real geometry.
+
+`bench/scripts/cutting_measurements.py` measures the replacement on the
+same Trial 2 export, at 0.9 m, the size the studio opens to by default. It
+writes nothing into `studies/`. Run it with
+`.venv\Scripts\python.exe bench\scripts\cutting_measurements.py` and it also
+checks itself against every figure the wave's own controller had already
+measured by hand (the plan's star shape, the default size's coverage, and
+the coverage regression at 1.5 m); every check below passed on the run this
+table is taken from, 2026-08-12:
+
+| measurement | value |
+| --- | --- |
+| star shaped | yes (238 of 240 rim steps forward, 2 backward, 0.467 degrees total, winding exactly 2 pi) |
+| target size, courses, pieces | 0.9 m, 7 courses, 233 pieces |
+| facets per piece | min 5 / median 6 / max 17 |
+| boundary points per piece | min 40 / median 48 / max 136 |
+| subdivision rounds | 3, limited by rounds (the edge length target, not the chord target, is what the round budget cuts off here) |
+| cap chord deviation | 0.960 mm against a 5.0 mm target |
+| corner normal residual | 0.3294595060342589 (19.236 degrees) |
+| clamped cap points | 137 of 41265 |
+| coverage | 0 orphan faces, 0 double faces (of 2400 analysis faces), 0 open facets, 0 slivers, 0 coverage holes, 0 broken boundary entries, 0 missing planes |
+
+At 1.5 m the same export grows 2 coverage holes, 1 broken boundary entry
+and 1 orphan face. That is a real limit of the current cut at coarse sizes
+on this export, published rather than hidden, and it is why the default
+size stays at 0.9 m rather than the coarser end of the slider.
+
+The corner normal residual is worth reading plainly rather than glossed
+over. A corner sits where two facets meet, and one stored normal can only
+lie in one of their two planes; `bench/studio/pieces.py`'s own test
+fixture, a four cell synthetic dome chosen to be a stress case, measures
+0.0104 (0.598 degrees) at its single worst corner. The real Trial 2 export
+measures 0.329 (19.2 degrees) at its own worst corner, thirty times larger.
+Nothing in the shipped acceptance tests bounds this figure on real geometry
+(the `< 0.02` bound in `tests/studio/test_pieces.py` is pinned to the
+synthetic fixture only), so this is not a failing measurement, but it is a
+genuinely larger disagreement than the fixture suggested, at a joint where
+a real export's curvature is sharper than the four cell dome modelled it to
+be. Worth a look before this reaches a client-facing drawing.
 
 ## CRA solver setup (IPOPT)
 

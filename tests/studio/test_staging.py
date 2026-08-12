@@ -18,10 +18,9 @@ def studio():
     if path not in sys.path:
         sys.path.insert(0, path)
     import geometry
-    import segmentation
     import staging
 
-    return geometry, segmentation, staging
+    return geometry, staging
 
 
 def studio_module(name):
@@ -39,14 +38,14 @@ def studio_module(name):
 def wide_contract():
     """A flat 4x4 quad grid with a real, single boundary loop.
 
-    two_radius_contract's eight disjoint quads could stand in for the old
-    ring/wedge binning (segmentation.segment_faces never needed a real
-    mesh boundary, only face centroids), but domain.plan_domain does: it
-    walks the mesh's own boundary ring, and eight faces that share no
-    vertex are eight separate one-face boundary loops, not one rim. So a
-    fixture that runs run_staging end to end through pattern/size needs an
-    actual single-loop mesh, and this is the smallest one that still gives
-    the cut two occupied courses to stage.
+    two_radius_contract's eight disjoint quads suit stage_plan directly
+    (it only ever reads assignment/order/keys, never a mesh boundary), but
+    domain.plan_domain needs more: it walks the mesh's own boundary ring,
+    and eight faces that share no vertex are eight separate one-face
+    boundary loops, not one rim. So a fixture that runs run_staging end to
+    end through pattern/size needs an actual single-loop mesh, and this is
+    the smallest one that still gives the cut two occupied courses to
+    stage.
 
     At pattern="bonded-courses", size=1.2, this yields exactly two courses:
     course 0 (rim, the outer 3-quad-wide band) binds 12 of the 16 analysis
@@ -96,7 +95,7 @@ def test_gravity_and_material_constants_mirror_the_fea_presets():
     src/ananke_fea/materials.py (or model.py GRAVITY) and here together.
     """
 
-    _, _, staging = studio()
+    _, staging = studio()
     assert staging.GRAVITY == 9.80665
     assert staging.FEA_MATERIALS == {
         "concrete", "concrete-c50", "concrete-sprayed", "timber",
@@ -114,22 +113,24 @@ def test_stage_plan_is_cumulative_rim_to_crown():
     """Stage s accumulates all courses 0..s-1, rim to crown.
 
     two_radius_contract has outer ring at r~5 (faces 0-3) and inner at r~1
-    (faces 4-7). This test drives stage_plan directly off segmentation's own
-    ring/wedge binning (not through the pattern/size cut, which needs a
-    mesh with one real boundary loop and this fixture is deliberately eight
-    disjoint quads): stage_plan itself is agnostic to where assignment,
-    order and keys came from, so this still pins its course-accumulation
-    contract on a fixture built for exactly that shape.
+    (faces 4-7). stage_plan itself is agnostic to where assignment, order
+    and keys came from (the old ring/wedge binning this used to drive it
+    through is retired), so its course-accumulation contract is pinned
+    directly here: every outer face assigned to course 0's one cell, every
+    inner face to course 1's, with no pattern/size cut in between (that cut
+    needs a mesh with one real boundary loop, and this fixture is
+    deliberately eight disjoint quads; see wide_contract below for that
+    route through the real pipeline).
     """
-    g, seg, staging = studio()
+    g, staging = studio()
     contract = two_radius_contract()
     arrays = g.mesh_arrays(contract)
-    centroids = g.face_centroids(arrays["vertices"], arrays["faces"])
-    binned = seg.segment_faces(centroids, rings=2)
-    keys = [seg.segment_key(*pair) for pair in binned["order"]]
-    plan = staging.stage_plan(binned["assignment"], binned["order"], keys)
+    assignment = [[0, 0]] * 4 + [[1, 0]] * 4
+    order = [[0, 0], [1, 0]]
+    keys = ["course0", "course1"]
+    plan = staging.stage_plan(assignment, order, keys)
 
-    # With two distinct radii and rings=2, we expect exactly 2 stages
+    # With two distinct radii, one course each, we expect exactly 2 stages
     assert len(plan) == 2
     assert plan[0]["stage"] == 1
     assert plan[0]["courses_placed"] == 1
@@ -155,21 +156,21 @@ def test_stage_plan_is_cumulative_rim_to_crown():
 def test_formwork_curve_is_monotone_and_ends_at_the_total_weight():
     """Formwork weight is exact arithmetic, cumulative and monotone.
 
-    This drives stage_plan/formwork_curve through
-    segmentation.segment_faces, whose assignment always has a real ring for
-    every face, so it can never orphan one and this "ends at the total"
-    guarantee is trivially true here. The production path (build through
-    tessellation.analysis_binding, see build_tessellation_for) can orphan a
-    face -- see test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed
+    Every face of two_radius_contract is assigned to a real cell here (the
+    outer ring to course 0, the inner ring to course 1), so this "ends at
+    the total" guarantee is trivially true: nothing is orphaned. The
+    production path (build through tessellation.analysis_binding, see
+    build_tessellation_for) can orphan a face -- see
+    test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed
     below for the case this test cannot exercise.
     """
-    g, seg, staging = studio()
+    g, staging = studio()
     contract = two_radius_contract()
     arrays = g.mesh_arrays(contract)
-    centroids = g.face_centroids(arrays["vertices"], arrays["faces"])
-    binned = seg.segment_faces(centroids, rings=2)
-    keys = [seg.segment_key(*pair) for pair in binned["order"]]
-    plan = staging.stage_plan(binned["assignment"], binned["order"], keys)
+    assignment = [[0, 0]] * 4 + [[1, 0]] * 4
+    order = [[0, 0], [1, 0]]
+    keys = ["course0", "course1"]
+    plan = staging.stage_plan(assignment, order, keys)
     curve = staging.formwork_curve(
         arrays["vertices"], arrays["faces"], plan, "concrete"
     )
@@ -222,7 +223,7 @@ def test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed(tmp_pa
     shortfall has to be both real (measured here) and disclosed (in
     document["tessellation"]["report"]).
     """
-    g, seg, staging = studio()
+    g, staging = studio()
     contract = orphan_gap_contract()
     contract_path = tmp_path / "Gap-contract.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
@@ -255,7 +256,7 @@ def test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed(tmp_pa
 
 def test_run_staging_with_a_stub_runner_writes_the_document(tmp_path):
     """run_staging orchestrates stages and writes a JSON document."""
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -302,7 +303,7 @@ def test_run_staging_never_calls_the_runner_for_a_material_outside_fea_materials
     """Brick has no ananke_fea preset (staging.FEA_MATERIALS says so), so
     the struck-now runner must never be invoked for it: nothing was ever
     solved, so nothing must be reported as having failed to solve."""
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -340,7 +341,7 @@ def test_run_staging_still_solves_a_material_fea_materials_covers(tmp_path):
     """The other half of the branch: concrete is in FEA_MATERIALS, so the
     runner must still be called and its verdict used, unmoved by the
     brick/tile/stone branch added alongside it."""
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -388,7 +389,7 @@ def test_a_course_with_no_bound_faces_still_gets_a_stage_but_adds_no_weight(tmp_
     regardless: its cells reach "segments", but no analysis face reaches
     "faces", so the formwork weight does not grow either.
     """
-    g, seg, staging = studio()
+    g, staging = studio()
     contract = tiny_contract()
     contract_path = tmp_path / "Tiny-contract.json"
     contract_path.write_text(json.dumps(contract), encoding="utf-8")
@@ -426,7 +427,7 @@ def test_run_staging_reports_progress_per_stage(tmp_path):
     wide_contract docstring), which is what this test needs to pin the
     per-stage callback contract against more than one callback.
     """
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -444,7 +445,7 @@ def test_run_staging_reports_progress_per_stage(tmp_path):
 
 
 def test_run_staging_rejects_an_unknown_material(tmp_path):
-    _, _, staging = studio()
+    _, staging = studio()
     with pytest.raises(ValueError, match="concrete"):
         staging.run_staging(
             {"contract": tmp_path / "x.json", "geometry": tmp_path / "y.json"},
@@ -457,7 +458,7 @@ def test_run_staging_rejects_an_unknown_material(tmp_path):
 
 
 def test_thickness_flows_into_every_runner_request_and_the_curve(tmp_path):
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -489,13 +490,13 @@ def test_thickness_flows_into_every_runner_request_and_the_curve(tmp_path):
 
 
 def test_default_thickness_is_unchanged():
-    _, _, staging = studio()
+    _, staging = studio()
     assert staging.DEFAULT_THICKNESS == 0.2
     assert staging.THICKNESS == 0.2
 
 
 def test_run_staging_runs_cra_per_stage_and_records_mu(tmp_path):
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -530,7 +531,7 @@ def test_run_staging_runs_cra_per_stage_and_records_mu(tmp_path):
 
 
 def test_include_cra_false_omits_cra_entirely(tmp_path):
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -547,7 +548,7 @@ def test_include_cra_false_omits_cra_entirely(tmp_path):
 
 
 def test_friction_constants_are_pinned():
-    _, _, staging = studio()
+    _, staging = studio()
     assert staging.FRICTION == {
         "concrete": 0.6, "concrete-c50": 0.6,
         "concrete-sprayed": 0.6, "timber": 0.4,
@@ -564,7 +565,7 @@ def test_cra_subprocess_runner_reports_a_timeout_instead_of_hanging(monkeypatch)
     TimeoutExpired stands in for an actual multi-minute hang.
     """
 
-    _, _, staging = studio()
+    _, staging = studio()
 
     def raise_timeout(*args, **kwargs):
         assert kwargs.get("timeout") == staging.CRA_TIMEOUT_SECONDS
@@ -593,7 +594,7 @@ def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
     instant; letting it run would cost real solve time to reach the same
     null. The cra_runner must NOT be called for the over-budget stage.
     """
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -637,7 +638,7 @@ def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
 
 
 def test_run_staging_builds_voussoirs_not_mesh_following_blocks(tmp_path):
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -667,7 +668,7 @@ def test_run_staging_builds_voussoirs_not_mesh_following_blocks(tmp_path):
 
 
 def test_include_cra_false_leaves_the_skip_list_null(tmp_path):
-    g, seg, staging = studio()
+    g, staging = studio()
     contract_path = tmp_path / "Wide-contract.json"
     contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
     geometry_path = tmp_path / "Wide-compas.json"
@@ -683,7 +684,7 @@ def test_include_cra_false_leaves_the_skip_list_null(tmp_path):
 
 
 def test_the_stage_plan_groups_by_course():
-    s = studio()[2]
+    s = studio()[1]
     assignment = [[0, 0], [0, 1], [1, 0], [1, 0]]
     order = [[0, 0], [0, 1], [1, 0]]
     keys = ["c0p0", "c0p1", "c1p0"]
@@ -695,14 +696,14 @@ def test_the_stage_plan_groups_by_course():
 
 
 def test_an_unassigned_face_never_reaches_a_stage():
-    s = studio()[2]
+    s = studio()[1]
     assignment = [[0, 0], None, [1, 0]]
     plan = s.stage_plan(assignment, [[0, 0], [1, 0]], ["a", "b"])
     assert plan[-1]["faces"] == [0, 2]
 
 
 def test_the_masonry_presets_carry_sourced_values():
-    _, _, staging = studio()
+    _, staging = studio()
     assert staging.DENSITIES["brick"] == 1900.0
     assert staging.DENSITIES["tile"] == 1800.0
     assert staging.DENSITIES["stone"] == 2500.0
@@ -711,6 +712,6 @@ def test_the_masonry_presets_carry_sourced_values():
 
 
 def test_every_material_has_a_default_pattern():
-    _, _, staging = studio()
+    _, staging = studio()
     g = studio_module("generators")
     assert set(staging.DENSITIES) == set(g.DEFAULT_PATTERN)

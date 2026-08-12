@@ -656,6 +656,86 @@ def test_data_panel_reports_the_cra_verdict_with_provenance():
     )
 
 
+def test_friction_provenance_is_keyed_by_material_not_by_value():
+    # Stone's friction is 0.6, the same number staging.py gives concrete, so
+    # a lookup keyed by the numeric mu value would attribute stone's dry
+    # stone rigid block literature source to concrete's EN 1992-1-1 clause
+    # 6.2.5 smooth precast joint. Keying by material name keeps the two
+    # apart even though the numbers collide.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("const FRICTION_PROVENANCE = {")
+    end = js.index("\n};", start)
+    body = js[start:end]
+    for material in (
+        "concrete", "concrete-c50", "concrete-sprayed", "timber",
+        "brick", "tile", "stone",
+    ):
+        assert '"{}"'.format(material) in body, (
+            "FRICTION_PROVENANCE has no entry for {}".format(material)
+        )
+    assert '"0.6"' not in body and '"0.4"' not in body, (
+        "FRICTION_PROVENANCE must not be keyed by the numeric mu value"
+    )
+    assert "dry stone" in body, "stone must carry its own sourced provenance"
+    stone_start = body.index('"stone":')
+    stone_line = body[stone_start:]
+    assert "EN 1992-1-1" not in stone_line, (
+        "stone must not read as sourced from the concrete precast joint clause"
+    )
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    panel_body = js[panel_start:panel_end]
+    assert "FRICTION_PROVENANCE[state.bundle.material]" in panel_body, (
+        "the Data panel must look the provenance up by the loaded study's "
+        "own material, not by the numeric verdict.mu it happens to carry"
+    )
+
+
+def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
+    # A cut that dropped analysis faces, missed a joint plane, or clamped a
+    # point off the surface looks identical on screen to a clean one unless
+    # every field bundle.py's tessellation summary carries reaches the
+    # panel: orphan/double faces, the corner residual, the chord deviation,
+    # clamped points, missing planes, and the rim wobble.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    assert "state.bundle.tessellation" in body
+    assert '"Cut"' in body
+    for field in (
+        "tess.pattern", "tess.source", "tess.target_size",
+        "tess.cells", "tess.courses",
+        "tess.chord_mm", "tess.corner_residual", "tess.clamped_points",
+        "tess.missing_planes", "tess.rounds", "tess.limit",
+        "tess.backward_turn_degrees", "tess.backward_steps",
+    ):
+        assert field in body, "the Cut section must read {}".format(field)
+    coverage = ("orphan_faces", "double_faces", "open_facets", "slivers",
+                "coverage_holes", "broken_boundary")
+    for field in coverage:
+        assert "coverage.{}".format(field) in body, (
+            "the coverage report must disclose {}".format(field)
+        )
+    # An imported cut has to quote its own provenance verbatim and the
+    # measured z offset, not the generated cut's target size.
+    assert "tess.provenance" in body
+    assert "tess.z_offset_max" in body
+    # A cut piece vertex is not a render mesh vertex, so a heatmap value at
+    # a point is an interpolated reading; that change in meaning has to be
+    # named, not just left implicit in sampleScalar's own code.
+    assert "interpolation" in body
+    # The Cut section must render ahead of the verification early-out, the
+    # same reason the CRA section does: it must show on a staged-but-
+    # unverified study, not only once a verification run exists.
+    cut_index = body.index("state.bundle.tessellation")
+    verify_early_out = body.index("no verification run embedded yet")
+    assert cut_index < verify_early_out, (
+        "the Cut section must come before the verification early-return "
+        "guard, or an unverified study never shows the cut's own disclosures"
+    )
+
+
 def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     panel_start = js.index("function renderDataPanel(")

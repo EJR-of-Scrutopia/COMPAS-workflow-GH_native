@@ -454,9 +454,20 @@ function craVerdict() {
   return staging.stages[staging.stages.length - 1].cra || null;
 }
 
+// Keyed by material, not by the numeric mu value: stone's friction is 0.6,
+// the same number staging.py gives concrete, so a value-keyed lookup would
+// attribute it to EN 1992-1-1 clause 6.2.5, a smooth precast concrete
+// joint, when it was deliberately sourced as the middle of the 0.5 to 0.7
+// span the dry stone rigid block literature uses. See staging.py's own
+// FRICTION comment, which this mirrors.
 const FRICTION_PROVENANCE = {
-  "0.6": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "0.4": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
+  "concrete": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "concrete-c50": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "concrete-sprayed": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "timber": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
+  "brick": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared brick bed joint",
+  "tile": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared tile bed joint",
+  "stone": "mu 0.60: middle of the 0.5 to 0.7 span the dry stone rigid block literature uses, quoted no more precisely than the source supports",
 };
 
 function layerAvailability(name) {
@@ -951,6 +962,91 @@ function renderDataPanel(v) {
   const content = document.getElementById("data-content");
   content.innerHTML = "";
 
+  // ---------- Cut section ----------
+  // A cut that dropped analysis faces, missed a joint plane, or clamped a
+  // point off the surface looks identical on screen to a clean one, so
+  // every field bundle.py's tessellation summary carries is disclosed here
+  // rather than trusted silently. Rendered unconditionally on any loaded
+  // bundle, ahead of the verification early-out below, the same reason the
+  // CRA section renders ahead of it.
+  const tess = state.bundle && state.bundle.tessellation;
+  if (tess) {
+    const cutHeading = document.createElement("h3");
+    cutHeading.textContent = "Cut";
+    content.appendChild(cutHeading);
+
+    const patternLine = document.createElement("p");
+    patternLine.textContent = tess.pattern + " ("
+      + (tess.source === "imported" ? "imported from Grasshopper" : "generated") + ")";
+    content.appendChild(patternLine);
+
+    const sizeLine = document.createElement("p");
+    sizeLine.textContent = tess.source === "imported"
+      ? "no target size of its own: an authored cut ignores the size control entirely"
+      : "target size " + tess.target_size + " m";
+    content.appendChild(sizeLine);
+
+    const countLine = document.createElement("p");
+    countLine.textContent = tess.cells + " pieces, " + tess.courses + " courses";
+    content.appendChild(countLine);
+
+    const chordLine = document.createElement("p");
+    chordLine.textContent = "cap chord deviation " + tess.chord_mm.toFixed(3)
+      + " mm against a 5.0 mm target, " + tess.rounds + " subdivision round(s), "
+      + "limited by " + tess.limit;
+    content.appendChild(chordLine);
+
+    const residualLine = document.createElement("p");
+    residualLine.textContent = "corner normal residual " + tess.corner_residual.toFixed(4)
+      + ": the sine of the angle between a corner's one stored normal and "
+      + "the plane of the facet that does not own it, since a corner "
+      + "belongs to two joints and one normal cannot lie in both";
+    content.appendChild(residualLine);
+
+    const clampedLine = document.createElement("p");
+    clampedLine.textContent = tess.clamped_points + " cap point(s) clamped to the "
+      + "nearest render mesh face, " + tess.missing_planes
+      + " boundary facet(s) with no joint plane to project onto";
+    content.appendChild(clampedLine);
+
+    const coverage = tess.report;
+    const coverageLine = document.createElement("p");
+    coverageLine.textContent = "coverage: " + coverage.orphan_faces.length
+      + " orphan face(s), " + coverage.double_faces.length + " double face(s), "
+      + coverage.open_facets.length + " open facet(s), " + coverage.slivers.length
+      + " sliver(s), " + coverage.coverage_holes.length + " coverage hole(s), "
+      + coverage.broken_boundary.length + " broken boundary entrie(s)";
+    content.appendChild(coverageLine);
+
+    if (tess.backward_turn_degrees !== null && tess.backward_turn_degrees !== undefined) {
+      const wobbleLine = document.createElement("p");
+      wobbleLine.textContent = tess.backward_steps + " of the plan's own rim step(s) "
+        + "turn backward, " + tess.backward_turn_degrees.toFixed(3)
+        + " degrees of backward turn total";
+      content.appendChild(wobbleLine);
+    }
+
+    if (tess.source === "imported") {
+      const provenanceLine = document.createElement("p");
+      provenanceLine.textContent = "provenance: " + JSON.stringify(tess.provenance || {});
+      content.appendChild(provenanceLine);
+      const zLine = document.createElement("p");
+      zLine.textContent = tess.z_offset_max === null || tess.z_offset_max === undefined
+        ? "measured z offset against the thrust surface: unmeasured"
+        : "measured z offset against the thrust surface: "
+          + (tess.z_offset_max * 1000).toFixed(1) + " mm";
+      content.appendChild(zLine);
+    }
+
+    const interpolationLine = document.createElement("p");
+    interpolationLine.textContent = "a piece's own points are not render mesh "
+      + "vertices, so every field value shown on a casting is sampled by "
+      + "interpolation through the barycentric weights the cut recorded for "
+      + "it, not read off a single mesh vertex directly: a heatmap value at "
+      + "a point is an interpolated reading, not a lookup.";
+    content.appendChild(interpolationLine);
+  }
+
   // The CRA verdict no longer pops up: it is gone from the badge, the HUD
   // and the integrity pulse, since the form finding already guarantees
   // compression-only equilibrium by construction and no size the API
@@ -972,7 +1068,7 @@ function renderDataPanel(v) {
         : "not run: " + (verdict.message || verdict.status);
     content.appendChild(line);
     const mu = document.createElement("p");
-    mu.textContent = FRICTION_PROVENANCE[String(verdict.mu)]
+    mu.textContent = FRICTION_PROVENANCE[state.bundle.material]
       || ("mu " + verdict.mu);
     content.appendChild(mu);
     const counts = document.createElement("p");
