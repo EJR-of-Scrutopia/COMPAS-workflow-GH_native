@@ -42,7 +42,9 @@ EXPORT = "Trial 2"
 UPLOADS = REPO / "bench" / "demo" / "upload from grasshopper"
 DEFAULT_PATTERN = "bonded-courses"
 DEFAULT_SIZE = 0.9         # the size the size-slider opens to (index.html)
-REGRESSION_SIZE = 1.5      # the size the controller found a coverage limit at
+REGRESSION_SIZE = 1.5      # the size the controller found a coverage limit at,
+                           # which the final fix wave then removed: see
+                           # regression_* in EXPECTED below
 
 # The controller's own measurements, taken on this export during the wave
 # (see task-10-brief.md and its fix round 1). Checked, not assumed: a
@@ -56,9 +58,20 @@ EXPECTED = {
     "default_cells": 233,
     "default_courses": 7,
     "default_analysis_faces": 2400,
-    "regression_coverage_holes": 2,
-    "regression_broken_boundary": 1,
-    "regression_orphan_faces": 1,
+    # Was 2 coverage holes, 1 broken boundary entry and 1 orphan face. The
+    # final fix wave found the cause and it was not a coverage limit at all:
+    # generators._arc emitted its inserted points ordered by the angle they
+    # came from rather than by the angle actually used, so any span crossing
+    # a seam (2 pi on the head joint pass, pi on the rim pass) came out of
+    # order and its outline crossed itself. At 1.5 m cell c3p4 read -36, 0,
+    # +24, -24, +36 degrees where it should read -36, -24, 0, +24, +36.
+    # Sorting the inserted angles clears all three of these at 1.5 m, and
+    # all 183 report entries across the 55 slider sizes from 0.30 to 3.00.
+    # tests/studio/test_generators.py sweeps that and pins it.
+    "regression_coverage_holes": 0,
+    "regression_broken_boundary": 0,
+    "regression_orphan_faces": 0,
+    "default_folded": 0,
     # Fix round 1: the plain max badly misrepresents the typical corner, so
     # the controller measured the whole distribution across all 695
     # corners and gave the median, mean, p99, max and counts over a fixed
@@ -157,16 +170,22 @@ def main() -> int:
     for entry in stats["over"]:
         print("    over {:<5.2f} ({:5.1f} deg): {} corners".format(
             entry["threshold"], _degrees(entry["threshold"]), entry["count"]))
-    print("clamped cap points              {} of {}".format(
-        report["clamped_points"], total_cap_points))
+    # The magnitudes, not only the count: 137 clamped points is either
+    # rounding noise or ten times the chord target depending on a number
+    # the report used to leave out (see cutting.Surface.lift).
+    print("clamped cap points              {} of {}, reaching {:.4f} m at "
+          "the worst and {:.4f} m at the median".format(
+              report["clamped_points"], total_cap_points,
+              report["clamped_max_m"], report["clamped_median_m"]))
     print("coverage                        {} orphan faces, {} double faces "
-          "(of {} analysis faces), {} open facets, {} slivers, "
+          "(of {} analysis faces), {} open facets, {} slivers, {} folded, "
           "{} coverage holes, {} broken boundary entries, {} missing planes".format(
               len(binding["report"]["orphan_faces"]),
               len(binding["report"]["double_faces"]),
               len(arrays["faces"]),
               len(tess["report"]["open_facets"]),
               len(tess["report"]["slivers"]),
+              len(tess["report"]["folded"]),
               len(tess["report"]["coverage_holes"]),
               len(tess["report"]["broken_boundary"]),
               report["missing_planes"]))
@@ -195,6 +214,8 @@ def main() -> int:
         _check("coverage holes", len(tess["report"]["coverage_holes"]), 0)
         _check("open facets", len(tess["report"]["open_facets"]), 0)
         _check("slivers", len(tess["report"]["slivers"]), 0)
+        _check("folded cells", len(tess["report"]["folded"]),
+               EXPECTED["default_folded"])
         _check("broken boundary entries", len(tess["report"]["broken_boundary"]), 0)
         _check("orphan faces", len(binding["report"]["orphan_faces"]), 0)
         _check("double faces", len(binding["report"]["double_faces"]), 0)
@@ -218,7 +239,7 @@ def main() -> int:
                   if stats["worst_corner_courses"] else "?"))
 
         print("")
-        print("coverage regression at {} m (a real limit, not hidden):".format(
+        print("the old coverage regression at {} m, now cleared:".format(
             REGRESSION_SIZE))
         reg_tess, _reg_surface, reg_binding = _cut(
             pattern, REGRESSION_SIZE, contract, arrays, render)
@@ -228,6 +249,13 @@ def main() -> int:
                EXPECTED["regression_broken_boundary"])
         _check("orphan faces", len(reg_binding["report"]["orphan_faces"]),
                EXPECTED["regression_orphan_faces"])
+        _check("folded cells", len(reg_tess["report"]["folded"]), 0)
+        print("  (this was 2 coverage holes, 1 broken boundary entry and 1 "
+              "orphan face, and it was not a size limit: it was _arc "
+              "emitting a seam-crossing span's points out of order. What a "
+              "tolerated rim wobble really costs is folded cells, at 0.30, "
+              "0.35, 0.45 and 0.50 m only, 14 in total across the whole "
+              "slider, and the folded list above names every one of them)")
 
     # The one staged run: proves staging.py's own pipeline (which calls
     # bundle.build_tessellation_for itself, see staging.run_staging) builds
