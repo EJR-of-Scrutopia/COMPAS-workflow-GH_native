@@ -35,16 +35,28 @@ GRAVITY = 9.80665
 DENSITIES = {
     "concrete": 2400.0, "concrete-c50": 2400.0,
     "concrete-sprayed": 2300.0, "timber": 385.0,
+    "brick": 1900.0, "tile": 1800.0, "stone": 2500.0,
 }
+# 1900: clay brick masonry. EN 1991-1-1 Annex A Table A.1 gives clay
+# masonry as 18 to 22 kN/m3; 1900 kg/m3 sits inside that band.
+# 1800: fired clay tile, Guastavino thin tile work. A literature value:
+# the Eurocodes carry no entry for it, and this is recorded as such the
+# same way timber's friction already is.
+# 2500: limestone, the Armadillo Vault's own material.
 DEFAULT_THICKNESS = 0.2
 THICKNESS = DEFAULT_THICKNESS  # alias: tests/fea/test_studio_mirror.py reads THICKNESS
 
 FRICTION = {
     "concrete": 0.6, "concrete-c50": 0.6,
     "concrete-sprayed": 0.6, "timber": 0.4,
+    "brick": 0.6, "tile": 0.6, "stone": 0.6,
 }
-# 0.6: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint.
+# 0.6: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint, and the
+# same value for mortared brick and tile bed joints.
 # 0.4: literature value for dry timber on timber (Eurocode 5 gives none).
+# 0.6 for stone: dry stone on stone spans 0.5 to 0.7 in the rigid block
+# literature. The middle of that band, quoted no more precisely than the
+# source supports.
 
 REPO = Path(__file__).resolve().parents[2]
 CRA_BLOCK_BUDGET = 14

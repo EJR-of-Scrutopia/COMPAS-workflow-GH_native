@@ -10,6 +10,13 @@ from pathlib import Path
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 
 
+def _luminance(hexstr):
+    """Relative luminance of a 6 hex digit colour string, no 0x prefix."""
+
+    v = int(hexstr, 16)
+    return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255)
+
+
 def test_vendor_files_are_present_and_pinned():
     core = STATIC / "vendor" / "three.core.js"
     module = STATIC / "vendor" / "three.module.js"
@@ -420,6 +427,25 @@ def test_applycut_only_adopts_a_usable_size_in_range():
     )
 
 
+def test_applycut_only_adopts_a_pattern_the_server_offers():
+    # Task 8 deliberately left this half of C1 open: applyCut synced
+    # state.size from the loaded bundle but not state.pattern, so selecting
+    # sprayed concrete kept sending whatever pattern the client last held
+    # rather than the bundle's own. Same defence as the size guard: only a
+    # pattern the server actually offers is adopted, an authored cut's
+    # pattern name is not trusted blindly.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyCut()")
+    body = js[start:js.index("\n}", start)]
+    guard_start = body.index("if (typeof pattern")
+    guard_line = body[guard_start:body.index("{", guard_start) + 1]
+    assert "state.patterns" in guard_line and "includes(pattern)" in guard_line
+    guarded = body[guard_start:body.index("\n  }", guard_start)]
+    assert "state.pattern = pattern" in guarded, (
+        "adopting state.pattern must be inside the guard, not before it"
+    )
+
+
 def test_pieces_are_built_at_the_bundles_thickness():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "fields.js" in js, "studio.js must import the pure fields module"
@@ -802,6 +828,27 @@ def test_no_piece_shows_while_the_net_is_still_inflating():
         "while inflating, every piece must be hidden outright, not just "
         "left at its default drop position"
     )
+
+
+def test_the_material_presets_read_apart():
+    """Closest pair luminance, keyed by name so inserting a preset cannot
+    silently move which four are measured."""
+
+    source = (STATIC / "studio.js").read_text(encoding="utf-8")
+    colours = dict(re.findall(r'"?([a-z0-9-]+)"?:\s*new THREE\.MeshPhysicalMaterial\(\{\s*\n?\s*color: 0x([0-9a-f]{6})', source))
+    wanted = ["concrete", "concrete-c50", "concrete-sprayed", "timber",
+              "brick", "tile", "stone"]
+    assert all(name in colours for name in wanted)
+    values = {name: _luminance(colours[name]) for name in wanted}
+    pairs = [(abs(values[a] - values[b]), a, b)
+             for i, a in enumerate(wanted) for b in wanted[i + 1:]]
+    assert min(pairs)[0] > 4.0, min(pairs)
+
+
+def test_the_pattern_control_says_what_is_not_built_yet():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="pattern-select"' in page
+    assert 'id="pattern-note"' in page
 
 
 def test_taper_is_a_drawing_parameter_and_the_hud_says_so():

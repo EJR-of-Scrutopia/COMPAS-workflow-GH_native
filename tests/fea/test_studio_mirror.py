@@ -26,11 +26,11 @@ def test_staging_constants_mirror_the_ananke_fea_presets():
     from ananke_fea.materials import PRESETS
     from ananke_fea.model import GRAVITY
 
-    assert staging.DENSITIES == {
-        "concrete": PRESETS["concrete"].density,
-        "concrete-c50": PRESETS["concrete-c50"].density,
-        "concrete-sprayed": PRESETS["concrete-sprayed"].density,
-        "timber": PRESETS["timber"].density,
-    }
+    # Only the materials PRESETS actually carries are checked here: Task 9
+    # added brick, tile and stone to staging.DENSITIES for cutting and
+    # costing, but ananke_fea has no elastic preset for any of the three, so
+    # there is nothing on the ananke_fea side for them to drift from.
+    for name, preset in PRESETS.items():
+        assert staging.DENSITIES[name] == preset.density
     assert staging.GRAVITY == GRAVITY
     assert staging.THICKNESS == 0.2

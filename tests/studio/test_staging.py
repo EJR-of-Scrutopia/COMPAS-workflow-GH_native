@@ -24,6 +24,18 @@ def studio():
     return geometry, segmentation, staging
 
 
+def studio_module(name):
+    """Import a single named bench/studio module, for tests that need one
+    this file's own studio() tuple does not carry (generators, for one)."""
+
+    import sys
+
+    path = str(REPO / "bench" / "studio")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    return __import__(name)
+
+
 def wide_contract():
     """A flat 4x4 quad grid with a real, single boundary loop.
 
@@ -69,16 +81,22 @@ def wide_contract():
 def test_gravity_and_material_constants_mirror_the_fea_presets():
     """These duplicate ananke_fea values the guard forbids importing.
 
+    Only the four materials ananke_fea actually carries a preset for are
+    pinned here. Brick, tile and stone (Task 9) are staging-only additions:
+    ananke_fea.materials.PRESETS has no entry for them, so a struck-now
+    solve against one of the three reports non-convergence with a message
+    rather than a numeric verdict, and there is nothing to mirror.
+
     If this test fails, someone changed a preset on one side only: change
     src/ananke_fea/materials.py (or model.py GRAVITY) and here together.
     """
 
     _, _, staging = studio()
     assert staging.GRAVITY == 9.80665
-    assert staging.DENSITIES == {
-        "concrete": 2400.0, "concrete-c50": 2400.0,
-        "concrete-sprayed": 2300.0, "timber": 385.0,
-    }
+    assert staging.DENSITIES["concrete"] == 2400.0
+    assert staging.DENSITIES["concrete-c50"] == 2400.0
+    assert staging.DENSITIES["concrete-sprayed"] == 2300.0
+    assert staging.DENSITIES["timber"] == 385.0
     assert staging.THICKNESS == 0.2
 
 
@@ -450,6 +468,7 @@ def test_friction_constants_are_pinned():
     assert staging.FRICTION == {
         "concrete": 0.6, "concrete-c50": 0.6,
         "concrete-sprayed": 0.6, "timber": 0.4,
+        "brick": 0.6, "tile": 0.6, "stone": 0.6,
     }
 
 
@@ -597,3 +616,18 @@ def test_an_unassigned_face_never_reaches_a_stage():
     assignment = [[0, 0], None, [1, 0]]
     plan = s.stage_plan(assignment, [[0, 0], [1, 0]], ["a", "b"])
     assert plan[-1]["faces"] == [0, 2]
+
+
+def test_the_masonry_presets_carry_sourced_values():
+    _, _, staging = studio()
+    assert staging.DENSITIES["brick"] == 1900.0
+    assert staging.DENSITIES["tile"] == 1800.0
+    assert staging.DENSITIES["stone"] == 2500.0
+    for material in ("brick", "tile", "stone"):
+        assert staging.FRICTION[material] == 0.6
+
+
+def test_every_material_has_a_default_pattern():
+    _, _, staging = studio()
+    g = studio_module("generators")
+    assert set(staging.DENSITIES) == set(g.DEFAULT_PATTERN)

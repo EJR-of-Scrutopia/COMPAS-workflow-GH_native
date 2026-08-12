@@ -24,6 +24,12 @@ const state = {
   segmentIndex: null,  // Task 11
   nodeRadius: 0.03,    // Task 6
   wireRadius: 0.02,    // Task 6
+  // Task 9: filled from /api/studies at boot, so the pattern control knows
+  // which patterns are actually selectable and what each material's own
+  // default and honesty note are.
+  patterns: [],
+  patternDefaults: {},
+  patternNotes: {},
 };
 
 const canvas = document.getElementById("view");
@@ -128,6 +134,23 @@ const materials = {
     color: 0xb07a3c, side: THREE.DoubleSide,      // warm brown, not bare white
     map: grainTexture(512),
     roughness: 0.55, metalness: 0.0, sheen: 0.15, sheenColor: 0xd9b98a,
+  }),
+  brick: new THREE.MeshPhysicalMaterial({
+    color: 0x8c4a32, side: THREE.DoubleSide,      // warm red brown, matt
+    map: noiseTexture(256, 150, 26),
+    roughness: 0.88, roughnessMap: noiseTexture(256, 210, 30),
+    metalness: 0.0,
+  }),
+  tile: new THREE.MeshPhysicalMaterial({
+    color: 0xc47a52, side: THREE.DoubleSide,      // lighter, fired sheen
+    map: noiseTexture(256, 190, 18),
+    roughness: 0.45, metalness: 0.0, sheen: 0.25, sheenColor: 0xe8c9a8,
+  }),
+  stone: new THREE.MeshPhysicalMaterial({
+    color: 0xbfb9a6, side: THREE.DoubleSide,      // pale, mineral
+    map: noiseTexture(256, 215, 22),
+    roughness: 0.8, roughnessMap: noiseTexture(256, 220, 35),
+    metalness: 0.0,
   }),
   steel: new THREE.MeshPhysicalMaterial({
     color: 0xb6bac2, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.2,
@@ -374,6 +397,19 @@ function applyCut() {
     state.size = size;
     document.getElementById("size-slider").value = size;
     document.getElementById("size-value").textContent = Math.round(size * 1000);
+  }
+  // Same defence for the pattern (Task 9, the half of C1 Task 8 left open):
+  // an authored cut's own pattern name (tess["pattern"] in staging.py, not
+  // the requested one) is only adopted when it is one the server actually
+  // offers, so a bundle carrying a Grasshopper-authored pattern name never
+  // leaves the pattern control pointing at an option it does not have.
+  // Without this, selecting a material still sent whichever pattern the
+  // client last held, so choosing sprayed concrete kept requesting bonded
+  // courses instead of the monolithic bands its own default names.
+  const pattern = state.bundle.pattern;
+  if (typeof pattern === "string" && state.patterns.includes(pattern)) {
+    state.pattern = pattern;
+    document.getElementById("pattern-select").value = pattern;
   }
   document.getElementById("piece-count").textContent = state.bundle.pieces.length;
   document.getElementById("course-count").textContent = state.bundle.tessellation.courses;
@@ -1053,6 +1089,48 @@ async function fetchJson(url) {
   return response.json();
 }
 
+// ---------- pattern control (Task 9) ----------
+// generators.PLANNED and generators.MATERIAL_NOTES are the honesty
+// mechanism: a pattern named in the spec but not built yet is listed and
+// disabled rather than silently absent, and a material whose intended
+// pattern is not built yet says so in pattern-note instead of quietly
+// drawing bonded courses under the missing pattern's name.
+function patternLabel(pattern) {
+  return pattern.split("-").map((word) => word[0].toUpperCase() + word.slice(1)).join(" ");
+}
+
+function populatePatternSelect(payload) {
+  const select = document.getElementById("pattern-select");
+  select.innerHTML = "";
+  for (const pattern of payload.patterns) {
+    const option = document.createElement("option");
+    option.value = pattern;
+    option.textContent = patternLabel(pattern);
+    select.appendChild(option);
+  }
+  for (const pattern of Object.keys(payload.patterns_planned)) {
+    const option = document.createElement("option");
+    option.value = pattern;
+    option.textContent = patternLabel(pattern) + " (arrives " + payload.patterns_planned[pattern] + ")";
+    option.disabled = true;
+    select.appendChild(option);
+  }
+}
+
+// Changing the material sets the pattern to that material's own default
+// (concrete-sprayed's is monolithic-bands, everything else's is
+// bonded-courses) and writes the material's honesty note, if it has one,
+// into pattern-note. Tile and stone are the only materials with a note
+// today: their intended patterns (Guastavino herringbone, the Armadillo
+// dual) are not built, so the note says which wave they arrive in rather
+// than let the pattern control claim one is drawing while another is.
+function updatePatternForMaterial(material) {
+  const pattern = state.patternDefaults[material] || state.pattern;
+  state.pattern = pattern;
+  document.getElementById("pattern-select").value = pattern;
+  document.getElementById("pattern-note").textContent = state.patternNotes[material] || "";
+}
+
 async function loadStudy(exportName) {
   const material = document.getElementById("material-select").value;
   const url = "/api/studies/" + encodeURIComponent(exportName) +
@@ -1070,6 +1148,11 @@ async function boot(preferredExport) {
   try {
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
+    state.patterns = payload.patterns;
+    state.patternDefaults = payload.pattern_defaults;
+    state.patternNotes = payload.pattern_notes;
+    populatePatternSelect(payload);
+    updatePatternForMaterial(document.getElementById("material-select").value);
     const select = document.getElementById("study-select");
     select.innerHTML = "";
     const names = [];
@@ -1168,7 +1251,13 @@ async function importColumns() {
 
 // ---------- UI wiring ----------
 document.getElementById("study-select").addEventListener("change", (e) => loadStudy(e.target.value));
-document.getElementById("material-select").addEventListener("change", () => {
+document.getElementById("material-select").addEventListener("change", (e) => {
+  updatePatternForMaterial(e.target.value);
+  const select = document.getElementById("study-select");
+  if (select.value) loadStudy(select.value);
+});
+document.getElementById("pattern-select").addEventListener("change", (e) => {
+  state.pattern = e.target.value;
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
@@ -1257,6 +1346,7 @@ document.getElementById("import-columns-button").addEventListener("click", impor
 // stays honest about what's on screen.
 function applyRunParamsToControls({ material, pattern, size, thickness }) {
   document.getElementById("material-select").value = material;
+  document.getElementById("pattern-select").value = pattern;
   document.getElementById("size-slider").value = size;
   document.getElementById("size-value").textContent = Math.round(size * 1000);
   document.getElementById("thickness-input").value = thickness;
