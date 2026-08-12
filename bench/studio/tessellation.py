@@ -245,8 +245,16 @@ def _find_coverage_holes(
 ) -> Tuple[List[Dict], List[List[int]]]:
     """Find loops of facets with exactly one owner.
 
-    Returns (coverage_holes, broken_boundary) where each entry is a dict
-    with points, area, and cells.
+    Detects regions fully enclosed by cells that no cell covers. A gap open to
+    the outside is topologically part of the rim and cannot be caught here. Such
+    gaps are caught by analysis_binding's orphan_faces, which tests real mesh
+    face centroids against real cells. Neither check proves the surface is
+    covered everywhere.
+
+    Returns (coverage_holes, broken_boundary) where coverage_holes is a list of
+    dicts with points (no repeated final point), area (real area, not doubled),
+    and cells (sorted keys of owners). broken_boundary lists vertices with
+    degree != 2 among single-owner facets.
     """
 
     single_owner = {facet: True for facet, count in owners.items() if count == 1}
@@ -260,7 +268,6 @@ def _find_coverage_holes(
 
     visited_edges: set = set()
     loops: List[List[int]] = []
-    broken: List[List[int]] = []
 
     for start in edges.keys():
         if any((start, next_pt) in visited_edges or (next_pt, start) in visited_edges
@@ -291,19 +298,17 @@ def _find_coverage_holes(
 
         if current == start and len(loop_points) > 2:
             loops.append(loop_points)
-        elif len(loop_points) > 0:
-            broken.append([loop_points[0], len(edges.get(loop_points[0], []))])
 
     areas_and_loops: List[Tuple[float, List[int]]] = []
     for loop in loops:
-        area = abs(ring_area(loop, points))
+        area = 0.5 * abs(ring_area(loop, points))
         areas_and_loops.append((area, loop))
 
     if not areas_and_loops:
-        return [], broken
+        broken_boundary = [[pt, len(edges.get(pt, []))] for pt in edges if len(edges[pt]) != 2]
+        return [], broken_boundary
 
     areas_and_loops.sort(key=lambda x: x[0], reverse=True)
-    rim_area, _ = areas_and_loops[0]
 
     coverage_holes = []
     for area, loop in areas_and_loops[1:]:
@@ -332,7 +337,14 @@ def build_tessellation(
     target_size: float,
     courses: int,
 ) -> Dict:
-    """Weld, resolve T junctions, and report what does not conform."""
+    """Weld, resolve T junctions, and report what does not conform.
+
+    The report includes coverage_holes (regions fully enclosed by cells that
+    no cell covers) and broken_boundary (vertices with anomalous degree among
+    single-owner facets). Note: coverage_holes does not catch gaps open to the
+    outside, which are topologically part of the rim. Such gaps are caught by
+    analysis_binding's orphan_faces check. Neither check proves complete coverage.
+    """
 
     if not raw_cells:
         raise ValueError("a tessellation with no cells cannot cut anything")

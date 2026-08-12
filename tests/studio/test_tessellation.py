@@ -175,3 +175,32 @@ def test_single_cell_has_no_coverage_holes():
     tess = t.build_tessellation(cell, "test", "generated", 1.0, 1)
     assert tess["report"]["coverage_holes"] == []
     assert tess["report"]["broken_boundary"] == []
+
+
+def test_four_cells_around_empty_middle_reports_hole():
+    """Four cells surrounding an empty 1x1 square.
+
+    s (south) = [[0,0],[3,0],[3,1],[0,1]]
+    n (north) = [[0,2],[3,2],[3,3],[0,3]]
+    w (west)  = [[0,1],[1,1],[1,2],[0,2]]
+    e (east)  = [[2,1],[3,1],[3,2],[2,2]]
+
+    Reports exactly one coverage hole in the middle with area 1.0 and all
+    four cells as owners.
+    """
+    t = studio()
+    cells = [
+        {"key": "s", "course": 0,
+         "outline": [[0.0, 0.0], [3.0, 0.0], [3.0, 1.0], [0.0, 1.0]], "holes": []},
+        {"key": "n", "course": 0,
+         "outline": [[0.0, 2.0], [3.0, 2.0], [3.0, 3.0], [0.0, 3.0]], "holes": []},
+        {"key": "w", "course": 0,
+         "outline": [[0.0, 1.0], [1.0, 1.0], [1.0, 2.0], [0.0, 2.0]], "holes": []},
+        {"key": "e", "course": 0,
+         "outline": [[2.0, 1.0], [3.0, 1.0], [3.0, 2.0], [2.0, 2.0]], "holes": []},
+    ]
+    tess = t.build_tessellation(cells, "test", "generated", 1.0, 1)
+    assert len(tess["report"]["coverage_holes"]) == 1
+    hole = tess["report"]["coverage_holes"][0]
+    assert sorted(hole["cells"]) == ["e", "n", "s", "w"]
+    assert abs(hole["area"] - 1.0) < t.TOL
