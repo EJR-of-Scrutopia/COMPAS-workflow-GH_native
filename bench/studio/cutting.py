@@ -42,16 +42,35 @@ def _inside_triangle(p, a, b, c, inclusive: bool = False) -> bool:
     return u > limit and v > limit and w > limit
 
 
+_COLLINEAR_TOL = 1e-6   # metres: matches tessellation.TOL, the weld tolerance
+                        # a T junction point was itself resolved to
+
+
 def ear_clip(ring: Sequence[int], points) -> List[Tuple[int, int, int]]:
     """Triangulate a simple ring, largest ear first.
 
-    A T junction leaves a straight 180 degree corner in the outline, whose
-    ear has exactly zero area. The area <= 0.0 skip excludes it under any
-    ordering, so the corner is preserved regardless of the selection rule.
-    Largest ear first matters for triangle quality: taking the biggest
-    available ear avoids carving off slivers. Since these caps are subdivided
-    and then lifted onto a surface, sliver triangles would produce noisy
-    surface normals on the drawn casting.
+    A T junction leaves a straight 180 degree vertex in the outline, whose
+    ear has exactly zero area under any ordering. Plain ear clipping can
+    therefore never remove it as a tip: the area <= 0.0 skip excludes it
+    from the loop, but the loop still has to end somewhere, and the final
+    triangle it appends is not checked, so a ring that reduces to exactly
+    that vertex and its two collinear neighbours ships a triangle with no
+    area at all. That vertex's later subdivision points then sit outside
+    the welded count, so the corner ownership pass skips them and a
+    neighbour on the other side of that joint can end up storing a
+    different normal for a point this piece also claims to own, which is
+    the one thing this module exists to prevent.
+
+    So every straight vertex is set aside first, the remaining ring is ear
+    clipped as usual (it now has no zero area ears to trip over), and each
+    set aside vertex is spliced back in by splitting the one triangle whose
+    boundary edge it lies on. That keeps every ring vertex a real corner of
+    at least one triangle with area, with no degenerate triangle produced.
+
+    Largest ear first matters for triangle quality otherwise: taking the
+    biggest available ear avoids carving off slivers. Since these caps are
+    subdivided and then lifted onto a surface, sliver triangles would
+    produce noisy surface normals on the drawn casting.
     """
 
     indices = list(ring)
@@ -62,6 +81,48 @@ def ear_clip(ring: Sequence[int], points) -> List[Tuple[int, int, int]]:
     ) < 0:
         indices.reverse()
 
+    n = len(indices)
+    collinear = [False] * n
+    for i in range(n):
+        a, b, c = indices[i - 1], indices[i], indices[(i + 1) % n]
+        base = math.hypot(points[c][0] - points[a][0], points[c][1] - points[a][1])
+        if base > 1e-12:
+            height = abs(_area2(points[a], points[b], points[c])) / base
+            collinear[i] = height < _COLLINEAR_TOL
+
+    simplified = [indices[i] for i in range(n) if not collinear[i]]
+    if len(simplified) < 3:
+        raise ValueError(
+            "a ring with only {} non collinear point(s) cannot be "
+            "triangulated".format(len(simplified))
+        )
+
+    triangles = _ear_clip_simplified(simplified, points)
+
+    # Splice the straight vertices back in, in ring order starting from a
+    # survivor, so a run of several on one edge lands in order along it:
+    # the first split creates the very edge the next one needs, rather
+    # than the original, now gone, edge between the two far corners.
+    start = next(i for i in range(n) if not collinear[i])
+    for step in range(n):
+        i = (start + step) % n
+        if not collinear[i]:
+            continue
+        left = indices[(i - 1) % n]
+        j = (i + 1) % n
+        while collinear[j]:
+            j = (j + 1) % n
+        right = indices[j]
+        triangles = _split_edge(triangles, left, right, indices[i])
+
+    return triangles
+
+
+def _ear_clip_simplified(indices: List[int], points) -> List[Tuple[int, int, int]]:
+    """The classic ear clip loop, on a ring already wound and free of any
+    straight vertex, so every ear it considers has real area."""
+
+    indices = list(indices)
     triangles: List[Tuple[int, int, int]] = []
     # Guard against infinite loops if the loop body changes: each iteration
     # either raises or removes exactly one index, so the loop terminates.
@@ -95,6 +156,33 @@ def ear_clip(ring: Sequence[int], points) -> List[Tuple[int, int, int]]:
         indices.pop(best[1])
     triangles.append((indices[0], indices[1], indices[2]))
     return triangles
+
+
+def _split_edge(triangles, a, b, t):
+    """Split the one triangle whose boundary edge runs from a to b.
+
+    A ring's own boundary edge, unlike an internal ear-clip diagonal,
+    belongs to exactly one triangle, in exactly this direction, so the
+    first match is the only one: it is found regardless of which of the
+    triangle's three cyclic positions the edge sits at, and the split
+    always keeps the same winding as the triangle it replaces.
+    """
+
+    for index, (p, q, r) in enumerate(triangles):
+        if (p, q) == (a, b):
+            apex = r
+        elif (q, r) == (a, b):
+            apex = p
+        elif (r, p) == (a, b):
+            apex = q
+        else:
+            continue
+        return triangles[:index] + [(a, t, apex), (t, b, apex)] + triangles[index + 1:]
+    raise ValueError(
+        "no triangle carries the boundary edge {} to {} to receive point {}".format(
+            a, b, t
+        )
+    )
 
 
 def bridge_holes(outline: Sequence[int], holes, points) -> List[int]:

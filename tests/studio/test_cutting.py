@@ -41,11 +41,40 @@ def test_a_t_junction_vertex_stays_a_real_corner():
     # The extra point at (0.5, 0) is collinear: it is where a neighbour's
     # head joint lands. Dropping it would leave this piece a chord where
     # the neighbour has a bend, and the joint would open once lifted.
+    #
+    # Plain ear clipping can never take a collinear vertex as an ear tip
+    # (its ear has exactly zero area under any ordering), so without the
+    # set-aside-and-splice handling in ear_clip, the ring reduces straight
+    # to this vertex and its two collinear neighbours, and the final
+    # triangle carries it with no area at all. That would still pass a
+    # weaker version of this test: the degenerate triangle contributes
+    # zero to the total area either way, and the T point is still present
+    # in *a* triangle tuple, just one with no area. The two extra checks
+    # below are what actually catch that.
     points = [[0, 0], [0.5, 0], [1, 0], [1, 1], [0, 1]]
-    triangles = c.ear_clip([0, 1, 2, 3, 4], points)
+    ring = [0, 1, 2, 3, 4]
+    triangles = c.ear_clip(ring, points)
     assert area_of(points, triangles) == pytest.approx(1.0)
     used = {index for triangle in triangles for index in triangle}
-    assert 1 in used
+    assert used == set(ring), "every ring vertex, including the T point, is a real corner"
+    for a, b, cc in triangles:
+        pa, pb, pc = points[a], points[b], points[cc]
+        area2 = abs(
+            (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0])
+        )
+        assert area2 > 1e-9, "a degenerate triangle slipped through"
+
+
+def test_a_sliver_ring_fails_with_a_readable_error():
+    c = studio()
+    # A ring welded down to only two distinct points (both ends of a
+    # collapsed sliver) used to die inside ear_clip with a bare IndexError
+    # naming nothing. build_tessellation deliberately reports slivers
+    # rather than rejecting them, so callers have to be able to tell what
+    # went wrong.
+    points = [[0, 0], [1, 0]]
+    with pytest.raises(ValueError):
+        c.ear_clip([0, 1], points)
 
 
 def test_bridge_holes_makes_an_annulus_clippable():

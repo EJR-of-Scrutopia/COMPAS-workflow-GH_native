@@ -106,7 +106,11 @@ def choose_rounds(tess: Dict, surface: cutting.Surface) -> Dict:
     Start from the edge length rule, then refine while the measured chord
     deviation is still over the target and there are rounds left. Both the
     achieved deviation and which limit stopped it are reported, because a
-    number that was never reached is worse than no number.
+    number that was never reached is worse than no number. "limit" says
+    "rounds" whenever the round budget, not either target, is why a target
+    is still missed: it is not just whichever loop happened to run last, or
+    a cut that ran out of rounds during the edge pass alone would still be
+    blamed on "edge" even though the edge target itself was never met.
     """
 
     points = tess["points"]
@@ -118,17 +122,18 @@ def choose_rounds(tess: Dict, surface: cutting.Surface) -> Dict:
     rounds = 0
     while rounds < cutting.MAX_ROUNDS and longest / (2 ** rounds) > cutting.CAP_EDGE_TARGET:
         rounds += 1
-    limit = "edge"
+    edge_m = longest / (2 ** rounds)
     chord = _chord_deviation(tess, surface, rounds)
     while chord > cutting.CHORD_TARGET and rounds < cutting.MAX_ROUNDS:
         rounds += 1
+        edge_m = longest / (2 ** rounds)
         chord = _chord_deviation(tess, surface, rounds)
-    if chord > cutting.CHORD_TARGET:
-        limit = "rounds"
+    missed = edge_m > cutting.CAP_EDGE_TARGET or chord > cutting.CHORD_TARGET
+    limit = "rounds" if (rounds >= cutting.MAX_ROUNDS and missed) else "edge"
     return {
         "rounds": rounds,
         "chord_mm": chord * 1000.0,
-        "edge_m": longest / (2 ** rounds),
+        "edge_m": edge_m,
         "limit": limit,
     }
 
@@ -179,19 +184,47 @@ def _lift(surface: cutting.Surface, plan) -> Dict:
 
 
 def _cap(tess: Dict, cell: Dict, rounds: int):
-    """The cell's plan triangulation and its boundary chains."""
+    """The cell's plan triangulation and its boundary chains.
+
+    build_tessellation deliberately reports slivers rather than rejecting
+    them, so this module has to cope with one reaching here: a ring too
+    degenerate to triangulate raises from cutting.ear_clip with no idea
+    which cell it came from, so that is caught here and re-raised naming
+    the cell key, which is the one piece of context this function alone
+    has.
+    """
 
     points = [list(p) for p in tess["points"]]
     ring = cutting.bridge_holes(cell["outline"], cell["holes"], points) \
         if cell["holes"] else list(cell["outline"])
-    triangles = cutting.ear_clip(ring, points)
+    try:
+        triangles = cutting.ear_clip(ring, points)
+    except (IndexError, ValueError) as error:
+        raise ValueError(
+            "cell {!r} could not be triangulated: {}".format(cell["key"], error)
+        ) from error
     chains = [list(cell["outline"])] + [list(hole) for hole in cell["holes"]]
     return cutting.subdivide(points, triangles, chains, rounds)
 
 
 def _facet_chain(chain: Sequence[int], per_facet: int) -> List[List[int]]:
-    """Split a subdivided ring back into one run of points per facet."""
+    """Split a subdivided ring back into one run of points per facet.
 
+    Assumes every facet was subdivided into exactly per_facet segments,
+    which holds only while the round count is global (see subdivide):
+    every chain edge splits every round, so a ring's length is always a
+    whole multiple of per_facet. Enforced here rather than left advisory,
+    because a ring that is not would silently hand back a wrap run whose
+    two ends are not a real facet, which then drops out through
+    planes.get with no signal that anything was wrong.
+    """
+
+    assert len(chain) % per_facet == 0, (
+        "a subdivided ring of {} points is not a whole multiple of {} "
+        "points per facet; the round count is no longer global".format(
+            len(chain), per_facet
+        )
+    )
     out = []
     for start in range(0, len(chain), per_facet):
         run = chain[start:start + per_facet]
@@ -247,7 +280,15 @@ def segment_pieces(
     surface: cutting.Surface,
     support_points: Sequence[Sequence[float]],
 ) -> Tuple[List[Dict], Dict]:
-    """One drawn piece per cell, in placement order, with its cut disclosed."""
+    """One drawn piece per cell, in placement order, with its cut disclosed.
+
+    is_support marks a cell if any support point lands inside it or on its
+    boundary: tessellation.point_in_cell counts an edge or corner as
+    inside, so a support that sits exactly on a joint marks every cell
+    that shares that joint, not just one of them. That is the same rule
+    the ring and wedge binning this replaces used, kept because four later
+    tasks read this flag.
+    """
 
     chosen = choose_rounds(tess, surface)
     rounds = chosen["rounds"]
@@ -258,6 +299,7 @@ def segment_pieces(
 
     residual = 0.0
     clamped = 0
+    missing_planes = 0
     facet_counts: List[int] = []
     boundary_counts: List[int] = []
     out: List[Dict] = []
@@ -281,6 +323,7 @@ def segment_pieces(
                 facet = (a, b) if a < b else (b, a)
                 plane = planes.get(facet)
                 if plane is None:
+                    missing_planes += 1
                     continue
                 facets_here += 1
                 for index in run[1:-1]:
@@ -334,6 +377,11 @@ def segment_pieces(
         })
 
     report = {
+        # facets_per_piece is the number to compare against the ring and
+        # wedge binning this replaces, whose cells carried 30 to 86
+        # boundary edges. boundary_points_per_piece counts every
+        # subdivided boundary point, not joints, so a five facet cell
+        # reports around 40 there: read facets_per_piece for the headline.
         "facets_per_piece": _spread(facet_counts),
         "boundary_points_per_piece": _spread(boundary_counts),
         "corner_residual": residual,
@@ -342,6 +390,7 @@ def segment_pieces(
         "edge_m": chosen["edge_m"],
         "limit": chosen["limit"],
         "clamped_points": clamped,
+        "missing_planes": missing_planes,
     }
     return out, report
 

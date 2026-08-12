@@ -115,14 +115,23 @@ def test_a_joint_facet_is_flat():
 
 
 def test_neighbours_agree_on_the_shared_cut_exactly():
-    made, _ = build()
+    made, report = build()
     left = next(m for m in made if m["key"] == "c00")
     right = next(m for m in made if m["key"] == "c10")
+    # Same 0.05 filter as test_a_joint_facet_is_flat, for the same reason:
+    # the joint plane is slightly tilted, so a 1e-6 filter here selects
+    # only the two welded corners, which both sides get by lifting the
+    # same welded plan point and neither side ever projects. Agreement
+    # there is close to tautological. The three interior chain points are
+    # what this module was written to make agree, and a 1e-6 filter
+    # silently drops them from the check.
     def shared(piece):
-        return sorted(
+        found = sorted(
             (round(point[1], 12), tuple(point), tuple(piece["normals"][i]))
-            for i, point in enumerate(piece["mid"]) if abs(point[0] - 1.0) < 1e-6
+            for i, point in enumerate(piece["mid"]) if abs(point[0] - 1.0) < 0.05
         )
+        assert len(found) == 2 ** report["rounds"] + 1
+        return found
     # Exact equality, not a tolerance: both sides compute the same plane
     # from the same canonically ordered chain, so a difference would mean
     # a real disagreement rather than a rounding difference.
@@ -151,12 +160,22 @@ def test_a_piece_is_watertight():
     made, _ = build()
     for piece in made:
         edges = {}
+        directed = []
         for face in piece["faces"]:
             for i in range(len(face)):
                 a, b = face[i], face[(i + 1) % len(face)]
+                directed.append((a, b))
                 key = (a, b) if a < b else (b, a)
                 edges[key] = edges.get(key, 0) + 1
         assert all(count == 2 for count in edges.values()), piece["key"]
+        # Undirected count alone would pass a flipped face: two faces that
+        # both wind the same edge the same way still cover it twice. Every
+        # directed edge appearing exactly once, with its reverse present,
+        # is what actually proves the piece is consistently oriented.
+        assert len(directed) == len(set(directed)), piece["key"]
+        seen = set(directed)
+        for a, b in directed:
+            assert (b, a) in seen, piece["key"]
 
 
 def test_facets_per_piece_stay_small():
@@ -184,6 +203,20 @@ def test_a_support_under_a_piece_marks_it():
     assert marked == ["c00"]
 
 
+def test_a_support_on_a_shared_edge_marks_both_neighbours():
+    # tessellation.point_in_cell counts a boundary point as inside, so a
+    # support that lands exactly on a joint is not this module's choice
+    # to make one sided: both cells that share that joint are marked.
+    # This is the same rule the ring and wedge binning this replaces
+    # used, kept because four later tasks read is_support.
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    made, _ = p.segment_pieces(tess, surface, [[1.0, 0.5]])
+    marked = sorted(piece["key"] for piece in made if piece["is_support"])
+    assert marked == ["c00", "c10"]
+
+
 def test_the_cap_follows_the_surface_within_the_chord_target():
     p = studio("pieces")
     cutting = studio("cutting")
@@ -192,3 +225,65 @@ def test_the_cap_follows_the_surface_within_the_chord_target():
     chosen = p.choose_rounds(tess, surface)
     assert chosen["rounds"] <= cutting.MAX_ROUNDS
     assert chosen["chord_mm"] <= 5.0 or chosen["limit"] == "rounds"
+
+
+def running_bond():
+    """Two 2 m cells below, three cells above offset by 1 m.
+
+    A plain bonded pattern like this puts a T junction in the middle of
+    three of these five cells' edges (both course 0 cells, and the middle
+    course 1 cell): the row above's internal joints land in the middle of
+    the row below's cells, and vice versa. That is exactly the shape a
+    Grasshopper authored brick pattern imports as, not a shape either
+    shipped generator produces (see the wave 6 fix round report).
+    """
+
+    t = studio("tessellation")
+    raw = [
+        {"key": "c0a", "course": 0, "outline": [[0, 0], [2, 0], [2, 1], [0, 1]], "holes": []},
+        {"key": "c0b", "course": 0, "outline": [[2, 0], [4, 0], [4, 1], [2, 1]], "holes": []},
+        {"key": "c1a", "course": 1, "outline": [[0, 1], [1, 1], [1, 2], [0, 2]], "holes": []},
+        {"key": "c1b", "course": 1, "outline": [[1, 1], [3, 1], [3, 2], [1, 2]], "holes": []},
+        {"key": "c1c", "course": 1, "outline": [[3, 1], [4, 1], [4, 2], [3, 2]], "holes": []},
+    ]
+    return t.build_tessellation(raw, "test", "generated", 1.0, 2)
+
+
+def flat_surface(width=4.0, height=2.0, nx=8, ny=4):
+    """A flat render mesh big enough to cover running_bond(), z = 0.
+
+    Flat because this fixture is about triangulation topology, not
+    curvature: a duplicate boundary point is a duplicate whether or not
+    the surface it is lifted onto is curved.
+    """
+
+    cutting = studio("cutting")
+    vertices = [
+        [i * width / nx, j * height / ny, 0.0]
+        for j in range(ny + 1) for i in range(nx + 1)
+    ]
+    faces = []
+    n = nx + 1
+    for j in range(ny):
+        for i in range(nx):
+            faces.append([j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i])
+    return cutting.Surface(vertices, faces)
+
+
+def test_a_t_junction_produces_no_duplicate_cap_points():
+    # Before the ear_clip fix, three of these five cells shipped a
+    # degenerate triangle at their T junction, stranding its subdivision
+    # points as extra, duplicate positions in mid: 28 duplicates in each
+    # of the three affected cells (84 total), all sitting on the joint
+    # line. Worse, those duplicated points sat past the welded count, so
+    # the corner ownership pass skipped them and kept the raw surface
+    # normal instead of the owner projected one, which a neighbour across
+    # that joint would not agree with. No duplicates at all is the
+    # measure that both problems are gone, not just the visible one.
+    p = studio("pieces")
+    surface = flat_surface()
+    tess = running_bond()
+    made, _ = p.segment_pieces(tess, surface, [])
+    for piece in made:
+        positions = [tuple(point) for point in piece["mid"]]
+        assert len(positions) == len(set(positions)), piece["key"]
