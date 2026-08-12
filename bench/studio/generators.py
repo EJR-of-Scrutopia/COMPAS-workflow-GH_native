@@ -21,7 +21,7 @@ Stdlib only: the bundle path imports this.
 from __future__ import annotations
 
 import math
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import domain as domain_module
 import tessellation
@@ -94,26 +94,42 @@ def _arc(domain: Dict, f: float, start: float, end: float, extra_angles=None) ->
     actually is, and what keeps a piece a clean four sided shape.
 
     extra_angles: optional list of angles to include if they fall strictly inside the span
+
+    Every candidate angle is tried at theta, theta plus a turn and theta
+    minus a turn, because a span can sit anywhere on the real line while
+    boundary_angles reports atan2 values in minus pi to pi and a course's
+    head joints run from an offset up past 2 pi. Whichever of the three
+    lands inside the span is the one this arc wants. The angles that
+    survive are then sorted by the value actually used, not by the theta
+    they came from, and deduplicated: a span crossing either seam (2 pi on
+    the head joint pass, pi on the rim pass) reaches some of its points
+    through the wrapped branch and some directly, so ordering by theta
+    emits them out of sequence and the outline crosses itself. Sorting the
+    inserted values is also what lets both passes share one list, instead
+    of relying on the accident that the rim pass happened to run first.
     """
 
-    points = [domain_module.plan_point(domain, f, start)]
+    turns: List[float] = []
     if f >= 1.0 - 1e-12:
-        for theta in domain_module.boundary_angles(domain):
-            for turn in (theta, theta + TWO_PI, theta - TWO_PI):
-                if start + 1e-12 < turn < end - 1e-12:
-                    points.append(domain_module.plan_point(domain, f, turn))
-
+        turns.extend(domain_module.boundary_angles(domain))
     if extra_angles:
-        for theta in extra_angles:
-            for turn in (theta, theta + TWO_PI, theta - TWO_PI):
-                if start + 1e-12 < turn < end - 1e-12:
-                    points.append(domain_module.plan_point(domain, f, turn))
+        turns.extend(extra_angles)
+    inside = sorted({
+        turn
+        for theta in turns
+        for turn in (theta, theta + TWO_PI, theta - TWO_PI)
+        if start + 1e-12 < turn < end - 1e-12
+    })
+    return (
+        [domain_module.plan_point(domain, f, start)]
+        + [domain_module.plan_point(domain, f, turn) for turn in inside]
+        + [domain_module.plan_point(domain, f, end)]
+    )
 
-    points.append(domain_module.plan_point(domain, f, end))
-    return points
 
-
-def _divisions(domain: Dict, size: float, courses: int, course: int) -> tuple:
+def _divisions(
+    domain: Dict, size: float, courses: int, course: int
+) -> Tuple[int, float, List[float]]:
     """One course's piece count, its stagger offset, and its head joint angles."""
     mid_f = 1.0 - (course + 0.5) / courses
     count = max(1, int(math.floor(_circumference(domain, mid_f) / size + 0.5)))
@@ -164,7 +180,7 @@ def bonded_courses(domain: Dict, size: float) -> List[Dict]:
     for course in range(courses):
         outer_f = 1.0 - course / courses
         inner_f = 1.0 - (course + 1) / courses
-        count, offset, angles = all_divisions[course]
+        count, offset, _ = all_divisions[course]
 
         for k in range(count):
             start = offset + TWO_PI * k / count

@@ -41,11 +41,24 @@ WOBBLE_TOLERANCE = math.radians(5.0)
 # ten times above that 0.467 degree measurement, comfortably below what a
 # genuine bay or oculus produces (an oculus or deep bay turns the boundary
 # back over a real fraction of the rim's own length, not two vertices out
-# of 240), and coarser sizes can still produce coverage holes on a
-# tolerated wobble -- that is accepted, because the coverage report already
-# names them cell by cell rather than hiding them behind a refusal. This is
-# an empirical threshold on one family of geometry, not a proof that every
-# 5-degree wobble is harmless or every larger one is a real bay.
+# of 240).
+#
+# What a tolerated wobble still costs, swept over all 55 slider sizes from
+# 0.30 to 3.00 m on this export: no coverage holes, no broken boundary, no
+# orphan faces at any size, but 14 folded cells, at four of the 55 sizes
+# (6 at 0.30, 4 at 0.35, 2 at 0.45, 2 at 0.50), every one of them in the
+# plus or minus 125.4 degree notch. A rim course cell there follows the
+# rim's own step in from 10.9136 m to 9.4519 m while its inner boundary is
+# a straight chord, and the chord passes outside the rim, so the outline
+# crosses itself. That is accepted rather than refused, because the report
+# names those cells by key: see build_tessellation's folded list, which is
+# the check that actually sees a fold (the sliver test reads an algebraic
+# area, and a fold's two lobes cancel in it). Before that list existed the
+# claim made here -- that the coverage report already names the offenders
+# cell by cell -- was not true of a fold: it produced no report entry of
+# any kind. This is an empirical threshold on one family of geometry, not
+# a proof that every 5-degree wobble is harmless or every larger one is a
+# real bay.
 
 
 def boundary_ring(faces: Sequence[Sequence[int]]) -> List[int]:

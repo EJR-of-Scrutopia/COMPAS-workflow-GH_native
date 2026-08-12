@@ -182,6 +182,121 @@ def test_the_committed_trial_2_domain_still_cuts_the_same():
     assert tess["report"]["broken_boundary"] == []
 
 
+# The piece-size slider runs 0.30 to 3.00 m in 55 steps of 0.05
+# (bench/studio/static/index.html). Sweeping all 55 on both generators and
+# both domains takes about a minute and a half; these seven are the spread
+# that carries the evidence, and they are not arbitrary:
+#
+#   0.30, 3.00  the two ends of the slider.
+#   0.35        where the rim-notch fold was first measured (cell c0p58).
+#   0.45, 0.50  the only other sizes on this domain that still fold.
+#   0.90        the size the studio opens to, and the one the committed
+#               fixture above pins, so the sweep and the pin agree.
+#   1.50        where _arc's seam bug put cell c3p4's inserted points out
+#               of order: it came out at -36, 0, +24, -24, +36 degrees
+#               where it should read -36, -24, 0, +24, +36, and its cap
+#               drew 0.82 square metres twice, one copy inside out. Also
+#               the size an earlier coverage regression in this wave was
+#               measured at.
+#
+# On the committed Trial 2 domain those give 21, 18, 14, 12, 7, 4 and 2
+# courses, odd counts and even. Both seams are reached at every one of
+# them: course 0 always contains atan2's own pi seam, which the rim pass
+# crosses, and every course with an odd index carries the half pitch
+# offset, so its last cell's span runs past 2 pi, which is the seam the
+# head joint pass crosses. Sweeping at one size cannot see either, which
+# is exactly how a cut that self-intersected at 35 of the 55 sizes shipped
+# with a green suite: the default and both pinned fixture sizes happen to
+# be clean.
+SWEEP_SIZES = (0.30, 0.35, 0.45, 0.50, 0.90, 1.50, 3.00)
+
+# Measured, not asserted into existence. What a tolerated rim wobble still
+# costs after _arc's seam is fixed: cells whose rim arc drops through the
+# plus or minus 125.4 degree notch while their inner boundary is a straight
+# chord that passes outside it. At every other swept size, on both
+# generators, nothing folds. See domain.WOBBLE_TOLERANCE's own note.
+TRIAL_2_FOLDS = {
+    (0.30, "bonded-courses"): ["c10p34", "c10p65", "c4p102", "c4p54",
+                               "c5p51", "c5p95"],
+    (0.35, "bonded-courses"): ["c0p108", "c0p58", "c9p27", "c9p52"],
+    (0.45, "bonded-courses"): ["c5p27", "c5p52"],
+    (0.50, "bonded-courses"): ["c0p40", "c0p74"],
+}
+
+
+def _folded_by_measurement(tess):
+    """Every cell whose own welded rings cross themselves, measured here
+    rather than taken from the report, so the report's folded list is
+    checked against geometry instead of against itself."""
+
+    t = studio("tessellation")
+    points = tess["points"]
+    return sorted(
+        cell["key"]
+        for cell in tess["cells"]
+        if any(
+            not t._is_simple([points[i] for i in ring])
+            for ring in [cell["outline"]] + list(cell["holes"])
+        )
+    )
+
+
+def _assert_conforms(tess, where):
+    report = tess["report"]
+    for key in ("coverage_holes", "open_facets", "slivers", "broken_boundary"):
+        assert report[key] == [], "{}: {} is not empty".format(where, key)
+
+
+@pytest.mark.parametrize("size", SWEEP_SIZES)
+@pytest.mark.parametrize("pattern", ["bonded-courses", "monolithic-bands"])
+def test_a_generated_cut_conforms_at_every_size_on_the_real_domain(pattern, size):
+    """The sweep the one-size tests could not do.
+
+    A cut that is clean at 0.9 m says nothing about 1.5 m: the seam a span
+    crosses depends on where the span sits, and where a span sits depends
+    on the size. This runs the committed Trial 2 domain, so it needs the
+    fixture and not the export, and it checks two things at every size.
+    First that nothing in the report is dirty. Second that the report's
+    folded list names exactly the cells that really do cross themselves,
+    which is the guard the sliver test cannot be: a bow tie's two lobes
+    cancel in the algebraic area, so a folded cell measures a comfortable
+    area and ear_clip triangulates it without complaint.
+    """
+
+    g = studio("generators")
+    fixture = json.loads(
+        (FIXTURES / "trial-2-tessellation.json").read_text(encoding="utf-8")
+    )
+    tess = g.generate(pattern, fixture["domain"], size)
+    where = "{} at {}".format(pattern, size)
+
+    _assert_conforms(tess, where)
+    measured = _folded_by_measurement(tess)
+    assert sorted(tess["report"]["folded"]) == measured, (
+        "{}: the folded list and the geometry disagree".format(where)
+    )
+    assert measured == sorted(TRIAL_2_FOLDS.get((size, pattern), [])), where
+
+
+@pytest.mark.parametrize("size", SWEEP_SIZES)
+@pytest.mark.parametrize("pattern", ["bonded-courses", "monolithic-bands"])
+def test_a_generated_cut_conforms_at_every_size_on_a_disc(pattern, size):
+    """The same sweep on geometry with no wobble in it at all.
+
+    A regular 48-gon has no backward rim step, so there is nothing here to
+    blame a fold on: every cell must be simple at every size. This is the
+    stronger half of the pair, and it was failing at 41 of the 55 slider
+    sizes before _arc sorted its inserted points.
+    """
+
+    g = studio("generators")
+    tess = g.generate(pattern, disc_domain(), size)
+    where = "{} at {} on the disc".format(pattern, size)
+    _assert_conforms(tess, where)
+    assert _folded_by_measurement(tess) == [], where
+    assert tess["report"]["folded"] == [], where
+
+
 def test_monolithic_bands_are_one_cell_per_course_with_holes():
     g = studio("generators")
     tess = g.generate("monolithic-bands", disc_domain(), 1.0)
