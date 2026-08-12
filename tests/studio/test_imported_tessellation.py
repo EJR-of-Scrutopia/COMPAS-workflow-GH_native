@@ -80,11 +80,25 @@ def test_overlapping_cells_are_rejected_by_name():
     assert "low" in message and "over" in message
 
 
+def test_an_unknown_schema_is_rejected_rather_than_guessed():
+    t = studio()
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(schema="bench.tessellation/2"), flat)
+    assert "bench.tessellation/2" in str(error.value)
+
+
 def test_an_unknown_units_value_is_rejected_rather_than_guessed():
     t = studio()
     with pytest.raises(ValueError) as error:
         t.from_document(document(units="mm"), flat)
     assert "mm" in str(error.value)
+
+
+def test_an_unknown_domain_is_rejected_rather_than_guessed():
+    t = studio()
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(domain="elevation"), flat)
+    assert "elevation" in str(error.value)
 
 
 def test_a_self_intersecting_outline_is_rejected_by_name():
@@ -125,3 +139,24 @@ def test_the_contract_wins_over_the_sidecar(tmp_path):
     found = t.read_tessellation({}, sidecar)
     assert found["pattern"] == "sidecar"
     assert t.read_tessellation({}, tmp_path / "missing.json") is None
+
+
+def test_a_concave_l_shaped_cell_and_its_exact_complement_are_accepted():
+    t = studio()
+    cells = [
+        {"key": "L", "course": 0,
+         "outline": [[0, 0], [3, 0], [3, 1], [1, 1], [1, 3], [0, 3]]},
+        {"key": "notch", "course": 0,
+         "outline": [[1, 1], [3, 1], [3, 3], [1, 3]]},
+    ]
+    tess = t.from_document(document(cells), flat)
+    assert len(tess["cells"]) == 2
+
+
+def test_a_ring_that_touches_itself_at_a_vertex_is_rejected_by_name():
+    t = studio()
+    cells = [{"key": "pinch", "course": 0,
+              "outline": [[0, 0], [2, 0], [1, 1], [2, 2], [0, 2], [1, 1]]}]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    assert "pinch" in str(error.value)

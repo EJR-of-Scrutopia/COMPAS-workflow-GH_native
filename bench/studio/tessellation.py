@@ -12,6 +12,10 @@ T junctions are resolved rather than forbidden. Bonded masonry is made of
 them: the whole point of a staggered course is that its head joints land
 in the middle of the bed below.
 
+Also reads and validates authored tessellations from Grasshopper via
+JSON contract or sidecar file, enforcing geometric and topological rules
+with rejection messages that name the offending cell for author feedback.
+
 Stdlib only: the bundle path imports this.
 """
 
@@ -193,6 +197,25 @@ def point_in_cell(point, cell: Dict, points) -> bool:
     if not point_in_ring(point, cell["outline"], points):
         return False
     return not any(point_in_ring(point, hole, points) for hole in cell["holes"])
+
+
+def point_strictly_in_cell(point, cell: Dict, points) -> bool:
+    """A point strictly inside a cell, not on the boundary.
+
+    The boundary includes edges and corners within TOL. Used for overlap
+    detection where touching boundaries are permitted by design.
+    """
+
+    x, y = point[0], point[1]
+    for ring in [cell["outline"]] + list(cell["holes"]):
+        for i in range(len(ring)):
+            a = points[ring[i]]
+            b = points[ring[(i + 1) % len(ring)]]
+            if abs(a[0] - x) <= TOL and abs(a[1] - y) <= TOL:
+                return False
+            if on_segment(point, a, b) is not None:
+                return False
+    return point_in_cell(point, cell, points)
 
 
 def _apply_remap(ring: List[int], remap: List[int]) -> List[int]:
@@ -554,15 +577,34 @@ def _segments_cross(a, b, c, d) -> bool:
 
 
 def _is_simple(ring) -> bool:
+    """Check that a ring is a simple polygon: no self-intersection.
+
+    Detects proper crossing of non-adjacent edges, duplicate points within TOL,
+    and vertices lying strictly inside non-adjacent edges. O(n squared) in the
+    ring's point count, acceptable for author-sized polygons at import time.
+    """
+
     count = len(ring)
+
     for i in range(count):
         for j in range(i + 1, count):
-            if j == i or (j + 1) % count == i or (i + 1) % count == j:
-                continue
-            if _segments_cross(
-                ring[i], ring[(i + 1) % count], ring[j], ring[(j + 1) % count]
-            ):
+            pi, pj = ring[i], ring[j]
+            if abs(pi[0] - pj[0]) <= TOL and abs(pi[1] - pj[1]) <= TOL:
                 return False
+
+    for i in range(count):
+        for j in range(i + 2, count):
+            if (j + 1) % count == i:
+                continue
+            a, b = ring[i], ring[(i + 1) % count]
+            c, d = ring[j], ring[(j + 1) % count]
+            if _segments_cross(a, b, c, d):
+                return False
+            if on_segment(c, a, b) is not None:
+                return False
+            if on_segment(d, a, b) is not None:
+                return False
+
     return True
 
 
@@ -597,7 +639,7 @@ def from_document(document: Dict, surface_height) -> Dict:
 
     seen = set()
     inferred = False
-    offset_max = 0.0
+    offset_max = None
     prepared: List[Dict] = []
     for position, cell in enumerate(raw_cells):
         key = cell.get("key")
@@ -617,11 +659,26 @@ def from_document(document: Dict, surface_height) -> Dict:
                 )
             plan = []
             for point in ring:
-                plan.append([float(point[0]), float(point[1])])
+                try:
+                    x, y = float(point[0]), float(point[1])
+                except (TypeError, ValueError, IndexError):
+                    raise ValueError(
+                        "cell {!r} has a coordinate that is not a number".format(key)
+                    )
+                plan.append([x, y])
                 if len(point) > 2:
-                    surface = surface_height(float(point[0]), float(point[1]))
+                    try:
+                        z = float(point[2])
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            "cell {!r} has a z coordinate that is not a number".format(key)
+                        )
+                    surface = surface_height(x, y)
                     if surface is not None:
-                        offset_max = max(offset_max, abs(float(point[2]) - surface))
+                        if offset_max is None:
+                            offset_max = abs(z - surface)
+                        else:
+                            offset_max = max(offset_max, abs(z - surface))
             if not _is_simple(plan):
                 raise ValueError(
                     "cell {!r} has an outline that crosses itself".format(key)
@@ -632,9 +689,15 @@ def from_document(document: Dict, surface_height) -> Dict:
         if course is None:
             inferred = True
             course = 0
+        try:
+            course = int(course)
+        except (TypeError, ValueError):
+            raise ValueError(
+                "cell {!r} has a course value that is not an integer".format(key)
+            )
         prepared.append({
             "key": key,
-            "course": int(course),
+            "course": course,
             "outline": flat_rings[0],
             "holes": flat_rings[1:],
         })
@@ -655,7 +718,17 @@ def from_document(document: Dict, surface_height) -> Dict:
 
 
 def _reject_overlaps(tess: Dict) -> None:
-    """Two cells covering the same ground is an authoring mistake, not a cut."""
+    """Two cells covering the same ground is an authoring mistake, not a cut.
+
+    Two cells overlap if: an edge of A properly crosses an edge of B, a
+    vertex of A lies strictly inside cell B, a vertex of B lies strictly
+    inside cell A, or their outlines are identical. Strictly inside means
+    inside and not on the boundary. This catches proper crossings and any
+    vertex strictly inside another cell. It does not catch a cell wholly
+    contained in another with every vertex on its boundary, which is caught
+    only by the identical outline rule. This is a check, not a proof of
+    disjointness.
+    """
 
     points = tess["points"]
     cells = tess["cells"]
@@ -671,19 +744,40 @@ def _reject_overlaps(tess: Dict) -> None:
         grid.insert(index, *box)
 
     for index, cell in enumerate(cells):
-        ring = [points[i] for i in cell["outline"]]
-        centre = [
-            sum(p[0] for p in ring) / len(ring),
-            sum(p[1] for p in ring) / len(ring),
-        ]
-        probes = [centre] + [
-            [(p[0] + centre[0]) / 2.0, (p[1] + centre[1]) / 2.0] for p in ring
-        ]
+        outline_a = cell["outline"]
         for other in grid.query(*boxes[index]):
             if other == index:
                 continue
-            if any(point_in_cell(probe, cells[other], points) for probe in probes):
+            outline_b = cells[other]["outline"]
+
+            if outline_a == outline_b:
                 raise ValueError(
-                    "cell {!r} overlaps cell {!r}; cells must cover the "
-                    "surface once".format(cell["key"], cells[other]["key"])
+                    "cell {!r} and cell {!r} have identical outlines; each cell "
+                    "must be unique".format(cell["key"], cells[other]["key"])
                 )
+
+            for i in range(len(outline_a)):
+                a = points[outline_a[i]]
+                b = points[outline_a[(i + 1) % len(outline_a)]]
+                for j in range(len(outline_b)):
+                    c = points[outline_b[j]]
+                    d = points[outline_b[(j + 1) % len(outline_b)]]
+                    if _segments_cross(a, b, c, d):
+                        raise ValueError(
+                            "cell {!r} overlaps cell {!r}; cells must cover the "
+                            "surface once".format(cell["key"], cells[other]["key"])
+                        )
+
+            for point_idx in outline_a:
+                if point_strictly_in_cell(points[point_idx], cells[other], points):
+                    raise ValueError(
+                        "cell {!r} overlaps cell {!r}; cells must cover the "
+                        "surface once".format(cell["key"], cells[other]["key"])
+                    )
+
+            for point_idx in outline_b:
+                if point_strictly_in_cell(points[point_idx], cell, points):
+                    raise ValueError(
+                        "cell {!r} overlaps cell {!r}; cells must cover the "
+                        "surface once".format(cells[other]["key"], cell["key"])
+                    )
