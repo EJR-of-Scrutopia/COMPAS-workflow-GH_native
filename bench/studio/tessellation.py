@@ -393,6 +393,16 @@ def build_tessellation(
     analysis_binding's orphan_faces, which tests mesh face centroids against
     real cells. Gaps thinner than the mesh face spacing pass both checks.
     Neither check proves complete coverage.
+
+    It also includes folded: cells whose own welded rings cross themselves.
+    A fold is the one defect none of the other checks can see. The sliver
+    test reads the algebraic area, which for a bow tie is the difference of
+    its two lobes and so comes out comfortably positive; the facet and
+    coverage checks are topological and a fold changes no facet's owner
+    count; and cutting.ear_clip triangulates the fold rather than raising,
+    shipping one lobe wound inside out. A cell is either a sliver or
+    folded, never listed as both: a ring with no area to speak of trips the
+    simplicity check as well, and the sliver is the more useful name for it.
     """
 
     if not raw_cells:
@@ -421,6 +431,7 @@ def build_tessellation(
 
     cells: List[Dict] = []
     slivers: List[str] = []
+    folded: List[str] = []
     for raw, outline, holes in welded:
         outline = _resolve(outline, points, grid)
         holes = [_resolve(hole, points, grid) for hole in holes]
@@ -438,6 +449,21 @@ def build_tessellation(
         area = 0.5 * ring_area(outline, points)
         if len(outline) < 3 or area < TOL * spread * spread:
             slivers.append(cell["key"])
+        # A fold is invisible to the sliver test above, which reads the
+        # algebraic area: a bow tie's two lobes cancel, so a badly folded
+        # cell can measure a comfortable positive area while half of it is
+        # drawn inside out. ear_clip does not object either, it simply
+        # triangulates the fold. So the ring is checked for simplicity
+        # here, and named rather than raised, because a generated fold is
+        # the studio's own doing on a plan whose rim it has to follow and
+        # the rest of this report degrades honestly the same way. An
+        # authored fold is still a rejection by name in from_document,
+        # which runs its own check before this: an author can fix theirs.
+        elif any(
+            not _is_simple([points[i] for i in ring])
+            for ring in [outline] + holes
+        ):
+            folded.append(cell["key"])
         cells.append(cell)
 
     axis = [
@@ -474,6 +500,7 @@ def build_tessellation(
             "double_faces": [],
             "open_facets": open_facets,
             "slivers": slivers,
+            "folded": folded,
             "coverage_holes": coverage_holes,
             "broken_boundary": broken_boundary,
         },

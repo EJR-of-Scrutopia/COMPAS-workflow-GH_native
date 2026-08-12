@@ -122,6 +122,32 @@ def test_a_self_intersecting_outline_is_rejected_by_name():
     assert "bowtie" in str(error.value)
 
 
+def test_an_authored_fold_is_refused_where_a_generated_one_is_only_named():
+    """The two routes disagree about a fold on purpose.
+
+    build_tessellation reports folded cells rather than raising, because a
+    generated fold is the studio's own doing on a plan whose rim it has to
+    follow, and the rest of that report degrades the same way. An author
+    can fix theirs in Grasshopper, so from_document still refuses by name,
+    and the check that refuses runs before build_tessellation ever sees the
+    cell: the same outline never reaches the folded list by this route.
+    """
+
+    t = studio()
+    outline = [[0.0, 0.0], [4.0, 0.0], [1.0, 3.0], [3.0, 3.0]]
+    cells = [{"key": "bowtie", "course": 0, "outline": outline}]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    assert "bowtie" in str(error.value)
+    assert "crosses itself" in str(error.value)
+
+    generated = t.build_tessellation(
+        [{"key": "bowtie", "course": 0, "outline": outline, "holes": []}],
+        "test", "generated", 1.0, 1,
+    )
+    assert generated["report"]["folded"] == ["bowtie"]
+
+
 def test_a_supplied_z_is_measured_against_the_surface_not_used():
     t = studio()
     cells = [
