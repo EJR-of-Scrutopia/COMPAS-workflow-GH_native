@@ -254,6 +254,18 @@ def run_staging(
         arrays["vertices"], arrays["faces"], plan, material, thickness
     )
 
+    # The over-budget remedy depends on where the cut came from: a larger
+    # target size genuinely shrinks a generated cut's block count, but an
+    # imported tessellation ignores size entirely (see
+    # tessellation.from_document), so the only real remedy there is
+    # re-authoring fewer, larger cells in Grasshopper.
+    if tess["source"] == "imported":
+        budget_remedy = ("the target piece size has no effect on an "
+                          "imported tessellation; re-author it with fewer, "
+                          "larger cells in Grasshopper for a verdict")
+    else:
+        budget_remedy = "choose a larger target piece size for a verdict"
+
     if runner is None:
         runner = _subprocess_runner(python_exe or FEA_PYTHON)
 
@@ -311,9 +323,9 @@ def run_staging(
                     "stands": None,
                     "status": "over budget",
                     "message": "{} blocks exceeds the affordable rigid-block "
-                               "budget of {}; choose a larger target piece "
-                               "size for a verdict".format(
-                                   len(stage_blocks), CRA_BLOCK_BUDGET),
+                               "budget of {}; {}".format(
+                                   len(stage_blocks), CRA_BLOCK_BUDGET,
+                                   budget_remedy),
                     "blocks": len(stage_blocks),
                     "interfaces": 0,
                     "mu": FRICTION[material],
@@ -328,13 +340,23 @@ def run_staging(
 
     document = {
         "material": material,
-        "pattern": pattern,
-        "size": size,
+        # tess["pattern"]/tess["target_size"], not the requested pattern/size,
+        # matching bundle.py: an authored (imported) tessellation ignores
+        # both, so the document states what the cut actually is rather than
+        # what was asked for. Identical to the request for a generated cut.
+        "pattern": tess["pattern"],
+        "size": tess["target_size"],
         "combination": "ULS",
         "tessellation": {
             "pattern": tess["pattern"], "source": tess["source"],
             "target_size": tess["target_size"], "courses": tess["courses"],
             "cells": len(tess["cells"]),
+            # The formwork curve sums only faces a cell covers (stage_plan
+            # skips a None assignment entry outright), so an orphan face's
+            # weight is silently absent from every stage's total unless its
+            # presence is disclosed here. Old ring/wedge binning could not
+            # orphan a face at all; this cut can.
+            "report": binding["report"],
         },
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,

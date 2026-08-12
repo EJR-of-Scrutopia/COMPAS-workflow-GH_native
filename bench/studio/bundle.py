@@ -99,12 +99,34 @@ def build_bundle(
     ]
     made, report = pieces.segment_pieces(tess, surface, support_points)
 
+    tessellation_summary = {
+        "pattern": tess["pattern"],
+        "source": tess["source"],
+        "target_size": tess["target_size"],
+        "courses": tess["courses"],
+        "cells": len(tess["cells"]),
+        "provenance": tess.get("provenance"),
+        "z_offset_max": tess.get("z_offset_max"),
+        "courses_inferred": tess.get("courses_inferred", False),
+        "report": binding["report"],
+    }
+    overlap = set(tessellation_summary) & set(report)
+    assert not overlap, (
+        "pieces.segment_pieces's report shares key(s) {} with the "
+        "tessellation summary; spreading it in would let one silently "
+        "overwrite the other".format(sorted(overlap))
+    )
+
     document = {
         "export": export_name,
         "slug": slug,
         "material": material,
+        # tess["pattern"]/tess["target_size"], not the requested pattern/size:
+        # an authored (imported) tessellation ignores both, and the document
+        # states what the cut actually is, not what was asked for. For a
+        # generated cut these are identical to what was requested.
         "pattern": tess["pattern"],
-        "size": size,
+        "size": tess["target_size"],
         "generated": datetime.datetime.now(datetime.timezone.utc)
         .isoformat(timespec="seconds"),
         "analysis_mesh": arrays,
@@ -122,18 +144,7 @@ def build_bundle(
             "assignment": binding["assignment"], "order": binding["order"],
             "keys": binding["keys"],
         },
-        "tessellation": {
-            "pattern": tess["pattern"],
-            "source": tess["source"],
-            "target_size": tess["target_size"],
-            "courses": tess["courses"],
-            "cells": len(tess["cells"]),
-            "provenance": tess.get("provenance"),
-            "z_offset_max": tess.get("z_offset_max"),
-            "courses_inferred": tess.get("courses_inferred", False),
-            "report": binding["report"],
-            **report,
-        },
+        "tessellation": {**tessellation_summary, **report},
         "pieces": made,
         "staging": _read_optional(
             staging_path(slug, material, pattern, size, thickness)),

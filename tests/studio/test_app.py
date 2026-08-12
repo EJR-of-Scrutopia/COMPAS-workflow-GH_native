@@ -55,6 +55,48 @@ def wait_for(client, run_id, timeout=10.0):
     raise AssertionError("run never finished: {}".format(state))
 
 
+def bay_contract():
+    """A 3x3 grid of unit quads with the (2, 1) face removed.
+
+    The bay makes the plan genuinely not star shaped about its own axis --
+    the same fixture shape as test_domain.py's grid(3, drop={(2, 1)}), here
+    expressed as a full equilibrium/formGraph contract so it can drive the
+    real bundle build. generators.generate refuses a plan like this, and
+    that refusal has to reach the client as a 400, not a stack trace.
+    """
+    side, n = 3, 4
+    verts = [
+        {"x": float(i), "y": float(j), "z": 0.0}
+        for j in range(n) for i in range(n)
+    ]
+    faces = []
+    fid = 0
+    for j in range(side):
+        for i in range(side):
+            if (i, j) == (2, 1):
+                continue
+            faces.append({
+                "id": fid,
+                "vertices": [
+                    j * n + i, j * n + i + 1,
+                    (j + 1) * n + i + 1, (j + 1) * n + i,
+                ],
+            })
+            fid += 1
+    edges = []
+    for face in faces:
+        v = face["vertices"]
+        for k in range(4):
+            edges.append({"u": v[k], "v": v[(k + 1) % 4]})
+    return {
+        "equilibrium": {
+            "vertices": verts, "edges": edges, "loads": [],
+            "resolvedSupportNodeIds": [0],
+        },
+        "formGraph": {"faces": faces},
+    }
+
+
 def test_studies_lists_the_export_and_ffmpeg_flag(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     payload = client.get("/api/studies").json()
@@ -76,6 +118,29 @@ def test_bundle_endpoint_validates_and_serves(tmp_path, monkeypatch):
     out_of_range = client.get("/api/studies/Tiny/bundle",
                               params={"material": "concrete", "pattern": "bonded-courses", "size": 9.0})
     assert out_of_range.status_code == 400
+
+
+def test_a_plan_the_engine_refuses_is_a_400_not_a_500(tmp_path, monkeypatch):
+    """A vault with a bay (re-entrant plan) is not star shaped, and no
+    polar pattern can cover it. Before this wave no geometry could reach
+    this failure at all, since the old ring/wedge binning worked on any
+    centroid cloud; get_bundle must surface generators.generate's own
+    message rather than let it fall through to an unhandled 500.
+    """
+    client, _ = make_client(tmp_path, monkeypatch)
+    upload = tmp_path / "upload"
+    (upload / "Bay-contract.json").write_text(
+        json.dumps(bay_contract()), encoding="utf-8"
+    )
+    (upload / "Bay-compas.json").write_text("{}", encoding="utf-8")
+    response = client.get(
+        "/api/studies/Bay/bundle",
+        params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "not star shaped" in detail
+    assert "Author the tessellation in Grasshopper and import it instead" in detail
 
 
 def test_run_lifecycle_reaches_done_and_embeds_staging(tmp_path, monkeypatch):

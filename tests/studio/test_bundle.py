@@ -130,17 +130,17 @@ def test_the_bundle_ships_drawn_pieces_on_the_render_mesh(tmp_path, monkeypatch)
     pieces = document["pieces"]
     assert pieces, "the bundle must carry the pieces the viewer draws"
     # A key is the casting's identity in the viewer: its tint, its texture
-    # offset and its entry in the placement index all hang off it. Every
-    # cell in this fixture is contiguous, so uniqueness here is nearly free
-    # and the assertion used to be fixture luck; the case that earns it, a
-    # cell holding two patches that never touch, is pinned in
-    # test_pieces.py. What this asserts is that the bundle carries the
-    # identity through unchanged, one entry per drawn casting, and that on
-    # contiguous cells the count still matches the cut.
+    # offset and its entry in the placement index all hang off it.
+    # segment_pieces builds exactly one piece per tessellation cell (see
+    # test_one_piece_per_cell_in_placement_order in test_pieces.py), so both
+    # the key uniqueness and the piece-per-cell count below are structural
+    # guarantees of the current architecture, not properties this fixture
+    # happens to have. (An older pieces.py, retired, could split one cell
+    # into more than one drawn casting; that shape no longer exists.)
     keys = [piece["key"] for piece in pieces]
     assert len(set(keys)) == len(keys), "two castings cannot share one key"
     assert len(keys) == len(document["binding"]["order"]), (
-        "contiguous cells should give one piece each"
+        "one piece per cell is structural"
     )
     render_vertex_count = len(document["render_mesh"]["vertices"])
     for piece in pieces:

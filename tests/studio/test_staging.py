@@ -125,7 +125,16 @@ def test_stage_plan_is_cumulative_rim_to_crown():
 
 
 def test_formwork_curve_is_monotone_and_ends_at_the_total_weight():
-    """Formwork weight is exact arithmetic, cumulative and monotone."""
+    """Formwork weight is exact arithmetic, cumulative and monotone.
+
+    This drives stage_plan/formwork_curve through
+    segmentation.segment_faces, whose assignment always has a real ring for
+    every face, so it can never orphan one and this "ends at the total"
+    guarantee is trivially true here. The production path (build through
+    tessellation.analysis_binding, see build_tessellation_for) can orphan a
+    face -- see test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed
+    below for the case this test cannot exercise.
+    """
     g, seg, staging = studio()
     contract = two_radius_contract()
     arrays = g.mesh_arrays(contract)
@@ -143,6 +152,77 @@ def test_formwork_curve_is_monotone_and_ends_at_the_total_weight():
     assert weights[-1] == pytest.approx(expected)
     for row in curve:
         assert row["formwork_carries_newtons"] == row["placed_weight_newtons"]
+
+
+def orphan_gap_contract():
+    """tiny_contract, authored with a tessellation that leaves a gap.
+
+    Two cells cover three of tiny_contract's four faces (the bottom band,
+    course 0; the top-left quadrant, course 1); nothing covers the
+    top-right quadrant, so face 3 (centroid (1.5, 1.5)) has no cell and
+    analysis_binding reports it an orphan. The gap is open to the domain's
+    own rim on two sides, so tessellation's own coverage_holes check (which
+    only catches fully enclosed gaps) cannot see it either -- this is
+    exactly the case tessellation.py's docstring says analysis_binding's
+    orphan_faces exists to catch.
+    """
+    contract = tiny_contract()
+    contract["tessellation"] = {
+        "schema": "bench.tessellation/1",
+        "units": "m",
+        "domain": "plan",
+        "pattern": "authored-gap-test",
+        "cells": [
+            {"key": "c0", "course": 0,
+             "outline": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]},
+            {"key": "c1", "course": 1,
+             "outline": [[0.0, 1.0], [1.0, 1.0], [1.0, 2.0], [0.0, 2.0]]},
+        ],
+    }
+    return contract
+
+
+def test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed(tmp_path):
+    """An orphan face's weight is silently absent from the formwork curve
+    unless the staging document discloses it.
+
+    stage_plan skips a None assignment entry outright (a face no cell
+    covers is placed by none), so formwork_curve's cumulative total ends
+    short of the structure's real weight by exactly that face's own
+    contribution. The old ring/wedge binning could not produce this case at
+    all (every face always landed in some ring); this cut can, so the
+    shortfall has to be both real (measured here) and disclosed (in
+    document["tessellation"]["report"]).
+    """
+    g, seg, staging = studio()
+    contract = orphan_gap_contract()
+    contract_path = tmp_path / "Gap-contract.json"
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    geometry_path = tmp_path / "Gap-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", pattern="bonded-courses", size=0.9,
+        out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+
+    arrays = g.mesh_arrays(contract)
+    total = sum(
+        g.face_area(arrays["vertices"], f) for f in arrays["faces"]
+    ) * staging.THICKNESS * 2400.0 * staging.GRAVITY
+    orphan_weight = g.face_area(
+        arrays["vertices"], arrays["faces"][3]
+    ) * staging.THICKNESS * 2400.0 * staging.GRAVITY
+
+    final_weight = document["stages"][-1]["placed_weight_newtons"]
+    assert final_weight < total
+    assert final_weight == pytest.approx(total - orphan_weight)
+    assert 3 not in document["stages"][-1]["faces"]
+
+    assert document["tessellation"]["report"]["orphan_faces"] == [3]
 
 
 def test_run_staging_with_a_stub_runner_writes_the_document(tmp_path):

@@ -116,7 +116,16 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         size: float = Query(...), thickness: float = Query(0.2),
     ):
         _validate(export, material, pattern, size, thickness)
-        return bundle.load_or_build_bundle(export, material, pattern, size, thickness)
+        try:
+            return bundle.load_or_build_bundle(export, material, pattern, size, thickness)
+        except ValueError as error:
+            # domain.boundary_ring, generators.generate and
+            # tessellation.from_document all raise ValueError with a message
+            # naming the offending vertex or cell -- an oculus, a re-entrant
+            # plan, or a bad authored cell all land here. The message is the
+            # whole point (it says where to look), so it is carried through
+            # unchanged rather than paraphrased or swallowed into a 500.
+            raise HTTPException(400, str(error))
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
