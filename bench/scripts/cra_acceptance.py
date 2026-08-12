@@ -7,14 +7,33 @@ masquerade as a cached study result.
 
 Usage:  ./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py [pattern] [size]
 
-NOTE: the shipped default export, "Trial 2", is not star shaped about its
-own axis under domain.plan_domain (measured: the rim turns back on itself
-at vertex 2519, 2 of its 240 boundary vertices), so generators.generate
-refuses it for any generated pattern -- this is a real property of that
-export's plan boundary, not a wiring defect in this script. Pass a
-star-shaped export's name via the EXPORT constant below, or route this
-script through an authored tessellation (tessellation.read_tessellation),
-to run it against Trial 2 as shipped.
+NOTE: the shipped default export, "Trial 2", IS star shaped under
+domain.plan_domain, and this script runs against it as shipped. An
+earlier revision of this note said the opposite and sent the reader to a
+workaround; it was written before domain.WOBBLE_TOLERANCE landed and was
+never re-measured. Measured 2026-08-12: star_shaped True, failure None,
+backward_turn 0.467 degrees against a WOBBLE_TOLERANCE of 5 degrees,
+backward_steps 2 of the rim's 240 boundary vertices. generators.generate
+accepts it for any generated pattern, and volume_comparison
+("bonded-courses", 1.0) runs: 180 mesh-following blocks against 187
+voussoirs, a 2.1 percent volume difference, no cells skipped.
+
+What does limit this script is the block budget, and no size the API
+permits gets under it. Measured 2026-08-12, voussoir blocks in stage 1
+(course 0 alone, the smallest stage there is) across the full range
+app.py accepts:
+
+    size 0.3 m  170 blocks        size 1.5 m  35 blocks
+    size 0.5 m  116 blocks        size 2.0 m  25 blocks
+    size 0.9 m   68 blocks        size 2.5 m  18 blocks
+    size 1.0 m   56 blocks        size 3.0 m  15 blocks
+
+against staging.CRA_BLOCK_BUDGET of 14. The largest size the API takes
+misses the budget by one block and every smaller size misses it by more,
+so staged_run reaches no real rigid-block verdict on this export at any
+size: every stage refuses "over budget" instead. That is the measurement
+behind run_staging's include_cra defaulting to False, and it is a
+property of this export's block count, not a defect in this script.
 """
 
 from __future__ import annotations

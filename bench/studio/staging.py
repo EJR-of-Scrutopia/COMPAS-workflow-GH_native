@@ -404,14 +404,17 @@ def run_staging(
                 # wall clock).
                 #
                 # The message promises no remedy: on a real study (Trial 2,
-                # measured across the whole size slider from 0.9 to 3.0, the
-                # full range app.py permits) the smallest reachable stage
-                # still carries more blocks than the budget at every size,
-                # so "choose a larger size" sends the reader to drag a
-                # slider to its end and get the same refusal. What is true,
-                # and what the message says, is the measured count, the
-                # budget, and why raising CRA_TIMEOUT_SECONDS would not
-                # help either.
+                # re-measured 2026-08-12 across 0.3 to 3.0, which is the
+                # full range app.py permits -- an earlier note here said
+                # 0.9 to 3.0 and understated it) the smallest reachable
+                # stage still carries more blocks than the budget at every
+                # size. Stage 1 alone runs 170 blocks at 0.3 m down to 15
+                # at 3.0 m, against a budget of 14, so "choose a larger
+                # size" sends the reader to drag a slider to its end and
+                # get the same refusal one block short. What is true, and
+                # what the message says, is the measured count, the budget,
+                # and why raising CRA_TIMEOUT_SECONDS would not help
+                # either. Full table in bench/scripts/cra_acceptance.py.
                 stage_entry["cra"] = {
                     "stands": None,
                     "status": "over budget",
