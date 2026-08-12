@@ -37,6 +37,7 @@ is exact and stays true regardless, so it is never gated on this.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import tempfile
 from pathlib import Path
@@ -152,9 +153,31 @@ CRA_TIMEOUT_SECONDS = 600
 
 def stage_plan(assignment: List[Optional[list]], order: List[list],
                keys: List[str]) -> List[Dict]:
-    """One stage per course: stage s has every cell of courses 0..s-1 placed."""
+    """One stage per course PRESENT in the cut, rim to crown, cumulative.
 
-    courses = max(pair[0] for pair in order) + 1
+    The courses walked are the sorted distinct course values order actually
+    carries, not range(max + 1). Iterating a range lost any cell whose
+    course fell outside it: a negatively coursed cell was welded and drawn
+    but never entered a stage, so its weight quietly left the formwork
+    curve while analysis_binding still reported zero orphans, its faces
+    being covered by a cell after all. tessellation.from_document now
+    rejects a negative course outright; walking what is there rather than
+    what a range assumes is the other half, so this cannot lose a cell it
+    was handed whatever an author does next.
+
+    Walking the present courses also stops the duplicate solves a sparse
+    numbering used to cause: courses 0 and 5 made six stages for two cells,
+    four of them full FEA solves over an identical placed-faces list.
+
+    "stage" is a dense 1-based index of the stages themselves.
+    "courses_placed" is one past the highest COURSE INDEX placed, not a
+    count of them: run_staging filters voussoir blocks with
+    block["ring"] < courses_placed, and ring is the course index. The two
+    are the same number for a densely numbered cut and must not be
+    conflated for a sparse one.
+    """
+
+    courses = sorted({pair[0] for pair in order})
     faces_by_cell: Dict[tuple, List[int]] = {}
     for face, pair in enumerate(assignment):
         if pair is None:
@@ -165,13 +188,13 @@ def stage_plan(assignment: List[Optional[list]], order: List[list],
     plan = []
     placed_faces: List[int] = []
     placed_segments: List[str] = []
-    for course in range(courses):
+    for position, course in enumerate(courses):
         for pair in order:
             if pair[0] == course:
                 placed_segments.append(label[tuple(pair)])
                 placed_faces.extend(faces_by_cell.get(tuple(pair), []))
         plan.append({
-            "stage": course + 1,
+            "stage": position + 1,
             "courses_placed": course + 1,
             "segments": list(placed_segments),
             "faces": sorted(placed_faces),
@@ -414,6 +437,30 @@ def run_staging(
                 })
         stages.append(stage_entry)
 
+    # The orphan shortfall, in the units the curve is read in. The report
+    # names orphans as face INDICES, and an index is not a quantity: a
+    # reader seeing "2 orphan faces" beside a HUD reading 13.1 kN has
+    # nothing to convert one into the other and cannot tell whether two
+    # orphans is 0.08 percent of the vault or half of it. Measured on the
+    # tiny contract with one cell covering half the mesh: orphan faces
+    # [1, 3], final formwork_carries 13087.1 N, structure 26174.2 N, a 50
+    # percent shortfall the index list alone never disclosed.
+    #
+    # structure_weight_newtons is the arithmetic the old ring/wedge binning
+    # used to guarantee: the last stage equalled the structure's total.
+    # This cut can orphan a face, so the total has to be shipped for the
+    # equality to still be checkable.
+    orphan_faces = (binding["report"].get("orphan_faces") or [])
+    weight_per_area = thickness * DENSITIES[material] * GRAVITY
+    orphan_weight = sum(
+        geometry.face_area(arrays["vertices"], arrays["faces"][face])
+        for face in orphan_faces
+    ) * weight_per_area
+    structure_weight = sum(
+        geometry.face_area(arrays["vertices"], face) for face in arrays["faces"]
+    ) * weight_per_area
+
+    backward_turn = tess.get("backward_turn")
     document = {
         "material": material,
         # tess["pattern"], not the requested pattern, matching bundle.py: an
@@ -435,12 +482,26 @@ def run_staging(
             "pattern": tess["pattern"], "source": tess["source"],
             "target_size": tess["target_size"], "courses": tess["courses"],
             "cells": len(tess["cells"]),
+            # The same provenance fields the bundle's own tessellation
+            # summary carries. This document is read on its own (by
+            # cra_acceptance.py, and by anyone opening staging-*.json), so
+            # it should not be the poorer record of the same cut.
+            "provenance": tess.get("provenance"),
+            "z_offset_max": tess.get("z_offset_max"),
+            "courses_inferred": tess.get("courses_inferred", False),
+            "backward_turn_degrees": (
+                math.degrees(backward_turn) if backward_turn is not None else None
+            ),
+            "backward_steps": tess.get("backward_steps"),
             # The formwork curve sums only faces a cell covers (stage_plan
             # skips a None assignment entry outright), so an orphan face's
             # weight is silently absent from every stage's total unless its
             # presence is disclosed here. Old ring/wedge binning could not
-            # orphan a face at all; this cut can.
+            # orphan a face at all; this cut can. The report names the
+            # faces; the two weights below say what they are worth.
             "report": binding["report"],
+            "orphan_weight_newtons": orphan_weight,
+            "structure_weight_newtons": structure_weight,
         },
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,

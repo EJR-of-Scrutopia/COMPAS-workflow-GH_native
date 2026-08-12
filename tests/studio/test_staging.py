@@ -253,6 +253,118 @@ def test_an_orphaned_faces_weight_is_missing_from_the_curve_and_disclosed(tmp_pa
 
     assert document["tessellation"]["report"]["orphan_faces"] == [3]
 
+    # The index list alone is not a disclosure. This test used to compute
+    # the orphan weight itself and then assert only the indices, which is
+    # exactly the reader's problem: "1 orphan face" beside a HUD reading a
+    # formwork total says nothing about whether that face is 0.08 percent
+    # of the vault or half of it. The weights are shipped, so the
+    # arithmetic the old ring/wedge binning guaranteed (last stage equals
+    # the structure) is checkable again from the document alone.
+    summary = document["tessellation"]
+    assert summary["orphan_weight_newtons"] == pytest.approx(orphan_weight)
+    assert summary["structure_weight_newtons"] == pytest.approx(total)
+    assert final_weight == pytest.approx(
+        summary["structure_weight_newtons"] - summary["orphan_weight_newtons"]
+    )
+    assert summary["orphan_weight_newtons"] > 0.0
+
+
+def test_a_cut_with_no_orphans_reports_a_zero_shortfall(tmp_path):
+    """The weights are always shipped, so zero is a stated zero.
+
+    A reader must be able to tell "no shortfall" from "this document does
+    not say", which is the difference between an absent key and a 0.0.
+    """
+    g, staging = studio()
+    contract_path = tmp_path / "Wide-contract.json"
+    contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Wide-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", pattern="bonded-courses", size=0.9,
+        out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+    summary = document["tessellation"]
+    assert summary["report"]["orphan_faces"] == []
+    assert summary["orphan_weight_newtons"] == 0.0
+    assert document["stages"][-1]["placed_weight_newtons"] == pytest.approx(
+        summary["structure_weight_newtons"]
+    )
+
+
+def test_the_staging_summary_carries_the_same_provenance_as_the_bundle(tmp_path):
+    """staging-*.json is read on its own, so it must be as good a record.
+
+    provenance, z_offset_max, courses_inferred, backward_turn_degrees and
+    backward_steps were on the bundle's tessellation summary and missing
+    from this one.
+    """
+    g, staging = studio()
+    contract_path = tmp_path / "Wide-contract.json"
+    contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Wide-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete", pattern="bonded-courses", size=0.9,
+        out_path=tmp_path / "o.json",
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+    summary = document["tessellation"]
+    for field in ("provenance", "z_offset_max", "courses_inferred",
+                  "backward_turn_degrees", "backward_steps"):
+        assert field in summary, field
+    assert summary["courses_inferred"] is False
+    assert summary["backward_steps"] == 0
+
+
+def test_stage_plan_walks_the_courses_present_not_a_range():
+    """A sparse course numbering must not invent stages, or lose cells.
+
+    range(max + 1) made one stage per integer up to the highest course,
+    whether or not a cell carried it, so courses 0 and 5 gave six stages
+    for two cells: four of them repeated the previous stage's placed-faces
+    list exactly, and run_staging turns each one into a full FEA solve.
+    Walking the distinct courses actually present gives one stage per real
+    course and nothing else.
+    """
+    g, staging = studio()
+    assignment = [[0, 0]] * 4 + [[5, 0]] * 4
+    order = [[0, 0], [5, 0]]
+    keys = ["rim", "crown"]
+    plan = staging.stage_plan(assignment, order, keys)
+
+    assert len(plan) == 2, "two cells, two courses, two stages"
+    assert [entry["stage"] for entry in plan] == [1, 2]
+    assert [entry["segments"] for entry in plan] == [["rim"], ["rim", "crown"]]
+    assert set(plan[0]["faces"]) == {0, 1, 2, 3}
+    assert set(plan[1]["faces"]) == set(range(8))
+    # No two stages may repeat a placed-faces list: an identical list is a
+    # duplicate solve, which is what the range produced.
+    seen = [tuple(entry["faces"]) for entry in plan]
+    assert len(set(seen)) == len(seen)
+    # courses_placed stays a COURSE INDEX bound, not a count of stages:
+    # run_staging filters voussoir blocks with block["ring"] < it, and ring
+    # is the course index, so course 5 must admit rings 0 and 5 alike.
+    assert [entry["courses_placed"] for entry in plan] == [1, 6]
+
+
+def test_a_single_course_high_up_still_makes_exactly_one_stage():
+    """The degenerate end of the same defect: one cell at course 7 alone
+    used to make eight stages, seven of them placing nothing at all."""
+    g, staging = studio()
+    plan = staging.stage_plan([[7, 0]] * 4, [[7, 0]], ["only"])
+    assert len(plan) == 1
+    assert plan[0]["stage"] == 1
+    assert plan[0]["segments"] == ["only"]
+    assert plan[0]["courses_placed"] == 8
+
 
 def test_run_staging_with_a_stub_runner_writes_the_document(tmp_path):
     """run_staging orchestrates stages and writes a JSON document."""
