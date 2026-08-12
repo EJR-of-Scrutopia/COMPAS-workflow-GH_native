@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def studio(name):
@@ -132,6 +134,52 @@ def test_bonded_courses_conform():
     assert tess["report"]["open_facets"] == []
     assert tess["report"]["slivers"] == []
     assert tess["report"]["coverage_holes"] == []
+
+
+def test_the_committed_trial_2_domain_still_cuts_the_same():
+    """A genuine regression pin on real geometry, without the export file.
+
+    tests/studio/make_fixtures.py measured the real Trial 2 export's own
+    plan domain (domain.plan_domain's return value: axis, loop, ring,
+    thetas, star_shaped, failure, backward_turn, backward_steps -- a few
+    hundred numbers, not the 2521 vertex mesh) once and committed it, along
+    with the cut generators.generate produced from it at the default
+    pattern and size. generators.generate needs only the domain, never the
+    mesh or the contract file, so this test rebuilds the cut from the
+    committed domain alone and checks it comes out bit for bit the same:
+    every cell's key, course, index and outline, and the whole welded
+    point table.
+
+    If this fails after an intentional rule change (domain.py,
+    generators.py or tessellation.py), regenerate with:
+    .venv\\Scripts\\python.exe tests/studio/make_fixtures.py
+    and read the new numbers before committing them -- a fixture that
+    silently records whatever the code now produces pins nothing.
+    """
+
+    g = studio("generators")
+    fixture = json.loads(
+        (FIXTURES / "trial-2-tessellation.json").read_text(encoding="utf-8")
+    )
+    tess = g.generate(fixture["pattern"], fixture["domain"], fixture["size"])
+
+    expected = fixture["cut"]
+    assert len(tess["cells"]) == expected["cells"]
+    assert tess["courses"] == expected["courses"]
+    assert tess["points"] == expected["points"]
+    assert [
+        {"key": cell["key"], "course": cell["course"],
+         "index": cell["index"], "outline": cell["outline"]}
+        for cell in tess["cells"]
+    ] == expected["cell_list"]
+
+    # The conformity properties are the ones that matter, and no synthetic
+    # fixture can show them: a real, irregular plan is what actually
+    # exercises T junctions, the rim silhouette and the weld.
+    assert tess["report"]["coverage_holes"] == []
+    assert tess["report"]["open_facets"] == []
+    assert tess["report"]["slivers"] == []
+    assert tess["report"]["broken_boundary"] == []
 
 
 def test_monolithic_bands_are_one_cell_per_course_with_holes():

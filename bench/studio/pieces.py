@@ -31,9 +31,10 @@ misrepresents the typical joint, so report["corner_residual_stats"]
 (built by residual_stats over corner_residuals's own per-corner mapping)
 carries the median, mean, p99, max and counts over a fixed set of
 thresholds, and names which course the worst corner sits in. Measured on
-the real Trial 2 export at 0.9 m: the typical corner (the median) is
-close to the synthetic fixture's own figure above; a small cluster, far
-higher, sits in the rim course, where the cut follows the mesh's own
+the real Trial 2 export at 0.9 m: the typical corner (the median,
+0.0196) is the same order as the synthetic fixture's own figure above
+(0.0104), roughly double it rather than a tight match; a small cluster,
+far higher, sits in the rim course, where the cut follows the mesh's own
 irregular boundary rather than a straight chord. See
 docs/BENCH.md and bench/scripts/cutting_measurements.py for the measured
 distribution.

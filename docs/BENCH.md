@@ -228,9 +228,10 @@ panel both quote it in full:
 | over 0.30 | -- | over 17.5 | 2 of 695 |
 
 The median is the figure that describes the cut: a typical corner sits at
-1.1 degrees, close to `bench/studio/pieces.py`'s own test fixture (a four
-cell synthetic dome chosen to be a stress case), which measures 0.0104
-(0.598 degrees) at its single worst corner. The max describes only its own
+0.0196 (1.1 degrees), the same order as `bench/studio/pieces.py`'s own test
+fixture (a four cell synthetic dome chosen to be a stress case), which
+measures 0.0104 (0.598 degrees) at its single worst corner -- roughly half
+the real median, not a tight match. The max describes only its own
 worst corner, not the cut as a whole, and the worst corners cluster in the
 rim course (course 0), where `generators._arc` inserts the mesh's own
 boundary corners so the drawn silhouette follows the real, irregular rim
