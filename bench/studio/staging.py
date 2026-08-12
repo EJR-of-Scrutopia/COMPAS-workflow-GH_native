@@ -26,8 +26,9 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import bundle
 import geometry
-import segmentation
+import subdivision
 import voussoirs
 
 GRAVITY = 9.80665
@@ -92,27 +93,31 @@ SOLVE_CRA = Path(__file__).resolve().parent / "solve_cra.py"
 CRA_TIMEOUT_SECONDS = 600
 
 
-def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
-    """One stage per ring: stage s has every cell of rings 0..s-1 placed."""
+def stage_plan(assignment: List[Optional[list]], order: List[list],
+               keys: List[str]) -> List[Dict]:
+    """One stage per course: stage s has every cell of courses 0..s-1 placed."""
 
-    rings = max(pair[0] for pair in order) + 1
+    courses = max(pair[0] for pair in order) + 1
     faces_by_cell: Dict[tuple, List[int]] = {}
     for face, pair in enumerate(assignment):
+        if pair is None:
+            continue                 # a face no cell covers is placed by none
         faces_by_cell.setdefault(tuple(pair), []).append(face)
 
+    label = {tuple(pair): keys[i] for i, pair in enumerate(order)}
     plan = []
     placed_faces: List[int] = []
     placed_segments: List[str] = []
-    for ring in range(rings):
+    for course in range(courses):
         for pair in order:
-            if pair[0] == ring:
-                placed_segments.append(segmentation.segment_key(*pair))
+            if pair[0] == course:
+                placed_segments.append(label[tuple(pair)])
                 placed_faces.extend(faces_by_cell.get(tuple(pair), []))
         plan.append({
-            "stage": ring + 1,
-            "rings_placed": ring + 1,
+            "stage": course + 1,
+            "courses_placed": course + 1,
             "segments": list(placed_segments),
-            "faces": list(placed_faces),
+            "faces": sorted(placed_faces),
         })
     return plan
 
@@ -206,7 +211,8 @@ def _cra_subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
 def run_staging(
     export_pair: Dict[str, Path],
     material: str,
-    rings: int,
+    pattern: str,
+    size: float,
     out_path: Path,
     python_exe: Optional[Path] = None,
     runner: Optional[Callable[[dict], dict]] = None,
@@ -217,11 +223,10 @@ def run_staging(
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
-    Returns a document with requested rings count and stages carrying one entry
-    per OCCUPIED ring. For radially degenerate geometry (all centroids equidistant),
-    len(document["stages"]) can be shorter than document["rings"]: stage_plan derives
-    ring count from occupied rings in segmentation.segment_faces output, not from
-    the requested rings parameter. This behaviour is explicit and tested.
+    Returns a document with one stage per COURSE of the cut tessellation
+    (rim to crown), whether or not every course holds a bound analysis face:
+    a course is a real drawn piece the moment the pattern generates it, so it
+    is placed and costed even on a stage that adds no new load.
     """
     if material not in DENSITIES:
         raise ValueError(
@@ -231,9 +236,20 @@ def run_staging(
         )
     contract = geometry.load_contract(export_pair["contract"])
     arrays = geometry.mesh_arrays(contract)
-    centroids = geometry.face_centroids(arrays["vertices"], arrays["faces"])
-    binned = segmentation.segment_faces(centroids, rings=rings)
-    plan = stage_plan(binned["assignment"], binned["order"])
+    render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
+    # The export name (for the tessellation sidecar path), recovered from
+    # the contract filename the same way geometry.available_exports names
+    # it: run_staging is only ever handed the file pair, not the name.
+    contract_name = Path(export_pair["contract"]).name
+    export_name = contract_name[: -len("-contract.json")]
+    # bundle.build_tessellation_for is the one cut, built once: staging and
+    # the drawn pieces must never diverge onto two different cuts, or a
+    # stage plan could name cells the pieces do not have.
+    # surface (the render mesh height field) is bundle.py's to use for
+    # drawing pieces; staging only needs the cut and its analysis binding.
+    tess, _surface, binding = bundle.build_tessellation_for(
+        export_name, contract, arrays, render, pattern, size)
+    plan = stage_plan(binding["assignment"], binding["order"], binding["keys"])
     curve = formwork_curve(
         arrays["vertices"], arrays["faces"], plan, material, thickness
     )
@@ -246,9 +262,15 @@ def run_staging(
     all_blocks: List[dict] = []
     skipped: Optional[List[dict]] = None
     if include_cra:
+        # voussoirs.segment_voussoirs cannot take a None assignment entry
+        # (a face no cell covers), so it stands in for -1, -1: a pair never
+        # in binding["order"], so no block is ever built for it.
+        voussoir_assignment = [
+            pair if pair is not None else [-1, -1] for pair in binding["assignment"]
+        ]
         all_blocks, skipped = voussoirs.segment_voussoirs(
-            arrays["vertices"], arrays["faces"], binned["assignment"],
-            binned["order"], thickness, set(geometry.support_ids(contract)),
+            arrays["vertices"], arrays["faces"], voussoir_assignment,
+            binding["order"], thickness, set(geometry.support_ids(contract)),
         )
 
     stages = []
@@ -269,16 +291,17 @@ def run_staging(
             "struck_now": struck,
         }}
         if include_cra:
-            # Blocks are one per display ring/wedge cell (segmentation's own
-            # binning), so a stage that has placed rings 0..k-1 has placed
-            # exactly the blocks in those rings.
+            # voussoirs.py keeps its own "ring" vocabulary internally; here
+            # it is the course index, not a ring/wedge bin. A stage that has
+            # placed courses 0..k-1 has placed exactly the blocks in those
+            # courses.
             stage_blocks = [
-                b for b in all_blocks if b["ring"] < entry["rings_placed"]
+                b for b in all_blocks if b["ring"] < entry["courses_placed"]
             ]
             if len(stage_blocks) > CRA_BLOCK_BUDGET:
                 # No coarsening is applied (see the CRA_BLOCK_BUDGET comment
-                # above), so a stage's block count is fixed by the display
-                # binning; there is no cheaper model to fall back to.
+                # above), so a stage's block count is fixed by the cut
+                # tessellation; there is no cheaper model to fall back to.
                 # Refusing here is honest and instant; letting it run would
                 # spend tens of seconds to reach the same null (measured:
                 # every stage past this budget failed to converge inside
@@ -288,8 +311,9 @@ def run_staging(
                     "stands": None,
                     "status": "over budget",
                     "message": "{} blocks exceeds the affordable rigid-block "
-                               "budget of {}; lower the ring count for a "
-                               "verdict".format(len(stage_blocks), CRA_BLOCK_BUDGET),
+                               "budget of {}; choose a larger target piece "
+                               "size for a verdict".format(
+                                   len(stage_blocks), CRA_BLOCK_BUDGET),
                     "blocks": len(stage_blocks),
                     "interfaces": 0,
                     "mu": FRICTION[material],
@@ -304,9 +328,14 @@ def run_staging(
 
     document = {
         "material": material,
-        "rings": rings,
+        "pattern": pattern,
+        "size": size,
         "combination": "ULS",
-        "segmentation": binned,
+        "tessellation": {
+            "pattern": tess["pattern"], "source": tess["source"],
+            "target_size": tess["target_size"], "courses": tess["courses"],
+            "cells": len(tess["cells"]),
+        },
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,
         "cra_skipped": skipped,

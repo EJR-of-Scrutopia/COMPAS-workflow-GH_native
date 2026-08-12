@@ -64,35 +64,41 @@ def test_studies_lists_the_export_and_ffmpeg_flag(tmp_path, monkeypatch):
 
 def test_bundle_endpoint_validates_and_serves(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
-    ok = client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4})
+    ok = client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
     assert ok.status_code == 200
     assert ok.json()["slug"] == "tiny"
-    missing = client.get("/api/studies/Nope/bundle", params={"material": "concrete", "rings": 4})
+    missing = client.get("/api/studies/Nope/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
     assert missing.status_code == 404
     assert "Tiny" in missing.json()["detail"]
-    bad = client.get("/api/studies/Tiny/bundle", params={"material": "adamantium", "rings": 4})
+    bad = client.get("/api/studies/Tiny/bundle",
+                     params={"material": "adamantium", "pattern": "bonded-courses", "size": 0.9})
     assert bad.status_code == 400
-    out_of_range = client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 99})
+    out_of_range = client.get("/api/studies/Tiny/bundle",
+                              params={"material": "concrete", "pattern": "bonded-courses", "size": 9.0})
     assert out_of_range.status_code == 400
 
 
 def test_run_lifecycle_reaches_done_and_embeds_staging(tmp_path, monkeypatch):
     client, studies = make_client(tmp_path, monkeypatch)
-    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     assert started.status_code == 202
     run_id = started.json()["run"]
     state = wait_for(client, run_id)
     assert state["state"] == "done", state["message"]
-    assert (studies / "tiny" / "studio" / "staging-concrete-r4-t200.json").is_file()
+    assert (
+        studies / "tiny" / "studio"
+        / "staging-concrete-bonded-courses-s900-t200.json"
+    ).is_file()
     document = client.get(
-        "/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4}
+        "/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
     ).json()
     assert document["staging"] is not None
-    # Tiny is radially degenerate (see conftest_data.tiny_contract): it
-    # collapses to one occupied ring no matter the requested rings count.
-    # See tests/studio/test_staging.py for the pinned contract.
+    # Tiny (see conftest_data.tiny_contract) is small enough that at this
+    # target size the whole plan is one course: see
+    # tests/studio/test_staging.py for the pinned contract.
     assert len(document["staging"]["stages"]) == 1
-    assert document["staging"]["rings"] == 4
+    assert document["staging"]["size"] == 0.9
 
 
 def test_bundle_url_is_percent_encoded_for_spaced_export_names(tmp_path, monkeypatch):
@@ -112,7 +118,8 @@ def test_bundle_url_is_percent_encoded_for_spaced_export_names(tmp_path, monkeyp
     (upload / "Tiny Two-compas.json").write_text("{}", encoding="utf-8")
 
     started = client.post(
-        "/api/runs", json={"export": "Tiny Two", "material": "concrete", "rings": 4}
+        "/api/runs", json={"export": "Tiny Two", "material": "concrete",
+                            "pattern": "bonded-courses", "size": 0.9}
     )
     assert started.status_code == 202
     state = wait_for(client, started.json()["run"])
@@ -136,9 +143,11 @@ def test_second_run_on_the_same_export_is_409(tmp_path, monkeypatch):
         return {"converged": True, "message": ""}
 
     client, _ = make_client(tmp_path, monkeypatch, runner=slow_runner)
-    first = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    first = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     assert first.status_code == 202
-    second = client.post("/api/runs", json={"export": "Tiny", "material": "timber", "rings": 4})
+    second = client.post("/api/runs", json={"export": "Tiny", "material": "timber",
+                                    "pattern": "bonded-courses", "size": 0.9})
     assert second.status_code == 409
     assert second.json()["run"] == first.json()["run"]
     release.set()
@@ -150,7 +159,8 @@ def test_failed_staging_reports_failed_not_stuck(tmp_path, monkeypatch):
         raise RuntimeError("the fea venv is on fire")
 
     client, _ = make_client(tmp_path, monkeypatch, runner=broken_runner)
-    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     state = wait_for(client, started.json()["run"])
     assert state["state"] == "failed"
     assert "on fire" in state["message"]
@@ -158,7 +168,8 @@ def test_failed_staging_reports_failed_not_stuck(tmp_path, monkeypatch):
 
 def test_frames_and_stitch_guardrails(tmp_path, monkeypatch):
     client, studies = make_client(tmp_path, monkeypatch)
-    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     run_id = started.json()["run"]
     wait_for(client, run_id)
     posted = client.post(
@@ -180,7 +191,8 @@ def test_posting_frame_one_clears_stale_frames_from_a_previous_recording(tmp_pat
     shorter video. Posting frame 1 again is the recording-restart signal.
     """
     client, studies = make_client(tmp_path, monkeypatch)
-    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     run_id = started.json()["run"]
     wait_for(client, run_id)
     frames = studies / "tiny" / "studio" / "frames"
@@ -212,7 +224,7 @@ def test_posting_frame_one_clears_stale_frames_from_a_previous_recording(tmp_pat
 
 def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
     client, studies = make_client(tmp_path, monkeypatch)
-    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4})
+    client.get("/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9})
     posted = client.post(
         "/api/frames/study-tiny?frame=3",
         content=b"png bytes",
@@ -234,14 +246,17 @@ def test_frames_accept_a_study_slug_without_a_run(tmp_path, monkeypatch):
 def test_thickness_is_validated_and_reaches_the_bundle(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     ok = client.get("/api/studies/Tiny/bundle",
-                    params={"material": "concrete", "rings": 4, "thickness": 0.3})
+                    params={"material": "concrete", "pattern": "bonded-courses",
+                            "size": 0.9, "thickness": 0.3})
     assert ok.status_code == 200
     assert ok.json()["provenance"]["thickness"] == 0.3
     bad = client.get("/api/studies/Tiny/bundle",
-                     params={"material": "concrete", "rings": 4, "thickness": 0.9})
+                     params={"material": "concrete", "pattern": "bonded-courses",
+                             "size": 0.9, "thickness": 0.9})
     assert bad.status_code == 400
     run = client.post("/api/runs", json={
-        "export": "Tiny", "material": "concrete", "rings": 4, "thickness": 0.3})
+        "export": "Tiny", "material": "concrete", "pattern": "bonded-courses",
+        "size": 0.9, "thickness": 0.3})
     assert run.status_code == 202
     state = wait_for(client, run.json()["run"])
     assert state["state"] == "done", state["message"]
@@ -295,12 +310,13 @@ def test_reupload_with_changed_geometry_invalidates_bundle_and_staging_caches(tm
     a moved vertex; both caches must be gone, frames/recording must survive,
     and a fresh GET must show the new geometry."""
     client, studies = make_client(tmp_path, monkeypatch)
-    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     wait_for(client, started.json()["run"])
 
     studio_dir = studies / "tiny" / "studio"
-    bundle_cache = studio_dir / "bundle-concrete-r4-t200.json"
-    staging_cache = studio_dir / "staging-concrete-r4-t200.json"
+    bundle_cache = studio_dir / "bundle-concrete-bonded-courses-s900-t200.json"
+    staging_cache = studio_dir / "staging-concrete-bonded-courses-s900-t200.json"
     assert bundle_cache.is_file()
     assert staging_cache.is_file()
 
@@ -322,7 +338,7 @@ def test_reupload_with_changed_geometry_invalidates_bundle_and_staging_caches(tm
     assert (studio_dir / "recording.mp4").is_file()
 
     fresh = client.get(
-        "/api/studies/Tiny/bundle", params={"material": "concrete", "rings": 4}
+        "/api/studies/Tiny/bundle", params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9}
     )
     assert fresh.status_code == 200
     assert fresh.json()["analysis_mesh"]["vertices"][0][2] == 9.0
@@ -340,7 +356,8 @@ def test_upload_during_a_live_run_is_409(tmp_path, monkeypatch):
         return {"converged": True, "message": ""}
 
     client, _ = make_client(tmp_path, monkeypatch, runner=slow_runner)
-    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete", "rings": 4})
+    started = client.post("/api/runs", json={"export": "Tiny", "material": "concrete",
+                                    "pattern": "bonded-courses", "size": 0.9})
     assert started.status_code == 202
     run_id = started.json()["run"]
 
@@ -388,3 +405,33 @@ def test_columns_upload_validates_shape(tmp_path, monkeypatch):
                       content=b'{"nope": 1}').status_code == 400
     assert client.put("/api/uploads/columns/..%2Fx.json",
                       content=b"{}").status_code in (400, 404)
+
+
+def test_size_out_of_range_is_rejected_by_name(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    response = client.get(
+        "/api/studies/Tiny/bundle",
+        params={"material": "concrete", "pattern": "bonded-courses",
+                "size": 9.0, "thickness": 0.2},
+    )
+    assert response.status_code == 400
+    assert "0.3" in response.json()["detail"]
+
+
+def test_an_unknown_pattern_is_rejected_by_name(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    response = client.get(
+        "/api/studies/Tiny/bundle",
+        params={"material": "concrete", "pattern": "herringbone",
+                "size": 0.9, "thickness": 0.2},
+    )
+    assert response.status_code == 400
+    assert "bonded-courses" in response.json()["detail"]
+
+
+def test_studies_lists_patterns_and_their_defaults(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    payload = client.get("/api/studies").json()
+    assert "bonded-courses" in payload["patterns"]
+    assert payload["pattern_defaults"]["concrete-sprayed"] == "monolithic-bands"
+    assert "guastavino-herringbone" in payload["patterns_planned"]
