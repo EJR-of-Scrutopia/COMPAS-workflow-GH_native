@@ -193,16 +193,27 @@ def bridge_holes(outline: Sequence[int], holes, points) -> List[int]:
     of that edge's ends is visible. The reflex refinement matters for
     spiky imported outlines; the concentric bands this studio generates
     are answered by the first candidate every time.
+
+    Holes are taken rightmost first, and each is spliced into the ring the
+    previous ones were already bridged into, so a later hole casts against
+    a ring that includes those bridges. Two holes tied at the same maximum
+    x, or a third hole behind two bridges, can leave the ray with no edge
+    to take. _splice raises in that case rather than returning a corrupt
+    ring, and it is told how many bridges the ring already carries so its
+    message can say whose defect it is: with no bridges in the ring the
+    hole really is outside its outline, and with bridges in it the
+    bridging is as likely to be the limit as the outline is. The import
+    contract documents multi-hole cells, so this is reachable.
     """
 
     ring = list(outline)
     ordered = sorted(holes, key=lambda h: -max(points[i][0] for i in h))
-    for hole in ordered:
-        ring = _splice(ring, list(hole), points)
+    for bridged, hole in enumerate(ordered):
+        ring = _splice(ring, list(hole), points, bridged)
     return ring
 
 
-def _splice(ring: List[int], hole: List[int], points) -> List[int]:
+def _splice(ring: List[int], hole: List[int], points, bridged: int = 0) -> List[int]:
     start = max(range(len(hole)), key=lambda i: points[hole[i]][0])
     m = hole[start]
     mx, my = points[m]
@@ -221,6 +232,16 @@ def _splice(ring: List[int], hole: List[int], points) -> List[int]:
             best_x = crossing
             best_at = i if a[0] > b[0] else (i + 1) % len(ring)
     if best_at is None:
+        if bridged:
+            raise ValueError(
+                "a hole could not be bridged into an outline that already "
+                "carries {} bridge(s): the ray right from the hole's "
+                "rightmost point met no edge of that ring to join to. Two "
+                "holes reaching the same maximum x, or a third hole behind "
+                "two bridges, can leave no candidate edge. That is a limit "
+                "of this bridging, not necessarily a fault in the "
+                "outline".format(bridged)
+            )
         raise ValueError("a hole is not inside its outline")
 
     partner = points[ring[best_at]]
@@ -316,10 +337,26 @@ class Surface:
             for a, b, c in self._triangles(self.faces[index]):
                 weights = self._barycentric(x, y, a, b, c)
                 if weights is not None and min(w for _, w in weights) >= -1e-9:
-                    return self._sample(weights, False)
-        # Off the mesh, which happens where an outline sits exactly on the
-        # rim and a float puts it a nanometre outside. Clamp to the nearest
-        # face and count it, rather than dropping the point.
+                    return self._sample(weights, False, 0.0)
+        # Off the mesh. This is not a float's rounding: measured on the real
+        # Trial 2 export at the default 0.9 m, 137 cap points land here, all
+        # of them genuinely outside the render mesh, at 6e-14 m at the
+        # closest, 0.0246 m at the median and 0.0523 m at the worst, and all
+        # but one of them inside the two clusters at plus and minus 125.4
+        # degrees where the rim notch is. Fifty-two millimetres is ten times
+        # CHORD_TARGET, so a count on its own was never enough to read: see
+        # clamped_max_m and clamped_median_m alongside clamped_points in
+        # pieces.segment_pieces's report.
+        #
+        # The cause is upstream and deliberate. domain.radius_at takes the
+        # OUTERMOST ray crossing, so wherever the tolerated rim wobble makes
+        # the plan boundary multi-valued along a ray, an f = 1 outline point
+        # is placed on the far crossing, past the near one, and therefore
+        # past the real surface. That choice is what stops a ray grazing a
+        # corner from falling back inside the rim, and it is not changed
+        # here; what changes is that the cost is now stated in metres.
+        # Clamp to the nearest face and measure it, rather than dropping the
+        # point.
         best_distance = None
         for index, face in enumerate(self.faces):
             cx = sum(self.vertices[i][0] for i in face) / len(face)
@@ -332,7 +369,35 @@ class Surface:
         weights = self._barycentric(x, y, a, b, c) or [(a, 1.0)]
         clamped = [(index, min(1.0, max(0.0, weight))) for index, weight in weights]
         total = sum(weight for _, weight in clamped) or 1.0
-        return self._sample([(i, w / total) for i, w in clamped], True)
+        return self._sample(
+            [(i, w / total) for i, w in clamped], True, self._reach(x, y, best)
+        )
+
+    def _reach(self, x: float, y: float, face) -> float:
+        """How far, in plan and in metres, the clamp moved this point.
+
+        The plan distance from the point to the outline of the face it was
+        clamped onto. The fallback is only reached when no face's own
+        triangles hold the point, so this is a distance outward: it is the
+        size of the disagreement between where the cut asked for a point
+        and where the surface actually ends.
+        """
+
+        ring = [self.vertices[i] for i in face]
+        best = None
+        for i in range(len(ring)):
+            a, b = ring[i], ring[(i + 1) % len(ring)]
+            ex, ey = b[0] - a[0], b[1] - a[1]
+            length2 = ex * ex + ey * ey
+            if length2 < 1e-24:
+                near = a
+            else:
+                along = min(1.0, max(0.0, ((x - a[0]) * ex + (y - a[1]) * ey) / length2))
+                near = (a[0] + along * ex, a[1] + along * ey)
+            distance = math.hypot(x - near[0], y - near[1])
+            if best is None or distance < best:
+                best = distance
+        return best if best is not None else 0.0
 
     def height(self, x: float, y: float) -> Optional[float]:
         # Optional is the callback contract for Task 7's tessellation reader,
@@ -351,7 +416,7 @@ class Surface:
             (c, _area2(pa, pb, p) / total),
         ]
 
-    def _sample(self, weights, clamped: bool) -> Dict:
+    def _sample(self, weights, clamped: bool, clamp_m: float) -> Dict:
         z = sum(self.vertices[i][2] * w for i, w in weights)
         normal = [
             sum(self.normals[i][axis] * w for i, w in weights) for axis in range(3)
@@ -362,6 +427,9 @@ class Surface:
             "normal": [v / length for v in normal],
             "weights": weights,
             "clamped": clamped,
+            # Zero when the point was on the mesh, so a caller can sum or
+            # sort these without asking about clamped first.
+            "clamp_m": clamp_m,
         }
 
 

@@ -193,6 +193,7 @@ def _lift(surface: cutting.Surface, plan) -> Dict:
         "normal": found["normal"],
         "weights": found["weights"],
         "clamped": found["clamped"],
+        "clamp_m": found["clamp_m"],
     }
 
 
@@ -232,12 +233,16 @@ def _facet_chain(chain: Sequence[int], per_facet: int) -> List[List[int]]:
     planes.get with no signal that anything was wrong.
     """
 
-    assert len(chain) % per_facet == 0, (
-        "a subdivided ring of {} points is not a whole multiple of {} "
-        "points per facet; the round count is no longer global".format(
-            len(chain), per_facet
+    if len(chain) % per_facet:
+        # A raise, not an assert: python -O drops asserts, and this one
+        # guards exactly the silent failure the docstring above describes,
+        # which would then ship rather than stop.
+        raise ValueError(
+            "a subdivided ring of {} points is not a whole multiple of {} "
+            "points per facet; the round count is no longer global".format(
+                len(chain), per_facet
+            )
         )
-    )
     out = []
     for start in range(0, len(chain), per_facet):
         run = chain[start:start + per_facet]
@@ -425,7 +430,7 @@ def segment_pieces(
     # same number as before, just kept apart).
     residuals_by_corner = corner_residuals(tess, surface, planes, owners)
 
-    clamped = 0
+    clamp_reach: List[float] = []
     missing_planes = 0
     facet_counts: List[int] = []
     boundary_counts: List[int] = []
@@ -437,7 +442,9 @@ def segment_pieces(
         used = sorted({index for triangle in triangles for index in triangle})
         position = {index: i for i, index in enumerate(used)}
         lifted = {index: _lift(surface, points[index]) for index in used}
-        clamped += sum(1 for index in used if lifted[index]["clamped"])
+        clamp_reach.extend(
+            lifted[index]["clamp_m"] for index in used if lifted[index]["clamped"]
+        )
 
         mid = {index: list(lifted[index]["point"]) for index in used}
         normals = {index: list(lifted[index]["normal"]) for index in used}
@@ -533,10 +540,33 @@ def segment_pieces(
         "rounds": rounds,
         "edge_m": chosen["edge_m"],
         "limit": chosen["limit"],
-        "clamped_points": clamped,
+        # clamped_points counts the cap points that landed off the render
+        # mesh and were pulled back onto it (see cutting.Surface.lift).
+        # clamped_max_m and clamped_median_m say by how far, in metres,
+        # over exactly that population: a count with no magnitude cannot be
+        # read, because the same 137 points are either rounding noise or
+        # ten times the 5 mm chord target depending on a number the report
+        # did not carry. On the real Trial 2 export at 0.9 m they come out
+        # at 0.0523 and 0.0246, so it is the second of those.
+        "clamped_points": len(clamp_reach),
+        "clamped_max_m": max(clamp_reach) if clamp_reach else 0.0,
+        "clamped_median_m": _median(clamp_reach),
         "missing_planes": missing_planes,
     }
     return out, report
+
+
+def _median(values: Sequence[float]) -> float:
+    """The plain median, 0.0 over nothing. Averaged across the two middles
+    on an even count, the same rule residual_stats uses."""
+
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return 0.0
+    if n % 2:
+        return ordered[n // 2]
+    return 0.5 * (ordered[n // 2 - 1] + ordered[n // 2])
 
 
 def _spread(

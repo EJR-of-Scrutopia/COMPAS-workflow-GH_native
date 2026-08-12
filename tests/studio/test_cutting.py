@@ -144,6 +144,36 @@ def test_a_point_off_the_surface_is_clamped_and_counted():
     assert sum(weight for _, weight in lifted["weights"]) == pytest.approx(1.0)
 
 
+def test_a_clamp_says_how_far_it_reached_in_metres():
+    """A count of clamped points cannot be read without a magnitude.
+
+    On the real Trial 2 export at 0.9 m the clamp reaches 52 mm at its
+    worst, ten times CHORD_TARGET, because domain.radius_at deliberately
+    takes the outermost rim crossing where the tolerated wobble makes the
+    boundary multi-valued. Half a metre here, on a unit square, is the same
+    number measured on geometry small enough to check by hand.
+    """
+
+    c = studio()
+    vertices = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
+    surface = c.Surface(vertices, [[0, 1, 2, 3]])
+
+    off = surface.lift(1.5, 0.5)
+    assert off["clamped"] is True
+    assert off["clamp_m"] == pytest.approx(0.5)
+
+    # Diagonally off the corner: 3-4-5, so 0.5 m out.
+    corner = surface.lift(1.3, 1.4)
+    assert corner["clamped"] is True
+    assert corner["clamp_m"] == pytest.approx(0.5)
+
+    # A point on the mesh reports zero rather than nothing, so a caller can
+    # sum or sort clamp_m without asking about clamped first.
+    on = surface.lift(0.5, 0.5)
+    assert on["clamped"] is False
+    assert on["clamp_m"] == 0.0
+
+
 def test_ear_clip_takes_the_largest_ear_and_avoids_slivers():
     c = studio()
     # The largest ear selection rule avoids slivers. When these caps are

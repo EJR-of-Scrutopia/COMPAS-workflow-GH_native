@@ -338,3 +338,46 @@ def test_a_t_junction_produces_no_duplicate_cap_points():
     for piece in made:
         positions = [tuple(point) for point in piece["mid"]]
         assert len(positions) == len(set(positions)), piece["key"]
+
+
+def test_a_clamp_free_cut_reports_no_magnitude_at_all():
+    _, report = build()
+    # The four cell fixture covers exactly the surface it sits on, so
+    # nothing is off the mesh. A zero count has to come with zero
+    # magnitudes, not with a leftover number from somewhere.
+    assert report["clamped_points"] == 0
+    assert report["clamped_max_m"] == 0.0
+    assert report["clamped_median_m"] == 0.0
+
+
+def test_clamped_points_are_disclosed_in_metres_not_only_counted():
+    """A count with no magnitude cannot be read.
+
+    On the real Trial 2 export at the default 0.9 m the clamp reaches
+    0.0523 m at its worst and 0.0246 m at the median across 137 points,
+    which is ten times cutting.CHORD_TARGET rather than the float's
+    rounding the code once claimed. Here the same disclosure is checked on
+    a cell that deliberately overhangs its own surface by a known 0.05 m,
+    the same order as the real one and small enough to verify by hand.
+    """
+
+    p = studio("pieces")
+    t = studio("tessellation")
+    surface, _, _ = dome_surface()          # a dome over [0, 2] squared
+    overhang = 0.05
+    tess = t.build_tessellation(
+        [{
+            "key": "over", "course": 0,
+            "outline": [[0.0, 0.0], [2.0 + overhang, 0.0],
+                        [2.0 + overhang, 2.0], [0.0, 2.0]],
+            "holes": [],
+        }],
+        "test", "generated", 1.0, 1,
+    )
+    _, report = p.segment_pieces(tess, surface, [])
+
+    assert report["clamped_points"] > 0
+    # The far edge sits exactly overhang metres past the mesh, and nothing
+    # on this cell is further out than that.
+    assert report["clamped_max_m"] == pytest.approx(overhang)
+    assert 0.0 < report["clamped_median_m"] <= report["clamped_max_m"]
