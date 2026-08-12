@@ -103,14 +103,17 @@ def plan_domain(
 
     star_shaped requires the rim to wind exactly once about the axis (a
     real second loop, a branch, or a numerically broken traversal is
-    refused outright) and the total backward turn -- the sum of every
-    angular step that runs the wrong way, in magnitude -- to stay under
-    WOBBLE_TOLERANCE. backward_turn and backward_steps are reported
-    whether or not the plan is accepted, since the wobble is a measured
-    property of the geometry either way; failure is populated only when
-    refused, and its message-worthy fields (vertex, theta, backward_steps)
-    point at the single deepest backward step, the same "where to look"
-    answer whether the refusal was on winding or on wobble.
+    refused outright) and the total backward turn -- the sum, in
+    magnitude, of every angular step that runs against the direction the
+    rim is being walked -- to stay under WOBBLE_TOLERANCE. The same mesh
+    wound the other way measures the same wobble, since the direction of
+    travel is read from the geometry rather than assumed anticlockwise.
+    backward_turn and backward_steps are reported whether or not the plan
+    is accepted, since the wobble is a measured property of the geometry
+    either way; failure is populated only when refused, and its
+    message-worthy fields (vertex, theta, backward_steps) point at the
+    single deepest backward step, the same "where to look" answer whether
+    the refusal was on winding or on wobble.
     """
 
     ring = boundary_ring(faces)
@@ -132,16 +135,29 @@ def plan_domain(
         steps.append(step)
         turn += step
 
-    backward_indices = [i for i, s in enumerate(steps) if s < -STEP_EPSILON]
-    backward_steps = len(backward_indices)
-    backward_turn = -sum(steps[i] for i in backward_indices)  # a magnitude
-
     winds_once = abs(abs(turn) - TWO_PI) < 1e-6
+
+    # Backward means against the direction the rim is being walked, not
+    # numerically negative. boundary_ring walks undirected adjacency, so
+    # which way round it goes is inherited from the mesh rather than
+    # canonicalised: a clockwise wound export is walked clockwise, every
+    # one of its steps is negative, and an absolute reading would call the
+    # whole rim backward and refuse perfectly good geometry at a full 360
+    # degrees of "wobble". winds_once has already pinned turn to within
+    # 1e-6 of plus or minus TWO_PI wherever this matters, so its sign
+    # names that direction unambiguously.
+    sense = -1.0 if turn < 0.0 else 1.0
+    walked = [sense * step for step in steps]
+
+    backward_indices = [i for i, s in enumerate(walked) if s < -STEP_EPSILON]
+    backward_steps = len(backward_indices)
+    backward_turn = -sum(walked[i] for i in backward_indices)  # a magnitude
+
     star = winds_once and backward_turn < WOBBLE_TOLERANCE
     failure = None
     if not star:
         worst = (
-            min(backward_indices, key=lambda i: steps[i])
+            min(backward_indices, key=lambda i: walked[i])
             if backward_indices else 0
         )
         failure = {

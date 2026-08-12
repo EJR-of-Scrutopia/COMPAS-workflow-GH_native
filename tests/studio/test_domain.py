@@ -24,8 +24,21 @@ def studio():
     return domain
 
 
-def grid(side, drop=()):
-    """side by side unit quads, with the listed (i, j) faces left out."""
+def grid(side, drop=(), clockwise=False):
+    """side by side unit quads, with the listed (i, j) faces left out.
+
+    clockwise reverses each face's vertex order, so the same vertices and
+    the same faces are wound the other way round: identical geometry, the
+    normals pointing the other way, which is an ordinary authoring choice
+    rather than a broken export. The reversal is anchored at the face's
+    first vertex on purpose. Reversing the whole list gives the same cycle
+    (a rotation of this one, so the same winding), but boundary_ring walks
+    undirected adjacency and picks its direction from the order it happens
+    to discover boundary edges in, and only this form turns that walk
+    around. Which way the rim is walked is therefore not a function of
+    winding alone, which is exactly why the wobble measure has to be read
+    relative to the direction of travel.
+    """
     vertices = [
         [float(i), float(j), 0.0]
         for j in range(side + 1) for i in range(side + 1)
@@ -36,7 +49,10 @@ def grid(side, drop=()):
             if (i, j) in drop:
                 continue
             n = side + 1
-            faces.append([j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i])
+            face = [j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i]
+            if clockwise:
+                face = [face[0]] + list(reversed(face[1:]))
+            faces.append(face)
     centroids = [
         [sum(vertices[k][axis] for k in face) / 4.0 for axis in range(3)]
         for face in faces
@@ -92,6 +108,27 @@ def test_a_bay_is_reported_as_not_star_shaped():
     assert domain["backward_turn"] > d.WOBBLE_TOLERANCE
 
 
+def test_a_bay_wound_clockwise_is_still_refused():
+    """The tolerance must not become a way of accepting a real bay.
+
+    The same 3 by 3 bay, wound the other way. Reading "backward" as
+    numerically negative measured this at 403.1142 degrees, a full turn of
+    the rim added to the bay's own 43.1: refused, but for the wrong
+    reason, and by an amount that says nothing about the geometry. Read
+    against the direction of travel it measures the bay itself, the same
+    figure test_a_bay_is_reported_as_not_star_shaped pins for the
+    anticlockwise winding, and refuses on that.
+    """
+    d = studio()
+    vertices, faces, centroids = grid(3, drop={(2, 1)}, clockwise=True)
+    domain = d.plan_domain(vertices, faces, centroids)
+    assert domain["star_shaped"] is False
+    assert domain["failure"]["backward_steps"] >= 1
+    assert domain["failure"]["vertex"] in d.boundary_ring(faces)
+    assert domain["backward_turn"] == pytest.approx(0.7524840212747467)
+    assert domain["backward_turn"] > d.WOBBLE_TOLERANCE
+
+
 def test_a_plain_grid_is_star_shaped():
     d = studio()
     vertices, faces, centroids = grid(3)
@@ -100,6 +137,54 @@ def test_a_plain_grid_is_star_shaped():
     assert domain["failure"] is None
     assert domain["backward_turn"] == 0.0
     assert domain["backward_steps"] == 0
+
+
+def test_a_plain_grid_wound_clockwise_is_star_shaped_too():
+    """Reversed face normals are an authoring choice, not a bad plan.
+
+    Identical geometry to test_a_plain_grid_is_star_shaped, wound the
+    other way, so its rim is walked clockwise and every angular step comes
+    out negative. Measuring backward steps in absolute terms called the
+    whole rim backward and refused this plan at 360 degrees of wobble over
+    12 steps, on a square with no wobble in it at all.
+    """
+    d = studio()
+    vertices, faces, centroids = grid(3, clockwise=True)
+    domain = d.plan_domain(vertices, faces, centroids)
+
+    # The rim really is walked the other way round, not merely authored
+    # differently: same starting vertex, the rest of the loop reversed.
+    anticlockwise = d.plan_domain(*grid(3))["ring"]
+    assert domain["ring"] == [anticlockwise[0]] + list(reversed(anticlockwise[1:]))
+
+    assert domain["star_shaped"] is True
+    assert domain["failure"] is None
+    assert domain["backward_turn"] == 0.0
+    assert domain["backward_steps"] == 0
+
+
+def test_a_plan_that_does_not_wind_once_is_refused_on_winding(monkeypatch):
+    """The winding check stands on its own, with no help from the wobble.
+
+    An L, three quads along the bottom and two up the left, whose mean
+    face centroid at (1.1, 1.1) lands in the notch rather than on the
+    material. Its rim sweeps out and back rather than round, so it winds
+    zero times about that axis and no polar pattern can be drawn on it,
+    however the wobble is read. WOBBLE_TOLERANCE is lifted past anything
+    the rim could measure so that the winding condition is the only thing
+    left that can refuse this plan: merge the two conditions into one, or
+    drop the winding half, and this test fails.
+    """
+    d = studio()
+    monkeypatch.setattr(d, "WOBBLE_TOLERANCE", 100.0)
+    vertices, faces, centroids = grid(3, drop={(1, 1), (2, 1), (1, 2), (2, 2)})
+    domain = d.plan_domain(vertices, faces, centroids)
+
+    assert domain["axis"] == pytest.approx([1.1, 1.1])
+    assert domain["backward_turn"] < d.WOBBLE_TOLERANCE
+    assert domain["star_shaped"] is False
+    assert domain["failure"]["turn"] == pytest.approx(0.0, abs=1e-9)
+    assert domain["failure"]["vertex"] in d.boundary_ring(faces)
 
 
 def test_a_small_wobble_is_tolerated_and_still_cuts_cleanly():
