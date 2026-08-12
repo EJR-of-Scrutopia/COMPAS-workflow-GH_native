@@ -209,3 +209,19 @@ def test_identical_outlines_in_different_order_are_rejected_by_name():
         t.from_document(document(cells), flat)
     message = str(error.value)
     assert "square1" in message and "square2" in message
+    assert "identical outlines" in message
+
+
+def test_cells_with_same_corners_in_different_order_are_rejected_by_name():
+    t = studio()
+    cells = [
+        {"key": "a", "course": 0,
+         "outline": [[0, 0], [4, 0], [0, 4], [1, 1]]},
+        {"key": "b", "course": 0,
+         "outline": [[0, 0], [4, 0], [1, 1], [0, 4]]},
+    ]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    message = str(error.value)
+    assert "a" in message and "b" in message
+    assert "connect the same corners in different orders" in message

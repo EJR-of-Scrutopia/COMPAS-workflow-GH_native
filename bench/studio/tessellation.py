@@ -726,17 +726,32 @@ def from_document(document: Dict, surface_height) -> Dict:
     return tess
 
 
+def _normalize_outline(outline: List[int]) -> Tuple[int, ...]:
+    """Normalize an outline to a canonical cyclic form.
+
+    Generates all cyclic rotations and their reversal, and returns the
+    lexicographically smallest. Two outlines that define the same polygon
+    (regardless of starting vertex or winding) normalize to the same list.
+    """
+
+    rotations = [tuple(outline[i:] + outline[:i]) for i in range(len(outline))]
+    reversed_outline = list(reversed(outline))
+    reversed_rotations = [tuple(reversed_outline[i:] + reversed_outline[:i]) for i in range(len(reversed_outline))]
+    return min(rotations + reversed_rotations)
+
+
 def _reject_overlaps(tess: Dict) -> None:
     """Two cells covering the same ground is an authoring mistake, not a cut.
 
     Two cells overlap if: an edge of A properly crosses an edge of B, a
     vertex of A lies strictly inside cell B, a vertex of B lies strictly
-    inside cell A, or their outlines are identical. Strictly inside means
-    inside and not on the boundary. This catches proper crossings and any
-    vertex strictly inside another cell. It does not catch a cell wholly
+    inside cell A, their outlines are identical, or they have the same
+    corners connected in different orders. Strictly inside means inside
+    and not on the boundary. This catches proper crossings and any vertex
+    strictly inside another cell. It does not catch a cell wholly
     contained in another with every vertex on its boundary, which is caught
-    only by the identical outline rule. This is a check, not a proof of
-    disjointness.
+    only if the outlines are identical or share corners with different
+    connectivity. This is a check, not a proof of disjointness.
     """
 
     points = tess["points"]
@@ -760,10 +775,18 @@ def _reject_overlaps(tess: Dict) -> None:
             outline_b = cells[other]["outline"]
 
             if len(outline_a) == len(outline_b) and set(outline_a) == set(outline_b):
-                raise ValueError(
-                    "cell {!r} and cell {!r} have identical outlines; each cell "
-                    "must be unique".format(cell["key"], cells[other]["key"])
-                )
+                if _normalize_outline(outline_a) == _normalize_outline(outline_b):
+                    raise ValueError(
+                        "cell {!r} and cell {!r} have identical outlines; each cell "
+                        "must be unique".format(cell["key"], cells[other]["key"])
+                    )
+                else:
+                    raise ValueError(
+                        "cell {!r} and cell {!r} connect the same corners in "
+                        "different orders; cells must cover the surface once".format(
+                            cell["key"], cells[other]["key"]
+                        )
+                    )
 
             for i in range(len(outline_a)):
                 a = points[outline_a[i]]
