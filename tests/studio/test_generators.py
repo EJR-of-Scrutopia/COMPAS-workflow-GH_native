@@ -52,32 +52,72 @@ def test_a_bigger_target_size_makes_fewer_pieces():
     assert len(small["cells"]) > len(large["cells"])
 
 
-def test_courses_stagger_by_half_a_piece():
+def test_bonded_offset_rule_is_exact():
     g = studio("generators")
     tess = g.generate("bonded-courses", disc_domain(), 1.0)
     points = tess["points"]
+
+    # Group cells by course
     by_course = {}
     for cell in tess["cells"]:
         by_course.setdefault(cell["course"], []).append(cell)
-    first = sorted(
-        math.atan2(*reversed(_centre(by_course[0][i], points)))
-        for i in range(len(by_course[0]))
-    )
-    second = sorted(
-        math.atan2(*reversed(_centre(by_course[1][i], points)))
-        for i in range(len(by_course[1]))
-    )
-    # No piece centre in course 1 sits on a piece centre in course 0.
-    for angle in second:
-        assert min(abs(angle - other) for other in first) > 1e-3
+
+    TWO_PI = 2.0 * math.pi
+
+    # For each course, check that the first piece's start angle equals the expected offset
+    for course in sorted(by_course.keys()):
+        cells_in_course = sorted(by_course[course], key=lambda c: int(c["key"].split("p")[1]))
+        count = len(cells_in_course)
+
+        # Get the first piece and its first point (start of outer arc)
+        first_cell = cells_in_course[0]
+        outline = first_cell["outline"]
+        first_point = points[outline[0]]
+
+        # Compute the angle of the first point
+        angle = math.atan2(first_point[1], first_point[0])
+
+        # Expected offset: (c % 2) * pi / count
+        expected = (course % 2) * math.pi / count
+
+        # Handle wrap-around: angles are equivalent if they differ by 2*pi
+        angle_diff = abs(angle - expected)
+        angle_diff = min(angle_diff, TWO_PI - angle_diff)
+
+        assert angle_diff < 1e-12, \
+            f"Course {course}: first piece at angle {angle}, expected {expected}"
 
 
-def _centre(cell, points):
-    ring = cell["outline"]
-    return [
-        sum(points[i][0] for i in ring) / len(ring),
-        sum(points[i][1] for i in ring) / len(ring),
-    ]
+def test_adjacent_courses_have_different_divisions():
+    g = studio("generators")
+    tess = g.generate("bonded-courses", disc_domain(), 1.0)
+
+    # Group cells by course
+    by_course = {}
+    for cell in tess["cells"]:
+        by_course.setdefault(cell["course"], []).append(cell)
+
+    TWO_PI = 2.0 * math.pi
+
+    # For each adjacent pair of courses, verify they have different divisions
+    courses_list = sorted(by_course.keys())
+    for i in range(len(courses_list) - 1):
+        c1 = courses_list[i]
+        c2 = courses_list[i + 1]
+
+        count1 = len(by_course[c1])
+        count2 = len(by_course[c2])
+
+        offset1 = (c1 % 2) * math.pi / count1
+        offset2 = (c2 % 2) * math.pi / count2
+
+        # Two courses have identical divisions if both count and offset match
+        same_count = (count1 == count2)
+        same_offset = abs((offset1 - offset2) % TWO_PI) < 1e-12
+
+        # Adjacent courses should not both have identical divisions
+        assert not (same_count and same_offset), \
+            f"Courses {c1} and {c2} have identical divisions: both have {count1} pieces"
 
 
 def test_bonded_courses_conform():

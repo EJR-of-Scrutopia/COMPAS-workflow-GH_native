@@ -7,6 +7,14 @@ working before those arrive. That is why the interface matters more than
 the two patterns behind it, and why an imported tessellation is a
 generator like any other (see tessellation.read_tessellation).
 
+Bonded courses apply an alternating half pitch offset to shift every other
+course, which avoids systematic alignment of head joints. However, this
+does not prevent all alignments: where adjacent courses' piece counts share
+factors, individual joints can line up. On a disc radius 5 at target size
+1.0, courses have 28, 22, 16, 9 and 3 pieces respectively, and a head
+joint falls at 90 degrees in courses 0, 1 and 2 alike. A sizing rule that
+guarantees no alignment is not a wave 6a question.
+
 Stdlib only: the bundle path imports this.
 """
 
@@ -77,13 +85,15 @@ def _circumference(domain: Dict, f: float) -> float:
     return total
 
 
-def _arc(domain: Dict, f: float, start: float, end: float) -> List[List[float]]:
+def _arc(domain: Dict, f: float, start: float, end: float, extra_angles=None) -> List[List[float]]:
     """Outline points from start to end at radius f, ends included.
 
     At the rim the arc follows the mesh's own boundary corners, so the
     silhouette is the real silhouette. Inside, a course boundary is a
     straight chord between its two ends, which is what a cut bed joint
     actually is, and what keeps a piece a clean four sided shape.
+
+    extra_angles: optional list of angles to include if they fall strictly inside the span
     """
 
     points = [domain_module.plan_point(domain, f, start)]
@@ -92,8 +102,24 @@ def _arc(domain: Dict, f: float, start: float, end: float) -> List[List[float]]:
             for turn in (theta, theta + TWO_PI, theta - TWO_PI):
                 if start + 1e-12 < turn < end - 1e-12:
                     points.append(domain_module.plan_point(domain, f, turn))
+
+    if extra_angles:
+        for theta in extra_angles:
+            for turn in (theta, theta + TWO_PI, theta - TWO_PI):
+                if start + 1e-12 < turn < end - 1e-12:
+                    points.append(domain_module.plan_point(domain, f, turn))
+
     points.append(domain_module.plan_point(domain, f, end))
     return points
+
+
+def _divisions(domain: Dict, size: float, courses: int, course: int) -> tuple:
+    """One course's piece count, its stagger offset, and its head joint angles."""
+    mid_f = 1.0 - (course + 0.5) / courses
+    count = max(1, int(math.floor(_circumference(domain, mid_f) / size + 0.5)))
+    offset = (course % 2) * math.pi / count
+    angles = [offset + TWO_PI * k / count for k in range(count)]
+    return count, offset, angles
 
 
 def _ring(domain: Dict, f: float) -> List[List[float]]:
@@ -115,21 +141,41 @@ def bonded_courses(domain: Dict, size: float) -> List[Dict]:
     """Staggered courses, rim to crown, at the target piece size."""
 
     courses = _course_count(domain, size)
+
+    # Calculate divisions for each course
+    all_divisions = []
+    for course in range(courses):
+        count, offset, angles = _divisions(domain, size, courses, course)
+        all_divisions.append((count, offset, angles))
+
+    # Build shared angles for each boundary level (union of adjacent courses)
+    shared = {}
+    for k in range(courses + 1):
+        angles_set = set()
+        if k >= 1:
+            # Inner boundary of course k-1
+            angles_set.update(all_divisions[k-1][2])
+        if k < courses:
+            # Outer boundary of course k
+            angles_set.update(all_divisions[k][2])
+        shared[k] = sorted(list(angles_set))
+
     cells: List[Dict] = []
     for course in range(courses):
         outer_f = 1.0 - course / courses
         inner_f = 1.0 - (course + 1) / courses
-        mid_f = 1.0 - (course + 0.5) / courses
-        count = max(1, int(math.floor(_circumference(domain, mid_f) / size + 0.5)))
-        offset = (course % 2) * math.pi / count
+        count, offset, angles = all_divisions[course]
+
         for k in range(count):
             start = offset + TWO_PI * k / count
             end = offset + TWO_PI * (k + 1) / count
-            outline = _arc(domain, outer_f, start, end)
+
+            outline = _arc(domain, outer_f, start, end, shared[course])
             if inner_f > 1e-12:
-                outline += list(reversed(_arc(domain, inner_f, start, end)))
+                outline += list(reversed(_arc(domain, inner_f, start, end, shared[course + 1])))
             else:
                 outline.append([domain["axis"][0], domain["axis"][1]])
+
             cells.append({
                 "key": "c{}p{}".format(course, k),
                 "course": course,
