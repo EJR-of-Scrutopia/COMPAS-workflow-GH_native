@@ -132,6 +132,18 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         export = body.get("export", "")
         material = body.get("material", "")
         pattern = body.get("pattern", "")
+        # Coerced BEFORE _validate, so a value float() cannot read raised
+        # out of the coercion itself and answered 500: size "abc" and a
+        # null thickness both did, while a MISSING size correctly gave 400
+        # through the range check. A body the caller can fix is a 400, and
+        # the message says which field it is.
+        for field, default in (("size", 0.0), ("thickness", 0.2)):
+            try:
+                float(body.get(field, default))
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    400, "{} must be a number, not {!r}".format(
+                        field, body.get(field)))
         size = float(body.get("size", 0.0))
         thickness = float(body.get("thickness", 0.2))
         _validate(export, material, pattern, size, thickness)
@@ -145,28 +157,45 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 "id": run_id, "export": export, "slug": slug,
                 "material": material, "pattern": pattern, "size": size,
                 "thickness": thickness,
-                "state": "queued", "stage": 0, "of": 0, "message": "",
+                # "of" stays 0 until the cut is known: the number of stages
+                # is the number of courses the cut produced, so nothing can
+                # state it up front the way the old "rings" request
+                # parameter could. Cutting a real export is the slow part,
+                # and a reader left with a bare "stage 0/0" for all of it
+                # cannot tell work from a hang. "phase" is the honest
+                # answer while the count is still unknown; the viewer half
+                # of this belongs to another dispatch.
+                "state": "queued", "stage": 0, "of": 0, "phase": "queued",
+                "message": "",
             }
 
         def work():
             run = RUNS[run_id]
             try:
                 run["state"] = "running"
-                run["message"] = "fea + cra per stage"
+                run["phase"] = "cutting"
+                run["message"] = "cutting the tessellation"
                 pairs = geometry.available_exports(bundle.UPLOAD_DIR)
 
                 def on_stage(stage, of):
                     run["stage"], run["of"] = stage, of
+                    run["phase"] = "staging"
+                    run["message"] = "fea + cra per stage"
 
                 staging.run_staging(
                     pairs[export], material, pattern, size,
                     bundle.staging_path(slug, material, pattern, size, thickness),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
                 )
+                run["phase"] = "bundling"
+                run["message"] = "assembling the bundle"
                 bundle.build_bundle(export, material, pattern, size, thickness)
                 run["state"] = "done"
+                run["phase"] = "done"
+                run["message"] = ""
             except Exception as error:
                 run["state"] = "failed"
+                run["phase"] = "failed"
                 run["message"] = "{}: {}".format(type(error).__name__, error)
 
         threading.Thread(target=work, daemon=True).start()
@@ -179,6 +208,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             raise HTTPException(404, "no run {}".format(run_id))
         return {
             "state": run["state"], "stage": run["stage"], "of": run["of"],
+            # phase says what is happening while "of" is still 0, which is
+            # the whole duration of the cut.
+            "phase": run.get("phase", ""),
             "message": run["message"],
             "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}".format(
                 urllib.parse.quote(run["export"]), run["material"],
@@ -230,7 +262,19 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         _invalidate_studio_cache(slug)
         other_kind = "compas" if kind == "contract" else "contract"
         other = directory / "{}-{}.json".format(name, other_kind)
-        return {"stored": filename, "pair_complete": other.is_file()}
+        # An authored tessellation sidecar survives a re-upload and keeps
+        # winning over the generated cut, so a pattern authored against the
+        # PREVIOUS geometry silently stays in force against the new one. It
+        # is not deleted here (it is the author's file, and re-uploading a
+        # contract is not a request to throw their pattern away) but it is
+        # named in the response, so a re-upload that quietly keeps using an
+        # old cut is at least visible from the route that caused it.
+        sidecar = bundle.tessellation_sidecar(name)
+        return {
+            "stored": filename,
+            "pair_complete": other.is_file(),
+            "authored_tessellation": sidecar.name if sidecar.is_file() else None,
+        }
 
     @app.put("/api/uploads/columns/{filename}")
     async def upload_columns(filename: str, request: Request):

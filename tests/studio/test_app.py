@@ -575,3 +575,140 @@ def test_studies_lists_patterns_and_their_defaults(tmp_path, monkeypatch):
     assert "bonded-courses" in payload["patterns"]
     assert payload["pattern_defaults"]["concrete-sprayed"] == "monolithic-bands"
     assert "guastavino-herringbone" in payload["patterns_planned"]
+
+
+def test_a_malformed_authored_tessellation_is_a_400_naming_the_cell(
+    tmp_path, monkeypatch
+):
+    """The 400 contract must hold for a wrong container type too.
+
+    from_document validated values by name but never the shape of the JSON
+    it was handed, so a wrong container escaped as a bare AttributeError
+    or TypeError. get_bundle catches only ValueError, and rightly so, so
+    each of these answered 500 with no detail body: a Grasshopper author
+    got neither the cell key nor which file to open, on the one route this
+    whole feature is built around. The bad-units case is the control: that
+    contract has always been kept.
+    """
+    client, _ = make_client(tmp_path, monkeypatch)
+    upload = tmp_path / "upload"
+    (upload / "Bad-compas.json").write_text("{}", encoding="utf-8")
+    base = {
+        "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+        "pattern": "authored",
+    }
+    square = [[0, 0], [2, 0], [2, 2], [0, 2]]
+    cases = [
+        ("bad units, the control",
+         dict(base, units="mm", cells=[{"key": "a", "course": 0,
+                                        "outline": square}]), "mm"),
+        ("a bare string among the cells", dict(base, cells=["oops"]), "cell 0"),
+        ("a non-list outline",
+         dict(base, cells=[{"key": "a", "course": 0, "outline": 7}]), "a"),
+        ("non-list holes",
+         dict(base, cells=[{"key": "a", "course": 0, "outline": square,
+                            "holes": 5}]), "a"),
+        ("a negative course",
+         dict(base, cells=[{"key": "sunk", "course": -1,
+                            "outline": square}]), "sunk"),
+    ]
+    for label, tess, expected in cases:
+        contract = tiny_contract()
+        contract["tessellation"] = tess
+        (upload / "Bad-contract.json").write_text(
+            json.dumps(contract), encoding="utf-8"
+        )
+        for stale in (tmp_path / "studies").glob("bad/studio/*.json"):
+            stale.unlink()
+        response = client.get(
+            "/api/studies/Bad/bundle",
+            params={"material": "concrete", "pattern": "bonded-courses",
+                    "size": 0.9},
+        )
+        assert response.status_code == 400, "{}: got {} {!r}".format(
+            label, response.status_code, response.text[:200])
+        assert expected in response.json()["detail"], "{}: {}".format(
+            label, response.json()["detail"])
+
+
+def test_a_non_numeric_size_or_thickness_is_a_400_not_a_500(tmp_path, monkeypatch):
+    """POST /api/runs coerced with float() before _validate ever ran.
+
+    A missing size correctly gave 400 (float(0.0) then the range check),
+    but a size the client typed as text and a null thickness both raised
+    out of the coercion itself and answered 500. The body is a request
+    the user can fix, so it is a 400 that says which field.
+    """
+    client, _ = make_client(tmp_path, monkeypatch)
+    for body, expected in (
+        ({"export": "Tiny", "material": "concrete",
+          "pattern": "bonded-courses", "size": "abc"}, "size"),
+        ({"export": "Tiny", "material": "concrete",
+          "pattern": "bonded-courses", "size": 0.9, "thickness": None},
+         "thickness"),
+    ):
+        response = client.post("/api/runs", json=body)
+        assert response.status_code == 400, "{} gave {} {!r}".format(
+            body, response.status_code, response.text[:200])
+        assert expected in response.json()["detail"]
+    # The range check still owns a number that is merely out of bounds.
+    out_of_range = client.post("/api/runs", json={
+        "export": "Tiny", "material": "concrete",
+        "pattern": "bonded-courses", "size": 99.0})
+    assert out_of_range.status_code == 400
+    assert "between" in out_of_range.json()["detail"]
+
+
+def test_a_run_reports_the_stage_count_and_says_what_it_is_doing(
+    tmp_path, monkeypatch
+):
+    """run["of"] is 0 until the cut is known, which is the slow part.
+
+    The count of stages comes from the cut, so it cannot be known when the
+    run is created; what the server can do is say which phase it is in
+    rather than leaving the reader with a bare "0/0". The run carries a
+    phase from the moment it starts, and "of" is filled in the moment the
+    first stage begins.
+    """
+    client, _ = make_client(tmp_path, monkeypatch)
+    started = client.post("/api/runs", json={
+        "export": "Tiny", "material": "concrete",
+        "pattern": "bonded-courses", "size": 0.9})
+    run_id = started.json()["run"]
+    state = wait_for(client, run_id)
+    assert state["state"] == "done", state
+    assert state["of"] >= 1, "the stage count must be filled in once known"
+    assert state["stage"] == state["of"]
+    assert state["phase"] == "done"
+
+
+def test_a_reupload_reports_the_authored_sidecar_that_will_keep_winning(
+    tmp_path, monkeypatch
+):
+    """A sidecar survives a re-upload and keeps overriding the new cut.
+
+    _invalidate_studio_cache drops bundle-*.json and staging-*.json, so a
+    re-upload does force a re-cut, but the re-cut still reads the sidecar
+    authored for the PREVIOUS geometry and quietly wins with it. Deleting
+    the author's file here would be wrong; going silent about it is what
+    was wrong. The route names it.
+    """
+    client, _ = make_client(tmp_path, monkeypatch)
+    import bundle
+
+    plain = client.put(
+        "/api/uploads/exports/Tiny/contract",
+        content=json.dumps(tiny_contract()).encode(),
+    )
+    assert plain.status_code == 200
+    assert plain.json()["authored_tessellation"] is None
+
+    bundle.tessellation_sidecar("Tiny").write_text(
+        json.dumps({"schema": "bench.tessellation/1"}), encoding="utf-8"
+    )
+    again = client.put(
+        "/api/uploads/exports/Tiny/contract",
+        content=json.dumps(tiny_contract()).encode(),
+    )
+    assert again.status_code == 200
+    assert again.json()["authored_tessellation"] == "Tiny-tessellation.json"
