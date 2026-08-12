@@ -17,7 +17,9 @@ Stdlib only: the bundle path imports this.
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import spatial
@@ -518,3 +520,170 @@ def _bucket_size(tess: Dict) -> float:
         1e-6,
     )
     return max(spread / 32.0, 1e-6)
+
+
+SCHEMA = "bench.tessellation/1"
+
+
+def read_tessellation(contract, sidecar_path) -> Optional[Dict]:
+    """The authored tessellation for a study, if there is one.
+
+    The contract wins over the sidecar, because the sidecar is the route
+    that exists before the Grasshopper component does.
+    """
+
+    found = (contract or {}).get("tessellation")
+    if isinstance(found, dict):
+        return found
+    path = Path(sidecar_path)
+    if path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return None
+
+
+def _segments_cross(a, b, c, d) -> bool:
+    def side(p, q, r):
+        value = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+        if abs(value) < 1e-15:
+            return 0
+        return 1 if value > 0 else -1
+
+    return (
+        side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0
+    )
+
+
+def _is_simple(ring) -> bool:
+    count = len(ring)
+    for i in range(count):
+        for j in range(i + 1, count):
+            if j == i or (j + 1) % count == i or (i + 1) % count == j:
+                continue
+            if _segments_cross(
+                ring[i], ring[(i + 1) % count], ring[j], ring[(j + 1) % count]
+            ):
+                return False
+    return True
+
+
+def from_document(document: Dict, surface_height) -> Dict:
+    """Validate an authored tessellation and build the cut from it.
+
+    Every rule is enforced and every rejection names its cell. A pattern
+    is authored in Grasshopper and fixed there, so "cell b7 overlaps cell
+    b8" is the whole difference between a fixable mistake and a mystery.
+    """
+
+    schema = document.get("schema")
+    if schema != SCHEMA:
+        raise ValueError(
+            "tessellation schema {!r} is not {!r}".format(schema, SCHEMA)
+        )
+    units = document.get("units")
+    if units != "m":
+        raise ValueError(
+            "tessellation units {!r} are not 'm'. This schema version reads "
+            "metres only, so a conversion is the author's to make.".format(units)
+        )
+    where = document.get("domain")
+    if where != "plan":
+        raise ValueError(
+            "tessellation domain {!r} is not 'plan'. This schema version "
+            "reads plan outlines only.".format(where)
+        )
+    raw_cells = document.get("cells") or []
+    if not raw_cells:
+        raise ValueError("this tessellation has no cells")
+
+    seen = set()
+    inferred = False
+    offset_max = 0.0
+    prepared: List[Dict] = []
+    for position, cell in enumerate(raw_cells):
+        key = cell.get("key")
+        if not isinstance(key, str) or not key:
+            raise ValueError("cell {} has no key".format(position))
+        if key in seen:
+            raise ValueError("cell key {!r} is used more than once".format(key))
+        seen.add(key)
+
+        rings = [cell.get("outline") or []] + list(cell.get("holes") or [])
+        flat_rings = []
+        for ring in rings:
+            if len(ring) < 3:
+                raise ValueError(
+                    "cell {!r} has a ring of {} points; a polygon needs "
+                    "3".format(key, len(ring))
+                )
+            plan = []
+            for point in ring:
+                plan.append([float(point[0]), float(point[1])])
+                if len(point) > 2:
+                    surface = surface_height(float(point[0]), float(point[1]))
+                    if surface is not None:
+                        offset_max = max(offset_max, abs(float(point[2]) - surface))
+            if not _is_simple(plan):
+                raise ValueError(
+                    "cell {!r} has an outline that crosses itself".format(key)
+                )
+            flat_rings.append(plan)
+
+        course = cell.get("course")
+        if course is None:
+            inferred = True
+            course = 0
+        prepared.append({
+            "key": key,
+            "course": int(course),
+            "outline": flat_rings[0],
+            "holes": flat_rings[1:],
+        })
+
+    courses = max(c["course"] for c in prepared) + 1
+    tess = build_tessellation(
+        prepared,
+        str(document.get("pattern") or "imported"),
+        "imported",
+        0.0,
+        courses,
+    )
+    _reject_overlaps(tess)
+    tess["provenance"] = dict(document.get("provenance") or {})
+    tess["z_offset_max"] = offset_max
+    tess["courses_inferred"] = inferred
+    return tess
+
+
+def _reject_overlaps(tess: Dict) -> None:
+    """Two cells covering the same ground is an authoring mistake, not a cut."""
+
+    points = tess["points"]
+    cells = tess["cells"]
+    grid = spatial.Grid(_bucket_size(tess))
+    boxes = []
+    for index, cell in enumerate(cells):
+        ring = [points[i] for i in cell["outline"]]
+        box = (
+            min(p[0] for p in ring), min(p[1] for p in ring),
+            max(p[0] for p in ring), max(p[1] for p in ring),
+        )
+        boxes.append(box)
+        grid.insert(index, *box)
+
+    for index, cell in enumerate(cells):
+        ring = [points[i] for i in cell["outline"]]
+        centre = [
+            sum(p[0] for p in ring) / len(ring),
+            sum(p[1] for p in ring) / len(ring),
+        ]
+        probes = [centre] + [
+            [(p[0] + centre[0]) / 2.0, (p[1] + centre[1]) / 2.0] for p in ring
+        ]
+        for other in grid.query(*boxes[index]):
+            if other == index:
+                continue
+            if any(point_in_cell(probe, cells[other], points) for probe in probes):
+                raise ValueError(
+                    "cell {!r} overlaps cell {!r}; cells must cover the "
+                    "surface once".format(cell["key"], cells[other]["key"])
+                )
