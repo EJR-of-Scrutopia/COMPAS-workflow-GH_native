@@ -996,12 +996,36 @@ function renderDataPanel(v) {
       + "limited by " + tess.limit;
     content.appendChild(chordLine);
 
-    const residualLine = document.createElement("p");
-    residualLine.textContent = "corner normal residual " + tess.corner_residual.toFixed(4)
-      + ": the sine of the angle between a corner's one stored normal and "
-      + "the plane of the facet that does not own it, since a corner "
-      + "belongs to two joints and one normal cannot lie in both";
-    content.appendChild(residualLine);
+    // The single worst-corner number badly misrepresents the cut, so the
+    // whole distribution is shown, not only tess.corner_residual (which
+    // stays the worst corner alone, equal to stats.max below): the median
+    // is what describes a typical joint, and the max describes only its
+    // own worst corner, which the studio names by course rather than
+    // leaving the reader to assume it is typical.
+    const stats = tess.corner_residual_stats;
+    const residualWhat = document.createElement("p");
+    residualWhat.textContent = "corner normal residual, over " + stats.count
+      + " corners: the sine of the angle between a corner's one stored "
+      + "normal and the plane of the facet that does not own it, since a "
+      + "corner belongs to two joints and one normal cannot lie in both";
+    content.appendChild(residualWhat);
+    const residualDistribution = document.createElement("p");
+    residualDistribution.textContent = "median " + stats.median.toFixed(4)
+      + ", mean " + stats.mean.toFixed(4) + ", p99 " + stats.p99.toFixed(4)
+      + ", max " + stats.max.toFixed(4) + " (its own worst corner, in "
+      + "course(s) " + stats.worst_corner_courses.join(", ") + "). The "
+      + "median describes the cut; the max describes only its worst "
+      + "corner, which clusters with the rest of the tail in the rim course, "
+      + "where the cut follows the mesh's own irregular boundary rather "
+      + "than a straight chord.";
+    content.appendChild(residualDistribution);
+    const residualCounts = document.createElement("p");
+    residualCounts.textContent = "corners over threshold: " + stats.over.map(
+      function (entry) {
+        return entry.count + " over " + entry.threshold;
+      }
+    ).join(", ");
+    content.appendChild(residualCounts);
 
     const clampedLine = document.createElement("p");
     clampedLine.textContent = tess.clamped_points + " cap point(s) clamped to the "

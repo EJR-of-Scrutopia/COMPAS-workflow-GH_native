@@ -152,8 +152,44 @@ def test_the_corner_residual_is_disclosed_and_bounded():
     # fixture's dome rises 0.4 over a 2 m span against 1 m pieces, more
     # curved relative to its pieces than the real vault is relative to
     # its 0.9 m ones, so this is a stress case, not a typical one. The
-    # real export's figure is measured in Task 10.
+    # real export's own distribution is measured in
+    # bench/scripts/cutting_measurements.py and docs/BENCH.md: a single
+    # worst-corner number badly misrepresents a real cut's typical joint,
+    # which is why report["corner_residual_stats"] carries the whole
+    # distribution below and this field alone stays only the max.
     assert 0.0 < report["corner_residual"] < 0.02
+
+
+def test_the_corner_residual_stats_carry_the_whole_distribution():
+    _, report = build()
+    stats = report["corner_residual_stats"]
+    # Nine welded corners on this fixture: a 3x3 grid shared by four cells.
+    assert stats["count"] == 9
+    assert stats["min"] <= stats["median"] <= stats["p99"] <= stats["max"]
+    # The max here is exactly the same number report["corner_residual"]
+    # already carries: this is the same measurement, not a second one.
+    assert stats["max"] == report["corner_residual"]
+    assert stats["min"] >= 0.0
+    for entry in stats["over"]:
+        assert 0 <= entry["count"] <= stats["count"]
+    # The worst corner belongs to at least one real course of this fixture.
+    assert stats["worst_corner_courses"]
+    assert all(course in (0, 1) for course in stats["worst_corner_courses"])
+
+
+def test_corner_residuals_max_matches_the_report_and_counts_every_corner():
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    planes = p.facet_planes(tess, surface)
+    owners = p.corner_owners(tess)
+    residuals = p.corner_residuals(tess, surface, planes, owners)
+    # One value per corner, not per cell visit: four cells share a 3x3
+    # grid, but every corner appears exactly once regardless of how many
+    # cells touch it.
+    assert len(residuals) == 9
+    _, report = build()
+    assert max(residuals.values()) == report["corner_residual"]
 
 
 def test_a_piece_is_watertight():
@@ -182,6 +218,21 @@ def test_facets_per_piece_stay_small():
     made, report = build()
     assert report["facets_per_piece"]["max"] <= 8
     assert report["facets_per_piece"]["median"] <= 6
+
+
+def test_facets_per_piece_names_the_course_of_its_own_max():
+    # A single max badly misrepresents the cut the same way the corner
+    # residual's max does (see test_the_corner_residual_stats_carry_the_
+    # whole_distribution): on a real export the piece with the most facets
+    # sits in the rim course, not a typical interior one, so the report
+    # names which course it is rather than leaving max to read as typical.
+    _, report = build()
+    fpp = report["facets_per_piece"]
+    assert "max_course" in fpp
+    assert fpp["max_course"] in (0, 1)
+    # boundary_points_per_piece gets no such note: only facets_per_piece's
+    # max is singled out for the rim-course explanation.
+    assert "max_course" not in report["boundary_points_per_piece"]
 
 
 def test_field_weights_sum_to_one_and_index_the_render_mesh():

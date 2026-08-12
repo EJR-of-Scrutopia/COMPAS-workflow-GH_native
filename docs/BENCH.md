@@ -197,11 +197,11 @@ table is taken from, 2026-08-12:
 | --- | --- |
 | star shaped | yes (238 of 240 rim steps forward, 2 backward, 0.467 degrees total, winding exactly 2 pi) |
 | target size, courses, pieces | 0.9 m, 7 courses, 233 pieces |
-| facets per piece | min 5 / median 6 / max 17 |
+| facets per piece | min 5 / median 6 / max 17 (the max belongs to course 0, the rim) |
 | boundary points per piece | min 40 / median 48 / max 136 |
 | subdivision rounds | 3, limited by rounds (the edge length target, not the chord target, is what the round budget cuts off here) |
 | cap chord deviation | 0.960 mm against a 5.0 mm target |
-| corner normal residual | 0.3294595060342589 (19.236 degrees) |
+| corner normal residual, 695 corners | median 0.0196, mean 0.0325, p99 0.2428, max 0.3295 (its own worst corner, in courses 0 and 1) |
 | clamped cap points | 137 of 41265 |
 | coverage | 0 orphan faces, 0 double faces (of 2400 analysis faces), 0 open facets, 0 slivers, 0 coverage holes, 0 broken boundary entries, 0 missing planes |
 
@@ -210,18 +210,52 @@ and 1 orphan face. That is a real limit of the current cut at coarse sizes
 on this export, published rather than hidden, and it is why the default
 size stays at 0.9 m rather than the coarser end of the slider.
 
-The corner normal residual is worth reading plainly rather than glossed
-over. A corner sits where two facets meet, and one stored normal can only
-lie in one of their two planes; `bench/studio/pieces.py`'s own test
-fixture, a four cell synthetic dome chosen to be a stress case, measures
-0.0104 (0.598 degrees) at its single worst corner. The real Trial 2 export
-measures 0.329 (19.2 degrees) at its own worst corner, thirty times larger.
-Nothing in the shipped acceptance tests bounds this figure on real geometry
-(the `< 0.02` bound in `tests/studio/test_pieces.py` is pinned to the
-synthetic fixture only), so this is not a failing measurement, but it is a
-genuinely larger disagreement than the fixture suggested, at a joint where
-a real export's curvature is sharper than the four cell dome modelled it to
-be. Worth a look before this reaches a client-facing drawing.
+A single worst-corner number for the residual badly misrepresents the cut,
+so `pieces.residual_stats` reports the whole distribution across every
+corner rather than only its maximum, and `docs/BENCH.md` and the Data
+panel both quote it in full:
+
+| residual | radians (sine of the angle) | degrees | corners over |
+| --- | --- | --- | --- |
+| median | 0.0196 | 1.1 | -- |
+| mean | 0.0325 | 1.9 | -- |
+| p99 | 0.2428 | 14.1 | -- |
+| max | 0.3295 | 19.2 | -- |
+| over 0.01 | -- | over 0.6 | 487 of 695 |
+| over 0.05 | -- | over 2.9 | 134 of 695 |
+| over 0.10 | -- | over 5.7 | 38 of 695 |
+| over 0.20 | -- | over 11.5 | 10 of 695 |
+| over 0.30 | -- | over 17.5 | 2 of 695 |
+
+The median is the figure that describes the cut: a typical corner sits at
+1.1 degrees, close to `bench/studio/pieces.py`'s own test fixture (a four
+cell synthetic dome chosen to be a stress case), which measures 0.0104
+(0.598 degrees) at its single worst corner. The max describes only its own
+worst corner, not the cut as a whole, and the worst corners cluster in the
+rim course (course 0), where `generators._arc` inserts the mesh's own
+boundary corners so the drawn silhouette follows the real, irregular rim
+rather than a straight chord: more corners inserted there means facets
+meeting at sharper angles, and a sharper angle between two facets
+necessarily pushes a stored normal further out of the one it does not
+belong to. It is the same cause as the facets-per-piece maximum of 17
+above: both are the rim course, not the general cut, so neither number
+should be read as typical against the medians beside them.
+
+In plain physical terms: the residual is the sine of the angle between a
+corner's stored normal and the plane of the facet that does not own it, so
+at the shipped 0.2 m shell thickness (a half thickness of 0.1 m either
+side of the mid surface a corner's normal actually offsets along), a
+residual of `r` moves that corner roughly `100 * r` millimetres from where
+a perfectly flat joint would put it. The median, 0.0196, is about 2 mm;
+the worst corner, 0.3295, is about 33 mm. Nothing in the shipped
+acceptance tests bounds either figure on real geometry (the `< 0.02` bound
+in `tests/studio/test_pieces.py` is pinned to the synthetic fixture only),
+so none of this is a failing measurement, but the tail is real and worth a
+look, at the rim course specifically, before this reaches a client-facing
+drawing. A real fix exists (using the intersection line of the two planes
+at a corner where only two facets meet, which would take those corners to
+zero) but is deliberately not applied here: that is a change to the
+keystone module at the end of a wave, and spending it is the owner's call.
 
 ## CRA solver setup (IPOPT)
 

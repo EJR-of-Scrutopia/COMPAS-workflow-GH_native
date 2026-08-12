@@ -706,7 +706,7 @@ def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
     for field in (
         "tess.pattern", "tess.source", "tess.target_size",
         "tess.cells", "tess.courses",
-        "tess.chord_mm", "tess.corner_residual", "tess.clamped_points",
+        "tess.chord_mm", "tess.clamped_points",
         "tess.missing_planes", "tess.rounds", "tess.limit",
         "tess.backward_turn_degrees", "tess.backward_steps",
     ):
@@ -717,6 +717,27 @@ def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
         assert "coverage.{}".format(field) in body, (
             "the coverage report must disclose {}".format(field)
         )
+    # Fix round 1: a single worst-corner number badly misrepresents the
+    # cut, so the whole distribution has to reach the panel, not just the
+    # max (tess.corner_residual on its own, kept only as the source of
+    # stats.max, is no longer read directly here).
+    assert "tess.corner_residual_stats" in body
+    for field in (
+        "stats.count", "stats.median", "stats.mean", "stats.p99",
+        "stats.max", "stats.worst_corner_courses", "stats.over",
+    ):
+        assert field in body, (
+            "the Cut section must read the residual distribution's {}, not "
+            "only the single worst corner".format(field)
+        )
+    assert "median describes the cut" in body, (
+        "the panel must say plainly that the median, not the max, "
+        "describes the cut"
+    )
+    assert "rim course" in body, (
+        "the panel must say the residual's worst corners cluster in the "
+        "rim course, not just list numbers"
+    )
     # An imported cut has to quote its own provenance verbatim and the
     # measured z offset, not the generated cut's target size.
     assert "tess.provenance" in body

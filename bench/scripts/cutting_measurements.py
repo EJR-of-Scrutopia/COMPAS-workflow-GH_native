@@ -45,8 +45,9 @@ DEFAULT_SIZE = 0.9         # the size the size-slider opens to (index.html)
 REGRESSION_SIZE = 1.5      # the size the controller found a coverage limit at
 
 # The controller's own measurements, taken on this export during the wave
-# (see task-10-brief.md). Checked, not assumed: a script that silently
-# agreed with numbers it never computed would be worse than no script.
+# (see task-10-brief.md and its fix round 1). Checked, not assumed: a
+# script that silently agreed with numbers it never computed would be
+# worse than no script.
 EXPECTED = {
     "rim_steps_forward": 238,
     "rim_steps_backward": 2,
@@ -58,6 +59,20 @@ EXPECTED = {
     "regression_coverage_holes": 2,
     "regression_broken_boundary": 1,
     "regression_orphan_faces": 1,
+    # Fix round 1: the plain max badly misrepresents the typical corner, so
+    # the controller measured the whole distribution across all 695
+    # corners and gave the median, mean, p99, max and counts over a fixed
+    # set of thresholds. pieces.residual_stats reproduces exactly this.
+    "residual_count": 695,
+    "residual_median": 0.0196,
+    "residual_mean": 0.0325,
+    "residual_p99": 0.2428,
+    "residual_max": 0.3295,
+    "residual_over_0.01": 487,
+    "residual_over_0.05": 134,
+    "residual_over_0.1": 38,
+    "residual_over_0.2": 10,
+    "residual_over_0.3": 2,
 }
 
 
@@ -69,6 +84,10 @@ def _check(label: str, measured, expected) -> None:
     mark = "matches" if measured == expected else "DISAGREES WITH"
     print("  check: {} = {} ({} the controller's {})".format(
         label, measured, mark, expected))
+
+
+def _degrees(residual: float) -> float:
+    return math.degrees(math.asin(min(1.0, residual)))
 
 
 def main() -> int:
@@ -113,8 +132,9 @@ def main() -> int:
     print("target size, courses, pieces    {} m, {} courses, {} pieces".format(
         size, tess["courses"], len(tess["cells"])))
     fpp = report["facets_per_piece"]
-    print("facets per piece                min {} / median {} / max {}".format(
-        fpp["min"], fpp["median"], fpp["max"]))
+    print("facets per piece                min {} / median {} / max {}"
+          " (max belongs to course {})".format(
+              fpp["min"], fpp["median"], fpp["max"], fpp["max_course"]))
     bpp = report["boundary_points_per_piece"]
     print("boundary points per piece       min {} / median {} / max {}".format(
         bpp["min"], bpp["median"], bpp["max"]))
@@ -122,9 +142,21 @@ def main() -> int:
         report["rounds"], report["limit"]))
     print("cap chord deviation             {:.3f} mm against a {:.1f} mm target".format(
         report["chord_mm"], cutting.CHORD_TARGET * 1000.0))
-    print("corner normal residual          {:.16g}   ({:.3f} degrees)".format(
-        report["corner_residual"],
-        math.degrees(math.asin(min(1.0, report["corner_residual"])))))
+
+    stats = report["corner_residual_stats"]
+    print("corner normal residual, over {} corners:".format(stats["count"]))
+    print("    median   {:.4f}   ({:.3f} deg)   -- describes the typical joint".format(
+        stats["median"], _degrees(stats["median"])))
+    print("    mean     {:.4f}   ({:.3f} deg)".format(
+        stats["mean"], _degrees(stats["mean"])))
+    print("    p99      {:.4f}   ({:.3f} deg)".format(
+        stats["p99"], _degrees(stats["p99"])))
+    print("    max      {:.16g}   ({:.3f} deg)   -- its own worst corner, "
+          "in course(s) {}".format(
+              stats["max"], _degrees(stats["max"]), stats["worst_corner_courses"]))
+    for entry in stats["over"]:
+        print("    over {:<5.2f} ({:5.1f} deg): {} corners".format(
+            entry["threshold"], _degrees(entry["threshold"]), entry["count"]))
     print("clamped cap points              {} of {}".format(
         report["clamped_points"], total_cap_points))
     print("coverage                        {} orphan faces, {} double faces "
@@ -166,6 +198,24 @@ def main() -> int:
         _check("broken boundary entries", len(tess["report"]["broken_boundary"]), 0)
         _check("orphan faces", len(binding["report"]["orphan_faces"]), 0)
         _check("double faces", len(binding["report"]["double_faces"]), 0)
+
+        print("")
+        print("corner residual distribution at the default size ({} m):".format(
+            DEFAULT_SIZE))
+        _check("corners measured", stats["count"], EXPECTED["residual_count"])
+        _check("median", round(stats["median"], 4), EXPECTED["residual_median"])
+        _check("mean", round(stats["mean"], 4), EXPECTED["residual_mean"])
+        _check("p99", round(stats["p99"], 4), EXPECTED["residual_p99"])
+        _check("max", round(stats["max"], 4), EXPECTED["residual_max"])
+        for entry in stats["over"]:
+            _check("over {}".format(entry["threshold"]), entry["count"],
+                   EXPECTED["residual_over_{}".format(entry["threshold"])])
+        print("  (the median describes the cut; the max describes only its "
+              "own worst corner; the worst corners cluster in the rim "
+              "course, course {}, where the outline follows the mesh's own "
+              "irregular boundary rather than a straight chord)".format(
+                  min(stats["worst_corner_courses"])
+                  if stats["worst_corner_courses"] else "?"))
 
         print("")
         print("coverage regression at {} m (a real limit, not hidden):".format(

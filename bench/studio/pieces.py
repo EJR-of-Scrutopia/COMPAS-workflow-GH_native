@@ -21,10 +21,22 @@ facet's plane, so a small residual means a small angle, not a distance.
 On the four cell dome fixture in test_pieces.py, at rounds chosen by
 choose_rounds, that residual comes out at about 0.0104, which is 0.598
 degrees, at the corner where the c10/c11 joint meets the free rim, on
-the steepest part of that fixture's dome. The real export's figure is
-measured in Task 10. What is not optional is agreement. A joint that is
-a fraction of a degree off flat is a modelling nicety; a joint whose two
-sides disagree is broken.
+the steepest part of that fixture's dome. What is not optional is
+agreement. A joint that is a fraction of a degree off flat is a
+modelling nicety; a joint whose two sides disagree is broken.
+
+report["corner_residual"] is the single worst corner across the whole
+cut, same as it always was; a single number about a worst case badly
+misrepresents the typical joint, so report["corner_residual_stats"]
+(built by residual_stats over corner_residuals's own per-corner mapping)
+carries the median, mean, p99, max and counts over a fixed set of
+thresholds, and names which course the worst corner sits in. Measured on
+the real Trial 2 export at 0.9 m: the typical corner (the median) is
+close to the synthetic fixture's own figure above; a small cluster, far
+higher, sits in the rim course, where the cut follows the mesh's own
+irregular boundary rather than a straight chord. See
+docs/BENCH.md and bench/scripts/cutting_measurements.py for the measured
+distribution.
 
 Stdlib only: the bundle imports this and the guard test forbids solver
 stacks there.
@@ -275,6 +287,114 @@ def corner_owners(tess: Dict) -> Dict[int, Tuple[int, int]]:
     return owner
 
 
+def corner_residuals(
+    tess: Dict,
+    surface: cutting.Surface,
+    planes: Optional[Dict[Tuple[int, int], tuple]] = None,
+    owners: Optional[Dict[int, Tuple[int, int]]] = None,
+) -> Dict[int, float]:
+    """Every corner's own worst disagreement, one value per corner.
+
+    A corner's stored normal is the raw surface normal flattened into its
+    owning facet's plane (see corner_owners). This measures, for every
+    OTHER facet across the WHOLE tessellation that also touches that
+    corner (not only the facets of whichever cell happens to be walking
+    it), how far that stored normal lies out of the other facet's own
+    plane, and keeps the worst one. Corners with no owning facet, or whose
+    owning facet has no computed plane, are absent from the returned
+    mapping: nothing was ever stored for them to disagree with.
+
+    max(corner_residuals(...).values()) is exactly the single number
+    report["corner_residual"] has always carried; this just keeps the
+    per-corner values apart instead of folding them into one running
+    maximum, so the distribution across every corner can be reported too.
+    """
+
+    if planes is None:
+        planes = facet_planes(tess, surface)
+    if owners is None:
+        owners = corner_owners(tess)
+
+    facets_by_corner: Dict[int, List[Tuple[int, int]]] = {}
+    for cell in tess["cells"]:
+        for facet in cell["facets"]:
+            for corner in facet:
+                facets_by_corner.setdefault(corner, []).append(facet)
+
+    points = tess["points"]
+    out: Dict[int, float] = {}
+    for corner, facet in owners.items():
+        if facet not in planes:
+            continue
+        lifted = _lift(surface, points[corner])
+        stored = project_direction(lifted["normal"], planes[facet])
+        worst = 0.0
+        for other in facets_by_corner.get(corner, ()):
+            if other == facet or other not in planes:
+                continue
+            _, plane_normal = planes[other]
+            worst = max(worst, abs(sum(
+                stored[axis] * plane_normal[axis] for axis in range(3))))
+        out[corner] = worst
+    return out
+
+
+RESIDUAL_THRESHOLDS = (0.01, 0.05, 0.10, 0.20, 0.30)
+# The break points a review found the plain max obscures: most corners sit
+# well under 0.01 (0.6 degrees), and the counts above each of these name
+# how the tail actually grows rather than leaving it to one worst number.
+
+
+def residual_stats(values: Sequence[float]) -> Dict:
+    """count/min/median/mean/p99/max over a set of residuals, plus how many
+    sit strictly over each of RESIDUAL_THRESHOLDS.
+
+    Nearest rank percentile (the smallest value at or past the 99th
+    percentile position), not an interpolated one: "the top 1 percent"
+    read as a plain count of corners, not a fractional one.
+    """
+
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return {
+            "count": 0, "min": 0.0, "median": 0.0, "mean": 0.0,
+            "p99": 0.0, "max": 0.0,
+            "over": [{"threshold": t, "count": 0} for t in RESIDUAL_THRESHOLDS],
+        }
+    median = (
+        ordered[n // 2] if n % 2
+        else 0.5 * (ordered[n // 2 - 1] + ordered[n // 2])
+    )
+    p99 = ordered[min(n - 1, math.ceil(0.99 * n) - 1)]
+    return {
+        "count": n,
+        "min": ordered[0],
+        "median": median,
+        "mean": sum(ordered) / n,
+        "p99": p99,
+        "max": ordered[-1],
+        "over": [
+            {"threshold": t, "count": sum(1 for v in ordered if v > t)}
+            for t in RESIDUAL_THRESHOLDS
+        ],
+    }
+
+
+def _courses_touching(tess: Dict, corner: int) -> List[int]:
+    """Every course with a cell that has this corner on its own boundary,
+    sorted, lowest (rimward) first. A corner on a shared joint can touch
+    cells from more than one course."""
+
+    courses = set()
+    for cell in tess["cells"]:
+        if corner in cell["outline"] or any(
+            corner in hole for hole in cell["holes"]
+        ):
+            courses.add(cell["course"])
+    return sorted(courses)
+
+
 def segment_pieces(
     tess: Dict,
     surface: cutting.Surface,
@@ -297,11 +417,18 @@ def segment_pieces(
     welded = len(tess["points"])
     per_facet = 2 ** rounds
 
-    residual = 0.0
+    # Computed once, globally, ahead of the per-cell loop below: one value
+    # per corner rather than folded cell by cell into a single running
+    # maximum, so the distribution across every corner survives to the
+    # report (see corner_residuals's own docstring for why this is the
+    # same number as before, just kept apart).
+    residuals_by_corner = corner_residuals(tess, surface, planes, owners)
+
     clamped = 0
     missing_planes = 0
     facet_counts: List[int] = []
     boundary_counts: List[int] = []
+    piece_courses: List[int] = []
     out: List[Dict] = []
 
     for cell in tess["cells"]:
@@ -336,17 +463,11 @@ def segment_pieces(
             facet = owners.get(index)
             if facet is None or facet not in planes:
                 continue
+            # The stored normal a drawn casting actually ships; the
+            # disagreement this creates with a corner's OTHER facets is
+            # measured once, globally, in residuals_by_corner above, not
+            # here cell by cell.
             normals[index] = project_direction(normals[index], planes[facet])
-            # The residual is what the OTHER facets at this corner give up:
-            # how far the one stored normal now lies out of their planes.
-            # Measuring the change from the raw surface normal instead
-            # would measure the projection, not the disagreement.
-            for other in cell["facets"]:
-                if other == facet or index not in other or other not in planes:
-                    continue
-                _, plane_normal = planes[other]
-                residual = max(residual, abs(sum(
-                    normals[index][axis] * plane_normal[axis] for axis in range(3))))
 
         faces: List[List[int]] = []
         count = len(used)
@@ -366,6 +487,7 @@ def segment_pieces(
 
         facet_counts.append(facets_here)
         boundary_counts.append(boundary_here)
+        piece_courses.append(cell["course"])
         out.append({
             "key": cell["key"],
             "course": cell["course"],
@@ -376,15 +498,36 @@ def segment_pieces(
             "is_support": is_support,
         })
 
+    residual = max(residuals_by_corner.values()) if residuals_by_corner else 0.0
+    stats = residual_stats(residuals_by_corner.values())
+    if residuals_by_corner:
+        worst_corner = max(residuals_by_corner, key=residuals_by_corner.get)
+        stats["worst_corner_courses"] = _courses_touching(tess, worst_corner)
+    else:
+        stats["worst_corner_courses"] = []
+
     report = {
         # facets_per_piece is the number to compare against the ring and
         # wedge binning this replaces, whose cells carried 30 to 86
         # boundary edges. boundary_points_per_piece counts every
         # subdivided boundary point, not joints, so a five facet cell
         # reports around 40 there: read facets_per_piece for the headline.
-        "facets_per_piece": _spread(facet_counts),
+        # max_course names which course the largest piece belongs to: a
+        # rim course cell following the mesh's own irregular boundary
+        # carries more facets than a straight-chorded interior one, so the
+        # max alone reads as typical unless its course is named alongside
+        # the median.
+        "facets_per_piece": _spread(facet_counts, piece_courses),
         "boundary_points_per_piece": _spread(boundary_counts),
+        # corner_residual is the single worst corner across the whole cut,
+        # unchanged in meaning from before this report. corner_residual_stats
+        # is the distribution that number was pulled from: the median
+        # describes the typical joint, corner_residual (== stats["max"])
+        # describes only its own worst one, and worst_corner_courses names
+        # which course that worst corner sits in (see corner_residuals and
+        # residual_stats above, and the module docstring).
         "corner_residual": residual,
+        "corner_residual_stats": stats,
         "chord_mm": chosen["chord_mm"],
         "rounds": rounds,
         "edge_m": chosen["edge_m"],
@@ -395,12 +538,21 @@ def segment_pieces(
     return out, report
 
 
-def _spread(values: Sequence[int]) -> Dict:
+def _spread(
+    values: Sequence[int], courses: Optional[Sequence[int]] = None
+) -> Dict:
+    """min/median/max over values; with courses (parallel to values), also
+    the course of one piece that reaches the max, so a reader is not left
+    to assume the max is typical when it belongs to a course of its own."""
+
     if not values:
         return {"min": 0, "median": 0, "max": 0}
     ordered = sorted(values)
-    return {
+    result = {
         "min": ordered[0],
         "median": ordered[len(ordered) // 2],
         "max": ordered[-1],
     }
+    if courses is not None:
+        result["max_course"] = courses[values.index(ordered[-1])]
+    return result
