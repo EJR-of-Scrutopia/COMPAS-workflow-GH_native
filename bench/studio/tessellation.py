@@ -36,11 +36,13 @@ class PointWeld:
         self.tol = tol
         self.points: List[List[float]] = []
         self.buckets: Dict[Tuple[int, int], List[int]] = {}
+        self.originals: List[Tuple[float, float]] = []
 
     def _home(self, x: float, y: float) -> Tuple[int, int]:
         return (int(math.floor(x / self.tol)), int(math.floor(y / self.tol)))
 
     def add(self, x: float, y: float) -> int:
+        self.originals.append((x, y))
         i, j = self._home(x, y)
         for di in (-1, 0, 1):
             for dj in (-1, 0, 1):
@@ -52,6 +54,74 @@ class PointWeld:
         self.points.append([x, y])
         self.buckets.setdefault((i, j), []).append(index)
         return index
+
+    def reconcile(self) -> Tuple[List[List[float]], List[int]]:
+        """Merge every chain of points within TOL, whatever order they arrived.
+
+        add() only ever compares a new point against the points already in
+        the table, so three points in a chain, each within TOL of the next,
+        weld into one point or two depending only on which arrived first.
+        Union find over the symmetric within TOL relation cannot depend on
+        order, because the relation does not.
+
+        Returns (points, remap): the new point table, and old index to new
+        index for every point the caller is holding.
+        """
+
+        n_orig = len(self.originals)
+        if n_orig == 0:
+            return [], []
+
+        parent: List[int] = list(range(n_orig))
+
+        def find(x: int) -> int:
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+
+        def union(x: int, y: int) -> None:
+            px, py = find(x), find(y)
+            if px != py:
+                parent[py] = px
+
+        for i in range(n_orig):
+            x_i, y_i = self.originals[i]
+            for j in range(i + 1, n_orig):
+                x_j, y_j = self.originals[j]
+                if abs(x_j - x_i) <= self.tol and abs(y_j - y_i) <= self.tol:
+                    union(i, j)
+
+        groups: Dict[int, List[int]] = {}
+        for index in range(n_orig):
+            root = find(index)
+            groups.setdefault(root, []).append(index)
+
+        group_reps: List[Tuple[Tuple[float, float], List[int]]] = []
+        for root in sorted(groups.keys()):
+            indices = groups[root]
+            min_point = min((self.originals[i][0], self.originals[i][1]) for i in indices)
+            group_reps.append((min_point, indices))
+
+        group_reps.sort(key=lambda x: x[0])
+
+        new_points = [[float(pt[0]), float(pt[1])] for pt, _ in group_reps]
+
+        orig_to_new: Dict[int, int] = {}
+        for new_idx, (_, orig_indices) in enumerate(group_reps):
+            for orig_idx in orig_indices:
+                orig_to_new[orig_idx] = new_idx
+
+        n_points = len(self.points)
+        remap: List[int] = [0] * n_points
+
+        for point_idx in range(n_points):
+            point_x, point_y = self.points[point_idx][0], self.points[point_idx][1]
+            for orig_idx, (orig_x, orig_y) in enumerate(self.originals):
+                if abs(orig_x - point_x) <= self.tol and abs(orig_y - point_y) <= self.tol:
+                    remap[point_idx] = orig_to_new[orig_idx]
+                    break
+
+        return new_points, remap
 
 
 def on_segment(p, a, b, tol: float = TOL) -> Optional[float]:
@@ -108,6 +178,18 @@ def point_in_cell(point, cell: Dict, points) -> bool:
     return not any(point_in_ring(point, hole, points) for hole in cell["holes"])
 
 
+def _apply_remap(ring: List[int], remap: List[int]) -> List[int]:
+    """Remap ring indices and drop consecutive duplicates."""
+    out: List[int] = []
+    for idx in ring:
+        new_idx = remap[idx]
+        if not out or out[-1] != new_idx:
+            out.append(new_idx)
+    if len(out) > 1 and out[0] == out[-1]:
+        out.pop()
+    return out
+
+
 def _weld_ring(ring, weld: PointWeld) -> List[int]:
     out: List[int] = []
     for x, y in ring:
@@ -156,6 +238,93 @@ def _facets(cell: Dict) -> List[Tuple[int, int]]:
     return out
 
 
+def _find_coverage_holes(
+    owners: Dict[Tuple[int, int], int],
+    cells: Sequence[Dict],
+    points: Sequence[Sequence[float]],
+) -> Tuple[List[Dict], List[List[int]]]:
+    """Find loops of facets with exactly one owner.
+
+    Returns (coverage_holes, broken_boundary) where each entry is a dict
+    with points, area, and cells.
+    """
+
+    single_owner = {facet: True for facet, count in owners.items() if count == 1}
+    if not single_owner:
+        return [], []
+
+    edges: Dict[int, List[Tuple[int, Tuple[int, int]]]] = {}
+    for (a, b) in single_owner.keys():
+        edges.setdefault(a, []).append((b, (a, b)))
+        edges.setdefault(b, []).append((a, (a, b)))
+
+    visited_edges: set = set()
+    loops: List[List[int]] = []
+    broken: List[List[int]] = []
+
+    for start in edges.keys():
+        if any((start, next_pt) in visited_edges or (next_pt, start) in visited_edges
+               for next_pt, _ in edges[start]):
+            continue
+
+        current = start
+        loop_points: List[int] = []
+        prev = None
+
+        while True:
+            loop_points.append(current)
+            if not edges[current]:
+                break
+
+            found_next = False
+            for next_pt, facet in edges[current]:
+                facet_tuple = (current, next_pt) if current < next_pt else (next_pt, current)
+                if facet_tuple not in visited_edges and next_pt != prev:
+                    visited_edges.add(facet_tuple)
+                    prev = current
+                    current = next_pt
+                    found_next = True
+                    break
+
+            if not found_next:
+                break
+
+        if current == start and len(loop_points) > 2:
+            loops.append(loop_points)
+        elif len(loop_points) > 0:
+            broken.append([loop_points[0], len(edges.get(loop_points[0], []))])
+
+    areas_and_loops: List[Tuple[float, List[int]]] = []
+    for loop in loops:
+        area = abs(ring_area(loop, points))
+        areas_and_loops.append((area, loop))
+
+    if not areas_and_loops:
+        return [], broken
+
+    areas_and_loops.sort(key=lambda x: x[0], reverse=True)
+    rim_area, _ = areas_and_loops[0]
+
+    coverage_holes = []
+    for area, loop in areas_and_loops[1:]:
+        cell_keys = set()
+        for i in range(len(loop)):
+            a, b = loop[i], loop[(i + 1) % len(loop)]
+            facet = (a, b) if a < b else (b, a)
+            for cell in cells:
+                if facet in cell["facets"]:
+                    cell_keys.add(cell["key"])
+        coverage_holes.append({
+            "points": loop,
+            "area": area,
+            "cells": sorted(cell_keys),
+        })
+
+    broken_boundary = [[pt, len(edges.get(pt, []))] for pt in edges if len(edges[pt]) != 2]
+
+    return coverage_holes, broken_boundary
+
+
 def build_tessellation(
     raw_cells: Sequence[Dict],
     pattern: str,
@@ -175,7 +344,11 @@ def build_tessellation(
         holes = [_weld_ring(hole, weld) for hole in raw.get("holes", [])]
         welded.append((raw, outline, holes))
 
-    points = weld.points
+    points, remap = weld.reconcile()
+    welded = [
+        (raw, _apply_remap(outline, remap), [_apply_remap(hole, remap) for hole in holes])
+        for raw, outline, holes in welded
+    ]
     spread = max(
         max(p[0] for p in points) - min(p[0] for p in points),
         max(p[1] for p in points) - min(p[1] for p in points),
@@ -226,6 +399,8 @@ def build_tessellation(
         if count > 2
     ]
 
+    coverage_holes, broken_boundary = _find_coverage_holes(owners, cells, points)
+
     return {
         "points": points,
         "cells": cells,
@@ -238,6 +413,8 @@ def build_tessellation(
             "double_faces": [],
             "open_facets": open_facets,
             "slivers": slivers,
+            "coverage_holes": coverage_holes,
+            "broken_boundary": broken_boundary,
         },
     }
 

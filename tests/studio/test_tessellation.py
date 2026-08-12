@@ -104,3 +104,74 @@ def test_binding_assigns_each_face_once():
     assert binding["assignment"][2] != binding["assignment"][3]
     assert len(binding["order"]) == 3
     assert binding["order"][0][0] == 0        # the rim course places first
+
+
+def test_welding_is_order_independent():
+    """Three points in a chain: mid within TOL of low, high within TOL of mid,
+    but low and high outside TOL. Inserting in different orders must give
+    the same number of points after reconcile."""
+
+    t = studio()
+    low = (0.0, 0.0)
+    mid = (0.9 * t.TOL, 0.0)
+    high = (1.8 * t.TOL, 0.0)
+
+    weld1 = t.PointWeld()
+    weld1.add(mid[0], mid[1])
+    weld1.add(low[0], low[1])
+    weld1.add(high[0], high[1])
+    points1, _ = weld1.reconcile()
+
+    weld2 = t.PointWeld()
+    weld2.add(low[0], low[1])
+    weld2.add(mid[0], mid[1])
+    weld2.add(high[0], high[1])
+    points2, _ = weld2.reconcile()
+
+    assert len(points1) == len(points2)
+
+
+def test_tessellation_is_order_independent():
+    """Build bonded_pair in two different orders and verify the point
+    coordinate lists and facet structure are identical."""
+
+    t = studio()
+    cells = bonded_pair()
+
+    tess1 = t.build_tessellation(cells, "test", "generated", 1.0, 2)
+    tess2 = t.build_tessellation(cells[::-1], "test", "generated", 1.0, 2)
+
+    assert len(tess1["points"]) == len(tess2["points"])
+    for p1, p2 in zip(tess1["points"], tess2["points"]):
+        assert abs(p1[0] - p2[0]) < t.TOL
+        assert abs(p1[1] - p2[1]) < t.TOL
+
+    facets1 = set()
+    for cell in tess1["cells"]:
+        for facet in cell["facets"]:
+            facets1.add(facet)
+
+    facets2 = set()
+    for cell in tess2["cells"]:
+        for facet in cell["facets"]:
+            facets2.add(facet)
+
+    assert facets1 == facets2
+
+
+def test_bonded_pair_has_no_coverage_holes():
+    t = studio()
+    tess = t.build_tessellation(bonded_pair(), "test", "generated", 1.0, 2)
+    assert tess["report"]["coverage_holes"] == []
+    assert tess["report"]["broken_boundary"] == []
+
+
+def test_single_cell_has_no_coverage_holes():
+    t = studio()
+    cell = [{
+        "key": "single", "course": 0,
+        "outline": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], "holes": []
+    }]
+    tess = t.build_tessellation(cell, "test", "generated", 1.0, 1)
+    assert tess["report"]["coverage_holes"] == []
+    assert tess["report"]["broken_boundary"] == []
