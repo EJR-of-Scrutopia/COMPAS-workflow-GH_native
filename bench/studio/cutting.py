@@ -45,12 +45,13 @@ def _inside_triangle(p, a, b, c, inclusive: bool = False) -> bool:
 def ear_clip(ring: Sequence[int], points) -> List[Tuple[int, int, int]]:
     """Triangulate a simple ring, largest ear first.
 
-    Largest ear first matters here: a T junction leaves a straight 180
-    degree corner in the outline, whose ear has no area. Clipping it early
-    would drop that corner out of the cap, and the neighbour that put it
-    there would be left with a bend where this piece has a chord. Taking
-    the biggest ear each time leaves the flat corners until they are real
-    triangles.
+    A T junction leaves a straight 180 degree corner in the outline, whose
+    ear has exactly zero area. The area <= 0.0 skip excludes it under any
+    ordering, so the corner is preserved regardless of the selection rule.
+    Largest ear first matters for triangle quality: taking the biggest
+    available ear avoids carving off slivers. Since these caps are subdivided
+    and then lifted onto a surface, sliver triangles would produce noisy
+    surface normals on the drawn casting.
     """
 
     indices = list(ring)
@@ -62,6 +63,8 @@ def ear_clip(ring: Sequence[int], points) -> List[Tuple[int, int, int]]:
         indices.reverse()
 
     triangles: List[Tuple[int, int, int]] = []
+    # Guard against infinite loops if the loop body changes: each iteration
+    # either raises or removes exactly one index, so the loop terminates.
     guard = len(indices) * len(indices) + 16
     while len(indices) > 3:
         guard -= 1
@@ -209,12 +212,10 @@ class Surface:
             1e-6,
         )
         self.grid = spatial.Grid(max(spread / 64.0, 1e-6))
-        self.boxes = []
         for index, face in enumerate(faces):
             xs = [vertices[i][0] for i in face]
             ys = [vertices[i][1] for i in face]
             box = (min(xs), min(ys), max(xs), max(ys))
-            self.boxes.append(box)
             self.grid.insert(index, *box)
 
     def _triangles(self, face):
@@ -246,6 +247,8 @@ class Surface:
         return self._sample([(i, w / total) for i, w in clamped], True)
 
     def height(self, x: float, y: float) -> Optional[float]:
+        # Optional is the callback contract for Task 7's tessellation reader,
+        # not a claim that this implementation can return None.
         return self.lift(x, y)["z"]
 
     def _barycentric(self, x, y, a, b, c):
