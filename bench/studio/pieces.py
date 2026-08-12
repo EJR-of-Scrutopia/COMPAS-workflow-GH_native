@@ -15,13 +15,16 @@ A corner sits where two facets meet, and a single stored normal can only
 lie in one of their two planes at once. So exactly one of a corner's
 facets owns its normal, chosen by a rule both neighbours compute
 identically, and the other facet is very slightly non planar at that one
-point. The residual is measured and reported rather than assumed: on the
-four cell dome fixture in test_pieces.py, at rounds chosen by
-choose_rounds, that residual comes out at about 0.0104 units, at the
-corner where the c10/c11 joint meets the free rim, where the surface is
-steepest. What is not optional is agreement. A joint that is a fraction
-of a millimetre off flat is a modelling nicety; a joint whose two sides
-disagree is broken.
+point. The residual is measured and reported rather than assumed: it is
+the sine of the angle between the stored normal and the non-owning
+facet's plane, so a small residual means a small angle, not a distance.
+On the four cell dome fixture in test_pieces.py, at rounds chosen by
+choose_rounds, that residual comes out at about 0.0104, which is 0.598
+degrees, at the corner where the c10/c11 joint meets the free rim, on
+the steepest part of that fixture's dome. The real export's figure is
+measured in Task 10. What is not optional is agreement. A joint that is
+a fraction of a degree off flat is a modelling nicety; a joint whose two
+sides disagree is broken.
 
 Stdlib only: the bundle imports this and the guard test forbids solver
 stacks there.
