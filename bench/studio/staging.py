@@ -13,9 +13,25 @@ model. blocks.py is no longer on that path at all; this module does not
 import it. This module never imports the solver stack; the guard test holds
 it to that.
 
-GRAVITY, DENSITIES and THICKNESS duplicate ananke_fea values on purpose
-(the import is forbidden); tests/studio/test_staging.py pins them to the
-preset values so a one-sided change fails loudly.
+GRAVITY, DENSITIES, THICKNESS and FEA_MATERIALS duplicate ananke_fea values
+on purpose (the import is forbidden); tests/studio/test_staging.py pins them
+to the preset values so a one-sided change fails loudly. FEA_MATERIALS is
+also cross-checked directly against ananke_fea.materials.PRESETS by
+tests/fea/test_studio_mirror.py, which runs where both sides are
+importable.
+
+Brick, tile and stone (Task 9) are staging-only materials: they carry a
+density and a friction for cutting, weight and the rigid-block check, but
+no ananke_fea preset, and FEA_MATERIALS says so explicitly. A continuum
+shell solve assumes tension carries across the material, and masonry does
+not carry tension across a joint, so giving these three an elastic shell
+preset would produce numbers that look authoritative and mean very little.
+run_staging never calls the struck-now runner for a material outside
+FEA_MATERIALS; it writes an honest "unavailable" stage entry instead (see
+_fea_unavailable), in the same shape the CRA path already uses for a null
+verdict: not a converged verdict and not a failed one, but no verdict to
+give. The formwork arithmetic (placed weight, what the falsework carries)
+is exact and stays true regardless, so it is never gated on this.
 """
 
 from __future__ import annotations
@@ -57,6 +73,35 @@ FRICTION = {
 # 0.6 for stone: dry stone on stone spans 0.5 to 0.7 in the rigid block
 # literature. The middle of that band, quoted no more precisely than the
 # source supports.
+
+FEA_MATERIALS = {"concrete", "concrete-c50", "concrete-sprayed", "timber"}
+# Exactly the materials ananke_fea.materials.PRESETS carries an elastic
+# shell preset for. Brick, tile and stone are deliberately absent: see the
+# module docstring for why a continuum shell solve is the wrong model for
+# masonry, not merely an unbuilt one. run_staging checks this set before
+# ever calling the struck-now runner.
+
+
+def _fea_unavailable(material: str) -> Dict:
+    """The honest struck-now entry for a material outside FEA_MATERIALS.
+
+    Same shape as the CRA path's own null verdicts (a verdict field set to
+    None, a status string, a message): not a convergence failure -- nobody
+    ever ran a solve to fail -- so it must never read as one.
+    """
+
+    return {
+        "converged": None,
+        "status": "unavailable",
+        "message": (
+            "{material} carries no ananke_fea preset: a continuum shell "
+            "solve would assume a tensile capacity across the material "
+            "that masonry does not carry across a joint. This studio "
+            "draws and costs {material} by weight only; there is no "
+            "struck-now check to run against it."
+        ).format(material=material),
+    }
+
 
 REPO = Path(__file__).resolve().parents[2]
 CRA_BLOCK_BUDGET = 14
@@ -298,6 +343,12 @@ def run_staging(
     for entry, weights in zip(plan, curve):
         if on_stage is not None:
             on_stage(entry["stage"], len(plan))
+        # The formwork weights above are exact arithmetic and hold for
+        # every material in DENSITIES; the struck-now runner is only ever
+        # invoked for a material FEA_MATERIALS actually covers. Outside
+        # that set there is no preset to solve against, so the runner is
+        # never called at all rather than being let fail and reporting a
+        # convergence failure that never happened.
         struck = runner({
             "contract_path": str(export_pair["contract"]),
             "geometry_path": str(export_pair["geometry"]),
@@ -305,7 +356,7 @@ def run_staging(
             "thickness": thickness,
             "include_export_loads": True,
             "placed_faces": sorted(entry["faces"]),
-        })
+        }) if material in FEA_MATERIALS else _fea_unavailable(material)
         stage_entry = {**entry, **{
             "placed_weight_newtons": weights["placed_weight_newtons"],
             "formwork_carries_newtons": weights["formwork_carries_newtons"],

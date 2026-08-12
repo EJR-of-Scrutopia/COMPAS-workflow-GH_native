@@ -152,6 +152,45 @@ def test_hud_captions_the_thickness_the_bundle_is_actually_built_at():
     assert "Math.round(state.thickness * 1000)" not in body
 
 
+def test_the_hud_does_not_call_an_unavailable_material_a_convergence_failure():
+    # Fix round 1: brick, tile and stone carry no ananke_fea preset, so
+    # staging.py never calls the struck-now runner for them and instead
+    # writes struck.status "unavailable". Before this fix the HUD had only
+    # two readings, "stands" and "no equilibrium found", so an unattempted
+    # solve read exactly like a real convergence failure. A third reading
+    # is required, and it must not share the failure branch's wording.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function updateHud(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert 'struck.status === "unavailable"' in body
+    assert "not available for this material" in body
+    # The two branches must be distinguishable at the text a user reads:
+    # the failure line must not be reachable through the unavailable line.
+    unavailable_start = body.index('struckLine = "struck now: not available')
+    unavailable_line = body[unavailable_start:body.index(";", unavailable_start)]
+    assert "no equilibrium found" not in unavailable_line
+
+
+def test_the_pulse_does_not_tint_an_unavailable_material_red():
+    # Fix round 1, the other half: applyPulse used only good/not-good, so a
+    # material with no ananke_fea preset pulsed the same red as a real
+    # failed solve. Neither green (nothing converged) nor red (nothing
+    # failed either) is honest; it must read as a third, neutral state.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyPulse(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert 'struck.status === "unavailable"' in body
+    tint_start = body.index("const tint =")
+    tint_line = body[tint_start:body.index(";", tint_start)]
+    assert "unavailable ?" in tint_line
+    # The neutral tint must be its own colour, distinct from both the good
+    # (green) and not-good (red) tints already pinned elsewhere.
+    assert "0x2a2a2a" in tint_line
+    assert "0x1a3a1a" in tint_line and "0x3a1a1a" in tint_line
+
+
 def test_boot_and_import_columns_share_the_dispose_before_reload_helper():
     # M1: boot() used to add a fresh columns group on every call with no
     # dispose, so each export-pair re-import (which calls boot()) stacked

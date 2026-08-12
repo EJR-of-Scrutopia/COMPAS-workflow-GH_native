@@ -855,12 +855,18 @@ function applyPulse(build) {
   const index = currentStageIndex(build);
   if (index === null) return;
   const stage = state.bundle.staging.stages[index];
-  // Green means the struck-now FEA solve converged. The form finding
-  // already guarantees compression-only equilibrium by construction, so a
-  // separate rigid-block lens is not what this pulse is for; see the Data
-  // panel for the CRA verdict where a study happens to carry one.
-  const good = !!(stage.struck_now && stage.struck_now.converged);
-  const tint = good ? 0x1a3a1a : 0x3a1a1a;
+  // Green means the struck-now FEA solve converged, red means it did not.
+  // "unavailable" (brick, tile, stone: no ananke_fea preset, see
+  // staging.FEA_MATERIALS) is neither -- no solve was ever attempted, so it
+  // gets a neutral grey rather than the red that would say a solve was run
+  // and lost. The form finding already guarantees compression-only
+  // equilibrium by construction, so a separate rigid-block lens is not
+  // what this pulse is for either; see the Data panel for the CRA verdict
+  // where a study happens to carry one.
+  const struck = stage.struck_now;
+  const unavailable = !!(struck && struck.status === "unavailable");
+  const good = !!(struck && struck.converged);
+  const tint = unavailable ? 0x2a2a2a : good ? 0x1a3a1a : 0x3a1a1a;
   const pulse = 0.5 + 0.5 * Math.sin(build * 4);
   for (const segment of state.objects.shell.children) {
     if (!segment.visible) continue;
@@ -914,10 +920,22 @@ function updateHud() {
     lines.push("stage " + stage.stage + " of " + staging.stages.length);
     lines.push("formwork carries " + (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN");
     const struck = stage.struck_now;
-    lines.push(struck && struck.converged
-      ? "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
-        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)"
-      : "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result"));
+    // Three readings, not two: a real convergence failure ("no equilibrium
+    // found") must never be the label for a material nobody ever tried to
+    // solve. staging.py's FEA_MATERIALS materials (concrete, timber, ...)
+    // are the only ones that reach a real runner call at all; brick, tile
+    // and stone come back with struck.status "unavailable" instead, and
+    // that has to read as "not available for this material", not failure.
+    let struckLine;
+    if (struck && struck.converged) {
+      struckLine = "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
+        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)";
+    } else if (struck && struck.status === "unavailable") {
+      struckLine = "struck now: not available for this material -- " + struck.message;
+    } else {
+      struckLine = "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result");
+    }
+    lines.push(struckLine);
   }
   hud.textContent = lines.join("\n");
 }

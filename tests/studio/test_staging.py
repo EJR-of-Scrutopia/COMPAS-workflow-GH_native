@@ -81,11 +81,16 @@ def wide_contract():
 def test_gravity_and_material_constants_mirror_the_fea_presets():
     """These duplicate ananke_fea values the guard forbids importing.
 
-    Only the four materials ananke_fea actually carries a preset for are
-    pinned here. Brick, tile and stone (Task 9) are staging-only additions:
-    ananke_fea.materials.PRESETS has no entry for them, so a struck-now
-    solve against one of the three reports non-convergence with a message
-    rather than a numeric verdict, and there is nothing to mirror.
+    Two halves, both pinned exactly, so a new material has to be a
+    deliberate act in two places rather than a one-sided edit that still
+    passes: FEA_MATERIALS' own densities must mirror ananke_fea's presets
+    exactly (not "at least these four"), and everything else in DENSITIES
+    must be exactly the staging-only masonry set with no ananke_fea preset
+    (brick, tile, stone) -- not "these three plus whatever got added
+    since." tests/fea/test_studio_mirror.py cross-checks the first half
+    against ananke_fea.materials.PRESETS directly, where both sides are
+    importable; this file cannot import ananke_fea at all, so it pins the
+    literal values instead.
 
     If this test fails, someone changed a preset on one side only: change
     src/ananke_fea/materials.py (or model.py GRAVITY) and here together.
@@ -93,10 +98,15 @@ def test_gravity_and_material_constants_mirror_the_fea_presets():
 
     _, _, staging = studio()
     assert staging.GRAVITY == 9.80665
-    assert staging.DENSITIES["concrete"] == 2400.0
-    assert staging.DENSITIES["concrete-c50"] == 2400.0
-    assert staging.DENSITIES["concrete-sprayed"] == 2300.0
-    assert staging.DENSITIES["timber"] == 385.0
+    assert staging.FEA_MATERIALS == {
+        "concrete", "concrete-c50", "concrete-sprayed", "timber",
+    }
+    fea_backed = {name: staging.DENSITIES[name] for name in staging.FEA_MATERIALS}
+    assert fea_backed == {
+        "concrete": 2400.0, "concrete-c50": 2400.0,
+        "concrete-sprayed": 2300.0, "timber": 385.0,
+    }
+    assert set(staging.DENSITIES) - staging.FEA_MATERIALS == {"brick", "tile", "stone"}
     assert staging.THICKNESS == 0.2
 
 
@@ -286,6 +296,79 @@ def test_run_staging_with_a_stub_runner_writes_the_document(tmp_path):
     assert requests_seen[-1]["placed_faces"] == sorted(
         document["stages"][-1]["faces"]
     )
+
+
+def test_run_staging_never_calls_the_runner_for_a_material_outside_fea_materials(tmp_path):
+    """Brick has no ananke_fea preset (staging.FEA_MATERIALS says so), so
+    the struck-now runner must never be invoked for it: nothing was ever
+    solved, so nothing must be reported as having failed to solve."""
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Wide-contract.json"
+    contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Wide-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    def runner_that_must_not_run(request):
+        raise AssertionError("the struck-now runner must not be called for brick")
+
+    out = tmp_path / "staging.json"
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="brick",
+        pattern="bonded-courses",
+        size=1.2,
+        out_path=out,
+        runner=runner_that_must_not_run,
+        include_cra=False,
+    )
+    assert len(document["stages"]) == 2
+    for stage in document["stages"]:
+        struck = stage["struck_now"]
+        # Not converged and not a failure either: no verdict was ever
+        # attempted, so it must not read as one that was attempted and lost.
+        assert struck["converged"] is None
+        assert struck["status"] == "unavailable"
+        assert "brick" in struck["message"]
+        assert "ananke_fea preset" in struck["message"]
+        # The formwork weights are exact arithmetic, independent of the
+        # struck-now check, and must still be real numbers for brick.
+        assert stage["placed_weight_newtons"] > 0
+        assert stage["formwork_carries_newtons"] > 0
+
+
+def test_run_staging_still_solves_a_material_fea_materials_covers(tmp_path):
+    """The other half of the branch: concrete is in FEA_MATERIALS, so the
+    runner must still be called and its verdict used, unmoved by the
+    brick/tile/stone branch added alongside it."""
+    g, seg, staging = studio()
+    contract_path = tmp_path / "Wide-contract.json"
+    contract_path.write_text(json.dumps(wide_contract()), encoding="utf-8")
+    geometry_path = tmp_path / "Wide-compas.json"
+    geometry_path.write_text("{}", encoding="utf-8")
+
+    calls = []
+
+    def stub_runner(request):
+        calls.append(request)
+        return {
+            "converged": True, "message": "",
+            "peak_tension": 1.0, "peak_compression": -2.0,
+        }
+
+    out = tmp_path / "staging.json"
+    document = staging.run_staging(
+        {"contract": contract_path, "geometry": geometry_path},
+        material="concrete",
+        pattern="bonded-courses",
+        size=1.2,
+        out_path=out,
+        runner=stub_runner,
+        include_cra=False,
+    )
+    assert len(calls) == len(document["stages"]) == 2
+    for stage in document["stages"]:
+        assert stage["struck_now"]["converged"] is True
+        assert stage["struck_now"].get("status") != "unavailable"
 
 
 def test_a_course_with_no_bound_faces_still_gets_a_stage_but_adds_no_weight(tmp_path):
