@@ -220,3 +220,112 @@ def test_the_cache_key_carries_size_and_pattern(tmp_path):
 def test_a_bundle_without_a_tessellation_is_stale():
     b = studio()[1]
     assert "tessellation" in b.REQUIRED_BUNDLE_KEYS
+
+
+def authored_sidecar():
+    """One cell, "a", covering the bottom half of tiny_contract's plan.
+
+    Half, not all, so the stage plan built from it carries a formwork
+    total that is visibly the wrong number for the whole vault: exactly
+    the mismatch the staleness gate exists to keep out of the HUD.
+    """
+    return {
+        "schema": "bench.tessellation/1",
+        "units": "m",
+        "domain": "plan",
+        "pattern": "authored",
+        "cells": [
+            {"key": "a", "course": 0,
+             "outline": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]},
+        ],
+    }
+
+
+def staged_against(bundle, upload):
+    import staging as staging_module
+
+    return staging_module.run_staging(
+        {"contract": upload / "Tiny-contract.json",
+         "geometry": upload / "Tiny-compas.json"},
+        material="concrete", pattern="bonded-courses", size=0.9,
+        out_path=bundle.staging_path("tiny", "concrete", "bonded-courses",
+                                     0.9, 0.2),
+        runner=lambda request: {"converged": True, "message": ""},
+        include_cra=False,
+    )
+
+
+def test_staging_built_from_another_cut_is_dropped_not_embedded(
+    tmp_path, monkeypatch
+):
+    """A stage plan naming cells this cut does not draw must not ship.
+
+    The sequence is the one a user reaches by hand: stage against an
+    authored sidecar, lose the sidecar (it is in neither the bundle cache
+    key nor app._invalidate_studio_cache), then delete bundle-*.json to
+    force a re-cut, which is the documented workaround and which leaves
+    staging-*.json behind. The rebuilt bundle draws generated cells; the
+    stale plan on disk still names the authored cell "a".
+
+    Nothing crashes when the two disagree, so a test that only asserted
+    "no exception" would pass against the broken build. The assertion has
+    to be that the plan is gone.
+    """
+    bundle, upload, _ = fake_export(tmp_path, monkeypatch)
+
+    sidecar = bundle.tessellation_sidecar("Tiny")
+    sidecar.write_text(json.dumps(authored_sidecar()), encoding="utf-8")
+    staged = staged_against(bundle, upload)
+    assert [s["segments"] for s in staged["stages"]] == [["a"]]
+    # app.py writes the pair together, so the honest starting point is a
+    # bundle that agrees with its plan.
+    first = bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.9, 0.2)
+    assert first["staging"] is not None
+    assert [piece["key"] for piece in first["pieces"]] == ["a"]
+
+    # The sidecar goes; the bundle is deleted to force a re-cut; staging
+    # stays on disk exactly as it was.
+    sidecar.unlink()
+    bundle.bundle_path("tiny", "concrete", "bonded-courses", 0.9, 0.2).unlink()
+    assert bundle.staging_path(
+        "tiny", "concrete", "bonded-courses", 0.9, 0.2).is_file()
+
+    rebuilt = bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.9, 0.2)
+    drawn = {piece["key"] for piece in rebuilt["pieces"]}
+    assert "a" not in drawn, "the re-cut must have generated its own cells"
+    assert rebuilt["staging"] is None, (
+        "a stage plan naming cell 'a' was embedded against pieces keyed "
+        "{}".format(sorted(drawn))
+    )
+
+
+def test_staging_from_the_same_cut_is_still_embedded(tmp_path, monkeypatch):
+    """The gate must not throw away a plan that does match.
+
+    A matching plan names exactly the drawn cells, so the guard has to
+    admit it. A gate that dropped everything would pass the test above
+    while making the whole staging feature dead.
+    """
+    bundle, upload, _ = fake_export(tmp_path, monkeypatch)
+    staged_against(bundle, upload)
+    document = bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.9, 0.2)
+    assert document["staging"] is not None
+    named = {s for stage in document["staging"]["stages"]
+             for s in stage["segments"]}
+    assert named == {piece["key"] for piece in document["pieces"]}
+
+
+def test_the_staleness_gate_compares_segments_against_piece_keys():
+    """The gate itself, exercised on both sides of the subset test."""
+    b = studio()[1]
+    made = [{"key": "c0p0"}, {"key": "c0p1"}]
+    assert b._staging_matches({"stages": [{"segments": ["c0p0"]}]}, made)
+    assert b._staging_matches(
+        {"stages": [{"segments": ["c0p0"]},
+                    {"segments": ["c0p0", "c0p1"]}]}, made)
+    assert not b._staging_matches({"stages": [{"segments": ["a"]}]}, made)
+    assert not b._staging_matches(
+        {"stages": [{"segments": ["c0p0", "gone"]}]}, made)
+    assert not b._staging_matches(None, made)
+    # An empty plan names nothing, so it cannot contradict the cut.
+    assert b._staging_matches({"stages": []}, made)

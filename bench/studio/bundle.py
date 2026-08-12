@@ -13,7 +13,7 @@ import datetime
 import json
 import math
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import cutting
 import domain
@@ -51,6 +51,53 @@ def _read_optional(path: Path) -> Optional[dict]:
     if path.is_file():
         return json.loads(path.read_text(encoding="utf-8"))
     return None
+
+
+def _staging_matches(staged: Optional[dict], made: List[dict]) -> bool:
+    """Does this stage plan name the cells these pieces actually carry?
+
+    The bundle guards its own pieces twice, with REQUIRED_BUNDLE_KEYS and
+    _pieces_are_uniquely_keyed, and both force a re-cut. The embedded
+    staging document had no gate at all: build_bundle read whatever
+    staging_path found and shipped it verbatim. app.py writes the two
+    together once, and that was the whole guarantee, so anything that
+    rebuilds the bundle without rebuilding staging breaks it. An authored
+    tessellation sidecar appearing, changing or disappearing does it,
+    since the sidecar is in neither the cache key nor
+    app._invalidate_studio_cache; so does the natural workaround for that,
+    which is to delete bundle-*.json to force a re-cut and leave
+    staging-*.json behind.
+
+    Nothing crashes when the two disagree, which is what makes it worth a
+    gate. The viewer derives the stage from the pieces' own courses and
+    clamps, so a mismatched plan reads as a working animation: a formwork
+    curve summed over a different cut's faces, and a struck-now verdict
+    solved for a different placed-faces list. Wrong numbers, wrong
+    verdict, no warning. Dropping the plan is preferred over attaching it
+    with a marker, because a marker is only as good as the reader that
+    honours it and this document is read by code in another tree.
+
+    A stage segment is a cell key: staging.stage_plan labels segments from
+    binding["keys"], and pieces.segment_pieces emits one piece per cell
+    under that same key, so a matching pair has equal sets. Subset, not
+    equality, is the test, because a plan naming fewer cells than are
+    drawn is still a plan about this cut.
+    """
+
+    if staged is None:
+        return False
+    stages = staged.get("stages")
+    if not isinstance(stages, list):
+        return False
+    named = set()
+    for stage in stages:
+        if not isinstance(stage, dict):
+            return False
+        segments = stage.get("segments") or []
+        if not isinstance(segments, list):
+            return False
+        named.update(segments)
+    return named <= {piece["key"] for piece in made}
 
 
 def build_tessellation_for(export_name, contract, arrays, render, pattern, size):
@@ -120,11 +167,24 @@ def build_bundle(
         "report": binding["report"],
     }
     overlap = set(tessellation_summary) & set(report)
-    assert not overlap, (
-        "pieces.segment_pieces's report shares key(s) {} with the "
-        "tessellation summary; spreading it in would let one silently "
-        "overwrite the other".format(sorted(overlap))
-    )
+    if overlap:
+        # A raise, not an assert: python -O strips an assert, and the
+        # contract this guards (the two dicts spread into one below) fails
+        # silently when it goes, with one dict quietly clobbering the
+        # other's field. A contract worth stating is worth enforcing in
+        # every interpreter mode.
+        raise ValueError(
+            "pieces.segment_pieces's report shares key(s) {} with the "
+            "tessellation summary; spreading it in would let one silently "
+            "overwrite the other".format(sorted(overlap))
+        )
+
+    # The stage plan is embedded only if it was solved against THIS cut.
+    # A stale plan is worse than no plan: see _staging_matches.
+    staged = _read_optional(
+        staging_path(slug, material, pattern, size, thickness))
+    if not _staging_matches(staged, made):
+        staged = None
 
     document = {
         "export": export_name,
@@ -165,8 +225,7 @@ def build_bundle(
         },
         "tessellation": {**tessellation_summary, **report},
         "pieces": made,
-        "staging": _read_optional(
-            staging_path(slug, material, pattern, size, thickness)),
+        "staging": staged,
         "verification": _read_optional(
             STUDIES_DIR / slug / "fea-verification.json"
         ),
@@ -175,7 +234,9 @@ def build_bundle(
             "thickness": thickness,
             "combination": "ULS",
             "combination_factor": 1.35,
-            "note": "staging and verification are null until their runs exist",
+            "note": "staging and verification are null until their runs "
+                    "exist; staging is also dropped, not embedded, when its "
+                    "stage plan names cells this cut does not draw",
         },
     }
     target = bundle_path(slug, material, pattern, size, thickness)
