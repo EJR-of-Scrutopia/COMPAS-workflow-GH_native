@@ -254,18 +254,6 @@ def run_staging(
         arrays["vertices"], arrays["faces"], plan, material, thickness
     )
 
-    # The over-budget remedy depends on where the cut came from: a larger
-    # target size genuinely shrinks a generated cut's block count, but an
-    # imported tessellation ignores size entirely (see
-    # tessellation.from_document), so the only real remedy there is
-    # re-authoring fewer, larger cells in Grasshopper.
-    if tess["source"] == "imported":
-        budget_remedy = ("the target piece size has no effect on an "
-                          "imported tessellation; re-author it with fewer, "
-                          "larger cells in Grasshopper for a verdict")
-    else:
-        budget_remedy = "choose a larger target piece size for a verdict"
-
     if runner is None:
         runner = _subprocess_runner(python_exe or FEA_PYTHON)
 
@@ -319,13 +307,29 @@ def run_staging(
                 # every stage past this budget failed to converge inside
                 # IPOPT's own iteration cap, not the CRA_TIMEOUT_SECONDS
                 # wall clock).
+                #
+                # The message promises no remedy: on a real study (Trial 2,
+                # measured across the whole size slider from 0.9 to 3.0, the
+                # full range app.py permits) the smallest reachable stage
+                # still carries more blocks than the budget at every size,
+                # so "choose a larger size" sends the reader to drag a
+                # slider to its end and get the same refusal. What is true,
+                # and what the message says, is the measured count, the
+                # budget, and why raising CRA_TIMEOUT_SECONDS would not
+                # help either.
                 stage_entry["cra"] = {
                     "stands": None,
                     "status": "over budget",
                     "message": "{} blocks exceeds the affordable rigid-block "
-                               "budget of {}; {}".format(
-                                   len(stage_blocks), CRA_BLOCK_BUDGET,
-                                   budget_remedy),
+                               "budget of {}. The budget is an empirically "
+                               "measured convergence ceiling, not a "
+                               "performance limit: past it the solver "
+                               "exhausts its own iteration cap rather than "
+                               "running out of time, so a longer wait would "
+                               "not help. A rigid-block verdict for a cut at "
+                               "this resolution is separate work this "
+                               "studio does not reach today.".format(
+                                   len(stage_blocks), CRA_BLOCK_BUDGET),
                     "blocks": len(stage_blocks),
                     "interfaces": 0,
                     "mu": FRICTION[material],

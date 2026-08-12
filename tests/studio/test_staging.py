@@ -521,8 +521,15 @@ def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
     stage_2_cra = document["stages"][1]["cra"]
     assert stage_2_cra["stands"] is None
     assert stage_2_cra["status"] == "over budget"
-    assert "blocks exceeds" in stage_2_cra["message"]
-    assert "larger target piece size" in stage_2_cra["message"]
+    # The message names what is measured (block count, budget) and why a
+    # longer wait would not help (an empirically measured convergence
+    # ceiling, not a wall-clock limit), but promises no remedy: on a real
+    # study (Trial 2, measured across the whole size slider app.py allows)
+    # no size reaches the budget, so "choose a larger size" would send the
+    # reader to drag a slider to its end and get the same refusal.
+    assert "11 blocks exceeds" in stage_2_cra["message"]
+    assert "budget of 9" in stage_2_cra["message"]
+    assert "larger" not in stage_2_cra["message"]
     # cra_runner should only have been called once (for stage 1)
     assert len(cra_runner_calls) == 1
 
