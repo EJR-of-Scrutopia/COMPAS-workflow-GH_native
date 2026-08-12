@@ -18,6 +18,13 @@ shape, the coverage at the default size, and the coverage regression at
 1.5 m. A mismatch there is reported as a mismatch, not quietly written over.
 
 Usage: .venv\\Scripts\\python.exe bench/scripts/cutting_measurements.py [pattern] [size]
+       .venv\\Scripts\\python.exe bench/scripts/cutting_measurements.py --sweep [pattern]
+
+--sweep walks every position of the piece-size slider rather than one size.
+docs/BENCH.md used to publish a coverage limit at one size, 1.5 m, taken
+when _arc's seam bug was still in and read as a property of coarse cuts;
+the honest form of that claim is the whole slider, measured, which is what
+this mode prints.
 """
 
 from __future__ import annotations
@@ -103,9 +110,101 @@ def _degrees(residual: float) -> float:
     return math.degrees(math.asin(min(1.0, residual)))
 
 
+# The piece-size slider's own range, read off index.html: min 0.3, max 3,
+# step 0.05. Written as integer millimetres and divided, so the walk lands
+# on the slider's own values rather than on a float accumulation of them.
+SLIDER_MIN_MM, SLIDER_MAX_MM, SLIDER_STEP_MM = 300, 3000, 50
+
+
+def slider_sizes():
+    return [
+        mm / 1000.0
+        for mm in range(SLIDER_MIN_MM, SLIDER_MAX_MM + 1, SLIDER_STEP_MM)
+    ]
+
+
+def sweep(pattern: str, contract, arrays, render) -> int:
+    """Every position of the size slider, not one size.
+
+    docs/BENCH.md published "at 1.5 m the same export grows 2 coverage
+    holes, 1 broken boundary entry and 1 orphan face" and read it as a
+    limit of the cut at coarse sizes. It was neither monotone nor bounded
+    there -- 2.0 m was clean while 1.5 m was not, and 3.0 m dropped nine
+    orphan faces -- because all of it was generators._arc emitting a
+    seam-crossing span's inserted points out of order, not a size limit.
+    One size can never tell those two apart, so this walks all 55.
+    """
+
+    sizes = slider_sizes()
+    print("coverage across the whole piece-size slider: {} sizes, {} to {} m "
+          "in steps of {} m (index.html's own range), pattern {!r}".format(
+              len(sizes), sizes[0], sizes[-1], SLIDER_STEP_MM / 1000.0, pattern))
+    print("")
+    header = ("size", "cells", "courses", "orphan", "double", "open",
+              "sliver", "folded", "holes", "broken")
+    print("  {:>5}  {:>6}  {:>7}  {:>6}  {:>6}  {:>5}  {:>6}  {:>6}  {:>5}  {:>6}"
+          .format(*header))
+    degraded = []
+    folded_total = 0
+    folded_sizes = []
+    for size in sizes:
+        tess, _surface, binding = _cut(pattern, size, contract, arrays, render)
+        counts = {
+            "orphan": len(binding["report"]["orphan_faces"]),
+            "double": len(binding["report"]["double_faces"]),
+            "open": len(tess["report"]["open_facets"]),
+            "sliver": len(tess["report"]["slivers"]),
+            "folded": len(tess["report"]["folded"]),
+            "holes": len(tess["report"]["coverage_holes"]),
+            "broken": len(tess["report"]["broken_boundary"]),
+        }
+        print("  {:>5.2f}  {:>6}  {:>7}  {:>6}  {:>6}  {:>5}  {:>6}  {:>6}  "
+              "{:>5}  {:>6}".format(
+                  size, len(tess["cells"]), tess["courses"],
+                  counts["orphan"], counts["double"], counts["open"],
+                  counts["sliver"], counts["folded"], counts["holes"],
+                  counts["broken"]))
+        if counts["folded"]:
+            folded_total += counts["folded"]
+            folded_sizes.append((size, sorted(tess["report"]["folded"])))
+        if any(value for name, value in counts.items() if name != "folded"):
+            degraded.append((size, dict(counts)))
+
+    print("")
+    if degraded:
+        print("sizes that still degrade (folded counted separately below):")
+        for size, counts in degraded:
+            print("  {:.2f} m: {}".format(
+                size, ", ".join("{} {}".format(v, k)
+                                for k, v in sorted(counts.items())
+                                if v and k != "folded")))
+    else:
+        print("no size on the slider drops an analysis face, doubles one, "
+              "leaves an open facet, a sliver, a coverage hole or a broken "
+              "boundary entry.")
+    print("")
+    if folded_sizes:
+        print("folded cells, {} in total at {} of the {} sizes:".format(
+            folded_total, len(folded_sizes), len(sizes)))
+        for size, keys in folded_sizes:
+            print("  {:.2f} m: {} -- {}".format(size, len(keys), ", ".join(keys)))
+        print("a folded cell is named in report['folded'] and nowhere "
+              "excluded: it is still cut, still capped and still drawn, "
+              "with one lobe of its cap inside out. It does not enter any "
+              "other count above, which is why naming it was the whole "
+              "point.")
+    else:
+        print("no folded cells at any size on the slider.")
+    return 0
+
+
 def main() -> int:
-    pattern = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATTERN
-    size = float(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_SIZE
+    argv = sys.argv[1:]
+    sweeping = bool(argv) and argv[0] == "--sweep"
+    if sweeping:
+        argv = argv[1:]
+    pattern = argv[0] if argv else DEFAULT_PATTERN
+    size = float(argv[1]) if len(argv) > 1 else DEFAULT_SIZE
 
     contract_path = UPLOADS / (EXPORT + "-contract.json")
     geometry_path = UPLOADS / (EXPORT + "-compas.json")
@@ -122,6 +221,11 @@ def main() -> int:
     centroids = geometry.face_centroids(arrays["vertices"], arrays["faces"])
     plan = domain.plan_domain(arrays["vertices"], arrays["faces"], centroids)
     render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
+
+    if sweeping:
+        print("export {!r}".format(EXPORT))
+        print("")
+        return sweep(pattern, contract, arrays, render)
 
     tess, surface, binding = _cut(pattern, size, contract, arrays, render)
     supports = geometry.support_ids(contract)
