@@ -263,3 +263,84 @@ def test_cells_with_same_corners_in_different_order_are_rejected_by_name():
     message = str(error.value)
     assert "a" in message and "b" in message
     assert "connect the same corners in different orders" in message
+
+
+def test_a_wrong_container_type_is_a_named_rejection_not_a_crash():
+    """The schema validates values by name, which reads the container.
+
+    A wrong container type therefore escaped from_document as a bare
+    AttributeError or TypeError, and app.get_bundle catches only
+    ValueError, so the route answered 500 with no detail body at all: not
+    the cell key, not even which file. Every case here used to be one of
+    those. The assertion is both that it is a ValueError (so the route can
+    make it a 400) and that the message names the cell, which is the whole
+    point of the 400 contract.
+    """
+    t = studio()
+    square = [[0, 0], [1, 0], [1, 1], [0, 1]]
+    cases = [
+        ("cells is not a list", document(), {"cells": "abc"}, "cells"),
+        ("a cell is a bare string", document(["oops"]), None, "cell 0"),
+        ("outline is not a list",
+         document([{"key": "a", "course": 0, "outline": 7}]), None, "'a'"),
+        ("holes is not a list",
+         document([{"key": "a", "course": 0, "outline": square, "holes": 5}]),
+         None, "'a'"),
+        ("a hole is not a list",
+         document([{"key": "a", "course": 0, "outline": square, "holes": [7]}]),
+         None, "'a'"),
+        ("a point is an object, not a pair",
+         document([{"key": "a", "course": 0,
+                    "outline": [{"x": 0}, {"x": 1}, {"x": 2}]}]), None, "'a'"),
+    ]
+    for label, doc, override, expected in cases:
+        if override is not None:
+            doc = dict(doc, **override)
+        with pytest.raises(ValueError) as error:
+            t.from_document(doc, flat)
+        assert expected in str(error.value), "{}: {}".format(label, error.value)
+
+
+def test_a_document_that_is_not_an_object_is_rejected_not_crashed():
+    """A sidecar holding a JSON list reached from_document unguarded.
+
+    read_tessellation type-checks the CONTRACT route (isinstance dict) but
+    hands the sidecar's json.loads result straight through, so a sidecar
+    authored as a bare list raised AttributeError on document.get.
+    """
+    t = studio()
+    with pytest.raises(ValueError) as error:
+        t.from_document(["not", "a", "document"], flat)
+    assert "JSON object" in str(error.value)
+
+
+def test_a_negative_course_is_rejected_by_cell_key():
+    """A negatively coursed cell was drawn but placed by no stage.
+
+    It welds, it becomes a piece, and it never appears in any stage, so
+    its weight leaves the formwork curve. analysis_binding reports zero
+    orphans (its faces ARE covered by a cell), so the one disclosure
+    mechanism cannot see it. Rejected at the authoring boundary, by name.
+    """
+    t = studio()
+    cells = [{"key": "sunk", "course": -3,
+              "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]}]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    message = str(error.value)
+    assert "sunk" in message and "-3" in message
+
+
+def test_a_malformed_sidecar_names_the_file_it_could_not_read(tmp_path):
+    """json.JSONDecodeError subclasses ValueError, so this already 400'd.
+
+    But "Expecting value: line 1 column 1" names neither the file nor the
+    fact a sidecar was involved, and the author is staring at a contract
+    that is perfectly valid.
+    """
+    t = studio()
+    sidecar = tmp_path / "Trial-tessellation.json"
+    sidecar.write_text("{not json at all", encoding="utf-8")
+    with pytest.raises(ValueError) as error:
+        t.read_tessellation({}, sidecar)
+    assert "Trial-tessellation.json" in str(error.value)

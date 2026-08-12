@@ -592,7 +592,19 @@ def read_tessellation(contract, sidecar_path) -> Optional[Dict]:
         return found
     path = Path(sidecar_path)
     if path.is_file():
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            # json.JSONDecodeError subclasses ValueError, so app.get_bundle
+            # already turned this into a 400 -- but a bare "Expecting value:
+            # line 1 column 1" names neither the file nor the fact that a
+            # sidecar was involved at all, and the author is looking at a
+            # contract that is perfectly valid. Wrapped so the message says
+            # which file to open.
+            raise ValueError(
+                "the authored tessellation at {} is not valid JSON: {}".format(
+                    path, error)
+            ) from error
     return None
 
 
@@ -657,6 +669,18 @@ def from_document(document: Dict, surface_height) -> Dict:
     unmeasured from measured and found to be zero.
     """
 
+    # Shape before value. Every rule below validates a value BY NAME, which
+    # reads the container it was handed; a wrong container type therefore
+    # escaped as a bare AttributeError or TypeError, and app.get_bundle
+    # catches only ValueError, so a Grasshopper author got a 500 with no
+    # body: not the cell key, not even which file. The 400 contract exists
+    # exactly for this, so the shape is checked first and every rejection
+    # names its cell the same way the value rules do.
+    if not isinstance(document, dict):
+        raise ValueError(
+            "a tessellation document must be a JSON object, not a {}".format(
+                type(document).__name__)
+        )
     schema = document.get("schema")
     if schema != SCHEMA:
         raise ValueError(
@@ -675,6 +699,11 @@ def from_document(document: Dict, surface_height) -> Dict:
             "reads plan outlines only.".format(where)
         )
     raw_cells = document.get("cells") or []
+    if not isinstance(raw_cells, list):
+        raise ValueError(
+            "tessellation cells must be a list, not a {}".format(
+                type(raw_cells).__name__)
+        )
     if not raw_cells:
         raise ValueError("this tessellation has no cells")
 
@@ -683,6 +712,11 @@ def from_document(document: Dict, surface_height) -> Dict:
     offset_max = None
     prepared: List[Dict] = []
     for position, cell in enumerate(raw_cells):
+        if not isinstance(cell, dict):
+            raise ValueError(
+                "cell {} is not an object, it is a {}".format(
+                    position, type(cell).__name__)
+            )
         key = cell.get("key")
         if not isinstance(key, str) or not key:
             raise ValueError("cell {} has no key".format(position))
@@ -690,9 +724,23 @@ def from_document(document: Dict, surface_height) -> Dict:
             raise ValueError("cell key {!r} is used more than once".format(key))
         seen.add(key)
 
-        rings = [cell.get("outline") or []] + list(cell.get("holes") or [])
+        outline = cell.get("outline") or []
+        if not isinstance(outline, list):
+            raise ValueError(
+                "cell {!r} has an outline that is not a list of points".format(key)
+            )
+        holes = cell.get("holes") or []
+        if not isinstance(holes, list):
+            raise ValueError(
+                "cell {!r} has holes that are not a list of rings".format(key)
+            )
+        rings = [outline] + list(holes)
         flat_rings = []
         for ring in rings:
+            if not isinstance(ring, list):
+                raise ValueError(
+                    "cell {!r} has a ring that is not a list of points".format(key)
+                )
             if len(ring) < 3:
                 raise ValueError(
                     "cell {!r} has a ring of {} points; a polygon needs "
@@ -702,7 +750,11 @@ def from_document(document: Dict, surface_height) -> Dict:
             for point in ring:
                 try:
                     x, y = float(point[0]), float(point[1])
-                except (TypeError, ValueError, IndexError):
+                except (TypeError, ValueError, IndexError, KeyError):
+                    # KeyError too: a point authored as {"x": .., "y": ..}
+                    # instead of [x, y] subscripts to a KeyError, which is
+                    # the same authoring mistake as any other and must not
+                    # escape as a 500.
                     raise ValueError(
                         "cell {!r} has a coordinate that is not a number".format(key)
                     )
@@ -735,6 +787,21 @@ def from_document(document: Dict, surface_height) -> Dict:
         except (TypeError, ValueError):
             raise ValueError(
                 "cell {!r} has a course value that is not an integer".format(key)
+            )
+        if course < 0:
+            # A course is an index from the rim up, and the staging plan
+            # walks the courses present. A negatively coursed cell was
+            # welded and drawn as a piece all the same, so its weight left
+            # the formwork curve without a trace: analysis_binding reports
+            # zero orphans (its faces ARE covered by a cell), so the one
+            # disclosure mechanism could not see it either. Measured on the
+            # tiny contract: courses -3 and 0 gave a final formwork of
+            # 13087.1 N against a true 26174.2 N with an entirely empty
+            # report. Rejected here, by cell key, alongside the other
+            # authored rules.
+            raise ValueError(
+                "cell {!r} has course {}; a course is an index from the rim "
+                "up and cannot be negative".format(key, course)
             )
         prepared.append({
             "key": key,
