@@ -115,33 +115,35 @@ def test_a_point_off_the_surface_is_clamped_and_counted():
     assert sum(weight for _, weight in lifted["weights"]) == pytest.approx(1.0)
 
 
-def test_largest_ear_selection_produces_better_triangles():
+def test_ear_clip_takes_the_largest_ear_and_avoids_slivers():
     c = studio()
-    # The largest ear selection rule exists for triangle quality: taking the
-    # biggest available ear avoids carving off slivers, which after
-    # subdivision and lifting produce noisy surface normals on the casting.
-    # This is shown by the comment in ear_clip.
+    # The largest ear selection rule avoids slivers. When these caps are
+    # subdivided and lifted onto the vault surface, sliver triangles produce
+    # noisy surface normals on the drawn casting.
     #
-    # Several fixture polygons were tested to find one where largest-ear and
-    # first-available strategies diverge in measurable ways:
-    #
-    # Fixture 1: Pentagon [0, 2, 4, 0.05, 3] with 0.05 tiny vertical gap.
-    # Result: Both strategies produce similar minima (~0.05), the difference
-    # disappears in small polygons because even first-available eventually
-    # picks the large ears.
-    #
-    # Fixture 2: Pentagon with even larger gap (0.1 then 0.2).
-    # Result: First-available minimum was actually slightly better, because
-    # removing a small ear early can free up larger ears later.
-    #
-    # The current tests (test_ear_clip_covers_a_square,
-    # test_a_t_junction_vertex_stays_a_real_corner) already verify that
-    # collinear T junctions are preserved by the zero-area skip, not by the
-    # ordering rule. The largest-ear rule itself is not directly testable
-    # without a corpus of real outlines where the difference emerges; the
-    # existing tests catch regr essions if the rule is removed.
+    # Fixture: 8-vertex simple polygon that exposes the difference between
+    # largest-ear and first-available selection. Measured results:
+    #   largest ear (shipped):  0.100930
+    #   first available:        0.000338
+    # The factor of 298 difference is exactly the problem the rule solves.
+    # The threshold 0.01 sits about 30x above first-available and 10x below
+    # largest-ear, so it fails loudly if the selection rule is swapped.
+    points = [
+        [0.642407, 0.0], [0.40025, 0.40025], [0.0, 0.767683], [-0.10957, 0.10957],
+        [-0.736031, 0.0], [-0.520895, -0.520895], [-0.0, -0.302062], [0.510753, -0.510753],
+    ]
+    ring = [0, 1, 2, 3, 4, 5, 6, 7]
 
-    # Smoke test: largest ear selection still works on known cases.
-    points = [[0, 0], [1, 0], [1, 1], [0, 1]]
-    triangles = c.ear_clip([0, 1, 2, 3], points)
-    assert len(triangles) == 2
+    triangles = c.ear_clip(ring, points)
+    # Total area is preserved.
+    assert area_of(points, triangles) == pytest.approx(0.876139146936, abs=1e-9)
+    # Minimum triangle area is above the threshold, proving largest-ear
+    # selection is in place.
+    min_area = min(
+        abs(
+            (points[a][0] - points[b][0]) * (points[c][1] - points[b][1])
+            - (points[a][1] - points[b][1]) * (points[c][0] - points[b][0])
+        ) / 2.0
+        for a, b, c in triangles
+    )
+    assert min_area >= 0.01
