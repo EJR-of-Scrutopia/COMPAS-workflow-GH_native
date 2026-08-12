@@ -122,6 +122,18 @@ def test_a_supplied_z_is_measured_against_the_surface_not_used():
     assert all(len(p) == 2 for p in tess["points"])
 
 
+def test_z_offset_max_is_none_when_surface_never_answers():
+    t = studio()
+    def no_surface(x, y):
+        return None
+    cells = [
+        {"key": "a", "course": 0,
+         "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+    ]
+    tess = t.from_document(document(cells), no_surface)
+    assert tess["z_offset_max"] is None
+
+
 def test_a_missing_course_is_filled_in_and_disclosed():
     t = studio()
     cells = [{"key": "a", "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]}]
@@ -160,3 +172,40 @@ def test_a_ring_that_touches_itself_at_a_vertex_is_rejected_by_name():
     with pytest.raises(ValueError) as error:
         t.from_document(document(cells), flat)
     assert "pinch" in str(error.value)
+
+
+def test_a_vertex_lying_on_a_non_adjacent_edge_is_rejected_by_name():
+    t = studio()
+    cells = [{"key": "bad", "course": 0,
+              "outline": [[0, 0], [2, 3], [4, 0], [4, 3], [0, 3]]}]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    assert "bad" in str(error.value)
+
+
+def test_identical_outlines_in_same_order_are_rejected_by_name():
+    t = studio()
+    cells = [
+        {"key": "square1", "course": 0,
+         "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+        {"key": "square2", "course": 0,
+         "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+    ]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    message = str(error.value)
+    assert "square1" in message and "square2" in message
+
+
+def test_identical_outlines_in_different_order_are_rejected_by_name():
+    t = studio()
+    cells = [
+        {"key": "square1", "course": 0,
+         "outline": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+        {"key": "square2", "course": 0,
+         "outline": [[1, 0], [1, 1], [0, 1], [0, 0]]},
+    ]
+    with pytest.raises(ValueError) as error:
+        t.from_document(document(cells), flat)
+    message = str(error.value)
+    assert "square1" in message and "square2" in message

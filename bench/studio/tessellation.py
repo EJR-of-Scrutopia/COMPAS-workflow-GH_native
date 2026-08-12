@@ -580,7 +580,7 @@ def _is_simple(ring) -> bool:
     """Check that a ring is a simple polygon: no self-intersection.
 
     Detects proper crossing of non-adjacent edges, duplicate points within TOL,
-    and vertices lying strictly inside non-adjacent edges. O(n squared) in the
+    and vertices lying strictly on non-adjacent edges. O(n squared) in the
     ring's point count, acceptable for author-sized polygons at import time.
     """
 
@@ -600,9 +600,13 @@ def _is_simple(ring) -> bool:
             c, d = ring[j], ring[(j + 1) % count]
             if _segments_cross(a, b, c, d):
                 return False
-            if on_segment(c, a, b) is not None:
-                return False
-            if on_segment(d, a, b) is not None:
+
+    for vi in range(count):
+        v = ring[vi]
+        for ei in range(count):
+            if vi == ei or vi == (ei + 1) % count:
+                continue
+            if on_segment(v, ring[ei], ring[(ei + 1) % count]) is not None:
                 return False
 
     return True
@@ -614,6 +618,11 @@ def from_document(document: Dict, surface_height) -> Dict:
     Every rule is enforced and every rejection names its cell. A pattern
     is authored in Grasshopper and fixed there, so "cell b7 overlaps cell
     b8" is the whole difference between a fixable mistake and a mystery.
+
+    Returns a tessellation with z_offset_max set to None if the surface
+    height callback never returns a value (unmeasured), or to a float if
+    any supplied z was compared against the surface. This distinguishes
+    unmeasured from measured and found to be zero.
     """
 
     schema = document.get("schema")
@@ -750,7 +759,7 @@ def _reject_overlaps(tess: Dict) -> None:
                 continue
             outline_b = cells[other]["outline"]
 
-            if outline_a == outline_b:
+            if len(outline_a) == len(outline_b) and set(outline_a) == set(outline_b):
                 raise ValueError(
                     "cell {!r} and cell {!r} have identical outlines; each cell "
                     "must be unique".format(cell["key"], cells[other]["key"])
