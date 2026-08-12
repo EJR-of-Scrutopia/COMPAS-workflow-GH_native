@@ -222,6 +222,47 @@ def test_a_bundle_without_a_tessellation_is_stale():
     assert "tessellation" in b.REQUIRED_BUNDLE_KEYS
 
 
+def test_a_bundle_cached_before_a_tessellation_field_existed_is_stale(
+    tmp_path, monkeypatch
+):
+    # Final fix wave. REQUIRED_BUNDLE_KEYS named only the two top level
+    # keys, so a field added inside the tessellation summary mid-wave left
+    # every bundle cached before it perfectly valid to this gate, and the
+    # viewer read it unguarded: the Data button appeared to do nothing at
+    # all on any machine that ran this branch while the wave was in
+    # progress, the owner's included. A sub-field the viewer reads makes a
+    # cache exactly as stale as a missing top level key does.
+    bundle, _, _ = fake_export(tmp_path, monkeypatch)
+    fresh = bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.9)
+    cached_path = bundle.bundle_path("tiny", "concrete", "bonded-courses", 0.9, 0.2)
+    for path in (
+        "tessellation.corner_residual_stats",
+        "tessellation.facets_per_piece",
+        "tessellation.boundary_points_per_piece",
+        "tessellation.clamped_max_m",
+        "tessellation.clamped_median_m",
+        "tessellation.report.folded",
+    ):
+        assert path in bundle.REQUIRED_BUNDLE_KEYS, (
+            "{} is read by the Data panel and must invalidate a cache that "
+            "predates it".format(path)
+        )
+        parts = path.split(".")
+        stale = json.loads(json.dumps(fresh))
+        node = stale
+        for part in parts[:-1]:
+            node = node[part]
+        del node[parts[-1]]
+        cached_path.write_text(json.dumps(stale), encoding="utf-8")
+        loaded = bundle.load_or_build_bundle("Tiny", "concrete", "bonded-courses", 0.9)
+        node = loaded
+        for part in parts:
+            assert part in node, (
+                "a bundle missing {} was served rather than re-cut".format(path)
+            )
+            node = node[part]
+
+
 def authored_sidecar():
     """One cell, "a", covering the bottom half of tiny_contract's plan.
 

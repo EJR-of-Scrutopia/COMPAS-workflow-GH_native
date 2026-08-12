@@ -30,7 +30,34 @@ STUDIES_DIR = REPO / "bench" / "studies"
 # The bundle document shape: if a cached document lacks any of these keys,
 # it is stale and must be rebuilt. This is how the cache invalidates itself
 # as new document fields are added, without requiring manual version numbers.
-REQUIRED_BUNDLE_KEYS = ("pieces", "tessellation")
+#
+# Dotted paths, because a field added inside the tessellation summary makes
+# a cached bundle exactly as stale as a missing top level key does, and the
+# top level pair alone could not see it. Every entry below the first two
+# landed during the 2026-08-12 cutting wave and is read by the viewer's
+# Data panel, so any machine that ran this branch mid-wave holds a cache
+# the panel cannot render. The panel degrades honestly on a missing
+# sub-field now as well; this is the half that stops the stale document
+# being served in the first place.
+REQUIRED_BUNDLE_KEYS = (
+    "pieces",
+    "tessellation",
+    "tessellation.corner_residual_stats",
+    "tessellation.facets_per_piece",
+    "tessellation.boundary_points_per_piece",
+    "tessellation.clamped_max_m",
+    "tessellation.clamped_median_m",
+    "tessellation.report.folded",
+)
+
+
+def _has_key_path(document: Dict, path: str) -> bool:
+    node = document
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return True
 
 
 def bundle_path(slug: str, material: str, pattern: str, size: float, thickness: float) -> Path:
@@ -267,7 +294,7 @@ def load_or_build_bundle(
     )
     if (
         cached is not None
-        and all(key in cached for key in REQUIRED_BUNDLE_KEYS)
+        and all(_has_key_path(cached, key) for key in REQUIRED_BUNDLE_KEYS)
         and _pieces_are_uniquely_keyed(cached)
     ):
         return cached
