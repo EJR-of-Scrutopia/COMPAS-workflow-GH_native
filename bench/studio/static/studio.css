@@ -34,9 +34,14 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
               border-bottom: 1px solid #2a2c31; }
 .hidden { display: none; }
 #layer-toggles label { display: flex; gap: 8px; align-items: center; }
+/* Bottom right, clear of the 300px control panel, rather than bottom left
+   on top of #hud. Both were anchored left: 16px; bottom: 16px, so turning
+   a heatmap on covered the last lines of the HUD -- and the HUD gained the
+   struck-now line in this branch, which is the line a heatmap is most
+   likely to be read against. */
 #legend {
   position: absolute;
-  left: 16px;
+  right: 316px;
   bottom: 16px;
   padding: 8px 12px;
   min-width: 180px;

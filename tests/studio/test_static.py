@@ -10,6 +10,17 @@ from pathlib import Path
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 
 
+def _function_body(js, name):
+    """The source of one top level function, brace to closing brace.
+
+    Every function in studio.js is written at column 0, so the first
+    "\\n}" after the declaration is its own closing brace.
+    """
+
+    start = js.index("function {}(".format(name))
+    return js[start:js.index("\n}", start)]
+
+
 def _luminance(hexstr):
     """Relative luminance of a 6 hex digit colour string, no 0x prefix."""
 
@@ -189,6 +200,59 @@ def test_the_pulse_does_not_tint_an_unavailable_material_red():
     # (green) and not-good (red) tints already pinned elsewhere.
     assert "0x2a2a2a" in tint_line
     assert "0x1a3a1a" in tint_line and "0x3a1a1a" in tint_line
+
+
+def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading():
+    # Final fix wave. The two tests above pin updateHud and applyPulse, the
+    # two functions commit 022f9c5 fixed, and neither of them looks at
+    # layerAvailability -- the third reader of the same state, in the same
+    # file, which kept the two-reading logic for the whole wave. It reached
+    # the screen twice on shipped exports: limestone with a finished staged
+    # run telling the reader to wait "until a staged run exists", and brick
+    # with a finished staged run and no verification file disabling the
+    # layers for "no staging" while staging sat in the bundle.
+    #
+    # All three are pinned here together, in one test, so that fixing two
+    # of them is not a thing that can pass.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    readers = ("updateHud", "applyPulse", "layerAvailability")
+    for name in readers:
+        body = _function_body(js, name)
+        reads_it = (
+            'status === "unavailable"' in body
+            or "stagingUnavailable(" in body
+        )
+        assert reads_it, (
+            "{} decides what to show from struck_now but never distinguishes "
+            "the unavailable case, so a material with no FEA preset reads as "
+            "a failure or as a missing run".format(name)
+        )
+    # The two that print words must print the SAME words: they are on screen
+    # at the same time, describing the same state.
+    for name in ("updateHud", "layerAvailability"):
+        assert "not available for this material" in _function_body(js, name), (
+            "{} must use the wording the other reader already prints on the "
+            "same screen".format(name)
+        )
+    # And layerAvailability must not send a user to run something that has
+    # already run and can never change the answer.
+    availability = _function_body(js, "layerAvailability")
+    unavailable_at = availability.index("stagingUnavailable()")
+    stale_at = availability.index("until a staged run exists")
+    assert unavailable_at < stale_at, (
+        "the unavailable case must be decided before the fallback that "
+        "tells the reader to wait for a staged run"
+    )
+    # The helper must read the staging document, not the material name: the
+    # list of materials with no FEA preset lives in staging.py and a copy of
+    # it here would be a second source of truth for it.
+    helper = _function_body(js, "stagingUnavailable")
+    assert "state.bundle.staging" in helper
+    for material in ("brick", "tile", "stone"):
+        assert '"{}"'.format(material) not in helper, (
+            "the viewer must not carry its own copy of staging.py's "
+            "FEA_MATERIALS list"
+        )
 
 
 def test_boot_and_import_columns_share_the_dispose_before_reload_helper():
@@ -540,10 +604,25 @@ def test_stress_smoothing_is_wired_and_per_surface_is_the_default():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert '<option value="per" selected>' in html
     assert "smoothStressField" in js and "interpolateScalarField" in js
-    start = js.index("function recolourSegments(")
-    end = js.index("\n}", start)
-    body = js[start:end]
-    assert "cornerSurface" in body, "per-surface mode must pick the field by skin"
+    body = _function_body(js, "recolourSegments")
+    # Per-surface mode picks the field by the corner's own skin.
+    # buildPieceMeshes writes userData.surface as `index < count ? 1 : -1`
+    # and nothing else, so a corner is always top or bottom: the two field
+    # branch below is exhaustive over what that attribute can hold. The
+    # "per" branch used to smooth a third, "worst", field for a case no
+    # corner could reach -- a full smoothing pass plus an interpolation
+    # onto every render vertex, on every recolour, read by nobody.
+    assert "surfaceOf[i] === 1 ? topField : bottomField" in body, (
+        "per-surface mode must pick the field by skin"
+    )
+    assert "smooth(\"worst\")" not in body, (
+        "the per-surface branch must not smooth a field no corner reads; "
+        "the stress-surface control's own worst option comes through "
+        "pickedField, which is read"
+    )
+    # That control's option must still work: it goes through pickedField.
+    assert '<option value="worst"' in html
+    assert "pickedField = smooth(surface)" in body
 
 
 def test_the_legend_exists_and_tracks_the_layers():
@@ -709,8 +788,43 @@ def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
         "tess.chord_mm", "tess.clamped_points",
         "tess.missing_planes", "tess.rounds", "tess.limit",
         "tess.backward_turn_degrees", "tess.backward_steps",
+        # Final fix wave. The spec lists boundary sub-edges per piece,
+        # before and after, under the measurements to report "in BENCH.md
+        # and in the Data panel where the user can see them". The bundle
+        # carried both the whole wave and the Cut section read neither,
+        # which this enumeration is exactly why: it listed twelve fields
+        # and omitted these two, so the omission stayed green.
+        "tess.facets_per_piece", "tess.boundary_points_per_piece",
+        # An authored cut whose cells carry no course puts every cell in
+        # course 0, which drives the drop sequence, taperAt and the stage
+        # mapping. The flag saying so shipped and reached no screen.
+        "tess.courses_inferred",
+        # A count with no magnitude cannot be read: the same 137 clamped
+        # points are rounding noise or ten times the chord target
+        # depending on how far they actually moved.
+        "tess.clamped_max_m", "tess.clamped_median_m",
     ):
         assert field in body, "the Cut section must read {}".format(field)
+    # The counts need denominators. "137 cap points clamped" and "137 of
+    # 41265" are not the same statement, and neither are "0 orphan faces"
+    # and "0 of 2400".
+    assert "capPointCount(" in body, (
+        "the clamped count must be quoted against the total cap points"
+    )
+    assert "analysis_mesh.faces.length" in body, (
+        "the orphan and double face counts must be quoted against the "
+        "number of analysis faces there are to orphan"
+    )
+    # A folded cell still ships a lobe of cap inside out. It enters none of
+    # the coverage counts, so the list naming them is the only disclosure
+    # there is, and it had no reader at all.
+    assert "coverage.folded" in body, (
+        "the Cut section must show the folded list beside the coverage report"
+    )
+    # The residual is disclosed as a sine; BENCH.md gives degrees too.
+    assert "residualDegrees(" in body, (
+        "the residual must be disclosed in degrees as well as as a sine"
+    )
     coverage = ("orphan_faces", "double_faces", "open_facets", "slivers",
                 "coverage_holes", "broken_boundary")
     for field in coverage:
@@ -754,6 +868,124 @@ def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
     assert cut_index < verify_early_out, (
         "the Cut section must come before the verification early-return "
         "guard, or an unverified study never shows the cut's own disclosures"
+    )
+
+
+def test_the_data_panel_survives_a_bundle_cached_before_a_field_existed():
+    # Final fix wave. corner_residual_stats landed late in the cutting wave
+    # and REQUIRED_BUNDLE_KEYS did not name it, so a bundle cached earlier
+    # in this branch's life was served as valid and the panel dereferenced
+    # tess.corner_residual_stats.count on it. The throw escaped the Data
+    # button's click handler AFTER content.innerHTML = "" and BEFORE
+    # panel.classList.toggle("hidden"), so the button read as doing nothing
+    # whatsoever. Every sub-field the Cut section reads must degrade to a
+    # line rather than take the panel down with it.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "renderDataPanel")
+    stats_at = body.index("const stats = tess.corner_residual_stats")
+    guard = body[stats_at:stats_at + 400]
+    assert "if (!stats)" in guard, (
+        "the residual distribution must be guarded: a bundle cached before "
+        "it existed has no corner_residual_stats to read a count off"
+    )
+    assert "not measured" in body, (
+        "a missing sub-field must degrade to a line saying so, not to a "
+        "panel that never opens"
+    )
+    # Same for the two spreads and the clamp magnitudes, which landed in
+    # the same wave and are missing from the same caches.
+    for guarded in ("if (fpp)", "if (bpp)", 'typeof tess.clamped_max_m === "number"'):
+        assert guarded in body, (
+            "{} must be guarded the same way: an older cache has neither "
+            "the field nor a reason to crash the panel".format(guarded)
+        )
+
+
+def test_the_hud_and_the_size_control_do_not_call_an_authored_size_a_target():
+    # bundle.py is explicit that document["size"] is the REQUESTED size and
+    # that an authored (imported) cut ignores it entirely -- its own
+    # target_size is None. The Data panel says so in as many words; the HUD,
+    # which is what a user reads during playback, printed "900 mm target"
+    # for an imported cut anyway, and applyCut wrote the same number into
+    # the size control's own label.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="size-units"' in html, (
+        "the size label needs its units in their own span, or the authored "
+        "case cannot correct them without garbling the number"
+    )
+    for name in ("updateHud", "applyCut"):
+        body = _function_body(js, name)
+        assert 'source === "imported"' in body, (
+            "{} must branch on whether the cut is authored before quoting "
+            "the requested size as a target".format(name)
+        )
+        assert "size control is not used" in body, (
+            "{} must say the size control is not used by an authored "
+            "cut".format(name)
+        )
+
+
+def test_a_finished_run_restores_the_material_note_with_the_material():
+    # applyRunParamsToControls assigns material-select.value directly, which
+    # fires no change event, and the change handler is the only other writer
+    # of pattern-note. So: load in limestone with the note showing, click
+    # Run, switch material mid-run, let the run finish -- the material is
+    # restored and the stone vault is drawn with the note gone, which is the
+    # exact failure the note exists to prevent.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "applyRunParamsToControls")
+    assert "pattern-note" in body, (
+        "restoring the material must restore its honesty note, since "
+        "assigning .value fires no change event"
+    )
+    assert "state.patternNotes[material]" in body
+    # The note only. updatePatternForMaterial also forces the material's
+    # default pattern, and calling it here would overwrite the pattern this
+    # run actually solved with.
+    assert "updatePatternForMaterial(" not in body, (
+        "the note only: forcing the material's default pattern here would "
+        "overwrite the pattern the finished run actually used"
+    )
+
+
+def test_the_run_status_says_cutting_rather_than_stage_zero_of_zero():
+    # run["of"] is the number of stages, which is the number of courses the
+    # cut produces, so it is 0 until the cut finishes. "stage 0 of 0" reads
+    # as a run with nothing to do.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "watchRun")
+    assert "run.of ?" in body, "the zero case must be branched on"
+    assert "cutting" in body
+
+
+def test_a_refused_run_reports_the_reason_the_server_gave():
+    # app.py 400s a size outside the slider's range, a thickness outside
+    # 0.05 to 0.5 m, and a material or pattern it does not offer, each
+    # naming what to use instead. Without an ok check the refusal body has
+    # no "run" key, watchRun polls /api/runs/undefined, that 404s, and the
+    # user is told "lost contact with the server" instead.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "startRun")
+    assert "response.ok" in body, (
+        "startRun must check the response before watching a run id the "
+        "refusal body does not carry"
+    )
+    assert "body.detail" in body, "the server's own reason must be shown"
+
+
+def test_the_legend_does_not_sit_on_top_of_the_hud():
+    # Both were anchored left: 16px; bottom: 16px, so turning a heatmap on
+    # covered the last lines of the HUD -- and the HUD gained the struck-now
+    # line in this branch, which is the line a heatmap is most likely to be
+    # read against.
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    hud = css[css.index("#hud {"):css.index("}", css.index("#hud {"))]
+    legend = css[css.index("#legend {"):css.index("}", css.index("#legend {"))]
+    hud_left = "left: 16px" in hud
+    legend_left = "left: 16px" in legend
+    assert not (hud_left and legend_left), (
+        "#hud and #legend must not share an anchor corner"
     )
 
 
