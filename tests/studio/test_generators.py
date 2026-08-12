@@ -34,6 +34,12 @@ def disc_domain(radius=5.0, sides=48):
         "thetas": [math.atan2(p[1], p[0]) for p in loop],
         "star_shaped": True,
         "failure": None,
+        # A regular polygon has no backward step at all: hand built here
+        # rather than routed through plan_domain, but generate() now reads
+        # these two keys unconditionally on every domain dict, so a
+        # perfectly star shaped fixture states its own wobble as zero.
+        "backward_turn": 0.0,
+        "backward_steps": 0,
     }
 
 

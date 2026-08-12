@@ -200,6 +200,12 @@ def test_the_bundle_ships_the_tessellation_and_its_report(tmp_path, monkeypatch)
     assert document["tessellation"]["cells"] == len(document["pieces"])
     assert "chord_mm" in document["tessellation"]
     assert "corner_residual" in document["tessellation"]
+    # tiny_contract's plan is a perfect square about its own centroid, so
+    # its rim has no backward step at all; the fields still have to be
+    # present (not just non-crashing) for a reader to see the wobble on a
+    # real, less regular export. See test_domain.py for the nonzero case.
+    assert document["tessellation"]["backward_turn_degrees"] == 0.0
+    assert document["tessellation"]["backward_steps"] == 0
 
 
 def test_the_cache_key_carries_size_and_pattern(tmp_path):

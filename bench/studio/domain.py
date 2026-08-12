@@ -5,11 +5,15 @@ and clipping the result to the vault would need a general polygon clipper;
 drawing them in a domain whose f = 1 is already the real rim needs none,
 because a generated outline can never leave the surface in the first place.
 
-The one precondition is that the plan boundary is star shaped about the
-axis, meaning every ray from the axis crosses it exactly once. A vault
-with an oculus or a deep bay is not, and no polar pattern can cover it.
-That is reported rather than approximated: see plan_domain's failure key,
-and the imported tessellation route in tessellation.py.
+The precondition is that the plan boundary is star shaped about the axis,
+meaning every ray from the axis crosses it exactly once. A vault with an
+oculus or a deep bay is not, and no polar pattern can cover it. A small
+local wobble in the rim is not the same thing as a bay: it turns the
+angular order back for a few boundary vertices without ever making the
+plan fail to be coverable by a polar pattern in practice, and every real
+export measured so far has one. WOBBLE_TOLERANCE draws that line. That is
+reported rather than approximated: see plan_domain's failure key, and the
+imported tessellation route in tessellation.py.
 
 Stdlib only: bundle.py imports this and the guard test forbids solver
 stacks on that path.
@@ -22,6 +26,26 @@ from typing import Dict, List, Sequence
 
 TWO_PI = 2.0 * math.pi
 STEP_EPSILON = 1e-12
+
+WOBBLE_TOLERANCE = math.radians(5.0)
+# Empirical, not a proof, in the same spirit as CRA_BLOCK_BUDGET in
+# staging.py. Measured on the real "Trial 2" export (and the three other
+# real exports shipped in this repo, all the same 2521 vertex mesh): of 240
+# rim steps, 238 go forward and exactly 2 go backward, by 0.004078 radians
+# each, a total backward turn of 0.467 degrees, at a point where the rim
+# genuinely steps in from 10.9136 m to 10.4098 m and back, a real 0.5 m
+# notch in the plan rather than numerical noise. Forcing the old all-or-
+# nothing check open and cutting that export for real: size 0.9 m gives 233
+# cells, 7 courses, 0 coverage holes, 0 orphan or double faces -- a flawless
+# cut on geometry the old check refused outright. 5 degrees sits roughly
+# ten times above that 0.467 degree measurement, comfortably below what a
+# genuine bay or oculus produces (an oculus or deep bay turns the boundary
+# back over a real fraction of the rim's own length, not two vertices out
+# of 240), and coarser sizes can still produce coverage holes on a
+# tolerated wobble -- that is accepted, because the coverage report already
+# names them cell by cell rather than hiding them behind a refusal. This is
+# an empirical threshold on one family of geometry, not a proof that every
+# 5-degree wobble is harmless or every larger one is a real bay.
 
 
 def boundary_ring(faces: Sequence[Sequence[int]]) -> List[int]:
@@ -76,6 +100,17 @@ def plan_domain(
 
     The axis is the mean face centroid, the same axis the ring and wedge
     binning used, so a familiar study stays recognisable after the change.
+
+    star_shaped requires the rim to wind exactly once about the axis (a
+    real second loop, a branch, or a numerically broken traversal is
+    refused outright) and the total backward turn -- the sum of every
+    angular step that runs the wrong way, in magnitude -- to stay under
+    WOBBLE_TOLERANCE. backward_turn and backward_steps are reported
+    whether or not the plan is accepted, since the wobble is a measured
+    property of the geometry either way; failure is populated only when
+    refused, and its message-worthy fields (vertex, theta, backward_steps)
+    point at the single deepest backward step, the same "where to look"
+    answer whether the refusal was on winding or on wobble.
     """
 
     ring = boundary_ring(faces)
@@ -97,21 +132,23 @@ def plan_domain(
         steps.append(step)
         turn += step
 
-    forward = sum(1 for s in steps if s > STEP_EPSILON)
-    backward = sum(1 for s in steps if s < -STEP_EPSILON)
-    star = abs(abs(turn) - TWO_PI) < 1e-6 and (forward == 0 or backward == 0)
+    backward_indices = [i for i, s in enumerate(steps) if s < -STEP_EPSILON]
+    backward_steps = len(backward_indices)
+    backward_turn = -sum(steps[i] for i in backward_indices)  # a magnitude
+
+    winds_once = abs(abs(turn) - TWO_PI) < 1e-6
+    star = winds_once and backward_turn < WOBBLE_TOLERANCE
     failure = None
     if not star:
-        against = backward if forward >= backward else forward
-        worst = min(
-            range(len(steps)),
-            key=lambda i: steps[i] if forward >= backward else -steps[i],
+        worst = (
+            min(backward_indices, key=lambda i: steps[i])
+            if backward_indices else 0
         )
         failure = {
             "vertex": ring[worst],
             "theta": thetas[worst],
             "turn": turn,
-            "backward_steps": against,
+            "backward_steps": backward_steps,
         }
     return {
         "axis": axis,
@@ -120,6 +157,8 @@ def plan_domain(
         "thetas": thetas,
         "star_shaped": star,
         "failure": failure,
+        "backward_turn": backward_turn,
+        "backward_steps": backward_steps,
     }
 
 

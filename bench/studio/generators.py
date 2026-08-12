@@ -230,11 +230,20 @@ def generate(pattern: str, domain: Dict, size: float) -> Dict:
         failure = domain["failure"]
         raise ValueError(
             "this plan is not star shaped about its axis (the rim turns back "
-            "on itself at vertex {}, {} times), so no polar pattern can cover "
-            "it. Author the tessellation in Grasshopper and import it "
-            "instead.".format(failure["vertex"], failure["backward_steps"])
+            "on itself at vertex {}, {} times, {:.2f} degrees of backward "
+            "turn total), so no polar pattern can cover it. Author the "
+            "tessellation in Grasshopper and import it instead.".format(
+                failure["vertex"], failure["backward_steps"],
+                math.degrees(domain["backward_turn"]),
+            )
         )
     raw = builder(domain, size)
-    return tessellation.build_tessellation(
+    tess = tessellation.build_tessellation(
         raw, pattern, "generated", size, _course_count(domain, size)
     )
+    # The wobble is a measured property of the plan, not of the pattern
+    # drawn on it, so it rides along on every generated cut for whoever
+    # reports it downstream (see bundle.py's tessellation summary).
+    tess["backward_turn"] = domain["backward_turn"]
+    tess["backward_steps"] = domain["backward_steps"]
+    return tess

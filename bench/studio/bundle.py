@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -99,6 +100,10 @@ def build_bundle(
     ]
     made, report = pieces.segment_pieces(tess, surface, support_points)
 
+    # backward_turn/backward_steps only exist on a generated cut (the
+    # domain they are measured from is never built for an imported one),
+    # so None here means "not applicable", not "zero wobble".
+    backward_turn = tess.get("backward_turn")
     tessellation_summary = {
         "pattern": tess["pattern"],
         "source": tess["source"],
@@ -108,6 +113,10 @@ def build_bundle(
         "provenance": tess.get("provenance"),
         "z_offset_max": tess.get("z_offset_max"),
         "courses_inferred": tess.get("courses_inferred", False),
+        "backward_turn_degrees": (
+            math.degrees(backward_turn) if backward_turn is not None else None
+        ),
+        "backward_steps": tess.get("backward_steps"),
         "report": binding["report"],
     }
     overlap = set(tessellation_summary) & set(report)

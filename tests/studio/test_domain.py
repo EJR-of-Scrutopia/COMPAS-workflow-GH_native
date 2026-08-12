@@ -78,12 +78,18 @@ def test_a_bay_is_reported_as_not_star_shaped():
     d = studio()
     # A 3 by 3 grid with the middle of the right column removed. The bay
     # spans x 2 to 3, y 1 to 2, and from the centroid of the remaining
-    # faces the boundary corner (3, 1) sits behind it.
+    # faces the boundary corner (3, 1) sits behind it. Its backward turn is
+    # measured, not just asserted nonzero: 0.752484... radians (about 43.1
+    # degrees), nearly 9 times WOBBLE_TOLERANCE's 5 degrees, so this pins
+    # that the threshold actually discriminates a real bay from a wobble
+    # rather than merely that this one fixture still fails.
     vertices, faces, centroids = grid(3, drop={(2, 1)})
     domain = d.plan_domain(vertices, faces, centroids)
     assert domain["star_shaped"] is False
     assert domain["failure"]["backward_steps"] >= 1
     assert domain["failure"]["vertex"] in d.boundary_ring(faces)
+    assert domain["backward_turn"] == pytest.approx(0.7524840212747467)
+    assert domain["backward_turn"] > d.WOBBLE_TOLERANCE
 
 
 def test_a_plain_grid_is_star_shaped():
@@ -92,3 +98,37 @@ def test_a_plain_grid_is_star_shaped():
     domain = d.plan_domain(vertices, faces, centroids)
     assert domain["star_shaped"] is True
     assert domain["failure"] is None
+    assert domain["backward_turn"] == 0.0
+    assert domain["backward_steps"] == 0
+
+
+def test_a_small_wobble_is_tolerated_and_still_cuts_cleanly():
+    """A local dip that reverses the angular order for one step, without
+    making the plan fail to be star shaped in practice: the same shape of
+    feature the real "Trial 2" export measures (see domain.py's
+    WOBBLE_TOLERANCE comment), reproduced here on a 20 by 20 grid by
+    nudging one boundary vertex off the straight edge it sits on.
+    """
+    d = studio()
+    vertices, faces, centroids = grid(20)
+    vertices[5][0] += 0.1
+    vertices[5][1] += 2.0
+    domain = d.plan_domain(vertices, faces, centroids)
+
+    # Accepted, and the reporting is not just "not refused": a test that
+    # checked only star_shaped would keep passing if the wobble reporting
+    # were deleted entirely.
+    assert domain["star_shaped"] is True
+    assert domain["failure"] is None
+    assert domain["backward_steps"] == 1
+    assert domain["backward_turn"] > 0.0
+    assert domain["backward_turn"] == pytest.approx(0.009140513255795568)
+    assert domain["backward_turn"] < d.WOBBLE_TOLERANCE
+
+    # And the tolerated wobble still produces a usable cut: no coverage
+    # holes at a size the real geometry can absorb the dip at.
+    generators = __import__("generators")
+    tessellation = __import__("tessellation")
+    tess = generators.generate("bonded-courses", domain, 1.2)
+    binding = tessellation.analysis_binding(tess, centroids)
+    assert binding["report"]["coverage_holes"] == []
