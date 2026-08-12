@@ -413,7 +413,7 @@ def test_run_staging_runs_cra_per_stage_and_records_mu(tmp_path):
         material="concrete", pattern="bonded-courses", size=1.2,
         out_path=tmp_path / "o.json",
         runner=lambda request: {"converged": True, "message": ""},
-        cra_runner=cra_stub,
+        cra_runner=cra_stub, include_cra=True,
     )
     assert len(cra_requests) == 2
     # The block set grows with the stages and carries the material's numbers.
@@ -514,7 +514,7 @@ def test_run_staging_refuses_over_budget_stages_honestly(tmp_path, monkeypatch):
         material="concrete", pattern="bonded-courses", size=1.2,
         out_path=tmp_path / "o.json",
         runner=lambda request: {"converged": True, "message": ""},
-        cra_runner=counting_cra_runner,
+        cra_runner=counting_cra_runner, include_cra=True,
     )
     # The second stage has 11 blocks (> budget of 9), so it should get the
     # over-budget verdict without calling cra_runner
@@ -553,7 +553,7 @@ def test_run_staging_builds_voussoirs_not_mesh_following_blocks(tmp_path):
         material="concrete", pattern="bonded-courses", size=1.2,
         out_path=tmp_path / "o.json",
         runner=lambda request: {"converged": True, "message": ""},
-        cra_runner=cra_stub,
+        cra_runner=cra_stub, include_cra=True,
     )
     assert document["cra_skipped"] == []
     for request_blocks in seen:

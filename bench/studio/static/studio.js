@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { segmentFaces } from "/static/binning.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
+  sampleScalar, sampleVector,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -16,11 +16,11 @@ const state = {
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
-  rings: 8,
+  pattern: "bonded-courses",
+  size: 0.9,
   thickness: 0.2,
   jointGap: 0.02,
   taper: 0,
-  segments: null,      // Task 11
   segmentIndex: null,  // Task 11
   nodeRadius: 0.03,    // Task 6
   wireRadius: 0.02,    // Task 6
@@ -337,64 +337,44 @@ function buildScene(bundle) {
   state.objects.ground = ground;
   scene.add(ground);
 
-  rebinSegments();
+  applyCut();
   buildLayerToggles();
   updateVectorLayers();
   updateMaterialControls();
   updateHud();
-  updateCraBadge();
 }
 
-// ---------- segmentation (Task 11 replaces the body of rebinSegments) ----------
-function faceCentroids(meshData) {
-  return meshData.faces.map((face) => {
-    let x = 0, y = 0, z = 0;
-    for (const i of face) { x += meshData.vertices[i][0]; y += meshData.vertices[i][1]; z += meshData.vertices[i][2]; }
-    const n = face.length;
-    return [x / n, y / n, z / n];
-  });
-}
-
-function rebinSegments() {
-  // The binning always follows the LOADED bundle's ring count, never the
+// ---------- the cut (Task 8: pieces and their course/size come from the server) ----------
+function applyCut() {
+  // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
-  // server-side at the bundle's ring count, and each one is looked up in
-  // state.segmentIndex by the key that binning gave it. Re-binning here to
-  // the slider's number instead would rebuild the index around cells the
-  // drawn pieces know nothing about: measured on Trial 2 against an
-  // 8-ring bundle, every slider value from 4 to 16 orphans keys (24 of 38
-  // pieces at 4 rings, 3 at 9, 14 at 16), and the first missing key throws
-  // inside applySceneAtTime, which while playing kills the render loop
-  // until reload. The slider asks the server for a matching bundle
-  // instead: see its change handler, which follows the thickness slider.
+  // server-side at the bundle's own size, and each one is looked up in
+  // state.segmentIndex by the key the cut gave it. Re-cutting here to the
+  // slider's number instead would rebuild the index around cells the drawn
+  // pieces know nothing about, which is the defect the ring/wedge binning
+  // this replaces used to have: measured on Trial 2 against an 8-ring
+  // bundle, every slider value from 4 to 16 orphaned keys, and the first
+  // missing key threw inside applySceneAtTime, which while playing killed
+  // the render loop until reload. The slider asks the server for a
+  // matching bundle instead: see its change handler, which follows the
+  // thickness slider.
   if (!state.bundle) return;
-  const rings = state.bundle.segments.rings;
-  state.rings = rings;
-  document.getElementById("rings-slider").value = rings;
-  document.getElementById("rings-value").textContent = rings;
-  const centroids = faceCentroids(state.bundle.analysis_mesh);
-  const local = segmentFaces(centroids, rings);
-  // Python is canonical: verify the mirror, then defer to the shipped copy.
-  const shipped = state.bundle.segments;
-  const agrees =
-    JSON.stringify(local.assignment) === JSON.stringify(shipped.assignment) &&
-    JSON.stringify(local.wedge_counts) === JSON.stringify(shipped.wedge_counts);
-  if (!agrees) {
-    showBanner("Segmentation mirror disagrees with Python; showing the Python binning. Fix binning.js before trusting the slider.");
-  }
-  state.segments = shipped;
+  const size = state.bundle.size;
+  state.size = size;
+  document.getElementById("size-slider").value = size;
+  document.getElementById("size-value").textContent = Math.round(size * 1000);
+  document.getElementById("piece-count").textContent = state.bundle.pieces.length;
+  document.getElementById("course-count").textContent = state.bundle.tessellation.courses;
   // The index the timeline looks a casting up in, keyed by the PIECE's own
-  // key rather than by its cell's. pieces.py emits one casting per
-  // connected patch, and a cell can hold two patches that never touch
-  // (measured: rings=16 on Trial 2 ships 67 pieces over 66 cells), so a
-  // cell key is not an identity. The array order is the drop order.
+  // key: pieces.py emits exactly one casting per cell of the cut
+  // tessellation, so the cell's own key is the piece's identity too. The
+  // array order is the drop order.
   state.segmentIndex = new Map();
   state.bundle.pieces.forEach((piece, position) => {
     state.segmentIndex.set(piece.key, {
-      ring: piece.ring, wedge: piece.wedge, order: position,
+      course: piece.course, order: position,
     });
   });
-  document.getElementById("segment-count").textContent = state.segments.order.length;
   rebuildTimeline();
 }
 
@@ -430,54 +410,6 @@ const FRICTION_PROVENANCE = {
   "0.6": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
   "0.4": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
 };
-
-// The badge and the HUD are what a user reads during playback; the Data
-// panel, which carries the disclosure in full, is a separate view they may
-// never open. So the same caveat rides along here, short enough to sit on
-// one line.
-//
-// It no longer quotes metres. The measured figures (up to 2.389 m at 2
-// rings, 1.964 m at 4) came from bench/scripts/cra_acceptance.py comparing
-// the voussoir model against blocks.segment_blocks, the mesh-following
-// prisms the viewer used to draw. This branch replaced that drawing: the
-// castings on screen are built by pieces.py, whose boundaries are already
-// projected onto flat joint planes and are then shrunk by the joint gap
-// and thinned by the crown taper, all in the one dimension those numbers
-// measured. The distance between the two models is real and undisclosed,
-// so it is named; the old number for it would be a false precision.
-const FACETED_CAVEAT = "on a faceted analysis model, not the casting drawn here";
-
-function updateCraBadge() {
-  const badge = document.getElementById("cra-badge");
-  if (!state.bundle) { badge.classList.add("hidden"); return; }
-  badge.classList.remove("hidden", "cra-stands", "cra-fails", "cra-unknown");
-  const verdict = craVerdict();
-  if (!verdict) {
-    badge.classList.add("cra-unknown");
-    badge.textContent = "CRA: no run yet";
-  } else if (verdict.stands === true) {
-    badge.classList.add("cra-stands");
-    badge.textContent = "CRA: stands (mu " + (+verdict.mu).toFixed(2) + ")";
-  } else if (verdict.stands === false) {
-    badge.classList.add("cra-fails");
-    badge.textContent = "CRA: does not stand";
-  } else {
-    badge.classList.add("cra-unknown");
-    badge.textContent = "CRA: not run (" + (verdict.message || verdict.status || "unknown") + ")";
-  }
-  if (verdict && (verdict.stands === true || verdict.stands === false)) {
-    // Appended after the three-state branch above, so it rides on every
-    // badge that makes a claim without touching which class or which
-    // words that branch chose. A null verdict makes no claim about the
-    // structure, so it needs no caveat about the model the claim would
-    // have been made on, and its message is long enough already.
-    badge.textContent += " " + FACETED_CAVEAT;
-  }
-  const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
-  if (skipped && skipped.length) {
-    badge.textContent += " (" + skipped.length + " piece(s) not modelled)";
-  }
-}
 
 function layerAvailability(name) {
   const stage = finalStage();
@@ -683,13 +615,12 @@ function recolourSegments() {
   }
   const white = new THREE.Color(0xffffff);
   for (const segment of state.objects.shell.children) {
-    const sources = segment.userData.sources;
+    const weights = segment.userData.weights;
     const surfaceOf = segment.userData.surface;
     const base = segment.userData.basePositions;
     const positions = segment.geometry.getAttribute("position");
-    const colours = new Float32Array(sources.length * 3);
-    for (let i = 0; i < sources.length; i++) {
-      const source = sources[i];
+    const colours = new Float32Array(weights.length * 3);
+    for (let i = 0; i < weights.length; i++) {
       const cornerSurface = surfaceOf[i] === 1 ? "top" : surfaceOf[i] === -1 ? "bottom" : "worst";
       let colour = null;
       if (wantStress) {
@@ -697,7 +628,11 @@ function recolourSegments() {
           const field = pickedField || (
             cornerSurface === "top" ? topField
               : cornerSurface === "bottom" ? bottomField : worstField);
-          const value = field[source];
+          // A cut piece vertex is not a mesh vertex, so the field is read
+          // through the weights the cut recorded for it rather than a bare
+          // index. A null component in the weighted sum keeps this white,
+          // same as the old missing-index branch.
+          const value = sampleScalar(field, weights[i]);
           colour = value === null ? white : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
@@ -706,7 +641,7 @@ function recolourSegments() {
       } else if (deflectionPeakOnly) {
         colour = STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly);
       }
-      const d = displacement ? displacement[source] : null;
+      const d = displacement ? sampleVector(displacement, weights[i], null) : null;
       if (!colour && wantDeflection && d) {
         colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
       }
@@ -843,10 +778,11 @@ function arrowField(entries, colour) {
 
 // ---------- integrity pulse ----------
 function currentStageIndex(build) {
-  // Which build stage the timeline is inside: stages are rings, and a ring's
-  // segments occupy a contiguous run of the drop order. build is elapsed
-  // time since the net finished inflating (see applySceneAtTime), so the
-  // stage reported here always matches the segments actually on screen.
+  // Which build stage the timeline is inside: stages are courses, and a
+  // course's segments occupy a contiguous run of the drop order. build is
+  // elapsed time since the net finished inflating (see applySceneAtTime),
+  // so the stage reported here always matches the segments actually on
+  // screen.
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
@@ -856,15 +792,14 @@ function currentStageIndex(build) {
   // down the drop order and pulsing that stage's verdict over it.
   const placed = Math.floor(build / placementStep());
   // Walked over the pieces, which are what actually drop, in the same order
-  // the index and the picture use. A split cell ships two castings, so the
-  // cell order is one placement short of the truth wherever that happens.
-  let ringsDone = 0, count = 0;
+  // the index and the picture use.
+  let coursesDone = 0, count = 0;
   for (const piece of state.bundle.pieces) {
     count += 1;
     if (count > placed) break;
-    ringsDone = Math.max(ringsDone, piece.ring + 1);
+    coursesDone = Math.max(coursesDone, piece.course + 1);
   }
-  return Math.max(0, Math.min(stages.length - 1, ringsDone - 1));
+  return Math.max(0, Math.min(stages.length - 1, coursesDone - 1));
 }
 
 function applyPulse(build) {
@@ -872,12 +807,11 @@ function applyPulse(build) {
   const index = currentStageIndex(build);
   if (index === null) return;
   const stage = state.bundle.staging.stages[index];
-  const cra = stage.cra;
-  // Green now means BOTH lenses pass: the struck-now FEA solve converged
-  // and the rigid-block verdict stands. A missing cra entry (old cache)
-  // reads as not passing; the HUD's "CRA: not run" line explains the red.
-  const good = !!(stage.struck_now && stage.struck_now.converged
-    && cra && cra.stands === true);
+  // Green means the struck-now FEA solve converged. The form finding
+  // already guarantees compression-only equilibrium by construction, so a
+  // separate rigid-block lens is not what this pulse is for; see the Data
+  // panel for the CRA verdict where a study happens to carry one.
+  const good = !!(stage.struck_now && stage.struck_now.converged);
   const tint = good ? 0x1a3a1a : 0x3a1a1a;
   const pulse = 0.5 + 0.5 * Math.sin(build * 4);
   for (const segment of state.objects.shell.children) {
@@ -897,7 +831,10 @@ function updateHud() {
   // loading bundle) and the HUD must never claim a thickness the shell
   // isn't built at.
   const provenanceThickness = state.bundle.provenance.thickness;
-  const lines = [state.bundle.export + "  (" + state.bundle.material + ", " + state.bundle.rings + " rings)"];
+  const lines = [state.bundle.export + "  (" + state.bundle.material + ", " +
+    Math.round(state.bundle.size * 1000) + " mm target, " +
+    state.bundle.pieces.length + " pieces in " +
+    state.bundle.tessellation.courses + " courses)"];
   const thicknessMm = Math.round(provenanceThickness * 1000);
   let thicknessLine = "shell thickness " + thicknessMm + " mm";
   if (v && v.thickness && Math.abs(v.thickness - provenanceThickness) > 1e-9) {
@@ -933,14 +870,6 @@ function updateHud() {
       ? "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
         " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)"
       : "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result"));
-    const cra = stage.cra;
-    if (cra && cra.stands === true) {
-      lines.push("CRA: stands, " + FACETED_CAVEAT);
-    } else if (cra && cra.stands === false) {
-      lines.push("CRA: does not stand, " + FACETED_CAVEAT);
-    } else {
-      lines.push("CRA: not run" + (cra && cra.message ? " (" + cra.message + ")" : ""));
-    }
   }
   hud.textContent = lines.join("\n");
 }
@@ -956,17 +885,19 @@ function renderDataPanel(v) {
   const content = document.getElementById("data-content");
   content.innerHTML = "";
 
-  // Render CRA section FIRST, before verification early-out, so it appears
-  // even on staged-but-unverified studies.
-  const craHeading = document.createElement("h3");
-  craHeading.textContent = "CRA rigid-block verdict";
-  content.appendChild(craHeading);
+  // The CRA verdict no longer pops up: it is gone from the badge, the HUD
+  // and the integrity pulse, since the form finding already guarantees
+  // compression-only equilibrium by construction and no size the API
+  // permits reaches the rigid-block budget in any case. The Data panel
+  // keeps the honest record where a study happens to carry one, rendered
+  // BEFORE the verification early-out so it still shows on a
+  // staged-but-unverified study, and rendered not at all, not as an empty
+  // heading, when there is no verdict to report.
   const verdict = craVerdict();
-  if (!verdict) {
-    const none = document.createElement("p");
-    none.textContent = "no CRA run yet: run a staged analysis";
-    content.appendChild(none);
-  } else {
+  if (verdict) {
+    const craHeading = document.createElement("h3");
+    craHeading.textContent = "CRA rigid-block verdict";
+    content.appendChild(craHeading);
     const line = document.createElement("p");
     line.textContent = verdict.stands === true
       ? "stands as rigid blocks under friction, self-weight only"
@@ -1108,7 +1039,8 @@ async function fetchJson(url) {
 async function loadStudy(exportName) {
   const material = document.getElementById("material-select").value;
   const url = "/api/studies/" + encodeURIComponent(exportName) +
-    "/bundle?material=" + material + "&rings=" + state.rings + "&thickness=" + state.thickness;
+    "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
+    "&size=" + state.size + "&thickness=" + state.thickness;
   try {
     buildScene(await fetchJson(url));
   } catch (error) {
@@ -1223,17 +1155,17 @@ document.getElementById("material-select").addEventListener("change", () => {
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
-// Exactly the thickness slider's shape, and for the same reason: the ring
-// count is a property of the BUNDLE, not of the client. "input" only moves
+// Exactly the thickness slider's shape, and for the same reason: the piece
+// size is a property of the BUNDLE, not of the client. "input" only moves
 // the live label, "change" (drag release) commits the value and asks the
-// server for a bundle whose pieces are built at that ring count. Re-binning
-// client-side while the drawn pieces stay at the old count is what used to
+// server for a bundle whose pieces are cut at that size. Re-cutting
+// client-side while the drawn pieces stay at the old size is what used to
 // orphan piece keys and stop the render loop.
-document.getElementById("rings-slider").addEventListener("input", (e) => {
-  document.getElementById("rings-value").textContent = e.target.value;
+document.getElementById("size-slider").addEventListener("input", (e) => {
+  document.getElementById("size-value").textContent = Math.round(+e.target.value * 1000);
 });
-document.getElementById("rings-slider").addEventListener("change", (e) => {
-  state.rings = +e.target.value;
+document.getElementById("size-slider").addEventListener("change", (e) => {
+  state.size = +e.target.value;
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
@@ -1301,18 +1233,19 @@ document.getElementById("run-button").addEventListener("click", startRun);
 document.getElementById("import-export-button").addEventListener("click", importExportPair);
 document.getElementById("import-columns-button").addEventListener("click", importColumns);
 
-// M5 fix: reload with the material/rings/thickness the run actually solved
-// with, not whatever the controls read when the run happens to finish. A
-// slider nudge mid-run must not orphan the run's own result -- it must show
-// up, and the controls must be set back to match so the display stays
-// honest about what's on screen.
-function applyRunParamsToControls({ material, rings, thickness }) {
+// M5 fix: reload with the material/pattern/size/thickness the run actually
+// solved with, not whatever the controls read when the run happens to
+// finish. A slider nudge mid-run must not orphan the run's own result -- it
+// must show up, and the controls must be set back to match so the display
+// stays honest about what's on screen.
+function applyRunParamsToControls({ material, pattern, size, thickness }) {
   document.getElementById("material-select").value = material;
-  document.getElementById("rings-slider").value = rings;
-  document.getElementById("rings-value").textContent = rings;
+  document.getElementById("size-slider").value = size;
+  document.getElementById("size-value").textContent = Math.round(size * 1000);
   document.getElementById("thickness-input").value = thickness;
   document.getElementById("thickness-value").textContent = Math.round(thickness * 1000);
-  state.rings = rings;
+  state.pattern = pattern;
+  state.size = size;
   state.thickness = thickness;
 }
 
@@ -1340,12 +1273,15 @@ async function startRun() {
   const material = document.getElementById("material-select").value;
   // Captured now, at POST time, so a later slider nudge cannot change what
   // this run is understood to have solved.
-  const params = { material, rings: state.rings, thickness: state.thickness };
+  const params = { material, pattern: state.pattern, size: state.size, thickness: state.thickness };
   try {
     const response = await fetch("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ export: exportName, material, rings: params.rings, thickness: params.thickness }),
+      body: JSON.stringify({
+        export: exportName, material, pattern: params.pattern,
+        size: params.size, thickness: params.thickness,
+      }),
     });
     const body = await response.json();
     if (response.status === 409) {
@@ -1439,10 +1375,10 @@ function pieceMaterial(key) {
   return own;
 }
 
-function taperAt(ring) {
+function taperAt(course) {
   // Pieces thin toward the crown, which is where the least load arrives.
-  const rings = Math.max(1, state.bundle.rings - 1);
-  return 1 - state.taper * Math.min(1, ring / rings);
+  const courses = Math.max(1, state.bundle.tessellation.courses - 1);
+  return 1 - state.taper * Math.min(1, course / courses);
 }
 
 function buildPieceMeshes() {
@@ -1453,7 +1389,7 @@ function buildPieceMeshes() {
   const gap = sprayedMaterial() ? 0 : state.jointGap;
   for (const piece of state.bundle.pieces) {
     const count = piece.mid.length;
-    const half = state.bundle.provenance.thickness * taperAt(piece.ring) / 2;
+    const half = state.bundle.provenance.thickness * taperAt(piece.course) / 2;
     const points = [];
     for (const sign of [1, -1]) {
       for (let i = 0; i < count; i++) {
@@ -1476,7 +1412,7 @@ function buildPieceMeshes() {
         p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]));
     }
     const shrink = Math.max(0, 1 - (gap / 2) / extent);
-    const positions = [], sources = [], surface = [];
+    const positions = [], weights = [], surface = [];
     for (const face of piece.faces) {
       for (let corner = 1; corner < face.length - 1; corner++) {
         for (const index of [face[0], face[corner], face[corner + 1]]) {
@@ -1485,7 +1421,7 @@ function buildPieceMeshes() {
             centre[0] + (p[0] - centre[0]) * shrink,
             centre[1] + (p[1] - centre[1]) * shrink,
             centre[2] + (p[2] - centre[2]) * shrink);
-          sources.push(piece.sources[index % count]);
+          weights.push(piece.sources[index % count]);
           surface.push(index < count ? 1 : -1);
         }
       }
@@ -1503,7 +1439,7 @@ function buildPieceMeshes() {
     // growth needs this to scale a piece about itself rather than about
     // z = 0 (see applySceneAtTime).
     mesh.userData.centreZ = centre[2];
-    mesh.userData.sources = sources;
+    mesh.userData.weights = weights;
     mesh.userData.surface = surface;
     mesh.userData.basePositions = new Float32Array(positions);
     group.add(mesh);
@@ -1780,4 +1716,4 @@ function frame(now) {
 boot();
 requestAnimationFrame(frame);
 
-export { state, buildScene, setLayer, rebinSegments, applyTimeline, timelineDuration, rebuildTimeline };
+export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

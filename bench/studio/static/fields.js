@@ -92,3 +92,29 @@ export function interpolateScalarField(field, vertexSources) {
     return found ? total / found : null;
   });
 }
+
+// A cut piece vertex is not a mesh vertex, so every solved field is read
+// through the barycentric weights the cut recorded for it. A vertex that
+// happens to land on a mesh vertex has a single weight of one, which is
+// exactly the lookup this replaces.
+export function sampleScalar(field, weights) {
+  let total = 0;
+  for (const [index, weight] of weights) {
+    const value = field[index];
+    if (value === null || value === undefined) return null;
+    total += value * weight;
+  }
+  return total;
+}
+
+export function sampleVector(field, weights, fallback) {
+  const out = [0, 0, 0];
+  for (const [index, weight] of weights) {
+    const value = field[index];
+    if (!value) return fallback;
+    out[0] += value[0] * weight;
+    out[1] += value[1] * weight;
+    out[2] += value[2] * weight;
+  }
+  return out;
+}

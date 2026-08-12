@@ -20,7 +20,7 @@ needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is no
 CHECK = textwrap.dedent("""
     import {
       segmentUVOffset, boxUVs, stressValueOf, smoothStressField,
-      interpolateScalarField,
+      interpolateScalarField, sampleScalar, sampleVector,
     } from %FIELDS%;
 
     function expect(condition, message) {
@@ -65,6 +65,16 @@ CHECK = textwrap.dedent("""
     expect(interpolated[3] === null, "a null source stays null");
     expect(near(interpolated[4], 3), "null sources are ignored when a real one exists");
 
+    // Weighted field sampling: a cut piece vertex sits between mesh
+    // vertices, so every field read is a weighted sum of them.
+    const scalarField = [0, 10, 20, 30];
+    expect(near(sampleScalar(scalarField, [[1, 1.0]]), 10), "single weight reads through");
+    expect(near(sampleScalar(scalarField, [[0, 0.5], [2, 0.5]]), 10), "two weights average");
+    expect(sampleScalar([null, 5], [[0, 0.5], [1, 0.5]]) === null, "a null source makes a null sample");
+    const vectorField = [[0, 0, 0], [2, 4, 6]];
+    const sampled = sampleVector(vectorField, [[0, 0.25], [1, 0.75]], [0, 0, 0]);
+    expect(near(sampled[0], 1.5) && near(sampled[2], 4.5), "vectors sample componentwise");
+
     console.log("ok");
 """)
 
@@ -83,5 +93,6 @@ def test_fields_module_exists_and_is_pure():
     assert 'from "three"' not in js and "THREE." not in js, "fields.js must not depend on three.js"
     assert "document." not in js and "window." not in js, "fields.js must not touch the DOM"
     for name in ("segmentUVOffset", "boxUVs", "stressValueOf",
-                 "smoothStressField", "interpolateScalarField"):
+                 "smoothStressField", "interpolateScalarField",
+                 "sampleScalar", "sampleVector"):
         assert "export function {}(".format(name) in js, "fields.js lost {}".format(name)

@@ -35,12 +35,24 @@ def test_no_external_urls_in_the_page_or_scripts():
         )
 
 
-def test_binning_js_avoids_the_known_parity_traps():
-    js = (STATIC / "binning.js").read_text(encoding="utf-8")
-    assert "Math.round" not in js, "use floor(x + 0.5); Math.round differs from Python round at .5"
-    assert "halfUp" in js
-    assert "theta < 0" in js, "JS % keeps sign; the fold to [0, 2pi) must be explicit"
-    assert "WEDGES_AT_RIM = 12" in js
+def test_the_page_no_longer_mirrors_the_binning():
+    assert not (STATIC / "binning.js").exists()
+    assert "binning.js" not in (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "segmentation mirror" not in (STATIC / "studio.js").read_text(
+        encoding="utf-8").lower()
+
+
+def test_the_size_control_replaces_the_ring_slider():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="size-slider"' in page
+    assert 'id="piece-count"' in page
+    assert 'id="rings-slider"' not in page
+
+
+def test_the_viewer_samples_fields_through_weights():
+    source = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "sampleScalar" in source
+    assert "sampleVector" in source
 
 
 def test_pbr_helpers_and_column_loader_exist():
@@ -318,60 +330,54 @@ def test_node_and_wire_size_sliders_rebuild_only_on_change():
         )
 
 
-def test_the_rings_slider_reloads_the_study_rather_than_rebinning_locally():
-    # C1: the pieces the viewer draws are built server-side at the BUNDLE's
-    # ring count and are looked up in state.segmentIndex by the key that
-    # binning gave them. A client-side re-bin at the slider's count rebuilds
-    # the index around different cells, so drawn pieces are left holding
-    # keys the index has never heard of: measured on Trial 2 against an
-    # 8-ring bundle, EVERY slider value from 4 to 16 orphans keys (24 of 38
-    # pieces at 4 rings, 3 at 9, 14 at 16). applySceneAtTime then throws on
-    # a missing key, and while playing that throw escapes frame() before its
+def test_the_size_slider_reloads_the_study_rather_than_recutting_locally():
+    # C1, carried forward from the ring/wedge binning wave 6 replaces: the
+    # pieces the viewer draws are built server-side at the BUNDLE's own
+    # size and are looked up in state.segmentIndex by the key the cut gave
+    # them. A client-side re-cut at the slider's value rebuilds the index
+    # around different cells, so drawn pieces are left holding keys the
+    # index has never heard of, and applySceneAtTime throws on the first
+    # missing one; while playing that throw escapes frame() before its
     # trailing requestAnimationFrame, so the render loop never restarts.
     # The slider must take the thickness slider's shape instead.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    input_start = js.index('getElementById("rings-slider").addEventListener("input"')
+    input_start = js.index('getElementById("size-slider").addEventListener("input"')
     input_body = js[input_start:js.index("\n});", input_start)]
-    assert "rings-value" in input_body, "input must still move the live label"
-    for forbidden in ("rebinSegments", "loadStudy", "state.rings ="):
+    assert "size-value" in input_body, "input must still move the live label"
+    for forbidden in ("applyCut", "loadStudy", "state.size ="):
         assert forbidden not in input_body, (
-            "the rings slider must not {} on every input event".format(forbidden)
+            "the size slider must not {} on every input event".format(forbidden)
         )
-    change_start = js.index('getElementById("rings-slider").addEventListener("change"')
+    change_start = js.index('getElementById("size-slider").addEventListener("change"')
     change_body = js[change_start:js.index("\n});", change_start)]
-    assert "state.rings = +e.target.value" in change_body
+    assert "state.size = +e.target.value" in change_body
     assert "loadStudy(" in change_body, (
-        "the ring count is a property of the bundle, so committing it must "
+        "the piece size is a property of the bundle, so committing it must "
         "reload the study and let the server rebuild the pieces"
     )
 
 
-def test_the_client_binning_follows_the_loaded_bundle_not_the_slider():
+def test_the_client_side_cut_follows_the_loaded_bundle_not_the_slider():
     # The other half of C1: even with the handler fixed, a mid-drag slider
     # must not be able to desynchronise the segment index from the drawn
-    # pieces, so the binning is derived from the bundle itself.
+    # pieces, so the cut is derived from the bundle itself.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function rebinSegments()" in js, "rebinSegments must take no ring count"
-    for call in re.findall(r"rebinSegments\(([^)]*)\)", js):
+    assert "function applyCut()" in js, "applyCut must take no size argument"
+    for call in re.findall(r"applyCut\(([^)]*)\)", js):
         assert call.strip() == "", (
-            "rebinSegments must never be handed a ring count; it reads the "
-            "loaded bundle's own count"
+            "applyCut must never be handed a size; it reads the loaded "
+            "bundle's own size"
         )
-    start = js.index("function rebinSegments()")
+    start = js.index("function applyCut()")
     body = js[start:js.index("\n}", start)]
-    assert "state.bundle.segments.rings" in body, (
-        "the binning must come from the loaded bundle's ring count"
+    assert "state.bundle.size" in body, (
+        "the cut must come from the loaded bundle's own size"
     )
     assert "e.target.value" not in body
     # The index the timeline looks a casting up in has to be keyed by the
-    # PIECE's key, not by its cell's: pieces.py emits one casting per
-    # connected patch, so a split cell ships two castings that share a ring
-    # and a wedge and must not share an identity (rings=16 on Trial 2 gives
-    # 67 pieces over 66 cells). A cell-keyed index cannot resolve them.
+    # PIECE's key: pieces.py emits exactly one casting per cell of the cut
+    # tessellation, so the cell's own key is the piece's identity too.
     assert "state.bundle.pieces.forEach" in body
-    assert "segmentKey(" not in body, (
-        "cell keys are not piece identities; index the pieces themselves"
-    )
 
 
 def test_pieces_are_built_at_the_bundles_thickness():
@@ -416,7 +422,10 @@ def test_recolour_consumes_the_piece_metadata():
     start = js.index("function recolourSegments(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "userData.sources" in body
+    # A cut piece vertex is not a mesh vertex, so a field is read through
+    # its weights, not a bare index; buildPieceMeshes stores them as
+    # userData.weights (see test_the_viewer_samples_fields_through_weights).
+    assert "userData.weights" in body
     assert "userData.surface" in body
     assert "userData.basePositions" in body
 
@@ -492,25 +501,36 @@ def test_stop_and_restart_transport_controls():
     assert "playing = true" in restart_body
 
 
-def test_cra_badge_hud_and_pulse_are_wired():
+def test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it():
+    # Owner ruling, mid wave 6: the CRA verdict is a constant popup, and the
+    # studio is always working to funicular form, so proving it stands is
+    # not the question -- the form finding already guarantees compression
+    # only equilibrium by construction, and separately no size the API
+    # permits can bring a real study under the rigid block budget any more.
+    # The badge, and every place that made the pulse or the HUD depend on
+    # it, are gone. craVerdict() itself survives: the Data panel still reads
+    # it where a study happens to carry a verdict (see
+    # test_data_panel_reports_the_cra_verdict_with_provenance).
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="cra-badge"' in html
+    assert 'id="cra-badge"' not in html
     for class_name in ("cra-stands", "cra-fails", "cra-unknown"):
-        assert class_name in css
-    assert "function craVerdict(" in js and "function updateCraBadge(" in js
+        assert class_name not in css
+    assert "function craVerdict(" in js
+    assert "function updateCraBadge(" not in js
     pulse_start = js.index("function applyPulse(")
     pulse_end = js.index("\n}", pulse_start)
-    assert "cra.stands" in js[pulse_start:pulse_end], (
-        "the pulse must require the CRA verdict as well as the FEA solve"
+    assert "cra.stands" not in js[pulse_start:pulse_end], (
+        "the pulse must pulse on the FEA solve alone, as it did before the "
+        "CRA wave"
     )
     hud_start = js.index("function updateHud(")
     hud_end = js.index("\n}", hud_start)
-    assert "CRA:" in js[hud_start:hud_end]
+    assert "CRA:" not in js[hud_start:hud_end]
     build_start = js.index("function buildScene(")
     build_end = js.index("\n}", build_start)
-    assert "updateCraBadge()" in js[build_start:build_end]
+    assert "updateCraBadge()" not in js[build_start:build_end]
 
 
 def test_data_panel_reports_the_cra_verdict_with_provenance():
@@ -565,49 +585,36 @@ def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     )
 
 
-def test_the_badge_and_hud_carry_the_faceted_caveat_too():
+def test_skipped_pieces_are_reported_in_the_data_panel():
+    # The badge this used to also check is gone (see
+    # test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it);
+    # the Data panel still names any piece the rigid-block model could not
+    # cover, on the studies that still carry a CRA verdict at all.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    # The Data panel is a separate view. The badge and the HUD are what a
-    # user reads during playback, so the caveat has to reach them as well
-    # or the headline verdict travels without it.
-    assert "FACETED_CAVEAT" in js
-    caveat_start = js.index("const FACETED_CAVEAT")
-    caveat = js[caveat_start:js.index("\n", caveat_start)]
-    assert "faceted" in caveat
-    # I3: the one-line form used to carry "up to 2.4 m off the drawn
-    # surface", a figure measured against the mesh-following block model
-    # this branch stopped drawing. The badge and HUD have room for the
-    # relationship, not for a number that is no longer true of it.
-    assert "2.4" not in caveat and "m off" not in caveat
-    assert "drawn here" in caveat or "drawn surface" not in caveat
-    badge_start = js.index("function updateCraBadge(")
-    badge_end = js.index("\n}", badge_start)
-    badge_body = js[badge_start:badge_end]
-    assert "FACETED_CAVEAT" in badge_body
-    # The three-state logic and its colour classes stay exactly as they
-    # were: the caveat is appended after the branch, never inside it.
-    for name in ("cra-stands", "cra-fails", "cra-unknown"):
-        assert name in badge_body
-    assert badge_body.index("FACETED_CAVEAT") > badge_body.index("cra-unknown")
-    hud_start = js.index("function updateHud(")
-    hud_end = js.index("\n}", hud_start)
-    assert "FACETED_CAVEAT" in js[hud_start:hud_end]
-
-
-def test_skipped_pieces_are_reported_in_data_panel_and_badge():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    # Data panel must reference cra_skipped and say pieces are absent
     panel_start = js.index("function renderDataPanel(")
     panel_end = js.index("\n}", panel_start)
     panel_body = js[panel_start:panel_end]
     assert "cra_skipped" in panel_body
     assert "absent from the rigid-block model" in panel_body
-    # Badge must reference cra_skipped and say pieces are not modelled
-    badge_start = js.index("function updateCraBadge(")
-    badge_end = js.index("\n}", badge_start)
-    badge_body = js[badge_start:badge_end]
-    assert "cra_skipped" in badge_body
-    assert "not modelled" in badge_body
+
+
+def test_the_data_panel_shows_nothing_when_there_is_no_cra_verdict():
+    # The owner does not want a popup, and does not want an empty section
+    # either: with run_staging's include_cra defaulting to False, most
+    # studies carry no cra entry on their final stage at all, and the panel
+    # must say nothing about CRA in that case rather than rendering a bare
+    # heading.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    verdict_start = body.index("const verdict = craVerdict();")
+    guard = body[verdict_start:body.index("{", verdict_start) + 1]
+    assert re.search(r"if\s*\(\s*verdict\s*\)\s*\{", guard), (
+        "the whole CRA section, heading included, must be conditional on a "
+        "real verdict, not rendered with a 'no CRA run yet' filler"
+    )
+    assert "no CRA run yet" not in body
 
 
 def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():

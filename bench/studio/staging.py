@@ -219,7 +219,7 @@ def run_staging(
     on_stage: Optional[Callable[[int, int], None]] = None,
     thickness: float = DEFAULT_THICKNESS,
     cra_runner: Optional[Callable[[dict], dict]] = None,
-    include_cra: bool = True,
+    include_cra: bool = False,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -227,6 +227,15 @@ def run_staging(
     (rim to crown), whether or not every course holds a bound analysis face:
     a course is a real drawn piece the moment the pattern generates it, so it
     is placed and costed even on a stage that adds no new load.
+
+    include_cra defaults to False: the owner's ruling is that the rigid-block
+    verdict is hidden from the viewer, since the form finding already
+    guarantees compression-only equilibrium by construction and no size the
+    API permits reaches CRA_BLOCK_BUDGET on a real export in any case (see
+    bench/scripts/cra_acceptance.py). No voussoir blocks are built and no
+    solver is shelled to for a display nobody sees. The parameter and every
+    line of the machinery stay for cra_acceptance.py, which still needs it
+    and passes include_cra=True explicitly.
     """
     if material not in DENSITIES:
         raise ValueError(

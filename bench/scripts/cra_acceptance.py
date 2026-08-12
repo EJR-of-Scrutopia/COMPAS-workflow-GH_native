@@ -83,9 +83,16 @@ def staged_run(pattern: str, size: float) -> None:
         print("stage {} of {} at {:.1f} s".format(stage, of, time.time() - started))
 
     with tempfile.TemporaryDirectory(prefix="cra_acceptance_") as tmp:
+        # run_staging's include_cra default flipped to False when the
+        # viewer stopped showing the verdict (Param: it's a constant
+        # popup, and the studio is always working to funicular form
+        # anyway). This script exists specifically to exercise the CRA
+        # machinery end to end, so it asks for it explicitly rather than
+        # inheriting the studio's own default.
         document = staging.run_staging(
             pair, material="concrete", pattern=pattern, size=size,
             out_path=Path(tmp) / "staging.json", on_stage=on_stage,
+            include_cra=True,
         )
     print("")
     print("total {:.1f} s   mu {}   skipped {}".format(
