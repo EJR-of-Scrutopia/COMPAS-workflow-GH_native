@@ -74,6 +74,28 @@ CHECK = textwrap.dedent("""
     const vectorField = [[0, 0, 0], [2, 4, 6]];
     const sampled = sampleVector(vectorField, [[0, 0.25], [1, 0.75]], [0, 0, 0]);
     expect(near(sampled[0], 1.5) && near(sampled[2], 4.5), "vectors sample componentwise");
+    // A legitimate all-zero vector must not be mistaken for a missing one:
+    // vectorField[0] is [0, 0, 0] and a weight of 1.0 on it alone must read
+    // through as zero, not fall back.
+    const zeroed = sampleVector(vectorField, [[0, 1.0]], [9, 9, 9]);
+    expect(near(zeroed[0], 0) && near(zeroed[1], 0) && near(zeroed[2], 0),
+      "a genuine [0, 0, 0] entry reads through, it is not mistaken for missing");
+    // The fallback branch itself: a null entry must return the fallback
+    // outright, not the partial sum accumulated before it was reached. An
+    // unasserted fallback branch would let a regression that returned the
+    // partial vector instead pass silently while shifting a vertex on screen.
+    const gappyVectorField = [[1, 1, 1], null];
+    const fellBack = sampleVector(gappyVectorField, [[0, 0.5], [1, 0.5]], [9, 9, 9]);
+    expect(near(fellBack[0], 9) && near(fellBack[1], 9) && near(fellBack[2], 9),
+      "a null entry returns the fallback outright, not a partial sum");
+
+    // Empty weights cannot happen today (the lift that produces them always
+    // returns three), but zero is the wrong answer for "no information": it
+    // is the same silently-shifted-value shape a null entry is.
+    expect(sampleScalar(scalarField, []) === null, "empty weights make a null scalar sample, not zero");
+    const emptyFallback = sampleVector(vectorField, [], [7, 7, 7]);
+    expect(near(emptyFallback[0], 7) && near(emptyFallback[1], 7) && near(emptyFallback[2], 7),
+      "empty weights fall back on a vector sample, not [0, 0, 0]");
 
     console.log("ok");
 """)

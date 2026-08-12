@@ -380,6 +380,46 @@ def test_the_client_side_cut_follows_the_loaded_bundle_not_the_slider():
     assert "state.bundle.pieces.forEach" in body
 
 
+def test_applycut_writes_the_piece_and_course_counts_it_reads():
+    # Nothing previously asserted that the piece-count/course-count writes
+    # actually come from the bundle: test_the_size_control_replaces_the_
+    # ring_slider only checks the elements exist in the page. If applyCut
+    # stopped writing them, both would sit at their static HTML zero and
+    # the suite would stay green.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyCut()")
+    body = js[start:js.index("\n}", start)]
+    assert (
+        'getElementById("piece-count").textContent = state.bundle.pieces.length'
+        in body
+    )
+    assert (
+        'getElementById("course-count").textContent = '
+        'state.bundle.tessellation.courses' in body
+    )
+
+
+def test_applycut_only_adopts_a_usable_size_in_range():
+    # Task 8 fix round 1, C1: an authored cut's target_size can be None, and
+    # bundle.py's own top level "size" field is now fixed to always report
+    # the REQUESTED size instead -- but a client that trusts a server value
+    # blindly is exactly how that class of bug reached the screen. applyCut
+    # must only adopt a usable number in the API's own range, as a second
+    # line of defence independent of the server side fix.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "SIZE_MIN = 0.3" in js and "SIZE_MAX = 3.0" in js
+    start = js.index("function applyCut()")
+    body = js[start:js.index("\n}", start)]
+    guard_start = body.index("if (typeof size")
+    guard_line = body[guard_start:body.index("{", guard_start) + 1]
+    assert "Number.isFinite(size)" in guard_line
+    assert "size >= SIZE_MIN" in guard_line and "size <= SIZE_MAX" in guard_line
+    guarded = body[guard_start:body.index("\n  }", guard_start)]
+    assert "state.size = size" in guarded, (
+        "adopting state.size must be inside the range guard, not before it"
+    )
+
+
 def test_pieces_are_built_at_the_bundles_thickness():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "fields.js" in js, "studio.js must import the pure fields module"
@@ -596,6 +636,27 @@ def test_skipped_pieces_are_reported_in_the_data_panel():
     panel_body = js[panel_start:panel_end]
     assert "cra_skipped" in panel_body
     assert "absent from the rigid-block model" in panel_body
+
+
+def test_the_skipped_piece_sentence_does_not_use_retired_ring_and_wedge_words():
+    # Task 8 fix round 1: voussoirs.py keeps entry.ring/entry.wedge as its
+    # own internal field names (ring is the course index, wedge the piece's
+    # position within it, not a ring/wedge polar bin), unrenamed by Task 7's
+    # own ruling. The sentence a user reads must not repeat those retired
+    # words even though the field access underneath is unchanged.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    assert '"ring ' not in body, (
+        "the studio no longer has a ring/wedge binning; the prose must not "
+        "name it"
+    )
+    assert '"wedge ' not in body
+    assert "entry.ring" in body and "entry.wedge" in body, (
+        "only the prose changes; the field access stays voussoirs.py's own"
+    )
+    assert "course " in body and "piece " in body
 
 
 def test_the_data_panel_shows_nothing_when_there_is_no_cra_verdict():

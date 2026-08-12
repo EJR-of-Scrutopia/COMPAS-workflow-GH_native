@@ -345,6 +345,13 @@ function buildScene(bundle) {
 }
 
 // ---------- the cut (Task 8: pieces and their course/size come from the server) ----------
+// Mirrors app.py's own SIZE_MIN/SIZE_MAX. The bundle's top level "size" is
+// meant to be the requested size (see bundle.py), but a client that trusts
+// a server value blindly is exactly how a poisoned value like the old
+// authored-cut sentinel reaches the screen; this is the defence in depth
+// for that class of bug, not the fix for it.
+const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
+
 function applyCut() {
   // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
@@ -360,9 +367,14 @@ function applyCut() {
   // thickness slider.
   if (!state.bundle) return;
   const size = state.bundle.size;
-  state.size = size;
-  document.getElementById("size-slider").value = size;
-  document.getElementById("size-value").textContent = Math.round(size * 1000);
+  // Only adopt a usable number in the API's own range. state.size otherwise
+  // keeps whatever it already held, so a bad value here cannot poison the
+  // next reload the way an unguarded copy did.
+  if (typeof size === "number" && Number.isFinite(size) && size >= SIZE_MIN && size <= SIZE_MAX) {
+    state.size = size;
+    document.getElementById("size-slider").value = size;
+    document.getElementById("size-value").textContent = Math.round(size * 1000);
+  }
   document.getElementById("piece-count").textContent = state.bundle.pieces.length;
   document.getElementById("course-count").textContent = state.bundle.tessellation.courses;
   // The index the timeline looks a casting up in, keyed by the PIECE's own
@@ -938,8 +950,13 @@ function renderDataPanel(v) {
       missing.textContent = skipped.length + " piece(s) could not be modelled "
         + "as a voussoir and are absent from the rigid-block model, so this "
         + "verdict describes less than the whole vault: "
+        // entry.ring/entry.wedge are voussoirs.py's own field names,
+        // unchanged there by Task 7's ruling: ring is the course index and
+        // wedge is the piece's position within it, not a ring/wedge polar
+        // bin. The sentence a user reads says so honestly without asking
+        // voussoirs.py to rename anything.
         + skipped.map(function (entry) {
-            return "ring " + entry.ring + " wedge " + entry.wedge
+            return "course " + entry.ring + " piece " + entry.wedge
               + " (" + entry.reason + ")";
           }).join("; ");
       content.appendChild(missing);

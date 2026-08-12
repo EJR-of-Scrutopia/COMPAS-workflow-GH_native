@@ -97,7 +97,13 @@ export function interpolateScalarField(field, vertexSources) {
 // through the barycentric weights the cut recorded for it. A vertex that
 // happens to land on a mesh vertex has a single weight of one, which is
 // exactly the lookup this replaces.
+//
+// Empty weights cannot happen today (the lift that produces them always
+// returns three), but zero is the wrong answer for "no information": it is
+// exactly the shape of a silently shifted heatmap value or a vertex dragged
+// to the origin, so both functions treat it the same as a null entry.
 export function sampleScalar(field, weights) {
+  if (!weights.length) return null;
   let total = 0;
   for (const [index, weight] of weights) {
     const value = field[index];
@@ -108,6 +114,7 @@ export function sampleScalar(field, weights) {
 }
 
 export function sampleVector(field, weights, fallback) {
+  if (!weights.length) return fallback;
   const out = [0, 0, 0];
   for (const [index, weight] of weights) {
     const value = field[index];

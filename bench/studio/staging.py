@@ -353,12 +353,20 @@ def run_staging(
 
     document = {
         "material": material,
-        # tess["pattern"]/tess["target_size"], not the requested pattern/size,
-        # matching bundle.py: an authored (imported) tessellation ignores
-        # both, so the document states what the cut actually is rather than
-        # what was asked for. Identical to the request for a generated cut.
+        # tess["pattern"], not the requested pattern, matching bundle.py: an
+        # authored (imported) tessellation ignores it, so the document
+        # states what the cut actually is rather than what was asked for.
+        # Identical to the request for a generated cut.
+        #
+        # size stays the REQUESTED size, not tess["target_size"]: found as
+        # the same defect in bundle.py's sibling field during Task 8 fix
+        # round 1 (an authored cut's target_size is None, and nothing here
+        # currently reads this field back into a request, but the document
+        # should still record what was asked for rather than "not
+        # applicable"). staging_path/bundle_path are keyed on this same
+        # requested value.
         "pattern": tess["pattern"],
-        "size": tess["target_size"],
+        "size": size,
         "combination": "ULS",
         "tessellation": {
             "pattern": tess["pattern"], "source": tess["source"],

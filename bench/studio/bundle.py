@@ -130,12 +130,22 @@ def build_bundle(
         "export": export_name,
         "slug": slug,
         "material": material,
-        # tess["pattern"]/tess["target_size"], not the requested pattern/size:
-        # an authored (imported) tessellation ignores both, and the document
-        # states what the cut actually is, not what was asked for. For a
-        # generated cut these are identical to what was requested.
+        # tess["pattern"], not the requested pattern: an authored (imported)
+        # tessellation ignores it, and the document states what the cut
+        # actually is, not what was asked for. For a generated cut this is
+        # identical to what was requested.
+        #
+        # size, the REQUESTED size, not tess["target_size"]: this field is
+        # the round trip parameter (get_bundle's own query argument) and
+        # part of the cache key (bundle_path/staging_path), so it has to be
+        # a value the API will accept back. An authored cut's target_size is
+        # None (see tessellation.build_tessellation): it ignores size
+        # entirely and has no size of its own to report, and echoing that
+        # None through here poisoned the client's state.size and then 400'd
+        # on the very next reload. The tessellation summary below is the
+        # honest record of what the cut actually used.
         "pattern": tess["pattern"],
-        "size": tess["target_size"],
+        "size": size,
         "generated": datetime.datetime.now(datetime.timezone.utc)
         .isoformat(timespec="seconds"),
         "analysis_mesh": arrays,

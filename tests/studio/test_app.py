@@ -97,6 +97,27 @@ def bay_contract():
     }
 
 
+def authored_tiny_contract():
+    """tiny_contract with an authored tessellation embedded in the contract
+    itself, so build_bundle routes through tessellation.from_document
+    instead of a generated pattern. An authored cut ignores the requested
+    size entirely, so its target_size is None (see
+    tessellation.build_tessellation).
+    """
+    contract = tiny_contract()
+    contract["tessellation"] = {
+        "schema": "bench.tessellation/1",
+        "units": "m",
+        "domain": "plan",
+        "pattern": "authored",
+        "cells": [
+            {"key": "a", "course": 0,
+             "outline": [[0, 0], [2, 0], [2, 2], [0, 2]]},
+        ],
+    }
+    return contract
+
+
 def test_studies_lists_the_export_and_ffmpeg_flag(tmp_path, monkeypatch):
     client, _ = make_client(tmp_path, monkeypatch)
     payload = client.get("/api/studies").json()
@@ -141,6 +162,60 @@ def test_a_plan_the_engine_refuses_is_a_400_not_a_500(tmp_path, monkeypatch):
     detail = response.json()["detail"]
     assert "not star shaped" in detail
     assert "Author the tessellation in Grasshopper and import it instead" in detail
+
+
+def test_an_authored_bundles_size_round_trips_through_the_api(tmp_path, monkeypatch):
+    """Task 8 fix round 1, C1: an authored cut ignores the requested size,
+    so tess["target_size"] is None. The bundle's top level "size" field
+    used to echo tess["target_size"] straight through (0.0 before the
+    tessellation.py sentinel fix, None after it), and applyCut copied that
+    poisoned value into state.size client side. The very next reload
+    (a material switch, a thickness commit, anything that calls loadStudy
+    again) sent that value back to this endpoint and got a 400, with no
+    way out except dragging the size slider by hand.
+
+    The top level "size" must be the REQUESTED size instead, which this
+    endpoint is guaranteed to accept back: that is the round trip this
+    test drives for real, through two live requests, not just a range
+    check on the first response.
+    """
+    client, studies = make_client(tmp_path, monkeypatch)
+    upload = tmp_path / "upload"
+    (upload / "Authored-contract.json").write_text(
+        json.dumps(authored_tiny_contract()), encoding="utf-8"
+    )
+    (upload / "Authored-compas.json").write_text("{}", encoding="utf-8")
+
+    first = client.get(
+        "/api/studies/Authored/bundle",
+        params={"material": "concrete", "pattern": "bonded-courses", "size": 0.9},
+    )
+    assert first.status_code == 200, first.json()
+    document = first.json()
+    assert document["tessellation"]["source"] == "imported"
+    # The cut's own honest record: it truly has no target size, not one of
+    # zero metres.
+    assert document["tessellation"]["target_size"] is None
+    round_tripped_size = document["size"]
+    assert round_tripped_size == 0.9, (
+        "the top level size must be the REQUESTED size, not the cut's own "
+        "target_size"
+    )
+
+    second = client.get(
+        "/api/studies/Authored/bundle",
+        params={
+            "material": "concrete", "pattern": "bonded-courses",
+            "size": round_tripped_size,
+        },
+    )
+    assert second.status_code == 200, (
+        "the value the first response reported as the bundle's own size "
+        "must be a value this same endpoint accepts back: {}".format(
+            second.json() if second.headers.get("content-type", "").startswith(
+                "application/json") else second.status_code
+        )
+    )
 
 
 def test_run_lifecycle_reaches_done_and_embeds_staging(tmp_path, monkeypatch):

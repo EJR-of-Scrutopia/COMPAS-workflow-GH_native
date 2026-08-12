@@ -376,10 +376,15 @@ def build_tessellation(
     raw_cells: Sequence[Dict],
     pattern: str,
     source: str,
-    target_size: float,
+    target_size: Optional[float],
     courses: int,
 ) -> Dict:
     """Weld, resolve T junctions, and report what does not conform.
+
+    target_size is None for an imported cut: it has no target size at all,
+    not one of zero, the same "not applicable" convention from_document
+    already uses for z_offset_max. A generated cut always passes a float
+    here, identical to what generators.generate was asked for.
 
     The report includes coverage_holes (regions fully enclosed by cells that
     no cell covers) and broken_boundary (vertices with anomalous degree among
@@ -716,7 +721,7 @@ def from_document(document: Dict, surface_height) -> Dict:
         prepared,
         str(document.get("pattern") or "imported"),
         "imported",
-        0.0,
+        None,
         courses,
     )
     _reject_overlaps(tess)

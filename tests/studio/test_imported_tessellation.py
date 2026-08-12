@@ -57,6 +57,18 @@ def test_a_valid_document_is_accepted():
     assert "broken_boundary" in tess["report"]
 
 
+def test_an_authored_cut_has_no_target_size_of_its_own():
+    # Task 8 fix round 1, C1: an authored cut ignores size entirely, so
+    # target_size must be None (not applicable), the same convention
+    # z_offset_max already uses, rather than 0.0 (measured and found to be
+    # zero). 0.0 is a real number bundle.py used to echo straight into the
+    # top level "size" field the client trusts, which then failed the API's
+    # own 0.3 to 3.0 validation on the very next reload.
+    t = studio()
+    tess = t.from_document(document(), flat)
+    assert tess["target_size"] is None
+
+
 def test_a_duplicate_key_is_rejected_by_name():
     t = studio()
     cells = [
