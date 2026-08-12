@@ -84,12 +84,20 @@ class PointWeld:
             if px != py:
                 parent[py] = px
 
-        for i in range(n_orig):
-            x_i, y_i = self.originals[i]
-            for j in range(i + 1, n_orig):
-                x_j, y_j = self.originals[j]
-                if abs(x_j - x_i) <= self.tol and abs(y_j - y_i) <= self.tol:
-                    union(i, j)
+        orig_buckets: Dict[Tuple[int, int], List[int]] = {}
+        for orig_idx, (x, y) in enumerate(self.originals):
+            i, j = self._home(x, y)
+            orig_buckets.setdefault((i, j), []).append(orig_idx)
+
+        for i, (x_i, y_i) in enumerate(self.originals):
+            bucket_i, bucket_j = self._home(x_i, y_i)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    for j in orig_buckets.get((bucket_i + di, bucket_j + dj), ()):
+                        if i != j:
+                            x_j, y_j = self.originals[j]
+                            if abs(x_j - x_i) <= self.tol and abs(y_j - y_i) <= self.tol:
+                                union(i, j)
 
         groups: Dict[int, List[int]] = {}
         for index in range(n_orig):
@@ -116,9 +124,16 @@ class PointWeld:
 
         for point_idx in range(n_points):
             point_x, point_y = self.points[point_idx][0], self.points[point_idx][1]
-            for orig_idx, (orig_x, orig_y) in enumerate(self.originals):
-                if abs(orig_x - point_x) <= self.tol and abs(orig_y - point_y) <= self.tol:
-                    remap[point_idx] = orig_to_new[orig_idx]
+            bucket_i, bucket_j = self._home(point_x, point_y)
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    for orig_idx in orig_buckets.get((bucket_i + di, bucket_j + dj), ()):
+                        orig_x, orig_y = self.originals[orig_idx]
+                        if abs(orig_x - point_x) <= self.tol and abs(orig_y - point_y) <= self.tol:
+                            remap[point_idx] = orig_to_new[orig_idx]
+                            break
+                    else:
+                        continue
                     break
 
         return new_points, remap
@@ -248,8 +263,8 @@ def _find_coverage_holes(
     Detects regions fully enclosed by cells that no cell covers. A gap open to
     the outside is topologically part of the rim and cannot be caught here. Such
     gaps are caught by analysis_binding's orphan_faces, which tests real mesh
-    face centroids against real cells. Neither check proves the surface is
-    covered everywhere.
+    face centroids against real cells. Gaps thinner than the mesh face spacing
+    pass both checks. Neither check proves the surface is covered everywhere.
 
     Returns (coverage_holes, broken_boundary) where coverage_holes is a list of
     dicts with points (no repeated final point), area (real area, not doubled),
@@ -279,6 +294,8 @@ def _find_coverage_holes(
         prev = None
 
         while True:
+            if len(loop_points) > 0 and current == start:
+                break
             loop_points.append(current)
             if not edges[current]:
                 break
@@ -343,7 +360,9 @@ def build_tessellation(
     no cell covers) and broken_boundary (vertices with anomalous degree among
     single-owner facets). Note: coverage_holes does not catch gaps open to the
     outside, which are topologically part of the rim. Such gaps are caught by
-    analysis_binding's orphan_faces check. Neither check proves complete coverage.
+    analysis_binding's orphan_faces, which tests mesh face centroids against
+    real cells. Gaps thinner than the mesh face spacing pass both checks.
+    Neither check proves complete coverage.
     """
 
     if not raw_cells:

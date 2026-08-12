@@ -204,3 +204,5 @@ def test_four_cells_around_empty_middle_reports_hole():
     hole = tess["report"]["coverage_holes"][0]
     assert sorted(hole["cells"]) == ["e", "n", "s", "w"]
     assert abs(hole["area"] - 1.0) < t.TOL
+    assert hole["points"][0] != hole["points"][-1]
+    assert len(set(hole["points"])) == len(hole["points"])
