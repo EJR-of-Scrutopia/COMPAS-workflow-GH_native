@@ -1359,12 +1359,16 @@ def test_every_clock_reads_the_drop_order_at_the_same_rate():
     # Replay the old C2 scenario arithmetically on the new model, at a
     # small and a large count: the build is constant, the scrubber range
     # covers the last landing, and by the end of the build the stage
-    # readout has counted every casting.
+    # readout has counted every casting. Drawn from the file's own
+    # constants through the same regexes pinned above, not restated as
+    # bare literals, so the replay is honestly about what studio.js holds.
+    build_target = float(re.search(r"BUILD_TARGET_SECONDS = ([\d.]+)", js).group(1))
+    drop_seconds = float(re.search(r"DROP_SECONDS = ([\d.]+)", js).group(1))
     for placements in (38, 1200):
-        step = 35 / max(1, placements)
-        assert abs(placements * step - 35) < 1e-9, "the build must be constant"
-        lands = (placements - 1) * step + 0.8
-        build_end = placements * step + 0.8
+        step = build_target / max(1, placements)
+        assert abs(placements * step - build_target) < 1e-9, "the build must be constant"
+        lands = (placements - 1) * step + drop_seconds
+        build_end = placements * step + drop_seconds
         assert build_end >= lands
         assert int(build_end // step) >= placements, (
             "at the end of the build the readout must count every casting"

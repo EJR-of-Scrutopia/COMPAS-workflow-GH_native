@@ -147,8 +147,16 @@ crown.
 - FEA layers: stress and deflection heatmaps (full per-element and
   per-node fields), load and reaction vectors, text overlays, the
   integrity pulse, thrust wires with node spheres.
-- Placement animation with drop, orbit speed, and orbit distance sliders;
-  the falsework strikes after the last segment lands.
+- Placement animation runs to a constant 35 second build whatever the
+  piece count: each casting still falls for 0.8 s, but the stagger between
+  drops is derived from the count, so castings overlap in flight rather
+  than landing one at a time. A timeline speed control scrubs playback
+  from 0.25x to 4x; orbit speed and orbit distance sliders set how the
+  camera circles the model. The falsework strikes after the last segment
+  lands. Finished shell and Formwork toggles sit in the View section
+  beside the FEA layers, so either can be hidden on its own.
+- The panel collapses into six sections -- Study, View, Animation, Scene,
+  Import, Record -- so only the controls in use need to stay open.
 - Record 1080p writes PNG frames through the server and stitches
   `recording.mp4` with ffmpeg.
 - Column geometry dropped into `bench/studio/columns/*.json` (either
@@ -210,11 +218,16 @@ The studio polish wave tried tightening the cap subdivision, CAP_EDGE_TARGET
 --density` measured that candidate at 13.13 s / 42.53 MB against a 0.9 m
 baseline of 3.16 s / 11.26 MB and 68.89 s / 327.61 MB against a 0.3 m
 baseline of 26.88 s / 87.46 MB, past the budget (2x seconds, 3x payload) at
-both probe sizes, so the back-off ladder landed on CAP_EDGE_TARGET 0.20 m,
-MAX_ROUNDS 3 (measured 3.02 s / 11.26 MB at 0.9 m and 24.01 s / 87.46 MB at
-0.3 m, both within budget because they equal the baseline) -- unchanged
-from the value the table above already reports, since MAX_ROUNDS 3 was
-already the binding constraint at both probe sizes on this export.
+both probe sizes. A second rung tried CAP_EDGE_TARGET 0.20 m alone with
+MAX_ROUNDS left at 3, and measured 3.02 s / 11.26 MB at 0.9 m and
+24.01 s / 87.46 MB at 0.3 m -- identical to the baseline, because
+MAX_ROUNDS 3 was already the binding constraint at both probe sizes on
+this export (see the subdivision rounds row above): a finer edge target
+changes nothing while the round budget cuts the subdivision off first, so
+that rung added no real density either. No rung tried this wave passed the
+budget gate while actually adding density, so CAP_EDGE_TARGET and
+MAX_ROUNDS stay at the values the table above already reports, 0.30 m and
+3, unchanged from before the wave.
 
 #### The coverage limit, over the whole slider rather than at one size
 
@@ -236,11 +249,11 @@ made across every position of the size slider rather than at one point:
 .venv\Scripts\python.exe bench\scripts\cutting_measurements.py --sweep
 ```
 
-Measured 2026-08-13 (re-run against the studio polish wave's finer cap
-density, CAP_EDGE_TARGET 0.20 m; unchanged from the 2026-08-12 figures
-below, because coverage is a cut-level property and does not move with
-subdivision density), bonded courses, all 55 slider positions from 0.30 to
-3.00 m in steps of 0.05:
+Measured 2026-08-13 (re-run after the studio polish wave, CAP_EDGE_TARGET
+still 0.30 m, unchanged from the 2026-08-12 figures below, because coverage
+is a cut-level property and does not move with subdivision density),
+bonded courses, all 55 slider positions from 0.30 to 3.00 m in steps of
+0.05:
 
 | sizes | orphan faces | double faces | open facets | slivers | coverage holes | broken boundary |
 | --- | --- | --- | --- | --- | --- | --- |
