@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import spatial
 
-CAP_EDGE_TARGET = 0.30    # metres: the edge length subdivision aims at
+CAP_EDGE_TARGET = 0.20    # metres: the edge length subdivision aims at
 CHORD_TARGET = 0.005      # metres: how far a cap may cut inside the surface
 MAX_ROUNDS = 3            # 4 ** 3 triangles per ear clipped triangle
 
