@@ -254,6 +254,55 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
             "FEA_MATERIALS list"
         )
 
+    # ------------------------------------------------------------------
+    # Second pass, same wave. finalStage() is null for three different
+    # reasons, not two: no staging at all, a material with no preset (the
+    # case pinned above), or a staged run that reached a real solver and
+    # came back with converged false. That third state fell through to the
+    # "no staging at all" branches -- advice to run a staged analysis that
+    # has already run and whose answer can never change. Every state below
+    # is checked against all three readers, not only the one each fix was
+    # sent to correct.
+    hud_body = _function_body(js, "updateHud")
+    pulse_body = _function_body(js, "applyPulse")
+
+    # State 1: a converged stage exists, so there is a real per-node field
+    # to colour with.
+    assert "if (stage) return { on: true };" in availability
+    assert "struck && struck.converged" in hud_body
+    assert '"struck now: stands' in hud_body
+    assert "good ? 0x1a3a1a" in pulse_body
+
+    # State 2: staging ran but the final stage has no per-node field,
+    # either because the material has no preset or because the solve did
+    # not converge. layerAvailability must say which, in updateHud's own
+    # words ("no equilibrium found"), and the gate must be the presence of
+    # a staged run, not the numeric value of any field on it.
+    assert "staging.stages && staging.stages.length" in availability
+    assert "no equilibrium found on the last staged run" in availability
+    assert "no equilibrium found" in hud_body
+    not_converged_peaks_at = availability.index(
+        'why: "peaks only: no equilibrium found on the last staged run"')
+    not_converged_off_at = availability.index(
+        'why: "no equilibrium found on the last staged run, and no verification data"')
+    assert unavailable_at < not_converged_peaks_at < not_converged_off_at < stale_at, (
+        "both staged-but-no-field readings (no preset, not converged) must "
+        "be decided before the fallback that assumes no staging exists at "
+        "all, or a finished non-converging run reads as a missing one"
+    )
+
+    # State 3: no staging at all. Verification peaks if a file is present,
+    # nothing otherwise; neither wording claims a run exists.
+    assert 'why: "peaks only until a staged run exists"' in availability
+    assert 'why: "no staging and no verification data"' in availability
+    staging_guard_at = hud_body.index(
+        "if (staging && staging.stages && staging.stages.length)")
+    struck_line_at = hud_body.index("let struckLine")
+    assert staging_guard_at < struck_line_at, (
+        "updateHud must never compute a struck-now line when there is no "
+        "staged run to read one from"
+    )
+
 
 def test_boot_and_import_columns_share_the_dispose_before_reload_helper():
     # M1: boot() used to add a fresh columns group on every call with no

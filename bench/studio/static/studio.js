@@ -462,11 +462,19 @@ function finalStage() {
 // so staging.py never calls the struck-now runner for them and writes
 // struck_now.status "unavailable" instead of a solve result. finalStage()
 // therefore returns null for those materials however many staged runs
-// complete, which makes "finalStage() is null" mean either "no staged run
-// exists" or "a staged run exists and this material has no solver" -- two
-// statements a reader must never see conflated. updateHud and applyPulse
-// were given this reading in commit 022f9c5; layerAvailability, the sibling
-// nobody re-read, was still printing the first when it meant the second.
+// complete, which makes "finalStage() is null" mean any of three different
+// things -- no staged run exists at all, a staged run exists and this
+// material has no solver, or a staged run exists, was solved, and did not
+// converge -- three statements a reader must never see conflated.
+// updateHud and applyPulse were given the no-solver reading in commit
+// 022f9c5; layerAvailability, the sibling nobody re-read, was still
+// printing the first when it meant the second (commit 8444539). What was
+// still missing after both fixes is the state one over: a stage that DID
+// reach the runner and came back with converged false. That is not "no
+// staging" (staging.stages is non-empty) and it is not "unavailable"
+// (struck_now.status is not "unavailable"), so it fell through to
+// layerAvailability's oldest, most generic branches, the same ones that
+// answer for a bundle with no staging at all.
 function stagingUnavailable() {
   const staging = state.bundle && state.bundle.staging;
   if (!staging || !staging.stages || !staging.stages.length) return false;
@@ -511,15 +519,28 @@ function layerAvailability(name) {
   }
   if (name === "stress" || name === "deflection") {
     if (stage) return { on: true };
-    // Three readings, the same three updateHud prints and applyPulse
-    // tints, in the same words. Telling a limestone study whose staged run
-    // has already finished to wait for one is advice that can never come
-    // true: no run on this material will ever produce a struck now field,
-    // because no solver is ever called for it.
-    if (stagingUnavailable()) {
+    // stage is null and the question is why, in the same words updateHud
+    // and applyPulse already use for the same struck_now on the same
+    // screen. A staged run (staging.stages.length) settles two of the
+    // three readings below before the "no staging at all" fallback is
+    // even reachable, because both of them describe a run that already
+    // happened and can never be answered by telling the reader to run one.
+    const staging = state.bundle && state.bundle.staging;
+    const staged = !!(staging && staging.stages && staging.stages.length);
+    if (staged) {
+      // Two reasons a finished run still has no per-node field to colour
+      // with, and only two: either the material has no ananke_fea preset
+      // (stagingUnavailable, updateHud's "not available for this
+      // material") or the solver ran and did not converge (updateHud's
+      // "no equilibrium found"). Neither is "no staging exists".
+      if (stagingUnavailable()) {
+        return v
+          ? { on: true, why: "peaks only: struck-now fields are not available for this material" }
+          : { on: false, why: "not available for this material, and no verification data" };
+      }
       return v
-        ? { on: true, why: "peaks only: struck-now fields are not available for this material" }
-        : { on: false, why: "not available for this material, and no verification data" };
+        ? { on: true, why: "peaks only: no equilibrium found on the last staged run" }
+        : { on: false, why: "no equilibrium found on the last staged run, and no verification data" };
     }
     if (v) return { on: true, why: "peaks only until a staged run exists" };
     return { on: false, why: "no staging and no verification data" };
