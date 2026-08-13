@@ -190,8 +190,8 @@ writes nothing into `studies/`. Run it with
 `.venv\Scripts\python.exe bench\scripts\cutting_measurements.py` and it also
 checks itself against every figure the wave's own controller had already
 measured by hand (the plan's star shape, the default size's coverage, and
-the coverage regression at 1.5 m); every check below passed on the run this
-table is taken from, 2026-08-12:
+the old coverage regression at 1.5 m, now cleared); every check below passed
+on the run this table is taken from, 2026-08-12:
 
 | measurement | value |
 | --- | --- |
