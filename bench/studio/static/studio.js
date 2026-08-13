@@ -93,6 +93,9 @@ function noiseTexture(size, base, variation) {
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(6, 6);
+  // Anisotropy 1 shimmers into moire bands at grazing angles, which is
+  // most of a vault seen from eye height.
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return texture;
 }
 
@@ -112,6 +115,8 @@ function grainTexture(size) {
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(3, 3);
+  // Same grazing-angle moire fix as noiseTexture.
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return texture;
 }
 
@@ -1968,6 +1973,7 @@ function buildPieceMeshes() {
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.
   const gap = sprayedMaterial() ? 0 : state.jointGap;
+  const built = [];
   for (const piece of state.bundle.pieces) {
     const count = piece.mid.length;
     const half = state.bundle.provenance.thickness * taperAt(piece.course) / 2;
@@ -1998,21 +2004,58 @@ function buildPieceMeshes() {
       for (let corner = 1; corner < face.length - 1; corner++) {
         for (const index of [face[0], face[corner], face[corner + 1]]) {
           const p = points[index];
-          positions.push(
-            centre[0] + (p[0] - centre[0]) * shrink,
-            centre[1] + (p[1] - centre[1]) * shrink,
-            centre[2] + (p[2] - centre[2]) * shrink);
+          // shrink === 1 must push p verbatim: c + (p - c) is not p in
+          // floats, and the sprayed weld below groups corners by exact
+          // bit pattern, which the engine only guarantees for the raw
+          // offsets from mid and normal.
+          if (shrink === 1) {
+            positions.push(p[0], p[1], p[2]);
+          } else {
+            positions.push(
+              centre[0] + (p[0] - centre[0]) * shrink,
+              centre[1] + (p[1] - centre[1]) * shrink,
+              centre[2] + (p[2] - centre[2]) * shrink);
+          }
           weights.push(piece.sources[index % count]);
           surface.push(index < count ? 1 : -1);
         }
       }
     }
+    built.push({ piece, positions, weights, surface, centre });
+  }
+  // Sprayed concrete is one continuous surface: the joint gap is zero,
+  // the shrink factor is exactly 1 and shared boundary points are
+  // bit-identical across pieces, so the crease normals are computed
+  // over the WHOLE shell in one call and sliced back per piece. Course
+  // joints then stop stepping in the light. Jointed materials keep
+  // per-piece normals: their pieces are genuinely separate and the
+  // lighting step at a joint is honest.
+  let welded = null;
+  if (sprayedMaterial()) {
+    let total = 0;
+    for (const entry of built) total += entry.positions.length;
+    const all = new Array(total);
+    let cursor = 0;
+    for (const entry of built) {
+      for (let i = 0; i < entry.positions.length; i++) {
+        all[cursor + i] = entry.positions[i];
+      }
+      cursor += entry.positions.length;
+    }
+    welded = creaseNormals(all);
+  }
+  let offset = 0;
+  for (const entry of built) {
+    const { piece, positions, weights, surface, centre } = entry;
+    const normals = welded
+      ? welded.slice(offset, offset + positions.length)
+      : creaseNormals(positions);
+    offset += positions.length;
     const uvs = boxUVs(positions, centre, segmentUVOffset(piece.key));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
-    geometry.setAttribute("normal",
-      new THREE.BufferAttribute(creaseNormals(positions), 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
     const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;

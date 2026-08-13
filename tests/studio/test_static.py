@@ -1604,3 +1604,25 @@ def test_the_panel_groups_into_six_collapsible_sections():
     )
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "#panel summary" in css
+
+
+def test_textures_are_anisotropic_and_sprayed_shades_as_one_surface():
+    # Two artefacts from the sprayed close-up. Fine wavy ripples at
+    # grazing angles: the procedural textures rendered at anisotropy 1,
+    # textbook texture moire. And tonal steps at every course joint:
+    # normals were welded within each piece only, so neighbouring pieces
+    # disagreed about the light at their shared boundary even though a
+    # zero joint gap makes sprayed concrete one continuous surface.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("noiseTexture", "grainTexture"):
+        assert "getMaxAnisotropy()" in _function_body(js, name), (
+            "{} must set max anisotropy".format(name)
+        )
+    body = _function_body(js, "buildPieceMeshes")
+    assert "welded" in body, (
+        "a monolithic surface must weld normals across the whole shell"
+    )
+    assert "shrink === 1" in body, (
+        "shrink 1 must push the raw point: c + (p - c) is not p in "
+        "floats, and the weld groups corners by exact bit pattern"
+    )
