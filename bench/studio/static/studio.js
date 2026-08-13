@@ -600,8 +600,8 @@ function setLayer(name, on) {
     } else if (name === "wires") {
       state.objects.wires.visible = on;
       state.objects.nodes.visible = on;
-    } else if (name === "shell" && state.objects.shell) {
-      state.objects.shell.visible = on;
+    } else if (name === "shell") {
+      if (state.objects.shell) state.objects.shell.visible = on;
     } else if (state.objects.falsework) {
       state.objects.falsework.visible = on;
     }
@@ -760,6 +760,7 @@ function recolourSegments() {
     const base = segment.userData.basePositions;
     const positions = segment.geometry.getAttribute("position");
     const colours = new Float32Array(weights.length * 3);
+    let displaced = false;
     for (let i = 0; i < weights.length; i++) {
       let colour = null;
       if (wantStress) {
@@ -791,14 +792,24 @@ function recolourSegments() {
           base[3 * i] + d[0] * exaggeration,
           base[3 * i + 1] + d[1] * exaggeration,
           base[3 * i + 2] + d[2] * exaggeration);
+        displaced = true;
       } else {
         positions.setXYZ(i, base[3 * i], base[3 * i + 1], base[3 * i + 2]);
       }
     }
     positions.needsUpdate = true;
     segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
-    segment.geometry.setAttribute("normal",
-      new THREE.BufferAttribute(creaseNormals(positions.array), 3));
+    // Recomputing crease normals costs a pass over every vertex, and the
+    // shape only actually changes when a displacement was painted in above.
+    // Skip it when this pass wrote positions straight back from
+    // basePositions -- unless the previous pass left the geometry bent, in
+    // which case the normals still belong to that bent shape and must be
+    // reset to match the flat positions just written.
+    if (displaced || segment.userData.wasDisplaced) {
+      segment.geometry.setAttribute("normal",
+        new THREE.BufferAttribute(creaseNormals(positions.array), 3));
+    }
+    segment.userData.wasDisplaced = displaced;
     // Off the heatmaps, the piece goes back to the material it was built
     // with, tint and all: pieceMaterial recomputes it from the key rather
     // than handing back a bare registry clone, which used to discard the
@@ -1503,13 +1514,19 @@ function scheduleReload() {
 }
 
 async function loadStudy(exportName) {
+  // An immediate load supersedes a pending settle timer: without this, a
+  // size commit followed within the settle window by a material, pattern
+  // or study change fires two full server cuts instead of one.
+  if (state.reloadTimer) { clearTimeout(state.reloadTimer); state.reloadTimer = null; }
   const material = document.getElementById("material-select").value;
   // The token: whoever increments last owns the screen. A response that
   // comes back to find a newer sequence number is dropped silently, so
   // two overlapping cuts can never race each other onto the canvas.
   const sequence = ++state.loadSequence;
   const status = document.getElementById("cut-status");
-  status.textContent = "cutting " + material + ", " + state.pattern + ", "
+  const materialLabel = document.querySelector(
+    '#material-select option[value="' + material + '"]').textContent;
+  status.textContent = "cutting " + materialLabel + ", " + patternLabel(state.pattern) + ", "
     + Math.round(state.size * 1000) + " mm pieces at "
     + Math.round(state.thickness * 1000) + " mm...";
   const url = "/api/studies/" + encodeURIComponent(exportName) +
@@ -1875,7 +1892,9 @@ function rebuildTimeline(preserve) {
     // Same export, new bundle: the fraction is what carries between two
     // different drop sequences, and it is applied through the scene-only
     // helper so the camera stays put. The playing flag rides across too,
-    // so a swap mid-animation keeps animating.
+    // so a swap mid-animation keeps animating. applySceneAtTime's own first
+    // line is what writes state.timeline.t, so this preserve path depends
+    // on that assignment happening here.
     applySceneAtTime(preserve.f * timelineDuration());
     state.timeline.playing = preserve.playing;
     document.getElementById("play-button").textContent =
@@ -2234,13 +2253,19 @@ scrubber.addEventListener("input", () => {
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
   updateHud();
 });
-for (const [id, prop] of [["timeline-speed", "speed"], ["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
+for (const [id, prop] of [["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
     if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
   });
 }
+// Speed is a playback rate, not a scene parameter: routing it through the
+// loop above would call applyTimeline on every drag tick, which snaps an
+// orbited camera back onto the ring for no scene effect at all. It is set
+// here instead, alongside the label it already updates, with no
+// applyTimeline call.
 document.getElementById("timeline-speed").addEventListener("input", (e) => {
   document.getElementById("timeline-speed-value").textContent = (+e.target.value).toFixed(2);
+  if (state.timeline) state.timeline.speed = +e.target.value;
 });
 document.getElementById("inflate-seconds").addEventListener("input", (e) => {
   document.getElementById("inflate-value").textContent = (+e.target.value).toFixed(1);
