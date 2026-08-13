@@ -3,14 +3,14 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
-  sampleScalar, sampleVector,
+  sampleScalar, sampleVector, creaseNormals,
 } from "/static/fields.js";
 
 // ---------- app state ----------
 const state = {
   bundle: null,
   studies: [],
-  layers: { wires: true, overlays: true, falsework: true },  // Task 14: layer visibility toggles
+  layers: { shell: true, wires: true, overlays: true, falsework: true },
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -30,6 +30,9 @@ const state = {
   patterns: [],
   patternDefaults: {},
   patternNotes: {},
+  patternChosen: false, // an explicit pattern choice survives material changes
+  loadSequence: 0,      // bundle request token: only the newest response lands
+  reloadTimer: null,    // the settle timer behind size and thickness commits
 };
 
 const canvas = document.getElementById("view");
@@ -113,7 +116,7 @@ function grainTexture(size) {
 
 const materials = {
   concrete: new THREE.MeshPhysicalMaterial({
-    color: 0x9a958a, side: THREE.DoubleSide,      // warm mid grey
+    color: 0x939590, side: THREE.DoubleSide,      // neutral mid grey
     map: noiseTexture(256, 205, 14),
     roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
     metalness: 0.0,
@@ -125,7 +128,7 @@ const materials = {
     metalness: 0.0,
   }),
   "concrete-sprayed": new THREE.MeshPhysicalMaterial({
-    color: 0xd8d2c4, side: THREE.DoubleSide,      // lighter, coarsest
+    color: 0xcbcbc6, side: THREE.DoubleSide,      // light neutral grey, coarsest
     map: noiseTexture(256, 195, 46),
     roughness: 0.98, roughnessMap: noiseTexture(256, 225, 40),
     metalness: 0.0,
@@ -218,7 +221,12 @@ function buildWiresAndNodes(bundle) {
     m.makeTranslation(v[0], v[1], v[2]);
     nodes.setMatrixAt(i, m);
   });
-  wires.castShadow = nodes.castShadow = true;
+  // The thrust network is a diagram of the analysis, not a scene object.
+  // Once the vault closes, the wires sit hidden inside the shell, and
+  // shadow maps ignore both occlusion and opacity, so with castShadow on
+  // they projected a grid shadow of an invisible net through the finished
+  // vault onto the ground. Overlays cast nothing; castings and columns do.
+  wires.castShadow = nodes.castShadow = false;
   return { wires, nodes };
 }
 
@@ -324,7 +332,7 @@ async function reloadColumns(names) {
   }
 }
 
-function buildScene(bundle) {
+function buildScene(bundle, preserve) {
   // A study load replaces the shell and the thrust network wholesale, so
   // it frees them on the way out rather than leaving them to the garbage
   // collector, which never sees the GPU side.
@@ -360,7 +368,7 @@ function buildScene(bundle) {
   state.objects.ground = ground;
   scene.add(ground);
 
-  applyCut();
+  applyCut(preserve);
   buildLayerToggles();
   updateVectorLayers();
   updateMaterialControls();
@@ -375,7 +383,7 @@ function buildScene(bundle) {
 // for that class of bug, not the fix for it.
 const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
 
-function applyCut() {
+function applyCut(preserve) {
   // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
   // server-side at the bundle's own size, and each one is looked up in
@@ -434,20 +442,21 @@ function applyCut() {
       course: piece.course, order: position,
     });
   });
-  rebuildTimeline();
+  rebuildTimeline(preserve);
 }
 
 // ---------- FEA layers ----------
 const LAYERS = [
+  ["shell", "Finished shell"],
+  ["falsework", "Formwork"],
+  ["wires", "Thrust wires and nodes"],
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
   ["loads", "Load vectors"],
   ["reactions", "Reaction vectors"],
   ["overlays", "Text overlays"],
   ["pulse", "Integrity pulse"],
-  ["wires", "Thrust wires and nodes"],
   ["forces", "Wire forces"],
-  ["falsework", "Falsework ghost"],
 ];
 
 function finalStage() {
@@ -581,7 +590,7 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires" || name === "falsework") {
+  if (name === "wires" || name === "falsework" || name === "shell") {
     // Visibility during and after the strike is the timeline's call, so
     // recompute from t instead of forcing visible here. This calls the
     // scene-only helper, not applyTimeline itself -- a layer checkbox must
@@ -591,6 +600,8 @@ function setLayer(name, on) {
     } else if (name === "wires") {
       state.objects.wires.visible = on;
       state.objects.nodes.visible = on;
+    } else if (name === "shell") {
+      if (state.objects.shell) state.objects.shell.visible = on;
     } else if (state.objects.falsework) {
       state.objects.falsework.visible = on;
     }
@@ -749,6 +760,7 @@ function recolourSegments() {
     const base = segment.userData.basePositions;
     const positions = segment.geometry.getAttribute("position");
     const colours = new Float32Array(weights.length * 3);
+    let displaced = false;
     for (let i = 0; i < weights.length; i++) {
       let colour = null;
       if (wantStress) {
@@ -780,13 +792,24 @@ function recolourSegments() {
           base[3 * i] + d[0] * exaggeration,
           base[3 * i + 1] + d[1] * exaggeration,
           base[3 * i + 2] + d[2] * exaggeration);
+        displaced = true;
       } else {
         positions.setXYZ(i, base[3 * i], base[3 * i + 1], base[3 * i + 2]);
       }
     }
     positions.needsUpdate = true;
     segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
-    segment.geometry.computeVertexNormals();
+    // Recomputing crease normals costs a pass over every vertex, and the
+    // shape only actually changes when a displacement was painted in above.
+    // Skip it when this pass wrote positions straight back from
+    // basePositions -- unless the previous pass left the geometry bent, in
+    // which case the normals still belong to that bent shape and must be
+    // reset to match the flat positions just written.
+    if (displaced || segment.userData.wasDisplaced) {
+      segment.geometry.setAttribute("normal",
+        new THREE.BufferAttribute(creaseNormals(positions.array), 3));
+    }
+    segment.userData.wasDisplaced = displaced;
     // Off the heatmaps, the piece goes back to the material it was built
     // with, tint and all: pieceMaterial recomputes it from the key rather
     // than handing back a bare registry clone, which used to discard the
@@ -912,10 +935,10 @@ function currentStageIndex(build) {
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
-  // placementStep, not dropSeconds: the HUD's stage line and the integrity
-  // pulse both hang off this number, and reading the picture at half its
-  // real rate had a finished sprayed vault quoting a stage still halfway
-  // down the drop order and pulsing that stage's verdict over it.
+  // placementStep, the one shared stagger: the HUD's stage line and the
+  // integrity pulse both hang off this number, and reading the picture
+  // at a different rate once had a finished sprayed vault quoting a
+  // stage still halfway down the drop order.
   const placed = Math.floor(build / placementStep());
   // Walked over the pieces, which are what actually drop, in the same order
   // the index and the picture use.
@@ -1446,28 +1469,85 @@ function populatePatternSelect(payload) {
   }
 }
 
-// Changing the material sets the pattern to that material's own default
-// (concrete-sprayed's is monolithic-bands, everything else's is
-// bonded-courses) and writes the material's honesty note, if it has one,
-// into pattern-note. Tile and stone are the only materials with a note
-// today: their intended patterns (Guastavino herringbone, the Armadillo
-// dual) are not built, so the note says which wave they arrive in rather
-// than let the pattern control claim one is drawing while another is.
+// Changing the material writes the material's honesty note always, but
+// only applies the material's default pattern while the user has never
+// explicitly chosen one: an explicit choice (state.patternChosen) rides
+// through every material change, which is what makes comparing timber
+// and sprayed concrete under the same monolithic bands possible at all.
 function updatePatternForMaterial(material) {
-  const pattern = state.patternDefaults[material] || state.pattern;
-  state.pattern = pattern;
-  document.getElementById("pattern-select").value = pattern;
+  if (!state.patternChosen) {
+    const pattern = state.patternDefaults[material] || state.pattern;
+    state.pattern = pattern;
+    document.getElementById("pattern-select").value = pattern;
+  }
   document.getElementById("pattern-note").textContent = state.patternNotes[material] || "";
 }
 
+// A commit whose requested parameters equal what the loaded bundle
+// already answers issues no request at all. bundle.size is the REQUESTED
+// size by bundle.py's own contract, so this comparison is honest for
+// authored cuts too, where the size is requested and then unused.
+function requestMatchesLoaded(material) {
+  const loaded = state.bundle;
+  return !!loaded
+    && loaded.export === document.getElementById("study-select").value
+    && loaded.material === material
+    && loaded.pattern === state.pattern
+    && loaded.size === state.size
+    && loaded.provenance.thickness === state.thickness;
+}
+
+// Size and thickness commits settle before they cut: stepping a slider
+// five times costs one request, RELOAD_SETTLE_MS after the last step.
+// The selects commit immediately; they share the token, not the timer.
+const RELOAD_SETTLE_MS = 1500;
+
+function scheduleReload() {
+  if (state.reloadTimer) clearTimeout(state.reloadTimer);
+  state.reloadTimer = setTimeout(() => {
+    state.reloadTimer = null;
+    const select = document.getElementById("study-select");
+    const material = document.getElementById("material-select").value;
+    if (!select.value || requestMatchesLoaded(material)) return;
+    loadStudy(select.value);
+  }, RELOAD_SETTLE_MS);
+}
+
 async function loadStudy(exportName) {
+  // An immediate load supersedes a pending settle timer: without this, a
+  // size commit followed within the settle window by a material, pattern
+  // or study change fires two full server cuts instead of one.
+  if (state.reloadTimer) { clearTimeout(state.reloadTimer); state.reloadTimer = null; }
   const material = document.getElementById("material-select").value;
+  // The token: whoever increments last owns the screen. A response that
+  // comes back to find a newer sequence number is dropped silently, so
+  // two overlapping cuts can never race each other onto the canvas.
+  const sequence = ++state.loadSequence;
+  const status = document.getElementById("cut-status");
+  const materialLabel = document.querySelector(
+    '#material-select option[value="' + material + '"]').textContent;
+  status.textContent = "cutting " + materialLabel + ", " + patternLabel(state.pattern) + ", "
+    + Math.round(state.size * 1000) + " mm pieces at "
+    + Math.round(state.thickness * 1000) + " mm...";
   const url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
   try {
-    buildScene(await fetchJson(url));
+    const fresh = await fetchJson(url);
+    if (sequence !== state.loadSequence) return;
+    status.textContent = "";
+    // Same export means the user is comparing settings, not changing
+    // subject: the viewing state survives the swap. Captured HERE, before
+    // buildScene replaces state.bundle, because timelineDuration reads
+    // the old bundle's piece count and cannot be asked afterwards.
+    const preserve = state.bundle && state.timeline
+      && state.bundle.export === fresh.export
+      ? { f: state.timeline.t / timelineDuration(), playing: state.timeline.playing }
+      : null;
+    buildScene(fresh, preserve);
   } catch (error) {
+    if (sequence !== state.loadSequence) return;
+    status.textContent = "";
     showBanner("Failed to load study: " + error.message);
   }
 }
@@ -1583,34 +1663,35 @@ document.getElementById("study-select").addEventListener("change", (e) => loadSt
 document.getElementById("material-select").addEventListener("change", (e) => {
   updatePatternForMaterial(e.target.value);
   const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;
+  state.patternChosen = true;
   const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  const material = document.getElementById("material-select").value;
+  if (select.value && !requestMatchesLoaded(material)) loadStudy(select.value);
 });
 // Exactly the thickness slider's shape, and for the same reason: the piece
 // size is a property of the BUNDLE, not of the client. "input" only moves
-// the live label, "change" (drag release) commits the value and asks the
-// server for a bundle whose pieces are cut at that size. Re-cutting
+// the live label, "change" (drag release) commits the value; re-cutting
 // client-side while the drawn pieces stay at the old size is what used to
-// orphan piece keys and stop the render loop.
+// orphan piece keys and stop the render loop. The commit itself goes
+// through scheduleReload's settle window rather than asking the server
+// directly.
 document.getElementById("size-slider").addEventListener("input", (e) => {
   document.getElementById("size-value").textContent = Math.round(+e.target.value * 1000);
 });
 document.getElementById("size-slider").addEventListener("change", (e) => {
   state.size = +e.target.value;
-  const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  scheduleReload();
 });
 document.getElementById("thickness-input").addEventListener("input", (e) => {
   document.getElementById("thickness-value").textContent = Math.round(+e.target.value * 1000);
 });
 document.getElementById("thickness-input").addEventListener("change", (e) => {
   state.thickness = +e.target.value;
-  const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  scheduleReload();
 });
 document.getElementById("joint-gap").addEventListener("input", (e) => {
   document.getElementById("joint-gap-value").textContent = Math.round(+e.target.value * 1000);
@@ -1767,43 +1848,63 @@ async function startRun() {
 }
 
 // ---------- placement timeline ----------
-const DROP_HEIGHT = 12, STRIKE_SECONDS = 2;
+const DROP_HEIGHT = 12, STRIKE_SECONDS = 2, DROP_SECONDS = 0.8,
+      BUILD_TARGET_SECONDS = 35;
 
 function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
 
-// How far apart two castings start, derived in exactly one place. Three
-// clocks read the drop order and all three have to read it the same way:
-// applySceneAtTime (what the picture does), timelineDuration (the scrubber
-// and the recorded frame count) and currentStageIndex (the HUD's stage
-// line and the integrity pulse). Sprayed concrete is not placed but built
-// up, so its castings overlap by half a window; while only two of the
-// three knew that, the picture ran at twice the rate of the readout.
+// How far apart two castings start, derived in exactly one place, and
+// derived from the COUNT: the build always takes BUILD_TARGET_SECONDS
+// whatever the cut, so a 1200 piece tile vault takes the same wall clock
+// as a 15 piece stone one. Each casting still falls for DROP_SECONDS, so
+// with the stagger smaller than the fall time several castings are
+// airborne at once. Three clocks read the drop order and all three have
+// to read it the same way: applySceneAtTime (what the picture does),
+// timelineDuration (the scrubber and the recorded frame count) and
+// currentStageIndex (the HUD's stage line and the integrity pulse).
 function placementStep() {
-  return sprayedMaterial() ? state.timeline.dropSeconds / 2 : state.timeline.dropSeconds;
+  return BUILD_TARGET_SECONDS / Math.max(1, placementCount());
 }
 
-function rebuildTimeline() {
-  const dropSeconds = +document.getElementById("drop-speed").value;
+function rebuildTimeline(preserve) {
   state.timeline = {
     playing: false, t: 0,
-    dropSeconds,
+    speed: +document.getElementById("timeline-speed").value,
     inflateSeconds: +document.getElementById("inflate-seconds").value,
     orbitSpeed: +document.getElementById("orbit-speed").value,
     orbitDistance: +document.getElementById("orbit-distance").value,
     autoSpin: true,
   };
   state.centre = sceneCentroid();
-  // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
-  // damped approach toward controls.target must aim at the same point, or
-  // live orbit, drag-release and the recorded camera each settle on a
-  // different seam. Sync once here, outside applyTimeline, so applyTimeline
-  // stays a pure function of t.
-  controls.target.copy(state.centre);
-  controls.update();
+  if (!preserve) {
+    // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
+    // damped approach toward controls.target must aim at the same point,
+    // or live orbit, drag-release and the recorded camera each settle on
+    // a different seam. Sync once here, outside applyTimeline, so
+    // applyTimeline stays a pure function of t. A same-export reload
+    // skips it: the centre is the same point, and the camera is wherever
+    // the user put it.
+    controls.target.copy(state.centre);
+    controls.update();
+  }
   buildPieceMeshes();
-  applyTimeline(0);
+  if (preserve) {
+    // Same export, new bundle: the fraction is what carries between two
+    // different drop sequences, and it is applied through the scene-only
+    // helper so the camera stays put. The playing flag rides across too,
+    // so a swap mid-animation keeps animating. applySceneAtTime's own first
+    // line is what writes state.timeline.t, so this preserve path depends
+    // on that assignment happening here.
+    applySceneAtTime(preserve.f * timelineDuration());
+    state.timeline.playing = preserve.playing;
+    document.getElementById("play-button").textContent =
+      preserve.playing ? "Pause" : "Play";
+    scrubber.value = Math.round(1000 * preserve.f);
+  } else {
+    applyTimeline(0);
+    scrubber.value = 0;
+  }
   recolourSegments();
-  scrubber.value = 0;
 }
 
 // How many castings drop, which is the number of PIECES and not the number
@@ -1813,10 +1914,9 @@ function placementCount() {
 }
 
 function timelineDuration() {
-  const count = placementCount();
   const step = placementStep();
-  return state.timeline.inflateSeconds + count * step
-    + state.timeline.dropSeconds + STRIKE_SECONDS;
+  return state.timeline.inflateSeconds + placementCount() * step
+    + DROP_SECONDS + STRIKE_SECONDS;
 }
 
 function pieceTint(key) {
@@ -1901,7 +2001,8 @@ function buildPieceMeshes() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
-    geometry.computeVertexNormals();
+    geometry.setAttribute("normal",
+      new THREE.BufferAttribute(creaseNormals(positions), 3));
     const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;
@@ -2000,7 +2101,6 @@ function applySceneAtTime(t) {
   // it (drop, strike, pulse) runs on build time, which only starts once
   // inflation is complete.
   const build = Math.max(0, t - state.timeline.inflateSeconds);
-  const dropSeconds = state.timeline.dropSeconds;
   const sprayed = sprayedMaterial();
   const step = placementStep();
   for (const segment of state.objects.shell.children) {
@@ -2009,20 +2109,21 @@ function applySceneAtTime(t) {
     // first casting reads build = 0 as "the very start of its drop" and
     // hangs at DROP_HEIGHT for the whole inflation window instead of being
     // absent. inflate reaches exactly 1 the instant build time begins.
-    if (inflate < 1) {
+    if (!state.layers.shell || inflate < 1) {
       segment.visible = false;
       continue;
     }
     const position = state.segmentIndex.get(segment.userData.key).order;
-    // Sprayed concrete is not precast: pieces overlap by half a window so
-    // the shell reads as continuous build up over the formwork rather than
-    // as arrivals. placementStep owns that halving for every clock at once.
+    // The stagger placementStep derives is smaller than DROP_SECONDS on
+    // any real cut, so castings overlap in flight for every material and
+    // sprayed concrete reads as continuous build up without any special
+    // case here.
     const start = position * step;
     if (build < start) {
       segment.visible = false;
       continue;
     }
-    const u = Math.min(1, (build - start) / dropSeconds);
+    const u = Math.min(1, (build - start) / DROP_SECONDS);
     segment.visible = true;
     if (sprayed) {
       // Sprayed concrete thickens on the formwork where it is sprayed, so
@@ -2045,7 +2146,7 @@ function applySceneAtTime(t) {
       segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     }
   }
-  const buildEnd = placementCount() * step + dropSeconds;
+  const buildEnd = placementCount() * step + DROP_SECONDS;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
   falsework.visible = !!state.layers.falsework && strikeU < 1;
@@ -2083,7 +2184,8 @@ async function recordAnimation() {
   if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
   const target = "study-" + state.bundle.slug;
   const fps = 60;
-  const total = Math.ceil(timelineDuration() * fps);
+  const speed = state.timeline.speed;
+  const total = Math.ceil(timelineDuration() / speed * fps);
   status.textContent = "recording " + total + " frames at 1080p (a few MB each on disk)";
   const wasPlaying = state.timeline.playing;
   state.timeline.playing = false;
@@ -2093,7 +2195,7 @@ async function recordAnimation() {
   state.recording = true;   // resize() must skip while this is set
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
-      applyTimeline(frameIndex / fps);
+      applyTimeline(frameIndex * speed / fps);
       renderer.render(scene, camera);
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       const response = await fetch(
@@ -2137,14 +2239,6 @@ document.getElementById("play-button").addEventListener("click", () => {
   state.timeline.playing = !state.timeline.playing;
   document.getElementById("play-button").textContent = state.timeline.playing ? "Pause" : "Play";
 });
-document.getElementById("stop-button").addEventListener("click", () => {
-  if (!state.timeline) return;
-  state.timeline.playing = false;
-  applyTimeline(0);
-  scrubber.value = 0;
-  document.getElementById("play-button").textContent = "Play";
-  updateHud();
-});
 document.getElementById("restart-button").addEventListener("click", () => {
   if (!state.timeline) return;
   applyTimeline(0);
@@ -2159,11 +2253,23 @@ scrubber.addEventListener("input", () => {
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
   updateHud();
 });
-for (const [id, prop] of [["drop-speed", "dropSeconds"], ["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
+for (const [id, prop] of [["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
     if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
   });
 }
+// Speed is a playback rate, not a scene parameter: routing it through the
+// loop above would call applyTimeline on every drag tick, which snaps an
+// orbited camera back onto the ring for no scene effect at all. It is set
+// here instead, alongside the label it already updates, with no
+// applyTimeline call.
+document.getElementById("timeline-speed").addEventListener("input", (e) => {
+  document.getElementById("timeline-speed-value").textContent = (+e.target.value).toFixed(2);
+  if (state.timeline) state.timeline.speed = +e.target.value;
+});
+document.getElementById("inflate-seconds").addEventListener("input", (e) => {
+  document.getElementById("inflate-value").textContent = (+e.target.value).toFixed(1);
+});
 
 let lastTime = performance.now();
 let playingFrameCount = 0;
@@ -2172,7 +2278,7 @@ function frame(now) {
   lastTime = now;
   resize();
   if (state.timeline && state.timeline.playing) {
-    applyTimeline(Math.min(state.timeline.t + delta, timelineDuration()));
+    applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed, timelineDuration()));
     if (state.timeline.t >= timelineDuration()) {
       state.timeline.playing = false;
       document.getElementById("play-button").textContent = "Play";

@@ -107,7 +107,7 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 def test_the_layer_registry_has_the_agreed_names():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework"):
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework", "shell"):
         assert '"{}"'.format(name) in js
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
@@ -126,7 +126,10 @@ def test_wire_forces_layer_is_registered_and_instanced():
 def test_record_mode_is_frame_indexed_not_clock_driven():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "recordAnimation" in js
-    assert "frameIndex / fps" in js, "frames must come from applyTimeline(frame/fps)"
+    assert "frameIndex * speed / fps" in js, (
+        "frames must come from applyTimeline(frame * speed / fps): pure in "
+        "frame number with the rate folded in"
+    )
     assert "study-" in js
     assert "state.recording" in js
 
@@ -425,10 +428,38 @@ def test_set_layer_does_not_call_applytimeline_directly():
 
 def test_falsework_is_a_translucent_ghost_with_a_toggle():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '"falsework", "Falsework ghost"' in js
+    assert '"falsework", "Formwork"' in js
     assert "opacity: 0.3" in js
     assert "wireMaterial.transparent = true" in js
     assert "nodeMaterial.transparent = true" in js
+
+
+def test_analysis_overlays_cast_no_shadows():
+    # The thrust wires sit hidden inside the closed shell once the vault is
+    # complete, but shadow maps ignore both occlusion and material opacity,
+    # so they cast a crisp grid through the shell onto the ground: the
+    # shadow of an invisible thing. The net is a diagram, not a scene
+    # object; it casts nothing. The formwork ghost already casts nothing
+    # (castShadow was never set on it), now as policy rather than accident.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "wires.castShadow = nodes.castShadow = false" in js
+    assert "falsework.castShadow" not in js
+    # The real objects keep casting.
+    build_body = _function_body(js, "buildPieceMeshes")
+    assert "mesh.castShadow = mesh.receiveShadow = true" in build_body
+
+
+def test_the_finished_shell_has_its_own_toggle():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '"shell", "Finished shell"' in js
+    assert "shell: true" in js, "the layer defaults on"
+    scene_body = _function_body(js, "applySceneAtTime")
+    assert "state.layers.shell" in scene_body, (
+        "the timeline recomputes every casting's visibility, so the gate "
+        "must live inside it or a scrub would undo the toggle"
+    )
+    layer_body = _function_body(js, "setLayer")
+    assert '"shell"' in layer_body
 
 
 def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
@@ -510,9 +541,13 @@ def test_the_size_slider_reloads_the_study_rather_than_recutting_locally():
     change_start = js.index('getElementById("size-slider").addEventListener("change"')
     change_body = js[change_start:js.index("\n});", change_start)]
     assert "state.size = +e.target.value" in change_body
-    assert "loadStudy(" in change_body, (
-        "the piece size is a property of the bundle, so committing it must "
-        "reload the study and let the server rebuild the pieces"
+    assert "scheduleReload()" in change_body, (
+        "the piece size is a property of the bundle: committing it goes "
+        "through the settle timer, which reloads the study server-side"
+    )
+    assert "loadStudy(" not in change_body, (
+        "the commit itself must not fire a cut; stepping a slider five "
+        "times costs one request, after the settle window"
     )
 
 
@@ -521,13 +556,13 @@ def test_the_client_side_cut_follows_the_loaded_bundle_not_the_slider():
     # must not be able to desynchronise the segment index from the drawn
     # pieces, so the cut is derived from the bundle itself.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function applyCut()" in js, "applyCut must take no size argument"
+    assert "function applyCut(preserve)" in js, "applyCut carries the preserve flag through, never a size"
     for call in re.findall(r"applyCut\(([^)]*)\)", js):
-        assert call.strip() == "", (
+        assert call.strip() in ("", "preserve"), (
             "applyCut must never be handed a size; it reads the loaded "
-            "bundle's own size"
+            "bundle's own size and at most threads the preserve flag"
         )
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     assert "state.bundle.size" in body, (
         "the cut must come from the loaded bundle's own size"
@@ -546,7 +581,7 @@ def test_applycut_writes_the_piece_and_course_counts_it_reads():
     # stopped writing them, both would sit at their static HTML zero and
     # the suite would stay green.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     assert (
         'getElementById("piece-count").textContent = state.bundle.pieces.length'
@@ -567,7 +602,7 @@ def test_applycut_only_adopts_a_usable_size_in_range():
     # line of defence independent of the server side fix.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "SIZE_MIN = 0.3" in js and "SIZE_MAX = 3.0" in js
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     guard_start = body.index("if (typeof size")
     guard_line = body[guard_start:body.index("{", guard_start) + 1]
@@ -587,7 +622,7 @@ def test_applycut_only_adopts_a_pattern_the_server_offers():
     # pattern the server actually offers is adopted, an authored cut's
     # pattern name is not trusted blindly.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     guard_start = body.index("if (typeof pattern")
     guard_line = body[guard_start:body.index("{", guard_start) + 1]
@@ -718,18 +753,17 @@ def test_stress_scale_and_legend_gradient_share_the_same_hexes():
     assert "studio.js" in css, "the legend gradient must point at STRESS_SCALE in studio.js"
 
 
-def test_stop_and_restart_transport_controls():
+def test_transport_is_pause_and_restart_only():
+    # The Stop button duplicated Pause (halting) plus Restart (rewind); it
+    # is gone. Restart still rewinds and plays; the scrubber covers rewind
+    # without playing.
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="stop-button"' in html and 'id="restart-button"' in html
-    stop_start = js.index('getElementById("stop-button")')
-    stop_end = js.index("\n});", stop_start)
-    stop_body = js[stop_start:stop_end]
-    assert "applyTimeline(0)" in stop_body
-    assert "playing = false" in stop_body
+    assert 'id="stop-button"' not in html
+    assert 'getElementById("stop-button")' not in js
+    assert 'id="play-button"' in html and 'id="restart-button"' in html
     restart_start = js.index('getElementById("restart-button")')
-    restart_end = js.index("\n});", restart_start)
-    restart_body = js[restart_start:restart_end]
+    restart_body = js[restart_start:js.index("\n});", restart_start)]
     assert "applyTimeline(0)" in restart_body
     assert "playing = true" in restart_body
 
@@ -1125,6 +1159,21 @@ def test_the_data_panel_shows_nothing_when_there_is_no_cra_verdict():
     assert "no CRA run yet" not in body
 
 
+def test_piece_shading_uses_crease_angle_normals():
+    # The piece geometry is unindexed triangle soup, so computeVertexNormals
+    # gives one flat normal per facet and the caps light up banded. The
+    # crease-angle helper smooths within each surface while the cap-to-side
+    # edges stay hard. Both builders of piece positions must use it: the
+    # initial build and the recolour pass that displaces for deflection.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("buildPieceMeshes", "recolourSegments"):
+        body = _function_body(js, name)
+        assert "creaseNormals(" in body, "{} must use crease normals".format(name)
+        assert "computeVertexNormals" not in body, (
+            "{} must not flat-shade the soup".format(name)
+        )
+
+
 def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
@@ -1284,86 +1333,46 @@ def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     assert "uniform thickness" in body, "the HUD must say the analysis did not taper"
 
 
-def _evaluate_step(expression, helper, sprayed, drop_seconds):
-    """Work out what a JS step expression comes to, with no JS runtime.
-
-    Only three forms appear: a call to the helper, the helper's own
-    sprayedMaterial() ternary, and arithmetic on state.timeline.dropSeconds.
-    Anything else is refused rather than guessed at.
-    """
-
-    text = expression.strip().rstrip(";").strip()
-    if text == "placementStep()":
-        text = helper.strip()
-    ternary = re.fullmatch(r"sprayedMaterial\(\)\s*\?\s*(.+?)\s*:\s*(.+)", text)
-    if ternary:
-        text = ternary.group(1) if sprayed else ternary.group(2)
-    text = text.replace("state.timeline.dropSeconds", repr(float(drop_seconds)))
-    assert re.fullmatch(r"[0-9.+\-*/() ]+", text), (
-        "unreadable step expression {!r}; the arithmetic pin cannot check "
-        "what it cannot evaluate".format(expression)
-    )
-    return eval(text, {"__builtins__": {}}, {})  # arithmetic only, see above
-
-
 def test_every_clock_reads_the_drop_order_at_the_same_rate():
-    # C2, and the reason the old sprayed pin missed it: that pin only
-    # string-matched sprayedMaterial() and DROP_HEIGHT inside
-    # applySceneAtTime, so halving the per-piece step in the picture while
-    # leaving currentStageIndex dividing by the full dropSeconds shipped
-    # green. Measured on Trial 2 sprayed at 8 rings (38 placements) with
-    # drop speed 0.5: the last casting lands at build 9.75 s, and the HUD
-    # read floor(9.75 / 0.5) = 19 of 38 placed, quoting stage 4 of 8 over a
-    # finished vault and pulsing stage 4's verdict at it.
-    #
-    # So this pin is arithmetic, not textual: it evaluates the step each of
-    # the three consumers actually uses and replays that scenario.
+    # The polish wave replaced the per-piece drop-speed model with a
+    # constant total build: placementStep() derives the stagger from the
+    # count, so the build takes BUILD_TARGET_SECONDS whatever the cut and
+    # pieces overlap in flight. The three consumers stay in step by all
+    # reading the one helper, which is the property the old arithmetic pin
+    # existed to protect. The sprayed half-window special case died with
+    # the derived stagger: overlap now comes free for every material.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    helper_start = js.index("function placementStep()")
-    helper = re.search(r"return (.+?);", js[helper_start:js.index("\n}", helper_start)]).group(1)
-
-    def body_of(name):
-        start = js.index("function {}(".format(name))
-        return js[start:js.index("\n}", start)]
-
-    expressions = {
-        "applySceneAtTime": re.search(
-            r"const step = (.+?);", body_of("applySceneAtTime")).group(1),
-        "timelineDuration": re.search(
-            r"const step = (.+?);", body_of("timelineDuration")).group(1),
-        "currentStageIndex": re.search(
-            r"Math\.floor\(build / (.+?)\);", body_of("currentStageIndex")).group(1),
-    }
-
-    placements, drop, stages = 38, 0.5, 8
-    for sprayed in (True, False):
-        steps = {
-            name: _evaluate_step(expression, helper, sprayed, drop)
-            for name, expression in expressions.items()
-        }
-        assert len(set(steps.values())) == 1, (
-            "the three clocks disagree on the per-piece step: {}".format(steps)
+    helper = _function_body(js, "placementStep")
+    assert "BUILD_TARGET_SECONDS / Math.max(1, placementCount())" in helper
+    assert "sprayedMaterial" not in helper, (
+        "the stagger no longer branches on material"
+    )
+    for name in ("applySceneAtTime", "timelineDuration", "currentStageIndex"):
+        assert "placementStep()" in _function_body(js, name), (
+            "{} must read the stagger from the one helper".format(name)
         )
-        step = steps["applySceneAtTime"]
-        assert step == (drop / 2 if sprayed else drop)
-        # The picture: the last casting starts at (n - 1) * step and takes a
-        # full drop window to land.
-        lands = (placements - 1) * step + drop
-        # The readout: how many castings currentStageIndex believes are down
-        # at that instant. It must be all of them, or the HUD quotes a stage
-        # the vault has already passed and the pulse tints a finished shell
-        # with that stage's verdict.
-        placed = int(lands // steps["currentStageIndex"])
-        assert placed >= placements, (
-            "at build {:.2f} s the last casting has landed but the stage "
-            "readout counts only {} of {} placed, so it reports stage {} of "
-            "{}".format(lands, placed, placements,
-                        min(stages, max(1, placed * stages // placements)), stages)
+    # The per-piece fall time is a constant now; the old user setting and
+    # every mention of it are gone, comments included.
+    assert "dropSeconds" not in js
+    assert re.search(r"DROP_SECONDS = 0\.8\b", js)
+    assert re.search(r"BUILD_TARGET_SECONDS = 35\b", js)
+    # Replay the old C2 scenario arithmetically on the new model, at a
+    # small and a large count: the build is constant, the scrubber range
+    # covers the last landing, and by the end of the build the stage
+    # readout has counted every casting. Drawn from the file's own
+    # constants through the same regexes pinned above, not restated as
+    # bare literals, so the replay is honestly about what studio.js holds.
+    build_target = float(re.search(r"BUILD_TARGET_SECONDS = ([\d.]+)", js).group(1))
+    drop_seconds = float(re.search(r"DROP_SECONDS = ([\d.]+)", js).group(1))
+    for placements in (38, 1200):
+        step = build_target / max(1, placements)
+        assert abs(placements * step - build_target) < 1e-9, "the build must be constant"
+        lands = (placements - 1) * step + drop_seconds
+        build_end = placements * step + drop_seconds
+        assert build_end >= lands
+        assert int(build_end // step) >= placements, (
+            "at the end of the build the readout must count every casting"
         )
-        # The scrubber has to cover the picture too, or the recording stops
-        # before the vault is finished.
-        duration = placements * steps["timelineDuration"] + drop
-        assert duration >= lands
 
 
 def test_sprayed_concrete_grows_about_its_own_centroid():
@@ -1427,3 +1436,134 @@ def test_the_four_materials_are_visually_distinct():
         "two presets sit {:.0f} apart in luminance and will read as the "
         "same material".format(closest)
     )
+
+
+def test_timeline_speed_is_a_playback_rate_outside_the_pure_timeline():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="timeline-speed"' in html and 'id="timeline-speed-value"' in html
+    assert 'id="drop-speed"' not in html
+    frame_body = _function_body(js, "frame")
+    assert "delta * state.timeline.speed" in frame_body
+    for name in ("applyTimeline", "applySceneAtTime"):
+        assert "state.timeline.speed" not in _function_body(js, name), (
+            "the rate lives in how fast callers advance t; {} must stay "
+            "pure in t".format(name)
+        )
+    record_start = js.index("async function recordAnimation(")
+    record_body = js[record_start:js.index("\n}", record_start)]
+    assert "timelineDuration() / speed * fps" in record_body
+
+
+def test_the_inflation_slider_labels_its_seconds():
+    # The bare " s" after the inflation input wrapped onto its own line in
+    # the panel. The unit rides with a live value now, like the mm sliders.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="inflate-value"' in html
+    label = html[html.index("Inflation"):html.index("</label>", html.index("Inflation"))]
+    assert "</span> s" in label
+    assert 'getElementById("inflate-value")' in js
+
+
+def test_slider_commits_settle_and_requests_cannot_race():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "RELOAD_SETTLE_MS = 1500" in js
+    schedule_body = _function_body(js, "scheduleReload")
+    assert "clearTimeout" in schedule_body and "setTimeout" in schedule_body
+    assert "loadStudy(" in schedule_body
+    assert "requestMatchesLoaded(" in schedule_body, (
+        "a commit that matches the loaded bundle must not fire a request"
+    )
+    for control_id in ("size-slider", "thickness-input"):
+        change_start = js.index(
+            'getElementById("{}").addEventListener("change"'.format(control_id))
+        change_body = js[change_start:js.index("\n});", change_start)]
+        assert "scheduleReload()" in change_body, control_id
+    load_start = js.index("async function loadStudy(")
+    load_body = js[load_start:js.index("\n}", load_start)]
+    assert "++state.loadSequence" in load_body
+    assert "sequence !== state.loadSequence" in load_body, (
+        "a stale response must be dropped, not land over a newer one"
+    )
+    assert "cut-status" in load_body, "the cut in flight must be visible"
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="cut-status"' in html
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#cut-status" in css
+
+
+def test_an_explicit_pattern_choice_survives_material_changes():
+    # Changing material used to force-write that material's default
+    # pattern, so timber plus monolithic bands silently became timber plus
+    # bonded courses. The honesty note is written on every material
+    # change; the default pattern only while no explicit choice was made.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "patternChosen: false" in js
+    select_start = js.index('getElementById("pattern-select").addEventListener("change"')
+    select_body = js[select_start:js.index("\n});", select_start)]
+    assert "state.patternChosen = true" in select_body
+    body = _function_body(js, "updatePatternForMaterial")
+    assert "pattern-note" in body
+    guard_at = body.index("if (!state.patternChosen)")
+    default_at = body.index("state.patternDefaults[material]")
+    assert guard_at < default_at, (
+        "the default pattern must sit inside the not-chosen guard"
+    )
+
+
+def test_a_same_export_reload_preserves_the_viewing_state():
+    # Changing material rebuilt the world: timeline to zero, playing off,
+    # camera snapped to the orbit ring, so comparing materials at the
+    # finished vault meant re-running the whole animation. A reload of the
+    # SAME export now carries the viewing state across: the fraction of
+    # the timeline (the honest mapping between two different drop
+    # sequences), the playing flag, and the camera untouched, applied
+    # through applySceneAtTime, never applyTimeline.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    load_start = js.index("async function loadStudy(")
+    load_body = js[load_start:js.index("\n}", load_start)]
+    assert "state.bundle.export === fresh.export" in load_body
+    assert "state.timeline.t / timelineDuration()" in load_body, (
+        "the fraction must be captured BEFORE buildScene replaces the "
+        "bundle, or the old duration is unrecoverable"
+    )
+    assert "function rebuildTimeline(preserve)" in js
+    rebuild_body = _function_body(js, "rebuildTimeline")
+    assert "applySceneAtTime(preserve.f * timelineDuration())" in rebuild_body
+    guard_at = rebuild_body.index("if (!preserve)")
+    sync_at = rebuild_body.index("controls.target.copy(state.centre)")
+    assert guard_at < sync_at, (
+        "the camera target re-aim belongs to the full reset only"
+    )
+    preserve_at = rebuild_body.index("if (preserve)")
+    tail = rebuild_body[preserve_at:rebuild_body.index("} else {", preserve_at)]
+    assert "applyTimeline(" not in tail, (
+        "the preserve branch must never call applyTimeline; that would "
+        "move a user-positioned camera"
+    )
+
+
+def test_the_panel_groups_into_six_collapsible_sections():
+    # Sections group by use, not by how the code grew: everything that
+    # shows or hides lives in View, everything that moves in Animation,
+    # and Scene is deliberately thin because the environment engine wave
+    # grows there. Study, View and Animation open; the rest collapsed.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    positions = []
+    for section_id, is_open in (
+        ("study-section", True), ("view-section", True),
+        ("animation-section", True), ("scene-section", False),
+        ("import-section", False), ("record-section", False),
+    ):
+        at = html.index('id="{}"'.format(section_id))
+        positions.append(at)
+        tag = html[html.rindex("<details", 0, at):html.index(">", at) + 1]
+        assert (" open" in tag) == is_open, section_id
+    assert positions == sorted(positions), "sections out of order"
+    assert "<h2>" not in html, "summaries are the section headers now"
+    assert "<summary>Styling</summary>" in html, (
+        "the layer styling controls nest collapsed inside View"
+    )
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#panel summary" in css

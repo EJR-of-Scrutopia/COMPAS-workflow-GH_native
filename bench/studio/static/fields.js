@@ -125,3 +125,78 @@ export function sampleVector(field, weights, fallback) {
   }
   return out;
 }
+
+// Crease-angle vertex normals for an unindexed triangle soup, 9 floats
+// per triangle. The piece builder guarantees that shared points are
+// bit-identical across facets (the cut welds them), so grouping corners
+// by exact position key is safe. Each corner's normal averages the facet
+// normals at its position whose angle to the corner's own facet normal
+// is inside the crease threshold: gently curved caps smooth, the roughly
+// 90 degree cap-to-side edges stay hard, so silhouettes keep corners.
+export function creaseNormals(positions, creaseDegrees = 40) {
+  const cosCrease = Math.cos((creaseDegrees * Math.PI) / 180);
+  const facetCount = positions.length / 9;
+  const facetNormals = new Array(facetCount);
+  const byPosition = new Map();
+  for (let f = 0; f < facetCount; f++) {
+    const i = 9 * f;
+    const ux = positions[i + 3] - positions[i];
+    const uy = positions[i + 4] - positions[i + 1];
+    const uz = positions[i + 5] - positions[i + 2];
+    const vx = positions[i + 6] - positions[i];
+    const vy = positions[i + 7] - positions[i + 1];
+    const vz = positions[i + 8] - positions[i + 2];
+    const nx = uy * vz - uz * vy;
+    const ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const length = Math.hypot(nx, ny, nz);
+    if (length < 1e-12) {
+      // A zero-area facet has no direction to contribute; it is left out
+      // of the position index entirely so it cannot poison a neighbour.
+      facetNormals[f] = null;
+      continue;
+    }
+    facetNormals[f] = [nx / length, ny / length, nz / length];
+    for (let corner = 0; corner < 3; corner++) {
+      const key = positions[i + 3 * corner] + ","
+        + positions[i + 3 * corner + 1] + ","
+        + positions[i + 3 * corner + 2];
+      let list = byPosition.get(key);
+      if (!list) { list = []; byPosition.set(key, list); }
+      list.push(f);
+    }
+  }
+  const normals = new Float32Array(positions.length);
+  for (let f = 0; f < facetCount; f++) {
+    const own = facetNormals[f];
+    for (let corner = 0; corner < 3; corner++) {
+      const at = 9 * f + 3 * corner;
+      if (!own) {
+        // A corner of a degenerate facet spans no area, so any unit
+        // vector is as honest; +z never produces a NaN downstream.
+        normals[at + 2] = 1;
+        continue;
+      }
+      const key = positions[at] + "," + positions[at + 1] + ","
+        + positions[at + 2];
+      let x = 0, y = 0, z = 0;
+      for (const other of byPosition.get(key)) {
+        const n = facetNormals[other];
+        if (n[0] * own[0] + n[1] * own[1] + n[2] * own[2] < cosCrease) continue;
+        x += n[0]; y += n[1]; z += n[2];
+      }
+      const length = Math.hypot(x, y, z);
+      if (length < 1e-12) {
+        // Unreachable while the facet's own normal is in its own list
+        // (dot 1 with itself), kept so a cancelling sum can never emit
+        // a zero normal.
+        normals[at] = own[0]; normals[at + 1] = own[1]; normals[at + 2] = own[2];
+      } else {
+        normals[at] = x / length;
+        normals[at + 1] = y / length;
+        normals[at + 2] = z / length;
+      }
+    }
+  }
+  return normals;
+}
