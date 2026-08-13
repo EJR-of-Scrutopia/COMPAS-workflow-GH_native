@@ -9,6 +9,7 @@ one.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import json
 import math
@@ -127,6 +128,23 @@ def _staging_matches(staged: Optional[dict], made: List[dict]) -> bool:
     return named <= {piece["key"] for piece in made}
 
 
+# The cut is the expensive step of a bundle build, and its inputs are the
+# export geometry, the pattern and the size: material and thickness never
+# reach it, so switching material at an already-cut size reuses the cut
+# instead of re-running it. In-process only and LRU-capped, because a
+# single small-size cut runs to tens of megabytes. Cleared by
+# clear_cut_memo() wherever the studio JSON cache is invalidated (an
+# export re-upload), so a stale cut cannot outlive its export. The
+# authored-tessellation sidecar shares the staleness gap the JSON cache
+# already documents above: it is in neither key.
+CUT_MEMO_LIMIT = 4
+_cut_memo: "collections.OrderedDict" = collections.OrderedDict()
+
+
+def clear_cut_memo() -> None:
+    _cut_memo.clear()
+
+
 def build_tessellation_for(export_name, contract, arrays, render, pattern, size):
     """The one cut, built once, for the drawing and for the analysis alike.
 
@@ -151,6 +169,24 @@ def build_tessellation_for(export_name, contract, arrays, render, pattern, size)
     return tess, surface, binding
 
 
+def _cut_for(export_name, contract, arrays, render, pattern, size):
+    key = (export_name, pattern, size)
+    if key in _cut_memo:
+        _cut_memo.move_to_end(key)
+        return _cut_memo[key]
+    tess, surface, binding = build_tessellation_for(
+        export_name, contract, arrays, render, pattern, size)
+    supports = geometry.support_ids(contract)
+    support_points = [
+        [arrays["vertices"][i][0], arrays["vertices"][i][1]] for i in supports
+    ]
+    made, report = pieces.segment_pieces(tess, surface, support_points)
+    _cut_memo[key] = (tess, binding, supports, made, report)
+    while len(_cut_memo) > CUT_MEMO_LIMIT:
+        _cut_memo.popitem(last=False)
+    return _cut_memo[key]
+
+
 def build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2
 ) -> Dict:
@@ -166,13 +202,8 @@ def build_bundle(
     arrays = geometry.mesh_arrays(contract)
     render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
 
-    tess, surface, binding = build_tessellation_for(
+    tess, binding, supports, made, report = _cut_for(
         export_name, contract, arrays, render, pattern, size)
-    supports = geometry.support_ids(contract)
-    support_points = [
-        [arrays["vertices"][i][0], arrays["vertices"][i][1]] for i in supports
-    ]
-    made, report = pieces.segment_pieces(tess, surface, support_points)
 
     # backward_turn/backward_steps only exist on a generated cut (the
     # domain they are measured from is never built for an imported one),
