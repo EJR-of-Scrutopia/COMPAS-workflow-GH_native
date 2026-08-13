@@ -807,10 +807,18 @@ function recolourSegments() {
     // Skip it when this pass wrote positions straight back from
     // basePositions -- unless the previous pass left the geometry bent, in
     // which case the normals still belong to that bent shape and must be
-    // reset to match the flat positions just written.
-    if (displaced || segment.userData.wasDisplaced) {
+    // reset to match the flat positions just written. That reset must
+    // restore the stored welded buffer, not recompute per piece: a
+    // recompute here is per-piece crease normals even on a sprayed shell,
+    // so two clicks of a heatmap (on, then off) would undo the one-surface
+    // weld buildPieceMeshes did, and the course joints would step in the
+    // light again until the next rebuild.
+    if (displaced) {
       segment.geometry.setAttribute("normal",
         new THREE.BufferAttribute(creaseNormals(positions.array), 3));
+    } else if (segment.userData.wasDisplaced) {
+      segment.geometry.setAttribute("normal",
+        new THREE.BufferAttribute(segment.userData.baseNormals.slice(), 3));
     }
     segment.userData.wasDisplaced = displaced;
     // Off the heatmaps, the piece goes back to the material it was built
@@ -915,11 +923,19 @@ function arrowField(entries, colour, anchor) {
     const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, -1);
     const start = new THREE.Vector3(...at);
     const tipAnchored = anchor === "tip";
-    const from = tipAnchored ? start.clone().addScaledVector(dir, -length) : start;
-    const to = tipAnchored ? start : start.clone().addScaledVector(dir, length);
+    // The analysis node sits on the mid-surface, half a thickness inside
+    // the drawn shell, so a head composed at the node is buried in opaque
+    // geometry. The tip-anchored arrow stands off by that half thickness
+    // and the cone's own half height, so its point touches the outer
+    // surface at the point of application.
+    const lift = tipAnchored ? state.bundle.provenance.thickness / 2 : 0;
+    const surface = start.clone().addScaledVector(dir, -lift);
+    const from = tipAnchored ? surface.clone().addScaledVector(dir, -length) : start;
+    const to = tipAnchored ? surface : start.clone().addScaledVector(dir, length);
     positions.push(from.x, from.y, from.z, to.x, to.y, to.z);
     q.setFromUnitVectors(up, dir);
-    m.compose(to, q, new THREE.Vector3(1, 1, 1));
+    const headAt = tipAnchored ? to.clone().addScaledVector(dir, -0.09) : to;
+    m.compose(headAt, q, new THREE.Vector3(1, 1, 1));
     heads.setMatrixAt(i, m);
   });
   const lines = new THREE.LineSegments(
@@ -2029,11 +2045,13 @@ function buildPieceMeshes() {
   }
   // Sprayed concrete is one continuous surface: the joint gap is zero,
   // the shrink factor is exactly 1 and shared boundary points are
-  // bit-identical across pieces, so the crease normals are computed
-  // over the WHOLE shell in one call and sliced back per piece. Course
-  // joints then stop stepping in the light. Jointed materials keep
-  // per-piece normals: their pieces are genuinely separate and the
-  // lighting step at a joint is honest.
+  // bit-identical across pieces at taper 0, so the crease normals are
+  // computed over the WHOLE shell in one call and sliced back per piece.
+  // Course joints then stop stepping in the light. With the crown taper
+  // above zero, adjacent courses are offset by different half
+  // thicknesses and their shared points honestly stop welding. Jointed
+  // materials keep per-piece normals: their pieces are genuinely
+  // separate and the lighting step at a joint is honest.
   let welded = null;
   if (sprayedMaterial()) {
     let total = 0;
@@ -2071,6 +2089,9 @@ function buildPieceMeshes() {
     mesh.userData.weights = weights;
     mesh.userData.surface = surface;
     mesh.userData.basePositions = new Float32Array(positions);
+    // The welded normal, stored so a deflection reset can restore it
+    // rather than recompute it: see recolourSegments.
+    mesh.userData.baseNormals = normals;
     group.add(mesh);
   }
   state.objects.shell = group;

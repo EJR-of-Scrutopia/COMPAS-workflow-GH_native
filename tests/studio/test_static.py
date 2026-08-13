@@ -1650,3 +1650,14 @@ def test_the_cut_overlay_shows_while_a_cut_is_in_flight():
     assert "#cut-overlay" in css
     assert "pointer-events: none" in css
     assert "@keyframes" in css
+
+
+def test_the_deflection_reset_restores_the_welded_normals():
+    # Deflection on then off wrote basePositions back but recomputed the
+    # normals PER PIECE, so a sprayed shell came back with the course
+    # joint steps the whole-shell weld exists to remove, and stayed that
+    # way until the next rebuild. The reset restores the stored buffer.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "userData.baseNormals = normals" in _function_body(js, "buildPieceMeshes")
+    body = _function_body(js, "recolourSegments")
+    assert "userData.baseNormals.slice()" in body
