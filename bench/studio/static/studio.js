@@ -3,7 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
-  sampleScalar, sampleVector,
+  sampleScalar, sampleVector, creaseNormals,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -786,7 +786,8 @@ function recolourSegments() {
     }
     positions.needsUpdate = true;
     segment.geometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
-    segment.geometry.computeVertexNormals();
+    segment.geometry.setAttribute("normal",
+      new THREE.BufferAttribute(creaseNormals(positions.array), 3));
     // Off the heatmaps, the piece goes back to the material it was built
     // with, tint and all: pieceMaterial recomputes it from the key rather
     // than handing back a bare registry clone, which used to discard the
@@ -1901,7 +1902,8 @@ function buildPieceMeshes() {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
-    geometry.computeVertexNormals();
+    geometry.setAttribute("normal",
+      new THREE.BufferAttribute(creaseNormals(positions), 3));
     const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;

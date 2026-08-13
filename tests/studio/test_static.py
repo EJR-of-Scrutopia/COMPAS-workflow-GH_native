@@ -1125,6 +1125,21 @@ def test_the_data_panel_shows_nothing_when_there_is_no_cra_verdict():
     assert "no CRA run yet" not in body
 
 
+def test_piece_shading_uses_crease_angle_normals():
+    # The piece geometry is unindexed triangle soup, so computeVertexNormals
+    # gives one flat normal per facet and the caps light up banded. The
+    # crease-angle helper smooths within each surface while the cap-to-side
+    # edges stay hard. Both builders of piece positions must use it: the
+    # initial build and the recolour pass that displaces for deflection.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("buildPieceMeshes", "recolourSegments"):
+        body = _function_body(js, name)
+        assert "creaseNormals(" in body, "{} must use crease normals".format(name)
+        assert "computeVertexNormals" not in body, (
+            "{} must not flat-shade the soup".format(name)
+        )
+
+
 def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
