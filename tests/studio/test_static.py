@@ -541,9 +541,13 @@ def test_the_size_slider_reloads_the_study_rather_than_recutting_locally():
     change_start = js.index('getElementById("size-slider").addEventListener("change"')
     change_body = js[change_start:js.index("\n});", change_start)]
     assert "state.size = +e.target.value" in change_body
-    assert "loadStudy(" in change_body, (
-        "the piece size is a property of the bundle, so committing it must "
-        "reload the study and let the server rebuild the pieces"
+    assert "scheduleReload()" in change_body, (
+        "the piece size is a property of the bundle: committing it goes "
+        "through the settle timer, which reloads the study server-side"
+    )
+    assert "loadStudy(" not in change_body, (
+        "the commit itself must not fire a cut; stepping a slider five "
+        "times costs one request, after the settle window"
     )
 
 
@@ -1456,3 +1460,49 @@ def test_the_inflation_slider_labels_its_seconds():
     label = html[html.index("Inflation"):html.index("</label>", html.index("Inflation"))]
     assert "</span> s" in label
     assert 'getElementById("inflate-value")' in js
+
+
+def test_slider_commits_settle_and_requests_cannot_race():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "RELOAD_SETTLE_MS = 1500" in js
+    schedule_body = _function_body(js, "scheduleReload")
+    assert "clearTimeout" in schedule_body and "setTimeout" in schedule_body
+    assert "loadStudy(" in schedule_body
+    assert "requestMatchesLoaded(" in schedule_body, (
+        "a commit that matches the loaded bundle must not fire a request"
+    )
+    for control_id in ("size-slider", "thickness-input"):
+        change_start = js.index(
+            'getElementById("{}").addEventListener("change"'.format(control_id))
+        change_body = js[change_start:js.index("\n});", change_start)]
+        assert "scheduleReload()" in change_body, control_id
+    load_start = js.index("async function loadStudy(")
+    load_body = js[load_start:js.index("\n}", load_start)]
+    assert "++state.loadSequence" in load_body
+    assert "sequence !== state.loadSequence" in load_body, (
+        "a stale response must be dropped, not land over a newer one"
+    )
+    assert "cut-status" in load_body, "the cut in flight must be visible"
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="cut-status"' in html
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#cut-status" in css
+
+
+def test_an_explicit_pattern_choice_survives_material_changes():
+    # Changing material used to force-write that material's default
+    # pattern, so timber plus monolithic bands silently became timber plus
+    # bonded courses. The honesty note is written on every material
+    # change; the default pattern only while no explicit choice was made.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "patternChosen: false" in js
+    select_start = js.index('getElementById("pattern-select").addEventListener("change"')
+    select_body = js[select_start:js.index("\n});", select_start)]
+    assert "state.patternChosen = true" in select_body
+    body = _function_body(js, "updatePatternForMaterial")
+    assert "pattern-note" in body
+    guard_at = body.index("if (!state.patternChosen)")
+    default_at = body.index("state.patternDefaults[material]")
+    assert guard_at < default_at, (
+        "the default pattern must sit inside the not-chosen guard"
+    )

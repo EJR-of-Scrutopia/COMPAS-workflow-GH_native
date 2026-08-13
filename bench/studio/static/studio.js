@@ -30,6 +30,9 @@ const state = {
   patterns: [],
   patternDefaults: {},
   patternNotes: {},
+  patternChosen: false, // an explicit pattern choice survives material changes
+  loadSequence: 0,      // bundle request token: only the newest response lands
+  reloadTimer: null,    // the settle timer behind size and thickness commits
 };
 
 const canvas = document.getElementById("view");
@@ -1455,28 +1458,71 @@ function populatePatternSelect(payload) {
   }
 }
 
-// Changing the material sets the pattern to that material's own default
-// (concrete-sprayed's is monolithic-bands, everything else's is
-// bonded-courses) and writes the material's honesty note, if it has one,
-// into pattern-note. Tile and stone are the only materials with a note
-// today: their intended patterns (Guastavino herringbone, the Armadillo
-// dual) are not built, so the note says which wave they arrive in rather
-// than let the pattern control claim one is drawing while another is.
+// Changing the material writes the material's honesty note always, but
+// only applies the material's default pattern while the user has never
+// explicitly chosen one: an explicit choice (state.patternChosen) rides
+// through every material change, which is what makes comparing timber
+// and sprayed concrete under the same monolithic bands possible at all.
 function updatePatternForMaterial(material) {
-  const pattern = state.patternDefaults[material] || state.pattern;
-  state.pattern = pattern;
-  document.getElementById("pattern-select").value = pattern;
+  if (!state.patternChosen) {
+    const pattern = state.patternDefaults[material] || state.pattern;
+    state.pattern = pattern;
+    document.getElementById("pattern-select").value = pattern;
+  }
   document.getElementById("pattern-note").textContent = state.patternNotes[material] || "";
+}
+
+// A commit whose requested parameters equal what the loaded bundle
+// already answers issues no request at all. bundle.size is the REQUESTED
+// size by bundle.py's own contract, so this comparison is honest for
+// authored cuts too, where the size is requested and then unused.
+function requestMatchesLoaded(material) {
+  const loaded = state.bundle;
+  return !!loaded
+    && loaded.export === document.getElementById("study-select").value
+    && loaded.material === material
+    && loaded.pattern === state.pattern
+    && loaded.size === state.size
+    && loaded.provenance.thickness === state.thickness;
+}
+
+// Size and thickness commits settle before they cut: stepping a slider
+// five times costs one request, RELOAD_SETTLE_MS after the last step.
+// The selects commit immediately; they share the token, not the timer.
+const RELOAD_SETTLE_MS = 1500;
+
+function scheduleReload() {
+  if (state.reloadTimer) clearTimeout(state.reloadTimer);
+  state.reloadTimer = setTimeout(() => {
+    state.reloadTimer = null;
+    const select = document.getElementById("study-select");
+    const material = document.getElementById("material-select").value;
+    if (!select.value || requestMatchesLoaded(material)) return;
+    loadStudy(select.value);
+  }, RELOAD_SETTLE_MS);
 }
 
 async function loadStudy(exportName) {
   const material = document.getElementById("material-select").value;
+  // The token: whoever increments last owns the screen. A response that
+  // comes back to find a newer sequence number is dropped silently, so
+  // two overlapping cuts can never race each other onto the canvas.
+  const sequence = ++state.loadSequence;
+  const status = document.getElementById("cut-status");
+  status.textContent = "cutting " + material + ", " + state.pattern + ", "
+    + Math.round(state.size * 1000) + " mm pieces at "
+    + Math.round(state.thickness * 1000) + " mm...";
   const url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
   try {
-    buildScene(await fetchJson(url));
+    const fresh = await fetchJson(url);
+    if (sequence !== state.loadSequence) return;
+    status.textContent = "";
+    buildScene(fresh);
   } catch (error) {
+    if (sequence !== state.loadSequence) return;
+    status.textContent = "";
     showBanner("Failed to load study: " + error.message);
   }
 }
@@ -1592,34 +1638,35 @@ document.getElementById("study-select").addEventListener("change", (e) => loadSt
 document.getElementById("material-select").addEventListener("change", (e) => {
   updatePatternForMaterial(e.target.value);
   const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;
+  state.patternChosen = true;
   const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  const material = document.getElementById("material-select").value;
+  if (select.value && !requestMatchesLoaded(material)) loadStudy(select.value);
 });
 // Exactly the thickness slider's shape, and for the same reason: the piece
 // size is a property of the BUNDLE, not of the client. "input" only moves
-// the live label, "change" (drag release) commits the value and asks the
-// server for a bundle whose pieces are cut at that size. Re-cutting
+// the live label, "change" (drag release) commits the value; re-cutting
 // client-side while the drawn pieces stay at the old size is what used to
-// orphan piece keys and stop the render loop.
+// orphan piece keys and stop the render loop. The commit itself goes
+// through scheduleReload's settle window rather than asking the server
+// directly.
 document.getElementById("size-slider").addEventListener("input", (e) => {
   document.getElementById("size-value").textContent = Math.round(+e.target.value * 1000);
 });
 document.getElementById("size-slider").addEventListener("change", (e) => {
   state.size = +e.target.value;
-  const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  scheduleReload();
 });
 document.getElementById("thickness-input").addEventListener("input", (e) => {
   document.getElementById("thickness-value").textContent = Math.round(+e.target.value * 1000);
 });
 document.getElementById("thickness-input").addEventListener("change", (e) => {
   state.thickness = +e.target.value;
-  const select = document.getElementById("study-select");
-  if (select.value) loadStudy(select.value);
+  scheduleReload();
 });
 document.getElementById("joint-gap").addEventListener("input", (e) => {
   document.getElementById("joint-gap-value").textContent = Math.round(+e.target.value * 1000);
