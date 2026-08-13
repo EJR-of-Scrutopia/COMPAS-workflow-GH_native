@@ -880,21 +880,22 @@ function updateVectorLayers() {
   const bundle = state.bundle;
   if (state.layers.loads) {
     state.objects.loadArrows = arrowField(
-      Object.entries(bundle.loads), 0x66aaff);
+      Object.entries(bundle.loads), 0x66aaff, "tip");
     scene.add(state.objects.loadArrows);
   }
   if (state.layers.reactions && Object.keys(bundle.reactions).length) {
     // Real TNA reaction vectors from the contract, shipped in the bundle.
     state.objects.reactionArrows = arrowField(
-      Object.entries(bundle.reactions), 0x66dd77);
+      Object.entries(bundle.reactions), 0x66dd77, "tail");
     scene.add(state.objects.reactionArrows);
   }
 }
 
-function arrowField(entries, colour) {
+function arrowField(entries, colour, anchor) {
   // One LineSegments for every shaft plus one instanced cone set for heads:
   // two draw calls however many nodes there are. Arrows draw exactly along
   // the shipped vector: loads arrive pointing down, reactions as exported.
+  // anchor 'tip' stands the shaft before the node so the head lands at the point of application; 'tail' leaves the node along the vector.
   const vertices = state.bundle.analysis_mesh.vertices;
   let magnitudeMax = 1e-9;
   for (const [, v] of entries) magnitudeMax = Math.max(magnitudeMax, Math.hypot(v[0], v[1], v[2]));
@@ -909,8 +910,10 @@ function arrowField(entries, colour) {
     const v = new THREE.Vector3(vector[0], vector[1], vector[2]);
     const length = 0.4 + 2.0 * (v.length() / magnitudeMax);
     const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, -1);
-    const from = new THREE.Vector3(...at);
-    const to = from.clone().addScaledVector(dir, length);
+    const start = new THREE.Vector3(...at);
+    const tipAnchored = anchor === "tip";
+    const from = tipAnchored ? start.clone().addScaledVector(dir, -length) : start;
+    const to = tipAnchored ? start : start.clone().addScaledVector(dir, length);
     positions.push(from.x, from.y, from.z, to.x, to.y, to.z);
     q.setFromUnitVectors(up, dir);
     m.compose(to, q, new THREE.Vector3(1, 1, 1));

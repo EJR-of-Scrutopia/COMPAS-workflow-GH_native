@@ -388,10 +388,23 @@ def test_load_arrows_draw_along_the_shipped_vector():
     # direction argument multiplied the vector by -1 twice over, so loads
     # rendered upward. Arrows must draw exactly along the shipped vector.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function arrowField(entries, colour)" in js
+    assert "function arrowField(entries, colour, anchor)" in js
     start = js.index("function arrowField(")
     end = js.index("\n}", start)
     assert "direction" not in js[start:end]
+
+
+def test_load_arrows_arrive_tip_first_and_reactions_leave_the_support():
+    # A downward load whose tail sits at the node hangs under the shell
+    # and reads as suction pulling the vault down. The head belongs at
+    # the point of application, so loads are tip-anchored; reactions
+    # genuinely emerge from the supports and stay tail-anchored.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "updateVectorLayers")
+    assert '0x66aaff, "tip"' in body, "loads must be tip-anchored"
+    assert '0x66dd77, "tail"' in body, "reactions must stay tail-anchored"
+    arrow_body = _function_body(js, "arrowField")
+    assert 'anchor === "tip"' in arrow_body
 
 
 def test_the_strike_takes_wires_nodes_and_falsework():
