@@ -1530,17 +1530,20 @@ async function loadStudy(exportName) {
   // two overlapping cuts can never race each other onto the canvas.
   const sequence = ++state.loadSequence;
   const status = document.getElementById("cut-status");
+  const overlay = document.getElementById("cut-overlay");
   const materialLabel = document.querySelector(
     '#material-select option[value="' + material + '"]').textContent;
   status.textContent = "cutting " + materialLabel + ", " + patternLabel(state.pattern) + ", "
     + Math.round(state.size * 1000) + " mm pieces at "
     + Math.round(state.thickness * 1000) + " mm...";
+  overlay.classList.remove("hidden");
   const url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
   try {
     const fresh = await fetchJson(url);
     if (sequence !== state.loadSequence) return;
+    overlay.classList.add("hidden");
     status.textContent = "";
     // Same export means the user is comparing settings, not changing
     // subject: the viewing state survives the swap. Captured HERE, before
@@ -1553,6 +1556,7 @@ async function loadStudy(exportName) {
     buildScene(fresh, preserve);
   } catch (error) {
     if (sequence !== state.loadSequence) return;
+    overlay.classList.add("hidden");
     status.textContent = "";
     showBanner("Failed to load study: " + error.message);
   }

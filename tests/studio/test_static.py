@@ -1626,3 +1626,27 @@ def test_textures_are_anisotropic_and_sprayed_shades_as_one_surface():
         "shrink 1 must push the raw point: c + (p - c) is not p in "
         "floats, and the weld groups corners by exact bit pattern"
     )
+
+
+def test_the_cut_overlay_shows_while_a_cut_is_in_flight():
+    # The status line in the panel was not enough: a slow material change
+    # read as a hang. The overlay is a signal, not a modal lock: it dims
+    # nothing and blocks no clicks.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert 'id="cut-overlay" class="hidden"' in html
+    assert 'id="cut-spinner"' in html
+    overlay_at = html.index('id="cut-overlay"')
+    assert html.index('id="cut-status"') > overlay_at, (
+        "the status line lives inside the overlay now"
+    )
+    load_start = js.index("async function loadStudy(")
+    load_body = js[load_start:js.index("\n}", load_start)]
+    assert 'overlay.classList.remove("hidden")' in load_body
+    assert load_body.count('overlay.classList.add("hidden")') == 2, (
+        "the overlay must hide on the landing path and the failure path"
+    )
+    assert "#cut-overlay" in css
+    assert "pointer-events: none" in css
+    assert "@keyframes" in css
