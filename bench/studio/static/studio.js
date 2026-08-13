@@ -332,7 +332,7 @@ async function reloadColumns(names) {
   }
 }
 
-function buildScene(bundle) {
+function buildScene(bundle, preserve) {
   // A study load replaces the shell and the thrust network wholesale, so
   // it frees them on the way out rather than leaving them to the garbage
   // collector, which never sees the GPU side.
@@ -368,7 +368,7 @@ function buildScene(bundle) {
   state.objects.ground = ground;
   scene.add(ground);
 
-  applyCut();
+  applyCut(preserve);
   buildLayerToggles();
   updateVectorLayers();
   updateMaterialControls();
@@ -383,7 +383,7 @@ function buildScene(bundle) {
 // for that class of bug, not the fix for it.
 const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
 
-function applyCut() {
+function applyCut(preserve) {
   // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
   // server-side at the bundle's own size, and each one is looked up in
@@ -442,7 +442,7 @@ function applyCut() {
       course: piece.course, order: position,
     });
   });
-  rebuildTimeline();
+  rebuildTimeline(preserve);
 }
 
 // ---------- FEA layers ----------
@@ -1519,7 +1519,15 @@ async function loadStudy(exportName) {
     const fresh = await fetchJson(url);
     if (sequence !== state.loadSequence) return;
     status.textContent = "";
-    buildScene(fresh);
+    // Same export means the user is comparing settings, not changing
+    // subject: the viewing state survives the swap. Captured HERE, before
+    // buildScene replaces state.bundle, because timelineDuration reads
+    // the old bundle's piece count and cannot be asked afterwards.
+    const preserve = state.bundle && state.timeline
+      && state.bundle.export === fresh.export
+      ? { f: state.timeline.t / timelineDuration(), playing: state.timeline.playing }
+      : null;
+    buildScene(fresh, preserve);
   } catch (error) {
     if (sequence !== state.loadSequence) return;
     status.textContent = "";
@@ -1841,7 +1849,7 @@ function placementStep() {
   return BUILD_TARGET_SECONDS / Math.max(1, placementCount());
 }
 
-function rebuildTimeline() {
+function rebuildTimeline(preserve) {
   state.timeline = {
     playing: false, t: 0,
     speed: +document.getElementById("timeline-speed").value,
@@ -1851,17 +1859,33 @@ function rebuildTimeline() {
     autoSpin: true,
   };
   state.centre = sceneCentroid();
-  // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
-  // damped approach toward controls.target must aim at the same point, or
-  // live orbit, drag-release and the recorded camera each settle on a
-  // different seam. Sync once here, outside applyTimeline, so applyTimeline
-  // stays a pure function of t.
-  controls.target.copy(state.centre);
-  controls.update();
+  if (!preserve) {
+    // applyTimeline's autoSpin camera.lookAt(state.centre) and controls'
+    // damped approach toward controls.target must aim at the same point,
+    // or live orbit, drag-release and the recorded camera each settle on
+    // a different seam. Sync once here, outside applyTimeline, so
+    // applyTimeline stays a pure function of t. A same-export reload
+    // skips it: the centre is the same point, and the camera is wherever
+    // the user put it.
+    controls.target.copy(state.centre);
+    controls.update();
+  }
   buildPieceMeshes();
-  applyTimeline(0);
+  if (preserve) {
+    // Same export, new bundle: the fraction is what carries between two
+    // different drop sequences, and it is applied through the scene-only
+    // helper so the camera stays put. The playing flag rides across too,
+    // so a swap mid-animation keeps animating.
+    applySceneAtTime(preserve.f * timelineDuration());
+    state.timeline.playing = preserve.playing;
+    document.getElementById("play-button").textContent =
+      preserve.playing ? "Pause" : "Play";
+    scrubber.value = Math.round(1000 * preserve.f);
+  } else {
+    applyTimeline(0);
+    scrubber.value = 0;
+  }
   recolourSegments();
-  scrubber.value = 0;
 }
 
 // How many castings drop, which is the number of PIECES and not the number

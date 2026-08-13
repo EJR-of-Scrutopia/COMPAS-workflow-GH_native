@@ -556,13 +556,13 @@ def test_the_client_side_cut_follows_the_loaded_bundle_not_the_slider():
     # must not be able to desynchronise the segment index from the drawn
     # pieces, so the cut is derived from the bundle itself.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function applyCut()" in js, "applyCut must take no size argument"
+    assert "function applyCut(preserve)" in js, "applyCut carries the preserve flag through, never a size"
     for call in re.findall(r"applyCut\(([^)]*)\)", js):
-        assert call.strip() == "", (
+        assert call.strip() in ("", "preserve"), (
             "applyCut must never be handed a size; it reads the loaded "
-            "bundle's own size"
+            "bundle's own size and at most threads the preserve flag"
         )
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     assert "state.bundle.size" in body, (
         "the cut must come from the loaded bundle's own size"
@@ -581,7 +581,7 @@ def test_applycut_writes_the_piece_and_course_counts_it_reads():
     # stopped writing them, both would sit at their static HTML zero and
     # the suite would stay green.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     assert (
         'getElementById("piece-count").textContent = state.bundle.pieces.length'
@@ -602,7 +602,7 @@ def test_applycut_only_adopts_a_usable_size_in_range():
     # line of defence independent of the server side fix.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "SIZE_MIN = 0.3" in js and "SIZE_MAX = 3.0" in js
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     guard_start = body.index("if (typeof size")
     guard_line = body[guard_start:body.index("{", guard_start) + 1]
@@ -622,7 +622,7 @@ def test_applycut_only_adopts_a_pattern_the_server_offers():
     # pattern the server actually offers is adopted, an authored cut's
     # pattern name is not trusted blindly.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    start = js.index("function applyCut()")
+    start = js.index("function applyCut(")
     body = js[start:js.index("\n}", start)]
     guard_start = body.index("if (typeof pattern")
     guard_line = body[guard_start:body.index("{", guard_start) + 1]
@@ -1505,4 +1505,36 @@ def test_an_explicit_pattern_choice_survives_material_changes():
     default_at = body.index("state.patternDefaults[material]")
     assert guard_at < default_at, (
         "the default pattern must sit inside the not-chosen guard"
+    )
+
+
+def test_a_same_export_reload_preserves_the_viewing_state():
+    # Changing material rebuilt the world: timeline to zero, playing off,
+    # camera snapped to the orbit ring, so comparing materials at the
+    # finished vault meant re-running the whole animation. A reload of the
+    # SAME export now carries the viewing state across: the fraction of
+    # the timeline (the honest mapping between two different drop
+    # sequences), the playing flag, and the camera untouched, applied
+    # through applySceneAtTime, never applyTimeline.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    load_start = js.index("async function loadStudy(")
+    load_body = js[load_start:js.index("\n}", load_start)]
+    assert "state.bundle.export === fresh.export" in load_body
+    assert "state.timeline.t / timelineDuration()" in load_body, (
+        "the fraction must be captured BEFORE buildScene replaces the "
+        "bundle, or the old duration is unrecoverable"
+    )
+    assert "function rebuildTimeline(preserve)" in js
+    rebuild_body = _function_body(js, "rebuildTimeline")
+    assert "applySceneAtTime(preserve.f * timelineDuration())" in rebuild_body
+    guard_at = rebuild_body.index("if (!preserve)")
+    sync_at = rebuild_body.index("controls.target.copy(state.centre)")
+    assert guard_at < sync_at, (
+        "the camera target re-aim belongs to the full reset only"
+    )
+    preserve_at = rebuild_body.index("if (preserve)")
+    tail = rebuild_body[preserve_at:rebuild_body.index("} else {", preserve_at)]
+    assert "applyTimeline(" not in tail, (
+        "the preserve branch must never call applyTimeline; that would "
+        "move a user-positioned camera"
     )
