@@ -921,10 +921,10 @@ function currentStageIndex(build) {
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
-  // placementStep, not dropSeconds: the HUD's stage line and the integrity
-  // pulse both hang off this number, and reading the picture at half its
-  // real rate had a finished sprayed vault quoting a stage still halfway
-  // down the drop order and pulsing that stage's verdict over it.
+  // placementStep, the one shared stagger: the HUD's stage line and the
+  // integrity pulse both hang off this number, and reading the picture
+  // at a different rate once had a finished sprayed vault quoting a
+  // stage still halfway down the drop order.
   const placed = Math.floor(build / placementStep());
   // Walked over the pieces, which are what actually drop, in the same order
   // the index and the picture use.
@@ -1776,26 +1776,28 @@ async function startRun() {
 }
 
 // ---------- placement timeline ----------
-const DROP_HEIGHT = 12, STRIKE_SECONDS = 2;
+const DROP_HEIGHT = 12, STRIKE_SECONDS = 2, DROP_SECONDS = 0.8,
+      BUILD_TARGET_SECONDS = 35;
 
 function easeOutCubic(u) { return 1 - Math.pow(1 - u, 3); }
 
-// How far apart two castings start, derived in exactly one place. Three
-// clocks read the drop order and all three have to read it the same way:
-// applySceneAtTime (what the picture does), timelineDuration (the scrubber
-// and the recorded frame count) and currentStageIndex (the HUD's stage
-// line and the integrity pulse). Sprayed concrete is not placed but built
-// up, so its castings overlap by half a window; while only two of the
-// three knew that, the picture ran at twice the rate of the readout.
+// How far apart two castings start, derived in exactly one place, and
+// derived from the COUNT: the build always takes BUILD_TARGET_SECONDS
+// whatever the cut, so a 1200 piece tile vault takes the same wall clock
+// as a 15 piece stone one. Each casting still falls for DROP_SECONDS, so
+// with the stagger smaller than the fall time several castings are
+// airborne at once. Three clocks read the drop order and all three have
+// to read it the same way: applySceneAtTime (what the picture does),
+// timelineDuration (the scrubber and the recorded frame count) and
+// currentStageIndex (the HUD's stage line and the integrity pulse).
 function placementStep() {
-  return sprayedMaterial() ? state.timeline.dropSeconds / 2 : state.timeline.dropSeconds;
+  return BUILD_TARGET_SECONDS / Math.max(1, placementCount());
 }
 
 function rebuildTimeline() {
-  const dropSeconds = +document.getElementById("drop-speed").value;
   state.timeline = {
     playing: false, t: 0,
-    dropSeconds,
+    speed: +document.getElementById("timeline-speed").value,
     inflateSeconds: +document.getElementById("inflate-seconds").value,
     orbitSpeed: +document.getElementById("orbit-speed").value,
     orbitDistance: +document.getElementById("orbit-distance").value,
@@ -1822,10 +1824,9 @@ function placementCount() {
 }
 
 function timelineDuration() {
-  const count = placementCount();
   const step = placementStep();
-  return state.timeline.inflateSeconds + count * step
-    + state.timeline.dropSeconds + STRIKE_SECONDS;
+  return state.timeline.inflateSeconds + placementCount() * step
+    + DROP_SECONDS + STRIKE_SECONDS;
 }
 
 function pieceTint(key) {
@@ -2010,7 +2011,6 @@ function applySceneAtTime(t) {
   // it (drop, strike, pulse) runs on build time, which only starts once
   // inflation is complete.
   const build = Math.max(0, t - state.timeline.inflateSeconds);
-  const dropSeconds = state.timeline.dropSeconds;
   const sprayed = sprayedMaterial();
   const step = placementStep();
   for (const segment of state.objects.shell.children) {
@@ -2024,15 +2024,16 @@ function applySceneAtTime(t) {
       continue;
     }
     const position = state.segmentIndex.get(segment.userData.key).order;
-    // Sprayed concrete is not precast: pieces overlap by half a window so
-    // the shell reads as continuous build up over the formwork rather than
-    // as arrivals. placementStep owns that halving for every clock at once.
+    // The stagger placementStep derives is smaller than DROP_SECONDS on
+    // any real cut, so castings overlap in flight for every material and
+    // sprayed concrete reads as continuous build up without any special
+    // case here.
     const start = position * step;
     if (build < start) {
       segment.visible = false;
       continue;
     }
-    const u = Math.min(1, (build - start) / dropSeconds);
+    const u = Math.min(1, (build - start) / DROP_SECONDS);
     segment.visible = true;
     if (sprayed) {
       // Sprayed concrete thickens on the formwork where it is sprayed, so
@@ -2055,7 +2056,7 @@ function applySceneAtTime(t) {
       segment.position.z = DROP_HEIGHT * (1 - easeOutCubic(u));
     }
   }
-  const buildEnd = placementCount() * step + dropSeconds;
+  const buildEnd = placementCount() * step + DROP_SECONDS;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
   falsework.visible = !!state.layers.falsework && strikeU < 1;
@@ -2093,7 +2094,8 @@ async function recordAnimation() {
   if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
   const target = "study-" + state.bundle.slug;
   const fps = 60;
-  const total = Math.ceil(timelineDuration() * fps);
+  const speed = state.timeline.speed;
+  const total = Math.ceil(timelineDuration() / speed * fps);
   status.textContent = "recording " + total + " frames at 1080p (a few MB each on disk)";
   const wasPlaying = state.timeline.playing;
   state.timeline.playing = false;
@@ -2103,7 +2105,7 @@ async function recordAnimation() {
   state.recording = true;   // resize() must skip while this is set
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
-      applyTimeline(frameIndex / fps);
+      applyTimeline(frameIndex * speed / fps);
       renderer.render(scene, camera);
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       const response = await fetch(
@@ -2147,14 +2149,6 @@ document.getElementById("play-button").addEventListener("click", () => {
   state.timeline.playing = !state.timeline.playing;
   document.getElementById("play-button").textContent = state.timeline.playing ? "Pause" : "Play";
 });
-document.getElementById("stop-button").addEventListener("click", () => {
-  if (!state.timeline) return;
-  state.timeline.playing = false;
-  applyTimeline(0);
-  scrubber.value = 0;
-  document.getElementById("play-button").textContent = "Play";
-  updateHud();
-});
 document.getElementById("restart-button").addEventListener("click", () => {
   if (!state.timeline) return;
   applyTimeline(0);
@@ -2169,11 +2163,17 @@ scrubber.addEventListener("input", () => {
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
   updateHud();
 });
-for (const [id, prop] of [["drop-speed", "dropSeconds"], ["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
+for (const [id, prop] of [["timeline-speed", "speed"], ["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
     if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
   });
 }
+document.getElementById("timeline-speed").addEventListener("input", (e) => {
+  document.getElementById("timeline-speed-value").textContent = (+e.target.value).toFixed(2);
+});
+document.getElementById("inflate-seconds").addEventListener("input", (e) => {
+  document.getElementById("inflate-value").textContent = (+e.target.value).toFixed(1);
+});
 
 let lastTime = performance.now();
 let playingFrameCount = 0;
@@ -2182,7 +2182,7 @@ function frame(now) {
   lastTime = now;
   resize();
   if (state.timeline && state.timeline.playing) {
-    applyTimeline(Math.min(state.timeline.t + delta, timelineDuration()));
+    applyTimeline(Math.min(state.timeline.t + delta * state.timeline.speed, timelineDuration()));
     if (state.timeline.t >= timelineDuration()) {
       state.timeline.playing = false;
       document.getElementById("play-button").textContent = "Play";
