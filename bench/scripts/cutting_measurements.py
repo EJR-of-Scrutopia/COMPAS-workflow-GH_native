@@ -29,9 +29,11 @@ this mode prints.
 
 from __future__ import annotations
 
+import json
 import math
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -198,10 +200,41 @@ def sweep(pattern: str, contract, arrays, render) -> int:
     return 0
 
 
+def density(pattern: str, contract, arrays, render) -> int:
+    """Cut time and pieces payload at the polish wave's two probe sizes.
+
+    The D8 budget gate: CAP_EDGE_TARGET 0.30 to 0.15 and MAX_ROUNDS 3 to 4
+    may only be pinned if, on this real export, cut plus segment stays
+    within 2x the baseline wall clock and the pieces payload within 3x
+    the baseline bytes, at both probe sizes. Run once on the old values
+    for the baseline, once on the candidates, and compare like with like.
+    """
+
+    supports = geometry.support_ids(contract)
+    support_points = [
+        [arrays["vertices"][i][0], arrays["vertices"][i][1]] for i in supports
+    ]
+    print("CAP_EDGE_TARGET {}   CHORD_TARGET {}   MAX_ROUNDS {}".format(
+        cutting.CAP_EDGE_TARGET, cutting.CHORD_TARGET, cutting.MAX_ROUNDS))
+    for size in (DEFAULT_SIZE, 0.3):
+        started = time.perf_counter()
+        tess, surface, _binding = _cut(pattern, size, contract, arrays, render)
+        made, report = pieces.segment_pieces(tess, surface, support_points)
+        seconds = time.perf_counter() - started
+        payload = len(json.dumps(made).encode("utf-8"))
+        print("  size {:.2f} m: {} pieces, {} round(s) (limited by {}), "
+              "chord {:.3f} mm, cut+segment {:.2f} s, "
+              "pieces payload {:.2f} MB".format(
+                  size, len(made), report["rounds"], report["limit"],
+                  report["chord_mm"], seconds, payload / 1e6))
+    return 0
+
+
 def main() -> int:
     argv = sys.argv[1:]
     sweeping = bool(argv) and argv[0] == "--sweep"
-    if sweeping:
+    density_mode = bool(argv) and argv[0] == "--density"
+    if sweeping or density_mode:
         argv = argv[1:]
     pattern = argv[0] if argv else DEFAULT_PATTERN
     size = float(argv[1]) if len(argv) > 1 else DEFAULT_SIZE
@@ -226,6 +259,11 @@ def main() -> int:
         print("export {!r}".format(EXPORT))
         print("")
         return sweep(pattern, contract, arrays, render)
+
+    if density_mode:
+        print("export {!r}".format(EXPORT))
+        print("")
+        return density(pattern, contract, arrays, render)
 
     tess, surface, binding = _cut(pattern, size, contract, arrays, render)
     supports = geometry.support_ids(contract)
