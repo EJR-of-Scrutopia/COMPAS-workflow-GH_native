@@ -48,6 +48,7 @@ def _invalidate_studio_cache(slug: str) -> None:
     recording, not to a geometry snapshot.
     """
 
+    bundle.clear_cut_memo()
     studio_dir = bundle.STUDIES_DIR / slug / "studio"
     if not studio_dir.is_dir():
         return

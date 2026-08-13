@@ -107,7 +107,7 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 def test_the_layer_registry_has_the_agreed_names():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework", "shell"):
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "shell"):
         assert '"{}"'.format(name) in js
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
@@ -388,10 +388,23 @@ def test_load_arrows_draw_along_the_shipped_vector():
     # direction argument multiplied the vector by -1 twice over, so loads
     # rendered upward. Arrows must draw exactly along the shipped vector.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function arrowField(entries, colour)" in js
+    assert "function arrowField(entries, colour, anchor)" in js
     start = js.index("function arrowField(")
     end = js.index("\n}", start)
     assert "direction" not in js[start:end]
+
+
+def test_load_arrows_arrive_tip_first_and_reactions_leave_the_support():
+    # A downward load whose tail sits at the node hangs under the shell
+    # and reads as suction pulling the vault down. The head belongs at
+    # the point of application, so loads are tip-anchored; reactions
+    # genuinely emerge from the supports and stay tail-anchored.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "updateVectorLayers")
+    assert '0x66aaff, "tip"' in body, "loads must be tip-anchored"
+    assert '0x66dd77, "tail"' in body, "reactions must stay tail-anchored"
+    arrow_body = _function_body(js, "arrowField")
+    assert 'anchor === "tip"' in arrow_body
 
 
 def test_the_strike_takes_wires_nodes_and_falsework():
@@ -404,7 +417,7 @@ def test_the_strike_takes_wires_nodes_and_falsework():
     end = js.index("\n}", start)
     body = js[start:end]
     assert "strikeU" in body
-    assert "state.layers.falsework" in body
+    assert "state.formworkMode" in body
     assert "state.layers.wires" in body
     for name in ("wires", "nodes"):
         assert '"{}"'.format(name) in body, "the strike must drive {}".format(name)
@@ -426,12 +439,36 @@ def test_set_layer_does_not_call_applytimeline_directly():
     )
 
 
-def test_falsework_is_a_translucent_ghost_with_a_toggle():
+def test_formwork_is_a_three_state_control():
+    # A checkbox cannot resurrect what the strike removed: at the
+    # finished vault it did nothing in either direction. Three states,
+    # in the owner's own words: animation (the build story, fade in with
+    # the inflation, strike away at the end), always (the resting ghost
+    # pinned for inspection), hidden (no ghost shell anywhere, build
+    # phase included).
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '"falsework", "Formwork"' in js
+    assert 'id="formwork-mode"' in html
+    assert '<option value="animation" selected>' in html
+    for value in ("always", "hidden"):
+        assert 'value="{}"'.format(value) in html
+    assert 'formworkMode: "animation"' in js
+    assert '"falsework", "Formwork"' not in js, "the checkbox entry is gone"
+    assert "falsework: true" not in js, (
+        "state.layers must not carry falsework any more"
+    )
+    body = _function_body(js, "applySceneAtTime")
+    assert "state.formworkMode" in body
+    assert 'mode === "always" || (mode === "animation" && strikeU < 1)' in body
+    # The ghost material itself is unchanged.
     assert "opacity: 0.3" in js
     assert "wireMaterial.transparent = true" in js
     assert "nodeMaterial.transparent = true" in js
+    # A mode change recomputes the scene without moving the camera.
+    wiring_at = js.index('getElementById("formwork-mode")')
+    wiring = js[wiring_at:js.index("\n});", wiring_at)]
+    assert "applySceneAtTime(state.timeline.t)" in wiring
+    assert "applyTimeline(" not in wiring
 
 
 def test_analysis_overlays_cast_no_shadows():
@@ -1567,3 +1604,60 @@ def test_the_panel_groups_into_six_collapsible_sections():
     )
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "#panel summary" in css
+
+
+def test_textures_are_anisotropic_and_sprayed_shades_as_one_surface():
+    # Two artefacts from the sprayed close-up. Fine wavy ripples at
+    # grazing angles: the procedural textures rendered at anisotropy 1,
+    # textbook texture moire. And tonal steps at every course joint:
+    # normals were welded within each piece only, so neighbouring pieces
+    # disagreed about the light at their shared boundary even though a
+    # zero joint gap makes sprayed concrete one continuous surface.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("noiseTexture", "grainTexture"):
+        assert "getMaxAnisotropy()" in _function_body(js, name), (
+            "{} must set max anisotropy".format(name)
+        )
+    body = _function_body(js, "buildPieceMeshes")
+    assert "welded" in body, (
+        "a monolithic surface must weld normals across the whole shell"
+    )
+    assert "shrink === 1" in body, (
+        "shrink 1 must push the raw point: c + (p - c) is not p in "
+        "floats, and the weld groups corners by exact bit pattern"
+    )
+
+
+def test_the_cut_overlay_shows_while_a_cut_is_in_flight():
+    # The status line in the panel was not enough: a slow material change
+    # read as a hang. The overlay is a signal, not a modal lock: it dims
+    # nothing and blocks no clicks.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert 'id="cut-overlay" class="hidden"' in html
+    assert 'id="cut-spinner"' in html
+    overlay_at = html.index('id="cut-overlay"')
+    assert html.index('id="cut-status"') > overlay_at, (
+        "the status line lives inside the overlay now"
+    )
+    load_start = js.index("async function loadStudy(")
+    load_body = js[load_start:js.index("\n}", load_start)]
+    assert 'overlay.classList.remove("hidden")' in load_body
+    assert load_body.count('overlay.classList.add("hidden")') == 2, (
+        "the overlay must hide on the landing path and the failure path"
+    )
+    assert "#cut-overlay" in css
+    assert "pointer-events: none" in css
+    assert "@keyframes" in css
+
+
+def test_the_deflection_reset_restores_the_welded_normals():
+    # Deflection on then off wrote basePositions back but recomputed the
+    # normals PER PIECE, so a sprayed shell came back with the course
+    # joint steps the whole-shell weld exists to remove, and stayed that
+    # way until the next rebuild. The reset restores the stored buffer.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "userData.baseNormals = normals" in _function_body(js, "buildPieceMeshes")
+    body = _function_body(js, "recolourSegments")
+    assert "userData.baseNormals.slice()" in body

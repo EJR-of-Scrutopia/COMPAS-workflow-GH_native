@@ -9,9 +9,11 @@ one.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import json
 import math
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -93,7 +95,11 @@ def _staging_matches(staged: Optional[dict], made: List[dict]) -> bool:
     since the sidecar is in neither the cache key nor
     app._invalidate_studio_cache; so does the natural workaround for that,
     which is to delete bundle-*.json to force a re-cut and leave
-    staging-*.json behind.
+    staging-*.json behind. Deleting the file alone is not enough while the
+    process is alive, since build_bundle goes through the in-process cut
+    memo (see _cut_for): that memo also has to be cleared, which in
+    practice means a re-upload (clear_cut_memo runs as part of
+    app._invalidate_studio_cache) or a restart.
 
     Nothing crashes when the two disagree, which is what makes it worth a
     gate. The viewer derives the stage from the pieces' own courses and
@@ -127,6 +133,43 @@ def _staging_matches(staged: Optional[dict], made: List[dict]) -> bool:
     return named <= {piece["key"] for piece in made}
 
 
+# The cut is the expensive step of a bundle build, and its inputs are the
+# export geometry, the pattern and the size: material and thickness never
+# reach it, so switching material at an already-cut size reuses the cut
+# instead of re-running it. In-process only and LRU-capped, because a
+# single small-size cut runs to tens of megabytes. Cleared by
+# clear_cut_memo() wherever the studio JSON cache is invalidated (an
+# export re-upload), so a stale cut cannot outlive its export -- and that
+# claim now holds under concurrency, not just in sequence: a generation
+# counter, bumped under the same lock the dict is guarded by, is what a
+# clear actually advances, so a cut that was already being built when the
+# clear landed is still handed back to its own caller but is never written
+# into the memo afterwards. The authored-tessellation sidecar shares the
+# staleness gap the JSON cache already documents above: it is in neither
+# key.
+#
+# get_bundle's threadpool (FastAPI runs a sync route on a worker thread),
+# the run worker thread (start_run's work(), which cuts through
+# staging.run_staging and build_bundle alike) and the async upload handler
+# (_invalidate_studio_cache, on every re-upload) are the concurrent readers
+# and writers _cut_memo_lock protects.
+#
+# The memoised tuple is shared by reference with every caller that reads
+# the same key, sometimes across different documents' requests at once:
+# nothing may mutate a returned cut in place.
+CUT_MEMO_LIMIT = 4
+_cut_memo_lock = threading.Lock()
+_cut_memo_generation = 0
+_cut_memo: "collections.OrderedDict" = collections.OrderedDict()
+
+
+def clear_cut_memo() -> None:
+    global _cut_memo_generation
+    with _cut_memo_lock:
+        _cut_memo_generation += 1
+        _cut_memo.clear()
+
+
 def build_tessellation_for(export_name, contract, arrays, render, pattern, size):
     """The one cut, built once, for the drawing and for the analysis alike.
 
@@ -151,6 +194,33 @@ def build_tessellation_for(export_name, contract, arrays, render, pattern, size)
     return tess, surface, binding
 
 
+def _cut_for(export_name, contract, arrays, render, pattern, size):
+    key = (export_name, pattern, size)
+    with _cut_memo_lock:
+        generation = _cut_memo_generation
+        if key in _cut_memo:
+            _cut_memo.move_to_end(key)
+            return _cut_memo[key]
+    tess, surface, binding = build_tessellation_for(
+        export_name, contract, arrays, render, pattern, size)
+    supports = geometry.support_ids(contract)
+    support_points = [
+        [arrays["vertices"][i][0], arrays["vertices"][i][1]] for i in supports
+    ]
+    made, report = pieces.segment_pieces(tess, surface, support_points)
+    result = (tess, binding, supports, made, report)
+    with _cut_memo_lock:
+        # A clear that ran while this cut was being built means the export
+        # may have changed under it: the result is still returned to its
+        # own caller (built from the inputs that caller loaded) but never
+        # memoised, so a stale cut cannot outlive its export.
+        if generation == _cut_memo_generation:
+            _cut_memo[key] = result
+            while len(_cut_memo) > CUT_MEMO_LIMIT:
+                _cut_memo.popitem(last=False)
+    return result
+
+
 def build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2
 ) -> Dict:
@@ -166,13 +236,8 @@ def build_bundle(
     arrays = geometry.mesh_arrays(contract)
     render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
 
-    tess, surface, binding = build_tessellation_for(
+    tess, binding, supports, made, report = _cut_for(
         export_name, contract, arrays, render, pattern, size)
-    supports = geometry.support_ids(contract)
-    support_points = [
-        [arrays["vertices"][i][0], arrays["vertices"][i][1]] for i in supports
-    ]
-    made, report = pieces.segment_pieces(tess, surface, support_points)
 
     # backward_turn/backward_steps only exist on a generated cut (the
     # domain they are measured from is never built for an imported one),

@@ -26,6 +26,13 @@ def fake_export(tmp_path, monkeypatch):
     """Point bundle.py at a temp upload/studies pair with the tiny contract."""
 
     geometry, bundle = studio()
+    # Each fake export is a fresh scenario, but bundle._cut_memo is a
+    # process-global keyed only on (export_name, pattern, size): without
+    # clearing it, an earlier test's memoized cut for "Tiny" would leak
+    # into a later test that expects its own upload dir's sidecar to be
+    # read fresh. conftest.py's autouse fixture clears it around every
+    # studio test now, mirroring what a real re-upload does through
+    # app._invalidate_studio_cache.
     upload = tmp_path / "upload"
     studies = tmp_path / "studies"
     upload.mkdir()
@@ -325,9 +332,17 @@ def test_staging_built_from_another_cut_is_dropped_not_embedded(
     assert [piece["key"] for piece in first["pieces"]] == ["a"]
 
     # The sidecar goes; the bundle is deleted to force a re-cut; staging
-    # stays on disk exactly as it was.
+    # stays on disk exactly as it was. Deleting the bundle file alone no
+    # longer forces the re-cut now that build_bundle goes through the cut
+    # memo (Task 5): the memo, keyed on export/pattern/size, is in neither
+    # the on-disk cache key nor this file deletion, same gap as the
+    # sidecar itself. In the running server this is cleared for free by
+    # app._invalidate_studio_cache on every re-upload; here, in the same
+    # process as the first cut, it has to be cleared explicitly to reach
+    # the state a real re-upload would leave behind.
     sidecar.unlink()
     bundle.bundle_path("tiny", "concrete", "bonded-courses", 0.9, 0.2).unlink()
+    bundle.clear_cut_memo()
     assert bundle.staging_path(
         "tiny", "concrete", "bonded-courses", 0.9, 0.2).is_file()
 
@@ -370,3 +385,32 @@ def test_the_staleness_gate_compares_segments_against_piece_keys():
     assert not b._staging_matches(None, made)
     # An empty plan names nothing, so it cannot contradict the cut.
     assert b._staging_matches({"stages": []}, made)
+
+
+def test_the_cut_is_reused_across_material_and_thickness(tmp_path, monkeypatch):
+    # The cut's inputs are export geometry, pattern and size: material
+    # and thickness never reach it. Switching material at an already-cut
+    # size must reuse the cut rather than re-run it, which is what makes
+    # a material swap near-instant in the viewer.
+    bundle, _, _ = fake_export(tmp_path, monkeypatch)
+    bundle.clear_cut_memo()
+    calls = []
+    real = bundle.build_tessellation_for
+
+    def counting(*args, **kwargs):
+        calls.append(args[0])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(bundle, "build_tessellation_for", counting)
+    bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.9)
+    bundle.build_bundle("Tiny", "timber", "bonded-courses", 0.9, thickness=0.3)
+    assert calls == ["Tiny"], "the second build must hit the cut memo"
+    # A different size is a different cut.
+    bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.6)
+    assert calls == ["Tiny", "Tiny"]
+    # Clearing the memo (what an export re-upload does through
+    # app._invalidate_studio_cache) forces a fresh cut, so a stale cut
+    # can never outlive its export.
+    bundle.clear_cut_memo()
+    bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.6)
+    assert calls == ["Tiny", "Tiny", "Tiny"]

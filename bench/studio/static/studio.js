@@ -10,7 +10,8 @@ import {
 const state = {
   bundle: null,
   studies: [],
-  layers: { shell: true, wires: true, overlays: true, falsework: true },
+  layers: { shell: true, wires: true, overlays: true },
+  formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -92,6 +93,9 @@ function noiseTexture(size, base, variation) {
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(6, 6);
+  // Anisotropy 1 shimmers into moire bands at grazing angles, which is
+  // most of a vault seen from eye height.
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return texture;
 }
 
@@ -111,6 +115,8 @@ function grainTexture(size) {
   const texture = new THREE.CanvasTexture(canvasEl);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(3, 3);
+  // Same grazing-angle moire fix as noiseTexture.
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return texture;
 }
 
@@ -448,7 +454,6 @@ function applyCut(preserve) {
 // ---------- FEA layers ----------
 const LAYERS = [
   ["shell", "Finished shell"],
-  ["falsework", "Formwork"],
   ["wires", "Thrust wires and nodes"],
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
@@ -590,7 +595,7 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires" || name === "falsework" || name === "shell") {
+  if (name === "wires" || name === "shell") {
     // Visibility during and after the strike is the timeline's call, so
     // recompute from t instead of forcing visible here. This calls the
     // scene-only helper, not applyTimeline itself -- a layer checkbox must
@@ -602,8 +607,6 @@ function setLayer(name, on) {
       state.objects.nodes.visible = on;
     } else if (name === "shell") {
       if (state.objects.shell) state.objects.shell.visible = on;
-    } else if (state.objects.falsework) {
-      state.objects.falsework.visible = on;
     }
   }
   if (name === "loads" || name === "reactions") updateVectorLayers();
@@ -804,10 +807,18 @@ function recolourSegments() {
     // Skip it when this pass wrote positions straight back from
     // basePositions -- unless the previous pass left the geometry bent, in
     // which case the normals still belong to that bent shape and must be
-    // reset to match the flat positions just written.
-    if (displaced || segment.userData.wasDisplaced) {
+    // reset to match the flat positions just written. That reset must
+    // restore the stored welded buffer, not recompute per piece: a
+    // recompute here is per-piece crease normals even on a sprayed shell,
+    // so two clicks of a heatmap (on, then off) would undo the one-surface
+    // weld buildPieceMeshes did, and the course joints would step in the
+    // light again until the next rebuild.
+    if (displaced) {
       segment.geometry.setAttribute("normal",
         new THREE.BufferAttribute(creaseNormals(positions.array), 3));
+    } else if (segment.userData.wasDisplaced) {
+      segment.geometry.setAttribute("normal",
+        new THREE.BufferAttribute(segment.userData.baseNormals.slice(), 3));
     }
     segment.userData.wasDisplaced = displaced;
     // Off the heatmaps, the piece goes back to the material it was built
@@ -880,21 +891,22 @@ function updateVectorLayers() {
   const bundle = state.bundle;
   if (state.layers.loads) {
     state.objects.loadArrows = arrowField(
-      Object.entries(bundle.loads), 0x66aaff);
+      Object.entries(bundle.loads), 0x66aaff, "tip");
     scene.add(state.objects.loadArrows);
   }
   if (state.layers.reactions && Object.keys(bundle.reactions).length) {
     // Real TNA reaction vectors from the contract, shipped in the bundle.
     state.objects.reactionArrows = arrowField(
-      Object.entries(bundle.reactions), 0x66dd77);
+      Object.entries(bundle.reactions), 0x66dd77, "tail");
     scene.add(state.objects.reactionArrows);
   }
 }
 
-function arrowField(entries, colour) {
+function arrowField(entries, colour, anchor) {
   // One LineSegments for every shaft plus one instanced cone set for heads:
   // two draw calls however many nodes there are. Arrows draw exactly along
   // the shipped vector: loads arrive pointing down, reactions as exported.
+  // anchor 'tip' stands the shaft before the node so the head lands at the point of application; 'tail' leaves the node along the vector.
   const vertices = state.bundle.analysis_mesh.vertices;
   let magnitudeMax = 1e-9;
   for (const [, v] of entries) magnitudeMax = Math.max(magnitudeMax, Math.hypot(v[0], v[1], v[2]));
@@ -909,11 +921,21 @@ function arrowField(entries, colour) {
     const v = new THREE.Vector3(vector[0], vector[1], vector[2]);
     const length = 0.4 + 2.0 * (v.length() / magnitudeMax);
     const dir = v.lengthSq() ? v.clone().normalize() : new THREE.Vector3(0, 0, -1);
-    const from = new THREE.Vector3(...at);
-    const to = from.clone().addScaledVector(dir, length);
+    const start = new THREE.Vector3(...at);
+    const tipAnchored = anchor === "tip";
+    // The analysis node sits on the mid-surface, half a thickness inside
+    // the drawn shell, so a head composed at the node is buried in opaque
+    // geometry. The tip-anchored arrow stands off by that half thickness
+    // and the cone's own half height, so its point touches the outer
+    // surface at the point of application.
+    const lift = tipAnchored ? state.bundle.provenance.thickness / 2 : 0;
+    const surface = start.clone().addScaledVector(dir, -lift);
+    const from = tipAnchored ? surface.clone().addScaledVector(dir, -length) : start;
+    const to = tipAnchored ? surface : start.clone().addScaledVector(dir, length);
     positions.push(from.x, from.y, from.z, to.x, to.y, to.z);
     q.setFromUnitVectors(up, dir);
-    m.compose(to, q, new THREE.Vector3(1, 1, 1));
+    const headAt = tipAnchored ? to.clone().addScaledVector(dir, -0.09) : to;
+    m.compose(headAt, q, new THREE.Vector3(1, 1, 1));
     heads.setMatrixAt(i, m);
   });
   const lines = new THREE.LineSegments(
@@ -1524,17 +1546,20 @@ async function loadStudy(exportName) {
   // two overlapping cuts can never race each other onto the canvas.
   const sequence = ++state.loadSequence;
   const status = document.getElementById("cut-status");
+  const overlay = document.getElementById("cut-overlay");
   const materialLabel = document.querySelector(
     '#material-select option[value="' + material + '"]').textContent;
   status.textContent = "cutting " + materialLabel + ", " + patternLabel(state.pattern) + ", "
     + Math.round(state.size * 1000) + " mm pieces at "
     + Math.round(state.thickness * 1000) + " mm...";
+  overlay.classList.remove("hidden");
   const url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
   try {
     const fresh = await fetchJson(url);
     if (sequence !== state.loadSequence) return;
+    overlay.classList.add("hidden");
     status.textContent = "";
     // Same export means the user is comparing settings, not changing
     // subject: the viewing state survives the swap. Captured HERE, before
@@ -1547,6 +1572,7 @@ async function loadStudy(exportName) {
     buildScene(fresh, preserve);
   } catch (error) {
     if (sequence !== state.loadSequence) return;
+    overlay.classList.add("hidden");
     status.textContent = "";
     showBanner("Failed to load study: " + error.message);
   }
@@ -1723,6 +1749,15 @@ for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
 // event, which a drag fires dozens of.
 document.getElementById("exaggeration").addEventListener("change", () => recolourSegments());
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
+document.getElementById("formwork-mode").addEventListener("change", (e) => {
+  state.formworkMode = e.target.value;
+  // Scene-only recompute: a mode change must never move the camera.
+  if (state.timeline) {
+    applySceneAtTime(state.timeline.t);
+  } else if (state.objects.falsework) {
+    state.objects.falsework.visible = e.target.value !== "hidden";
+  }
+});
 // Same pattern as the thickness slider: "input" only updates the live mm
 // label, "change" (drag release) commits the value and rebuilds -- so a
 // drag fires one InstancedMesh rebuild, not dozens.
@@ -1958,6 +1993,7 @@ function buildPieceMeshes() {
   // Thickness on screen is what the bundle was solved at, never the live
   // slider, which can drift while a bundle loads.
   const gap = sprayedMaterial() ? 0 : state.jointGap;
+  const built = [];
   for (const piece of state.bundle.pieces) {
     const count = piece.mid.length;
     const half = state.bundle.provenance.thickness * taperAt(piece.course) / 2;
@@ -1988,21 +2024,60 @@ function buildPieceMeshes() {
       for (let corner = 1; corner < face.length - 1; corner++) {
         for (const index of [face[0], face[corner], face[corner + 1]]) {
           const p = points[index];
-          positions.push(
-            centre[0] + (p[0] - centre[0]) * shrink,
-            centre[1] + (p[1] - centre[1]) * shrink,
-            centre[2] + (p[2] - centre[2]) * shrink);
+          // shrink === 1 must push p verbatim: c + (p - c) is not p in
+          // floats, and the sprayed weld below groups corners by exact
+          // bit pattern, which the engine only guarantees for the raw
+          // offsets from mid and normal.
+          if (shrink === 1) {
+            positions.push(p[0], p[1], p[2]);
+          } else {
+            positions.push(
+              centre[0] + (p[0] - centre[0]) * shrink,
+              centre[1] + (p[1] - centre[1]) * shrink,
+              centre[2] + (p[2] - centre[2]) * shrink);
+          }
           weights.push(piece.sources[index % count]);
           surface.push(index < count ? 1 : -1);
         }
       }
     }
+    built.push({ piece, positions, weights, surface, centre });
+  }
+  // Sprayed concrete is one continuous surface: the joint gap is zero,
+  // the shrink factor is exactly 1 and shared boundary points are
+  // bit-identical across pieces at taper 0, so the crease normals are
+  // computed over the WHOLE shell in one call and sliced back per piece.
+  // Course joints then stop stepping in the light. With the crown taper
+  // above zero, adjacent courses are offset by different half
+  // thicknesses and their shared points honestly stop welding. Jointed
+  // materials keep per-piece normals: their pieces are genuinely
+  // separate and the lighting step at a joint is honest.
+  let welded = null;
+  if (sprayedMaterial()) {
+    let total = 0;
+    for (const entry of built) total += entry.positions.length;
+    const all = new Array(total);
+    let cursor = 0;
+    for (const entry of built) {
+      for (let i = 0; i < entry.positions.length; i++) {
+        all[cursor + i] = entry.positions[i];
+      }
+      cursor += entry.positions.length;
+    }
+    welded = creaseNormals(all);
+  }
+  let offset = 0;
+  for (const entry of built) {
+    const { piece, positions, weights, surface, centre } = entry;
+    const normals = welded
+      ? welded.slice(offset, offset + positions.length)
+      : creaseNormals(positions);
+    offset += positions.length;
     const uvs = boxUVs(positions, centre, segmentUVOffset(piece.key));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute("uv", new THREE.BufferAttribute(new Float32Array(uvs), 2));
-    geometry.setAttribute("normal",
-      new THREE.BufferAttribute(creaseNormals(positions), 3));
+    geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
     const mesh = new THREE.Mesh(geometry, pieceMaterial(piece.key));
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.userData.key = piece.key;
@@ -2014,6 +2089,9 @@ function buildPieceMeshes() {
     mesh.userData.weights = weights;
     mesh.userData.surface = surface;
     mesh.userData.basePositions = new Float32Array(positions);
+    // The welded normal, stored so a deflection reset can restore it
+    // rather than recompute it: see recolourSegments.
+    mesh.userData.baseNormals = normals;
     group.add(mesh);
   }
   state.objects.shell = group;
@@ -2149,11 +2227,15 @@ function applySceneAtTime(t) {
   const buildEnd = placementCount() * step + DROP_SECONDS;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
-  falsework.visible = !!state.layers.falsework && strikeU < 1;
-  // The falsework fades in with the inflation as well as out with the
-  // strike, so it never appears before the net has any form to support.
-  falsework.material.opacity = 0.3 * inflate * (1 - strikeU);
-  falsework.position.z = -0.02 - 1.5 * strikeU;
+  // Three states, the owner's own words. Animation follows the build
+  // story: fade in with the inflation, stand through the build, strike
+  // away at the end. Always pins the resting ghost for inspection even
+  // after the strike. Hidden removes the ghost shell everywhere, build
+  // phase included.
+  const mode = state.formworkMode;
+  falsework.visible = mode === "always" || (mode === "animation" && strikeU < 1);
+  falsework.material.opacity = mode === "always" ? 0.3 : 0.3 * inflate * (1 - strikeU);
+  falsework.position.z = mode === "always" ? -0.02 : -0.02 - 1.5 * strikeU;
   // The strike takes the thrust network with it: wires and nodes fade,
   // drop and vanish on the same clock, and scrubbing back restores them
   // because everything here is computed from t (by way of build).
