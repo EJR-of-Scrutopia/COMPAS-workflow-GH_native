@@ -20,7 +20,7 @@ needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is no
 CHECK = textwrap.dedent("""
     import {
       segmentUVOffset, boxUVs, stressValueOf, smoothStressField,
-      interpolateScalarField, sampleScalar, sampleVector,
+      interpolateScalarField, sampleScalar, sampleVector, creaseNormals,
     } from %FIELDS%;
 
     function expect(condition, message) {
@@ -97,6 +97,37 @@ CHECK = textwrap.dedent("""
     expect(near(emptyFallback[0], 7) && near(emptyFallback[1], 7) && near(emptyFallback[2], 7),
       "empty weights fall back on a vector sample, not [0, 0, 0]");
 
+    // Crease-angle normals: two coplanar triangles sharing an edge smooth
+    // (identical +z normals at every corner), while a 90 degree fold stays
+    // hard (each side keeps its own facet normal at the shared edge).
+    const flatPair = [
+      0,0,0, 1,0,0, 0,1,0,
+      1,0,0, 1,1,0, 0,1,0,
+    ];
+    const flatNormals = creaseNormals(flatPair, 40);
+    expect(near(flatNormals[2], 1) && near(flatNormals[17], 1),
+      "coplanar facets agree on +z");
+    // One triangle in z = 0, one standing in the x = 1 plane, sharing the
+    // edge from (1,0,0) to (1,1,0): 90 degrees apart, over the crease.
+    const folded = [
+      0,0,0, 1,0,0, 1,1,0,
+      1,0,0, 1,0,1, 1,1,0,
+    ];
+    const foldedNormals = creaseNormals(folded, 40);
+    expect(near(foldedNormals[5], 1), "the flat side keeps +z at the fold");
+    expect(near(Math.abs(foldedNormals[9]), 1) && near(foldedNormals[11], 0),
+      "the standing side keeps its own x facet normal at the fold, not a blend");
+    // A degenerate facet neither poisons its neighbours nor emits NaN.
+    const withSliver = [
+      0,0,0, 1,0,0, 0,1,0,
+      0,0,0, 0,0,0, 1,0,0,
+    ];
+    const sliverNormals = creaseNormals(withSliver, 40);
+    expect(near(sliverNormals[2], 1), "a real facet is unaffected by a sliver neighbour");
+    let allFinite = true;
+    for (const value of sliverNormals) allFinite = allFinite && Number.isFinite(value);
+    expect(allFinite, "degenerate facets still emit finite normals");
+
     console.log("ok");
 """)
 
@@ -116,5 +147,5 @@ def test_fields_module_exists_and_is_pure():
     assert "document." not in js and "window." not in js, "fields.js must not touch the DOM"
     for name in ("segmentUVOffset", "boxUVs", "stressValueOf",
                  "smoothStressField", "interpolateScalarField",
-                 "sampleScalar", "sampleVector"):
+                 "sampleScalar", "sampleVector", "creaseNormals"):
         assert "export function {}(".format(name) in js, "fields.js lost {}".format(name)
