@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { segmentFaces } from "/static/binning.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
+  sampleScalar, sampleVector,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -16,14 +16,20 @@ const state = {
   userDragging: false, // Task 13
   recording: false,    // Task 15: true while recordAnimation() drives the render loop
   centre: null,        // Task 13: cached orbit centroid, set in rebuildTimeline
-  rings: 8,
+  pattern: "bonded-courses",
+  size: 0.9,
   thickness: 0.2,
   jointGap: 0.02,
   taper: 0,
-  segments: null,      // Task 11
   segmentIndex: null,  // Task 11
   nodeRadius: 0.03,    // Task 6
   wireRadius: 0.02,    // Task 6
+  // Task 9: filled from /api/studies at boot, so the pattern control knows
+  // which patterns are actually selectable and what each material's own
+  // default and honesty note are.
+  patterns: [],
+  patternDefaults: {},
+  patternNotes: {},
 };
 
 const canvas = document.getElementById("view");
@@ -128,6 +134,23 @@ const materials = {
     color: 0xb07a3c, side: THREE.DoubleSide,      // warm brown, not bare white
     map: grainTexture(512),
     roughness: 0.55, metalness: 0.0, sheen: 0.15, sheenColor: 0xd9b98a,
+  }),
+  brick: new THREE.MeshPhysicalMaterial({
+    color: 0x8c4a32, side: THREE.DoubleSide,      // warm red brown, matt
+    map: noiseTexture(256, 150, 26),
+    roughness: 0.88, roughnessMap: noiseTexture(256, 210, 30),
+    metalness: 0.0,
+  }),
+  tile: new THREE.MeshPhysicalMaterial({
+    color: 0xc47a52, side: THREE.DoubleSide,      // lighter, fired sheen
+    map: noiseTexture(256, 190, 18),
+    roughness: 0.45, metalness: 0.0, sheen: 0.25, sheenColor: 0xe8c9a8,
+  }),
+  stone: new THREE.MeshPhysicalMaterial({
+    color: 0xbfb9a6, side: THREE.DoubleSide,      // pale, mineral
+    map: noiseTexture(256, 215, 22),
+    roughness: 0.8, roughnessMap: noiseTexture(256, 220, 35),
+    metalness: 0.0,
   }),
   steel: new THREE.MeshPhysicalMaterial({
     color: 0xb6bac2, roughness: 0.32, metalness: 1.0, envMapIntensity: 1.2,
@@ -337,64 +360,80 @@ function buildScene(bundle) {
   state.objects.ground = ground;
   scene.add(ground);
 
-  rebinSegments();
+  applyCut();
   buildLayerToggles();
   updateVectorLayers();
   updateMaterialControls();
   updateHud();
-  updateCraBadge();
 }
 
-// ---------- segmentation (Task 11 replaces the body of rebinSegments) ----------
-function faceCentroids(meshData) {
-  return meshData.faces.map((face) => {
-    let x = 0, y = 0, z = 0;
-    for (const i of face) { x += meshData.vertices[i][0]; y += meshData.vertices[i][1]; z += meshData.vertices[i][2]; }
-    const n = face.length;
-    return [x / n, y / n, z / n];
-  });
-}
+// ---------- the cut (Task 8: pieces and their course/size come from the server) ----------
+// Mirrors app.py's own SIZE_MIN/SIZE_MAX. The bundle's top level "size" is
+// meant to be the requested size (see bundle.py), but a client that trusts
+// a server value blindly is exactly how a poisoned value like the old
+// authored-cut sentinel reaches the screen; this is the defence in depth
+// for that class of bug, not the fix for it.
+const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
 
-function rebinSegments() {
-  // The binning always follows the LOADED bundle's ring count, never the
+function applyCut() {
+  // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
-  // server-side at the bundle's ring count, and each one is looked up in
-  // state.segmentIndex by the key that binning gave it. Re-binning here to
-  // the slider's number instead would rebuild the index around cells the
-  // drawn pieces know nothing about: measured on Trial 2 against an
-  // 8-ring bundle, every slider value from 4 to 16 orphans keys (24 of 38
-  // pieces at 4 rings, 3 at 9, 14 at 16), and the first missing key throws
-  // inside applySceneAtTime, which while playing kills the render loop
-  // until reload. The slider asks the server for a matching bundle
-  // instead: see its change handler, which follows the thickness slider.
+  // server-side at the bundle's own size, and each one is looked up in
+  // state.segmentIndex by the key the cut gave it. Re-cutting here to the
+  // slider's number instead would rebuild the index around cells the drawn
+  // pieces know nothing about, which is the defect the ring/wedge binning
+  // this replaces used to have: measured on Trial 2 against an 8-ring
+  // bundle, every slider value from 4 to 16 orphaned keys, and the first
+  // missing key threw inside applySceneAtTime, which while playing killed
+  // the render loop until reload. The slider asks the server for a
+  // matching bundle instead: see its change handler, which follows the
+  // thickness slider.
   if (!state.bundle) return;
-  const rings = state.bundle.segments.rings;
-  state.rings = rings;
-  document.getElementById("rings-slider").value = rings;
-  document.getElementById("rings-value").textContent = rings;
-  const centroids = faceCentroids(state.bundle.analysis_mesh);
-  const local = segmentFaces(centroids, rings);
-  // Python is canonical: verify the mirror, then defer to the shipped copy.
-  const shipped = state.bundle.segments;
-  const agrees =
-    JSON.stringify(local.assignment) === JSON.stringify(shipped.assignment) &&
-    JSON.stringify(local.wedge_counts) === JSON.stringify(shipped.wedge_counts);
-  if (!agrees) {
-    showBanner("Segmentation mirror disagrees with Python; showing the Python binning. Fix binning.js before trusting the slider.");
+  const size = state.bundle.size;
+  // Only adopt a usable number in the API's own range. state.size otherwise
+  // keeps whatever it already held, so a bad value here cannot poison the
+  // next reload the way an unguarded copy did.
+  if (typeof size === "number" && Number.isFinite(size) && size >= SIZE_MIN && size <= SIZE_MAX) {
+    state.size = size;
+    document.getElementById("size-slider").value = size;
+    document.getElementById("size-value").textContent = Math.round(size * 1000);
   }
-  state.segments = shipped;
+  // bundle.py is explicit that document["size"] is the REQUESTED size and
+  // that an authored cut ignores it (its own target_size is None). The
+  // number above is therefore what the control asked for, not what the cut
+  // used, and calling it a "target" when nothing targeted it is the same
+  // claim the Data panel already refuses to make. The units span, which
+  // the slider's live input handler never touches, carries the correction
+  // so a mid-drag label stays true rather than reverting to "mm target".
+  document.getElementById("size-units").textContent =
+    state.bundle.tessellation.source === "imported"
+      ? " mm requested, but this cut is authored in Grasshopper and the size control is not used"
+      : " mm target";
+  // Same defence for the pattern (Task 9, the half of C1 Task 8 left open):
+  // an authored cut's own pattern name (tess["pattern"] in staging.py, not
+  // the requested one) is only adopted when it is one the server actually
+  // offers, so a bundle carrying a Grasshopper-authored pattern name never
+  // leaves the pattern control pointing at an option it does not have.
+  // Without this, selecting a material still sent whichever pattern the
+  // client last held, so choosing sprayed concrete kept requesting bonded
+  // courses instead of the monolithic bands its own default names.
+  const pattern = state.bundle.pattern;
+  if (typeof pattern === "string" && state.patterns.includes(pattern)) {
+    state.pattern = pattern;
+    document.getElementById("pattern-select").value = pattern;
+  }
+  document.getElementById("piece-count").textContent = state.bundle.pieces.length;
+  document.getElementById("course-count").textContent = state.bundle.tessellation.courses;
   // The index the timeline looks a casting up in, keyed by the PIECE's own
-  // key rather than by its cell's. pieces.py emits one casting per
-  // connected patch, and a cell can hold two patches that never touch
-  // (measured: rings=16 on Trial 2 ships 67 pieces over 66 cells), so a
-  // cell key is not an identity. The array order is the drop order.
+  // key: pieces.py emits exactly one casting per cell of the cut
+  // tessellation, so the cell's own key is the piece's identity too. The
+  // array order is the drop order.
   state.segmentIndex = new Map();
   state.bundle.pieces.forEach((piece, position) => {
     state.segmentIndex.set(piece.key, {
-      ring: piece.ring, wedge: piece.wedge, order: position,
+      course: piece.course, order: position,
     });
   });
-  document.getElementById("segment-count").textContent = state.segments.order.length;
   rebuildTimeline();
 }
 
@@ -418,6 +457,35 @@ function finalStage() {
   return last.struck_now && last.struck_now.converged ? last.struck_now : null;
 }
 
+// The third reading, in the one place all three readers can share it.
+// brick, tile and stone carry no ananke_fea preset (staging.FEA_MATERIALS),
+// so staging.py never calls the struck-now runner for them and writes
+// struck_now.status "unavailable" instead of a solve result. finalStage()
+// therefore returns null for those materials however many staged runs
+// complete, which makes "finalStage() is null" mean any of three different
+// things -- no staged run exists at all, a staged run exists and this
+// material has no solver, or a staged run exists, was solved, and did not
+// converge -- three statements a reader must never see conflated.
+// updateHud and applyPulse were given the no-solver reading in commit
+// 022f9c5; layerAvailability, the sibling nobody re-read, was still
+// printing the first when it meant the second (commit 8444539). What was
+// still missing after both fixes is the state one over: a stage that DID
+// reach the runner and came back with converged false. That is not "no
+// staging" (staging.stages is non-empty) and it is not "unavailable"
+// (struck_now.status is not "unavailable"), so it fell through to
+// layerAvailability's oldest, most generic branches, the same ones that
+// answer for a bundle with no staging at all.
+function stagingUnavailable() {
+  const staging = state.bundle && state.bundle.staging;
+  if (!staging || !staging.stages || !staging.stages.length) return false;
+  // some, not every: staging.py decides this per material, before any
+  // stage runs, so it is all or nothing in practice -- and a bundle where
+  // it somehow is not still has a stage nobody solved, which is the thing
+  // worth saying.
+  return staging.stages.some(
+    (stage) => stage.struck_now && stage.struck_now.status === "unavailable");
+}
+
 function craVerdict() {
   // The final stage's verdict is the whole-study verdict; run_staging
   // writes one cra entry per stage and no separate whole-vault solve.
@@ -426,58 +494,21 @@ function craVerdict() {
   return staging.stages[staging.stages.length - 1].cra || null;
 }
 
+// Keyed by material, not by the numeric mu value: stone's friction is 0.6,
+// the same number staging.py gives concrete, so a value-keyed lookup would
+// attribute it to EN 1992-1-1 clause 6.2.5, a smooth precast concrete
+// joint, when it was deliberately sourced as the middle of the 0.5 to 0.7
+// span the dry stone rigid block literature uses. See staging.py's own
+// FRICTION comment, which this mirrors.
 const FRICTION_PROVENANCE = {
-  "0.6": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
-  "0.4": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
+  "concrete": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "concrete-c50": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "concrete-sprayed": "mu 0.60: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint",
+  "timber": "mu 0.40: literature value for dry timber on timber contact (Eurocode 5 gives none)",
+  "brick": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared brick bed joint",
+  "tile": "mu 0.60: EN 1992-1-1 clause 6.2.5, the same value for a mortared tile bed joint",
+  "stone": "mu 0.60: middle of the 0.5 to 0.7 span the dry stone rigid block literature uses, quoted no more precisely than the source supports",
 };
-
-// The badge and the HUD are what a user reads during playback; the Data
-// panel, which carries the disclosure in full, is a separate view they may
-// never open. So the same caveat rides along here, short enough to sit on
-// one line.
-//
-// It no longer quotes metres. The measured figures (up to 2.389 m at 2
-// rings, 1.964 m at 4) came from bench/scripts/cra_acceptance.py comparing
-// the voussoir model against blocks.segment_blocks, the mesh-following
-// prisms the viewer used to draw. This branch replaced that drawing: the
-// castings on screen are built by pieces.py, whose boundaries are already
-// projected onto flat joint planes and are then shrunk by the joint gap
-// and thinned by the crown taper, all in the one dimension those numbers
-// measured. The distance between the two models is real and undisclosed,
-// so it is named; the old number for it would be a false precision.
-const FACETED_CAVEAT = "on a faceted analysis model, not the casting drawn here";
-
-function updateCraBadge() {
-  const badge = document.getElementById("cra-badge");
-  if (!state.bundle) { badge.classList.add("hidden"); return; }
-  badge.classList.remove("hidden", "cra-stands", "cra-fails", "cra-unknown");
-  const verdict = craVerdict();
-  if (!verdict) {
-    badge.classList.add("cra-unknown");
-    badge.textContent = "CRA: no run yet";
-  } else if (verdict.stands === true) {
-    badge.classList.add("cra-stands");
-    badge.textContent = "CRA: stands (mu " + (+verdict.mu).toFixed(2) + ")";
-  } else if (verdict.stands === false) {
-    badge.classList.add("cra-fails");
-    badge.textContent = "CRA: does not stand";
-  } else {
-    badge.classList.add("cra-unknown");
-    badge.textContent = "CRA: not run (" + (verdict.message || verdict.status || "unknown") + ")";
-  }
-  if (verdict && (verdict.stands === true || verdict.stands === false)) {
-    // Appended after the three-state branch above, so it rides on every
-    // badge that makes a claim without touching which class or which
-    // words that branch chose. A null verdict makes no claim about the
-    // structure, so it needs no caveat about the model the claim would
-    // have been made on, and its message is long enough already.
-    badge.textContent += " " + FACETED_CAVEAT;
-  }
-  const skipped = state.bundle.staging && state.bundle.staging.cra_skipped;
-  if (skipped && skipped.length) {
-    badge.textContent += " (" + skipped.length + " piece(s) not modelled)";
-  }
-}
 
 function layerAvailability(name) {
   const stage = finalStage();
@@ -488,6 +519,29 @@ function layerAvailability(name) {
   }
   if (name === "stress" || name === "deflection") {
     if (stage) return { on: true };
+    // stage is null and the question is why, in the same words updateHud
+    // and applyPulse already use for the same struck_now on the same
+    // screen. A staged run (staging.stages.length) settles two of the
+    // three readings below before the "no staging at all" fallback is
+    // even reachable, because both of them describe a run that already
+    // happened and can never be answered by telling the reader to run one.
+    const staging = state.bundle && state.bundle.staging;
+    const staged = !!(staging && staging.stages && staging.stages.length);
+    if (staged) {
+      // Two reasons a finished run still has no per-node field to colour
+      // with, and only two: either the material has no ananke_fea preset
+      // (stagingUnavailable, updateHud's "not available for this
+      // material") or the solver ran and did not converge (updateHud's
+      // "no equilibrium found"). Neither is "no staging exists".
+      if (stagingUnavailable()) {
+        return v
+          ? { on: true, why: "peaks only: struck-now fields are not available for this material" }
+          : { on: false, why: "not available for this material, and no verification data" };
+      }
+      return v
+        ? { on: true, why: "peaks only: no equilibrium found on the last staged run" }
+        : { on: false, why: "no equilibrium found on the last staged run, and no verification data" };
+    }
     if (v) return { on: true, why: "peaks only until a staged run exists" };
     return { on: false, why: "no staging and no verification data" };
   }
@@ -666,7 +720,15 @@ function recolourSegments() {
   // Smooth per-vertex stress: face values averaged onto analysis vertices,
   // then carried to render vertices through vertex_sources, the same rule
   // the displacement field uses. Null means no adjacent face had data.
-  let topField = null, bottomField = null, worstField = null, pickedField = null;
+  // Two fields under "per surface", not three. buildPieceMeshes writes
+  // userData.surface as `index < count ? 1 : -1` and nothing else, so a
+  // corner is always top or bottom and the third field the "per" branch
+  // used to smooth was never read by any corner: a full smoothing pass
+  // over the analysis faces plus an interpolation onto every render
+  // vertex, run on every recolour, whose result went nowhere. The
+  // stress-surface control's own "worst" option is unaffected -- that one
+  // comes through pickedField below, which is read.
+  let topField = null, bottomField = null, pickedField = null;
   if (stage && wantStress) {
     const analysis = state.bundle.analysis_mesh;
     const sources = mesh.vertex_sources;
@@ -676,28 +738,27 @@ function recolourSegments() {
     if (surface === "per") {
       topField = smooth("top");
       bottomField = smooth("bottom");
-      worstField = smooth("worst");
     } else {
       pickedField = smooth(surface);
     }
   }
   const white = new THREE.Color(0xffffff);
   for (const segment of state.objects.shell.children) {
-    const sources = segment.userData.sources;
+    const weights = segment.userData.weights;
     const surfaceOf = segment.userData.surface;
     const base = segment.userData.basePositions;
     const positions = segment.geometry.getAttribute("position");
-    const colours = new Float32Array(sources.length * 3);
-    for (let i = 0; i < sources.length; i++) {
-      const source = sources[i];
-      const cornerSurface = surfaceOf[i] === 1 ? "top" : surfaceOf[i] === -1 ? "bottom" : "worst";
+    const colours = new Float32Array(weights.length * 3);
+    for (let i = 0; i < weights.length; i++) {
       let colour = null;
       if (wantStress) {
         if (pickedField || topField) {
-          const field = pickedField || (
-            cornerSurface === "top" ? topField
-              : cornerSurface === "bottom" ? bottomField : worstField);
-          const value = field[source];
+          const field = pickedField || (surfaceOf[i] === 1 ? topField : bottomField);
+          // A cut piece vertex is not a mesh vertex, so the field is read
+          // through the weights the cut recorded for it rather than a bare
+          // index. A null component in the weighted sum keeps this white,
+          // same as the old missing-index branch.
+          const value = sampleScalar(field, weights[i]);
           colour = value === null ? white : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
@@ -706,7 +767,7 @@ function recolourSegments() {
       } else if (deflectionPeakOnly) {
         colour = STRESS_SCALE(0.3 * deflectionPeakOnly, deflectionPeakOnly);
       }
-      const d = displacement ? displacement[source] : null;
+      const d = displacement ? sampleVector(displacement, weights[i], null) : null;
       if (!colour && wantDeflection && d) {
         colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
       }
@@ -843,10 +904,11 @@ function arrowField(entries, colour) {
 
 // ---------- integrity pulse ----------
 function currentStageIndex(build) {
-  // Which build stage the timeline is inside: stages are rings, and a ring's
-  // segments occupy a contiguous run of the drop order. build is elapsed
-  // time since the net finished inflating (see applySceneAtTime), so the
-  // stage reported here always matches the segments actually on screen.
+  // Which build stage the timeline is inside: stages are courses, and a
+  // course's segments occupy a contiguous run of the drop order. build is
+  // elapsed time since the net finished inflating (see applySceneAtTime),
+  // so the stage reported here always matches the segments actually on
+  // screen.
   if (!state.bundle.staging || !state.timeline) return null;
   const stages = state.bundle.staging.stages;
   if (!stages || !stages.length) return null;
@@ -856,15 +918,14 @@ function currentStageIndex(build) {
   // down the drop order and pulsing that stage's verdict over it.
   const placed = Math.floor(build / placementStep());
   // Walked over the pieces, which are what actually drop, in the same order
-  // the index and the picture use. A split cell ships two castings, so the
-  // cell order is one placement short of the truth wherever that happens.
-  let ringsDone = 0, count = 0;
+  // the index and the picture use.
+  let coursesDone = 0, count = 0;
   for (const piece of state.bundle.pieces) {
     count += 1;
     if (count > placed) break;
-    ringsDone = Math.max(ringsDone, piece.ring + 1);
+    coursesDone = Math.max(coursesDone, piece.course + 1);
   }
-  return Math.max(0, Math.min(stages.length - 1, ringsDone - 1));
+  return Math.max(0, Math.min(stages.length - 1, coursesDone - 1));
 }
 
 function applyPulse(build) {
@@ -872,13 +933,18 @@ function applyPulse(build) {
   const index = currentStageIndex(build);
   if (index === null) return;
   const stage = state.bundle.staging.stages[index];
-  const cra = stage.cra;
-  // Green now means BOTH lenses pass: the struck-now FEA solve converged
-  // and the rigid-block verdict stands. A missing cra entry (old cache)
-  // reads as not passing; the HUD's "CRA: not run" line explains the red.
-  const good = !!(stage.struck_now && stage.struck_now.converged
-    && cra && cra.stands === true);
-  const tint = good ? 0x1a3a1a : 0x3a1a1a;
+  // Green means the struck-now FEA solve converged, red means it did not.
+  // "unavailable" (brick, tile, stone: no ananke_fea preset, see
+  // staging.FEA_MATERIALS) is neither -- no solve was ever attempted, so it
+  // gets a neutral grey rather than the red that would say a solve was run
+  // and lost. The form finding already guarantees compression-only
+  // equilibrium by construction, so a separate rigid-block lens is not
+  // what this pulse is for either; see the Data panel for the CRA verdict
+  // where a study happens to carry one.
+  const struck = stage.struck_now;
+  const unavailable = !!(struck && struck.status === "unavailable");
+  const good = !!(struck && struck.converged);
+  const tint = unavailable ? 0x2a2a2a : good ? 0x1a3a1a : 0x3a1a1a;
   const pulse = 0.5 + 0.5 * Math.sin(build * 4);
   for (const segment of state.objects.shell.children) {
     if (!segment.visible) continue;
@@ -897,7 +963,18 @@ function updateHud() {
   // loading bundle) and the HUD must never claim a thickness the shell
   // isn't built at.
   const provenanceThickness = state.bundle.provenance.thickness;
-  const lines = [state.bundle.export + "  (" + state.bundle.material + ", " + state.bundle.rings + " rings)"];
+  // Same correction the size control carries and the Data panel already
+  // makes in as many words: bundle.size is the size that was REQUESTED,
+  // and an authored cut ignores it. The HUD is what a user reads during
+  // playback, so it is the last place that may quote a target the cut on
+  // screen never had.
+  const sizeCaption = state.bundle.tessellation.source === "imported"
+    ? "authored cut, the size control is not used"
+    : Math.round(state.bundle.size * 1000) + " mm target";
+  const lines = [state.bundle.export + "  (" + state.bundle.material + ", " +
+    sizeCaption + ", " +
+    state.bundle.pieces.length + " pieces in " +
+    state.bundle.tessellation.courses + " courses)"];
   const thicknessMm = Math.round(provenanceThickness * 1000);
   let thicknessLine = "shell thickness " + thicknessMm + " mm";
   if (v && v.thickness && Math.abs(v.thickness - provenanceThickness) > 1e-9) {
@@ -929,18 +1006,22 @@ function updateHud() {
     lines.push("stage " + stage.stage + " of " + staging.stages.length);
     lines.push("formwork carries " + (stage.formwork_carries_newtons / 1000).toFixed(1) + " kN");
     const struck = stage.struck_now;
-    lines.push(struck && struck.converged
-      ? "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
-        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)"
-      : "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result"));
-    const cra = stage.cra;
-    if (cra && cra.stands === true) {
-      lines.push("CRA: stands, " + FACETED_CAVEAT);
-    } else if (cra && cra.stands === false) {
-      lines.push("CRA: does not stand, " + FACETED_CAVEAT);
+    // Three readings, not two: a real convergence failure ("no equilibrium
+    // found") must never be the label for a material nobody ever tried to
+    // solve. staging.py's FEA_MATERIALS materials (concrete, timber, ...)
+    // are the only ones that reach a real runner call at all; brick, tile
+    // and stone come back with struck.status "unavailable" instead, and
+    // that has to read as "not available for this material", not failure.
+    let struckLine;
+    if (struck && struck.converged) {
+      struckLine = "struck now: stands (peak tension " + (struck.peak_tension / 1e6).toFixed(2) +
+        " MPa, peak compression " + (struck.peak_compression / 1e6).toFixed(2) + " MPa)";
+    } else if (struck && struck.status === "unavailable") {
+      struckLine = "struck now: not available for this material -- " + struck.message;
     } else {
-      lines.push("CRA: not run" + (cra && cra.message ? " (" + cra.message + ")" : ""));
+      struckLine = "struck now: no equilibrium found -- " + (struck && struck.message ? struck.message : "no solve result");
     }
+    lines.push(struckLine);
   }
   hud.textContent = lines.join("\n");
 }
@@ -952,21 +1033,248 @@ function showBanner(text) {
 }
 
 // ---------- data panel ----------
+// The residual is the SINE of an angle, which docs/BENCH.md quotes in
+// degrees and millimetres beside the bare number because a sine of 0.33 is
+// not something a reader converts in their head. Same conversion the
+// measurement script prints.
+function residualDegrees(sine) {
+  return Math.asin(Math.min(1, Math.max(-1, sine))) * 180 / Math.PI;
+}
+
+// Total cap points across every drawn casting: the denominator the clamped
+// count is meaningless without. "137 cap points clamped" and "137 of 41265"
+// are not the same statement.
+function capPointCount() {
+  return (state.bundle && state.bundle.pieces || []).reduce(
+    (total, piece) => total + piece.mid.length, 0);
+}
+
 function renderDataPanel(v) {
   const content = document.getElementById("data-content");
   content.innerHTML = "";
 
-  // Render CRA section FIRST, before verification early-out, so it appears
-  // even on staged-but-unverified studies.
-  const craHeading = document.createElement("h3");
-  craHeading.textContent = "CRA rigid-block verdict";
-  content.appendChild(craHeading);
+  // ---------- Cut section ----------
+  // A cut that dropped analysis faces, missed a joint plane, or clamped a
+  // point off the surface looks identical on screen to a clean one, so
+  // every field bundle.py's tessellation summary carries is disclosed here
+  // rather than trusted silently. Rendered unconditionally on any loaded
+  // bundle, ahead of the verification early-out below, the same reason the
+  // CRA section renders ahead of it.
+  const tess = state.bundle && state.bundle.tessellation;
+  if (tess) {
+    const cutHeading = document.createElement("h3");
+    cutHeading.textContent = "Cut";
+    content.appendChild(cutHeading);
+
+    const patternLine = document.createElement("p");
+    patternLine.textContent = tess.pattern + " ("
+      + (tess.source === "imported" ? "imported from Grasshopper" : "generated") + ")";
+    content.appendChild(patternLine);
+
+    const sizeLine = document.createElement("p");
+    sizeLine.textContent = tess.source === "imported"
+      ? "no target size of its own: an authored cut ignores the size control entirely"
+      : "target size " + tess.target_size + " m";
+    content.appendChild(sizeLine);
+
+    const countLine = document.createElement("p");
+    countLine.textContent = tess.cells + " pieces, " + tess.courses + " courses";
+    content.appendChild(countLine);
+
+    // An authored cut whose cells carry no course lands every one of them
+    // in course 0 (tessellation.from_document), so the vault collapses to
+    // a single course and the drop sequence, taperAt and the stage mapping
+    // all follow that collapse. The flag saying so shipped in the bundle
+    // and was never rendered anywhere a user could see it.
+    if (tess.courses_inferred) {
+      const inferredLine = document.createElement("p");
+      inferredLine.textContent = "no cell in this authored cut carried a "
+        + "course, so every one was placed in course 0: the courses above "
+        + "are inferred, not authored, and the drop sequence, the crown "
+        + "taper and the stage mapping all read this vault as one course.";
+      content.appendChild(inferredLine);
+    }
+
+    // The spec asks for boundary sub-edges per piece, before and after, in
+    // BENCH.md and in the Data panel where the user can see them. The
+    // bundle has carried both since pieces.py started reporting them; the
+    // panel is the only place a user meets a specific loaded cut, and the
+    // rim outlier is exactly the caveat it exists for.
+    const fpp = tess.facets_per_piece;
+    if (fpp) {
+      const facetLine = document.createElement("p");
+      facetLine.textContent = "facets per piece: min " + fpp.min + " / median "
+        + fpp.median + " / max " + fpp.max
+        + (fpp.max_course === undefined || fpp.max_course === null
+          ? "" : " (the max belongs to course " + fpp.max_course + ")")
+        + ". This is the number the retired ring and wedge binning's 30 to "
+        + "86 boundary edges per cell compares against: a four sided "
+        + "voussoir has four.";
+      content.appendChild(facetLine);
+    }
+    const bpp = tess.boundary_points_per_piece;
+    if (bpp) {
+      const boundaryLine = document.createElement("p");
+      boundaryLine.textContent = "boundary points per piece: min " + bpp.min
+        + " / median " + bpp.median + " / max " + bpp.max
+        + ". These count every subdivided boundary point rather than the "
+        + "joints themselves, so read facets per piece for the headline.";
+      content.appendChild(boundaryLine);
+    }
+
+    const chordLine = document.createElement("p");
+    chordLine.textContent = "cap chord deviation " + tess.chord_mm.toFixed(3)
+      + " mm against a 5.0 mm target, " + tess.rounds + " subdivision round(s), "
+      + "limited by " + tess.limit;
+    content.appendChild(chordLine);
+
+    // The single worst-corner number badly misrepresents the cut, so the
+    // whole distribution is shown, not only tess.corner_residual (which
+    // stays the worst corner alone, equal to stats.max below): the median
+    // is what describes a typical joint, and the max describes only its
+    // own worst corner, which the studio names by course rather than
+    // leaving the reader to assume it is typical.
+    // Guarded, not assumed. corner_residual_stats landed late in the
+    // cutting wave and REQUIRED_BUNDLE_KEYS did not name it until this
+    // fix, so every machine that ran this branch mid-wave has a cached
+    // bundle without it. Dereferencing stats.count on one of those threw
+    // out of the Data button's click handler AFTER content.innerHTML = ""
+    // and BEFORE the panel was unhidden, so the button read as doing
+    // nothing at all. A missing sub-field degrades to a line saying so.
+    const stats = tess.corner_residual_stats;
+    if (!stats) {
+      const residualMissing = document.createElement("p");
+      residualMissing.textContent = "corner normal residual: not measured in "
+        + "this bundle, which was cached before the distribution was "
+        + "reported. Delete the cached bundle, or change any control, to "
+        + "re-cut.";
+      content.appendChild(residualMissing);
+    } else {
+      const residualWhat = document.createElement("p");
+      residualWhat.textContent = "corner normal residual, over " + stats.count
+        + " corners: the sine of the angle between a corner's one stored "
+        + "normal and the plane of the facet that does not own it, since a "
+        + "corner belongs to two joints and one normal cannot lie in both";
+      content.appendChild(residualWhat);
+      const residualDistribution = document.createElement("p");
+      // In degrees as well as the bare sine, the way docs/BENCH.md quotes
+      // it: a sine of 0.33 is not a number a reader converts in their head,
+      // and the whole point of the distribution is that it can be read.
+      residualDistribution.textContent = "median " + stats.median.toFixed(4)
+        + " (" + residualDegrees(stats.median).toFixed(2) + " degrees)"
+        + ", mean " + stats.mean.toFixed(4)
+        + " (" + residualDegrees(stats.mean).toFixed(2) + " degrees)"
+        + ", p99 " + stats.p99.toFixed(4)
+        + " (" + residualDegrees(stats.p99).toFixed(2) + " degrees)"
+        + ", max " + stats.max.toFixed(4)
+        + " (" + residualDegrees(stats.max).toFixed(2) + " degrees, its own "
+        + "worst corner, in course(s) " + stats.worst_corner_courses.join(", ")
+        + "). The median describes the cut; the max describes only its worst "
+        + "corner, which clusters with the rest of the tail in the rim course, "
+        + "where the cut follows the mesh's own irregular boundary rather "
+        + "than a straight chord.";
+      content.appendChild(residualDistribution);
+      const residualCounts = document.createElement("p");
+      residualCounts.textContent = "corners over threshold: " + stats.over.map(
+        function (entry) {
+          return entry.count + " of " + stats.count + " over " + entry.threshold
+            + " (" + residualDegrees(entry.threshold).toFixed(1) + " degrees)";
+        }
+      ).join(", ");
+      content.appendChild(residualCounts);
+    }
+
+    // With denominators and, for the clamp, with the magnitude. The same
+    // 137 clamped points are either rounding noise or ten times the 5 mm
+    // chord target depending on how far they moved, which is why the
+    // report carries clamped_max_m and clamped_median_m at all.
+    const capPoints = capPointCount();
+    const clampedLine = document.createElement("p");
+    let clampedText = tess.clamped_points + " of " + capPoints
+      + " cap point(s) clamped to the nearest render mesh face";
+    if (typeof tess.clamped_max_m === "number"
+        && typeof tess.clamped_median_m === "number") {
+      clampedText += ", reaching " + (tess.clamped_max_m * 1000).toFixed(1)
+        + " mm at the worst and " + (tess.clamped_median_m * 1000).toFixed(1)
+        + " mm at the median";
+    } else {
+      clampedText += " (by how far: not measured in this cached bundle)";
+    }
+    clampedText += "; " + tess.missing_planes
+      + " boundary facet(s) with no joint plane to project onto";
+    clampedLine.textContent = clampedText;
+    content.appendChild(clampedLine);
+
+    const coverage = tess.report;
+    const analysisFaces = state.bundle.analysis_mesh.faces.length;
+    const coverageLine = document.createElement("p");
+    coverageLine.textContent = "coverage: " + coverage.orphan_faces.length
+      + " of " + analysisFaces + " analysis face(s) orphaned, "
+      + coverage.double_faces.length + " doubled; of " + tess.cells
+      + " cell(s), " + coverage.open_facets.length + " open facet(s), "
+      + coverage.slivers.length + " sliver(s), "
+      + coverage.coverage_holes.length + " coverage hole(s), "
+      + coverage.broken_boundary.length + " broken boundary entrie(s)";
+    content.appendChild(coverageLine);
+
+    // A folded cell is named and nowhere excluded: it is still cut, still
+    // capped and still drawn, with one lobe of its cap inside out. It
+    // enters none of the counts above, so naming it here is the only way
+    // anyone learns which piece on screen is the bad one.
+    const folded = coverage.folded;
+    const foldedLine = document.createElement("p");
+    foldedLine.textContent = !folded
+      ? "folded cells: not measured in this cached bundle"
+      : folded.length
+        ? "folded: " + folded.length + " cell(s) whose welded outline "
+          + "crosses itself -- " + folded.join(", ") + ". Each is still cut, "
+          + "still capped and still drawn, with one lobe of its cap inside "
+          + "out, and enters none of the coverage counts above."
+        : "folded: no cell's welded outline crosses itself";
+    content.appendChild(foldedLine);
+
+    if (tess.backward_turn_degrees !== null && tess.backward_turn_degrees !== undefined) {
+      const wobbleLine = document.createElement("p");
+      wobbleLine.textContent = tess.backward_steps + " of the plan's own rim step(s) "
+        + "turn backward, " + tess.backward_turn_degrees.toFixed(3)
+        + " degrees of backward turn total";
+      content.appendChild(wobbleLine);
+    }
+
+    if (tess.source === "imported") {
+      const provenanceLine = document.createElement("p");
+      provenanceLine.textContent = "provenance: " + JSON.stringify(tess.provenance || {});
+      content.appendChild(provenanceLine);
+      const zLine = document.createElement("p");
+      zLine.textContent = tess.z_offset_max === null || tess.z_offset_max === undefined
+        ? "measured z offset against the thrust surface: unmeasured"
+        : "measured z offset against the thrust surface: "
+          + (tess.z_offset_max * 1000).toFixed(1) + " mm";
+      content.appendChild(zLine);
+    }
+
+    const interpolationLine = document.createElement("p");
+    interpolationLine.textContent = "a piece's own points are not render mesh "
+      + "vertices, so every field value shown on a casting is sampled by "
+      + "interpolation through the barycentric weights the cut recorded for "
+      + "it, not read off a single mesh vertex directly: a heatmap value at "
+      + "a point is an interpolated reading, not a lookup.";
+    content.appendChild(interpolationLine);
+  }
+
+  // The CRA verdict no longer pops up: it is gone from the badge, the HUD
+  // and the integrity pulse, since the form finding already guarantees
+  // compression-only equilibrium by construction and no size the API
+  // permits reaches the rigid-block budget in any case. The Data panel
+  // keeps the honest record where a study happens to carry one, rendered
+  // BEFORE the verification early-out so it still shows on a
+  // staged-but-unverified study, and rendered not at all, not as an empty
+  // heading, when there is no verdict to report.
   const verdict = craVerdict();
-  if (!verdict) {
-    const none = document.createElement("p");
-    none.textContent = "no CRA run yet: run a staged analysis";
-    content.appendChild(none);
-  } else {
+  if (verdict) {
+    const craHeading = document.createElement("h3");
+    craHeading.textContent = "CRA rigid-block verdict";
+    content.appendChild(craHeading);
     const line = document.createElement("p");
     line.textContent = verdict.stands === true
       ? "stands as rigid blocks under friction, self-weight only"
@@ -975,7 +1283,7 @@ function renderDataPanel(v) {
         : "not run: " + (verdict.message || verdict.status);
     content.appendChild(line);
     const mu = document.createElement("p");
-    mu.textContent = FRICTION_PROVENANCE[String(verdict.mu)]
+    mu.textContent = FRICTION_PROVENANCE[state.bundle.material]
       || ("mu " + verdict.mu);
     content.appendChild(mu);
     const counts = document.createElement("p");
@@ -1007,8 +1315,13 @@ function renderDataPanel(v) {
       missing.textContent = skipped.length + " piece(s) could not be modelled "
         + "as a voussoir and are absent from the rigid-block model, so this "
         + "verdict describes less than the whole vault: "
+        // entry.ring/entry.wedge are voussoirs.py's own field names,
+        // unchanged there by Task 7's ruling: ring is the course index and
+        // wedge is the piece's position within it, not a ring/wedge polar
+        // bin. The sentence a user reads says so honestly without asking
+        // voussoirs.py to rename anything.
         + skipped.map(function (entry) {
-            return "ring " + entry.ring + " wedge " + entry.wedge
+            return "course " + entry.ring + " piece " + entry.wedge
               + " (" + entry.reason + ")";
           }).join("; ");
       content.appendChild(missing);
@@ -1105,10 +1418,53 @@ async function fetchJson(url) {
   return response.json();
 }
 
+// ---------- pattern control (Task 9) ----------
+// generators.PLANNED and generators.MATERIAL_NOTES are the honesty
+// mechanism: a pattern named in the spec but not built yet is listed and
+// disabled rather than silently absent, and a material whose intended
+// pattern is not built yet says so in pattern-note instead of quietly
+// drawing bonded courses under the missing pattern's name.
+function patternLabel(pattern) {
+  return pattern.split("-").map((word) => word[0].toUpperCase() + word.slice(1)).join(" ");
+}
+
+function populatePatternSelect(payload) {
+  const select = document.getElementById("pattern-select");
+  select.innerHTML = "";
+  for (const pattern of payload.patterns) {
+    const option = document.createElement("option");
+    option.value = pattern;
+    option.textContent = patternLabel(pattern);
+    select.appendChild(option);
+  }
+  for (const pattern of Object.keys(payload.patterns_planned)) {
+    const option = document.createElement("option");
+    option.value = pattern;
+    option.textContent = patternLabel(pattern) + " (arrives " + payload.patterns_planned[pattern] + ")";
+    option.disabled = true;
+    select.appendChild(option);
+  }
+}
+
+// Changing the material sets the pattern to that material's own default
+// (concrete-sprayed's is monolithic-bands, everything else's is
+// bonded-courses) and writes the material's honesty note, if it has one,
+// into pattern-note. Tile and stone are the only materials with a note
+// today: their intended patterns (Guastavino herringbone, the Armadillo
+// dual) are not built, so the note says which wave they arrive in rather
+// than let the pattern control claim one is drawing while another is.
+function updatePatternForMaterial(material) {
+  const pattern = state.patternDefaults[material] || state.pattern;
+  state.pattern = pattern;
+  document.getElementById("pattern-select").value = pattern;
+  document.getElementById("pattern-note").textContent = state.patternNotes[material] || "";
+}
+
 async function loadStudy(exportName) {
   const material = document.getElementById("material-select").value;
   const url = "/api/studies/" + encodeURIComponent(exportName) +
-    "/bundle?material=" + material + "&rings=" + state.rings + "&thickness=" + state.thickness;
+    "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
+    "&size=" + state.size + "&thickness=" + state.thickness;
   try {
     buildScene(await fetchJson(url));
   } catch (error) {
@@ -1121,6 +1477,11 @@ async function boot(preferredExport) {
   try {
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
+    state.patterns = payload.patterns;
+    state.patternDefaults = payload.pattern_defaults;
+    state.patternNotes = payload.pattern_notes;
+    populatePatternSelect(payload);
+    updatePatternForMaterial(document.getElementById("material-select").value);
     const select = document.getElementById("study-select");
     select.innerHTML = "";
     const names = [];
@@ -1219,21 +1580,27 @@ async function importColumns() {
 
 // ---------- UI wiring ----------
 document.getElementById("study-select").addEventListener("change", (e) => loadStudy(e.target.value));
-document.getElementById("material-select").addEventListener("change", () => {
+document.getElementById("material-select").addEventListener("change", (e) => {
+  updatePatternForMaterial(e.target.value);
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
-// Exactly the thickness slider's shape, and for the same reason: the ring
-// count is a property of the BUNDLE, not of the client. "input" only moves
-// the live label, "change" (drag release) commits the value and asks the
-// server for a bundle whose pieces are built at that ring count. Re-binning
-// client-side while the drawn pieces stay at the old count is what used to
-// orphan piece keys and stop the render loop.
-document.getElementById("rings-slider").addEventListener("input", (e) => {
-  document.getElementById("rings-value").textContent = e.target.value;
+document.getElementById("pattern-select").addEventListener("change", (e) => {
+  state.pattern = e.target.value;
+  const select = document.getElementById("study-select");
+  if (select.value) loadStudy(select.value);
 });
-document.getElementById("rings-slider").addEventListener("change", (e) => {
-  state.rings = +e.target.value;
+// Exactly the thickness slider's shape, and for the same reason: the piece
+// size is a property of the BUNDLE, not of the client. "input" only moves
+// the live label, "change" (drag release) commits the value and asks the
+// server for a bundle whose pieces are cut at that size. Re-cutting
+// client-side while the drawn pieces stay at the old size is what used to
+// orphan piece keys and stop the render loop.
+document.getElementById("size-slider").addEventListener("input", (e) => {
+  document.getElementById("size-value").textContent = Math.round(+e.target.value * 1000);
+});
+document.getElementById("size-slider").addEventListener("change", (e) => {
+  state.size = +e.target.value;
   const select = document.getElementById("study-select");
   if (select.value) loadStudy(select.value);
 });
@@ -1269,7 +1636,11 @@ document.getElementById("taper").addEventListener("change", (e) => {
 for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
   document.getElementById(id).addEventListener("input", applyEnvironment);
 }
-document.getElementById("exaggeration").addEventListener("input", () => recolourSegments());
+// "change" (drag release), not "input": the file's own convention for every
+// other slider that rebuilds something, and this one re-runs the recolour
+// over every casting's geometry. On the real export that is 233 of them per
+// event, which a drag fires dozens of.
+document.getElementById("exaggeration").addEventListener("change", () => recolourSegments());
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
 // Same pattern as the thickness slider: "input" only updates the live mm
 // label, "change" (drag release) commits the value and rebuilds -- so a
@@ -1301,18 +1672,34 @@ document.getElementById("run-button").addEventListener("click", startRun);
 document.getElementById("import-export-button").addEventListener("click", importExportPair);
 document.getElementById("import-columns-button").addEventListener("click", importColumns);
 
-// M5 fix: reload with the material/rings/thickness the run actually solved
-// with, not whatever the controls read when the run happens to finish. A
-// slider nudge mid-run must not orphan the run's own result -- it must show
-// up, and the controls must be set back to match so the display stays
-// honest about what's on screen.
-function applyRunParamsToControls({ material, rings, thickness }) {
+// M5 fix: reload with the material/pattern/size/thickness the run actually
+// solved with, not whatever the controls read when the run happens to
+// finish. A slider nudge mid-run must not orphan the run's own result -- it
+// must show up, and the controls must be set back to match so the display
+// stays honest about what's on screen.
+function applyRunParamsToControls({ material, pattern, size, thickness }) {
   document.getElementById("material-select").value = material;
-  document.getElementById("rings-slider").value = rings;
-  document.getElementById("rings-value").textContent = rings;
+  // Assigning .value fires no change event, and the change handler is the
+  // only other writer of pattern-note. So: load in limestone with the note
+  // showing, switch material mid-run, let the run finish, and the material
+  // is restored here with the note left at whatever the mid-run switch put
+  // there -- empty for every material but tile and stone. The studio then
+  // draws bonded courses under a limestone label with the caveat that the
+  // Armadillo dual is not built gone from the screen, which is the exact
+  // failure the note exists to prevent.
+  //
+  // The note only, never the pattern: updatePatternForMaterial also forces
+  // the material's default pattern, and calling it here would overwrite
+  // the pattern this run actually solved with.
+  document.getElementById("pattern-note").textContent =
+    state.patternNotes[material] || "";
+  document.getElementById("pattern-select").value = pattern;
+  document.getElementById("size-slider").value = size;
+  document.getElementById("size-value").textContent = Math.round(size * 1000);
   document.getElementById("thickness-input").value = thickness;
   document.getElementById("thickness-value").textContent = Math.round(thickness * 1000);
-  state.rings = rings;
+  state.pattern = pattern;
+  state.size = size;
   state.thickness = thickness;
 }
 
@@ -1320,7 +1707,12 @@ function watchRun(runId, exportName, status, params) {
   const poll = setInterval(async () => {
     try {
       const run = await fetchJson("/api/runs/" + runId);
-      status.textContent = run.state + " (stage " + run.stage + "/" + run.of + ") " + run.message;
+      // "of" is 0 until the cut finishes, because the number of stages is
+      // the number of courses the cut produces and nothing knows it before
+      // then. "stage 0 of 0" reads as a run that has nothing to do; say
+      // what it is actually doing instead.
+      const progress = run.of ? "stage " + run.stage + " of " + run.of : "cutting";
+      status.textContent = run.state + " (" + progress + ") " + run.message;
       if (run.state === "done") {
         clearInterval(poll);
         applyRunParamsToControls(params);
@@ -1340,17 +1732,32 @@ async function startRun() {
   const material = document.getElementById("material-select").value;
   // Captured now, at POST time, so a later slider nudge cannot change what
   // this run is understood to have solved.
-  const params = { material, rings: state.rings, thickness: state.thickness };
+  const params = { material, pattern: state.pattern, size: state.size, thickness: state.thickness };
   try {
     const response = await fetch("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ export: exportName, material, rings: params.rings, thickness: params.thickness }),
+      body: JSON.stringify({
+        export: exportName, material, pattern: params.pattern,
+        size: params.size, thickness: params.thickness,
+      }),
     });
     const body = await response.json();
     if (response.status === 409) {
       status.textContent = "watching the live run";
       watchRun(body.run, exportName, status, params);
+      return;
+    }
+    // A refusal carries a precise reason: app.py 400s a size outside the
+    // slider's range, a thickness outside 0.05 to 0.5 m, and a material or
+    // pattern it does not offer, each naming what to use instead. Without
+    // this check the refusal body has no "run" key, watchRun polls
+    // /api/runs/undefined, that 404s, and the one thing the user is told
+    // is "lost contact with the server" -- a connection failure that never
+    // happened, in place of a sentence saying exactly what to change.
+    if (!response.ok) {
+      status.textContent = "run refused: " + (body && body.detail
+        ? body.detail : "HTTP " + response.status);
       return;
     }
     watchRun(body.run, exportName, status, params);
@@ -1439,10 +1846,10 @@ function pieceMaterial(key) {
   return own;
 }
 
-function taperAt(ring) {
+function taperAt(course) {
   // Pieces thin toward the crown, which is where the least load arrives.
-  const rings = Math.max(1, state.bundle.rings - 1);
-  return 1 - state.taper * Math.min(1, ring / rings);
+  const courses = Math.max(1, state.bundle.tessellation.courses - 1);
+  return 1 - state.taper * Math.min(1, course / courses);
 }
 
 function buildPieceMeshes() {
@@ -1453,7 +1860,7 @@ function buildPieceMeshes() {
   const gap = sprayedMaterial() ? 0 : state.jointGap;
   for (const piece of state.bundle.pieces) {
     const count = piece.mid.length;
-    const half = state.bundle.provenance.thickness * taperAt(piece.ring) / 2;
+    const half = state.bundle.provenance.thickness * taperAt(piece.course) / 2;
     const points = [];
     for (const sign of [1, -1]) {
       for (let i = 0; i < count; i++) {
@@ -1476,7 +1883,7 @@ function buildPieceMeshes() {
         p[0] - centre[0], p[1] - centre[1], p[2] - centre[2]));
     }
     const shrink = Math.max(0, 1 - (gap / 2) / extent);
-    const positions = [], sources = [], surface = [];
+    const positions = [], weights = [], surface = [];
     for (const face of piece.faces) {
       for (let corner = 1; corner < face.length - 1; corner++) {
         for (const index of [face[0], face[corner], face[corner + 1]]) {
@@ -1485,7 +1892,7 @@ function buildPieceMeshes() {
             centre[0] + (p[0] - centre[0]) * shrink,
             centre[1] + (p[1] - centre[1]) * shrink,
             centre[2] + (p[2] - centre[2]) * shrink);
-          sources.push(piece.sources[index % count]);
+          weights.push(piece.sources[index % count]);
           surface.push(index < count ? 1 : -1);
         }
       }
@@ -1503,7 +1910,7 @@ function buildPieceMeshes() {
     // growth needs this to scale a piece about itself rather than about
     // z = 0 (see applySceneAtTime).
     mesh.userData.centreZ = centre[2];
-    mesh.userData.sources = sources;
+    mesh.userData.weights = weights;
     mesh.userData.surface = surface;
     mesh.userData.basePositions = new Float32Array(positions);
     group.add(mesh);
@@ -1579,6 +1986,14 @@ function applyInflation(u) {
 // either.
 function applySceneAtTime(t) {
   state.timeline.t = t;
+  // Guarded like every sibling that touches these two (recolourSegments,
+  // applyPulse, setLayer). disposeShell sets state.objects.shell to null,
+  // and this function is reachable from setLayer and rebuildWiresAndNodes,
+  // neither of which is ordered after a rebuild; the falsework is built in
+  // the same pass. An unguarded read throws out of frame() before the
+  // frame is rescheduled, which kills the render loop until the page is
+  // reloaded, and that is a heavy price for a null check.
+  if (!state.objects.shell || !state.objects.falsework) return;
   const inflate = inflationFactor(t);
   applyInflation(inflate);
   // The timeline opens with the net inflating into form; everything after
@@ -1780,4 +2195,4 @@ function frame(now) {
 boot();
 requestAnimationFrame(frame);
 
-export { state, buildScene, setLayer, rebinSegments, applyTimeline, timelineDuration, rebuildTimeline };
+export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

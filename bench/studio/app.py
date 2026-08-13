@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import bundle
+import generators
 import geometry
 import staging
 
@@ -30,6 +31,9 @@ RUNS: dict = {}
 RUNS_LOCK = threading.Lock()
 
 MATERIALS = sorted(staging.DENSITIES)
+SIZE_MIN = 0.3
+SIZE_MAX = 3.0
+PATTERNS = sorted(generators.GENERATORS)
 
 
 def _ffmpeg_present() -> bool:
@@ -52,7 +56,8 @@ def _invalidate_studio_cache(slug: str) -> None:
             stale.unlink()
 
 
-def _validate(export: str, material: str, rings: int, thickness: float) -> None:
+def _validate(export: str, material: str, pattern: str, size: float,
+              thickness: float) -> None:
     pairs = geometry.available_exports(bundle.UPLOAD_DIR)
     if export not in pairs:
         raise HTTPException(404, "no export named {!r}. Available: {}".format(
@@ -60,11 +65,15 @@ def _validate(export: str, material: str, rings: int, thickness: float) -> None:
     if material not in staging.DENSITIES:
         raise HTTPException(400, "unknown material {!r}: use one of {}".format(
             material, ", ".join(MATERIALS)))
-    import segmentation
-
-    if not segmentation.RING_MIN <= rings <= segmentation.RING_MAX:
-        raise HTTPException(400, "rings must be between {} and {}".format(
-            segmentation.RING_MIN, segmentation.RING_MAX))
+    if pattern not in generators.GENERATORS:
+        planned = generators.PLANNED.get(pattern)
+        detail = ("the {} pattern arrives in {}".format(pattern, planned)
+                  if planned else "unknown pattern {!r}".format(pattern))
+        raise HTTPException(400, "{}: use one of {}".format(
+            detail, ", ".join(PATTERNS)))
+    if not SIZE_MIN <= size <= SIZE_MAX:
+        raise HTTPException(400, "target piece size must be between {} and {} "
+                                 "metres".format(SIZE_MIN, SIZE_MAX))
     if not 0.05 <= thickness <= 0.5:
         raise HTTPException(400, "thickness must be between 0.05 and 0.5 metres")
 
@@ -92,23 +101,52 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         columns = sorted(
             p.name for p in COLUMNS_DIR.glob("*.json")
         ) if COLUMNS_DIR.is_dir() else []
-        return {"studies": rows, "columns": columns, "ffmpeg": _ffmpeg_present()}
+        return {
+            "studies": rows, "columns": columns, "ffmpeg": _ffmpeg_present(),
+            "patterns": PATTERNS,
+            "pattern_defaults": generators.DEFAULT_PATTERN,
+            "patterns_planned": generators.PLANNED,
+            "pattern_notes": generators.MATERIAL_NOTES,
+            "size_range": [SIZE_MIN, SIZE_MAX],
+        }
 
     @app.get("/api/studies/{export}/bundle")
     def get_bundle(
-        export: str, material: str = Query(...), rings: int = Query(...),
-        thickness: float = Query(0.2),
+        export: str, material: str = Query(...), pattern: str = Query(...),
+        size: float = Query(...), thickness: float = Query(0.2),
     ):
-        _validate(export, material, rings, thickness)
-        return bundle.load_or_build_bundle(export, material, rings, thickness)
+        _validate(export, material, pattern, size, thickness)
+        try:
+            return bundle.load_or_build_bundle(export, material, pattern, size, thickness)
+        except ValueError as error:
+            # domain.boundary_ring, generators.generate and
+            # tessellation.from_document all raise ValueError with a message
+            # naming the offending vertex or cell -- an oculus, a re-entrant
+            # plan, or a bad authored cell all land here. The message is the
+            # whole point (it says where to look), so it is carried through
+            # unchanged rather than paraphrased or swallowed into a 500.
+            raise HTTPException(400, str(error))
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
         export = body.get("export", "")
         material = body.get("material", "")
-        rings = int(body.get("rings", 0))
+        pattern = body.get("pattern", "")
+        # Coerced BEFORE _validate, so a value float() cannot read raised
+        # out of the coercion itself and answered 500: size "abc" and a
+        # null thickness both did, while a MISSING size correctly gave 400
+        # through the range check. A body the caller can fix is a 400, and
+        # the message says which field it is.
+        for field, default in (("size", 0.0), ("thickness", 0.2)):
+            try:
+                float(body.get(field, default))
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    400, "{} must be a number, not {!r}".format(
+                        field, body.get(field)))
+        size = float(body.get("size", 0.0))
         thickness = float(body.get("thickness", 0.2))
-        _validate(export, material, rings, thickness)
+        _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
             for run in RUNS.values():
@@ -117,29 +155,47 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             run_id = uuid.uuid4().hex[:12]
             RUNS[run_id] = {
                 "id": run_id, "export": export, "slug": slug,
-                "material": material, "rings": rings, "thickness": thickness,
-                "state": "queued", "stage": 0, "of": rings, "message": "",
+                "material": material, "pattern": pattern, "size": size,
+                "thickness": thickness,
+                # "of" stays 0 until the cut is known: the number of stages
+                # is the number of courses the cut produced, so nothing can
+                # state it up front the way the old "rings" request
+                # parameter could. Cutting a real export is the slow part,
+                # and a reader left with a bare "stage 0/0" for all of it
+                # cannot tell work from a hang. "phase" is the honest
+                # answer while the count is still unknown; the viewer half
+                # of this belongs to another dispatch.
+                "state": "queued", "stage": 0, "of": 0, "phase": "queued",
+                "message": "",
             }
 
         def work():
             run = RUNS[run_id]
             try:
                 run["state"] = "running"
-                run["message"] = "fea + cra per stage"
+                run["phase"] = "cutting"
+                run["message"] = "cutting the tessellation"
                 pairs = geometry.available_exports(bundle.UPLOAD_DIR)
 
                 def on_stage(stage, of):
                     run["stage"], run["of"] = stage, of
+                    run["phase"] = "staging"
+                    run["message"] = "fea + cra per stage"
 
                 staging.run_staging(
-                    pairs[export], material, rings,
-                    bundle.staging_path(slug, material, rings, thickness),
+                    pairs[export], material, pattern, size,
+                    bundle.staging_path(slug, material, pattern, size, thickness),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
                 )
-                bundle.build_bundle(export, material, rings, thickness)
+                run["phase"] = "bundling"
+                run["message"] = "assembling the bundle"
+                bundle.build_bundle(export, material, pattern, size, thickness)
                 run["state"] = "done"
+                run["phase"] = "done"
+                run["message"] = ""
             except Exception as error:
                 run["state"] = "failed"
+                run["phase"] = "failed"
                 run["message"] = "{}: {}".format(type(error).__name__, error)
 
         threading.Thread(target=work, daemon=True).start()
@@ -152,9 +208,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             raise HTTPException(404, "no run {}".format(run_id))
         return {
             "state": run["state"], "stage": run["stage"], "of": run["of"],
+            # phase says what is happening while "of" is still 0, which is
+            # the whole duration of the cut.
+            "phase": run.get("phase", ""),
             "message": run["message"],
-            "bundle_url": "/api/studies/{}/bundle?material={}&rings={}&thickness={}".format(
-                urllib.parse.quote(run["export"]), run["material"], run["rings"],
+            "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}".format(
+                urllib.parse.quote(run["export"]), run["material"],
+                urllib.parse.quote(run["pattern"]), run["size"],
                 run["thickness"]),
         }
 
@@ -202,7 +262,19 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         _invalidate_studio_cache(slug)
         other_kind = "compas" if kind == "contract" else "contract"
         other = directory / "{}-{}.json".format(name, other_kind)
-        return {"stored": filename, "pair_complete": other.is_file()}
+        # An authored tessellation sidecar survives a re-upload and keeps
+        # winning over the generated cut, so a pattern authored against the
+        # PREVIOUS geometry silently stays in force against the new one. It
+        # is not deleted here (it is the author's file, and re-uploading a
+        # contract is not a request to throw their pattern away) but it is
+        # named in the response, so a re-upload that quietly keeps using an
+        # old cut is at least visible from the route that caused it.
+        sidecar = bundle.tessellation_sidecar(name)
+        return {
+            "stored": filename,
+            "pair_complete": other.is_file(),
+            "authored_tessellation": sidecar.name if sidecar.is_file() else None,
+        }
 
     @app.put("/api/uploads/columns/{filename}")
     async def upload_columns(filename: str, request: Request):

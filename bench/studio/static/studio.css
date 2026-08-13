@@ -21,7 +21,7 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: #7a2b20; border-radius: 4px;
           font-size: 13px; z-index: 10; }
-#run-status, #record-status, #import-status { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
+#run-status, #record-status, #import-status, #pattern-note { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
 #data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
               overflow: auto; background: rgba(16, 17, 20, 0.95); padding: 14px;
               border: 1px solid #2a2c31; border-radius: 6px; z-index: 20; }
@@ -34,9 +34,14 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
               border-bottom: 1px solid #2a2c31; }
 .hidden { display: none; }
 #layer-toggles label { display: flex; gap: 8px; align-items: center; }
+/* Bottom right, clear of the 300px control panel, rather than bottom left
+   on top of #hud. Both were anchored left: 16px; bottom: 16px, so turning
+   a heatmap on covered the last lines of the HUD -- and the HUD gained the
+   struck-now line in this branch, which is the line a heatmap is most
+   likely to be read against. */
 #legend {
   position: absolute;
-  left: 16px;
+  right: 316px;
   bottom: 16px;
   padding: 8px 12px;
   min-width: 180px;
@@ -59,17 +64,3 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
   background: linear-gradient(to right, #f2efe8, #cc2211);
 }
 #legend-labels { display: flex; justify-content: space-between; }
-#cra-badge {
-  position: absolute;
-  left: 16px;
-  bottom: 112px;
-  padding: 6px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  color: #eef1f5;
-  background: #4a4f56;
-}
-#cra-badge.hidden { display: none; }
-#cra-badge.cra-stands { background: #1f5c2d; }
-#cra-badge.cra-fails { background: #7a231b; }
-#cra-badge.cra-unknown { background: #4a4f56; }

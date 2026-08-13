@@ -26,11 +26,16 @@ def test_staging_constants_mirror_the_ananke_fea_presets():
     from ananke_fea.materials import PRESETS
     from ananke_fea.model import GRAVITY
 
-    assert staging.DENSITIES == {
-        "concrete": PRESETS["concrete"].density,
-        "concrete-c50": PRESETS["concrete-c50"].density,
-        "concrete-sprayed": PRESETS["concrete-sprayed"].density,
-        "timber": PRESETS["timber"].density,
-    }
+    # Two halves, both pinned exactly. Task 9 added brick, tile and stone to
+    # staging.DENSITIES for cutting and costing; they carry no ananke_fea
+    # preset on purpose (a continuum shell solve assumes tension carries
+    # across the material, which masonry does not carry across a joint), so
+    # staging.FEA_MATERIALS must name exactly the materials PRESETS itself
+    # carries -- not "at least these four" -- and restricting DENSITIES to
+    # that set must match PRESETS' own densities exactly. Either half
+    # drifting, in either direction, fails this loudly instead of quietly.
+    assert staging.FEA_MATERIALS == set(PRESETS)
+    fea_backed = {name: staging.DENSITIES[name] for name in staging.FEA_MATERIALS}
+    assert fea_backed == {name: preset.density for name, preset in PRESETS.items()}
     assert staging.GRAVITY == GRAVITY
     assert staging.THICKNESS == 0.2

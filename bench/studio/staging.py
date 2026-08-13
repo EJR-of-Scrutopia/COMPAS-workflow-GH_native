@@ -13,37 +13,96 @@ model. blocks.py is no longer on that path at all; this module does not
 import it. This module never imports the solver stack; the guard test holds
 it to that.
 
-GRAVITY, DENSITIES and THICKNESS duplicate ananke_fea values on purpose
-(the import is forbidden); tests/studio/test_staging.py pins them to the
-preset values so a one-sided change fails loudly.
+GRAVITY, DENSITIES, THICKNESS and FEA_MATERIALS duplicate ananke_fea values
+on purpose (the import is forbidden); tests/studio/test_staging.py pins them
+to the preset values so a one-sided change fails loudly. FEA_MATERIALS is
+also cross-checked directly against ananke_fea.materials.PRESETS by
+tests/fea/test_studio_mirror.py, which runs where both sides are
+importable.
+
+Brick, tile and stone (Task 9) are staging-only materials: they carry a
+density and a friction for cutting, weight and the rigid-block check, but
+no ananke_fea preset, and FEA_MATERIALS says so explicitly. A continuum
+shell solve assumes tension carries across the material, and masonry does
+not carry tension across a joint, so giving these three an elastic shell
+preset would produce numbers that look authoritative and mean very little.
+run_staging never calls the struck-now runner for a material outside
+FEA_MATERIALS; it writes an honest "unavailable" stage entry instead (see
+_fea_unavailable), in the same shape the CRA path already uses for a null
+verdict: not a converged verdict and not a failed one, but no verdict to
+give. The formwork arithmetic (placed weight, what the falsework carries)
+is exact and stays true regardless, so it is never gated on this.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+import bundle
 import geometry
-import segmentation
+import subdivision
 import voussoirs
 
 GRAVITY = 9.80665
 DENSITIES = {
     "concrete": 2400.0, "concrete-c50": 2400.0,
     "concrete-sprayed": 2300.0, "timber": 385.0,
+    "brick": 1900.0, "tile": 1800.0, "stone": 2500.0,
 }
+# 1900: clay brick masonry. EN 1991-1-1 Annex A Table A.1 gives clay
+# masonry as 18 to 22 kN/m3; 1900 kg/m3 sits inside that band.
+# 1800: fired clay tile, Guastavino thin tile work. A literature value:
+# the Eurocodes carry no entry for it, and this is recorded as such the
+# same way timber's friction already is.
+# 2500: limestone, the Armadillo Vault's own material.
 DEFAULT_THICKNESS = 0.2
 THICKNESS = DEFAULT_THICKNESS  # alias: tests/fea/test_studio_mirror.py reads THICKNESS
 
 FRICTION = {
     "concrete": 0.6, "concrete-c50": 0.6,
     "concrete-sprayed": 0.6, "timber": 0.4,
+    "brick": 0.6, "tile": 0.6, "stone": 0.6,
 }
-# 0.6: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint.
+# 0.6: EN 1992-1-1 clause 6.2.5, smooth precast concrete joint, and the
+# same value for mortared brick and tile bed joints.
 # 0.4: literature value for dry timber on timber (Eurocode 5 gives none).
+# 0.6 for stone: dry stone on stone spans 0.5 to 0.7 in the rigid block
+# literature. The middle of that band, quoted no more precisely than the
+# source supports.
+
+FEA_MATERIALS = {"concrete", "concrete-c50", "concrete-sprayed", "timber"}
+# Exactly the materials ananke_fea.materials.PRESETS carries an elastic
+# shell preset for. Brick, tile and stone are deliberately absent: see the
+# module docstring for why a continuum shell solve is the wrong model for
+# masonry, not merely an unbuilt one. run_staging checks this set before
+# ever calling the struck-now runner.
+
+
+def _fea_unavailable(material: str) -> Dict:
+    """The honest struck-now entry for a material outside FEA_MATERIALS.
+
+    Same shape as the CRA path's own null verdicts (a verdict field set to
+    None, a status string, a message): not a convergence failure -- nobody
+    ever ran a solve to fail -- so it must never read as one.
+    """
+
+    return {
+        "converged": None,
+        "status": "unavailable",
+        "message": (
+            "{material} carries no ananke_fea preset: a continuum shell "
+            "solve would assume a tensile capacity across the material "
+            "that masonry does not carry across a joint. This studio "
+            "draws and costs {material} by weight only; there is no "
+            "struck-now check to run against it."
+        ).format(material=material),
+    }
+
 
 REPO = Path(__file__).resolve().parents[2]
 CRA_BLOCK_BUDGET = 14
@@ -92,27 +151,53 @@ SOLVE_CRA = Path(__file__).resolve().parent / "solve_cra.py"
 CRA_TIMEOUT_SECONDS = 600
 
 
-def stage_plan(assignment: List[list], order: List[list]) -> List[Dict]:
-    """One stage per ring: stage s has every cell of rings 0..s-1 placed."""
+def stage_plan(assignment: List[Optional[list]], order: List[list],
+               keys: List[str]) -> List[Dict]:
+    """One stage per course PRESENT in the cut, rim to crown, cumulative.
 
-    rings = max(pair[0] for pair in order) + 1
+    The courses walked are the sorted distinct course values order actually
+    carries, not range(max + 1). Iterating a range lost any cell whose
+    course fell outside it: a negatively coursed cell was welded and drawn
+    but never entered a stage, so its weight quietly left the formwork
+    curve while analysis_binding still reported zero orphans, its faces
+    being covered by a cell after all. tessellation.from_document now
+    rejects a negative course outright; walking what is there rather than
+    what a range assumes is the other half, so this cannot lose a cell it
+    was handed whatever an author does next.
+
+    Walking the present courses also stops the duplicate solves a sparse
+    numbering used to cause: courses 0 and 5 made six stages for two cells,
+    four of them full FEA solves over an identical placed-faces list.
+
+    "stage" is a dense 1-based index of the stages themselves.
+    "courses_placed" is one past the highest COURSE INDEX placed, not a
+    count of them: run_staging filters voussoir blocks with
+    block["ring"] < courses_placed, and ring is the course index. The two
+    are the same number for a densely numbered cut and must not be
+    conflated for a sparse one.
+    """
+
+    courses = sorted({pair[0] for pair in order})
     faces_by_cell: Dict[tuple, List[int]] = {}
     for face, pair in enumerate(assignment):
+        if pair is None:
+            continue                 # a face no cell covers is placed by none
         faces_by_cell.setdefault(tuple(pair), []).append(face)
 
+    label = {tuple(pair): keys[i] for i, pair in enumerate(order)}
     plan = []
     placed_faces: List[int] = []
     placed_segments: List[str] = []
-    for ring in range(rings):
+    for position, course in enumerate(courses):
         for pair in order:
-            if pair[0] == ring:
-                placed_segments.append(segmentation.segment_key(*pair))
+            if pair[0] == course:
+                placed_segments.append(label[tuple(pair)])
                 placed_faces.extend(faces_by_cell.get(tuple(pair), []))
         plan.append({
-            "stage": ring + 1,
-            "rings_placed": ring + 1,
+            "stage": position + 1,
+            "courses_placed": course + 1,
             "segments": list(placed_segments),
-            "faces": list(placed_faces),
+            "faces": sorted(placed_faces),
         })
     return plan
 
@@ -206,22 +291,31 @@ def _cra_subprocess_runner(python_exe: Path) -> Callable[[dict], dict]:
 def run_staging(
     export_pair: Dict[str, Path],
     material: str,
-    rings: int,
+    pattern: str,
+    size: float,
     out_path: Path,
     python_exe: Optional[Path] = None,
     runner: Optional[Callable[[dict], dict]] = None,
     on_stage: Optional[Callable[[int, int], None]] = None,
     thickness: float = DEFAULT_THICKNESS,
     cra_runner: Optional[Callable[[dict], dict]] = None,
-    include_cra: bool = True,
+    include_cra: bool = False,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
-    Returns a document with requested rings count and stages carrying one entry
-    per OCCUPIED ring. For radially degenerate geometry (all centroids equidistant),
-    len(document["stages"]) can be shorter than document["rings"]: stage_plan derives
-    ring count from occupied rings in segmentation.segment_faces output, not from
-    the requested rings parameter. This behaviour is explicit and tested.
+    Returns a document with one stage per COURSE of the cut tessellation
+    (rim to crown), whether or not every course holds a bound analysis face:
+    a course is a real drawn piece the moment the pattern generates it, so it
+    is placed and costed even on a stage that adds no new load.
+
+    include_cra defaults to False: the owner's ruling is that the rigid-block
+    verdict is hidden from the viewer, since the form finding already
+    guarantees compression-only equilibrium by construction and no size the
+    API permits reaches CRA_BLOCK_BUDGET on a real export in any case (see
+    bench/scripts/cra_acceptance.py). No voussoir blocks are built and no
+    solver is shelled to for a display nobody sees. The parameter and every
+    line of the machinery stay for cra_acceptance.py, which still needs it
+    and passes include_cra=True explicitly.
     """
     if material not in DENSITIES:
         raise ValueError(
@@ -231,9 +325,20 @@ def run_staging(
         )
     contract = geometry.load_contract(export_pair["contract"])
     arrays = geometry.mesh_arrays(contract)
-    centroids = geometry.face_centroids(arrays["vertices"], arrays["faces"])
-    binned = segmentation.segment_faces(centroids, rings=rings)
-    plan = stage_plan(binned["assignment"], binned["order"])
+    render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
+    # The export name (for the tessellation sidecar path), recovered from
+    # the contract filename the same way geometry.available_exports names
+    # it: run_staging is only ever handed the file pair, not the name.
+    contract_name = Path(export_pair["contract"]).name
+    export_name = contract_name[: -len("-contract.json")]
+    # bundle.build_tessellation_for is the one cut, built once: staging and
+    # the drawn pieces must never diverge onto two different cuts, or a
+    # stage plan could name cells the pieces do not have.
+    # surface (the render mesh height field) is bundle.py's to use for
+    # drawing pieces; staging only needs the cut and its analysis binding.
+    tess, _surface, binding = bundle.build_tessellation_for(
+        export_name, contract, arrays, render, pattern, size)
+    plan = stage_plan(binding["assignment"], binding["order"], binding["keys"])
     curve = formwork_curve(
         arrays["vertices"], arrays["faces"], plan, material, thickness
     )
@@ -246,15 +351,27 @@ def run_staging(
     all_blocks: List[dict] = []
     skipped: Optional[List[dict]] = None
     if include_cra:
+        # voussoirs.segment_voussoirs cannot take a None assignment entry
+        # (a face no cell covers), so it stands in for -1, -1: a pair never
+        # in binding["order"], so no block is ever built for it.
+        voussoir_assignment = [
+            pair if pair is not None else [-1, -1] for pair in binding["assignment"]
+        ]
         all_blocks, skipped = voussoirs.segment_voussoirs(
-            arrays["vertices"], arrays["faces"], binned["assignment"],
-            binned["order"], thickness, set(geometry.support_ids(contract)),
+            arrays["vertices"], arrays["faces"], voussoir_assignment,
+            binding["order"], thickness, set(geometry.support_ids(contract)),
         )
 
     stages = []
     for entry, weights in zip(plan, curve):
         if on_stage is not None:
             on_stage(entry["stage"], len(plan))
+        # The formwork weights above are exact arithmetic and hold for
+        # every material in DENSITIES; the struck-now runner is only ever
+        # invoked for a material FEA_MATERIALS actually covers. Outside
+        # that set there is no preset to solve against, so the runner is
+        # never called at all rather than being let fail and reporting a
+        # convergence failure that never happened.
         struck = runner({
             "contract_path": str(export_pair["contract"]),
             "geometry_path": str(export_pair["geometry"]),
@@ -262,34 +379,55 @@ def run_staging(
             "thickness": thickness,
             "include_export_loads": True,
             "placed_faces": sorted(entry["faces"]),
-        })
+        }) if material in FEA_MATERIALS else _fea_unavailable(material)
         stage_entry = {**entry, **{
             "placed_weight_newtons": weights["placed_weight_newtons"],
             "formwork_carries_newtons": weights["formwork_carries_newtons"],
             "struck_now": struck,
         }}
         if include_cra:
-            # Blocks are one per display ring/wedge cell (segmentation's own
-            # binning), so a stage that has placed rings 0..k-1 has placed
-            # exactly the blocks in those rings.
+            # voussoirs.py keeps its own "ring" vocabulary internally; here
+            # it is the course index, not a ring/wedge bin. A stage that has
+            # placed courses 0..k-1 has placed exactly the blocks in those
+            # courses.
             stage_blocks = [
-                b for b in all_blocks if b["ring"] < entry["rings_placed"]
+                b for b in all_blocks if b["ring"] < entry["courses_placed"]
             ]
             if len(stage_blocks) > CRA_BLOCK_BUDGET:
                 # No coarsening is applied (see the CRA_BLOCK_BUDGET comment
-                # above), so a stage's block count is fixed by the display
-                # binning; there is no cheaper model to fall back to.
+                # above), so a stage's block count is fixed by the cut
+                # tessellation; there is no cheaper model to fall back to.
                 # Refusing here is honest and instant; letting it run would
                 # spend tens of seconds to reach the same null (measured:
                 # every stage past this budget failed to converge inside
                 # IPOPT's own iteration cap, not the CRA_TIMEOUT_SECONDS
                 # wall clock).
+                #
+                # The message promises no remedy: on a real study (Trial 2,
+                # re-measured 2026-08-12 across 0.3 to 3.0, which is the
+                # full range app.py permits -- an earlier note here said
+                # 0.9 to 3.0 and understated it) the smallest reachable
+                # stage still carries more blocks than the budget at every
+                # size. Stage 1 alone runs 170 blocks at 0.3 m down to 15
+                # at 3.0 m, against a budget of 14, so "choose a larger
+                # size" sends the reader to drag a slider to its end and
+                # get the same refusal one block short. What is true, and
+                # what the message says, is the measured count, the budget,
+                # and why raising CRA_TIMEOUT_SECONDS would not help
+                # either. Full table in bench/scripts/cra_acceptance.py.
                 stage_entry["cra"] = {
                     "stands": None,
                     "status": "over budget",
                     "message": "{} blocks exceeds the affordable rigid-block "
-                               "budget of {}; lower the ring count for a "
-                               "verdict".format(len(stage_blocks), CRA_BLOCK_BUDGET),
+                               "budget of {}. The budget is an empirically "
+                               "measured convergence ceiling, not a "
+                               "performance limit: past it the solver "
+                               "exhausts its own iteration cap rather than "
+                               "running out of time, so a longer wait would "
+                               "not help. A rigid-block verdict for a cut at "
+                               "this resolution is separate work this "
+                               "studio does not reach today.".format(
+                                   len(stage_blocks), CRA_BLOCK_BUDGET),
                     "blocks": len(stage_blocks),
                     "interfaces": 0,
                     "mu": FRICTION[material],
@@ -302,11 +440,72 @@ def run_staging(
                 })
         stages.append(stage_entry)
 
+    # The orphan shortfall, in the units the curve is read in. The report
+    # names orphans as face INDICES, and an index is not a quantity: a
+    # reader seeing "2 orphan faces" beside a HUD reading 13.1 kN has
+    # nothing to convert one into the other and cannot tell whether two
+    # orphans is 0.08 percent of the vault or half of it. Measured on the
+    # tiny contract with one cell covering half the mesh: orphan faces
+    # [1, 3], final formwork_carries 13087.1 N, structure 26174.2 N, a 50
+    # percent shortfall the index list alone never disclosed.
+    #
+    # structure_weight_newtons is the arithmetic the old ring/wedge binning
+    # used to guarantee: the last stage equalled the structure's total.
+    # This cut can orphan a face, so the total has to be shipped for the
+    # equality to still be checkable.
+    orphan_faces = (binding["report"].get("orphan_faces") or [])
+    weight_per_area = thickness * DENSITIES[material] * GRAVITY
+    orphan_weight = sum(
+        geometry.face_area(arrays["vertices"], arrays["faces"][face])
+        for face in orphan_faces
+    ) * weight_per_area
+    structure_weight = sum(
+        geometry.face_area(arrays["vertices"], face) for face in arrays["faces"]
+    ) * weight_per_area
+
+    backward_turn = tess.get("backward_turn")
     document = {
         "material": material,
-        "rings": rings,
+        # tess["pattern"], not the requested pattern, matching bundle.py: an
+        # authored (imported) tessellation ignores it, so the document
+        # states what the cut actually is rather than what was asked for.
+        # Identical to the request for a generated cut.
+        #
+        # size stays the REQUESTED size, not tess["target_size"]: found as
+        # the same defect in bundle.py's sibling field during Task 8 fix
+        # round 1 (an authored cut's target_size is None, and nothing here
+        # currently reads this field back into a request, but the document
+        # should still record what was asked for rather than "not
+        # applicable"). staging_path/bundle_path are keyed on this same
+        # requested value.
+        "pattern": tess["pattern"],
+        "size": size,
         "combination": "ULS",
-        "segmentation": binned,
+        "tessellation": {
+            "pattern": tess["pattern"], "source": tess["source"],
+            "target_size": tess["target_size"], "courses": tess["courses"],
+            "cells": len(tess["cells"]),
+            # The same provenance fields the bundle's own tessellation
+            # summary carries. This document is read on its own (by
+            # cra_acceptance.py, and by anyone opening staging-*.json), so
+            # it should not be the poorer record of the same cut.
+            "provenance": tess.get("provenance"),
+            "z_offset_max": tess.get("z_offset_max"),
+            "courses_inferred": tess.get("courses_inferred", False),
+            "backward_turn_degrees": (
+                math.degrees(backward_turn) if backward_turn is not None else None
+            ),
+            "backward_steps": tess.get("backward_steps"),
+            # The formwork curve sums only faces a cell covers (stage_plan
+            # skips a None assignment entry outright), so an orphan face's
+            # weight is silently absent from every stage's total unless its
+            # presence is disclosed here. Old ring/wedge binning could not
+            # orphan a face at all; this cut can. The report names the
+            # faces; the two weights below say what they are worth.
+            "report": binding["report"],
+            "orphan_weight_newtons": orphan_weight,
+            "structure_weight_newtons": structure_weight,
+        },
         "stages": stages,
         "cra_mu": FRICTION[material] if include_cra else None,
         "cra_skipped": skipped,

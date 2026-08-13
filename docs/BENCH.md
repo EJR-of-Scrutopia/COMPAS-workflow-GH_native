@@ -135,11 +135,15 @@ verified analysis. It reads the same export pairs as demo 09, treats the
 funicular surface as falsework, and stages precast segments onto it rim to
 crown.
 
-- Study, material (C30/37 or GL24h), and a segmentation slider (4 to 16
-  rings; wedge counts follow ring radius, staggered ring to ring).
+- Study, material (concrete, concrete C50, sprayed concrete, timber, brick,
+  tile or stone), a pattern control, and a piece size slider (0.3 to 3.0 m;
+  the cut is rebuilt server side, not recomputed in the browser).
 - Run staged analysis: per stage, the falsework bookkeeping is exact
   arithmetic and the struck-now counterfactual is a real OpenSees solve in
-  .venv-fea; stages that find no equilibrium say so.
+  .venv-fea; stages that find no equilibrium say so, and a material with no
+  `ananke_fea` preset (brick, tile, stone) says plainly that no struck-now
+  check exists for it rather than reporting a convergence failure that
+  never happened.
 - FEA layers: stress and deflection heatmaps (full per-element and
   per-node fields), load and reaction vectors, text overlays, the
   integrity pulse, thrust wires with node spheres.
@@ -153,6 +157,162 @@ crown.
 Generated outputs live under `bench/studies/<slug>/studio/` and are not
 committed. The server never imports the solver stacks; a guard test holds
 it to that.
+
+### The cut: tessellation replaces the ring and wedge binning
+
+The studio used to bin whole analysis-mesh faces into concentric ring and
+wedge cells (4 to 16 rings, wedge counts following ring radius). A cell's
+shape was whatever the binning happened to sweep up, not a real polygon: on
+the Trial 2 export, measured before any of this landed,
+
+```text
+cell        faces   boundary edges   corner runs
+(0, 3)         70               66             4
+(0, 4)         35               30             3
+(1, 0)         66               86             3
+```
+
+A four sided voussoir has four boundary edges; these had thirty to
+eighty-six. The 2026-08-12 cutting engine wave replaced the binning with a
+real tessellation: a pattern (`bench/studio/generators.py`) or an imported
+Grasshopper cut (`bench/studio/tessellation.py`) draws polygon cells
+straight from the vault's own star shaped plan, welds them into one
+conforming cut with T junctions resolved rather than forbidden, and
+`bench/studio/pieces.py` caps each cell with a triangulated, flat jointed
+casting lifted onto the thrust surface. `bench/studio/segmentation.py`, the
+ring and wedge binning itself, is retired; the studio's own size and pattern
+controls, and `bench/scripts/cutting_measurements.py` below, are what now
+pin the cut on real geometry.
+
+`bench/scripts/cutting_measurements.py` measures the replacement on the
+same Trial 2 export, at 0.9 m, the size the studio opens to by default. It
+writes nothing into `studies/`. Run it with
+`.venv\Scripts\python.exe bench\scripts\cutting_measurements.py` and it also
+checks itself against every figure the wave's own controller had already
+measured by hand (the plan's star shape, the default size's coverage, and
+the old coverage regression at 1.5 m, now cleared); every check below passed
+on the run this table is taken from, 2026-08-12:
+
+| measurement | value |
+| --- | --- |
+| star shaped | yes (238 of 240 rim steps forward, 2 backward, 0.467 degrees total, winding exactly 2 pi) |
+| target size, courses, pieces | 0.9 m, 7 courses, 233 pieces |
+| facets per piece | min 5 / median 6 / max 17 (the max belongs to course 0, the rim) |
+| boundary points per piece | min 40 / median 48 / max 136 |
+| subdivision rounds | 3, limited by rounds (the edge length target, not the chord target, is what the round budget cuts off here) |
+| cap chord deviation | 0.960 mm against a 5.0 mm target |
+| corner normal residual, 695 corners | median 0.0196, mean 0.0325, p99 0.2428, max 0.3295 (its own worst corner, in courses 0 and 1) |
+| clamped cap points | 137 of 41265, reaching 0.0523 m at the worst and 0.0246 m at the median |
+| coverage | 0 orphan faces, 0 double faces (of 2400 analysis faces), 0 open facets, 0 slivers, 0 folded, 0 coverage holes, 0 broken boundary entries, 0 missing planes |
+
+#### The coverage limit, over the whole slider rather than at one size
+
+This section used to publish a second figure: "at 1.5 m the same export
+grows 2 coverage holes, 1 broken boundary entry and 1 orphan face", read
+as a real limit of the cut at coarse sizes. It was not a size limit at
+all. `generators._arc` emitted the points it inserts ordered by the angle
+they came from rather than by the angle actually used, so any span
+crossing a seam came out of order and its own outline crossed itself.
+That affected 35 of the 55 slider sizes on this export, 53 self-crossing
+cells and 183 report entries in total, and it was scattered across the
+slider rather than concentrated at the coarse end, which is precisely
+what a measurement at one size cannot see. The before and after sweep is
+in `.superpowers/sdd/2026-08-12-cutting-engine/final-fix-engine-report.md`.
+The fix is in `generators._arc`, and the claim this document makes is now
+made across every position of the size slider rather than at one point:
+
+```bash
+.venv\Scripts\python.exe bench\scripts\cutting_measurements.py --sweep
+```
+
+Measured 2026-08-12, bonded courses, all 55 slider positions from 0.30 to
+3.00 m in steps of 0.05:
+
+| sizes | orphan faces | double faces | open facets | slivers | coverage holes | broken boundary |
+| --- | --- | --- | --- | --- | --- | --- |
+| 54 of 55, 0.35 to 3.00 m | 0 | 0 | 0 | 0 | 0 | 0 |
+| 0.30 m, the slider's finest | 0 | 2 | 0 | 0 | 0 | 0 |
+
+1.5 m is clean, and so is every size on the slider but the finest. At
+0.30 m two analysis faces have centroids inside three cells each: face
+268 in c3p108, c4p102 and c5p96, and face 2268 in c3p57, c4p54 and
+c5p50. `tessellation.analysis_binding` assigns such a face to the lowest
+indexed cell that claims it, so nothing is counted twice downstream, but
+cells that overlap in plan are a real defect at that size and the report
+names both the face and every cell claiming it. One of the three in each
+case (c4p102, c4p54) is also on the folded list below; whether the fold
+is the cause of the overlap has not been measured.
+
+What a tolerated rim wobble costs is folded cells, and the sweep names
+every one of them:
+
+| size | folded cells |
+| --- | --- |
+| 0.30 m | 6: c10p34, c10p65, c4p102, c4p54, c5p51, c5p95 |
+| 0.35 m | 4: c0p108, c0p58, c9p27, c9p52 |
+| 0.45 m | 2: c5p27, c5p52 |
+| 0.50 m | 2: c0p40, c0p74 |
+
+14 in total, at 4 of the 55 sizes, none above 0.50 m and none at the
+default. `bench/studio/domain.py`'s note on WOBBLE_TOLERANCE traces them
+to the rim's own plus or minus 125.4 degree notch, where the boundary
+steps in from 10.9136 m to 9.4519 m while a cell's inner boundary is a
+straight chord that passes outside it: that is the cost of tolerating a
+rim wobble rather than refusing the export outright. A folded cell is
+still cut, still capped and still drawn, with one lobe of its cap inside
+out, and it enters none of the coverage counts above: the sliver
+test reads an algebraic area and a fold's two lobes cancel in it, so
+`report["folded"]` naming the cell by key is the entire disclosure. The
+studio's Data panel lists it beside the coverage line for exactly that
+reason. The default size stays at 0.9 m, which is clean on every count.
+
+A single worst-corner number for the residual badly misrepresents the cut,
+so `pieces.residual_stats` reports the whole distribution across every
+corner rather than only its maximum, and `docs/BENCH.md` and the Data
+panel both quote it in full:
+
+| residual | radians (sine of the angle) | degrees | corners over |
+| --- | --- | --- | --- |
+| median | 0.0196 | 1.1 | -- |
+| mean | 0.0325 | 1.9 | -- |
+| p99 | 0.2428 | 14.1 | -- |
+| max | 0.3295 | 19.2 | -- |
+| over 0.01 | -- | over 0.6 | 487 of 695 |
+| over 0.05 | -- | over 2.9 | 134 of 695 |
+| over 0.10 | -- | over 5.7 | 38 of 695 |
+| over 0.20 | -- | over 11.5 | 10 of 695 |
+| over 0.30 | -- | over 17.5 | 2 of 695 |
+
+The median is the figure that describes the cut: a typical corner sits at
+0.0196 (1.1 degrees), the same order as `bench/studio/pieces.py`'s own test
+fixture (a four cell synthetic dome chosen to be a stress case), which
+measures 0.0104 (0.598 degrees) at its single worst corner -- roughly half
+the real median, not a tight match. The max describes only its own
+worst corner, not the cut as a whole, and the worst corners cluster in the
+rim course (course 0), where `generators._arc` inserts the mesh's own
+boundary corners so the drawn silhouette follows the real, irregular rim
+rather than a straight chord: more corners inserted there means facets
+meeting at sharper angles, and a sharper angle between two facets
+necessarily pushes a stored normal further out of the one it does not
+belong to. It is the same cause as the facets-per-piece maximum of 17
+above: both are the rim course, not the general cut, so neither number
+should be read as typical against the medians beside them.
+
+In plain physical terms: the residual is the sine of the angle between a
+corner's stored normal and the plane of the facet that does not own it, so
+at the shipped 0.2 m shell thickness (a half thickness of 0.1 m either
+side of the mid surface a corner's normal actually offsets along), a
+residual of `r` moves that corner roughly `100 * r` millimetres from where
+a perfectly flat joint would put it. The median, 0.0196, is about 2 mm;
+the worst corner, 0.3295, is about 33 mm. Nothing in the shipped
+acceptance tests bounds either figure on real geometry (the `< 0.02` bound
+in `tests/studio/test_pieces.py` is pinned to the synthetic fixture only),
+so none of this is a failing measurement, but the tail is real and worth a
+look, at the rim course specifically, before this reaches a client-facing
+drawing. A real fix exists (using the intersection line of the two planes
+at a corner where only two facets meet, which would take those corners to
+zero) but is deliberately not applied here: that is a change to the
+keystone module at the end of a wave, and spending it is the owner's call.
 
 ## CRA solver setup (IPOPT)
 
@@ -223,7 +383,8 @@ returns the diagonal of the axis aligned bounding box over every block
 vertex in the request. The whole assembly's box is used rather than a
 representative joint edge because a per-joint measure shrinks as the
 segmentation refines: the solver parameters would then depend on the
-studio's ring count rather than on the size of the thing being analysed.
+studio's target piece size rather than on the size of the thing being
+analysed.
 `eps` keeps upstream's own eps/d_bnd ratio of one tenth, which is
 dimensionless and is the parameter the formulation actually cares about.
 
@@ -259,34 +420,52 @@ does. It writes its staging document to a temporary directory so a probe
 run can never masquerade as a cached study result. Repeat it with:
 
 ```bash
-./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py 2
-./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py 4
+./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py bonded-courses 0.9
+./.venv/Scripts/python.exe bench/scripts/cra_acceptance.py bonded-courses 3.0
 ```
 
-Both runs re-measured 2026-08-10 after the solver-parameter fix above and
-the epistemics fix below, and these are the numbers an operator repeating
-the two commands gets today. The earlier pass in this section reported
-"does not stand" on three stages; those results are withdrawn, and the
-Reading paragraph at the end of this section explains why.
+The script's arguments are `[pattern] [size]`, the studio's own two cut
+controls. They used to be a bare ring count, and the two commands printed
+here were `cra_acceptance.py 2` and `cra_acceptance.py 4`, which since the
+2026-08-12 cutting wave error out with `ValueError: unknown pattern '2'`.
+0.9 m is the size the studio opens to and 3.0 m the coarsest the API
+accepts, which is also the fewest blocks this export can be cut into and
+so the closest it ever comes to the rigid-block budget.
+
+The two tables that follow are the ones the script prints. The staged CRA
+tables further down are not: they were taken under the ring and wedge
+binning the cutting wave retired, and they have not been re-run against
+the cut. Each says so where it stands.
 
 #### Volume comparison, mesh-following block model vs voussoirs
 
-| rings | mesh-following | voussoirs | volume difference |
-| --- | --- | --- | --- |
-| 2 | 13 blocks, 6408 faces (492.9/block), 38.1737 m3 | 13 blocks, 164 faces (12.6/block), 26.9065 m3 | -29.5% |
-| 4 | 21 blocks, 7188 faces (342.3/block), 38.1737 m3 | 21 blocks, 308 faces (14.7/block), 31.4984 m3 | -17.5% |
+Re-measured 2026-08-12 against the cut, at the two sizes the commands
+above name:
 
-The mesh-following volume is identical at both ring counts (a partition
-of the same closed mesh sums to the same total regardless of how it is
-cut), confirming both models see the same underlying export. The voussoir
+| target size | mesh-following | voussoirs | volume difference |
+| --- | --- | --- | --- |
+| 0.9 m | 233 blocks, 11676 faces, 38.1737 m3 | 259 blocks, 3764 faces, 36.6983 m3 | -3.9% |
+| 3.0 m | 20 blocks, 6832 faces, 38.1737 m3 | 20 blocks, 284 faces, 30.2643 m3 | -20.7% |
+
+The mesh-following volume is identical at both sizes (a partition of the
+same closed mesh sums to the same total regardless of how it is cut),
+confirming both models see the same underlying export. The voussoir
 volume is not: replacing every mesh face on a joint with one planar face
-undercounts volume, by nearly a third at rings=2 and by a sixth at
-rings=4, closing only because finer segmentation makes each joint flatter
-to begin with. Zero cells were skipped at either ring count. Block count
-is identical between the two models at both ring counts: it is fixed by
-the ring/wedge segmentation, not by which block-building method runs on
-top of it. This figure does not change with CRA_BLOCK_BUDGET; it is
-unaffected by the recalibration below.
+undercounts volume, by a fifth at 3.0 m and by 3.9 percent at the
+default, closing because a finer cut makes each joint flatter to begin
+with. Zero cells were skipped at either size.
+
+Two things this table used to say are no longer true and are withdrawn
+rather than edited. It was keyed on a ring count the studio no longer
+has, and it reported block counts identical between the two models
+because the ring and wedge segmentation fixed them. At 3.0 m they still
+agree, 20 against 20; at 0.9 m they do not, 233 against 259, because a
+cell the cut splits into separate patches becomes separate voussoirs
+while `blocks.segment_blocks` still builds one prism per cell. Read the
+volume difference, which is a property of the joint model, rather than
+the block count, which is now a property of which builder ran. This
+figure does not change with CRA_BLOCK_BUDGET; it is unaffected by the
+recalibration below.
 
 #### Budget recalibration: CRA_BLOCK_BUDGET
 
@@ -326,37 +505,49 @@ does. The full measurement, including the script used, is recorded in
 
 #### Staged CRA gate, per stage (recalibrated budget, CRA_BLOCK_BUDGET=14)
 
-rings=2, total wall time 47.2 s then 44.8 s on a repeat run with
-identical verdicts:
+Re-measured 2026-08-12 against the cut. 3.0 m, the coarsest cut the API
+accepts, total wall time 9.1 s, mu 0.6, no cell skipped:
 
 | stage | blocks | interfaces | verdict | status | timing |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 8 | 2 | no verdict (None) | maxIterations | reached at 0.1 s |
-| 2 | 13 | 17 | no verdict (None) | infeasible | reached at 9.1 s |
+| 1 | 15 | 0 | no verdict (None) | over budget (15 > 14) | reached at 0.4 s |
+| 2 | 20 | 0 | no verdict (None) | over budget (20 > 14) | reached at 4.9 s |
 
-rings=4 (the studio's minimum), total wall time 21.9 s then 22.1 s on a
-repeat run with identical verdicts:
+0.9 m, the size the studio opens to, total wall time 25.0 s, mu 0.6, no
+cell skipped:
 
 | stage | blocks | interfaces | verdict | status | timing |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 6 | 0 | stands (True) | all blocks are supports (trivial case) | reached at 0.1 s |
-| 2 | 13 | 10 | no verdict (None) | Cannot load a SolverResults object with bad status: error | reached at 2.7 s |
-| 3 | 19 | 0 | no verdict (None) | over budget (19 > 14) | reached at 14.1 s |
-| 4 | 21 | 0 | no verdict (None) | over budget (21 > 14) | reached at 17.7 s |
+| 1 | 68 | 0 | no verdict (None) | over budget (68 > 14) | reached at 0.6 s |
+| 2 | 127 | 0 | no verdict (None) | over budget (127 > 14) | reached at 3.3 s |
+| 3 | 173 | 0 | no verdict (None) | over budget (173 > 14) | reached at 6.3 s |
+| 4 | 218 | 0 | no verdict (None) | over budget (218 > 14) | reached at 9.7 s |
+| 5 | 242 | 0 | no verdict (None) | over budget (242 > 14) | reached at 13.5 s |
+| 6 | 255 | 0 | no verdict (None) | over budget (255 > 14) | reached at 17.1 s |
+| 7 | 259 | 0 | no verdict (None) | over budget (259 > 14) | reached at 21.1 s |
 
-No stage timed out in either run, and no cell was skipped at either ring
-count. An over-budget or all-supports stage reports 0 interfaces because
-the solver never runs (over budget) or has nothing to check (every block
-already grounded): interface detection happens inside the rigid-block
-solve itself, so a stage that never reaches the solver has none to count.
+No stage timed out in either run. An over-budget stage reports 0
+interfaces because the solver never runs: interface detection happens
+inside the rigid-block solve itself, so a stage that never reaches the
+solver has none to count.
 
-**Reading**: this export now returns no structural verdict at all. The
-only True is stage 1 at rings=4, where every placed block is a support
-and no solve happens; every other stage is an honest null. That is a
-worse-looking result than the previous pass, which reported "does not
-stand" on three stages, and it is the correct one. Those earlier results
-were withdrawn for two independent reasons found by control rather than
-by argument.
+**Reading**: this export returns no structural verdict at all, and under
+the cut it cannot. The smallest stage the API can produce on this
+geometry is 15 blocks, at the coarsest size the slider offers, against a
+CRA_BLOCK_BUDGET of 14: one block over, and every finer size is further
+over. Every stage at every size is an honest null on that ground alone,
+and no solver ever runs. That is not a defect in this script, it is a
+property of this export's block count, and `run_staging`'s `include_cra`
+defaults to False because of it.
+
+Two earlier results in this section were withdrawn, and the reasoning
+stands whatever the cut does. The pass before last reported "does not
+stand" on three stages; the pass after it reported a single True, at
+rings=4 stage 1, where every placed block was a support and no solve
+happened. Neither result survives, the first because it was wrong and the
+second because the ring count it was keyed to no longer exists. The two
+independent reasons the "does not stand" was withdrawn were found by
+control rather than by argument.
 
 First, a solver parameterisation artefact. `d_bnd` and `eps` were left at
 upstream's unit-scale defaults, which are absolute lengths in metres, on
@@ -375,11 +566,15 @@ reported as failures.
 So the earlier uniform does-not-stand result was a solver
 parameterisation artefact on top of a positional modelling error, not a
 structural reading of the vault. The positional error is the second thing
-this pass measured and the one that had gone undisclosed: the faceted
+that pass measured and the one that had gone undisclosed: the faceted
 analysis surface sits up to 2.389 m from the mesh-following block surface
 at rings=2 and 1.964 m at rings=4, against a shell half thickness of
 0.1 m. Even a converged verdict on this model would be a verdict about
-blocks sitting metres from where the studio draws them.
+blocks sitting metres from where the studio draws them. Those two figures
+were taken under the ring and wedge binning the cutting wave retired, and
+have not been re-run against the cut: they are kept as the record of why
+the earlier verdicts were withdrawn, not as a current measurement, and
+the ring counts naming them no longer correspond to any studio control.
 
 Read that pair for what it is. Both surfaces come from the same analysis
 mesh: `voussoirs.segment_voussoirs` against `blocks.segment_blocks`, and
@@ -401,7 +596,13 @@ the shell thickness. Neither is a tuning exercise on this export.
 
 One measurement should be read as a warning rather than a result. The
 same k sweep was run on this export's own stages, twelve values from 0.5
-to 0.001, on every stage inside CRA_BLOCK_BUDGET:
+to 0.001, on every stage inside CRA_BLOCK_BUDGET. It was taken under the
+ring and wedge binning the cutting wave retired and has not been re-run
+against the cut, and it cannot be: the cut's smallest stage at the
+coarsest size the API accepts is 15 blocks, so no stage on this export is
+inside the budget any more and the sweep has nothing left to run on. It
+is kept because what it says about k is a statement about the solver
+rather than about the segmentation.
 
 | stage | blocks | k values reaching a verdict | the verdict |
 | --- | --- | --- | --- |

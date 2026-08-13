@@ -1,40 +1,55 @@
-"""The piece the viewer draws: curved caps, flat joints.
+"""The piece the viewer draws: a cap cut to its outline, on flat joints.
 
-A drawn segment used to be the cell's mesh faces offset both ways through
-the thickness, so neighbouring pieces met flush along a curve and the shell
-read as one monolithic object. A piece keeps those curved caps, which is
-what makes the vault look like the vault, but projects its boundary onto a
-flat plane per joint run, so the cut between two castings is a real flat
-face.
+A drawn piece is built from its own cell, not from whatever mesh faces
+happened to fall inside it. Its cap is a triangulation of the outline
+lifted onto the thrust surface, so the vault keeps its curvature and the
+heatmaps keep their resolution, and its boundary is the outline exactly.
+Neighbours share boundary points because both took them from the same
+welded cut, so their joints coincide rather than nearly coincide.
 
-Thickness is not applied here. Each vertex ships as a mid-surface point
+Thickness is not applied here. Each vertex ships as a mid surface point
 plus a unit normal, and the viewer offsets by half the thickness either
-way, which lets thickness, taper and the joint gap all be client-side.
+way, which keeps thickness, taper and the joint gap client side.
 
-A corner sits where two joints meet, and a single stored normal can only
-lie in one of their two planes at once, not both (only along their line
-of intersection, and a third cell meeting the same corner would generally
-miss even that). So exactly one of a corner's two runs owns its normal;
-the other run is very slightly non-planar at that one point. Measured on
-the test fixture, at a thickness of 0.2, that residual is about 0.003
-units, well under a millimetre at any real scale and invisible in the
-model. What is not optional is agreement: every cell that touches a given
-corner reads the same globally agreed owner for it (see
-_corner_owner_planes), so neighbours always store the exact same position
-and normal there, and their joint faces coincide. A joint that is a
-fraction of a millimetre off flat is a modelling nicety; a joint where the
-two sides disagree on the geometry is broken.
+A corner sits where two facets meet, and a single stored normal can only
+lie in one of their two planes at once. So exactly one of a corner's
+facets owns its normal, chosen by a rule both neighbours compute
+identically, and the other facet is very slightly non planar at that one
+point. The residual is measured and reported rather than assumed: it is
+the sine of the angle between the stored normal and the non-owning
+facet's plane, so a small residual means a small angle, not a distance.
+On the four cell dome fixture in test_pieces.py, at rounds chosen by
+choose_rounds, that residual comes out at about 0.0104, which is 0.598
+degrees, at the corner where the c10/c11 joint meets the free rim, on
+the steepest part of that fixture's dome. What is not optional is
+agreement. A joint that is a fraction of a degree off flat is a
+modelling nicety; a joint whose two sides disagree is broken.
 
-Stdlib only: the bundle imports this, and the guard test forbids solver
+report["corner_residual"] is the single worst corner across the whole
+cut, same as it always was; a single number about a worst case badly
+misrepresents the typical joint, so report["corner_residual_stats"]
+(built by residual_stats over corner_residuals's own per-corner mapping)
+carries the median, mean, p99, max and counts over a fixed set of
+thresholds, and names which course the worst corner sits in. Measured on
+the real Trial 2 export at 0.9 m: the typical corner (the median,
+0.0196) is the same order as the synthetic fixture's own figure above
+(0.0104), roughly double it rather than a tight match; a small cluster,
+far higher, sits in the rim course, where the cut follows the mesh's own
+irregular boundary rather than a straight chord. See
+docs/BENCH.md and bench/scripts/cutting_measurements.py for the measured
+distribution.
+
+Stdlib only: the bundle imports this and the guard test forbids solver
 stacks there.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+import math
+from typing import Dict, List, Optional, Sequence, Tuple
 
-import blocks
-import voussoirs
+import cutting
+import tessellation
 
 
 def _cross(u, v):
@@ -52,32 +67,31 @@ def _normalise(v) -> Optional[List[float]]:
     return [v[0] / length, v[1] / length, v[2] / length]
 
 
-def run_plane(corner_a, corner_b, chain, vertices, normals):
-    """The joint plane for one run: through both corners, along the shell.
+def run_plane(corner_a, corner_b, chain_normals):
+    """The joint plane for one facet: through both corners, along the shell.
 
-    Built from the two corners and the average surface normal of the chain,
-    which matters for two reasons. A corner belongs to two runs at once,
-    and a plane defined this way contains its corners by construction, so
-    the runs never disagree about where a corner goes. And the neighbouring
-    cell walks the same chain backwards: that flips the returned normal but
-    leaves the plane identical, so both cells project onto the same surface.
+    Built from the two corners and the average surface normal along the
+    facet, which matters twice over. The plane contains its corners by
+    construction, so the two facets meeting at a corner never disagree
+    about where that corner goes. And the neighbouring cell walks the same
+    facet from the other side: the chain is put in a canonical order
+    before this is called, so both sides sum the same normals in the same
+    order and land on a bit identical plane.
     """
 
-    a, b = vertices[corner_a], vertices[corner_b]
-    along = _normalise([b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+    along = _normalise([corner_b[i] - corner_a[i] for i in range(3)])
     if along is None:
         return None
     average = [0.0, 0.0, 0.0]
-    for vertex in chain:
-        n = normals[vertex]
-        average = [average[i] + n[i] for i in range(3)]
+    for normal in chain_normals:
+        average = [average[i] + normal[i] for i in range(3)]
     average = _normalise(average)
     if average is None:
         return None
     plane_normal = _normalise(_cross(along, average))
     if plane_normal is None:
         return None
-    return (list(a), plane_normal)
+    return (list(corner_a), plane_normal)
 
 
 def project_to_plane(point, plane):
@@ -89,9 +103,8 @@ def project_to_plane(point, plane):
 def project_direction(vector, plane):
     """The component of a direction lying in the plane, unit length.
 
-    A side face is only flat if the offset direction lies in the joint
-    plane as well as the point, otherwise the top and bottom edges of the
-    joint bow away from each other.
+    A wall is only flat if the offset direction lies in the joint plane as
+    well as the point, otherwise its top and bottom edges bow apart.
     """
 
     _, normal = plane
@@ -100,183 +113,477 @@ def project_direction(vector, plane):
     return flattened if flattened is not None else list(vector)
 
 
-def _run_key(run: dict) -> Tuple[int, int]:
-    """The identity of a run's chain, independent of which side reads it.
+def choose_rounds(tess: Dict, surface: cutting.Surface) -> Dict:
+    """How many subdivision rounds the cap needs, by measurement.
 
-    Two cells sharing a run see the same set of undirected edges, just
-    walked in opposite directions, so the minimum undirected edge key of
-    those edges is identical from either side. That makes it usable as a
-    global, side-free way to compare two different runs that both want to
-    claim the same corner.
+    Start from the edge length rule, then refine while the measured chord
+    deviation is still over the target and there are rounds left. Both the
+    achieved deviation and which limit stopped it are reported, because a
+    number that was never reached is worse than no number. "limit" says
+    "rounds" whenever the round budget, not either target, is why a target
+    is still missed: it is not just whichever loop happened to run last, or
+    a cut that ran out of rounds during the edge pass alone would still be
+    blamed on "edge" even though the edge target itself was never met.
     """
 
-    return min((min(a, b), max(a, b)) for a, b in run["edges"])
+    points = tess["points"]
+    longest = 0.0
+    for cell in tess["cells"]:
+        for a, b in cell["facets"]:
+            longest = max(longest, math.hypot(
+                points[a][0] - points[b][0], points[a][1] - points[b][1]))
+    rounds = 0
+    while rounds < cutting.MAX_ROUNDS and longest / (2 ** rounds) > cutting.CAP_EDGE_TARGET:
+        rounds += 1
+    edge_m = longest / (2 ** rounds)
+    chord = _chord_deviation(tess, surface, rounds)
+    while chord > cutting.CHORD_TARGET and rounds < cutting.MAX_ROUNDS:
+        rounds += 1
+        edge_m = longest / (2 ** rounds)
+        chord = _chord_deviation(tess, surface, rounds)
+    missed = edge_m > cutting.CAP_EDGE_TARGET or chord > cutting.CHORD_TARGET
+    limit = "rounds" if (rounds >= cutting.MAX_ROUNDS and missed) else "edge"
+    return {
+        "rounds": rounds,
+        "chord_mm": chord * 1000.0,
+        "edge_m": edge_m,
+        "limit": limit,
+    }
 
 
-def _corner_owner_planes(
-    vertices: Sequence[Sequence[float]],
-    faces: Sequence[Sequence[int]],
-    assignment: Sequence[Sequence[int]],
-    order: Sequence[Sequence[int]],
-    normals: Sequence[Sequence[float]],
-) -> Dict[int, tuple]:
-    """The one plane each corner vertex's normal is flattened into.
+def _chord_deviation(tess: Dict, surface: cutting.Surface, rounds: int) -> float:
+    """How far the cap cuts inside the surface, on a sample of the cut.
 
-    A corner sits where two runs meet, and a run's plane only ever
-    contains its own two corners by construction, so a corner's position
-    is already correct no matter which of its two runs anyone asks. Its
-    normal is a different story: a single stored direction cannot lie in
-    two different planes at once (only along their line of intersection,
-    which a third cell meeting the same corner would generally miss too),
-    so exactly one of a corner's runs has to own its normal.
-
-    That choice has to come out the same way no matter which cell is
-    asking, or two neighbours store different normals for a vertex they
-    both claim, and the joint between them stops matching. So every run
-    of every cell is built once, up front, in a single pass over the whole
-    mesh, and each corner is handed to whichever incident run has the
-    smallest `_run_key`. Both cells sharing a run compute that key
-    identically, so both land on the same owner independently, without
-    needing to compare notes or agree on an iteration order.
+    Measured by lifting each sampled triangle's own plan centroid and
+    taking its distance to the plane of that triangle's three lifted
+    corners. A sample rather than the whole tessellation because the round
+    count is global, so a few hundred triangles settle it.
     """
 
-    users = voussoirs.edge_users(faces)
-    faces_by_cell: Dict[Tuple[int, int], List[int]] = {}
-    for face_index, pair in enumerate(assignment):
-        faces_by_cell.setdefault((pair[0], pair[1]), []).append(face_index)
+    worst = 0.0
+    sampled = 0
+    for cell in tess["cells"]:
+        if sampled > 200:
+            break
+        points, triangles, _ = _cap(tess, cell, rounds)
+        lifted = [_lift(surface, p) for p in points]
+        for a, b, c in triangles:
+            sampled += 1
+            pa, pb, pc = lifted[a]["point"], lifted[b]["point"], lifted[c]["point"]
+            normal = _normalise(_cross(
+                [pb[i] - pa[i] for i in range(3)],
+                [pc[i] - pa[i] for i in range(3)],
+            ))
+            if normal is None:
+                continue
+            centre = [
+                (points[a][0] + points[b][0] + points[c][0]) / 3.0,
+                (points[a][1] + points[b][1] + points[c][1]) / 3.0,
+            ]
+            on_surface = _lift(surface, centre)["point"]
+            worst = max(worst, abs(sum(
+                (on_surface[i] - pa[i]) * normal[i] for i in range(3))))
+    return worst
 
-    best_key: Dict[int, Tuple[int, int]] = {}
-    owner_plane: Dict[int, tuple] = {}
-    for ring, wedge in order:
-        cell_faces = faces_by_cell.get((ring, wedge), [])
-        if not cell_faces:
+
+def _lift(surface: cutting.Surface, plan) -> Dict:
+    found = surface.lift(plan[0], plan[1])
+    return {
+        "point": [plan[0], plan[1], found["z"]],
+        "normal": found["normal"],
+        "weights": found["weights"],
+        "clamped": found["clamped"],
+        "clamp_m": found["clamp_m"],
+    }
+
+
+def _cap(tess: Dict, cell: Dict, rounds: int):
+    """The cell's plan triangulation and its boundary chains.
+
+    build_tessellation deliberately reports slivers rather than rejecting
+    them, so this module has to cope with one reaching here: a ring too
+    degenerate to triangulate raises from cutting.ear_clip with no idea
+    which cell it came from, so that is caught here and re-raised naming
+    the cell key, which is the one piece of context this function alone
+    has.
+    """
+
+    points = [list(p) for p in tess["points"]]
+    ring = cutting.bridge_holes(cell["outline"], cell["holes"], points) \
+        if cell["holes"] else list(cell["outline"])
+    try:
+        triangles = cutting.ear_clip(ring, points)
+    except (IndexError, ValueError) as error:
+        raise ValueError(
+            "cell {!r} could not be triangulated: {}".format(cell["key"], error)
+        ) from error
+    chains = [list(cell["outline"])] + [list(hole) for hole in cell["holes"]]
+    return cutting.subdivide(points, triangles, chains, rounds)
+
+
+def _facet_chain(chain: Sequence[int], per_facet: int) -> List[List[int]]:
+    """Split a subdivided ring back into one run of points per facet.
+
+    Assumes every facet was subdivided into exactly per_facet segments,
+    which holds only while the round count is global (see subdivide):
+    every chain edge splits every round, so a ring's length is always a
+    whole multiple of per_facet. Enforced here rather than left advisory,
+    because a ring that is not would silently hand back a wrap run whose
+    two ends are not a real facet, which then drops out through
+    planes.get with no signal that anything was wrong.
+    """
+
+    if len(chain) % per_facet:
+        # A raise, not an assert: python -O drops asserts, and this one
+        # guards exactly the silent failure the docstring above describes,
+        # which would then ship rather than stop.
+        raise ValueError(
+            "a subdivided ring of {} points is not a whole multiple of {} "
+            "points per facet; the round count is no longer global".format(
+                len(chain), per_facet
+            )
+        )
+    out = []
+    for start in range(0, len(chain), per_facet):
+        run = chain[start:start + per_facet]
+        run.append(chain[(start + per_facet) % len(chain)])
+        out.append(run)
+    return out
+
+
+def facet_planes(tess: Dict, surface: cutting.Surface) -> Dict[Tuple[int, int], tuple]:
+    """One plane per facet, computed once, globally, from both ends.
+
+    Canonical order is by welded point id, so the cell on either side
+    feeds run_plane the identical sequence and gets a bit identical plane
+    back. Computing this per cell, in whatever order that cell happened to
+    walk its own boundary, is exactly how two neighbours end up with
+    joints that nearly match.
+    """
+
+    points = tess["points"]
+    planes: Dict[Tuple[int, int], tuple] = {}
+    for facet in {f for cell in tess["cells"] for f in cell["facets"]}:
+        a, b = facet                      # already canonical: a < b
+        lifted_a = _lift(surface, points[a])
+        lifted_b = _lift(surface, points[b])
+        plane = run_plane(
+            lifted_a["point"], lifted_b["point"],
+            [lifted_a["normal"], lifted_b["normal"]],
+        )
+        if plane is not None:
+            planes[facet] = plane
+    return planes
+
+
+def corner_owners(tess: Dict) -> Dict[int, Tuple[int, int]]:
+    """The one facet each corner's normal is flattened into.
+
+    A corner joins two facets and one direction cannot lie in both planes,
+    so one of them has to own it. The choice is the smallest facet key
+    touching that corner, which both neighbours compute identically
+    without comparing notes.
+    """
+
+    owner: Dict[int, Tuple[int, int]] = {}
+    for facet in sorted({f for cell in tess["cells"] for f in cell["facets"]}):
+        for corner in facet:
+            if corner not in owner or facet < owner[corner]:
+                owner[corner] = facet
+    return owner
+
+
+def corner_residuals(
+    tess: Dict,
+    surface: cutting.Surface,
+    planes: Optional[Dict[Tuple[int, int], tuple]] = None,
+    owners: Optional[Dict[int, Tuple[int, int]]] = None,
+) -> Dict[int, float]:
+    """Every corner's own worst disagreement, one value per corner.
+
+    A corner's stored normal is the raw surface normal flattened into its
+    owning facet's plane (see corner_owners). This measures, for every
+    OTHER facet across the WHOLE tessellation that also touches that
+    corner (not only the facets of whichever cell happens to be walking
+    it), how far that stored normal lies out of the other facet's own
+    plane, and keeps the worst one. Corners with no owning facet, or whose
+    owning facet has no computed plane, are absent from the returned
+    mapping: nothing was ever stored for them to disagree with.
+
+    max(corner_residuals(...).values()) is exactly the single number
+    report["corner_residual"] has always carried; this just keeps the
+    per-corner values apart instead of folding them into one running
+    maximum, so the distribution across every corner can be reported too.
+    """
+
+    if planes is None:
+        planes = facet_planes(tess, surface)
+    if owners is None:
+        owners = corner_owners(tess)
+
+    facets_by_corner: Dict[int, List[Tuple[int, int]]] = {}
+    for cell in tess["cells"]:
+        for facet in cell["facets"]:
+            for corner in facet:
+                facets_by_corner.setdefault(corner, []).append(facet)
+
+    points = tess["points"]
+    out: Dict[int, float] = {}
+    for corner, facet in owners.items():
+        if facet not in planes:
             continue
-        labels = voussoirs.edge_labels(faces, cell_faces, assignment, users)
-        for component in voussoirs.face_components(faces, cell_faces):
-            for loop in voussoirs.component_loops(faces, component):
-                for run in voussoirs.loop_runs(loop, labels):
-                    chain = [edge[0] for edge in run["edges"]] + [run["edges"][-1][1]]
-                    plane = run_plane(chain[0], chain[-1], chain, vertices, normals)
-                    if plane is None:
-                        continue
-                    key = _run_key(run)
-                    for corner in (chain[0], chain[-1]):
-                        if corner not in best_key or key < best_key[corner]:
-                            best_key[corner] = key
-                            owner_plane[corner] = plane
-    return owner_plane
+        lifted = _lift(surface, points[corner])
+        stored = project_direction(lifted["normal"], planes[facet])
+        worst = 0.0
+        for other in facets_by_corner.get(corner, ()):
+            if other == facet or other not in planes:
+                continue
+            _, plane_normal = planes[other]
+            worst = max(worst, abs(sum(
+                stored[axis] * plane_normal[axis] for axis in range(3))))
+        out[corner] = worst
+    return out
 
 
-def _piece_faces(count: int, cell_faces, index_of):
-    """Cap faces both ways plus one quad per boundary edge, wound outward."""
+RESIDUAL_THRESHOLDS = (0.01, 0.05, 0.10, 0.20, 0.30)
+# The break points a review found the plain max obscures: most corners sit
+# well under 0.01 (0.6 degrees), and the counts above each of these name
+# how the tail actually grows rather than leaving it to one worst number.
 
-    faces: List[List[int]] = []
-    for face in cell_faces:
-        top = [index_of[v] for v in face]
-        faces.append(top)
-        faces.append([index_of[v] + count for v in reversed(face)])
-    return faces
+
+def residual_stats(values: Sequence[float]) -> Dict:
+    """count/min/median/mean/p99/max over a set of residuals, plus how many
+    sit strictly over each of RESIDUAL_THRESHOLDS.
+
+    Nearest rank percentile (the smallest value at or past the 99th
+    percentile position), not an interpolated one: "the top 1 percent"
+    read as a plain count of corners, not a fractional one.
+    """
+
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return {
+            "count": 0, "min": 0.0, "median": 0.0, "mean": 0.0,
+            "p99": 0.0, "max": 0.0,
+            "over": [{"threshold": t, "count": 0} for t in RESIDUAL_THRESHOLDS],
+        }
+    median = (
+        ordered[n // 2] if n % 2
+        else 0.5 * (ordered[n // 2 - 1] + ordered[n // 2])
+    )
+    p99 = ordered[min(n - 1, math.ceil(0.99 * n) - 1)]
+    return {
+        "count": n,
+        "min": ordered[0],
+        "median": median,
+        "mean": sum(ordered) / n,
+        "p99": p99,
+        "max": ordered[-1],
+        "over": [
+            {"threshold": t, "count": sum(1 for v in ordered if v > t)}
+            for t in RESIDUAL_THRESHOLDS
+        ],
+    }
+
+
+def _courses_touching(tess: Dict, corner: int) -> List[int]:
+    """Every course with a cell that has this corner on its own boundary,
+    sorted, lowest (rimward) first. A corner on a shared joint can touch
+    cells from more than one course."""
+
+    courses = set()
+    for cell in tess["cells"]:
+        if corner in cell["outline"] or any(
+            corner in hole for hole in cell["holes"]
+        ):
+            courses.add(cell["course"])
+    return sorted(courses)
 
 
 def segment_pieces(
-    vertices: Sequence[Sequence[float]],
-    faces: Sequence[Sequence[int]],
-    assignment: Sequence[Sequence[int]],
-    order: Sequence[Sequence[int]],
-    support_ids: Iterable[int],
-) -> List[dict]:
-    """One drawn piece per connected patch of each cell, in drop order."""
+    tess: Dict,
+    surface: cutting.Surface,
+    support_points: Sequence[Sequence[float]],
+) -> Tuple[List[Dict], Dict]:
+    """One drawn piece per cell, in placement order, with its cut disclosed.
 
-    normals = blocks.vertex_normals(vertices, faces)
-    support = set(support_ids)
-    users = voussoirs.edge_users(faces)
-    faces_by_cell: Dict[Tuple[int, int], List[int]] = {}
-    for face_index, pair in enumerate(assignment):
-        faces_by_cell.setdefault((pair[0], pair[1]), []).append(face_index)
+    is_support marks a cell if any support point lands inside it or on its
+    boundary: tessellation.point_in_cell counts an edge or corner as
+    inside, so a support that sits exactly on a joint marks every cell
+    that shares that joint, not just one of them. That is the same rule
+    the ring and wedge binning this replaces used, kept because four later
+    tasks read this flag.
+    """
 
-    # Every corner's normal is resolved once, globally, before any piece is
-    # built. See _corner_owner_planes for why: a corner's normal can only
-    # lie in one of its two runs' planes, and the choice of which one has
-    # to come out the same from both cells that meet there.
-    corner_planes = _corner_owner_planes(vertices, faces, assignment, order, normals)
+    chosen = choose_rounds(tess, surface)
+    rounds = chosen["rounds"]
+    planes = facet_planes(tess, surface)
+    owners = corner_owners(tess)
+    welded = len(tess["points"])
+    per_facet = 2 ** rounds
 
-    out: List[dict] = []
-    for ring, wedge in order:
-        cell_faces = faces_by_cell.get((ring, wedge), [])
-        if not cell_faces:
-            continue
-        labels = voussoirs.edge_labels(faces, cell_faces, assignment, users)
-        components = voussoirs.face_components(faces, cell_faces)
-        for patch, component in enumerate(components):
-            used: List[int] = []
-            seen = set()
-            for face_index in component:
-                for vertex in faces[face_index]:
-                    if vertex not in seen:
-                        seen.add(vertex)
-                        used.append(vertex)
-            mid = {vertex: list(vertices[vertex]) for vertex in used}
-            normal = {vertex: list(normals[vertex]) for vertex in used}
+    # Computed once, globally, ahead of the per-cell loop below: one value
+    # per corner rather than folded cell by cell into a single running
+    # maximum, so the distribution across every corner survives to the
+    # report (see corner_residuals's own docstring for why this is the
+    # same number as before, just kept apart).
+    residuals_by_corner = corner_residuals(tess, surface, planes, owners)
 
-            # A run's two corners are unaffected by projecting onto its own
-            # plane (that plane is built through them), so a corner's
-            # position is already correct and is left untouched here. A
-            # vertex strictly between a run's corners belongs to exactly
-            # one run, so its position and normal are flattened onto that
-            # run's plane without ambiguity.
-            corners: set = set()
-            for loop in voussoirs.component_loops(faces, component):
-                for run in voussoirs.loop_runs(loop, labels):
-                    chain = [edge[0] for edge in run["edges"]] + [run["edges"][-1][1]]
-                    plane = run_plane(chain[0], chain[-1], chain, vertices, normals)
-                    if plane is None:
-                        continue
-                    corners.add(chain[0])
-                    corners.add(chain[-1])
-                    for vertex in chain[1:-1]:
-                        mid[vertex] = project_to_plane(mid[vertex], plane)
-                        normal[vertex] = project_direction(normal[vertex], plane)
+    clamp_reach: List[float] = []
+    missing_planes = 0
+    facet_counts: List[int] = []
+    boundary_counts: List[int] = []
+    piece_courses: List[int] = []
+    out: List[Dict] = []
 
-            # A corner's normal, on the other hand, is ambiguous (it sits
-            # on two runs), so it is not flattened onto whichever of this
-            # piece's own runs happens to touch it. It is looked up in the
-            # global map instead, so every piece that shares this corner
-            # reads the identical answer.
-            for vertex in corners:
-                plane = corner_planes.get(vertex)
+    for cell in tess["cells"]:
+        points, triangles, chains = _cap(tess, cell, rounds)
+        used = sorted({index for triangle in triangles for index in triangle})
+        position = {index: i for i, index in enumerate(used)}
+        lifted = {index: _lift(surface, points[index]) for index in used}
+        clamp_reach.extend(
+            lifted[index]["clamp_m"] for index in used if lifted[index]["clamped"]
+        )
+
+        mid = {index: list(lifted[index]["point"]) for index in used}
+        normals = {index: list(lifted[index]["normal"]) for index in used}
+
+        facets_here = 0
+        boundary_here = 0
+        for chain in chains:
+            boundary_here += len(chain)
+            for run in _facet_chain(chain, per_facet):
+                a, b = run[0], run[-1]
+                facet = (a, b) if a < b else (b, a)
+                plane = planes.get(facet)
                 if plane is None:
+                    missing_planes += 1
                     continue
-                normal[vertex] = project_direction(normal[vertex], plane)
+                facets_here += 1
+                for index in run[1:-1]:
+                    mid[index] = project_to_plane(mid[index], plane)
+                    normals[index] = project_direction(normals[index], plane)
 
-            index_of = {vertex: i for i, vertex in enumerate(used)}
-            count = len(used)
-            piece_faces = _piece_faces(count, [faces[i] for i in component], index_of)
-            for a, b in voussoirs.segment_boundary_edges_for(faces, component):
-                ta, tb = index_of[a], index_of[b]
-                piece_faces.append([tb, ta, ta + count, tb + count])
+        for index in used:
+            if index >= welded:
+                continue                   # a subdivision point, not a corner
+            facet = owners.get(index)
+            if facet is None or facet not in planes:
+                continue
+            # The stored normal a drawn casting actually ships; the
+            # disagreement this creates with a corner's OTHER facets is
+            # measured once, globally, in residuals_by_corner above, not
+            # here cell by cell.
+            normals[index] = project_direction(normals[index], planes[facet])
 
-            # A key is an identity, not a label: the viewer tints each
-            # casting from it, offsets its texture by it and looks it up in
-            # the placement index by it. A cell can hold two patches that do
-            # not touch (measured on the Trial 2 export, rings=16 gives 67
-            # pieces over 66 cells, r10w2 twice), and two castings sharing
-            # one key share a tint, a texture offset and a place in the drop
-            # order. The cell's own key is kept wherever it means exactly
-            # one piece, which is nearly always; the patch index appears
-            # only where it has to. ring and wedge are untouched either way,
-            # so everything that reads the cell still reads it.
-            key = "r{}w{}".format(ring, wedge)
-            if len(components) > 1:
-                key += "p{}".format(patch)
+        faces: List[List[int]] = []
+        count = len(used)
+        for a, b, c in triangles:
+            faces.append([position[a], position[b], position[c]])
+            faces.append([
+                position[c] + count, position[b] + count, position[a] + count])
+        for chain in chains:
+            for i in range(len(chain)):
+                u, v = position[chain[i]], position[chain[(i + 1) % len(chain)]]
+                faces.append([v, u, u + count, v + count])
 
-            out.append({
-                "key": key,
-                "ring": ring,
-                "wedge": wedge,
-                "mid": [mid[v] for v in used],
-                "normals": [normal[v] for v in used],
-                "sources": list(used),
-                "faces": piece_faces,
-                "is_support": any(v in support for v in used),
-            })
-    return out
+        is_support = any(
+            tessellation.point_in_cell(point, cell, tess["points"])
+            for point in support_points
+        )
+
+        facet_counts.append(facets_here)
+        boundary_counts.append(boundary_here)
+        piece_courses.append(cell["course"])
+        out.append({
+            "key": cell["key"],
+            "course": cell["course"],
+            "mid": [mid[index] for index in used],
+            "normals": [normals[index] for index in used],
+            "sources": [lifted[index]["weights"] for index in used],
+            "faces": faces,
+            "is_support": is_support,
+        })
+
+    residual = max(residuals_by_corner.values()) if residuals_by_corner else 0.0
+    stats = residual_stats(residuals_by_corner.values())
+    if residuals_by_corner:
+        worst_corner = max(residuals_by_corner, key=residuals_by_corner.get)
+        stats["worst_corner_courses"] = _courses_touching(tess, worst_corner)
+    else:
+        stats["worst_corner_courses"] = []
+
+    report = {
+        # facets_per_piece is the number to compare against the ring and
+        # wedge binning this replaces, whose cells carried 30 to 86
+        # boundary edges. boundary_points_per_piece counts every
+        # subdivided boundary point, not joints, so a five facet cell
+        # reports around 40 there: read facets_per_piece for the headline.
+        # max_course names which course the largest piece belongs to: a
+        # rim course cell following the mesh's own irregular boundary
+        # carries more facets than a straight-chorded interior one, so the
+        # max alone reads as typical unless its course is named alongside
+        # the median.
+        "facets_per_piece": _spread(facet_counts, piece_courses),
+        "boundary_points_per_piece": _spread(boundary_counts),
+        # corner_residual is the single worst corner across the whole cut,
+        # unchanged in meaning from before this report. corner_residual_stats
+        # is the distribution that number was pulled from: the median
+        # describes the typical joint, corner_residual (== stats["max"])
+        # describes only its own worst one, and worst_corner_courses names
+        # which course that worst corner sits in (see corner_residuals and
+        # residual_stats above, and the module docstring).
+        "corner_residual": residual,
+        "corner_residual_stats": stats,
+        "chord_mm": chosen["chord_mm"],
+        "rounds": rounds,
+        "edge_m": chosen["edge_m"],
+        "limit": chosen["limit"],
+        # clamped_points counts the cap points that landed off the render
+        # mesh and were pulled back onto it (see cutting.Surface.lift).
+        # clamped_max_m and clamped_median_m say by how far, in metres,
+        # over exactly that population: a count with no magnitude cannot be
+        # read, because the same 137 points are either rounding noise or
+        # ten times the 5 mm chord target depending on a number the report
+        # did not carry. On the real Trial 2 export at 0.9 m they come out
+        # at 0.0523 and 0.0246, so it is the second of those.
+        "clamped_points": len(clamp_reach),
+        "clamped_max_m": max(clamp_reach) if clamp_reach else 0.0,
+        "clamped_median_m": _median(clamp_reach),
+        "missing_planes": missing_planes,
+    }
+    return out, report
+
+
+def _median(values: Sequence[float]) -> float:
+    """The plain median, 0.0 over nothing. Averaged across the two middles
+    on an even count, the same rule residual_stats uses."""
+
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return 0.0
+    if n % 2:
+        return ordered[n // 2]
+    return 0.5 * (ordered[n // 2 - 1] + ordered[n // 2])
+
+
+def _spread(
+    values: Sequence[int], courses: Optional[Sequence[int]] = None
+) -> Dict:
+    """min/median/max over values; with courses (parallel to values), also
+    the course of one piece that reaches the max, so a reader is not left
+    to assume the max is typical when it belongs to a course of its own."""
+
+    if not values:
+        return {"min": 0, "median": 0, "max": 0}
+    ordered = sorted(values)
+    result = {
+        "min": ordered[0],
+        "median": ordered[len(ordered) // 2],
+        "max": ordered[-1],
+    }
+    if courses is not None:
+        result["max_course"] = courses[values.index(ordered[-1])]
+    return result

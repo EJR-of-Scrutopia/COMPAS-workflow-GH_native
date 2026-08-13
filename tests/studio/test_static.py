@@ -10,6 +10,24 @@ from pathlib import Path
 STATIC = Path(__file__).resolve().parents[2] / "bench" / "studio" / "static"
 
 
+def _function_body(js, name):
+    """The source of one top level function, brace to closing brace.
+
+    Every function in studio.js is written at column 0, so the first
+    "\\n}" after the declaration is its own closing brace.
+    """
+
+    start = js.index("function {}(".format(name))
+    return js[start:js.index("\n}", start)]
+
+
+def _luminance(hexstr):
+    """Relative luminance of a 6 hex digit colour string, no 0x prefix."""
+
+    v = int(hexstr, 16)
+    return 0.2126 * ((v >> 16) & 255) + 0.7152 * ((v >> 8) & 255) + 0.0722 * (v & 255)
+
+
 def test_vendor_files_are_present_and_pinned():
     core = STATIC / "vendor" / "three.core.js"
     module = STATIC / "vendor" / "three.module.js"
@@ -35,12 +53,24 @@ def test_no_external_urls_in_the_page_or_scripts():
         )
 
 
-def test_binning_js_avoids_the_known_parity_traps():
-    js = (STATIC / "binning.js").read_text(encoding="utf-8")
-    assert "Math.round" not in js, "use floor(x + 0.5); Math.round differs from Python round at .5"
-    assert "halfUp" in js
-    assert "theta < 0" in js, "JS % keeps sign; the fold to [0, 2pi) must be explicit"
-    assert "WEDGES_AT_RIM = 12" in js
+def test_the_page_no_longer_mirrors_the_binning():
+    assert not (STATIC / "binning.js").exists()
+    assert "binning.js" not in (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "segmentation mirror" not in (STATIC / "studio.js").read_text(
+        encoding="utf-8").lower()
+
+
+def test_the_size_control_replaces_the_ring_slider():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="size-slider"' in page
+    assert 'id="piece-count"' in page
+    assert 'id="rings-slider"' not in page
+
+
+def test_the_viewer_samples_fields_through_weights():
+    source = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "sampleScalar" in source
+    assert "sampleVector" in source
 
 
 def test_pbr_helpers_and_column_loader_exist():
@@ -131,6 +161,147 @@ def test_hud_captions_the_thickness_the_bundle_is_actually_built_at():
     body = js[start:end]
     assert "state.bundle.provenance.thickness" in body
     assert "Math.round(state.thickness * 1000)" not in body
+
+
+def test_the_hud_does_not_call_an_unavailable_material_a_convergence_failure():
+    # Fix round 1: brick, tile and stone carry no ananke_fea preset, so
+    # staging.py never calls the struck-now runner for them and instead
+    # writes struck.status "unavailable". Before this fix the HUD had only
+    # two readings, "stands" and "no equilibrium found", so an unattempted
+    # solve read exactly like a real convergence failure. A third reading
+    # is required, and it must not share the failure branch's wording.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function updateHud(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert 'struck.status === "unavailable"' in body
+    assert "not available for this material" in body
+    # The two branches must be distinguishable at the text a user reads:
+    # the failure line must not be reachable through the unavailable line.
+    unavailable_start = body.index('struckLine = "struck now: not available')
+    unavailable_line = body[unavailable_start:body.index(";", unavailable_start)]
+    assert "no equilibrium found" not in unavailable_line
+
+
+def test_the_pulse_does_not_tint_an_unavailable_material_red():
+    # Fix round 1, the other half: applyPulse used only good/not-good, so a
+    # material with no ananke_fea preset pulsed the same red as a real
+    # failed solve. Neither green (nothing converged) nor red (nothing
+    # failed either) is honest; it must read as a third, neutral state.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyPulse(")
+    end = js.index("\n}", start)
+    body = js[start:end]
+    assert 'struck.status === "unavailable"' in body
+    tint_start = body.index("const tint =")
+    tint_line = body[tint_start:body.index(";", tint_start)]
+    assert "unavailable ?" in tint_line
+    # The neutral tint must be its own colour, distinct from both the good
+    # (green) and not-good (red) tints already pinned elsewhere.
+    assert "0x2a2a2a" in tint_line
+    assert "0x1a3a1a" in tint_line and "0x3a1a1a" in tint_line
+
+
+def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading():
+    # Final fix wave. The two tests above pin updateHud and applyPulse, the
+    # two functions commit 022f9c5 fixed, and neither of them looks at
+    # layerAvailability -- the third reader of the same state, in the same
+    # file, which kept the two-reading logic for the whole wave. It reached
+    # the screen twice on shipped exports: limestone with a finished staged
+    # run telling the reader to wait "until a staged run exists", and brick
+    # with a finished staged run and no verification file disabling the
+    # layers for "no staging" while staging sat in the bundle.
+    #
+    # All three are pinned here together, in one test, so that fixing two
+    # of them is not a thing that can pass.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    readers = ("updateHud", "applyPulse", "layerAvailability")
+    for name in readers:
+        body = _function_body(js, name)
+        reads_it = (
+            'status === "unavailable"' in body
+            or "stagingUnavailable(" in body
+        )
+        assert reads_it, (
+            "{} decides what to show from struck_now but never distinguishes "
+            "the unavailable case, so a material with no FEA preset reads as "
+            "a failure or as a missing run".format(name)
+        )
+    # The two that print words must print the SAME words: they are on screen
+    # at the same time, describing the same state.
+    for name in ("updateHud", "layerAvailability"):
+        assert "not available for this material" in _function_body(js, name), (
+            "{} must use the wording the other reader already prints on the "
+            "same screen".format(name)
+        )
+    # And layerAvailability must not send a user to run something that has
+    # already run and can never change the answer.
+    availability = _function_body(js, "layerAvailability")
+    unavailable_at = availability.index("stagingUnavailable()")
+    stale_at = availability.index("until a staged run exists")
+    assert unavailable_at < stale_at, (
+        "the unavailable case must be decided before the fallback that "
+        "tells the reader to wait for a staged run"
+    )
+    # The helper must read the staging document, not the material name: the
+    # list of materials with no FEA preset lives in staging.py and a copy of
+    # it here would be a second source of truth for it.
+    helper = _function_body(js, "stagingUnavailable")
+    assert "state.bundle.staging" in helper
+    for material in ("brick", "tile", "stone"):
+        assert '"{}"'.format(material) not in helper, (
+            "the viewer must not carry its own copy of staging.py's "
+            "FEA_MATERIALS list"
+        )
+
+    # ------------------------------------------------------------------
+    # Second pass, same wave. finalStage() is null for three different
+    # reasons, not two: no staging at all, a material with no preset (the
+    # case pinned above), or a staged run that reached a real solver and
+    # came back with converged false. That third state fell through to the
+    # "no staging at all" branches -- advice to run a staged analysis that
+    # has already run and whose answer can never change. Every state below
+    # is checked against all three readers, not only the one each fix was
+    # sent to correct.
+    hud_body = _function_body(js, "updateHud")
+    pulse_body = _function_body(js, "applyPulse")
+
+    # State 1: a converged stage exists, so there is a real per-node field
+    # to colour with.
+    assert "if (stage) return { on: true };" in availability
+    assert "struck && struck.converged" in hud_body
+    assert '"struck now: stands' in hud_body
+    assert "good ? 0x1a3a1a" in pulse_body
+
+    # State 2: staging ran but the final stage has no per-node field,
+    # either because the material has no preset or because the solve did
+    # not converge. layerAvailability must say which, in updateHud's own
+    # words ("no equilibrium found"), and the gate must be the presence of
+    # a staged run, not the numeric value of any field on it.
+    assert "staging.stages && staging.stages.length" in availability
+    assert "no equilibrium found on the last staged run" in availability
+    assert "no equilibrium found" in hud_body
+    not_converged_peaks_at = availability.index(
+        'why: "peaks only: no equilibrium found on the last staged run"')
+    not_converged_off_at = availability.index(
+        'why: "no equilibrium found on the last staged run, and no verification data"')
+    assert unavailable_at < not_converged_peaks_at < not_converged_off_at < stale_at, (
+        "both staged-but-no-field readings (no preset, not converged) must "
+        "be decided before the fallback that assumes no staging exists at "
+        "all, or a finished non-converging run reads as a missing one"
+    )
+
+    # State 3: no staging at all. Verification peaks if a file is present,
+    # nothing otherwise; neither wording claims a run exists.
+    assert 'why: "peaks only until a staged run exists"' in availability
+    assert 'why: "no staging and no verification data"' in availability
+    staging_guard_at = hud_body.index(
+        "if (staging && staging.stages && staging.stages.length)")
+    struck_line_at = hud_body.index("let struckLine")
+    assert staging_guard_at < struck_line_at, (
+        "updateHud must never compute a struck-now line when there is no "
+        "staged run to read one from"
+    )
 
 
 def test_boot_and_import_columns_share_the_dispose_before_reload_helper():
@@ -318,59 +489,112 @@ def test_node_and_wire_size_sliders_rebuild_only_on_change():
         )
 
 
-def test_the_rings_slider_reloads_the_study_rather_than_rebinning_locally():
-    # C1: the pieces the viewer draws are built server-side at the BUNDLE's
-    # ring count and are looked up in state.segmentIndex by the key that
-    # binning gave them. A client-side re-bin at the slider's count rebuilds
-    # the index around different cells, so drawn pieces are left holding
-    # keys the index has never heard of: measured on Trial 2 against an
-    # 8-ring bundle, EVERY slider value from 4 to 16 orphans keys (24 of 38
-    # pieces at 4 rings, 3 at 9, 14 at 16). applySceneAtTime then throws on
-    # a missing key, and while playing that throw escapes frame() before its
+def test_the_size_slider_reloads_the_study_rather_than_recutting_locally():
+    # C1, carried forward from the ring/wedge binning wave 6 replaces: the
+    # pieces the viewer draws are built server-side at the BUNDLE's own
+    # size and are looked up in state.segmentIndex by the key the cut gave
+    # them. A client-side re-cut at the slider's value rebuilds the index
+    # around different cells, so drawn pieces are left holding keys the
+    # index has never heard of, and applySceneAtTime throws on the first
+    # missing one; while playing that throw escapes frame() before its
     # trailing requestAnimationFrame, so the render loop never restarts.
     # The slider must take the thickness slider's shape instead.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    input_start = js.index('getElementById("rings-slider").addEventListener("input"')
+    input_start = js.index('getElementById("size-slider").addEventListener("input"')
     input_body = js[input_start:js.index("\n});", input_start)]
-    assert "rings-value" in input_body, "input must still move the live label"
-    for forbidden in ("rebinSegments", "loadStudy", "state.rings ="):
+    assert "size-value" in input_body, "input must still move the live label"
+    for forbidden in ("applyCut", "loadStudy", "state.size ="):
         assert forbidden not in input_body, (
-            "the rings slider must not {} on every input event".format(forbidden)
+            "the size slider must not {} on every input event".format(forbidden)
         )
-    change_start = js.index('getElementById("rings-slider").addEventListener("change"')
+    change_start = js.index('getElementById("size-slider").addEventListener("change"')
     change_body = js[change_start:js.index("\n});", change_start)]
-    assert "state.rings = +e.target.value" in change_body
+    assert "state.size = +e.target.value" in change_body
     assert "loadStudy(" in change_body, (
-        "the ring count is a property of the bundle, so committing it must "
+        "the piece size is a property of the bundle, so committing it must "
         "reload the study and let the server rebuild the pieces"
     )
 
 
-def test_the_client_binning_follows_the_loaded_bundle_not_the_slider():
+def test_the_client_side_cut_follows_the_loaded_bundle_not_the_slider():
     # The other half of C1: even with the handler fixed, a mid-drag slider
     # must not be able to desynchronise the segment index from the drawn
-    # pieces, so the binning is derived from the bundle itself.
+    # pieces, so the cut is derived from the bundle itself.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "function rebinSegments()" in js, "rebinSegments must take no ring count"
-    for call in re.findall(r"rebinSegments\(([^)]*)\)", js):
+    assert "function applyCut()" in js, "applyCut must take no size argument"
+    for call in re.findall(r"applyCut\(([^)]*)\)", js):
         assert call.strip() == "", (
-            "rebinSegments must never be handed a ring count; it reads the "
-            "loaded bundle's own count"
+            "applyCut must never be handed a size; it reads the loaded "
+            "bundle's own size"
         )
-    start = js.index("function rebinSegments()")
+    start = js.index("function applyCut()")
     body = js[start:js.index("\n}", start)]
-    assert "state.bundle.segments.rings" in body, (
-        "the binning must come from the loaded bundle's ring count"
+    assert "state.bundle.size" in body, (
+        "the cut must come from the loaded bundle's own size"
     )
     assert "e.target.value" not in body
     # The index the timeline looks a casting up in has to be keyed by the
-    # PIECE's key, not by its cell's: pieces.py emits one casting per
-    # connected patch, so a split cell ships two castings that share a ring
-    # and a wedge and must not share an identity (rings=16 on Trial 2 gives
-    # 67 pieces over 66 cells). A cell-keyed index cannot resolve them.
+    # PIECE's key: pieces.py emits exactly one casting per cell of the cut
+    # tessellation, so the cell's own key is the piece's identity too.
     assert "state.bundle.pieces.forEach" in body
-    assert "segmentKey(" not in body, (
-        "cell keys are not piece identities; index the pieces themselves"
+
+
+def test_applycut_writes_the_piece_and_course_counts_it_reads():
+    # Nothing previously asserted that the piece-count/course-count writes
+    # actually come from the bundle: test_the_size_control_replaces_the_
+    # ring_slider only checks the elements exist in the page. If applyCut
+    # stopped writing them, both would sit at their static HTML zero and
+    # the suite would stay green.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyCut()")
+    body = js[start:js.index("\n}", start)]
+    assert (
+        'getElementById("piece-count").textContent = state.bundle.pieces.length'
+        in body
+    )
+    assert (
+        'getElementById("course-count").textContent = '
+        'state.bundle.tessellation.courses' in body
+    )
+
+
+def test_applycut_only_adopts_a_usable_size_in_range():
+    # Task 8 fix round 1, C1: an authored cut's target_size can be None, and
+    # bundle.py's own top level "size" field is now fixed to always report
+    # the REQUESTED size instead -- but a client that trusts a server value
+    # blindly is exactly how that class of bug reached the screen. applyCut
+    # must only adopt a usable number in the API's own range, as a second
+    # line of defence independent of the server side fix.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "SIZE_MIN = 0.3" in js and "SIZE_MAX = 3.0" in js
+    start = js.index("function applyCut()")
+    body = js[start:js.index("\n}", start)]
+    guard_start = body.index("if (typeof size")
+    guard_line = body[guard_start:body.index("{", guard_start) + 1]
+    assert "Number.isFinite(size)" in guard_line
+    assert "size >= SIZE_MIN" in guard_line and "size <= SIZE_MAX" in guard_line
+    guarded = body[guard_start:body.index("\n  }", guard_start)]
+    assert "state.size = size" in guarded, (
+        "adopting state.size must be inside the range guard, not before it"
+    )
+
+
+def test_applycut_only_adopts_a_pattern_the_server_offers():
+    # Task 8 deliberately left this half of C1 open: applyCut synced
+    # state.size from the loaded bundle but not state.pattern, so selecting
+    # sprayed concrete kept sending whatever pattern the client last held
+    # rather than the bundle's own. Same defence as the size guard: only a
+    # pattern the server actually offers is adopted, an authored cut's
+    # pattern name is not trusted blindly.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("function applyCut()")
+    body = js[start:js.index("\n}", start)]
+    guard_start = body.index("if (typeof pattern")
+    guard_line = body[guard_start:body.index("{", guard_start) + 1]
+    assert "state.patterns" in guard_line and "includes(pattern)" in guard_line
+    guarded = body[guard_start:body.index("\n  }", guard_start)]
+    assert "state.pattern = pattern" in guarded, (
+        "adopting state.pattern must be inside the guard, not before it"
     )
 
 
@@ -416,7 +640,10 @@ def test_recolour_consumes_the_piece_metadata():
     start = js.index("function recolourSegments(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "userData.sources" in body
+    # A cut piece vertex is not a mesh vertex, so a field is read through
+    # its weights, not a bare index; buildPieceMeshes stores them as
+    # userData.weights (see test_the_viewer_samples_fields_through_weights).
+    assert "userData.weights" in body
     assert "userData.surface" in body
     assert "userData.basePositions" in body
 
@@ -426,10 +653,25 @@ def test_stress_smoothing_is_wired_and_per_surface_is_the_default():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert '<option value="per" selected>' in html
     assert "smoothStressField" in js and "interpolateScalarField" in js
-    start = js.index("function recolourSegments(")
-    end = js.index("\n}", start)
-    body = js[start:end]
-    assert "cornerSurface" in body, "per-surface mode must pick the field by skin"
+    body = _function_body(js, "recolourSegments")
+    # Per-surface mode picks the field by the corner's own skin.
+    # buildPieceMeshes writes userData.surface as `index < count ? 1 : -1`
+    # and nothing else, so a corner is always top or bottom: the two field
+    # branch below is exhaustive over what that attribute can hold. The
+    # "per" branch used to smooth a third, "worst", field for a case no
+    # corner could reach -- a full smoothing pass plus an interpolation
+    # onto every render vertex, on every recolour, read by nobody.
+    assert "surfaceOf[i] === 1 ? topField : bottomField" in body, (
+        "per-surface mode must pick the field by skin"
+    )
+    assert "smooth(\"worst\")" not in body, (
+        "the per-surface branch must not smooth a field no corner reads; "
+        "the stress-surface control's own worst option comes through "
+        "pickedField, which is read"
+    )
+    # That control's option must still work: it goes through pickedField.
+    assert '<option value="worst"' in html
+    assert "pickedField = smooth(surface)" in body
 
 
 def test_the_legend_exists_and_tracks_the_layers():
@@ -492,25 +734,36 @@ def test_stop_and_restart_transport_controls():
     assert "playing = true" in restart_body
 
 
-def test_cra_badge_hud_and_pulse_are_wired():
+def test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it():
+    # Owner ruling, mid wave 6: the CRA verdict is a constant popup, and the
+    # studio is always working to funicular form, so proving it stands is
+    # not the question -- the form finding already guarantees compression
+    # only equilibrium by construction, and separately no size the API
+    # permits can bring a real study under the rigid block budget any more.
+    # The badge, and every place that made the pulse or the HUD depend on
+    # it, are gone. craVerdict() itself survives: the Data panel still reads
+    # it where a study happens to carry a verdict (see
+    # test_data_panel_reports_the_cra_verdict_with_provenance).
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="cra-badge"' in html
+    assert 'id="cra-badge"' not in html
     for class_name in ("cra-stands", "cra-fails", "cra-unknown"):
-        assert class_name in css
-    assert "function craVerdict(" in js and "function updateCraBadge(" in js
+        assert class_name not in css
+    assert "function craVerdict(" in js
+    assert "function updateCraBadge(" not in js
     pulse_start = js.index("function applyPulse(")
     pulse_end = js.index("\n}", pulse_start)
-    assert "cra.stands" in js[pulse_start:pulse_end], (
-        "the pulse must require the CRA verdict as well as the FEA solve"
+    assert "cra.stands" not in js[pulse_start:pulse_end], (
+        "the pulse must pulse on the FEA solve alone, as it did before the "
+        "CRA wave"
     )
     hud_start = js.index("function updateHud(")
     hud_end = js.index("\n}", hud_start)
-    assert "CRA:" in js[hud_start:hud_end]
+    assert "CRA:" not in js[hud_start:hud_end]
     build_start = js.index("function buildScene(")
     build_end = js.index("\n}", build_start)
-    assert "updateCraBadge()" in js[build_start:build_end]
+    assert "updateCraBadge()" not in js[build_start:build_end]
 
 
 def test_data_panel_reports_the_cra_verdict_with_provenance():
@@ -528,6 +781,260 @@ def test_data_panel_reports_the_cra_verdict_with_provenance():
     assert cra_index < verify_early_out, (
         "CRA section must come before the verification early-return guard, "
         "or staged-but-unverified studies will never show the verdict"
+    )
+
+
+def test_friction_provenance_is_keyed_by_material_not_by_value():
+    # Stone's friction is 0.6, the same number staging.py gives concrete, so
+    # a lookup keyed by the numeric mu value would attribute stone's dry
+    # stone rigid block literature source to concrete's EN 1992-1-1 clause
+    # 6.2.5 smooth precast joint. Keying by material name keeps the two
+    # apart even though the numbers collide.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = js.index("const FRICTION_PROVENANCE = {")
+    end = js.index("\n};", start)
+    body = js[start:end]
+    for material in (
+        "concrete", "concrete-c50", "concrete-sprayed", "timber",
+        "brick", "tile", "stone",
+    ):
+        assert '"{}"'.format(material) in body, (
+            "FRICTION_PROVENANCE has no entry for {}".format(material)
+        )
+    assert '"0.6"' not in body and '"0.4"' not in body, (
+        "FRICTION_PROVENANCE must not be keyed by the numeric mu value"
+    )
+    assert "dry stone" in body, "stone must carry its own sourced provenance"
+    stone_start = body.index('"stone":')
+    stone_line = body[stone_start:]
+    assert "EN 1992-1-1" not in stone_line, (
+        "stone must not read as sourced from the concrete precast joint clause"
+    )
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    panel_body = js[panel_start:panel_end]
+    assert "FRICTION_PROVENANCE[state.bundle.material]" in panel_body, (
+        "the Data panel must look the provenance up by the loaded study's "
+        "own material, not by the numeric verdict.mu it happens to carry"
+    )
+
+
+def test_the_data_panel_has_a_cut_section_with_every_measured_disclosure():
+    # A cut that dropped analysis faces, missed a joint plane, or clamped a
+    # point off the surface looks identical on screen to a clean one unless
+    # every field bundle.py's tessellation summary carries reaches the
+    # panel: orphan/double faces, the corner residual, the chord deviation,
+    # clamped points, missing planes, and the rim wobble.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    assert "state.bundle.tessellation" in body
+    assert '"Cut"' in body
+    for field in (
+        "tess.pattern", "tess.source", "tess.target_size",
+        "tess.cells", "tess.courses",
+        "tess.chord_mm", "tess.clamped_points",
+        "tess.missing_planes", "tess.rounds", "tess.limit",
+        "tess.backward_turn_degrees", "tess.backward_steps",
+        # Final fix wave. The spec lists boundary sub-edges per piece,
+        # before and after, under the measurements to report "in BENCH.md
+        # and in the Data panel where the user can see them". The bundle
+        # carried both the whole wave and the Cut section read neither,
+        # which this enumeration is exactly why: it listed twelve fields
+        # and omitted these two, so the omission stayed green.
+        "tess.facets_per_piece", "tess.boundary_points_per_piece",
+        # An authored cut whose cells carry no course puts every cell in
+        # course 0, which drives the drop sequence, taperAt and the stage
+        # mapping. The flag saying so shipped and reached no screen.
+        "tess.courses_inferred",
+        # A count with no magnitude cannot be read: the same 137 clamped
+        # points are rounding noise or ten times the chord target
+        # depending on how far they actually moved.
+        "tess.clamped_max_m", "tess.clamped_median_m",
+    ):
+        assert field in body, "the Cut section must read {}".format(field)
+    # The counts need denominators. "137 cap points clamped" and "137 of
+    # 41265" are not the same statement, and neither are "0 orphan faces"
+    # and "0 of 2400".
+    assert "capPointCount(" in body, (
+        "the clamped count must be quoted against the total cap points"
+    )
+    assert "analysis_mesh.faces.length" in body, (
+        "the orphan and double face counts must be quoted against the "
+        "number of analysis faces there are to orphan"
+    )
+    # A folded cell still ships a lobe of cap inside out. It enters none of
+    # the coverage counts, so the list naming them is the only disclosure
+    # there is, and it had no reader at all.
+    assert "coverage.folded" in body, (
+        "the Cut section must show the folded list beside the coverage report"
+    )
+    # The residual is disclosed as a sine; BENCH.md gives degrees too.
+    assert "residualDegrees(" in body, (
+        "the residual must be disclosed in degrees as well as as a sine"
+    )
+    coverage = ("orphan_faces", "double_faces", "open_facets", "slivers",
+                "coverage_holes", "broken_boundary")
+    for field in coverage:
+        assert "coverage.{}".format(field) in body, (
+            "the coverage report must disclose {}".format(field)
+        )
+    # Fix round 1: a single worst-corner number badly misrepresents the
+    # cut, so the whole distribution has to reach the panel, not just the
+    # max (tess.corner_residual on its own, kept only as the source of
+    # stats.max, is no longer read directly here).
+    assert "tess.corner_residual_stats" in body
+    for field in (
+        "stats.count", "stats.median", "stats.mean", "stats.p99",
+        "stats.max", "stats.worst_corner_courses", "stats.over",
+    ):
+        assert field in body, (
+            "the Cut section must read the residual distribution's {}, not "
+            "only the single worst corner".format(field)
+        )
+    assert "median describes the cut" in body, (
+        "the panel must say plainly that the median, not the max, "
+        "describes the cut"
+    )
+    assert "rim course" in body, (
+        "the panel must say the residual's worst corners cluster in the "
+        "rim course, not just list numbers"
+    )
+    # An imported cut has to quote its own provenance verbatim and the
+    # measured z offset, not the generated cut's target size.
+    assert "tess.provenance" in body
+    assert "tess.z_offset_max" in body
+    # A cut piece vertex is not a render mesh vertex, so a heatmap value at
+    # a point is an interpolated reading; that change in meaning has to be
+    # named, not just left implicit in sampleScalar's own code.
+    assert "interpolation" in body
+    # The Cut section must render ahead of the verification early-out, the
+    # same reason the CRA section does: it must show on a staged-but-
+    # unverified study, not only once a verification run exists.
+    cut_index = body.index("state.bundle.tessellation")
+    verify_early_out = body.index("no verification run embedded yet")
+    assert cut_index < verify_early_out, (
+        "the Cut section must come before the verification early-return "
+        "guard, or an unverified study never shows the cut's own disclosures"
+    )
+
+
+def test_the_data_panel_survives_a_bundle_cached_before_a_field_existed():
+    # Final fix wave. corner_residual_stats landed late in the cutting wave
+    # and REQUIRED_BUNDLE_KEYS did not name it, so a bundle cached earlier
+    # in this branch's life was served as valid and the panel dereferenced
+    # tess.corner_residual_stats.count on it. The throw escaped the Data
+    # button's click handler AFTER content.innerHTML = "" and BEFORE
+    # panel.classList.toggle("hidden"), so the button read as doing nothing
+    # whatsoever. Every sub-field the Cut section reads must degrade to a
+    # line rather than take the panel down with it.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "renderDataPanel")
+    stats_at = body.index("const stats = tess.corner_residual_stats")
+    guard = body[stats_at:stats_at + 400]
+    assert "if (!stats)" in guard, (
+        "the residual distribution must be guarded: a bundle cached before "
+        "it existed has no corner_residual_stats to read a count off"
+    )
+    assert "not measured" in body, (
+        "a missing sub-field must degrade to a line saying so, not to a "
+        "panel that never opens"
+    )
+    # Same for the two spreads and the clamp magnitudes, which landed in
+    # the same wave and are missing from the same caches.
+    for guarded in ("if (fpp)", "if (bpp)", 'typeof tess.clamped_max_m === "number"'):
+        assert guarded in body, (
+            "{} must be guarded the same way: an older cache has neither "
+            "the field nor a reason to crash the panel".format(guarded)
+        )
+
+
+def test_the_hud_and_the_size_control_do_not_call_an_authored_size_a_target():
+    # bundle.py is explicit that document["size"] is the REQUESTED size and
+    # that an authored (imported) cut ignores it entirely -- its own
+    # target_size is None. The Data panel says so in as many words; the HUD,
+    # which is what a user reads during playback, printed "900 mm target"
+    # for an imported cut anyway, and applyCut wrote the same number into
+    # the size control's own label.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="size-units"' in html, (
+        "the size label needs its units in their own span, or the authored "
+        "case cannot correct them without garbling the number"
+    )
+    for name in ("updateHud", "applyCut"):
+        body = _function_body(js, name)
+        assert 'source === "imported"' in body, (
+            "{} must branch on whether the cut is authored before quoting "
+            "the requested size as a target".format(name)
+        )
+        assert "size control is not used" in body, (
+            "{} must say the size control is not used by an authored "
+            "cut".format(name)
+        )
+
+
+def test_a_finished_run_restores_the_material_note_with_the_material():
+    # applyRunParamsToControls assigns material-select.value directly, which
+    # fires no change event, and the change handler is the only other writer
+    # of pattern-note. So: load in limestone with the note showing, click
+    # Run, switch material mid-run, let the run finish -- the material is
+    # restored and the stone vault is drawn with the note gone, which is the
+    # exact failure the note exists to prevent.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "applyRunParamsToControls")
+    assert "pattern-note" in body, (
+        "restoring the material must restore its honesty note, since "
+        "assigning .value fires no change event"
+    )
+    assert "state.patternNotes[material]" in body
+    # The note only. updatePatternForMaterial also forces the material's
+    # default pattern, and calling it here would overwrite the pattern this
+    # run actually solved with.
+    assert "updatePatternForMaterial(" not in body, (
+        "the note only: forcing the material's default pattern here would "
+        "overwrite the pattern the finished run actually used"
+    )
+
+
+def test_the_run_status_says_cutting_rather_than_stage_zero_of_zero():
+    # run["of"] is the number of stages, which is the number of courses the
+    # cut produces, so it is 0 until the cut finishes. "stage 0 of 0" reads
+    # as a run with nothing to do.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "watchRun")
+    assert "run.of ?" in body, "the zero case must be branched on"
+    assert "cutting" in body
+
+
+def test_a_refused_run_reports_the_reason_the_server_gave():
+    # app.py 400s a size outside the slider's range, a thickness outside
+    # 0.05 to 0.5 m, and a material or pattern it does not offer, each
+    # naming what to use instead. Without an ok check the refusal body has
+    # no "run" key, watchRun polls /api/runs/undefined, that 404s, and the
+    # user is told "lost contact with the server" instead.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "startRun")
+    assert "response.ok" in body, (
+        "startRun must check the response before watching a run id the "
+        "refusal body does not carry"
+    )
+    assert "body.detail" in body, "the server's own reason must be shown"
+
+
+def test_the_legend_does_not_sit_on_top_of_the_hud():
+    # Both were anchored left: 16px; bottom: 16px, so turning a heatmap on
+    # covered the last lines of the HUD -- and the HUD gained the struck-now
+    # line in this branch, which is the line a heatmap is most likely to be
+    # read against.
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    hud = css[css.index("#hud {"):css.index("}", css.index("#hud {"))]
+    legend = css[css.index("#legend {"):css.index("}", css.index("#legend {"))]
+    hud_left = "left: 16px" in hud
+    legend_left = "left: 16px" in legend
+    assert not (hud_left and legend_left), (
+        "#hud and #legend must not share an anchor corner"
     )
 
 
@@ -565,49 +1072,57 @@ def test_the_data_panel_says_the_verdict_is_on_a_faceted_model():
     )
 
 
-def test_the_badge_and_hud_carry_the_faceted_caveat_too():
+def test_skipped_pieces_are_reported_in_the_data_panel():
+    # The badge this used to also check is gone (see
+    # test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it);
+    # the Data panel still names any piece the rigid-block model could not
+    # cover, on the studies that still carry a CRA verdict at all.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    # The Data panel is a separate view. The badge and the HUD are what a
-    # user reads during playback, so the caveat has to reach them as well
-    # or the headline verdict travels without it.
-    assert "FACETED_CAVEAT" in js
-    caveat_start = js.index("const FACETED_CAVEAT")
-    caveat = js[caveat_start:js.index("\n", caveat_start)]
-    assert "faceted" in caveat
-    # I3: the one-line form used to carry "up to 2.4 m off the drawn
-    # surface", a figure measured against the mesh-following block model
-    # this branch stopped drawing. The badge and HUD have room for the
-    # relationship, not for a number that is no longer true of it.
-    assert "2.4" not in caveat and "m off" not in caveat
-    assert "drawn here" in caveat or "drawn surface" not in caveat
-    badge_start = js.index("function updateCraBadge(")
-    badge_end = js.index("\n}", badge_start)
-    badge_body = js[badge_start:badge_end]
-    assert "FACETED_CAVEAT" in badge_body
-    # The three-state logic and its colour classes stay exactly as they
-    # were: the caveat is appended after the branch, never inside it.
-    for name in ("cra-stands", "cra-fails", "cra-unknown"):
-        assert name in badge_body
-    assert badge_body.index("FACETED_CAVEAT") > badge_body.index("cra-unknown")
-    hud_start = js.index("function updateHud(")
-    hud_end = js.index("\n}", hud_start)
-    assert "FACETED_CAVEAT" in js[hud_start:hud_end]
-
-
-def test_skipped_pieces_are_reported_in_data_panel_and_badge():
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    # Data panel must reference cra_skipped and say pieces are absent
     panel_start = js.index("function renderDataPanel(")
     panel_end = js.index("\n}", panel_start)
     panel_body = js[panel_start:panel_end]
     assert "cra_skipped" in panel_body
     assert "absent from the rigid-block model" in panel_body
-    # Badge must reference cra_skipped and say pieces are not modelled
-    badge_start = js.index("function updateCraBadge(")
-    badge_end = js.index("\n}", badge_start)
-    badge_body = js[badge_start:badge_end]
-    assert "cra_skipped" in badge_body
-    assert "not modelled" in badge_body
+
+
+def test_the_skipped_piece_sentence_does_not_use_retired_ring_and_wedge_words():
+    # Task 8 fix round 1: voussoirs.py keeps entry.ring/entry.wedge as its
+    # own internal field names (ring is the course index, wedge the piece's
+    # position within it, not a ring/wedge polar bin), unrenamed by Task 7's
+    # own ruling. The sentence a user reads must not repeat those retired
+    # words even though the field access underneath is unchanged.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    assert '"ring ' not in body, (
+        "the studio no longer has a ring/wedge binning; the prose must not "
+        "name it"
+    )
+    assert '"wedge ' not in body
+    assert "entry.ring" in body and "entry.wedge" in body, (
+        "only the prose changes; the field access stays voussoirs.py's own"
+    )
+    assert "course " in body and "piece " in body
+
+
+def test_the_data_panel_shows_nothing_when_there_is_no_cra_verdict():
+    # The owner does not want a popup, and does not want an empty section
+    # either: with run_staging's include_cra defaulting to False, most
+    # studies carry no cra entry on their final stage at all, and the panel
+    # must say nothing about CRA in that case rather than rendering a bare
+    # heading.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    panel_start = js.index("function renderDataPanel(")
+    panel_end = js.index("\n}", panel_start)
+    body = js[panel_start:panel_end]
+    verdict_start = body.index("const verdict = craVerdict();")
+    guard = body[verdict_start:body.index("{", verdict_start) + 1]
+    assert re.search(r"if\s*\(\s*verdict\s*\)\s*\{", guard), (
+        "the whole CRA section, heading included, must be conditional on a "
+        "real verdict, not rendered with a 'no CRA run yet' filler"
+    )
+    assert "no CRA run yet" not in body
 
 
 def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
@@ -734,6 +1249,27 @@ def test_no_piece_shows_while_the_net_is_still_inflating():
         "while inflating, every piece must be hidden outright, not just "
         "left at its default drop position"
     )
+
+
+def test_the_material_presets_read_apart():
+    """Closest pair luminance, keyed by name so inserting a preset cannot
+    silently move which four are measured."""
+
+    source = (STATIC / "studio.js").read_text(encoding="utf-8")
+    colours = dict(re.findall(r'"?([a-z0-9-]+)"?:\s*new THREE\.MeshPhysicalMaterial\(\{\s*\n?\s*color: 0x([0-9a-f]{6})', source))
+    wanted = ["concrete", "concrete-c50", "concrete-sprayed", "timber",
+              "brick", "tile", "stone"]
+    assert all(name in colours for name in wanted)
+    values = {name: _luminance(colours[name]) for name in wanted}
+    pairs = [(abs(values[a] - values[b]), a, b)
+             for i, a in enumerate(wanted) for b in wanted[i + 1:]]
+    assert min(pairs)[0] > 4.0, min(pairs)
+
+
+def test_the_pattern_control_says_what_is_not_built_yet():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="pattern-select"' in page
+    assert 'id="pattern-note"' in page
 
 
 def test_taper_is_a_drawing_parameter_and_the_hud_says_so():

@@ -1,8 +1,8 @@
-"""pieces.py builds the piece the viewer draws: curved caps, flat joints.
+"""pieces.py builds the casting the viewer draws, from the cut.
 
-The fixture is a 2 by 2 grid of unit quads, one cell each, lifted into a
-shallow dome so the surface is genuinely curved and a flat joint is a real
-constraint rather than a trivially satisfied one.
+The fixture is a shallow dome cut into four cells, so a flat joint is a
+real constraint rather than a trivially satisfied one, and so that two
+neighbours have something to disagree about.
 """
 
 from __future__ import annotations
@@ -16,248 +16,368 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 
 
-def studio():
+def studio(name):
     path = str(REPO / "bench" / "studio")
     if path not in sys.path:
         sys.path.insert(0, path)
-    import pieces
-    return pieces
+    return __import__(name)
 
 
 def dome_z(x, y):
     return 0.4 * math.cos(0.6 * (x - 1)) * math.cos(0.6 * (y - 1))
 
 
-VERTICES = [[c, r, dome_z(c, r)] for r in range(4) for c in range(4)]
-FACES = [
-    [r * 4 + c, r * 4 + c + 1, (r + 1) * 4 + c + 1, (r + 1) * 4 + c]
-    for r in range(3) for c in range(3)
-]
-# Four cells over nine quads: a 2 by 2 arrangement with the centre column
-# and row shared out, so every cell has two neighbours and a free rim.
-ASSIGNMENT = [[0, 0], [0, 0], [0, 1], [0, 0], [0, 0], [0, 1], [1, 0], [1, 0], [1, 1]]
-ORDER = [[0, 0], [0, 1], [1, 0], [1, 1]]
+def dome_surface(side=8):
+    """A side by side quad mesh over [0, 2] squared, lifted into a dome."""
 
-
-def build(support_ids=()):
-    return studio().segment_pieces(VERTICES, FACES, ASSIGNMENT, ORDER, support_ids)
-
-
-def test_a_piece_is_produced_for_every_cell():
-    pieces = build()
-    assert sorted((p["ring"], p["wedge"]) for p in pieces) == [
-        (0, 0), (0, 1), (1, 0), (1, 1)
+    cutting = studio("cutting")
+    step = 2.0 / side
+    vertices = [
+        [i * step, j * step, dome_z(i * step, j * step)]
+        for j in range(side + 1) for i in range(side + 1)
     ]
-    for piece in pieces:
-        assert len(piece["mid"]) == len(piece["normals"]) == len(piece["sources"])
-        assert piece["key"] == "r{}w{}".format(piece["ring"], piece["wedge"])
+    faces = []
+    n = side + 1
+    for j in range(side):
+        for i in range(side):
+            faces.append([j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i])
+    return cutting.Surface(vertices, faces), vertices, faces
 
 
-def test_a_split_cell_ships_two_pieces_with_distinct_keys():
-    # A ring's occupied wedges are not always contiguous, so one cell can
-    # hold two patches that never touch, and pieces.py rightly emits one
-    # casting for each. Keying both by the cell made them one identity: the
-    # viewer tints a casting from its key, offsets its texture by it and
-    # looks it up in the placement index by it, so the two shared a colour,
-    # a texture offset and a place in the drop order. Measured on the real
-    # export, rings=16 ships 67 pieces over 66 cells (r10w2 twice).
+def four_cells():
+    t = studio("tessellation")
+    raw = []
+    for j in range(2):
+        for i in range(2):
+            raw.append({
+                "key": "c{}{}".format(i, j),
+                "course": j,
+                "outline": [
+                    [i * 1.0, j * 1.0], [i * 1.0 + 1.0, j * 1.0],
+                    [i * 1.0 + 1.0, j * 1.0 + 1.0], [i * 1.0, j * 1.0 + 1.0],
+                ],
+                "holes": [],
+            })
+    return t.build_tessellation(raw, "test", "generated", 1.0, 2)
+
+
+def build():
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    return p.segment_pieces(tess, surface, [[0.0, 0.0]])
+
+
+def test_one_piece_per_cell_in_placement_order():
+    made, _ = build()
+    # Anticlockwise within each course about the cut's own centre, here
+    # (1, 1): c00 sits at -135 degrees, c10 at -45, c11 at +45, c01 at
+    # +135. That is the tessellation's placement order, not row major
+    # authoring order, and it is correct: do not "fix" it back.
+    assert [piece["key"] for piece in made] == ["c00", "c10", "c11", "c01"]
+    assert [piece["course"] for piece in made] == [0, 0, 1, 1]
+
+
+def test_a_joint_facet_is_flat():
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    planes = p.facet_planes(tess, surface)
+    chosen = p.choose_rounds(tess, surface)
+    made, _ = p.segment_pieces(tess, surface, [])
+    # Every point on the shared cut between c00 and c10 lies in one plane.
+    shared = [
+        facet for facet in tess["cells"][0]["facets"]
+        if facet in set(tess["cells"][1]["facets"])
+    ]
+    assert len(shared) == 1
+    origin, normal = planes[shared[0]]
+    piece = next(m for m in made if m["key"] == "c00")
+    # The joint plane runs through the two corners along the chain's
+    # average surface normal, so it is not exactly x = 1: it is slightly
+    # tilted, and projecting the chain's interior points onto it moves
+    # them off x = 1 by a few hundredths of a millimetre. A 1e-6 filter
+    # is about 45 times tighter than that measured tilt and finds only
+    # the two corners, which are never moved. 0.05 is well inside the gap
+    # to the cap's own interior points (nearest x is 0.75) so it selects
+    # the chain and only the chain.
+    on_plane = [
+        point for point in piece["mid"]
+        if abs(point[0] - 1.0) < 0.05
+    ]
+    # Exactly the subdivided chain: one point per round-doubling, plus
+    # the closing point. A short count here means the chain silently lost
+    # points rather than just failing to be found.
+    assert len(on_plane) == 2 ** chosen["rounds"] + 1
+    for point in on_plane:
+        offset = sum((point[axis] - origin[axis]) * normal[axis] for axis in range(3))
+        assert abs(offset) < 1e-9
+
+
+def test_neighbours_agree_on_the_shared_cut_exactly():
+    made, report = build()
+    left = next(m for m in made if m["key"] == "c00")
+    right = next(m for m in made if m["key"] == "c10")
+    # Same 0.05 filter as test_a_joint_facet_is_flat, for the same reason:
+    # the joint plane is slightly tilted, so a 1e-6 filter here selects
+    # only the two welded corners, which both sides get by lifting the
+    # same welded plan point and neither side ever projects. Agreement
+    # there is close to tautological. The three interior chain points are
+    # what this module was written to make agree, and a 1e-6 filter
+    # silently drops them from the check.
+    def shared(piece):
+        found = sorted(
+            (round(point[1], 12), tuple(point), tuple(piece["normals"][i]))
+            for i, point in enumerate(piece["mid"]) if abs(point[0] - 1.0) < 0.05
+        )
+        assert len(found) == 2 ** report["rounds"] + 1
+        return found
+    # Exact equality, not a tolerance: both sides compute the same plane
+    # from the same canonically ordered chain, so a difference would mean
+    # a real disagreement rather than a rounding difference.
+    assert shared(left) == shared(right)
+
+
+def test_the_corner_residual_is_disclosed_and_bounded():
+    _, report = build()
+    # A corner belongs to two joints and one normal cannot lie in both
+    # planes. Exactly one facet owns each corner, so the other joint is a
+    # hair off flat there. The number is measured, not assumed.
     #
-    # Here faces 0 and 8 are opposite corners of the grid, sharing neither
-    # an edge nor a vertex, and both are given to cell (0, 0).
-    split = [[0, 1]] * len(FACES)
-    split[0] = [0, 0]
-    split[8] = [0, 0]
-    pieces = studio().segment_pieces(VERTICES, FACES, split, [[0, 0], [0, 1]], ())
-    patches = [p for p in pieces if (p["ring"], p["wedge"]) == (0, 0)]
-    assert len(patches) == 2, "the two disjoint patches are two castings"
-    keys = [p["key"] for p in patches]
-    assert len(set(keys)) == 2, "two castings, two identities: {}".format(keys)
-    for piece in patches:
-        # ring and wedge stay intact: everything that reads the cell, from
-        # the taper to the stage readout, still reads it.
-        assert (piece["ring"], piece["wedge"]) == (0, 0)
-        assert piece["key"].startswith("r0w0")
-    # Every key in the document is unique, not just the split cell's.
-    all_keys = [p["key"] for p in pieces]
-    assert len(set(all_keys)) == len(all_keys)
+    # It is the sine of the angle between the stored normal and the
+    # non-owning facet's plane, not a distance: on this fixture that is
+    # 0.0104, which is 0.598 degrees, which is about 1 mm of deviation at
+    # the shipped 0.2 m thickness, at the one corner where a real joint
+    # meets a free rim edge on the steepest part of the dome. This
+    # fixture's dome rises 0.4 over a 2 m span against 1 m pieces, more
+    # curved relative to its pieces than the real vault is relative to
+    # its 0.9 m ones, so this is a stress case, not a typical one. The
+    # real export's own distribution is measured in
+    # bench/scripts/cutting_measurements.py and docs/BENCH.md: a single
+    # worst-corner number badly misrepresents a real cut's typical joint,
+    # which is why report["corner_residual_stats"] carries the whole
+    # distribution below and this field alone stays only the max.
+    assert 0.0 < report["corner_residual"] < 0.02
 
 
-def test_a_contiguous_cell_keeps_the_plain_cell_key():
-    # The patch index only appears where it has to, so the common case
-    # keeps the key it always had.
-    for piece in build():
-        assert piece["key"] == "r{}w{}".format(piece["ring"], piece["wedge"])
+def test_the_corner_residual_stats_carry_the_whole_distribution():
+    _, report = build()
+    stats = report["corner_residual_stats"]
+    # Nine welded corners on this fixture: a 3x3 grid shared by four cells.
+    assert stats["count"] == 9
+    assert stats["min"] <= stats["median"] <= stats["p99"] <= stats["max"]
+    # The max here is exactly the same number report["corner_residual"]
+    # already carries: this is the same measurement, not a second one.
+    assert stats["max"] == report["corner_residual"]
+    assert stats["min"] >= 0.0
+    for entry in stats["over"]:
+        assert 0 <= entry["count"] <= stats["count"]
+    # The worst corner belongs to at least one real course of this fixture.
+    assert stats["worst_corner_courses"]
+    assert all(course in (0, 1) for course in stats["worst_corner_courses"])
 
 
-def test_every_normal_is_a_unit_vector():
-    for piece in build():
-        for n in piece["normals"]:
-            assert math.hypot(n[0], n[1], n[2]) == pytest.approx(1.0, abs=1e-9)
+def test_corner_residuals_max_matches_the_report_and_counts_every_corner():
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    planes = p.facet_planes(tess, surface)
+    owners = p.corner_owners(tess)
+    residuals = p.corner_residuals(tess, surface, planes, owners)
+    # One value per corner, not per cell visit: four cells share a 3x3
+    # grid, but every corner appears exactly once regardless of how many
+    # cells touch it.
+    assert len(residuals) == 9
+    _, report = build()
+    assert max(residuals.values()) == report["corner_residual"]
 
 
-def test_pieces_are_closed_and_orientable_at_any_thickness():
-    for piece in build():
-        edges = []
+def test_a_piece_is_watertight():
+    made, _ = build()
+    for piece in made:
+        edges = {}
+        directed = []
         for face in piece["faces"]:
             for i in range(len(face)):
-                edges.append((face[i], face[(i + 1) % len(face)]))
-        assert len(edges) == len(set(edges)), "a directed edge is used twice"
-        seen = set(edges)
-        for a, b in edges:
-            assert (b, a) in seen, "edge {} {} has no reverse".format(a, b)
+                a, b = face[i], face[(i + 1) % len(face)]
+                directed.append((a, b))
+                key = (a, b) if a < b else (b, a)
+                edges[key] = edges.get(key, 0) + 1
+        assert all(count == 2 for count in edges.values()), piece["key"]
+        # Undirected count alone would pass a flipped face: two faces that
+        # both wind the same edge the same way still cover it twice. Every
+        # directed edge appearing exactly once, with its reverse present,
+        # is what actually proves the piece is consistently oriented.
+        assert len(directed) == len(set(directed)), piece["key"]
+        seen = set(directed)
+        for a, b in directed:
+            assert (b, a) in seen, piece["key"]
 
 
-def _pairs_sharing_a_run(pieces_by_key):
-    """Every pair of pieces that shares a real boundary chain.
+def test_facets_per_piece_stay_small():
+    made, report = build()
+    assert report["facets_per_piece"]["max"] <= 8
+    assert report["facets_per_piece"]["median"] <= 6
 
-    A single shared vertex is just a point touch (the fixture's centre
-    vertex sits under all four cells but is only ever a corner, never a
-    joint by itself); two or more shared vertices means the pieces share
-    at least one full run, a genuine joint whose two sides must match.
+
+def test_facets_per_piece_names_the_course_of_its_own_max():
+    # A single max badly misrepresents the cut the same way the corner
+    # residual's max does (see test_the_corner_residual_stats_carry_the_
+    # whole_distribution): on a real export the piece with the most facets
+    # sits in the rim course, not a typical interior one, so the report
+    # names which course it is rather than leaving max to read as typical.
+    _, report = build()
+    fpp = report["facets_per_piece"]
+    assert "max_course" in fpp
+    assert fpp["max_course"] in (0, 1)
+    # boundary_points_per_piece gets no such note: only facets_per_piece's
+    # max is singled out for the rim-course explanation.
+    assert "max_course" not in report["boundary_points_per_piece"]
+
+
+def test_field_weights_sum_to_one_and_index_the_render_mesh():
+    made, _ = build()
+    _, vertices, _ = dome_surface()
+    for piece in made:
+        assert len(piece["sources"]) == len(piece["mid"])
+        for weights in piece["sources"]:
+            assert sum(weight for _, weight in weights) == pytest.approx(1.0)
+            assert all(0 <= index < len(vertices) for index, _ in weights)
+
+
+def test_a_support_under_a_piece_marks_it():
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    made, _ = p.segment_pieces(tess, surface, [[0.5, 0.5]])
+    marked = [piece["key"] for piece in made if piece["is_support"]]
+    assert marked == ["c00"]
+
+
+def test_a_support_on_a_shared_edge_marks_both_neighbours():
+    # tessellation.point_in_cell counts a boundary point as inside, so a
+    # support that lands exactly on a joint is not this module's choice
+    # to make one sided: both cells that share that joint are marked.
+    # This is the same rule the ring and wedge binning this replaces
+    # used, kept because four later tasks read is_support.
+    p = studio("pieces")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    made, _ = p.segment_pieces(tess, surface, [[1.0, 0.5]])
+    marked = sorted(piece["key"] for piece in made if piece["is_support"])
+    assert marked == ["c00", "c10"]
+
+
+def test_the_cap_follows_the_surface_within_the_chord_target():
+    p = studio("pieces")
+    cutting = studio("cutting")
+    surface, _, _ = dome_surface()
+    tess = four_cells()
+    chosen = p.choose_rounds(tess, surface)
+    assert chosen["rounds"] <= cutting.MAX_ROUNDS
+    assert chosen["chord_mm"] <= 5.0 or chosen["limit"] == "rounds"
+
+
+def running_bond():
+    """Two 2 m cells below, three cells above offset by 1 m.
+
+    A plain bonded pattern like this puts a T junction in the middle of
+    three of these five cells' edges (both course 0 cells, and the middle
+    course 1 cell): the row above's internal joints land in the middle of
+    the row below's cells, and vice versa. That is exactly the shape a
+    Grasshopper authored brick pattern imports as, not a shape either
+    shipped generator produces (see the wave 6 fix round report).
     """
 
-    keys = sorted(pieces_by_key.keys())
-    pairs = []
-    for i in range(len(keys)):
-        for j in range(i + 1, len(keys)):
-            first, second = pieces_by_key[keys[i]], pieces_by_key[keys[j]]
-            shared = set(first["sources"]) & set(second["sources"])
-            if len(shared) >= 2:
-                pairs.append((keys[i], keys[j], shared))
-    return pairs
+    t = studio("tessellation")
+    raw = [
+        {"key": "c0a", "course": 0, "outline": [[0, 0], [2, 0], [2, 1], [0, 1]], "holes": []},
+        {"key": "c0b", "course": 0, "outline": [[2, 0], [4, 0], [4, 1], [2, 1]], "holes": []},
+        {"key": "c1a", "course": 1, "outline": [[0, 1], [1, 1], [1, 2], [0, 2]], "holes": []},
+        {"key": "c1b", "course": 1, "outline": [[1, 1], [3, 1], [3, 2], [1, 2]], "holes": []},
+        {"key": "c1c", "course": 1, "outline": [[3, 1], [4, 1], [4, 2], [3, 2]], "holes": []},
+    ]
+    return t.build_tessellation(raw, "test", "generated", 1.0, 2)
 
 
-def test_a_joint_run_is_flat_on_both_faces_of_the_thickness():
-    # A run's own plane is exact for every vertex it actually flattens:
-    # its strictly interior vertices, which belong to no other run, and
-    # whichever of its two corners the global ownership map hands it (see
-    # pieces._corner_owner_planes). For run B, the (0, 0)/(0, 1) joint
-    # with chain 2-6-10, that is vertex 6 (its only interior vertex) and
-    # vertex 10 (the corner whose smallest incident run key is run B's
-    # own). It is NOT vertex 2: vertex 2 is also a corner of cell (0, 0)'s
-    # free rim, whose run has a smaller canonical key, so the global map
-    # hands vertex 2's normal to that run instead. Neighbours still agree
-    # exactly on vertex 2 (test_neighbours_agree_on_the_shared_geometry);
-    # its residual against run B's own plane specifically is measured,
-    # not ignored, in
-    # test_a_corner_not_owned_by_the_shared_run_has_a_measured_residual.
-    p = studio()
-    import blocks
-    normals = blocks.vertex_normals(VERTICES, FACES)
-    plane = p.run_plane(2, 10, [2, 6, 10], VERTICES, normals)
-    owners = p._corner_owner_planes(VERTICES, FACES, ASSIGNMENT, ORDER, normals)
+def flat_surface(width=4.0, height=2.0, nx=8, ny=4):
+    """A flat render mesh big enough to cover running_bond(), z = 0.
 
-    pieces = {(x["ring"], x["wedge"]): x for x in build()}
-    first, second = pieces[(0, 0)], pieces[(0, 1)]
-    shared = set(first["sources"]) & set(second["sources"])
-    assert shared == {2, 6, 10}, "the fixture's run B chain changed"
-    owned = {6} | {corner for corner in (2, 10) if owners.get(corner) == plane}
-    assert len(owned) >= 2, "the run must own its interior vertex plus a corner"
+    Flat because this fixture is about triangulation topology, not
+    curvature: a duplicate boundary point is a duplicate whether or not
+    the surface it is lifted onto is curved.
+    """
 
-    points = []
-    for source in owned:
-        index = first["sources"].index(source)
-        mid, normal = first["mid"][index], first["normals"][index]
-        for sign in (1.0, -1.0):
-            points.append([mid[axis] + normal[axis] * 0.1 * sign for axis in range(3)])
-    a, b, c = points[0], points[1], points[2]
-    u = [b[i] - a[i] for i in range(3)]
-    v = [c[i] - a[i] for i in range(3)]
-    m = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
-    length = math.hypot(*m)
-    assert length > 1e-9, "the owned vertices are degenerate in the fixture"
-    m = [component / length for component in m]
-    for point in points:
-        offset = sum((point[i] - a[i]) * m[i] for i in range(3))
-        assert abs(offset) < 1e-9, "owning-run vertex sits off the joint plane"
+    cutting = studio("cutting")
+    vertices = [
+        [i * width / nx, j * height / ny, 0.0]
+        for j in range(ny + 1) for i in range(nx + 1)
+    ]
+    faces = []
+    n = nx + 1
+    for j in range(ny):
+        for i in range(nx):
+            faces.append([j * n + i, j * n + i + 1, (j + 1) * n + i + 1, (j + 1) * n + i])
+    return cutting.Surface(vertices, faces)
 
 
-def test_a_corner_not_owned_by_the_shared_run_has_a_measured_residual():
-    # A corner sits at the junction of two joints, and one stored normal
-    # cannot lie in both of their planes at once (only along their line
-    # of intersection, which a third cell meeting the same corner would
-    # generally miss anyway). Vertex 2 is a corner of run B but is owned
-    # by cell (0, 0)'s free rim instead (see the test above), so its
-    # normal is not flat against run B's own plane. That is the accepted
-    # cost of exact neighbour agreement, not a bug, and this measures
-    # exactly how large it is on this fixture rather than asserting a
-    # guessed number.
-    p = studio()
-    import blocks
-    normals = blocks.vertex_normals(VERTICES, FACES)
-    origin, plane_normal = p.run_plane(2, 10, [2, 6, 10], VERTICES, normals)
+def test_a_t_junction_produces_no_duplicate_cap_points():
+    # Before the ear_clip fix, three of these five cells shipped a
+    # degenerate triangle at their T junction, stranding its subdivision
+    # points as extra, duplicate positions in mid: 28 duplicates in each
+    # of the three affected cells (84 total), all sitting on the joint
+    # line. Worse, those duplicated points sat past the welded count, so
+    # the corner ownership pass skipped them and kept the raw surface
+    # normal instead of the owner projected one, which a neighbour across
+    # that joint would not agree with. No duplicates at all is the
+    # measure that both problems are gone, not just the visible one.
+    p = studio("pieces")
+    surface = flat_surface()
+    tess = running_bond()
+    made, _ = p.segment_pieces(tess, surface, [])
+    for piece in made:
+        positions = [tuple(point) for point in piece["mid"]]
+        assert len(positions) == len(set(positions)), piece["key"]
 
-    pieces = {(x["ring"], x["wedge"]): x for x in build()}
-    piece = pieces[(0, 0)]
-    index = piece["sources"].index(2)
-    mid, normal = piece["mid"][index], piece["normals"][index]
 
-    residual = max(
-        abs(sum((mid[axis] + normal[axis] * 0.1 * sign - origin[axis]) * plane_normal[axis]
-                 for axis in range(3)))
-        for sign in (1.0, -1.0)
+def test_a_clamp_free_cut_reports_no_magnitude_at_all():
+    _, report = build()
+    # The four cell fixture covers exactly the surface it sits on, so
+    # nothing is off the mesh. A zero count has to come with zero
+    # magnitudes, not with a leftover number from somewhere.
+    assert report["clamped_points"] == 0
+    assert report["clamped_max_m"] == 0.0
+    assert report["clamped_median_m"] == 0.0
+
+
+def test_clamped_points_are_disclosed_in_metres_not_only_counted():
+    """A count with no magnitude cannot be read.
+
+    On the real Trial 2 export at the default 0.9 m the clamp reaches
+    0.0523 m at its worst and 0.0246 m at the median across 137 points,
+    which is ten times cutting.CHORD_TARGET rather than the float's
+    rounding the code once claimed. Here the same disclosure is checked on
+    a cell that deliberately overhangs its own surface by a known 0.05 m,
+    the same order as the real one and small enough to verify by hand.
+    """
+
+    p = studio("pieces")
+    t = studio("tessellation")
+    surface, _, _ = dome_surface()          # a dome over [0, 2] squared
+    overhang = 0.05
+    tess = t.build_tessellation(
+        [{
+            "key": "over", "course": 0,
+            "outline": [[0.0, 0.0], [2.0 + overhang, 0.0],
+                        [2.0 + overhang, 2.0], [0.0, 2.0]],
+            "holes": [],
+        }],
+        "test", "generated", 1.0, 1,
     )
-    # Measured on this fixture, at a thickness of 0.2 (0.1 offset each
-    # way), at about 0.003 units. Bounded with headroom above that so a
-    # small change in the dome does not spuriously fail this, but capped
-    # well short of anything that would read as visibly non-planar, and
-    # floored above zero so a regression that silently drops the effect
-    # (for instance vertex 2 becoming owned by run B by accident) is
-    # caught too.
-    assert 1e-6 < residual < 0.01, "corner residual moved outside the measured band"
+    _, report = p.segment_pieces(tess, surface, [])
 
-
-def test_neighbours_agree_on_the_shared_geometry():
-    # Every pair of pieces sharing a run must agree on it exactly, same
-    # mid position and same normal, for every vertex of that run
-    # including both corners. This is what keeps two castings' joint
-    # faces coincident, and it holds regardless of which run owns a given
-    # corner's normal: both cells read that ownership from the same
-    # global map (pieces._corner_owner_planes), so they always land on
-    # the same answer independently. The fixture has four such pairs (the
-    # other two combinations only touch at the fixture's single centre
-    # vertex, not along a run), and all four are checked here, not just
-    # the one pair that happened to agree by luck of loop order before
-    # ownership was made global.
-    pieces = {(x["ring"], x["wedge"]): x for x in build()}
-    pairs = _pairs_sharing_a_run(pieces)
-    assert len(pairs) >= 2, "the fixture needs more than one shared run to prove this"
-    for key_a, key_b, shared in pairs:
-        first, second = pieces[key_a], pieces[key_b]
-        for source in shared:
-            i = first["sources"].index(source)
-            j = second["sources"].index(source)
-            assert first["mid"][i] == pytest.approx(second["mid"][j], abs=1e-12), (
-                "{} and {} disagree on vertex {} position".format(key_a, key_b, source)
-            )
-            assert first["normals"][i] == pytest.approx(second["normals"][j], abs=1e-12), (
-                "{} and {} disagree on vertex {} normal".format(key_a, key_b, source)
-            )
-
-
-def test_interior_vertices_keep_the_true_surface():
-    # Only boundary vertices are projected. A vertex genuinely inside the
-    # cell must stay exactly where the mesh put it, or the caps stop being
-    # the vault. Cell membership is what matters here, not global mesh
-    # degree: a vertex can touch four faces and still sit on this cell's
-    # boundary, and those vertices are supposed to move.
-    p = studio()
-    import voussoirs
-    pieces = {(x["ring"], x["wedge"]): x for x in build()}
-    piece = pieces[(0, 0)]
-    cell_faces = [i for i, pair in enumerate(ASSIGNMENT) if pair == [0, 0]]
-    on_boundary = set()
-    for a, b in voussoirs.segment_boundary_edges_for(FACES, cell_faces):
-        on_boundary.add(a)
-        on_boundary.add(b)
-    interior = [s for s in piece["sources"] if s not in on_boundary]
-    assert interior, "the fixture needs at least one interior vertex"
-    for source in interior:
-        index = piece["sources"].index(source)
-        assert piece["mid"][index] == pytest.approx(VERTICES[source], abs=1e-12)
-
-
-def test_support_marking_follows_the_cell_vertices():
-    pieces = {(x["ring"], x["wedge"]): x for x in build(support_ids=[0])}
-    assert pieces[(0, 0)]["is_support"] is True
-    assert pieces[(1, 1)]["is_support"] is False
+    assert report["clamped_points"] > 0
+    # The far edge sits exactly overhang metres past the mesh, and nothing
+    # on this cell is further out than that.
+    assert report["clamped_max_m"] == pytest.approx(overhang)
+    assert 0.0 < report["clamped_median_m"] <= report["clamped_max_m"]
