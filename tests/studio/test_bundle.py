@@ -28,11 +28,11 @@ def fake_export(tmp_path, monkeypatch):
     geometry, bundle = studio()
     # Each fake export is a fresh scenario, but bundle._cut_memo is a
     # process-global keyed only on (export_name, pattern, size): without
-    # this, an earlier test's memoized cut for "Tiny" leaks into a later
-    # test that expects its own upload dir's sidecar to be read fresh.
-    # This mirrors what a real re-upload does through
+    # clearing it, an earlier test's memoized cut for "Tiny" would leak
+    # into a later test that expects its own upload dir's sidecar to be
+    # read fresh. conftest.py's autouse fixture clears it around every
+    # studio test now, mirroring what a real re-upload does through
     # app._invalidate_studio_cache.
-    bundle.clear_cut_memo()
     upload = tmp_path / "upload"
     studies = tmp_path / "studies"
     upload.mkdir()
