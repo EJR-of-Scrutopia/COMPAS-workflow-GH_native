@@ -10,7 +10,8 @@ import {
 const state = {
   bundle: null,
   studies: [],
-  layers: { shell: true, wires: true, overlays: true, falsework: true },
+  layers: { shell: true, wires: true, overlays: true },
+  formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -448,7 +449,6 @@ function applyCut(preserve) {
 // ---------- FEA layers ----------
 const LAYERS = [
   ["shell", "Finished shell"],
-  ["falsework", "Formwork"],
   ["wires", "Thrust wires and nodes"],
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
@@ -590,7 +590,7 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires" || name === "falsework" || name === "shell") {
+  if (name === "wires" || name === "shell") {
     // Visibility during and after the strike is the timeline's call, so
     // recompute from t instead of forcing visible here. This calls the
     // scene-only helper, not applyTimeline itself -- a layer checkbox must
@@ -602,8 +602,6 @@ function setLayer(name, on) {
       state.objects.nodes.visible = on;
     } else if (name === "shell") {
       if (state.objects.shell) state.objects.shell.visible = on;
-    } else if (state.objects.falsework) {
-      state.objects.falsework.visible = on;
     }
   }
   if (name === "loads" || name === "reactions") updateVectorLayers();
@@ -1726,6 +1724,15 @@ for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
 // event, which a drag fires dozens of.
 document.getElementById("exaggeration").addEventListener("change", () => recolourSegments());
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
+document.getElementById("formwork-mode").addEventListener("change", (e) => {
+  state.formworkMode = e.target.value;
+  // Scene-only recompute: a mode change must never move the camera.
+  if (state.timeline) {
+    applySceneAtTime(state.timeline.t);
+  } else if (state.objects.falsework) {
+    state.objects.falsework.visible = e.target.value !== "hidden";
+  }
+});
 // Same pattern as the thickness slider: "input" only updates the live mm
 // label, "change" (drag release) commits the value and rebuilds -- so a
 // drag fires one InstancedMesh rebuild, not dozens.
@@ -2152,11 +2159,15 @@ function applySceneAtTime(t) {
   const buildEnd = placementCount() * step + DROP_SECONDS;
   const strikeU = build <= buildEnd ? 0 : Math.min(1, (build - buildEnd) / STRIKE_SECONDS);
   const falsework = state.objects.falsework;
-  falsework.visible = !!state.layers.falsework && strikeU < 1;
-  // The falsework fades in with the inflation as well as out with the
-  // strike, so it never appears before the net has any form to support.
-  falsework.material.opacity = 0.3 * inflate * (1 - strikeU);
-  falsework.position.z = -0.02 - 1.5 * strikeU;
+  // Three states, the owner's own words. Animation follows the build
+  // story: fade in with the inflation, stand through the build, strike
+  // away at the end. Always pins the resting ghost for inspection even
+  // after the strike. Hidden removes the ghost shell everywhere, build
+  // phase included.
+  const mode = state.formworkMode;
+  falsework.visible = mode === "always" || (mode === "animation" && strikeU < 1);
+  falsework.material.opacity = mode === "always" ? 0.3 : 0.3 * inflate * (1 - strikeU);
+  falsework.position.z = mode === "always" ? -0.02 : -0.02 - 1.5 * strikeU;
   // The strike takes the thrust network with it: wires and nodes fade,
   // drop and vanish on the same clock, and scrubbing back restores them
   // because everything here is computed from t (by way of build).

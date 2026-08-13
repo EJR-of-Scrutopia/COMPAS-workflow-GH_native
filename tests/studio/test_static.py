@@ -107,7 +107,7 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 def test_the_layer_registry_has_the_agreed_names():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework", "shell"):
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "shell"):
         assert '"{}"'.format(name) in js
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
@@ -417,7 +417,7 @@ def test_the_strike_takes_wires_nodes_and_falsework():
     end = js.index("\n}", start)
     body = js[start:end]
     assert "strikeU" in body
-    assert "state.layers.falsework" in body
+    assert "state.formworkMode" in body
     assert "state.layers.wires" in body
     for name in ("wires", "nodes"):
         assert '"{}"'.format(name) in body, "the strike must drive {}".format(name)
@@ -439,12 +439,36 @@ def test_set_layer_does_not_call_applytimeline_directly():
     )
 
 
-def test_falsework_is_a_translucent_ghost_with_a_toggle():
+def test_formwork_is_a_three_state_control():
+    # A checkbox cannot resurrect what the strike removed: at the
+    # finished vault it did nothing in either direction. Three states,
+    # in the owner's own words: animation (the build story, fade in with
+    # the inflation, strike away at the end), always (the resting ghost
+    # pinned for inspection), hidden (no ghost shell anywhere, build
+    # phase included).
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '"falsework", "Formwork"' in js
+    assert 'id="formwork-mode"' in html
+    assert '<option value="animation" selected>' in html
+    for value in ("always", "hidden"):
+        assert 'value="{}"'.format(value) in html
+    assert 'formworkMode: "animation"' in js
+    assert '"falsework", "Formwork"' not in js, "the checkbox entry is gone"
+    assert "falsework: true" not in js, (
+        "state.layers must not carry falsework any more"
+    )
+    body = _function_body(js, "applySceneAtTime")
+    assert "state.formworkMode" in body
+    assert 'mode === "always" || (mode === "animation" && strikeU < 1)' in body
+    # The ghost material itself is unchanged.
     assert "opacity: 0.3" in js
     assert "wireMaterial.transparent = true" in js
     assert "nodeMaterial.transparent = true" in js
+    # A mode change recomputes the scene without moving the camera.
+    wiring_at = js.index('getElementById("formwork-mode")')
+    wiring = js[wiring_at:js.index("\n});", wiring_at)]
+    assert "applySceneAtTime(state.timeline.t)" in wiring
+    assert "applyTimeline(" not in wiring
 
 
 def test_analysis_overlays_cast_no_shadows():
