@@ -24,8 +24,8 @@
   <div id="legend-labels"><span id="legend-min"></span><span id="legend-zero"></span><span id="legend-max"></span></div>
 </div>
 <aside id="panel">
-  <section id="study-section">
-    <h2>Study</h2>
+  <details id="study-section" open>
+    <summary>Study</summary>
     <select id="study-select"></select>
     <select id="material-select">
       <option value="concrete">Concrete C30/37</option>
@@ -47,9 +47,42 @@
     <button id="run-button">Run staged analysis</button>
     <div id="run-status"></div>
     <div id="cut-status"></div>
-  </section>
-  <section id="import-section">
-    <h2>Import</h2>
+  </details>
+  <details id="view-section" open>
+    <summary>View</summary>
+    <div id="layer-toggles"></div>
+    <details id="styling-section">
+      <summary>Styling</summary>
+      <label>Stress surface <select id="stress-surface">
+        <option value="per" selected>Per surface</option>
+        <option value="worst">Worst of both</option>
+        <option value="top">Top</option>
+        <option value="bottom">Bottom</option>
+      </select></label>
+      <label>Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
+      <label>Node size <input id="node-radius" type="range" min="0.01" max="0.10" step="0.005" value="0.03"> <span id="node-radius-value">30</span> mm</label>
+      <label>Wire size <input id="wire-radius" type="range" min="0.005" max="0.06" step="0.005" value="0.02"> <span id="wire-radius-value">20</span> mm</label>
+    </details>
+    <button id="data-button">Data</button>
+  </details>
+  <details id="animation-section" open>
+    <summary>Animation</summary>
+    <button id="play-button">Play</button>
+    <button id="restart-button">Restart</button>
+    <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
+    <label>Timeline speed <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="timeline-speed-value">1.00</span>x</label>
+    <label>Inflation <input id="inflate-seconds" type="range" min="0" max="10" step="0.5" value="3"> <span id="inflate-value">3.0</span> s</label>
+    <label>Orbit speed <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
+    <label>Orbit distance <input id="orbit-distance" type="range" min="10" max="60" step="1" value="30"></label>
+  </details>
+  <details id="scene-section">
+    <summary>Scene</summary>
+    <label>Sun azimuth <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140"></label>
+    <label>Sun elevation <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40"></label>
+    <label>Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
+  </details>
+  <details id="import-section">
+    <summary>Import</summary>
     <label>Grasshopper export pair (*-contract.json + *-compas.json)
       <input id="import-export-input" type="file" multiple accept=".json"></label>
     <button id="import-export-button">Upload export pair</button>
@@ -57,42 +90,12 @@
       <input id="import-columns-input" type="file" accept=".json"></label>
     <button id="import-columns-button">Upload columns file</button>
     <div id="import-status"></div>
-  </section>
-  <section id="animation-section">
-    <h2>Placement</h2>
-    <button id="play-button">Play</button>
-    <button id="restart-button">Restart</button>
-    <label>Timeline speed <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="timeline-speed-value">1.00</span>x</label>
-    <label>Inflation <input id="inflate-seconds" type="range" min="0" max="10" step="0.5" value="3"> <span id="inflate-value">3.0</span> s</label>
-    <label>Orbit speed <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
-    <label>Orbit distance <input id="orbit-distance" type="range" min="10" max="60" step="1" value="30"></label>
-    <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
-  </section>
-  <section id="environment-section">
-    <h2>Environment</h2>
-    <label>Sun azimuth <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140"></label>
-    <label>Sun elevation <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40"></label>
-    <label>Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
-  </section>
-  <section id="layers-section">
-    <h2>FEA layers</h2>
-    <div id="layer-toggles"></div>
-    <label>Stress surface <select id="stress-surface">
-      <option value="per" selected>Per surface</option>
-      <option value="worst">Worst of both</option>
-      <option value="top">Top</option>
-      <option value="bottom">Bottom</option>
-    </select></label>
-    <label>Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
-    <label>Node size <input id="node-radius" type="range" min="0.01" max="0.10" step="0.005" value="0.03"> <span id="node-radius-value">30</span> mm</label>
-    <label>Wire size <input id="wire-radius" type="range" min="0.005" max="0.06" step="0.005" value="0.02"> <span id="wire-radius-value">20</span> mm</label>
-    <button id="data-button">Data</button>
-  </section>
-  <section id="record-section">
-    <h2>Record</h2>
+  </details>
+  <details id="record-section">
+    <summary>Record</summary>
     <button id="record-button">Record 1080p</button>
     <div id="record-status"></div>
-  </section>
+  </details>
 </aside>
 <div id="data-panel" class="hidden"><button id="data-close">Close</button><div id="data-content"></div></div>
 <script type="module" src="/static/studio.js"></script>

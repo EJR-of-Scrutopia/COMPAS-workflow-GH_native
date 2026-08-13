@@ -1538,3 +1538,28 @@ def test_a_same_export_reload_preserves_the_viewing_state():
         "the preserve branch must never call applyTimeline; that would "
         "move a user-positioned camera"
     )
+
+
+def test_the_panel_groups_into_six_collapsible_sections():
+    # Sections group by use, not by how the code grew: everything that
+    # shows or hides lives in View, everything that moves in Animation,
+    # and Scene is deliberately thin because the environment engine wave
+    # grows there. Study, View and Animation open; the rest collapsed.
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    positions = []
+    for section_id, is_open in (
+        ("study-section", True), ("view-section", True),
+        ("animation-section", True), ("scene-section", False),
+        ("import-section", False), ("record-section", False),
+    ):
+        at = html.index('id="{}"'.format(section_id))
+        positions.append(at)
+        tag = html[html.rindex("<details", 0, at):html.index(">", at) + 1]
+        assert (" open" in tag) == is_open, section_id
+    assert positions == sorted(positions), "sections out of order"
+    assert "<h2>" not in html, "summaries are the section headers now"
+    assert "<summary>Styling</summary>" in html, (
+        "the layer styling controls nest collapsed inside View"
+    )
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert "#panel summary" in css

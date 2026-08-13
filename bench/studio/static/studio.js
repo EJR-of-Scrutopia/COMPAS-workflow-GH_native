@@ -116,7 +116,7 @@ function grainTexture(size) {
 
 const materials = {
   concrete: new THREE.MeshPhysicalMaterial({
-    color: 0x9a958a, side: THREE.DoubleSide,      // warm mid grey
+    color: 0x939590, side: THREE.DoubleSide,      // neutral mid grey
     map: noiseTexture(256, 205, 14),
     roughness: 0.9, roughnessMap: noiseTexture(256, 215, 40),
     metalness: 0.0,
@@ -128,7 +128,7 @@ const materials = {
     metalness: 0.0,
   }),
   "concrete-sprayed": new THREE.MeshPhysicalMaterial({
-    color: 0xd8d2c4, side: THREE.DoubleSide,      // lighter, coarsest
+    color: 0xcbcbc6, side: THREE.DoubleSide,      // light neutral grey, coarsest
     map: noiseTexture(256, 195, 46),
     roughness: 0.98, roughnessMap: noiseTexture(256, 225, 40),
     metalness: 0.0,
