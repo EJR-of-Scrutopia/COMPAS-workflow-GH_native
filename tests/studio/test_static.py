@@ -107,7 +107,7 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 def test_the_layer_registry_has_the_agreed_names():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework"):
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "falsework", "shell"):
         assert '"{}"'.format(name) in js
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
@@ -425,10 +425,38 @@ def test_set_layer_does_not_call_applytimeline_directly():
 
 def test_falsework_is_a_translucent_ghost_with_a_toggle():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '"falsework", "Falsework ghost"' in js
+    assert '"falsework", "Formwork"' in js
     assert "opacity: 0.3" in js
     assert "wireMaterial.transparent = true" in js
     assert "nodeMaterial.transparent = true" in js
+
+
+def test_analysis_overlays_cast_no_shadows():
+    # The thrust wires sit hidden inside the closed shell once the vault is
+    # complete, but shadow maps ignore both occlusion and material opacity,
+    # so they cast a crisp grid through the shell onto the ground: the
+    # shadow of an invisible thing. The net is a diagram, not a scene
+    # object; it casts nothing. The formwork ghost already casts nothing
+    # (castShadow was never set on it), now as policy rather than accident.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "wires.castShadow = nodes.castShadow = false" in js
+    assert "falsework.castShadow" not in js
+    # The real objects keep casting.
+    build_body = _function_body(js, "buildPieceMeshes")
+    assert "mesh.castShadow = mesh.receiveShadow = true" in build_body
+
+
+def test_the_finished_shell_has_its_own_toggle():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '"shell", "Finished shell"' in js
+    assert "shell: true" in js, "the layer defaults on"
+    scene_body = _function_body(js, "applySceneAtTime")
+    assert "state.layers.shell" in scene_body, (
+        "the timeline recomputes every casting's visibility, so the gate "
+        "must live inside it or a scrub would undo the toggle"
+    )
+    layer_body = _function_body(js, "setLayer")
+    assert '"shell"' in layer_body
 
 
 def test_node_and_wire_size_sliders_rebuild_the_thrust_network():

@@ -10,7 +10,7 @@ import {
 const state = {
   bundle: null,
   studies: [],
-  layers: { wires: true, overlays: true, falsework: true },  // Task 14: layer visibility toggles
+  layers: { shell: true, wires: true, overlays: true, falsework: true },
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -218,7 +218,12 @@ function buildWiresAndNodes(bundle) {
     m.makeTranslation(v[0], v[1], v[2]);
     nodes.setMatrixAt(i, m);
   });
-  wires.castShadow = nodes.castShadow = true;
+  // The thrust network is a diagram of the analysis, not a scene object.
+  // Once the vault closes, the wires sit hidden inside the shell, and
+  // shadow maps ignore both occlusion and opacity, so with castShadow on
+  // they projected a grid shadow of an invisible net through the finished
+  // vault onto the ground. Overlays cast nothing; castings and columns do.
+  wires.castShadow = nodes.castShadow = false;
   return { wires, nodes };
 }
 
@@ -439,15 +444,16 @@ function applyCut() {
 
 // ---------- FEA layers ----------
 const LAYERS = [
+  ["shell", "Finished shell"],
+  ["falsework", "Formwork"],
+  ["wires", "Thrust wires and nodes"],
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
   ["loads", "Load vectors"],
   ["reactions", "Reaction vectors"],
   ["overlays", "Text overlays"],
   ["pulse", "Integrity pulse"],
-  ["wires", "Thrust wires and nodes"],
   ["forces", "Wire forces"],
-  ["falsework", "Falsework ghost"],
 ];
 
 function finalStage() {
@@ -581,7 +587,7 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires" || name === "falsework") {
+  if (name === "wires" || name === "falsework" || name === "shell") {
     // Visibility during and after the strike is the timeline's call, so
     // recompute from t instead of forcing visible here. This calls the
     // scene-only helper, not applyTimeline itself -- a layer checkbox must
@@ -591,6 +597,8 @@ function setLayer(name, on) {
     } else if (name === "wires") {
       state.objects.wires.visible = on;
       state.objects.nodes.visible = on;
+    } else if (name === "shell" && state.objects.shell) {
+      state.objects.shell.visible = on;
     } else if (state.objects.falsework) {
       state.objects.falsework.visible = on;
     }
@@ -2011,7 +2019,7 @@ function applySceneAtTime(t) {
     // first casting reads build = 0 as "the very start of its drop" and
     // hangs at DROP_HEIGHT for the whole inflation window instead of being
     // absent. inflate reaches exactly 1 the instant build time begins.
-    if (inflate < 1) {
+    if (!state.layers.shell || inflate < 1) {
       segment.visible = false;
       continue;
     }
