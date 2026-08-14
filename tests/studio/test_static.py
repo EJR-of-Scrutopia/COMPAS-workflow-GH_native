@@ -1137,6 +1137,14 @@ def test_props_persist_per_study_and_stay_out_of_the_analysis():
     # segment meshes only, and props live in their own group.
     assert "propsGroup" in js
     assert "propsGroup" not in _function_body(js, "recolourSegments")
+    # A drag that ends over a fixed panel overlay never reaches the canvas
+    # with a pointerup, so the drag must hold pointer capture for its whole
+    # life and release it on both pointerup and pointercancel.
+    assert "setPointerCapture" in js and "releasePointerCapture" in js, (
+        "a prop drag must capture the pointer or ending it over #panel or "
+        "#data-panel leaves controls.enabled stuck false"
+    )
+    assert 'addEventListener("pointercancel"' in js
 
 
 def test_the_legend_does_not_sit_on_top_of_the_hud():

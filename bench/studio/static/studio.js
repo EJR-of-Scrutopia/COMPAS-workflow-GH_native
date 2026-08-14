@@ -2240,6 +2240,7 @@ canvas.addEventListener("pointerdown", (event) => {
     selectProp(record);
     state.propDrag = true;
     controls.enabled = false;
+    canvas.setPointerCapture(event.pointerId);
   } else if (state.selectedProp) {
     selectProp(null);
   }
@@ -2252,12 +2253,15 @@ canvas.addEventListener("pointermove", (event) => {
   state.selectedProp.y = hit.y;
   state.selectedProp.object.position.set(hit.x, hit.y, 0);
 });
-canvas.addEventListener("pointerup", () => {
+function endPropDrag(event) {
+  if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   if (!state.propDrag) return;
   state.propDrag = false;
   controls.enabled = true;
   saveProps();
-});
+}
+canvas.addEventListener("pointerup", endPropDrag);
+canvas.addEventListener("pointercancel", endPropDrag);
 window.addEventListener("keydown", (event) => {
   const tag = document.activeElement ? document.activeElement.tagName : "";
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
