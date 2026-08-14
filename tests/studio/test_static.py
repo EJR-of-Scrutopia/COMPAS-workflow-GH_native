@@ -1112,6 +1112,33 @@ def test_hdri_mode_loads_estimates_and_persists():
     assert '"/api/uploads/hdri/"' in js
 
 
+def test_the_props_row_offers_the_five_props_and_a_clear():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    for button in ("prop-figure", "prop-tree", "prop-pallets",
+                   "prop-barrier", "prop-cone", "props-clear"):
+        assert 'id="{}"'.format(button) in html
+
+
+def test_props_persist_per_study_and_stay_out_of_the_analysis():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    key = _function_body(js, "propsKey")
+    assert "bench-studio-props:" in key and "state.bundle.export" in key
+    make = _function_body(js, "makeProp")
+    assert "castShadow = true" in make
+    restore = _function_body(js, "restoreProps")
+    assert "localStorage.getItem" in restore
+    save = _function_body(js, "saveProps")
+    assert "localStorage.setItem" in save
+    # buildScene restores the layout for the study it just built.
+    assert "restoreProps()" in _function_body(js, "buildScene")
+    # The placement layer pauses the camera, never fights it.
+    assert "controls.enabled = false" in js and "controls.enabled = true" in js
+    # Props never join analysis recolouring: recolourSegments touches
+    # segment meshes only, and props live in their own group.
+    assert "propsGroup" in js
+    assert "propsGroup" not in _function_body(js, "recolourSegments")
+
+
 def test_the_legend_does_not_sit_on_top_of_the_hud():
     # Both were anchored left: 16px; bottom: 16px, so turning a heatmap on
     # covered the last lines of the HUD -- and the HUD gained the struck-now

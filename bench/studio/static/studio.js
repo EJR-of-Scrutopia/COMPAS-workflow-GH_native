@@ -17,6 +17,10 @@ const state = {
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
+  props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
+  armedPropType: null,  // a prop button was clicked; the next ground click places it
+  selectedProp: null,   // the record whose object is highlighted and keyboard-driven
+  propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
@@ -58,6 +62,7 @@ camera.position.set(24, -24, 14);
 camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
+const propRaycaster = new THREE.Raycaster();
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -360,6 +365,179 @@ function groundMaterial(preset) {
   return groundMaterialCache[preset];
 }
 
+// ---------- E5: placeable props ----------
+// Procedural low-poly groups, origin on the ground plane, metres for
+// units. They cast shadows, never join analysis picking or recolouring,
+// and their layout is mirrored to localStorage per study.
+const propsGroup = new THREE.Group();
+scene.add(propsGroup);
+
+function propMaterial(color) {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.85 });
+}
+
+function propFigure() {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.95, 4, 8), propMaterial(0x4a5560));
+  body.rotation.x = Math.PI / 2;
+  body.position.z = 0.78;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8), propMaterial(0xc8a288));
+  head.position.z = 1.62;
+  group.add(body, head);
+  return group;
+}
+
+function propTree() {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 1.6, 8), propMaterial(0x6b4f35));
+  trunk.rotation.x = Math.PI / 2;
+  trunk.position.z = 0.8;
+  const lower = new THREE.Mesh(new THREE.SphereGeometry(1.15, 10, 8), propMaterial(0x4d6b3a));
+  lower.position.z = 2.3;
+  const upper = new THREE.Mesh(new THREE.SphereGeometry(0.8, 10, 8), propMaterial(0x557a41));
+  upper.position.z = 3.2;
+  group.add(trunk, lower, upper);
+  return group;
+}
+
+function propPallets() {
+  const group = new THREE.Group();
+  for (let level = 0; level < 3; level += 1) {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.14), propMaterial(0xa08050));
+    slab.position.z = 0.07 + level * 0.16;
+    group.add(slab);
+  }
+  return group;
+}
+
+function propBarrier() {
+  const group = new THREE.Group();
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.06, 0.5), propMaterial(0xd8d8d8));
+  rail.position.z = 0.7;
+  group.add(rail);
+  for (const x of [-0.9, 0.9]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.95), propMaterial(0xd8d8d8));
+    leg.position.set(x, 0, 0.475);
+    group.add(leg);
+  }
+  return group;
+}
+
+function propCone() {
+  const group = new THREE.Group();
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.65, 12), propMaterial(0xd2622a));
+  cone.rotation.x = Math.PI / 2;
+  cone.position.z = 0.36;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.05), propMaterial(0x33363a));
+  base.position.z = 0.025;
+  group.add(cone, base);
+  return group;
+}
+
+const PROP_BUILDERS = {
+  figure: propFigure, tree: propTree, pallets: propPallets,
+  barrier: propBarrier, cone: propCone,
+};
+
+function makeProp(type) {
+  const group = PROP_BUILDERS[type]();
+  group.traverse((child) => {
+    if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+  });
+  group.userData.propType = type;
+  return group;
+}
+
+function propsKey() {
+  return "bench-studio-props:" + state.bundle.export;
+}
+
+function saveProps() {
+  const layout = state.props.map((p) => ({ type: p.type, x: p.x, y: p.y, rotation: p.rotation }));
+  localStorage.setItem(propsKey(), JSON.stringify(layout));
+}
+
+function restoreProps() {
+  for (const record of state.props) propsGroup.remove(record.object);
+  state.props = [];
+  state.selectedProp = null;
+  let layout = [];
+  try {
+    layout = JSON.parse(localStorage.getItem(propsKey()) || "[]");
+  } catch (error) {
+    layout = [];
+  }
+  if (!Array.isArray(layout)) layout = [];
+  for (const entry of layout) {
+    if (!PROP_BUILDERS[entry.type]) continue;
+    placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
+  }
+}
+
+function placeProp(type, x, y, rotation, save) {
+  const object = makeProp(type);
+  object.position.set(x, y, 0);
+  object.rotation.z = rotation;
+  propsGroup.add(object);
+  const record = { type, x, y, rotation, object };
+  state.props.push(record);
+  if (save) saveProps();
+  return record;
+}
+
+function setPropEmissive(record, on) {
+  record.object.traverse((child) => {
+    if (child.isMesh) child.material.emissive.set(on ? 0x2a4a66 : 0x000000);
+  });
+}
+
+function selectProp(record) {
+  if (state.selectedProp) setPropEmissive(state.selectedProp, false);
+  state.selectedProp = record;
+  if (record) setPropEmissive(record, true);
+}
+
+function armProp(type) {
+  const already = state.armedPropType === type;
+  disarmProp();
+  if (already) return;
+  state.armedPropType = type;
+  controls.enabled = false;
+  document.getElementById("prop-" + type).classList.add("armed");
+}
+
+function disarmProp() {
+  if (state.armedPropType) {
+    document.getElementById("prop-" + state.armedPropType).classList.remove("armed");
+  }
+  state.armedPropType = null;
+  if (!state.propDrag) controls.enabled = true;
+}
+
+function groundPointAt(event) {
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  propRaycaster.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3();
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  return propRaycaster.ray.intersectPlane(plane, hit) ? hit : null;
+}
+
+function propRecordAt(event) {
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  propRaycaster.setFromCamera(ndc, camera);
+  const hits = propRaycaster.intersectObjects(propsGroup.children, true);
+  if (!hits.length) return null;
+  let node = hits[0].object;
+  while (node.parent && node.parent !== propsGroup) node = node.parent;
+  return state.props.find((p) => p.object === node) || null;
+}
+
 const materials = {
   concrete: new THREE.MeshPhysicalMaterial({
     color: 0x939590, side: THREE.DoubleSide,      // neutral mid grey
@@ -618,6 +796,7 @@ function buildScene(bundle, preserve) {
   buildLayerToggles();
   updateVectorLayers();
   updateMaterialControls();
+  restoreProps();
   updateHud();
 }
 
@@ -2033,6 +2212,66 @@ document.getElementById("weather-preset").addEventListener("change", (e) => {
 document.getElementById("ground-preset").addEventListener("change", (e) => {
   state.groundPreset = e.target.value;
   if (state.objects.ground) state.objects.ground.material = groundMaterial(e.target.value);
+});
+for (const [id, type] of [["prop-figure", "figure"], ["prop-tree", "tree"],
+                          ["prop-pallets", "pallets"], ["prop-barrier", "barrier"],
+                          ["prop-cone", "cone"]]) {
+  document.getElementById(id).addEventListener("click", () => {
+    if (state.bundle) armProp(type);
+  });
+}
+document.getElementById("props-clear").addEventListener("click", () => {
+  if (!state.bundle) return;
+  for (const record of state.props) propsGroup.remove(record.object);
+  state.props = [];
+  state.selectedProp = null;
+  saveProps();
+});
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || !state.bundle) return;
+  if (state.armedPropType) {
+    const hit = groundPointAt(event);
+    if (hit) selectProp(placeProp(state.armedPropType, hit.x, hit.y, 0, true));
+    disarmProp();
+    return;
+  }
+  const record = propRecordAt(event);
+  if (record) {
+    selectProp(record);
+    state.propDrag = true;
+    controls.enabled = false;
+  } else if (state.selectedProp) {
+    selectProp(null);
+  }
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!state.propDrag || !state.selectedProp) return;
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  state.selectedProp.x = hit.x;
+  state.selectedProp.y = hit.y;
+  state.selectedProp.object.position.set(hit.x, hit.y, 0);
+});
+canvas.addEventListener("pointerup", () => {
+  if (!state.propDrag) return;
+  state.propDrag = false;
+  controls.enabled = true;
+  saveProps();
+});
+window.addEventListener("keydown", (event) => {
+  const tag = document.activeElement ? document.activeElement.tagName : "";
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  if (!state.selectedProp) return;
+  if (event.key === "r" || event.key === "R") {
+    state.selectedProp.rotation += Math.PI / 12;
+    state.selectedProp.object.rotation.z = state.selectedProp.rotation;
+    saveProps();
+  } else if (event.key === "Delete" || event.key === "Backspace") {
+    propsGroup.remove(state.selectedProp.object);
+    state.props = state.props.filter((p) => p !== state.selectedProp);
+    state.selectedProp = null;
+    saveProps();
+  }
 });
 // "change" (drag release), not "input": the file's own convention for every
 // other slider that rebuilds something, and this one re-runs the recolour
