@@ -1668,13 +1668,13 @@ def test_the_environment_addons_are_vendored():
     # beside RoomEnvironment, same pinned three version, importable through
     # the importmap's three/addons/ prefix.
     sky = STATIC / "vendor" / "addons" / "objects" / "Sky.js"
-    rgbe = STATIC / "vendor" / "addons" / "loaders" / "RGBELoader.js"
-    assert sky.is_file() and rgbe.is_file()
+    hdr = STATIC / "vendor" / "addons" / "loaders" / "HDRLoader.js"
+    assert sky.is_file() and hdr.is_file()
     sky_text = sky.read_text(encoding="utf-8")
-    rgbe_text = rgbe.read_text(encoding="utf-8")
+    hdr_text = hdr.read_text(encoding="utf-8")
     assert "turbidity" in sky_text, "Sky.js must be the scattering shader"
-    assert "RGBE" in rgbe_text, "RGBELoader.js must decode Radiance files"
-    for text in (sky_text, rgbe_text):
+    assert "RGBE" in hdr_text, "HDRLoader.js must decode Radiance files"
+    for text in (sky_text, hdr_text):
         assert "from 'three'" in text or 'from "three"' in text, (
             "addons must import bare 'three' so the importmap resolves them"
         )
