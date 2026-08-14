@@ -1104,6 +1104,8 @@ def test_hdri_mode_loads_estimates_and_persists():
     assert "estimateSunFromEquirect" in body
     assert 'localStorage.setItem("bench-studio-hdri"' in body
     assert ".dispose()" in body, "replacing an hdri must free the old texture"
+    assert "180 - estimate.azimuthDeg" in body, (
+        "world azimuth = 180 - image azimuth under three's equirect convention")
     refresh = _function_body(js, "refreshHdriList")
     assert '"/api/hdri"' in refresh
     assert 'localStorage.getItem("bench-studio-hdri")' in refresh
@@ -1129,6 +1131,11 @@ def test_props_persist_per_study_and_stay_out_of_the_analysis():
     assert "localStorage.getItem" in restore
     save = _function_body(js, "saveProps")
     assert "localStorage.setItem" in save
+    # A prop leaves its own geometry and material behind on the GPU when it
+    # is dropped; every site that removes one from propsGroup must dispose
+    # it first, the same rule disposeShell already follows.
+    assert "disposeProp(" in _function_body(js, "restoreProps")
+    assert js.count("disposeProp(") >= 4
     # buildScene restores the layout for the study it just built.
     assert "restoreProps()" in _function_body(js, "buildScene")
     # The placement layer pauses the camera, never fights it.
@@ -1763,6 +1770,10 @@ def test_the_weather_presets_are_parameter_bundles_on_one_sky():
     # The sky is one shared mesh in a Z-up world.
     assert "new Sky()" in js
     assert "uniforms.up.value.set(0, 0, 1)" in js
+    # The vendored Sky's cloud block is hardcoded Y-up; scattering respects
+    # the up uniform above but the clouds do not, so they must be switched
+    # off rather than ship wrongly oriented on every preset.
+    assert "cloudCoverage.value = 0" in js
 
 
 def test_pmrem_regeneration_stays_off_the_input_path():

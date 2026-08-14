@@ -84,6 +84,7 @@ const sky = new Sky();
 sky.scale.setScalar(450);
 sky.visible = false;
 sky.material.uniforms.up.value.set(0, 0, 1);
+sky.material.uniforms.cloudCoverage.value = 0; // the cloud block is hardcoded Y-up; scattering respects up, clouds do not
 scene.add(sky);
 
 // E2: weather presets are parameter bundles on that one shader. The
@@ -241,10 +242,11 @@ async function loadHdri(name) {
     localStorage.setItem("bench-studio-hdri", name);
     const image = texture.image;
     const estimate = estimateSunFromEquirect(image.data, image.width, image.height);
-    // The estimator speaks image space; the backdrop is rotated a quarter
-    // turn about X for the Z-up scene, under which world azimuth is the
-    // negated image azimuth (u = atan2(z, x) in three's equirect shader).
-    const azimuth = ((-estimate.azimuthDeg) % 360 + 360) % 360;
+    // The estimator speaks image space. Three's equirect shader samples
+    // u = atan2(dir.z, dir.x) / (2 * pi) + 0.5, and the backgroundRotation
+    // quarter-turn is uploaded transposed, so world azimuth = 180 - image
+    // azimuth, not the negated image azimuth.
+    const azimuth = ((180 - estimate.azimuthDeg) % 360 + 360) % 360;
     document.getElementById("sun-azimuth").value = Math.round(azimuth);
     document.getElementById("sun-elevation").value =
       Math.round(Math.min(85, Math.max(5, estimate.elevationDeg)));
@@ -257,6 +259,7 @@ async function loadHdri(name) {
     regenerateEnvironment();
   } catch (error) {
     status.textContent = "could not load " + name + ": " + error.message;
+    regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   }
 }
 
@@ -457,8 +460,18 @@ function saveProps() {
   localStorage.setItem(propsKey(), JSON.stringify(layout));
 }
 
+// Mirrors disposeShell's rule: whatever is replaced owns GPU buffers.
+function disposeProp(object) {
+  object.traverse((child) => {
+    if (child.isMesh) {
+      child.geometry.dispose();
+      child.material.dispose();
+    }
+  });
+}
+
 function restoreProps() {
-  for (const record of state.props) propsGroup.remove(record.object);
+  for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
   state.selectedProp = null;
   let layout = [];
@@ -2222,7 +2235,7 @@ for (const [id, type] of [["prop-figure", "figure"], ["prop-tree", "tree"],
 }
 document.getElementById("props-clear").addEventListener("click", () => {
   if (!state.bundle) return;
-  for (const record of state.props) propsGroup.remove(record.object);
+  for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
   state.props = [];
   state.selectedProp = null;
   saveProps();
@@ -2271,6 +2284,7 @@ window.addEventListener("keydown", (event) => {
     state.selectedProp.object.rotation.z = state.selectedProp.rotation;
     saveProps();
   } else if (event.key === "Delete" || event.key === "Backspace") {
+    disposeProp(state.selectedProp.object);
     propsGroup.remove(state.selectedProp.object);
     state.props = state.props.filter((p) => p !== state.selectedProp);
     state.selectedProp = null;
