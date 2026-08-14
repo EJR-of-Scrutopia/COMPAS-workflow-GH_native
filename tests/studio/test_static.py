@@ -1094,6 +1094,66 @@ def test_a_refused_run_reports_the_reason_the_server_gave():
     assert "body.detail" in body, "the server's own reason must be shown"
 
 
+def test_hdri_mode_loads_estimates_and_persists():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "HDRLoader" in js and "three/addons/loaders/HDRLoader.js" in js
+    body = _function_body(js, "loadHdri")
+    assert "setDataType(THREE.FloatType)" in body, (
+        "the estimator needs Float32 pixels, not half floats")
+    assert "EquirectangularReflectionMapping" in body
+    assert "estimateSunFromEquirect" in body
+    assert 'localStorage.setItem("bench-studio-hdri"' in body
+    assert ".dispose()" in body, "replacing an hdri must free the old texture"
+    assert "180 - estimate.azimuthDeg" in body, (
+        "world azimuth = 180 - image azimuth under three's equirect convention")
+    refresh = _function_body(js, "refreshHdriList")
+    assert '"/api/hdri"' in refresh
+    assert 'localStorage.getItem("bench-studio-hdri")' in refresh
+    assert "no HDRIs installed" in refresh
+    # The upload path PUTs to the guarded route and then adopts the file.
+    assert '"/api/uploads/hdri/"' in js
+
+
+def test_the_props_row_offers_the_five_props_and_a_clear():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    for button in ("prop-figure", "prop-tree", "prop-pallets",
+                   "prop-barrier", "prop-cone", "props-clear"):
+        assert 'id="{}"'.format(button) in html
+
+
+def test_props_persist_per_study_and_stay_out_of_the_analysis():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    key = _function_body(js, "propsKey")
+    assert "bench-studio-props:" in key and "state.bundle.export" in key
+    make = _function_body(js, "makeProp")
+    assert "castShadow = true" in make
+    restore = _function_body(js, "restoreProps")
+    assert "localStorage.getItem" in restore
+    save = _function_body(js, "saveProps")
+    assert "localStorage.setItem" in save
+    # A prop leaves its own geometry and material behind on the GPU when it
+    # is dropped; every site that removes one from propsGroup must dispose
+    # it first, the same rule disposeShell already follows.
+    assert "disposeProp(" in _function_body(js, "restoreProps")
+    assert js.count("disposeProp(") >= 4
+    # buildScene restores the layout for the study it just built.
+    assert "restoreProps()" in _function_body(js, "buildScene")
+    # The placement layer pauses the camera, never fights it.
+    assert "controls.enabled = false" in js and "controls.enabled = true" in js
+    # Props never join analysis recolouring: recolourSegments touches
+    # segment meshes only, and props live in their own group.
+    assert "propsGroup" in js
+    assert "propsGroup" not in _function_body(js, "recolourSegments")
+    # A drag that ends over a fixed panel overlay never reaches the canvas
+    # with a pointerup, so the drag must hold pointer capture for its whole
+    # life and release it on both pointerup and pointercancel.
+    assert "setPointerCapture" in js and "releasePointerCapture" in js, (
+        "a prop drag must capture the pointer or ending it over #panel or "
+        "#data-panel leaves controls.enabled stuck false"
+    )
+    assert 'addEventListener("pointercancel"' in js
+
+
 def test_the_legend_does_not_sit_on_top_of_the_hud():
     # Both were anchored left: 16px; bottom: 16px, so turning a heatmap on
     # covered the last lines of the HUD -- and the HUD gained the struck-now
@@ -1661,3 +1721,106 @@ def test_the_deflection_reset_restores_the_welded_normals():
     assert "userData.baseNormals = normals" in _function_body(js, "buildPieceMeshes")
     body = _function_body(js, "recolourSegments")
     assert "userData.baseNormals.slice()" in body
+
+
+def test_the_environment_addons_are_vendored():
+    # Task E1/E2/E3 groundwork: the Sky shader and the Radiance loader sit
+    # beside RoomEnvironment, same pinned three version, importable through
+    # the importmap's three/addons/ prefix.
+    sky = STATIC / "vendor" / "addons" / "objects" / "Sky.js"
+    hdr = STATIC / "vendor" / "addons" / "loaders" / "HDRLoader.js"
+    assert sky.is_file() and hdr.is_file()
+    assert not (STATIC / "vendor" / "addons" / "loaders" / "RGBELoader.js").exists(), "only the 0.185 HDRLoader is vendored"
+    sky_text = sky.read_text(encoding="utf-8")
+    hdr_text = hdr.read_text(encoding="utf-8")
+    assert "turbidity" in sky_text, "Sky.js must be the scattering shader"
+    assert "RGBE" in hdr_text, "HDRLoader.js must decode Radiance files"
+    for text in (sky_text, hdr_text):
+        assert "from 'three'" in text or 'from "three"' in text, (
+            "addons must import bare 'three' so the importmap resolves them"
+        )
+
+
+def test_the_environment_select_owns_three_exclusive_modes():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="environment-mode"' in html
+    for value in ("studio", "sky", "hdri"):
+        assert '<option value="{}"'.format(value) in html
+    assert '<option value="studio" selected' in html
+    assert 'environmentMode: "studio"' in js
+    # Mode switches recompute the scene through the environment functions
+    # and never touch the camera: no camera writes in any of them.
+    for name in ("applyEnvironment", "regenerateEnvironment", "applySunFromSliders"):
+        body = _function_body(js, name)
+        assert "camera.position" not in body
+        assert "controls.target" not in body
+
+
+def test_the_weather_presets_are_parameter_bundles_on_one_sky():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="weather-preset"' in html
+    for value in ("clear", "hazy", "overcast", "golden-hour", "night"):
+        assert '<option value="{}"'.format(value) in html
+    for key in ("turbidity", "rayleigh", "mieCoefficient", "mieDirectionalG",
+                "sunIntensity", "sunColor", "shadowRadius", "exposure",
+                "hemisphere", "fogColor", "fogNear", "fogFar"):
+        assert key in js, "WEATHER presets must carry {}".format(key)
+    # The sky is one shared mesh in a Z-up world.
+    assert "new Sky()" in js
+    assert "uniforms.up.value.set(0, 0, 1)" in js
+    # The vendored Sky's cloud block is hardcoded Y-up; scattering respects
+    # the up uniform above but the clouds do not, so they must be switched
+    # off rather than ship wrongly oriented on every preset.
+    assert "cloudCoverage.value = 0" in js
+
+
+def test_pmrem_regeneration_stays_off_the_input_path():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # The only fromScene/fromEquirectangular calls after boot live in
+    # regenerateEnvironment; applyEnvironment and the slider input path
+    # stay cheap.
+    for name in ("applyEnvironment", "applySunFromSliders"):
+        body = _function_body(js, name)
+        assert "fromScene" not in body and "fromEquirectangular" not in body
+    regen = _function_body(js, "regenerateEnvironment")
+    assert "fromScene" in regen and "fromEquirectangular" in regen
+    # Sun slider input events move the light only; regeneration hangs on
+    # the change event gated to sky mode.
+    assert 'addEventListener("input", applySunFromSliders)' in js
+
+
+def test_each_environment_mode_owns_background_fog_and_rotation():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "applyEnvironment")
+    assert "scene.fog = null" in body, "studio and hdri modes must clear fog"
+    assert "new THREE.Fog(" in body, "sky mode must set fog"
+    assert "backgroundRotation" in js and "environmentRotation" in js
+    # The tone slider is a studio-mode control; sky and hdri rows swap in.
+    assert 'id="background-row"' in (STATIC / "index.html").read_text(encoding="utf-8")
+
+
+def test_environment_functions_never_read_the_clock_or_the_timeline():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("applyEnvironment", "regenerateEnvironment", "applySunFromSliders"):
+        body = _function_body(js, name)
+        for banned in ("performance.now", "Date.now", "state.timeline"):
+            assert banned not in body, "{} reads {}".format(name, banned)
+
+
+def test_the_ground_presets_swap_one_discs_material():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="ground-preset"' in html
+    for value in ("dark-studio", "concrete-slab", "patio-pavers", "tiles"):
+        assert '<option value="{}"'.format(value) in html
+        assert '"{}"'.format(value) in js
+    assert 'groundPreset: "dark-studio"' in js
+    # One disc, material swapped in place, materials cached for the session.
+    assert "groundMaterialCache" in js
+    body = _function_body(js, "buildScene")
+    assert "groundMaterial(state.groundPreset)" in body
+    # The joint texture is procedural canvas work like every other texture.
+    joint = _function_body(js, "groundJointTexture")
+    assert "createElement" in joint and "getMaxAnisotropy" in joint

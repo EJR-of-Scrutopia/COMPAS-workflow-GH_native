@@ -1,9 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { Sky } from "three/addons/objects/Sky.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
-  sampleScalar, sampleVector, creaseNormals,
+  sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -12,6 +14,15 @@ const state = {
   studies: [],
   layers: { shell: true, wires: true, overlays: true },
   formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
+  environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
+  weatherPreset: "clear",    // E2: a key of WEATHER
+  groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
+  props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
+  armedPropType: null,  // a prop button was clicked; the next ground click places it
+  selectedProp: null,   // the record whose object is highlighted and keyboard-driven
+  propDrag: false,
+  hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
+  hdriName: null,
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -51,9 +62,12 @@ camera.position.set(24, -24, 14);
 camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
+const propRaycaster = new THREE.Raycaster();
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = studioEnvironment;
+let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 
 const sun = new THREE.DirectionalLight(0xffffff, 3.0);
 sun.castShadow = true;
@@ -61,19 +75,192 @@ sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = -30; sun.shadow.camera.right = 30;
 sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xbfd4e6, 0x30271f, 0.5));
+const hemi = new THREE.HemisphereLight(0xbfd4e6, 0x30271f, 0.5);
+scene.add(hemi);
 
-function applyEnvironment() {
+// E2: one physical sky shared by backdrop and lighting. The shader's up
+// vector defaults to Y-up; this scene is Z-up.
+const sky = new Sky();
+sky.scale.setScalar(450);
+sky.visible = false;
+sky.material.uniforms.up.value.set(0, 0, 1);
+sky.material.uniforms.cloudCoverage.value = 0; // the cloud block is hardcoded Y-up; scattering respects up, clouds do not
+scene.add(sky);
+
+// E2: weather presets are parameter bundles on that one shader. The
+// numbers are starting values tuned by eye, not physics claims; elevation
+// non-null moves the slider to a fitting default when the preset lands.
+const WEATHER = {
+  clear: {
+    turbidity: 3, rayleigh: 1.2, mieCoefficient: 0.004, mieDirectionalG: 0.8,
+    sunIntensity: 3.2, sunColor: 0xfff2e0, shadowRadius: 2, exposure: 0.75,
+    hemisphere: 0.35, fogColor: 0xcfd8e0, fogNear: 120, fogFar: 400, elevation: null,
+  },
+  hazy: {
+    turbidity: 10, rayleigh: 2.2, mieCoefficient: 0.02, mieDirectionalG: 0.75,
+    sunIntensity: 2.2, sunColor: 0xffe8c8, shadowRadius: 6, exposure: 0.7,
+    hemisphere: 0.45, fogColor: 0xd8d4c8, fogNear: 60, fogFar: 240, elevation: null,
+  },
+  overcast: {
+    turbidity: 20, rayleigh: 3.5, mieCoefficient: 0.06, mieDirectionalG: 0.6,
+    sunIntensity: 0.9, sunColor: 0xe8ecf0, shadowRadius: 12, exposure: 0.65,
+    hemisphere: 0.7, fogColor: 0xc4c8cc, fogNear: 50, fogFar: 200, elevation: null,
+  },
+  "golden-hour": {
+    turbidity: 6, rayleigh: 2.8, mieCoefficient: 0.012, mieDirectionalG: 0.85,
+    sunIntensity: 2.6, sunColor: 0xffb36b, shadowRadius: 3, exposure: 0.7,
+    hemisphere: 0.3, fogColor: 0xe0c0a0, fogNear: 80, fogFar: 300, elevation: 12,
+  },
+  night: {
+    turbidity: 2, rayleigh: 0.4, mieCoefficient: 0.002, mieDirectionalG: 0.7,
+    sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.5,
+    hemisphere: 0.15, fogColor: 0x10141c, fogNear: 60, fogFar: 250, elevation: 20,
+  },
+};
+
+function applySunFromSliders() {
   const az = THREE.MathUtils.degToRad(+document.getElementById("sun-azimuth").value);
   const el = THREE.MathUtils.degToRad(+document.getElementById("sun-elevation").value);
   const r = 60;
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
-  const tone = +document.getElementById("background-tone").value / 100;
-  scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
-  // Light concretes were clipping to white under the room environment plus
-  // filmic tone mapping, which made three different presets look identical.
-  renderer.toneMappingExposure = 0.85;
-  scene.environmentIntensity = 0.6;
+  sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
+}
+
+function setEnvironmentTexture(texture, target) {
+  // The studio texture is permanent; sky and hdri targets are disposable,
+  // and leaking one per regeneration is a GPU leak the browser never
+  // reports. Dispose the old target before adopting the new one.
+  if (environmentTarget) environmentTarget.dispose();
+  environmentTarget = target || null;
+  scene.environment = texture;
+}
+
+function applyEnvironment() {
+  // The cheap pass: lights, backdrop ownership, fog, row visibility.
+  // PMREM lives in regenerateEnvironment only (E6).
+  applySunFromSliders();
+  document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
+  document.getElementById("weather-row").classList.toggle("hidden", state.environmentMode !== "sky");
+  document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
+  if (state.environmentMode === "sky") {
+    const preset = WEATHER[state.weatherPreset];
+    const uniforms = sky.material.uniforms;
+    uniforms.turbidity.value = preset.turbidity;
+    uniforms.rayleigh.value = preset.rayleigh;
+    uniforms.mieCoefficient.value = preset.mieCoefficient;
+    uniforms.mieDirectionalG.value = preset.mieDirectionalG;
+    sky.visible = true;
+    scene.background = null;
+    scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
+    scene.backgroundRotation.set(0, 0, 0);
+    scene.environmentRotation.set(0, 0, 0);
+    sun.intensity = preset.sunIntensity;
+    sun.color.set(preset.sunColor);
+    sun.shadow.radius = preset.shadowRadius;
+    hemi.intensity = preset.hemisphere;
+    renderer.toneMappingExposure = preset.exposure;
+    scene.environmentIntensity = 0.6;
+  } else if (state.environmentMode === "hdri") {
+    sky.visible = false;
+    scene.fog = null;
+    // Equirects are authored Y-up; the scene is Z-up, so both samplers
+    // rotate a quarter turn about X (E3).
+    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
+    scene.backgroundRotation.set(Math.PI / 2, 0, 0);
+    scene.environmentRotation.set(Math.PI / 2, 0, 0);
+    hemi.intensity = 0.25;
+    renderer.toneMappingExposure = 0.8;
+    scene.environmentIntensity = 1.0;
+  } else {
+    sky.visible = false;
+    scene.fog = null;
+    const tone = +document.getElementById("background-tone").value / 100;
+    scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
+    scene.backgroundRotation.set(0, 0, 0);
+    scene.environmentRotation.set(0, 0, 0);
+    sun.intensity = 3.0;
+    sun.color.set(0xffffff);
+    sun.shadow.radius = 1;
+    hemi.intensity = 0.5;
+    // Light concretes were clipping to white under the room environment plus
+    // filmic tone mapping, which made three different presets look identical.
+    renderer.toneMappingExposure = 0.85;
+    scene.environmentIntensity = 0.6;
+  }
+}
+
+function regenerateEnvironment() {
+  // The one PMREM site (E6): mode entry, weather change, sun slider
+  // release in sky mode, and HDRI load all land here.
+  if (state.environmentMode === "sky") {
+    const holder = new THREE.Scene();
+    holder.add(sky); // borrows the mesh; a mesh lives in one scene at a time
+    const target = pmrem.fromScene(holder, 0.04);
+    scene.add(sky);
+    setEnvironmentTexture(target.texture, target);
+  } else if (state.environmentMode === "hdri" && state.hdriTexture) {
+    const target = pmrem.fromEquirectangular(state.hdriTexture);
+    setEnvironmentTexture(target.texture, target);
+  } else {
+    setEnvironmentTexture(studioEnvironment, null);
+  }
+}
+
+async function refreshHdriList(selectName) {
+  const response = await fetch("/api/hdri");
+  const { files } = await response.json();
+  const select = document.getElementById("hdri-select");
+  select.innerHTML = "";
+  if (!files.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "no HDRIs installed";
+    select.appendChild(option);
+    return [];
+  }
+  for (const name of files) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+  const stored = selectName || localStorage.getItem("bench-studio-hdri");
+  if (stored && files.includes(stored)) select.value = stored;
+  return files;
+}
+
+async function loadHdri(name) {
+  const status = document.getElementById("hdri-status");
+  status.textContent = "loading " + name;
+  try {
+    const loader = new HDRLoader().setDataType(THREE.FloatType);
+    const texture = await loader.loadAsync("/api/hdri/" + encodeURIComponent(name));
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    if (state.hdriTexture) state.hdriTexture.dispose();
+    state.hdriTexture = texture;
+    state.hdriName = name;
+    localStorage.setItem("bench-studio-hdri", name);
+    const image = texture.image;
+    const estimate = estimateSunFromEquirect(image.data, image.width, image.height);
+    // The estimator speaks image space. Three's equirect shader samples
+    // u = atan2(dir.z, dir.x) / (2 * pi) + 0.5, and the backgroundRotation
+    // quarter-turn is uploaded transposed, so world azimuth = 180 - image
+    // azimuth, not the negated image azimuth.
+    const azimuth = ((180 - estimate.azimuthDeg) % 360 + 360) % 360;
+    document.getElementById("sun-azimuth").value = Math.round(azimuth);
+    document.getElementById("sun-elevation").value =
+      Math.round(Math.min(85, Math.max(5, estimate.elevationDeg)));
+    // applyEnvironment's hdri branch deliberately leaves sun.intensity and
+    // sun.color alone (Task 3 sets only hemi, exposure and
+    // environmentIntensity there), so the estimate survives the call below.
+    sun.intensity = estimate.intensity;
+    status.textContent = "";
+    applyEnvironment();
+    regenerateEnvironment();
+  } catch (error) {
+    status.textContent = "could not load " + name + ": " + error.message;
+    regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
+  }
 }
 
 // ---------- procedural textures: offline, no image assets ----------
@@ -118,6 +305,250 @@ function grainTexture(size) {
   // Same grazing-angle moire fix as noiseTexture.
   texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
   return texture;
+}
+
+// E4: joints drawn into colour, roughness and bump so raking sun catches
+// them. The disc's CircleGeometry UVs span its 120 m diameter once, so a
+// repeat of n gives cells of 120 / n metres.
+function groundJointTexture(cols, rows, staggered, baseTone) {
+  const size = 512;
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = canvasEl.height = size;
+  const context = canvasEl.getContext("2d");
+  let seed = 987654;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const cellW = size / cols;
+  const cellH = size / rows;
+  for (let row = 0; row < rows; row += 1) {
+    const offset = staggered && row % 2 === 1 ? cellW / 2 : 0;
+    for (let col = -1; col < cols; col += 1) {
+      const tone = baseTone + Math.floor((random() - 0.5) * 22);
+      context.fillStyle = "rgb(" + tone + "," + tone + "," + (tone - 4) + ")";
+      context.fillRect(col * cellW + offset + 2, row * cellH + 2, cellW - 4, cellH - 4);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvasEl);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return texture;
+}
+
+const GROUNDS = {
+  "dark-studio": () => new THREE.MeshPhysicalMaterial({ color: 0x22242a, roughness: 0.95 }),
+  "concrete-slab": () => new THREE.MeshPhysicalMaterial({
+    color: 0x8f9094,
+    map: noiseTexture(512, 200, 10),
+    roughness: 0.93,
+    roughnessMap: noiseTexture(512, 215, 30),
+  }),
+  "patio-pavers": () => {
+    const texture = groundJointTexture(4, 4, true, 172);
+    texture.repeat.set(120 / (4 * 1.2), 120 / (4 * 0.9)); // 1.2 x 0.9 m pavers
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0xb0a698, map: texture, roughness: 0.9,
+      bumpMap: texture, bumpScale: 0.35,
+    });
+    return material;
+  },
+  "tiles": () => {
+    const texture = groundJointTexture(8, 8, false, 168);
+    texture.repeat.set(120 / (8 * 0.6), 120 / (8 * 0.6)); // 0.6 m square tiles
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0x9aa0a4, map: texture, roughness: 0.55,
+      bumpMap: texture, bumpScale: 0.2,
+    });
+    return material;
+  },
+};
+
+const groundMaterialCache = {};
+
+function groundMaterial(preset) {
+  if (!groundMaterialCache[preset]) groundMaterialCache[preset] = GROUNDS[preset]();
+  return groundMaterialCache[preset];
+}
+
+// ---------- E5: placeable props ----------
+// Procedural low-poly groups, origin on the ground plane, metres for
+// units. They cast shadows, never join analysis picking or recolouring,
+// and their layout is mirrored to localStorage per study.
+const propsGroup = new THREE.Group();
+scene.add(propsGroup);
+
+function propMaterial(color) {
+  return new THREE.MeshStandardMaterial({ color, roughness: 0.85 });
+}
+
+function propFigure() {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.95, 4, 8), propMaterial(0x4a5560));
+  body.rotation.x = Math.PI / 2;
+  body.position.z = 0.78;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 8), propMaterial(0xc8a288));
+  head.position.z = 1.62;
+  group.add(body, head);
+  return group;
+}
+
+function propTree() {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.14, 1.6, 8), propMaterial(0x6b4f35));
+  trunk.rotation.x = Math.PI / 2;
+  trunk.position.z = 0.8;
+  const lower = new THREE.Mesh(new THREE.SphereGeometry(1.15, 10, 8), propMaterial(0x4d6b3a));
+  lower.position.z = 2.3;
+  const upper = new THREE.Mesh(new THREE.SphereGeometry(0.8, 10, 8), propMaterial(0x557a41));
+  upper.position.z = 3.2;
+  group.add(trunk, lower, upper);
+  return group;
+}
+
+function propPallets() {
+  const group = new THREE.Group();
+  for (let level = 0; level < 3; level += 1) {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.14), propMaterial(0xa08050));
+    slab.position.z = 0.07 + level * 0.16;
+    group.add(slab);
+  }
+  return group;
+}
+
+function propBarrier() {
+  const group = new THREE.Group();
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.06, 0.5), propMaterial(0xd8d8d8));
+  rail.position.z = 0.7;
+  group.add(rail);
+  for (const x of [-0.9, 0.9]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.5, 0.95), propMaterial(0xd8d8d8));
+    leg.position.set(x, 0, 0.475);
+    group.add(leg);
+  }
+  return group;
+}
+
+function propCone() {
+  const group = new THREE.Group();
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.65, 12), propMaterial(0xd2622a));
+  cone.rotation.x = Math.PI / 2;
+  cone.position.z = 0.36;
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.05), propMaterial(0x33363a));
+  base.position.z = 0.025;
+  group.add(cone, base);
+  return group;
+}
+
+const PROP_BUILDERS = {
+  figure: propFigure, tree: propTree, pallets: propPallets,
+  barrier: propBarrier, cone: propCone,
+};
+
+function makeProp(type) {
+  const group = PROP_BUILDERS[type]();
+  group.traverse((child) => {
+    if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+  });
+  group.userData.propType = type;
+  return group;
+}
+
+function propsKey() {
+  return "bench-studio-props:" + state.bundle.export;
+}
+
+function saveProps() {
+  const layout = state.props.map((p) => ({ type: p.type, x: p.x, y: p.y, rotation: p.rotation }));
+  localStorage.setItem(propsKey(), JSON.stringify(layout));
+}
+
+// Mirrors disposeShell's rule: whatever is replaced owns GPU buffers.
+function disposeProp(object) {
+  object.traverse((child) => {
+    if (child.isMesh) {
+      child.geometry.dispose();
+      child.material.dispose();
+    }
+  });
+}
+
+function restoreProps() {
+  for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
+  state.props = [];
+  state.selectedProp = null;
+  let layout = [];
+  try {
+    layout = JSON.parse(localStorage.getItem(propsKey()) || "[]");
+  } catch (error) {
+    layout = [];
+  }
+  if (!Array.isArray(layout)) layout = [];
+  for (const entry of layout) {
+    if (!PROP_BUILDERS[entry.type]) continue;
+    placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
+  }
+}
+
+function placeProp(type, x, y, rotation, save) {
+  const object = makeProp(type);
+  object.position.set(x, y, 0);
+  object.rotation.z = rotation;
+  propsGroup.add(object);
+  const record = { type, x, y, rotation, object };
+  state.props.push(record);
+  if (save) saveProps();
+  return record;
+}
+
+function setPropEmissive(record, on) {
+  record.object.traverse((child) => {
+    if (child.isMesh) child.material.emissive.set(on ? 0x2a4a66 : 0x000000);
+  });
+}
+
+function selectProp(record) {
+  if (state.selectedProp) setPropEmissive(state.selectedProp, false);
+  state.selectedProp = record;
+  if (record) setPropEmissive(record, true);
+}
+
+function armProp(type) {
+  const already = state.armedPropType === type;
+  disarmProp();
+  if (already) return;
+  state.armedPropType = type;
+  controls.enabled = false;
+  document.getElementById("prop-" + type).classList.add("armed");
+}
+
+function disarmProp() {
+  if (state.armedPropType) {
+    document.getElementById("prop-" + state.armedPropType).classList.remove("armed");
+  }
+  state.armedPropType = null;
+  if (!state.propDrag) controls.enabled = true;
+}
+
+function groundPointAt(event) {
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  propRaycaster.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3();
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  return propRaycaster.ray.intersectPlane(plane, hit) ? hit : null;
+}
+
+function propRecordAt(event) {
+  const rect = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1);
+  propRaycaster.setFromCamera(ndc, camera);
+  const hits = propRaycaster.intersectObjects(propsGroup.children, true);
+  if (!hits.length) return null;
+  let node = hits[0].object;
+  while (node.parent && node.parent !== propsGroup) node = node.parent;
+  return state.props.find((p) => p.object === node) || null;
 }
 
 const materials = {
@@ -367,7 +798,7 @@ function buildScene(bundle, preserve) {
 
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(60, 64),
-    new THREE.MeshPhysicalMaterial({ color: 0x22242a, roughness: 0.95 })
+    groundMaterial(state.groundPreset)
   );
   ground.receiveShadow = true;
   ground.position.z = -0.03;
@@ -378,6 +809,7 @@ function buildScene(bundle, preserve) {
   buildLayerToggles();
   updateVectorLayers();
   updateMaterialControls();
+  restoreProps();
   updateHud();
 }
 
@@ -1740,9 +2172,125 @@ document.getElementById("taper").addEventListener("change", (e) => {
   updateHud();
   if (state.timeline) applySceneAtTime(state.timeline.t);
 });
-for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
-  document.getElementById(id).addEventListener("input", applyEnvironment);
+// Sun slider input moves the light and the sky uniform live (cheap);
+// the PMREM ambient catches up on release, and only in sky mode, where
+// the sky is what the environment is made of.
+for (const id of ["sun-azimuth", "sun-elevation"]) {
+  document.getElementById(id).addEventListener("input", applySunFromSliders);
+  document.getElementById(id).addEventListener("change", () => {
+    if (state.environmentMode === "sky") regenerateEnvironment();
+  });
 }
+document.getElementById("background-tone").addEventListener("input", applyEnvironment);
+document.getElementById("environment-mode").addEventListener("change", async (e) => {
+  state.environmentMode = e.target.value;
+  applyEnvironment();
+  if (state.environmentMode === "hdri" && !state.hdriTexture) {
+    await refreshHdriList();
+    const name = document.getElementById("hdri-select").value;
+    if (name) { await loadHdri(name); return; }
+  }
+  regenerateEnvironment();
+});
+document.getElementById("hdri-select").addEventListener("change", (e) => {
+  if (e.target.value) loadHdri(e.target.value);
+});
+document.getElementById("hdri-upload").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const status = document.getElementById("hdri-status");
+  status.textContent = "uploading " + file.name;
+  const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
+    method: "PUT",
+    body: file,
+  });
+  if (!response.ok) {
+    status.textContent = "upload failed: " + (await response.text());
+    return;
+  }
+  status.textContent = "";
+  await refreshHdriList(file.name);
+  await loadHdri(file.name);
+  event.target.value = "";
+});
+document.getElementById("weather-preset").addEventListener("change", (e) => {
+  state.weatherPreset = e.target.value;
+  const preset = WEATHER[e.target.value];
+  if (preset.elevation !== null) {
+    document.getElementById("sun-elevation").value = preset.elevation;
+  }
+  applyEnvironment();
+  regenerateEnvironment();
+});
+document.getElementById("ground-preset").addEventListener("change", (e) => {
+  state.groundPreset = e.target.value;
+  if (state.objects.ground) state.objects.ground.material = groundMaterial(e.target.value);
+});
+for (const [id, type] of [["prop-figure", "figure"], ["prop-tree", "tree"],
+                          ["prop-pallets", "pallets"], ["prop-barrier", "barrier"],
+                          ["prop-cone", "cone"]]) {
+  document.getElementById(id).addEventListener("click", () => {
+    if (state.bundle) armProp(type);
+  });
+}
+document.getElementById("props-clear").addEventListener("click", () => {
+  if (!state.bundle) return;
+  for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
+  state.props = [];
+  state.selectedProp = null;
+  saveProps();
+});
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || !state.bundle) return;
+  if (state.armedPropType) {
+    const hit = groundPointAt(event);
+    if (hit) selectProp(placeProp(state.armedPropType, hit.x, hit.y, 0, true));
+    disarmProp();
+    return;
+  }
+  const record = propRecordAt(event);
+  if (record) {
+    selectProp(record);
+    state.propDrag = true;
+    controls.enabled = false;
+    canvas.setPointerCapture(event.pointerId);
+  } else if (state.selectedProp) {
+    selectProp(null);
+  }
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!state.propDrag || !state.selectedProp) return;
+  const hit = groundPointAt(event);
+  if (!hit) return;
+  state.selectedProp.x = hit.x;
+  state.selectedProp.y = hit.y;
+  state.selectedProp.object.position.set(hit.x, hit.y, 0);
+});
+function endPropDrag(event) {
+  if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (!state.propDrag) return;
+  state.propDrag = false;
+  controls.enabled = true;
+  saveProps();
+}
+canvas.addEventListener("pointerup", endPropDrag);
+canvas.addEventListener("pointercancel", endPropDrag);
+window.addEventListener("keydown", (event) => {
+  const tag = document.activeElement ? document.activeElement.tagName : "";
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  if (!state.selectedProp) return;
+  if (event.key === "r" || event.key === "R") {
+    state.selectedProp.rotation += Math.PI / 12;
+    state.selectedProp.object.rotation.z = state.selectedProp.rotation;
+    saveProps();
+  } else if (event.key === "Delete" || event.key === "Backspace") {
+    disposeProp(state.selectedProp.object);
+    propsGroup.remove(state.selectedProp.object);
+    state.props = state.props.filter((p) => p !== state.selectedProp);
+    state.selectedProp = null;
+    saveProps();
+  }
+});
 // "change" (drag release), not "input": the file's own convention for every
 // other slider that rebuilds something, and this one re-runs the recolour
 // over every casting's geometry. On the real export that is 233 of them per

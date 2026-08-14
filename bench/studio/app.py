@@ -26,6 +26,8 @@ import staging
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
+HDRI_DIR = Path(__file__).resolve().parent / "hdri"
+HDRI_MAX_BYTES = 64 * 1024 * 1024
 
 RUNS: dict = {}
 RUNS_LOCK = threading.Lock()
@@ -227,6 +229,37 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "no column file {}".format(name))
         return FileResponse(path)
+
+    @app.get("/api/hdri")
+    def hdri_list():
+        if not HDRI_DIR.is_dir():
+            return {"files": []}
+        return {"files": sorted(
+            p.name for p in HDRI_DIR.glob("*.hdr") if p.is_file())}
+
+    @app.get("/api/hdri/{name}")
+    def hdri_file(name: str):
+        if "/" in name or "\\" in name or ".." in name:
+            raise HTTPException(400, "bad hdri name")
+        path = HDRI_DIR / name
+        if not path.is_file():
+            raise HTTPException(404, "no hdri file {}".format(name))
+        return FileResponse(path)
+
+    @app.put("/api/uploads/hdri/{filename}")
+    async def upload_hdri(filename: str, request: Request):
+        if "/" in filename or "\\" in filename or ".." in filename:
+            raise HTTPException(400, "bad hdri filename")
+        if not filename.endswith(".hdr"):
+            raise HTTPException(400, "hdri filename must end in .hdr")
+        body = await request.body()
+        if len(body) > HDRI_MAX_BYTES:
+            raise HTTPException(413, "hdri file exceeds the size cap")
+        if not (body.startswith(b"#?RADIANCE") or body.startswith(b"#?RGBE")):
+            raise HTTPException(400, "not a Radiance .hdr file")
+        HDRI_DIR.mkdir(parents=True, exist_ok=True)
+        (HDRI_DIR / filename).write_bytes(body)
+        return {"stored": filename}
 
     @app.put("/api/uploads/exports/{name}/{kind}")
     async def upload_export(name: str, kind: str, request: Request):

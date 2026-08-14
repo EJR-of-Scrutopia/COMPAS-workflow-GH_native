@@ -82,9 +82,41 @@
   </details>
   <details id="scene-section">
     <summary>Scene</summary>
+    <label>Environment <select id="environment-mode">
+      <option value="studio" selected>Studio</option>
+      <option value="sky">Sky</option>
+      <option value="hdri">HDRI</option>
+    </select></label>
+    <label id="weather-row" class="hidden">Weather <select id="weather-preset">
+      <option value="clear" selected>Clear</option>
+      <option value="hazy">Hazy</option>
+      <option value="overcast">Overcast</option>
+      <option value="golden-hour">Golden hour</option>
+      <option value="night">Night</option>
+    </select></label>
+    <div id="hdri-row" class="hidden">
+      <label>HDRI <select id="hdri-select"></select></label>
+      <label>Upload .hdr <input id="hdri-upload" type="file" accept=".hdr"></label>
+      <div id="hdri-status"></div>
+    </div>
     <label>Sun azimuth <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140"></label>
     <label>Sun elevation <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40"></label>
-    <label>Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
+    <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
+    <label>Ground <select id="ground-preset">
+      <option value="dark-studio" selected>Dark studio</option>
+      <option value="concrete-slab">Concrete slab</option>
+      <option value="patio-pavers">Patio pavers</option>
+      <option value="tiles">Tiles</option>
+    </select></label>
+    <div id="props-row">
+      <span>Props</span>
+      <button id="prop-figure">Figure</button>
+      <button id="prop-tree">Tree</button>
+      <button id="prop-pallets">Pallets</button>
+      <button id="prop-barrier">Barrier</button>
+      <button id="prop-cone">Cone</button>
+      <button id="props-clear">Clear props</button>
+    </div>
   </details>
   <details id="import-section">
     <summary>Import</summary>

@@ -19,6 +19,7 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
          background: #1c1e23; color: #e8e8e6; border: 1px solid #34373d;
          border-radius: 4px; font-size: 13px; }
 #panel button:hover { border-color: #6f7074; cursor: pointer; }
+#props-row button.armed { outline: 2px solid #7ab3e0; }
 #hud { position: fixed; left: 16px; bottom: 16px; font-size: 13px;
        line-height: 1.5; white-space: pre; pointer-events: none;
        text-shadow: 0 1px 3px #000; }
