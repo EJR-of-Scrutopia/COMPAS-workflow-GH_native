@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { Sky } from "three/addons/objects/Sky.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals,
@@ -12,6 +13,10 @@ const state = {
   studies: [],
   layers: { shell: true, wires: true, overlays: true },
   formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
+  environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
+  weatherPreset: "clear",    // E2: a key of WEATHER
+  hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
+  hdriName: null,
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -53,7 +58,9 @@ const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environment = studioEnvironment;
+let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 
 const sun = new THREE.DirectionalLight(0xffffff, 3.0);
 sun.castShadow = true;
@@ -61,19 +68,134 @@ sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.left = -30; sun.shadow.camera.right = 30;
 sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30;
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xbfd4e6, 0x30271f, 0.5));
+const hemi = new THREE.HemisphereLight(0xbfd4e6, 0x30271f, 0.5);
+scene.add(hemi);
 
-function applyEnvironment() {
+// E2: one physical sky shared by backdrop and lighting. The shader's up
+// vector defaults to Y-up; this scene is Z-up.
+const sky = new Sky();
+sky.scale.setScalar(450);
+sky.visible = false;
+sky.material.uniforms.up.value.set(0, 0, 1);
+scene.add(sky);
+
+// E2: weather presets are parameter bundles on that one shader. The
+// numbers are starting values tuned by eye, not physics claims; elevation
+// non-null moves the slider to a fitting default when the preset lands.
+const WEATHER = {
+  clear: {
+    turbidity: 3, rayleigh: 1.2, mieCoefficient: 0.004, mieDirectionalG: 0.8,
+    sunIntensity: 3.2, sunColor: 0xfff2e0, shadowRadius: 2, exposure: 0.75,
+    hemisphere: 0.35, fogColor: 0xcfd8e0, fogNear: 120, fogFar: 400, elevation: null,
+  },
+  hazy: {
+    turbidity: 10, rayleigh: 2.2, mieCoefficient: 0.02, mieDirectionalG: 0.75,
+    sunIntensity: 2.2, sunColor: 0xffe8c8, shadowRadius: 6, exposure: 0.7,
+    hemisphere: 0.45, fogColor: 0xd8d4c8, fogNear: 60, fogFar: 240, elevation: null,
+  },
+  overcast: {
+    turbidity: 20, rayleigh: 3.5, mieCoefficient: 0.06, mieDirectionalG: 0.6,
+    sunIntensity: 0.9, sunColor: 0xe8ecf0, shadowRadius: 12, exposure: 0.65,
+    hemisphere: 0.7, fogColor: 0xc4c8cc, fogNear: 50, fogFar: 200, elevation: null,
+  },
+  "golden-hour": {
+    turbidity: 6, rayleigh: 2.8, mieCoefficient: 0.012, mieDirectionalG: 0.85,
+    sunIntensity: 2.6, sunColor: 0xffb36b, shadowRadius: 3, exposure: 0.7,
+    hemisphere: 0.3, fogColor: 0xe0c0a0, fogNear: 80, fogFar: 300, elevation: 12,
+  },
+  night: {
+    turbidity: 2, rayleigh: 0.4, mieCoefficient: 0.002, mieDirectionalG: 0.7,
+    sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.5,
+    hemisphere: 0.15, fogColor: 0x10141c, fogNear: 60, fogFar: 250, elevation: 20,
+  },
+};
+
+function applySunFromSliders() {
   const az = THREE.MathUtils.degToRad(+document.getElementById("sun-azimuth").value);
   const el = THREE.MathUtils.degToRad(+document.getElementById("sun-elevation").value);
   const r = 60;
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
-  const tone = +document.getElementById("background-tone").value / 100;
-  scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
-  // Light concretes were clipping to white under the room environment plus
-  // filmic tone mapping, which made three different presets look identical.
-  renderer.toneMappingExposure = 0.85;
-  scene.environmentIntensity = 0.6;
+  sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
+}
+
+function setEnvironmentTexture(texture, target) {
+  // The studio texture is permanent; sky and hdri targets are disposable,
+  // and leaking one per regeneration is a GPU leak the browser never
+  // reports. Dispose the old target before adopting the new one.
+  if (environmentTarget) environmentTarget.dispose();
+  environmentTarget = target || null;
+  scene.environment = texture;
+}
+
+function applyEnvironment() {
+  // The cheap pass: lights, backdrop ownership, fog, row visibility.
+  // PMREM lives in regenerateEnvironment only (E6).
+  applySunFromSliders();
+  document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
+  document.getElementById("weather-row").classList.toggle("hidden", state.environmentMode !== "sky");
+  document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
+  if (state.environmentMode === "sky") {
+    const preset = WEATHER[state.weatherPreset];
+    const uniforms = sky.material.uniforms;
+    uniforms.turbidity.value = preset.turbidity;
+    uniforms.rayleigh.value = preset.rayleigh;
+    uniforms.mieCoefficient.value = preset.mieCoefficient;
+    uniforms.mieDirectionalG.value = preset.mieDirectionalG;
+    sky.visible = true;
+    scene.background = null;
+    scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
+    scene.backgroundRotation.set(0, 0, 0);
+    scene.environmentRotation.set(0, 0, 0);
+    sun.intensity = preset.sunIntensity;
+    sun.color.set(preset.sunColor);
+    sun.shadow.radius = preset.shadowRadius;
+    hemi.intensity = preset.hemisphere;
+    renderer.toneMappingExposure = preset.exposure;
+    scene.environmentIntensity = 0.6;
+  } else if (state.environmentMode === "hdri") {
+    sky.visible = false;
+    scene.fog = null;
+    // Equirects are authored Y-up; the scene is Z-up, so both samplers
+    // rotate a quarter turn about X (E3).
+    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
+    scene.backgroundRotation.set(Math.PI / 2, 0, 0);
+    scene.environmentRotation.set(Math.PI / 2, 0, 0);
+    hemi.intensity = 0.25;
+    renderer.toneMappingExposure = 0.8;
+    scene.environmentIntensity = 1.0;
+  } else {
+    sky.visible = false;
+    scene.fog = null;
+    const tone = +document.getElementById("background-tone").value / 100;
+    scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
+    scene.backgroundRotation.set(0, 0, 0);
+    scene.environmentRotation.set(0, 0, 0);
+    sun.intensity = 3.0;
+    sun.color.set(0xffffff);
+    sun.shadow.radius = 1;
+    hemi.intensity = 0.5;
+    // Light concretes were clipping to white under the room environment plus
+    // filmic tone mapping, which made three different presets look identical.
+    renderer.toneMappingExposure = 0.85;
+    scene.environmentIntensity = 0.6;
+  }
+}
+
+function regenerateEnvironment() {
+  // The one PMREM site (E6): mode entry, weather change, sun slider
+  // release in sky mode, and HDRI load all land here.
+  if (state.environmentMode === "sky") {
+    const holder = new THREE.Scene();
+    holder.add(sky); // borrows the mesh; a mesh lives in one scene at a time
+    const target = pmrem.fromScene(holder, 0.04);
+    scene.add(sky);
+    setEnvironmentTexture(target.texture, target);
+  } else if (state.environmentMode === "hdri" && state.hdriTexture) {
+    const target = pmrem.fromEquirectangular(state.hdriTexture);
+    setEnvironmentTexture(target.texture, target);
+  } else {
+    setEnvironmentTexture(studioEnvironment, null);
+  }
 }
 
 // ---------- procedural textures: offline, no image assets ----------
@@ -1740,9 +1862,30 @@ document.getElementById("taper").addEventListener("change", (e) => {
   updateHud();
   if (state.timeline) applySceneAtTime(state.timeline.t);
 });
-for (const id of ["sun-azimuth", "sun-elevation", "background-tone"]) {
-  document.getElementById(id).addEventListener("input", applyEnvironment);
+// Sun slider input moves the light and the sky uniform live (cheap);
+// the PMREM ambient catches up on release, and only in sky mode, where
+// the sky is what the environment is made of.
+for (const id of ["sun-azimuth", "sun-elevation"]) {
+  document.getElementById(id).addEventListener("input", applySunFromSliders);
+  document.getElementById(id).addEventListener("change", () => {
+    if (state.environmentMode === "sky") regenerateEnvironment();
+  });
 }
+document.getElementById("background-tone").addEventListener("input", applyEnvironment);
+document.getElementById("environment-mode").addEventListener("change", (e) => {
+  state.environmentMode = e.target.value;
+  applyEnvironment();
+  regenerateEnvironment();
+});
+document.getElementById("weather-preset").addEventListener("change", (e) => {
+  state.weatherPreset = e.target.value;
+  const preset = WEATHER[e.target.value];
+  if (preset.elevation !== null) {
+    document.getElementById("sun-elevation").value = preset.elevation;
+  }
+  applyEnvironment();
+  regenerateEnvironment();
+});
 // "change" (drag release), not "input": the file's own convention for every
 // other slider that rebuilds something, and this one re-runs the recolour
 // over every casting's geometry. On the real export that is 233 of them per

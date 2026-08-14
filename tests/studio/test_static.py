@@ -1679,3 +1679,67 @@ def test_the_environment_addons_are_vendored():
         assert "from 'three'" in text or 'from "three"' in text, (
             "addons must import bare 'three' so the importmap resolves them"
         )
+
+
+def test_the_environment_select_owns_three_exclusive_modes():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="environment-mode"' in html
+    for value in ("studio", "sky", "hdri"):
+        assert '<option value="{}"'.format(value) in html
+    assert '<option value="studio" selected' in html
+    assert 'environmentMode: "studio"' in js
+    # Mode switches recompute the scene through the environment functions
+    # and never touch the camera: no camera writes in any of them.
+    for name in ("applyEnvironment", "regenerateEnvironment", "applySunFromSliders"):
+        body = _function_body(js, name)
+        assert "camera.position" not in body
+        assert "controls.target" not in body
+
+
+def test_the_weather_presets_are_parameter_bundles_on_one_sky():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="weather-preset"' in html
+    for value in ("clear", "hazy", "overcast", "golden-hour", "night"):
+        assert '<option value="{}"'.format(value) in html
+    for key in ("turbidity", "rayleigh", "mieCoefficient", "mieDirectionalG",
+                "sunIntensity", "sunColor", "shadowRadius", "exposure",
+                "hemisphere", "fogColor", "fogNear", "fogFar"):
+        assert key in js, "WEATHER presets must carry {}".format(key)
+    # The sky is one shared mesh in a Z-up world.
+    assert "new Sky()" in js
+    assert "uniforms.up.value.set(0, 0, 1)" in js
+
+
+def test_pmrem_regeneration_stays_off_the_input_path():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # The only fromScene/fromEquirectangular calls after boot live in
+    # regenerateEnvironment; applyEnvironment and the slider input path
+    # stay cheap.
+    for name in ("applyEnvironment", "applySunFromSliders"):
+        body = _function_body(js, name)
+        assert "fromScene" not in body and "fromEquirectangular" not in body
+    regen = _function_body(js, "regenerateEnvironment")
+    assert "fromScene" in regen and "fromEquirectangular" in regen
+    # Sun slider input events move the light only; regeneration hangs on
+    # the change event gated to sky mode.
+    assert 'addEventListener("input", applySunFromSliders)' in js
+
+
+def test_each_environment_mode_owns_background_fog_and_rotation():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "applyEnvironment")
+    assert "scene.fog = null" in body, "studio and hdri modes must clear fog"
+    assert "new THREE.Fog(" in body, "sky mode must set fog"
+    assert "backgroundRotation" in js and "environmentRotation" in js
+    # The tone slider is a studio-mode control; sky and hdri rows swap in.
+    assert 'id="background-row"' in (STATIC / "index.html").read_text(encoding="utf-8")
+
+
+def test_environment_functions_never_read_the_clock_or_the_timeline():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("applyEnvironment", "regenerateEnvironment", "applySunFromSliders"):
+        body = _function_body(js, name)
+        for banned in ("performance.now", "Date.now", "state.timeline"):
+            assert banned not in body, "{} reads {}".format(name, banned)
