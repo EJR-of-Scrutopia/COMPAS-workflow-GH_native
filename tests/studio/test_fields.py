@@ -141,11 +141,50 @@ def test_fields_agree_with_hand_computed_values(tmp_path):
     assert "ok" in result.stdout
 
 
+SUN_CHECK = textwrap.dedent("""
+    import { estimateSunFromEquirect } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b, tol) { return Math.abs(a - b) < tol; }
+
+    // A 64 x 32 equirect, uniform dim grey with one hot texel at
+    // x 16, y 8. Row 0 is the top of the image (RGBELoader keeps file
+    // order, Radiance scanlines run top first).
+    const width = 64, height = 32;
+    const data = new Float32Array(width * height * 4).fill(0.1);
+    const hot = (8 * width + 16) * 4;
+    data[hot] = data[hot + 1] = data[hot + 2] = 50;
+    const peaked = estimateSunFromEquirect(data, width, height);
+    expect(near(peaked.azimuthDeg, (16 / 64) * 360, 1e-9), "azimuth from u");
+    expect(near(peaked.elevationDeg, 90 - (8 / 32) * 180, 1e-9), "elevation from v, top row is the zenith");
+    expect(peaked.intensity > 2, "a peaked map earns a hard sun");
+
+    // A uniform map has no sun to find: the intensity floor applies.
+    const flat = new Float32Array(width * height * 4).fill(0.4);
+    const overcast = estimateSunFromEquirect(flat, width, height);
+    expect(near(overcast.intensity, 0.6, 1e-9), "uniform light maps to the soft floor");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_sun_estimator_reads_a_synthetic_equirect(tmp_path):
+    script = tmp_path / "sun_check.mjs"
+    script.write_text(SUN_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())), encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout
+
+
 def test_fields_module_exists_and_is_pure():
     js = FIELDS.read_text(encoding="utf-8")
     assert 'from "three"' not in js and "THREE." not in js, "fields.js must not depend on three.js"
     assert "document." not in js and "window." not in js, "fields.js must not touch the DOM"
     for name in ("segmentUVOffset", "boxUVs", "stressValueOf",
                  "smoothStressField", "interpolateScalarField",
-                 "sampleScalar", "sampleVector", "creaseNormals"):
+                 "sampleScalar", "sampleVector", "creaseNormals",
+                 "estimateSunFromEquirect"):
         assert "export function {}(".format(name) in js, "fields.js lost {}".format(name)

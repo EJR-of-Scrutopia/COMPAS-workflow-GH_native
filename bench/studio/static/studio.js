@@ -2,9 +2,10 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
+import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
-  sampleScalar, sampleVector, creaseNormals,
+  sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -195,6 +196,61 @@ function regenerateEnvironment() {
     setEnvironmentTexture(target.texture, target);
   } else {
     setEnvironmentTexture(studioEnvironment, null);
+  }
+}
+
+async function refreshHdriList(selectName) {
+  const response = await fetch("/api/hdri");
+  const { files } = await response.json();
+  const select = document.getElementById("hdri-select");
+  select.innerHTML = "";
+  if (!files.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "no HDRIs installed";
+    select.appendChild(option);
+    return [];
+  }
+  for (const name of files) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+  const stored = selectName || localStorage.getItem("bench-studio-hdri");
+  if (stored && files.includes(stored)) select.value = stored;
+  return files;
+}
+
+async function loadHdri(name) {
+  const status = document.getElementById("hdri-status");
+  status.textContent = "loading " + name;
+  try {
+    const loader = new HDRLoader().setDataType(THREE.FloatType);
+    const texture = await loader.loadAsync("/api/hdri/" + encodeURIComponent(name));
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    if (state.hdriTexture) state.hdriTexture.dispose();
+    state.hdriTexture = texture;
+    state.hdriName = name;
+    localStorage.setItem("bench-studio-hdri", name);
+    const image = texture.image;
+    const estimate = estimateSunFromEquirect(image.data, image.width, image.height);
+    // The estimator speaks image space; the backdrop is rotated a quarter
+    // turn about X for the Z-up scene, under which world azimuth is the
+    // negated image azimuth (u = atan2(z, x) in three's equirect shader).
+    const azimuth = ((-estimate.azimuthDeg) % 360 + 360) % 360;
+    document.getElementById("sun-azimuth").value = Math.round(azimuth);
+    document.getElementById("sun-elevation").value =
+      Math.round(Math.min(85, Math.max(5, estimate.elevationDeg)));
+    // applyEnvironment's hdri branch deliberately leaves sun.intensity and
+    // sun.color alone (Task 3 sets only hemi, exposure and
+    // environmentIntensity there), so the estimate survives the call below.
+    sun.intensity = estimate.intensity;
+    status.textContent = "";
+    applyEnvironment();
+    regenerateEnvironment();
+  } catch (error) {
+    status.textContent = "could not load " + name + ": " + error.message;
   }
 }
 
@@ -1872,10 +1928,36 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
   });
 }
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
-document.getElementById("environment-mode").addEventListener("change", (e) => {
+document.getElementById("environment-mode").addEventListener("change", async (e) => {
   state.environmentMode = e.target.value;
   applyEnvironment();
+  if (state.environmentMode === "hdri" && !state.hdriTexture) {
+    await refreshHdriList();
+    const name = document.getElementById("hdri-select").value;
+    if (name) { await loadHdri(name); return; }
+  }
   regenerateEnvironment();
+});
+document.getElementById("hdri-select").addEventListener("change", (e) => {
+  if (e.target.value) loadHdri(e.target.value);
+});
+document.getElementById("hdri-upload").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const status = document.getElementById("hdri-status");
+  status.textContent = "uploading " + file.name;
+  const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
+    method: "PUT",
+    body: file,
+  });
+  if (!response.ok) {
+    status.textContent = "upload failed: " + (await response.text());
+    return;
+  }
+  status.textContent = "";
+  await refreshHdriList(file.name);
+  await loadHdri(file.name);
+  event.target.value = "";
 });
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;

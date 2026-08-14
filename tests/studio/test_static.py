@@ -1094,6 +1094,24 @@ def test_a_refused_run_reports_the_reason_the_server_gave():
     assert "body.detail" in body, "the server's own reason must be shown"
 
 
+def test_hdri_mode_loads_estimates_and_persists():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "HDRLoader" in js and "three/addons/loaders/HDRLoader.js" in js
+    body = _function_body(js, "loadHdri")
+    assert "setDataType(THREE.FloatType)" in body, (
+        "the estimator needs Float32 pixels, not half floats")
+    assert "EquirectangularReflectionMapping" in body
+    assert "estimateSunFromEquirect" in body
+    assert 'localStorage.setItem("bench-studio-hdri"' in body
+    assert ".dispose()" in body, "replacing an hdri must free the old texture"
+    refresh = _function_body(js, "refreshHdriList")
+    assert '"/api/hdri"' in refresh
+    assert 'localStorage.getItem("bench-studio-hdri")' in refresh
+    assert "no HDRIs installed" in refresh
+    # The upload path PUTs to the guarded route and then adopts the file.
+    assert '"/api/uploads/hdri/"' in js
+
+
 def test_the_legend_does_not_sit_on_top_of_the_hud():
     # Both were anchored left: 16px; bottom: 16px, so turning a heatmap on
     # covered the last lines of the HUD -- and the HUD gained the struck-now

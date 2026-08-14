@@ -200,3 +200,37 @@ export function creaseNormals(positions, creaseDegrees = 40) {
   }
   return normals;
 }
+
+// E3: find the sun in an equirectangular HDR so shadows agree with the
+// picture by default. Pure array maths: pixel data in, angles and an
+// intensity out, no three.js, no DOM, so node can pin it. Convention:
+// u spans azimuth 0..360, v spans elevation with row 0 at the zenith
+// (RGBELoader keeps Radiance file order, whose scanlines run top first).
+export function estimateSunFromEquirect(data, width, height, stride = 4) {
+  const step = Math.max(1, Math.floor(width / 256));
+  let total = 0;
+  let count = 0;
+  let best = -1;
+  let bestX = 0;
+  let bestY = 0;
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const i = (y * width + x) * stride;
+      const lum = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      total += lum;
+      count += 1;
+      if (lum > best) { best = lum; bestX = x; bestY = y; }
+    }
+  }
+  const mean = total / Math.max(1, count);
+  const peak = mean > 0 ? best / mean : 1;
+  // A clear sky peaks thousands of times over its mean; an overcast map
+  // barely rises above it. Log-map that ratio into a usable lamp range
+  // with a soft floor so a sunless map still grounds the vault.
+  const intensity = Math.min(4, Math.max(0.6, 0.6 + 0.35 * Math.log2(Math.max(1, peak))));
+  return {
+    azimuthDeg: (bestX / width) * 360,
+    elevationDeg: 90 - (bestY / height) * 180,
+    intensity,
+  };
+}
