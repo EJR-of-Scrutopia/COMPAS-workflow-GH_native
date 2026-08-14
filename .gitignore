@@ -73,6 +73,7 @@ bench/demo/*.png
 
 # Generated studio outputs
 bench/studies/*/studio/
+bench/studio/hdri/
 
 # Upstream COMPAS example repos, fetched by scripts/fetch_compas_examples.sh
 upstream/
