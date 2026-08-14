@@ -1670,6 +1670,7 @@ def test_the_environment_addons_are_vendored():
     sky = STATIC / "vendor" / "addons" / "objects" / "Sky.js"
     hdr = STATIC / "vendor" / "addons" / "loaders" / "HDRLoader.js"
     assert sky.is_file() and hdr.is_file()
+    assert not (STATIC / "vendor" / "addons" / "loaders" / "RGBELoader.js").exists(), "only the 0.185 HDRLoader is vendored"
     sky_text = sky.read_text(encoding="utf-8")
     hdr_text = hdr.read_text(encoding="utf-8")
     assert "turbidity" in sky_text, "Sky.js must be the scattering shader"
