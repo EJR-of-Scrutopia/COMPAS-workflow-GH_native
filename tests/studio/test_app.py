@@ -745,8 +745,13 @@ def test_hdri_upload_rejections(tmp_path, monkeypatch):
     oversize = client.put(
         "/api/uploads/hdri/big.hdr", content=b"#?RADIANCE" + b"\x00" * 101)
     assert oversize.status_code == 413
+    assert not (tmp_path / "hdri" / "big.hdr").exists()
     assert client.get("/api/hdri/missing.hdr").status_code == 404
     traversal = client.get("/api/hdri/..%5Capp.py")
     assert traversal.status_code in (400, 404)
+    traversal_put = client.put(
+        "/api/uploads/hdri/..%5Cevil.hdr", content=b"#?RADIANCE")
+    assert traversal_put.status_code in (400, 404)
+    assert not (tmp_path / "hdri").exists() or not list((tmp_path / "hdri").glob("*evil*"))
     assert not (tmp_path / "hdri" / "notes.txt").exists()
     assert not (tmp_path / "hdri" / "fake.hdr").exists()
