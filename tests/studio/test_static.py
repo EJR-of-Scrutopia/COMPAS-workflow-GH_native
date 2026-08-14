@@ -1761,3 +1761,20 @@ def test_environment_functions_never_read_the_clock_or_the_timeline():
         body = _function_body(js, name)
         for banned in ("performance.now", "Date.now", "state.timeline"):
             assert banned not in body, "{} reads {}".format(name, banned)
+
+
+def test_the_ground_presets_swap_one_discs_material():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="ground-preset"' in html
+    for value in ("dark-studio", "concrete-slab", "patio-pavers", "tiles"):
+        assert '<option value="{}"'.format(value) in html
+        assert '"{}"'.format(value) in js
+    assert 'groundPreset: "dark-studio"' in js
+    # One disc, material swapped in place, materials cached for the session.
+    assert "groundMaterialCache" in js
+    body = _function_body(js, "buildScene")
+    assert "groundMaterial(state.groundPreset)" in body
+    # The joint texture is procedural canvas work like every other texture.
+    joint = _function_body(js, "groundJointTexture")
+    assert "createElement" in joint and "getMaxAnisotropy" in joint

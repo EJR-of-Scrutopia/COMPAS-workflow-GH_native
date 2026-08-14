@@ -16,6 +16,7 @@ const state = {
   formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
+  groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
@@ -298,6 +299,67 @@ function grainTexture(size) {
   return texture;
 }
 
+// E4: joints drawn into colour, roughness and bump so raking sun catches
+// them. The disc's CircleGeometry UVs span its 120 m diameter once, so a
+// repeat of n gives cells of 120 / n metres.
+function groundJointTexture(cols, rows, staggered, baseTone) {
+  const size = 512;
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = canvasEl.height = size;
+  const context = canvasEl.getContext("2d");
+  let seed = 987654;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const cellW = size / cols;
+  const cellH = size / rows;
+  for (let row = 0; row < rows; row += 1) {
+    const offset = staggered && row % 2 === 1 ? cellW / 2 : 0;
+    for (let col = -1; col < cols; col += 1) {
+      const tone = baseTone + Math.floor((random() - 0.5) * 22);
+      context.fillStyle = "rgb(" + tone + "," + tone + "," + (tone - 4) + ")";
+      context.fillRect(col * cellW + offset + 2, row * cellH + 2, cellW - 4, cellH - 4);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvasEl);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return texture;
+}
+
+const GROUNDS = {
+  "dark-studio": () => new THREE.MeshPhysicalMaterial({ color: 0x22242a, roughness: 0.95 }),
+  "concrete-slab": () => new THREE.MeshPhysicalMaterial({
+    color: 0x8f9094,
+    map: noiseTexture(512, 200, 10),
+    roughness: 0.93,
+    roughnessMap: noiseTexture(512, 215, 30),
+  }),
+  "patio-pavers": () => {
+    const texture = groundJointTexture(4, 4, true, 172);
+    texture.repeat.set(120 / (4 * 1.2), 120 / (4 * 0.9)); // 1.2 x 0.9 m pavers
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0xb0a698, map: texture, roughness: 0.9,
+      bumpMap: texture, bumpScale: 0.35,
+    });
+    return material;
+  },
+  "tiles": () => {
+    const texture = groundJointTexture(8, 8, false, 168);
+    texture.repeat.set(120 / (8 * 0.6), 120 / (8 * 0.6)); // 0.6 m square tiles
+    const material = new THREE.MeshPhysicalMaterial({
+      color: 0x9aa0a4, map: texture, roughness: 0.55,
+      bumpMap: texture, bumpScale: 0.2,
+    });
+    return material;
+  },
+};
+
+const groundMaterialCache = {};
+
+function groundMaterial(preset) {
+  if (!groundMaterialCache[preset]) groundMaterialCache[preset] = GROUNDS[preset]();
+  return groundMaterialCache[preset];
+}
+
 const materials = {
   concrete: new THREE.MeshPhysicalMaterial({
     color: 0x939590, side: THREE.DoubleSide,      // neutral mid grey
@@ -545,7 +607,7 @@ function buildScene(bundle, preserve) {
 
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(60, 64),
-    new THREE.MeshPhysicalMaterial({ color: 0x22242a, roughness: 0.95 })
+    groundMaterial(state.groundPreset)
   );
   ground.receiveShadow = true;
   ground.position.z = -0.03;
@@ -1967,6 +2029,10 @@ document.getElementById("weather-preset").addEventListener("change", (e) => {
   }
   applyEnvironment();
   regenerateEnvironment();
+});
+document.getElementById("ground-preset").addEventListener("change", (e) => {
+  state.groundPreset = e.target.value;
+  if (state.objects.ground) state.objects.ground.material = groundMaterial(e.target.value);
 });
 // "change" (drag release), not "input": the file's own convention for every
 // other slider that rebuilds something, and this one re-runs the recolour
