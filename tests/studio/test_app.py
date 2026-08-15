@@ -769,10 +769,16 @@ def test_windows_drive_relative_names_cannot_escape(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "HDRI_DIR", tmp_path / "hdri")
     body = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n\x00\x00\x00\x00"
     assert client.put("/api/uploads/hdri/C:evil.hdr", content=body).status_code == 400
-    assert client.get("/api/hdri/C:app.py").status_code in (400, 404)
-    assert not (tmp_path / "C:evil.hdr").exists()
+    # _contained() rejects the drive-relative name before any lookup runs,
+    # so this is a guard failure every time, not a "maybe it 404s instead"
+    # depending on what happens to sit at the resolved path.
+    assert client.get("/api/hdri/C:app.py").status_code == 400
+    assert not list(tmp_path.rglob("*evil*")), (
+        "no file named for the drive-relative payload may exist anywhere "
+        "under tmp_path"
+    )
     assert client.put(
-        "/api/uploads/columns/C:evil.json", content=b"{}").status_code in (400, 422)
+        "/api/uploads/columns/C:evil.json", content=b"{}").status_code == 400
 
 
 def test_hdri_same_name_reupload_overwrites(tmp_path, monkeypatch):
