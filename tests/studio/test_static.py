@@ -106,9 +106,21 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 
 def test_the_layer_registry_has_the_agreed_names():
+    # Rewritten: the old version checked these names were present ANYWHERE
+    # in studio.js, which every one of them is for unrelated reasons
+    # ("wires" and "shell" name scene objects throughout the file, not
+    # layers) -- the assertion passed whether or not LAYERS itself agreed.
+    # Read LAYERS' own literal and check it directly.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "shell"):
-        assert '"{}"'.format(name) in js
+    start = js.index("const LAYERS = [") + len("const LAYERS = [")
+    end = js.index("];", start)
+    body = js[start:end]
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "forces"):
+        assert '"{}"'.format(name) in body, "LAYERS is missing {}".format(name)
+    for name in ("shell", "wires"):
+        assert '"{}"'.format(name) not in body, (
+            "{} is not a layer; the Show select owns it, not a checkbox".format(name)
+        )
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
 
@@ -759,8 +771,12 @@ def test_the_heatmaps_are_unlit_data_colours():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     body = _function_body(js, "recolourSegments")
     assert "MeshBasicMaterial" in body and "toneMapped: false" in body, (
-        "analysis colours must not depend on lighting or tone mapping")
-    assert "MeshPhysicalMaterial({ vertexColors" not in body
+        "a staged per-vertex field must not depend on lighting or tone mapping")
+    # The peaks-only fallback (no stage, verification only) is one flat
+    # tint standing in for a whole surface, not a field: it keeps the
+    # previous lit material rather than claiming an unlit exemption a
+    # single colour has no field to earn.
+    assert "MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })" in body
 
 
 def test_missing_coverage_reads_as_grey_not_white():
@@ -1729,6 +1745,12 @@ def test_the_show_select_offers_four_exclusive_modes():
     assert "applyShowMode()" in _function_body(js, "applySceneAtTime")
     body = _function_body(js, "applyShowMode")
     assert "camera.position" not in body and "controls.target" not in body
+    # The strike (applySceneAtTime) fades wires/nodes toward opacity 0 and
+    # position.z -1.5; leaving Timeline for Framework/Shell/Both must
+    # restore both to their built values, or a mid-strike scrub leaves the
+    # net faded and sunk in every other Show mode.
+    assert "material.opacity = 1" in body
+    assert "position.z = 0" in body
 
 
 def test_the_formwork_default_is_hidden():
@@ -1943,7 +1965,12 @@ def test_brightness_and_contrast_grade_every_render():
         "recordings must carry the grade too")
     assert js.count("renderer.render(scene, camera)") == 0, (
         "all rendering goes through the composer now")
-    for name in ("applyGrade", "renderView"):
+    # The composer, not the renderer, must be the one resized: a live
+    # window resize and a 1080p recording that skipped composer.setSize
+    # would render into a stale-sized target and stretch or crop.
+    assert "composer.setSize" in _function_body(js, "resize")
+    assert "composer.setSize" in _function_body(js, "recordAnimation")
+    for name in ("applyGrade", "renderView", "applyShowMode"):
         body = _function_body(js, name)
         for banned in ("performance.now", "Date.now", "state.timeline"):
             assert banned not in body

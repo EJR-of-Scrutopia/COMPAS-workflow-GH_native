@@ -238,12 +238,16 @@ function regenerateEnvironment() {
 }
 
 async function refreshHdriList(selectName) {
+  // null signals a failed fetch, already bannered here: callers must stop
+  // rather than fall through to loadHdri, which would fail the same fetch
+  // again and banner it a second time. [] is a real, successful answer
+  // (no HDRIs installed) and callers may carry on past it.
   let files;
   try {
     ({ files } = await fetchJson("/api/hdri"));
   } catch (error) {
     showBanner("Failed to load the HDRI list: " + error.message);
-    return [];
+    return null;
   }
   const select = document.getElementById("hdri-select");
   select.innerHTML = "";
@@ -1288,12 +1292,18 @@ function recolourSegments() {
     // than handing back a bare registry clone, which used to discard the
     // per casting tint before the first frame was ever drawn.
     const previous = segment.material;
-    // Analysis colours are data, not scenography: unlit and exempt from
-    // tone mapping, they read identically under any environment mode,
-    // exposure or contrast setting.
-    segment.material = (wantStress || wantDeflection)
+    const wantHeatmap = wantStress || wantDeflection;
+    // A staged per-vertex field is data, not scenography: unlit and exempt
+    // from tone mapping, it reads identically under any environment mode,
+    // exposure or contrast setting. The peaks-only fallback (no stage,
+    // verification only) is not a field, it is one flat tint standing in
+    // for a whole surface, so it keeps ordinary lighting rather than
+    // claiming an exemption a single colour has no field to earn.
+    segment.material = wantHeatmap && stage
       ? new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false })
-      : pieceMaterial(segment.userData.key);
+      : wantHeatmap
+        ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
+        : pieceMaterial(segment.userData.key);
     // What is discarded here is always a per piece instance, never the
     // shared registry entry, so freeing it is safe: without this, every
     // layer toggle and every exaggeration nudge leaked one material per
@@ -2227,7 +2237,8 @@ document.getElementById("environment-mode").addEventListener("change", async (e)
   state.environmentMode = e.target.value;
   applyEnvironment();
   if (state.environmentMode === "hdri" && !state.hdriTexture) {
-    await refreshHdriList();
+    const files = await refreshHdriList();
+    if (files === null) return; // fetch failed; already bannered
     const name = document.getElementById("hdri-select").value;
     if (name) { await loadHdri(name); return; }
   }
@@ -2248,7 +2259,8 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
     });
     if (!response.ok) throw new Error(await response.text());
     status.textContent = "";
-    await refreshHdriList(file.name);
+    const files = await refreshHdriList(file.name);
+    if (files === null) return; // fetch failed; already bannered
     await loadHdri(file.name);
   } catch (error) {
     status.textContent = "";
@@ -2842,8 +2854,11 @@ function applySceneAtTime(t) {
   // visible from outside it. Half the thickness clears the intrados
   // exactly; 5 cm of air on top of that keeps it legible as a ghost
   // rather than flush against the shell.
+  // The BUNDLE's own thickness, same reason arrowField's lift does at
+  // studio.js:1396: state.thickness is the control's live value and can
+  // drift from what the shell on screen was actually built at.
   falsework.position.z = mode === "always"
-    ? -(state.thickness / 2) - 0.05
+    ? -(state.bundle.provenance.thickness / 2) - 0.05
     : -0.02 - 1.5 * strikeU;
   // The strike takes the thrust network with it: wires and nodes fade,
   // drop and vanish on the same clock, and scrubbing back restores them
@@ -2857,7 +2872,13 @@ function applySceneAtTime(t) {
     object.material.opacity = 1 - strikeU;
     object.position.z = -1.5 * strikeU;
   }
-  applyPulse(build);
+  // The pulse is a Timeline effect: build is the elapsed drop-order clock
+  // and has no meaning in Framework/Shell/Both, which show a fixed rest
+  // state with no build order to be partway through. Calling it
+  // unconditionally left the last frame's emissive tint stuck on the shell
+  // after switching Show mode away from Timeline; applyShowMode's own
+  // sweep, below, clears that residue on entry to the other three modes.
+  if (state.showMode === "timeline") applyPulse(build);
   applyShowMode();
 }
 
@@ -2866,7 +2887,12 @@ function applySceneAtTime(t) {
 // choice of net and shell. Falsework stays with its own select, except
 // framework mode, which is the bare net by definition.
 function applyShowMode() {
-  if (!state.objects.shell || !state.objects.wires) return;
+  // Guarded like applySceneAtTime guards shell/falsework, above: an
+  // unguarded read of nodes or bundle throws out of frame() before the
+  // frame is rescheduled, which kills the render loop until the page is
+  // reloaded. shell and wires were guarded already; nodes and bundle are
+  // built alongside them (buildScene, rebuildWiresAndNodes) but were not.
+  if (!state.objects.shell || !state.objects.wires || !state.objects.nodes || !state.bundle) return;
   if (state.showMode === "timeline") return;
   const shellOn = state.showMode === "shell" || state.showMode === "both";
   const netOn = state.showMode === "framework" || state.showMode === "both";
@@ -2876,6 +2902,12 @@ function applyShowMode() {
     segment.position.set(0, 0, 0);
     segment.rotation.set(0, 0, 0);
     segment.scale.set(1, 1, 1);
+    // applyPulse only runs in Timeline (see applySceneAtTime, above), so
+    // leaving here without sweeping this back would leave the last
+    // Timeline frame's tint stuck on the shell in Shell/Both. Same sweep
+    // setLayer("pulse", false) does when the pulse layer itself is turned
+    // off.
+    segment.material.emissiveIntensity = 0;
   }
   state.objects.wires.visible = netOn;
   state.objects.nodes.visible = netOn;
@@ -2896,8 +2928,11 @@ function applyShowMode() {
     if (wanted) {
       falsework.material.opacity = 0.3;
       // Same offset as the always branch in applySceneAtTime above, so
-      // the two never disagree about where the ghost sits at rest.
-      falsework.position.z = -(state.thickness / 2) - 0.05;
+      // the two never disagree about where the ghost sits at rest. The
+      // BUNDLE's own thickness, same reason arrowField's lift does at
+      // studio.js:1396: state.thickness is the control's live value and
+      // can drift from what the shell on screen was actually built at.
+      falsework.position.z = -(state.bundle.provenance.thickness / 2) - 0.05;
     }
   }
 }
