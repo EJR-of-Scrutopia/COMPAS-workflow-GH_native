@@ -2931,4 +2931,6 @@ function frame(now) {
 boot();
 requestAnimationFrame(frame);
 
+window.__studio = { state, scene };
+
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

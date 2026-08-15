@@ -1824,3 +1824,9 @@ def test_the_ground_presets_swap_one_discs_material():
     # The joint texture is procedural canvas work like every other texture.
     joint = _function_body(js, "groundJointTexture")
     assert "createElement" in joint and "getMaxAnisotropy" in joint
+
+
+def test_the_probe_hook_exposes_state_and_scene():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "window.__studio = { state, scene }" in js, (
+        "the probe rig reads app state through this hook")
