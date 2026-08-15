@@ -168,26 +168,25 @@ crown.
   animation and is the default) and a Formwork select which defaults to
   Hidden; Always stands the ghost falsework clear of the shell's inner face
   so it is actually visible.
-- Scene section controls the environment, lighting, ground and props.
-  Environment select offers three exclusive modes. Studio offers the neutral
-  room as a backdrop (default), with a tone slider for it. Sky is a physical
-  scattering shader with five weather presets (Clear, Hazy, Overcast, Golden
-  hour, Night); the sun azimuth and elevation sliders drive both the light
-  and sky and stay live across all presets, with relighting on slider release.
-  HDRI mode uses .hdr files dropped into bench/studio/hdri/ or uploaded from
-  the browser at a 200 MB cap; the studio estimates the sun from the image's
-  brightest region and sets the sliders, which remain live to override the
-  estimate, though no HDRIs ship with the repo. Brightness (0.3 to 2) and
-  Contrast (-0.5 to 0.5) sliders grade the exposure; these carry into
-  recordings. Analysis colours (heatmaps, stress, deflection, vectors) are
-  unlit data: identical in every environment mode, immune to exposure and
-  contrast, so they read consistently across all settings. Ground select
-  offers four procedural presets: Dark studio (default), Concrete slab,
-  Patio pavers and Tiles. Props are five placeable objects (Figure, Tree,
-  Pallets, Barrier, Cone); arm a prop button, click the ground to place,
-  drag to move, press R for 15 degree rotations, Delete removes, clicking
-  empty ground deselects. Layouts save per study in the browser and survive
-  a reload; props appear in recordings. Clear props empties the layout.
+- Scene section: Environment select offers three exclusive modes. Studio
+  offers the neutral room as a backdrop (default), with a tone slider for it.
+  Sky is a physical scattering shader with five weather presets (Clear, Hazy,
+  Overcast, Golden hour, Night); the sun azimuth and elevation sliders drive
+  both the light and sky and stay live across all presets, with relighting on
+  slider release. HDRI mode uses .hdr files dropped into bench/studio/hdri/
+  or uploaded from the browser at a 200 MB cap; the studio estimates the sun
+  from the image's brightest region and sets the sliders, which remain live
+  to override the estimate, though no HDRIs ship with the repo.
+- Brightness (0.3 to 2) and Contrast (-0.5 to 0.5) sliders grade the exposure;
+  these carry into recordings. Analysis colours (heatmaps, stress, deflection,
+  vectors) are unlit data: identical in every environment mode, immune to
+  exposure and contrast, so they read consistently across all settings.
+- Ground select offers four procedural presets: Dark studio (default), Concrete
+  slab, Patio pavers and Tiles. Props are five placeable objects (Figure, Tree,
+  Pallets, Barrier, Cone); arm a prop button, click the ground to place, drag
+  to move, press R for 15 degree rotations, Delete removes, clicking empty
+  ground deselects. Layouts save per study in the browser and survive a reload;
+  props appear in recordings. Clear props empties the layout.
 - Column geometry dropped into `bench/studio/columns/*.json` (either
   `{"vertices", "faces"}` or a contract-style export) renders in steel.
 
