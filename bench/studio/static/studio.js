@@ -17,8 +17,9 @@ import {
 const state = {
   bundle: null,
   studies: [],
-  layers: { shell: true, wires: true, overlays: true },
-  formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
+  layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
+  showMode: "timeline", // R4: "framework" | "shell" | "both" | "timeline" (see applyShowMode)
+  formworkMode: "hidden", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
@@ -915,8 +916,6 @@ function applyCut(preserve) {
 
 // ---------- FEA layers ----------
 const LAYERS = [
-  ["shell", "Finished shell"],
-  ["wires", "Thrust wires and nodes"],
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
   ["loads", "Load vectors"],
@@ -1057,20 +1056,6 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires" || name === "shell") {
-    // Visibility during and after the strike is the timeline's call, so
-    // recompute from t instead of forcing visible here. This calls the
-    // scene-only helper, not applyTimeline itself -- a layer checkbox must
-    // never reposition a user-orbited camera.
-    if (state.timeline) {
-      applySceneAtTime(state.timeline.t);
-    } else if (name === "wires") {
-      state.objects.wires.visible = on;
-      state.objects.nodes.visible = on;
-    } else if (name === "shell") {
-      if (state.objects.shell) state.objects.shell.visible = on;
-    }
-  }
   if (name === "loads" || name === "reactions") updateVectorLayers();
   if (name === "stress" || name === "deflection") recolourSegments();
   if (name === "forces") applyWireForces();
@@ -2353,6 +2338,10 @@ document.getElementById("formwork-mode").addEventListener("change", (e) => {
     state.objects.falsework.visible = e.target.value !== "hidden";
   }
 });
+document.getElementById("show-mode").addEventListener("change", (e) => {
+  state.showMode = e.target.value;
+  if (state.timeline) applySceneAtTime(state.timeline.t);
+});
 // Same pattern as the thickness slider: "input" only updates the live mm
 // label, "change" (drag release) commits the value and rebuilds -- so a
 // drag fires one InstancedMesh rebuild, not dozens.
@@ -2782,7 +2771,7 @@ function applySceneAtTime(t) {
     // first casting reads build = 0 as "the very start of its drop" and
     // hangs at DROP_HEIGHT for the whole inflation window instead of being
     // absent. inflate reaches exactly 1 the instant build time begins.
-    if (!state.layers.shell || inflate < 1) {
+    if (inflate < 1) {
       segment.visible = false;
       continue;
     }
@@ -2830,18 +2819,71 @@ function applySceneAtTime(t) {
   const mode = state.formworkMode;
   falsework.visible = mode === "always" || (mode === "animation" && strikeU < 1);
   falsework.material.opacity = mode === "always" ? 0.3 : 0.3 * inflate * (1 - strikeU);
-  falsework.position.z = mode === "always" ? -0.02 : -0.02 - 1.5 * strikeU;
+  // R3: the ghost is built from the analysis mid-surface mesh
+  // (buildPieceMeshes offsets the real, opaque pieces from that same
+  // surface by half the shell thickness). The old -0.02 constant sat
+  // comfortably inside the opaque shell's own thickness and was never
+  // visible from outside it. Half the thickness clears the intrados
+  // exactly; 5 cm of air on top of that keeps it legible as a ghost
+  // rather than flush against the shell.
+  falsework.position.z = mode === "always"
+    ? -(state.thickness / 2) - 0.05
+    : -0.02 - 1.5 * strikeU;
   // The strike takes the thrust network with it: wires and nodes fade,
   // drop and vanish on the same clock, and scrubbing back restores them
-  // because everything here is computed from t (by way of build).
+  // because everything here is computed from t (by way of build). The Show
+  // select, not this checkbox, now owns whether the net is visible outside
+  // the strike window (applyShowMode).
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
-    object.visible = !!state.layers.wires && strikeU < 1;
+    object.visible = strikeU < 1;
     object.material.opacity = 1 - strikeU;
     object.position.z = -1.5 * strikeU;
   }
   applyPulse(build);
+  applyShowMode();
+}
+
+// R4: the Show select is a lens over the same scene function. Timeline
+// shows whatever t says; the other three are the rest state with a fixed
+// choice of net and shell. Falsework stays with its own select, except
+// framework mode, which is the bare net by definition.
+function applyShowMode() {
+  if (!state.objects.shell || !state.objects.wires) return;
+  if (state.showMode === "timeline") return;
+  const shellOn = state.showMode === "shell" || state.showMode === "both";
+  const netOn = state.showMode === "framework" || state.showMode === "both";
+  applyInflation(1);
+  for (const segment of state.objects.shell.children) {
+    segment.visible = shellOn;
+    segment.position.set(0, 0, 0);
+    segment.rotation.set(0, 0, 0);
+    segment.scale.set(1, 1, 1);
+  }
+  state.objects.wires.visible = netOn;
+  state.objects.nodes.visible = netOn;
+  // The strike (applySceneAtTime, above) is the only thing that fades
+  // wires/nodes: it writes material.opacity toward 0 and position.z toward
+  // -1.5 as strikeU rises, and touches nothing else on either object.
+  // scale.z is inflation-driven, not strike-driven, and applyInflation(1)
+  // above already put it back to 1, so opacity and position.z are the only
+  // two properties this lens needs to restore to their built values.
+  state.objects.wires.material.opacity = 1;
+  state.objects.nodes.material.opacity = 1;
+  state.objects.wires.position.z = 0;
+  state.objects.nodes.position.z = 0;
+  const falsework = state.objects.falsework;
+  if (falsework) {
+    const wanted = state.formworkMode === "always" && state.showMode !== "framework";
+    falsework.visible = wanted;
+    if (wanted) {
+      falsework.material.opacity = 0.3;
+      // Same offset as the always branch in applySceneAtTime above, so
+      // the two never disagree about where the ghost sits at rest.
+      falsework.position.z = -(state.thickness / 2) - 0.05;
+    }
+  }
 }
 
 function applyTimeline(t) {

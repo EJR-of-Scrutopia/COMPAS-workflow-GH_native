@@ -418,21 +418,26 @@ def test_the_strike_takes_wires_nodes_and_falsework():
     body = js[start:end]
     assert "strikeU" in body
     assert "state.formworkMode" in body
-    assert "state.layers.wires" in body
+    # Task 4: the wires layer checkbox is gone (the Show select owns net
+    # visibility now), so the strike no longer reads state.layers.wires --
+    # timeline mode shows the net per the strike clock alone.
+    assert "state.layers.wires" not in body
     for name in ("wires", "nodes"):
         assert '"{}"'.format(name) in body, "the strike must drive {}".format(name)
 
 
 def test_set_layer_does_not_call_applytimeline_directly():
-    # FINDING 1 (camera snap): setLayer's wires/falsework branch used to call
+    # FINDING 1 (camera snap): setLayer's old wires/shell branch used to call
     # applyTimeline, whose autoSpin branch repositions the camera onto the
     # orbit ring -- so ticking a layer checkbox teleported a user-positioned
-    # camera. It must call the scene-only applySceneAtTime helper instead.
+    # camera. Task 4 removed that branch entirely (wires/shell moved to the
+    # Show select, applyShowMode), but the invariant it protected still
+    # holds: no code path inside setLayer may reposition the camera.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     start = js.index("function setLayer(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "applySceneAtTime(state.timeline.t)" in body
+    assert 'name === "wires" || name === "shell"' not in body
     assert "applyTimeline(" not in body, (
         "setLayer must never call applyTimeline directly; that would move "
         "the camera on a layer toggle"
@@ -449,10 +454,13 @@ def test_formwork_is_a_three_state_control():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert 'id="formwork-mode"' in html
-    assert '<option value="animation" selected>' in html
+    assert '<option value="animation">' in html
     for value in ("always", "hidden"):
         assert 'value="{}"'.format(value) in html
-    assert 'formworkMode: "animation"' in js
+    # Task 4: the default flipped to hidden (see
+    # test_the_formwork_default_is_hidden); animation and always remain
+    # selectable options.
+    assert 'formworkMode: "hidden"' in js
     assert '"falsework", "Formwork"' not in js, "the checkbox entry is gone"
     assert "falsework: true" not in js, (
         "state.layers must not carry falsework any more"
@@ -486,17 +494,18 @@ def test_analysis_overlays_cast_no_shadows():
     assert "mesh.castShadow = mesh.receiveShadow = true" in build_body
 
 
-def test_the_finished_shell_has_its_own_toggle():
+def test_the_finished_shell_is_governed_by_show_mode_not_a_checkbox():
+    # Task 4: the shell and wires checkboxes are gone from LAYERS; the
+    # Show select owns both now (test_the_show_select_offers_four_
+    # exclusive_modes, applyShowMode). The timeline's own segment gate no
+    # longer reads a layers flag at all -- inflate is the only gate left.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '"shell", "Finished shell"' in js
-    assert "shell: true" in js, "the layer defaults on"
+    assert '"shell", "Finished shell"' not in js
+    assert '"wires", "Thrust wires and nodes"' not in js
     scene_body = _function_body(js, "applySceneAtTime")
-    assert "state.layers.shell" in scene_body, (
-        "the timeline recomputes every casting's visibility, so the gate "
-        "must live inside it or a scrub would undo the toggle"
-    )
+    assert "state.layers.shell" not in scene_body
     layer_body = _function_body(js, "setLayer")
-    assert '"shell"' in layer_body
+    assert 'name === "wires" || name === "shell"' not in layer_body
 
 
 def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
@@ -1670,16 +1679,17 @@ def test_a_same_export_reload_preserves_the_viewing_state():
 
 
 def test_the_panel_groups_into_six_collapsible_sections():
-    # Sections group by use, not by how the code grew: everything that
-    # shows or hides lives in View, everything that moves in Animation,
-    # and Scene is deliberately thin because the environment engine wave
-    # grows there. Study, View and Animation open; the rest collapsed.
+    # Task 4 reorganised the panel: Import, Study, Analysis, View,
+    # Animation, Scene. Study, View and Animation open; the rest
+    # collapsed. Record's controls moved inside Animation, and the
+    # Styling sub-section was flattened into Analysis, so neither
+    # "record-section" nor a Styling summary exists any more.
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     positions = []
     for section_id, is_open in (
-        ("study-section", True), ("view-section", True),
+        ("import-section", False), ("study-section", True),
+        ("analysis-section", False), ("view-section", True),
         ("animation-section", True), ("scene-section", False),
-        ("import-section", False), ("record-section", False),
     ):
         at = html.index('id="{}"'.format(section_id))
         positions.append(at)
@@ -1687,11 +1697,47 @@ def test_the_panel_groups_into_six_collapsible_sections():
         assert (" open" in tag) == is_open, section_id
     assert positions == sorted(positions), "sections out of order"
     assert "<h2>" not in html, "summaries are the section headers now"
-    assert "<summary>Styling</summary>" in html, (
-        "the layer styling controls nest collapsed inside View"
-    )
+    assert 'id="record-section"' not in html
+    assert 'id="styling-section"' not in html
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "#panel summary" in css
+
+
+def test_the_show_select_offers_four_exclusive_modes():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="show-mode"' in html
+    for value in ("framework", "shell", "both", "timeline"):
+        assert '<option value="{}"'.format(value) in html
+    assert '<option value="timeline" selected' in html
+    assert 'showMode: "timeline"' in js
+    assert "applyShowMode()" in _function_body(js, "applySceneAtTime")
+    body = _function_body(js, "applyShowMode")
+    assert "camera.position" not in body and "controls.target" not in body
+
+
+def test_the_formwork_default_is_hidden():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '<option value="hidden" selected' in html
+    assert 'formworkMode: "hidden"' in js
+
+
+def test_the_panel_reorganises_into_six_sections():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    order = [html.index('id="{}-section"'.format(name))
+             for name in ("import", "study", "analysis", "view", "animation", "scene")]
+    assert order == sorted(order), "section order is Import, Study, Analysis, View, Animation, Scene"
+    assert 'id="record-section"' not in html
+    assert 'id="styling-section"' not in html
+    # Record's controls live inside Animation now.
+    animation = html[html.index('id="animation-section"'):html.index('id="scene-section"')]
+    assert 'id="record-button"' in animation and 'id="record-status"' in animation
+    # The analysis section owns the toggles and the analysis controls.
+    analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
+    for control in ("layer-toggles", "stress-surface", "exaggeration",
+                    "node-radius", "wire-radius", "data-button"):
+        assert control in analysis, control
 
 
 def test_textures_are_anisotropic_and_sprayed_shades_as_one_surface():
