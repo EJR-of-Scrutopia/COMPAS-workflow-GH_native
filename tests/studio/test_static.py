@@ -1151,6 +1151,21 @@ def test_hdri_mode_loads_estimates_and_persists():
     assert '"/api/uploads/hdri/"' in js
 
 
+def test_hdri_failures_reach_the_banner():
+    """Task 5: refreshHdriList, loadHdri and the upload handler must not
+    fail silently into #hdri-status alone; every failure routes through the
+    studio's own error banner (showBanner) or its fetchJson wrapper, which
+    throws with the failing URL in the message."""
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("refreshHdriList", "loadHdri"):
+        assert "showBanner" in _function_body(js, name) or "fetchJson" in _function_body(js, name), name
+    upload_handler = js[js.index('getElementById("hdri-upload")'):]
+    upload_handler = upload_handler[:upload_handler.index("\n});") + 4]
+    assert "showBanner" in upload_handler
+    assert 'event.target.value = ""' in upload_handler
+    assert "finally" in upload_handler
+
+
 def test_the_props_row_offers_the_five_props_and_a_clear():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     for button in ("prop-figure", "prop-tree", "prop-pallets",

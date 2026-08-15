@@ -238,8 +238,13 @@ function regenerateEnvironment() {
 }
 
 async function refreshHdriList(selectName) {
-  const response = await fetch("/api/hdri");
-  const { files } = await response.json();
+  let files;
+  try {
+    ({ files } = await fetchJson("/api/hdri"));
+  } catch (error) {
+    showBanner("Failed to load the HDRI list: " + error.message);
+    return [];
+  }
   const select = document.getElementById("hdri-select");
   select.innerHTML = "";
   if (!files.length) {
@@ -289,7 +294,11 @@ async function loadHdri(name) {
     applyEnvironment();
     regenerateEnvironment();
   } catch (error) {
-    status.textContent = "could not load " + name + ": " + error.message;
+    // #hdri-status keeps progress text only; the failure itself goes to
+    // the banner, named, so it cannot be missed off-screen or overwritten
+    // by the next progress message.
+    status.textContent = "";
+    showBanner("Could not load HDRI " + name + ": " + error.message);
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   }
 }
@@ -2232,18 +2241,25 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
   if (!file) return;
   const status = document.getElementById("hdri-status");
   status.textContent = "uploading " + file.name;
-  const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
-    method: "PUT",
-    body: file,
-  });
-  if (!response.ok) {
-    status.textContent = "upload failed: " + (await response.text());
-    return;
+  try {
+    const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
+      method: "PUT",
+      body: file,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    status.textContent = "";
+    await refreshHdriList(file.name);
+    await loadHdri(file.name);
+  } catch (error) {
+    status.textContent = "";
+    showBanner("Failed to upload " + file.name + ": " + error.message);
+  } finally {
+    // Always runs, success or failure, so a failed upload never jams the
+    // input: without this, choosing the same filename again after a
+    // failure does not re-fire "change" (the value never changed), and
+    // the picker looks like it silently does nothing on the retry.
+    event.target.value = "";
   }
-  status.textContent = "";
-  await refreshHdriList(file.name);
-  await loadHdri(file.name);
-  event.target.value = "";
 });
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;

@@ -27,7 +27,18 @@ import staging
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
 HDRI_DIR = Path(__file__).resolve().parent / "hdri"
-HDRI_MAX_BYTES = 64 * 1024 * 1024
+HDRI_MAX_BYTES = 200 * 1024 * 1024
+
+
+def _contained(directory: Path, name: str) -> bool:
+    """True when directory/name resolves inside directory. Catches ..,
+    separators, and Windows drive-relative names like C:foo that
+    Path joins by replacing the base entirely."""
+    try:
+        return (directory / name).resolve().parent == directory.resolve()
+    except (OSError, ValueError):
+        return False
+
 
 RUNS: dict = {}
 RUNS_LOCK = threading.Lock()
@@ -223,7 +234,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.get("/api/columns/{name}")
     def column(name: str):
-        if "/" in name or "\\" in name or ".." in name:
+        if "/" in name or "\\" in name or ".." in name or ":" in name:
+            raise HTTPException(400, "bad column name")
+        if not _contained(COLUMNS_DIR, name):
             raise HTTPException(400, "bad column name")
         path = COLUMNS_DIR / name
         if not path.is_file():
@@ -239,7 +252,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.get("/api/hdri/{name}")
     def hdri_file(name: str):
-        if "/" in name or "\\" in name or ".." in name:
+        if "/" in name or "\\" in name or ".." in name or ":" in name:
+            raise HTTPException(400, "bad hdri name")
+        if not _contained(HDRI_DIR, name):
             raise HTTPException(400, "bad hdri name")
         path = HDRI_DIR / name
         if not path.is_file():
@@ -248,13 +263,15 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.put("/api/uploads/hdri/{filename}")
     async def upload_hdri(filename: str, request: Request):
-        if "/" in filename or "\\" in filename or ".." in filename:
+        if "/" in filename or "\\" in filename or ".." in filename or ":" in filename:
+            raise HTTPException(400, "bad hdri filename")
+        if not _contained(HDRI_DIR, filename):
             raise HTTPException(400, "bad hdri filename")
         if not filename.endswith(".hdr"):
             raise HTTPException(400, "hdri filename must end in .hdr")
         body = await request.body()
         if len(body) > HDRI_MAX_BYTES:
-            raise HTTPException(413, "hdri file exceeds the size cap")
+            raise HTTPException(413, "hdri file exceeds the 200 MB cap")
         if not (body.startswith(b"#?RADIANCE") or body.startswith(b"#?RGBE")):
             raise HTTPException(400, "not a Radiance .hdr file")
         HDRI_DIR.mkdir(parents=True, exist_ok=True)
@@ -312,7 +329,9 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.put("/api/uploads/columns/{filename}")
     async def upload_columns(filename: str, request: Request):
-        if "/" in filename or "\\" in filename or ".." in filename:
+        if "/" in filename or "\\" in filename or ".." in filename or ":" in filename:
+            raise HTTPException(400, "bad column filename")
+        if not _contained(COLUMNS_DIR, filename):
             raise HTTPException(400, "bad column filename")
         if not filename.endswith(".json"):
             raise HTTPException(400, "column filename must end in .json")
