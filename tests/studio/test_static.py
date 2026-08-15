@@ -746,6 +746,34 @@ def test_stress_smoothing_is_wired_and_per_surface_is_the_default():
     assert "pickedField = smooth(surface)" in body
 
 
+def test_the_heatmaps_are_unlit_data_colours():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "recolourSegments")
+    assert "MeshBasicMaterial" in body and "toneMapped: false" in body, (
+        "analysis colours must not depend on lighting or tone mapping")
+    assert "MeshPhysicalMaterial({ vertexColors" not in body
+
+
+def test_missing_coverage_reads_as_grey_not_white():
+    # Root cause 2 from the stress-map report: sampleScalar used to return
+    # null the instant ANY weighted corner lacked data, and recolourSegments
+    # painted null straight to white -- indistinguishable from the pale
+    # zero-stress end of STRESS_SCALE (0xf2efe8). sampleScalar now
+    # renormalises over whatever corners DO have data (see test_fields.py),
+    # so null only remains when every weighted corner is missing; that
+    # honest "no data" case must read as a neutral grey the scale never
+    # produces, not white.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "recolourSegments")
+    assert "0x808080" in body, "no-data colour must be a neutral grey, not white"
+    assert "0xffffff" not in body, (
+        "recolourSegments must not paint missing data as white; white sits "
+        "inside the stress scale's own pale-zero region"
+    )
+    assert "colour = value === null ? noData :" in body
+    assert "if (!colour) colour = noData;" in body
+
+
 def test_the_legend_exists_and_tracks_the_layers():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")

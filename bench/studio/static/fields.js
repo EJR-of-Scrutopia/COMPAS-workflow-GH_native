@@ -102,28 +102,40 @@ export function interpolateScalarField(field, vertexSources) {
 // returns three), but zero is the wrong answer for "no information": it is
 // exactly the shape of a silently shifted heatmap value or a vertex dragged
 // to the origin, so both functions treat it the same as a null entry.
+//
+// A single missing corner used to forfeit the whole sample: one hole in
+// coverage turned the render vertex null even though its other corners had
+// real data. Both functions instead sum only the corners that DO have data
+// and renormalise over their weight, so a vertex with partial coverage
+// reads as that partial data (weight-corrected) rather than nothing. Only
+// when every weighted corner is missing does the sample fall back, because
+// then there is truly nothing to renormalise over.
 export function sampleScalar(field, weights) {
   if (!weights.length) return null;
-  let total = 0;
+  let total = 0, foundWeight = 0;
   for (const [index, weight] of weights) {
     const value = field[index];
-    if (value === null || value === undefined) return null;
+    if (value === null || value === undefined) continue;
     total += value * weight;
+    foundWeight += weight;
   }
-  return total;
+  return foundWeight > 0 ? total / foundWeight : null;
 }
 
 export function sampleVector(field, weights, fallback) {
   if (!weights.length) return fallback;
   const out = [0, 0, 0];
+  let foundWeight = 0;
   for (const [index, weight] of weights) {
     const value = field[index];
-    if (!value) return fallback;
+    if (!value) continue;
     out[0] += value[0] * weight;
     out[1] += value[1] * weight;
     out[2] += value[2] * weight;
+    foundWeight += weight;
   }
-  return out;
+  if (foundWeight <= 0) return fallback;
+  return [out[0] / foundWeight, out[1] / foundWeight, out[2] / foundWeight];
 }
 
 // Crease-angle vertex normals for an unindexed triangle soup, 9 floats

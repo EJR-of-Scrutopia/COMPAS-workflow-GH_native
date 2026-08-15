@@ -1188,7 +1188,12 @@ function recolourSegments() {
       pickedField = smooth(surface);
     }
   }
-  const white = new THREE.Color(0xffffff);
+  // No-data reads as a neutral mid grey, not white: white sits inside the
+  // STRESS_SCALE gradient's own pale-zero region (0xf2efe8), so a bank of
+  // missing corners used to look like a bank of zero stress instead of a
+  // hole in coverage. Grey is clearly outside every scale this function
+  // paints (compression blue, zero pale beige, tension red).
+  const noData = new THREE.Color(0x808080);
   for (const segment of state.objects.shell.children) {
     const weights = segment.userData.weights;
     const surfaceOf = segment.userData.surface;
@@ -1203,10 +1208,11 @@ function recolourSegments() {
           const field = pickedField || (surfaceOf[i] === 1 ? topField : bottomField);
           // A cut piece vertex is not a mesh vertex, so the field is read
           // through the weights the cut recorded for it rather than a bare
-          // index. A null component in the weighted sum keeps this white,
-          // same as the old missing-index branch.
+          // index. sampleScalar renormalises over whatever weighted corners
+          // do have data, so null here means every one of them is missing,
+          // not just one -- an honest "no data" reads as grey, not white.
           const value = sampleScalar(field, weights[i]);
-          colour = value === null ? white : STRESS_SCALE(value, stressMagnitude);
+          colour = value === null ? noData : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
           colour = STRESS_SCALE(stressValue(null, surface, stressMagnitude), stressMagnitude);
@@ -1218,7 +1224,7 @@ function recolourSegments() {
       if (!colour && wantDeflection && d) {
         colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
       }
-      if (!colour) colour = white;
+      if (!colour) colour = noData;
       colours[3 * i] = colour.r;
       colours[3 * i + 1] = colour.g;
       colours[3 * i + 2] = colour.b;
@@ -1258,8 +1264,11 @@ function recolourSegments() {
     // than handing back a bare registry clone, which used to discard the
     // per casting tint before the first frame was ever drawn.
     const previous = segment.material;
+    // Analysis colours are data, not scenography: unlit and exempt from
+    // tone mapping, they read identically under any environment mode,
+    // exposure or contrast setting.
     segment.material = (wantStress || wantDeflection)
-      ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
+      ? new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false })
       : pieceMaterial(segment.userData.key);
     // What is discarded here is always a per piece instance, never the
     // shared registry entry, so freeing it is safe: without this, every
