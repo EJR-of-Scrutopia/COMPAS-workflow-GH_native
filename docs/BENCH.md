@@ -178,9 +178,15 @@ crown.
   from the image's brightest region and sets the sliders, which remain live
   to override the estimate, though no HDRIs ship with the repo.
 - Brightness (0.3 to 2) and Contrast (-0.5 to 0.5) sliders grade the exposure;
-  these carry into recordings. Analysis colours (heatmaps, stress, deflection,
-  vectors) are unlit data: identical in every environment mode, immune to
-  exposure and contrast, so they read consistently across all settings.
+  these carry into recordings. Analysis colours (heatmaps: stress, deflection)
+  are unlit data: no sun, sky or HDRI change them, so they read identically
+  under every environment and lighting mode. They are not immune to the
+  display grade itself; like everything else on screen they still pass
+  through tone mapping, Brightness and Contrast in the EffectComposer chain,
+  the same as the old lit rendering did. That grade is a monotone mapping, so
+  ordering and sense always hold, and the rendered colours track the legend
+  far closer than the old lit rendering did. Load and reaction vectors are
+  ordinary lit scene objects, not exempt from lighting or the display grade.
 - Ground select offers four procedural presets: Dark studio (default), Concrete
   slab, Patio pavers and Tiles. Props are five placeable objects (Figure, Tree,
   Pallets, Barrier, Cone); arm a prop button, click the ground to place, drag
