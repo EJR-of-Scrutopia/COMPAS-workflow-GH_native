@@ -153,15 +153,48 @@ crown.
   than landing one at a time. A timeline speed control scrubs playback
   from 0.25x to 4x; orbit speed and orbit distance sliders set how the
   camera circles the model. The falsework strikes after the last segment
-  lands. Finished shell and Formwork toggles sit in the View section
-  beside the FEA layers, so either can be hidden on its own.
-- The panel collapses into six sections -- Study, View, Animation, Scene,
-  Import, Record -- so only the controls in use need to stay open.
-- Record 1080p writes PNG frames through the server and stitches
+  lands.
+- The panel holds six collapsible sections in order: Import, Study,
+  Analysis, View, Animation, Scene. Record is a button inside Animation
+  that writes 1080p PNG frames through the server and stitches
   `recording.mp4` with ffmpeg.
+- Analysis section holds heatmap and vector layer toggles (stress and
+  deflection per-element and per-node fields, load and reaction vectors,
+  text overlays and the integrity pulse), stress surface modes (per surface,
+  worst of both, top, bottom), deflection exaggeration, node and wire size
+  sliders, and a Data button to inspect the cut's coverage report.
+- View section holds a Show select (Framework renders the bare thrust net,
+  Shell the finished masonry, Both shows both, Timeline plays the build
+  animation and is the default) and a Formwork select which defaults to
+  Hidden; Always stands the ghost falsework clear of the shell's inner face
+  so it is actually visible.
+- Scene section: Environment select offers three exclusive modes. Studio
+  offers the neutral room as a backdrop (default), with a tone slider for it.
+  Sky is a physical scattering shader with five weather presets (Clear, Hazy,
+  Overcast, Golden hour, Night); the sun azimuth and elevation sliders drive
+  both the light and sky and stay live across all presets, with relighting on
+  slider release. HDRI mode uses .hdr files dropped into bench/studio/hdri/
+  or uploaded from the browser at a 200 MB cap; the studio estimates the sun
+  from the image's brightest region and sets the sliders, which remain live
+  to override the estimate, though no HDRIs ship with the repo.
+- Brightness (0.3 to 2) and Contrast (-0.5 to 0.5) sliders grade the exposure;
+  these carry into recordings. Analysis colours (heatmaps: stress, deflection)
+  are unlit data: no sun, sky or HDRI change them, so they read identically
+  under every environment and lighting mode. They are not immune to the
+  display grade itself; like everything else on screen they still pass
+  through tone mapping, Brightness and Contrast in the EffectComposer chain,
+  the same as the old lit rendering did. That grade is a monotone mapping, so
+  ordering and sense always hold, and the rendered colours track the legend
+  far closer than the old lit rendering did. Load and reaction vectors are
+  ordinary lit scene objects, not exempt from lighting or the display grade.
+- Ground select offers four procedural presets: Dark studio (default), Concrete
+  slab, Patio pavers and Tiles. Props are five placeable objects (Figure, Tree,
+  Pallets, Barrier, Cone); arm a prop button, click the ground to place, drag
+  to move, press R for 15 degree rotations, Delete removes, clicking empty
+  ground deselects. Layouts save per study in the browser and survive a reload;
+  props appear in recordings. Clear props empties the layout.
 - Column geometry dropped into `bench/studio/columns/*.json` (either
   `{"vertices", "faces"}` or a contract-style export) renders in steel.
-- The Scene section controls the environment, lighting, ground and props. Environment select offers three exclusive modes, each owning its own backdrop, image lighting and fog: Studio (the neutral room, default), Sky (a physical scattering shader) and HDRI. In Sky mode, five weather presets (Clear, Hazy, Overcast, Golden hour, Night) are parameter bundles on the shader; the sun azimuth and elevation sliders stay live in all presets and drive both the light and sky, with relighting on slider release. HDRI mode uses .hdr files dropped into bench/studio/hdri/ or uploaded from the browser at a 64 MB cap; the studio estimates the sun from the image's brightest region and sets the sliders, which remain live to override the estimate, though no HDRIs ship with the repo. Studio mode alone offers a tone slider for the backdrop. Ground select offers four procedural presets: Dark studio (default), Concrete slab, Patio pavers and Tiles. Props are five placeable objects: Figure, Tree, Pallets, Barrier and Cone; arm a prop button, click the ground to place, drag to move, press R for 15 degree rotations, Delete removes, clicking empty ground deselects. Layouts save per study in the browser and survive a reload; props appear in recordings. Clear props empties the layout.
 
 Generated outputs live under `bench/studies/<slug>/studio/` and are not
 committed. The server never imports the solver stacks; a guard test holds
@@ -286,9 +319,14 @@ default. `bench/studio/domain.py`'s note on WOBBLE_TOLERANCE traces them
 to the rim's own plus or minus 125.4 degree notch, where the boundary
 steps in from 10.9136 m to 9.4519 m while a cell's inner boundary is a
 straight chord that passes outside it: that is the cost of tolerating a
-rim wobble rather than refusing the export outright. A folded cell is
-still cut, still capped and still drawn, with one lobe of its cap inside
-out, and it enters none of the coverage counts above: the sliver
+rim wobble rather than refusing the export outright. The rim's clipped
+silhouette and crescent notches are genuine tessellation limits: 137 outline
+points are clamped by the cap's outermost-crossing rule, and on the reference
+export at 0.9 m they reach a median of 24.6 mm and a maximum of 52.3 mm.
+A density increase cannot remove the notches because they are outline points
+clamped by the cap's geometry rule, not a subdivision artifact. A folded
+cell is still cut, still capped and still drawn, with one lobe of its cap
+inside out, and it enters none of the coverage counts above: the sliver
 test reads an algebraic area and a fold's two lobes cancel in it, so
 `report["folded"]` naming the cell by key is the entire disclosure. The
 studio's Data panel lists it beside the coverage line for exactly that

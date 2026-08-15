@@ -70,7 +70,14 @@ CHECK = textwrap.dedent("""
     const scalarField = [0, 10, 20, 30];
     expect(near(sampleScalar(scalarField, [[1, 1.0]]), 10), "single weight reads through");
     expect(near(sampleScalar(scalarField, [[0, 0.5], [2, 0.5]]), 10), "two weights average");
-    expect(sampleScalar([null, 5], [[0, 0.5], [1, 0.5]]) === null, "a null source makes a null sample");
+    // A single missing corner used to null the whole sample. It now
+    // renormalises over the corner(s) that DO have data: one present corner
+    // (weight 0.5) and one missing corner reads through as that present
+    // corner's own value, not null and not half of it.
+    expect(near(sampleScalar([null, 5], [[0, 0.5], [1, 0.5]]), 5),
+      "one missing corner renormalises to the present corner's value");
+    expect(sampleScalar([null, null], [[0, 0.5], [1, 0.5]]) === null,
+      "only when every weighted corner is missing does the sample stay null");
     const vectorField = [[0, 0, 0], [2, 4, 6]];
     const sampled = sampleVector(vectorField, [[0, 0.25], [1, 0.75]], [0, 0, 0]);
     expect(near(sampled[0], 1.5) && near(sampled[2], 4.5), "vectors sample componentwise");
@@ -80,14 +87,21 @@ CHECK = textwrap.dedent("""
     const zeroed = sampleVector(vectorField, [[0, 1.0]], [9, 9, 9]);
     expect(near(zeroed[0], 0) && near(zeroed[1], 0) && near(zeroed[2], 0),
       "a genuine [0, 0, 0] entry reads through, it is not mistaken for missing");
-    // The fallback branch itself: a null entry must return the fallback
-    // outright, not the partial sum accumulated before it was reached. An
-    // unasserted fallback branch would let a regression that returned the
-    // partial vector instead pass silently while shifting a vertex on screen.
+    // Same renormalisation as sampleScalar, for consistency: a null entry
+    // no longer forfeits the whole sample. One present corner ([1,1,1] at
+    // weight 0.5) and one missing corner reads through as [1,1,1], the
+    // present corner's own value, not the fallback and not a halved sum.
     const gappyVectorField = [[1, 1, 1], null];
-    const fellBack = sampleVector(gappyVectorField, [[0, 0.5], [1, 0.5]], [9, 9, 9]);
+    const renormalised = sampleVector(gappyVectorField, [[0, 0.5], [1, 0.5]], [9, 9, 9]);
+    expect(near(renormalised[0], 1) && near(renormalised[1], 1) && near(renormalised[2], 1),
+      "one missing corner renormalises to the present corner's value, not the fallback");
+    // Only when every weighted corner is missing is there truly nothing to
+    // renormalise over, so the fallback is what must come back -- not a
+    // zero vector, which would look like a real, converged reading.
+    const allGappyVectorField = [null, null];
+    const fellBack = sampleVector(allGappyVectorField, [[0, 0.5], [1, 0.5]], [9, 9, 9]);
     expect(near(fellBack[0], 9) && near(fellBack[1], 9) && near(fellBack[2], 9),
-      "a null entry returns the fallback outright, not a partial sum");
+      "every weighted corner missing returns the fallback outright");
 
     // Empty weights cannot happen today (the lift that produces them always
     // returns three), but zero is the wrong answer for "no information": it

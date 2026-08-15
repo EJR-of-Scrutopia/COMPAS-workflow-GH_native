@@ -77,3 +77,7 @@ bench/studio/hdri/
 
 # Upstream COMPAS example repos, fetched by scripts/fetch_compas_examples.sh
 upstream/
+
+# The probe rig's node install: bench/scripts/studio_probe.mjs needs
+# puppeteer-core, installed locally next to it rather than pinned in the repo.
+bench/scripts/probe-env/

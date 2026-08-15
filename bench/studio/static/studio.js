@@ -3,6 +3,11 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContrastShader.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
@@ -12,8 +17,9 @@ import {
 const state = {
   bundle: null,
   studies: [],
-  layers: { shell: true, wires: true, overlays: true },
-  formworkMode: "animation", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
+  layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
+  showMode: "timeline", // R4: "framework" | "shell" | "both" | "timeline" (see applyShowMode)
+  formworkMode: "hidden", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
@@ -23,6 +29,9 @@ const state = {
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
+  brightness: 1,     // R2: multiplier on the active mode's exposure base
+  contrast: 0,       // R2: BrightnessContrastShader contrast, display space
+  exposureBase: 0.85, // written by applyEnvironment per mode and preset
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -69,6 +78,27 @@ const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = studioEnvironment;
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 
+// R2: render, tone-map to display space, then grade. Contrast pivots
+// around mid grey, which is only meaningful AFTER tone mapping, so the
+// grade pass sits last, on the OutputPass's sRGB result. samples: 4
+// keeps the antialiasing the direct canvas render had.
+const composerTarget = new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType });
+const composer = new EffectComposer(renderer, composerTarget);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new OutputPass());
+const gradePass = new ShaderPass(BrightnessContrastShader);
+composer.addPass(gradePass);
+
+function applyGrade() {
+  renderer.toneMappingExposure = state.exposureBase * state.brightness;
+  gradePass.uniforms.brightness.value = 0;
+  gradePass.uniforms.contrast.value = state.contrast;
+}
+
+function renderView() {
+  composer.render();
+}
+
 const sun = new THREE.DirectionalLight(0xffffff, 3.0);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -93,17 +123,17 @@ scene.add(sky);
 const WEATHER = {
   clear: {
     turbidity: 3, rayleigh: 1.2, mieCoefficient: 0.004, mieDirectionalG: 0.8,
-    sunIntensity: 3.2, sunColor: 0xfff2e0, shadowRadius: 2, exposure: 0.75,
+    sunIntensity: 3.2, sunColor: 0xfff2e0, shadowRadius: 2, exposure: 0.55,
     hemisphere: 0.35, fogColor: 0xcfd8e0, fogNear: 120, fogFar: 400, elevation: null,
   },
   hazy: {
     turbidity: 10, rayleigh: 2.2, mieCoefficient: 0.02, mieDirectionalG: 0.75,
-    sunIntensity: 2.2, sunColor: 0xffe8c8, shadowRadius: 6, exposure: 0.7,
+    sunIntensity: 2.2, sunColor: 0xffe8c8, shadowRadius: 6, exposure: 0.55,
     hemisphere: 0.45, fogColor: 0xd8d4c8, fogNear: 60, fogFar: 240, elevation: null,
   },
   overcast: {
     turbidity: 20, rayleigh: 3.5, mieCoefficient: 0.06, mieDirectionalG: 0.6,
-    sunIntensity: 0.9, sunColor: 0xe8ecf0, shadowRadius: 12, exposure: 0.65,
+    sunIntensity: 0.9, sunColor: 0xe8ecf0, shadowRadius: 12, exposure: 0.5,
     hemisphere: 0.7, fogColor: 0xc4c8cc, fogNear: 50, fogFar: 200, elevation: null,
   },
   "golden-hour": {
@@ -113,7 +143,7 @@ const WEATHER = {
   },
   night: {
     turbidity: 2, rayleigh: 0.4, mieCoefficient: 0.002, mieDirectionalG: 0.7,
-    sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.5,
+    sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.45,
     hemisphere: 0.15, fogColor: 0x10141c, fogNear: 60, fogFar: 250, elevation: 20,
   },
 };
@@ -158,7 +188,7 @@ function applyEnvironment() {
     sun.color.set(preset.sunColor);
     sun.shadow.radius = preset.shadowRadius;
     hemi.intensity = preset.hemisphere;
-    renderer.toneMappingExposure = preset.exposure;
+    state.exposureBase = preset.exposure;
     scene.environmentIntensity = 0.6;
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
@@ -169,7 +199,7 @@ function applyEnvironment() {
     scene.backgroundRotation.set(Math.PI / 2, 0, 0);
     scene.environmentRotation.set(Math.PI / 2, 0, 0);
     hemi.intensity = 0.25;
-    renderer.toneMappingExposure = 0.8;
+    state.exposureBase = 0.7;
     scene.environmentIntensity = 1.0;
   } else {
     sky.visible = false;
@@ -184,9 +214,10 @@ function applyEnvironment() {
     hemi.intensity = 0.5;
     // Light concretes were clipping to white under the room environment plus
     // filmic tone mapping, which made three different presets look identical.
-    renderer.toneMappingExposure = 0.85;
+    state.exposureBase = 0.85;
     scene.environmentIntensity = 0.6;
   }
+  applyGrade();
 }
 
 function regenerateEnvironment() {
@@ -207,8 +238,17 @@ function regenerateEnvironment() {
 }
 
 async function refreshHdriList(selectName) {
-  const response = await fetch("/api/hdri");
-  const { files } = await response.json();
+  // null signals a failed fetch, already bannered here: callers must stop
+  // rather than fall through to loadHdri, which would fail the same fetch
+  // again and banner it a second time. [] is a real, successful answer
+  // (no HDRIs installed) and callers may carry on past it.
+  let files;
+  try {
+    ({ files } = await fetchJson("/api/hdri"));
+  } catch (error) {
+    showBanner("Failed to load the HDRI list: " + error.message);
+    return null;
+  }
   const select = document.getElementById("hdri-select");
   select.innerHTML = "";
   if (!files.length) {
@@ -258,7 +298,11 @@ async function loadHdri(name) {
     applyEnvironment();
     regenerateEnvironment();
   } catch (error) {
-    status.textContent = "could not load " + name + ": " + error.message;
+    // #hdri-status keeps progress text only; the failure itself goes to
+    // the banner, named, so it cannot be missed off-screen or overwritten
+    // by the next progress message.
+    status.textContent = "";
+    showBanner("Could not load HDRI " + name + ": " + error.message);
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   }
 }
@@ -885,8 +929,6 @@ function applyCut(preserve) {
 
 // ---------- FEA layers ----------
 const LAYERS = [
-  ["shell", "Finished shell"],
-  ["wires", "Thrust wires and nodes"],
   ["stress", "Stress heatmap"],
   ["deflection", "Deflection heatmap"],
   ["loads", "Load vectors"],
@@ -1027,20 +1069,6 @@ function buildLayerToggles() {
 
 function setLayer(name, on) {
   state.layers[name] = on;
-  if (name === "wires" || name === "shell") {
-    // Visibility during and after the strike is the timeline's call, so
-    // recompute from t instead of forcing visible here. This calls the
-    // scene-only helper, not applyTimeline itself -- a layer checkbox must
-    // never reposition a user-orbited camera.
-    if (state.timeline) {
-      applySceneAtTime(state.timeline.t);
-    } else if (name === "wires") {
-      state.objects.wires.visible = on;
-      state.objects.nodes.visible = on;
-    } else if (name === "shell") {
-      if (state.objects.shell) state.objects.shell.visible = on;
-    }
-  }
   if (name === "loads" || name === "reactions") updateVectorLayers();
   if (name === "stress" || name === "deflection") recolourSegments();
   if (name === "forces") applyWireForces();
@@ -1188,7 +1216,12 @@ function recolourSegments() {
       pickedField = smooth(surface);
     }
   }
-  const white = new THREE.Color(0xffffff);
+  // No-data reads as a neutral mid grey, not white: white sits inside the
+  // STRESS_SCALE gradient's own pale-zero region (0xf2efe8), so a bank of
+  // missing corners used to look like a bank of zero stress instead of a
+  // hole in coverage. Grey is clearly outside every scale this function
+  // paints (compression blue, zero pale beige, tension red).
+  const noData = new THREE.Color(0x808080);
   for (const segment of state.objects.shell.children) {
     const weights = segment.userData.weights;
     const surfaceOf = segment.userData.surface;
@@ -1203,10 +1236,11 @@ function recolourSegments() {
           const field = pickedField || (surfaceOf[i] === 1 ? topField : bottomField);
           // A cut piece vertex is not a mesh vertex, so the field is read
           // through the weights the cut recorded for it rather than a bare
-          // index. A null component in the weighted sum keeps this white,
-          // same as the old missing-index branch.
+          // index. sampleScalar renormalises over whatever weighted corners
+          // do have data, so null here means every one of them is missing,
+          // not just one -- an honest "no data" reads as grey, not white.
           const value = sampleScalar(field, weights[i]);
-          colour = value === null ? white : STRESS_SCALE(value, stressMagnitude);
+          colour = value === null ? noData : STRESS_SCALE(value, stressMagnitude);
         } else {
           // Verification peaks only: the flat honest tint, as before.
           colour = STRESS_SCALE(stressValue(null, surface, stressMagnitude), stressMagnitude);
@@ -1218,7 +1252,7 @@ function recolourSegments() {
       if (!colour && wantDeflection && d) {
         colour = STRESS_SCALE(Math.hypot(d[0], d[1], d[2]), deflectionMax);
       }
-      if (!colour) colour = white;
+      if (!colour) colour = noData;
       colours[3 * i] = colour.r;
       colours[3 * i + 1] = colour.g;
       colours[3 * i + 2] = colour.b;
@@ -1258,9 +1292,18 @@ function recolourSegments() {
     // than handing back a bare registry clone, which used to discard the
     // per casting tint before the first frame was ever drawn.
     const previous = segment.material;
-    segment.material = (wantStress || wantDeflection)
-      ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
-      : pieceMaterial(segment.userData.key);
+    const wantHeatmap = wantStress || wantDeflection;
+    // A staged per-vertex field is data, not scenography: unlit and exempt
+    // from tone mapping, it reads identically under any environment mode,
+    // exposure or contrast setting. The peaks-only fallback (no stage,
+    // verification only) is not a field, it is one flat tint standing in
+    // for a whole surface, so it keeps ordinary lighting rather than
+    // claiming an exemption a single colour has no field to earn.
+    segment.material = wantHeatmap && stage
+      ? new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, toneMapped: false })
+      : wantHeatmap
+        ? new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })
+        : pieceMaterial(segment.userData.key);
     // What is discarded here is always a per piece instance, never the
     // shared registry entry, so freeing it is safe: without this, every
     // layer toggle and every exaggeration nudge leaked one material per
@@ -2182,11 +2225,20 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
   });
 }
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
+document.getElementById("brightness").addEventListener("input", (e) => {
+  state.brightness = +e.target.value;
+  applyGrade();
+});
+document.getElementById("contrast").addEventListener("input", (e) => {
+  state.contrast = +e.target.value;
+  applyGrade();
+});
 document.getElementById("environment-mode").addEventListener("change", async (e) => {
   state.environmentMode = e.target.value;
   applyEnvironment();
   if (state.environmentMode === "hdri" && !state.hdriTexture) {
-    await refreshHdriList();
+    const files = await refreshHdriList();
+    if (files === null) return; // fetch failed; already bannered
     const name = document.getElementById("hdri-select").value;
     if (name) { await loadHdri(name); return; }
   }
@@ -2200,18 +2252,26 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
   if (!file) return;
   const status = document.getElementById("hdri-status");
   status.textContent = "uploading " + file.name;
-  const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
-    method: "PUT",
-    body: file,
-  });
-  if (!response.ok) {
-    status.textContent = "upload failed: " + (await response.text());
-    return;
+  try {
+    const response = await fetch("/api/uploads/hdri/" + encodeURIComponent(file.name), {
+      method: "PUT",
+      body: file,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    status.textContent = "";
+    const files = await refreshHdriList(file.name);
+    if (files === null) return; // fetch failed; already bannered
+    await loadHdri(file.name);
+  } catch (error) {
+    status.textContent = "";
+    showBanner("Failed to upload " + file.name + ": " + error.message);
+  } finally {
+    // Always runs, success or failure, so a failed upload never jams the
+    // input: without this, choosing the same filename again after a
+    // failure does not re-fire "change" (the value never changed), and
+    // the picker looks like it silently does nothing on the retry.
+    event.target.value = "";
   }
-  status.textContent = "";
-  await refreshHdriList(file.name);
-  await loadHdri(file.name);
-  event.target.value = "";
 });
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;
@@ -2305,6 +2365,10 @@ document.getElementById("formwork-mode").addEventListener("change", (e) => {
   } else if (state.objects.falsework) {
     state.objects.falsework.visible = e.target.value !== "hidden";
   }
+});
+document.getElementById("show-mode").addEventListener("change", (e) => {
+  state.showMode = e.target.value;
+  if (state.timeline) applySceneAtTime(state.timeline.t);
 });
 // Same pattern as the thickness slider: "input" only updates the live mm
 // label, "change" (drag release) commits the value and rebuilds -- so a
@@ -2735,7 +2799,7 @@ function applySceneAtTime(t) {
     // first casting reads build = 0 as "the very start of its drop" and
     // hangs at DROP_HEIGHT for the whole inflation window instead of being
     // absent. inflate reaches exactly 1 the instant build time begins.
-    if (!state.layers.shell || inflate < 1) {
+    if (inflate < 1) {
       segment.visible = false;
       continue;
     }
@@ -2783,18 +2847,94 @@ function applySceneAtTime(t) {
   const mode = state.formworkMode;
   falsework.visible = mode === "always" || (mode === "animation" && strikeU < 1);
   falsework.material.opacity = mode === "always" ? 0.3 : 0.3 * inflate * (1 - strikeU);
-  falsework.position.z = mode === "always" ? -0.02 : -0.02 - 1.5 * strikeU;
+  // R3: the ghost is built from the analysis mid-surface mesh
+  // (buildPieceMeshes offsets the real, opaque pieces from that same
+  // surface by half the shell thickness). The old -0.02 constant sat
+  // comfortably inside the opaque shell's own thickness and was never
+  // visible from outside it. Half the thickness clears the intrados
+  // exactly; 5 cm of air on top of that keeps it legible as a ghost
+  // rather than flush against the shell.
+  // The BUNDLE's own thickness, same reason arrowField's lift does at
+  // studio.js:1396: state.thickness is the control's live value and can
+  // drift from what the shell on screen was actually built at.
+  falsework.position.z = mode === "always"
+    ? -(state.bundle.provenance.thickness / 2) - 0.05
+    : -0.02 - 1.5 * strikeU;
   // The strike takes the thrust network with it: wires and nodes fade,
   // drop and vanish on the same clock, and scrubbing back restores them
-  // because everything here is computed from t (by way of build).
+  // because everything here is computed from t (by way of build). The Show
+  // select, not this checkbox, now owns whether the net is visible outside
+  // the strike window (applyShowMode).
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
-    object.visible = !!state.layers.wires && strikeU < 1;
+    object.visible = strikeU < 1;
     object.material.opacity = 1 - strikeU;
     object.position.z = -1.5 * strikeU;
   }
-  applyPulse(build);
+  // The pulse is a Timeline effect: build is the elapsed drop-order clock
+  // and has no meaning in Framework/Shell/Both, which show a fixed rest
+  // state with no build order to be partway through. Calling it
+  // unconditionally left the last frame's emissive tint stuck on the shell
+  // after switching Show mode away from Timeline; applyShowMode's own
+  // sweep, below, clears that residue on entry to the other three modes.
+  if (state.showMode === "timeline") applyPulse(build);
+  applyShowMode();
+}
+
+// R4: the Show select is a lens over the same scene function. Timeline
+// shows whatever t says; the other three are the rest state with a fixed
+// choice of net and shell. Falsework stays with its own select, except
+// framework mode, which is the bare net by definition.
+function applyShowMode() {
+  // Guarded like applySceneAtTime guards shell/falsework, above: an
+  // unguarded read of nodes or bundle throws out of frame() before the
+  // frame is rescheduled, which kills the render loop until the page is
+  // reloaded. shell and wires were guarded already; nodes and bundle are
+  // built alongside them (buildScene, rebuildWiresAndNodes) but were not.
+  if (!state.objects.shell || !state.objects.wires || !state.objects.nodes || !state.bundle) return;
+  if (state.showMode === "timeline") return;
+  const shellOn = state.showMode === "shell" || state.showMode === "both";
+  const netOn = state.showMode === "framework" || state.showMode === "both";
+  applyInflation(1);
+  for (const segment of state.objects.shell.children) {
+    segment.visible = shellOn;
+    segment.position.set(0, 0, 0);
+    segment.rotation.set(0, 0, 0);
+    segment.scale.set(1, 1, 1);
+    // applyPulse only runs in Timeline (see applySceneAtTime, above), so
+    // leaving here without sweeping this back would leave the last
+    // Timeline frame's tint stuck on the shell in Shell/Both. Same sweep
+    // setLayer("pulse", false) does when the pulse layer itself is turned
+    // off.
+    segment.material.emissiveIntensity = 0;
+  }
+  state.objects.wires.visible = netOn;
+  state.objects.nodes.visible = netOn;
+  // The strike (applySceneAtTime, above) is the only thing that fades
+  // wires/nodes: it writes material.opacity toward 0 and position.z toward
+  // -1.5 as strikeU rises, and touches nothing else on either object.
+  // scale.z is inflation-driven, not strike-driven, and applyInflation(1)
+  // above already put it back to 1, so opacity and position.z are the only
+  // two properties this lens needs to restore to their built values.
+  state.objects.wires.material.opacity = 1;
+  state.objects.nodes.material.opacity = 1;
+  state.objects.wires.position.z = 0;
+  state.objects.nodes.position.z = 0;
+  const falsework = state.objects.falsework;
+  if (falsework) {
+    const wanted = state.formworkMode === "always" && state.showMode !== "framework";
+    falsework.visible = wanted;
+    if (wanted) {
+      falsework.material.opacity = 0.3;
+      // Same offset as the always branch in applySceneAtTime above, so
+      // the two never disagree about where the ghost sits at rest. The
+      // BUNDLE's own thickness, same reason arrowField's lift does at
+      // studio.js:1396: state.thickness is the control's live value and
+      // can drift from what the shell on screen was actually built at.
+      falsework.position.z = -(state.bundle.provenance.thickness / 2) - 0.05;
+    }
+  }
 }
 
 function applyTimeline(t) {
@@ -2820,13 +2960,14 @@ async function recordAnimation() {
   const wasPlaying = state.timeline.playing;
   state.timeline.playing = false;
   renderer.setSize(1920, 1080, false);
+  composer.setSize(1920, 1080);
   camera.aspect = 1920 / 1080;
   camera.updateProjectionMatrix();
   state.recording = true;   // resize() must skip while this is set
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
       applyTimeline(frameIndex * speed / fps);
-      renderer.render(scene, camera);
+      renderView();
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       const response = await fetch(
         "/api/frames/" + target + "?frame=" + (frameIndex + 1),
@@ -2843,6 +2984,10 @@ async function recordAnimation() {
   } catch (error) {
     status.textContent = "recording failed: " + error.message;
   } finally {
+    // No explicit canvas-size restore here: this flag flip is what lets
+    // resize() act again, and it picks the canvas back up to its CSS size
+    // (including the composer, via the resize() edit above) on the very
+    // next frame().
     state.recording = false;
     state.timeline.playing = wasPlaying;
   }
@@ -2855,6 +3000,7 @@ function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (canvas.width !== w || canvas.height !== h) {
     renderer.setSize(w, h, false);
+    composer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }
@@ -2924,11 +3070,16 @@ function frame(now) {
     scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   }
   controls.update();
-  renderer.render(scene, camera);
+  renderView();
   requestAnimationFrame(frame);
 }
 
 boot();
 requestAnimationFrame(frame);
+
+// The probe rig reads app state through this hook. Camera and controls are
+// exported too so a capture run can frame a detail (the rim, a joint) that
+// the default framing, tuned for a full-size vault, leaves illegible.
+window.__studio = { state, scene, camera, controls };
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

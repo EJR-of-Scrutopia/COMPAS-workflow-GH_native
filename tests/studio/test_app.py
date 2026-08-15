@@ -755,3 +755,64 @@ def test_hdri_upload_rejections(tmp_path, monkeypatch):
     assert not (tmp_path / "hdri").exists() or not list((tmp_path / "hdri").glob("*evil*"))
     assert not (tmp_path / "hdri" / "notes.txt").exists()
     assert not (tmp_path / "hdri" / "fake.hdr").exists()
+
+
+def test_windows_drive_relative_names_cannot_escape(tmp_path, monkeypatch):
+    """Task 5, defect table report 6/7 hardening: a Windows drive-relative
+    name like 'C:evil.hdr' is not caught by a plain '/'/'\\'/'..' character
+    guard, and Path's own join can replace the base directory entirely for
+    such names. _contained() closes this on the hdri GET, hdri PUT and
+    columns PUT routes."""
+    client, _ = make_client(tmp_path, monkeypatch)
+    import app as app_module
+
+    monkeypatch.setattr(app_module, "HDRI_DIR", tmp_path / "hdri")
+    body = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n\x00\x00\x00\x00"
+    assert client.put("/api/uploads/hdri/C:evil.hdr", content=body).status_code == 400
+    # _contained() rejects the drive-relative name before any lookup runs,
+    # so this is a guard failure every time, not a "maybe it 404s instead"
+    # depending on what happens to sit at the resolved path.
+    assert client.get("/api/hdri/C:app.py").status_code == 400
+    assert not list(tmp_path.rglob("*evil*")), (
+        "no file named for the drive-relative payload may exist anywhere "
+        "under tmp_path"
+    )
+    assert client.put(
+        "/api/uploads/columns/C:evil.json", content=b"{}").status_code == 400
+
+
+def test_hdri_same_name_reupload_overwrites(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+    import app as app_module
+
+    monkeypatch.setattr(app_module, "HDRI_DIR", tmp_path / "hdri")
+    head = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n"
+    assert client.put("/api/uploads/hdri/a.hdr", content=head + b"\x01\x01\x01\x01").status_code == 200
+    assert client.put("/api/uploads/hdri/a.hdr", content=head + b"\x02\x02\x02\x02").status_code == 200
+    assert (tmp_path / "hdri" / "a.hdr").read_bytes().endswith(b"\x02\x02\x02\x02")
+
+
+def test_export_reupload_serves_new_geometry(tmp_path, monkeypatch):
+    client, _ = make_client(tmp_path, monkeypatch)
+
+    first = client.get(
+        "/api/studies/Tiny/bundle",
+        params={"material": "concrete", "pattern": "bonded-courses",
+                "size": 0.9, "thickness": 0.2},
+    )
+    assert first.status_code == 200
+    tall = tiny_contract()
+    # tiny_contract's vertices are a LIST of {"x", "y", "z"} dicts (see
+    # conftest_data.tiny_contract), not a mapping keyed by id.
+    for vertex in tall["equilibrium"]["vertices"]:
+        vertex["z"] = vertex.get("z", 0.0) + 1.2
+    put = client.put(
+        "/api/uploads/exports/Tiny/contract", content=json.dumps(tall).encode())
+    assert put.status_code == 200
+    second = client.get(
+        "/api/studies/Tiny/bundle",
+        params={"material": "concrete", "pattern": "bonded-courses",
+                "size": 0.9, "thickness": 0.2},
+    )
+    assert second.status_code == 200
+    assert first.content != second.content, "a re-upload must serve the new geometry"

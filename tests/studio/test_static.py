@@ -106,9 +106,21 @@ def test_the_timeline_is_a_pure_function_of_time():
 
 
 def test_the_layer_registry_has_the_agreed_names():
+    # Rewritten: the old version checked these names were present ANYWHERE
+    # in studio.js, which every one of them is for unrelated reasons
+    # ("wires" and "shell" name scene objects throughout the file, not
+    # layers) -- the assertion passed whether or not LAYERS itself agreed.
+    # Read LAYERS' own literal and check it directly.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "wires", "shell"):
-        assert '"{}"'.format(name) in js
+    start = js.index("const LAYERS = [") + len("const LAYERS = [")
+    end = js.index("];", start)
+    body = js[start:end]
+    for name in ("stress", "deflection", "loads", "reactions", "overlays", "pulse", "forces"):
+        assert '"{}"'.format(name) in body, "LAYERS is missing {}".format(name)
+    for name in ("shell", "wires"):
+        assert '"{}"'.format(name) not in body, (
+            "{} is not a layer; the Show select owns it, not a checkbox".format(name)
+        )
     assert "layerAvailability" in js
     assert "no staging" in js or "staged run" in js, "disabled layers must say why"
 
@@ -418,21 +430,26 @@ def test_the_strike_takes_wires_nodes_and_falsework():
     body = js[start:end]
     assert "strikeU" in body
     assert "state.formworkMode" in body
-    assert "state.layers.wires" in body
+    # Task 4: the wires layer checkbox is gone (the Show select owns net
+    # visibility now), so the strike no longer reads state.layers.wires --
+    # timeline mode shows the net per the strike clock alone.
+    assert "state.layers.wires" not in body
     for name in ("wires", "nodes"):
         assert '"{}"'.format(name) in body, "the strike must drive {}".format(name)
 
 
 def test_set_layer_does_not_call_applytimeline_directly():
-    # FINDING 1 (camera snap): setLayer's wires/falsework branch used to call
+    # FINDING 1 (camera snap): setLayer's old wires/shell branch used to call
     # applyTimeline, whose autoSpin branch repositions the camera onto the
     # orbit ring -- so ticking a layer checkbox teleported a user-positioned
-    # camera. It must call the scene-only applySceneAtTime helper instead.
+    # camera. Task 4 removed that branch entirely (wires/shell moved to the
+    # Show select, applyShowMode), but the invariant it protected still
+    # holds: no code path inside setLayer may reposition the camera.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     start = js.index("function setLayer(")
     end = js.index("\n}", start)
     body = js[start:end]
-    assert "applySceneAtTime(state.timeline.t)" in body
+    assert 'name === "wires" || name === "shell"' not in body
     assert "applyTimeline(" not in body, (
         "setLayer must never call applyTimeline directly; that would move "
         "the camera on a layer toggle"
@@ -449,10 +466,13 @@ def test_formwork_is_a_three_state_control():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert 'id="formwork-mode"' in html
-    assert '<option value="animation" selected>' in html
+    assert '<option value="animation">' in html
     for value in ("always", "hidden"):
         assert 'value="{}"'.format(value) in html
-    assert 'formworkMode: "animation"' in js
+    # Task 4: the default flipped to hidden (see
+    # test_the_formwork_default_is_hidden); animation and always remain
+    # selectable options.
+    assert 'formworkMode: "hidden"' in js
     assert '"falsework", "Formwork"' not in js, "the checkbox entry is gone"
     assert "falsework: true" not in js, (
         "state.layers must not carry falsework any more"
@@ -486,17 +506,18 @@ def test_analysis_overlays_cast_no_shadows():
     assert "mesh.castShadow = mesh.receiveShadow = true" in build_body
 
 
-def test_the_finished_shell_has_its_own_toggle():
+def test_the_finished_shell_is_governed_by_show_mode_not_a_checkbox():
+    # Task 4: the shell and wires checkboxes are gone from LAYERS; the
+    # Show select owns both now (test_the_show_select_offers_four_
+    # exclusive_modes, applyShowMode). The timeline's own segment gate no
+    # longer reads a layers flag at all -- inflate is the only gate left.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '"shell", "Finished shell"' in js
-    assert "shell: true" in js, "the layer defaults on"
+    assert '"shell", "Finished shell"' not in js
+    assert '"wires", "Thrust wires and nodes"' not in js
     scene_body = _function_body(js, "applySceneAtTime")
-    assert "state.layers.shell" in scene_body, (
-        "the timeline recomputes every casting's visibility, so the gate "
-        "must live inside it or a scrub would undo the toggle"
-    )
+    assert "state.layers.shell" not in scene_body
     layer_body = _function_body(js, "setLayer")
-    assert '"shell"' in layer_body
+    assert 'name === "wires" || name === "shell"' not in layer_body
 
 
 def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
@@ -744,6 +765,38 @@ def test_stress_smoothing_is_wired_and_per_surface_is_the_default():
     # That control's option must still work: it goes through pickedField.
     assert '<option value="worst"' in html
     assert "pickedField = smooth(surface)" in body
+
+
+def test_the_heatmaps_are_unlit_data_colours():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "recolourSegments")
+    assert "MeshBasicMaterial" in body and "toneMapped: false" in body, (
+        "a staged per-vertex field must not depend on lighting or tone mapping")
+    # The peaks-only fallback (no stage, verification only) is one flat
+    # tint standing in for a whole surface, not a field: it keeps the
+    # previous lit material rather than claiming an unlit exemption a
+    # single colour has no field to earn.
+    assert "MeshPhysicalMaterial({ vertexColors: true, roughness: 0.85, side: THREE.DoubleSide })" in body
+
+
+def test_missing_coverage_reads_as_grey_not_white():
+    # Root cause 2 from the stress-map report: sampleScalar used to return
+    # null the instant ANY weighted corner lacked data, and recolourSegments
+    # painted null straight to white -- indistinguishable from the pale
+    # zero-stress end of STRESS_SCALE (0xf2efe8). sampleScalar now
+    # renormalises over whatever corners DO have data (see test_fields.py),
+    # so null only remains when every weighted corner is missing; that
+    # honest "no data" case must read as a neutral grey the scale never
+    # produces, not white.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "recolourSegments")
+    assert "0x808080" in body, "no-data colour must be a neutral grey, not white"
+    assert "0xffffff" not in body, (
+        "recolourSegments must not paint missing data as white; white sits "
+        "inside the stress scale's own pale-zero region"
+    )
+    assert "colour = value === null ? noData :" in body
+    assert "if (!colour) colour = noData;" in body
 
 
 def test_the_legend_exists_and_tracks_the_layers():
@@ -1112,6 +1165,21 @@ def test_hdri_mode_loads_estimates_and_persists():
     assert "no HDRIs installed" in refresh
     # The upload path PUTs to the guarded route and then adopts the file.
     assert '"/api/uploads/hdri/"' in js
+
+
+def test_hdri_failures_reach_the_banner():
+    """Task 5: refreshHdriList, loadHdri and the upload handler must not
+    fail silently into #hdri-status alone; every failure routes through the
+    studio's own error banner (showBanner) or its fetchJson wrapper, which
+    throws with the failing URL in the message."""
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for name in ("refreshHdriList", "loadHdri"):
+        assert "showBanner" in _function_body(js, name) or "fetchJson" in _function_body(js, name), name
+    upload_handler = js[js.index('getElementById("hdri-upload")'):]
+    upload_handler = upload_handler[:upload_handler.index("\n});") + 4]
+    assert "showBanner" in upload_handler
+    assert 'event.target.value = ""' in upload_handler
+    assert "finally" in upload_handler
 
 
 def test_the_props_row_offers_the_five_props_and_a_clear():
@@ -1642,16 +1710,17 @@ def test_a_same_export_reload_preserves_the_viewing_state():
 
 
 def test_the_panel_groups_into_six_collapsible_sections():
-    # Sections group by use, not by how the code grew: everything that
-    # shows or hides lives in View, everything that moves in Animation,
-    # and Scene is deliberately thin because the environment engine wave
-    # grows there. Study, View and Animation open; the rest collapsed.
+    # Task 4 reorganised the panel: Import, Study, Analysis, View,
+    # Animation, Scene. Study, View and Animation open; the rest
+    # collapsed. Record's controls moved inside Animation, and the
+    # Styling sub-section was flattened into Analysis, so neither
+    # "record-section" nor a Styling summary exists any more.
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     positions = []
     for section_id, is_open in (
-        ("study-section", True), ("view-section", True),
+        ("import-section", False), ("study-section", True),
+        ("analysis-section", False), ("view-section", True),
         ("animation-section", True), ("scene-section", False),
-        ("import-section", False), ("record-section", False),
     ):
         at = html.index('id="{}"'.format(section_id))
         positions.append(at)
@@ -1659,11 +1728,53 @@ def test_the_panel_groups_into_six_collapsible_sections():
         assert (" open" in tag) == is_open, section_id
     assert positions == sorted(positions), "sections out of order"
     assert "<h2>" not in html, "summaries are the section headers now"
-    assert "<summary>Styling</summary>" in html, (
-        "the layer styling controls nest collapsed inside View"
-    )
+    assert 'id="record-section"' not in html
+    assert 'id="styling-section"' not in html
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert "#panel summary" in css
+
+
+def test_the_show_select_offers_four_exclusive_modes():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="show-mode"' in html
+    for value in ("framework", "shell", "both", "timeline"):
+        assert '<option value="{}"'.format(value) in html
+    assert '<option value="timeline" selected' in html
+    assert 'showMode: "timeline"' in js
+    assert "applyShowMode()" in _function_body(js, "applySceneAtTime")
+    body = _function_body(js, "applyShowMode")
+    assert "camera.position" not in body and "controls.target" not in body
+    # The strike (applySceneAtTime) fades wires/nodes toward opacity 0 and
+    # position.z -1.5; leaving Timeline for Framework/Shell/Both must
+    # restore both to their built values, or a mid-strike scrub leaves the
+    # net faded and sunk in every other Show mode.
+    assert "material.opacity = 1" in body
+    assert "position.z = 0" in body
+
+
+def test_the_formwork_default_is_hidden():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert '<option value="hidden" selected' in html
+    assert 'formworkMode: "hidden"' in js
+
+
+def test_the_panel_reorganises_into_six_sections():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    order = [html.index('id="{}-section"'.format(name))
+             for name in ("import", "study", "analysis", "view", "animation", "scene")]
+    assert order == sorted(order), "section order is Import, Study, Analysis, View, Animation, Scene"
+    assert 'id="record-section"' not in html
+    assert 'id="styling-section"' not in html
+    # Record's controls live inside Animation now.
+    animation = html[html.index('id="animation-section"'):html.index('id="scene-section"')]
+    assert 'id="record-button"' in animation and 'id="record-status"' in animation
+    # The analysis section owns the toggles and the analysis controls.
+    analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
+    for control in ("layer-toggles", "stress-surface", "exaggeration",
+                    "node-radius", "wire-radius", "data-button"):
+        assert control in analysis, control
 
 
 def test_textures_are_anisotropic_and_sprayed_shades_as_one_surface():
@@ -1824,3 +1935,42 @@ def test_the_ground_presets_swap_one_discs_material():
     # The joint texture is procedural canvas work like every other texture.
     joint = _function_body(js, "groundJointTexture")
     assert "createElement" in joint and "getMaxAnisotropy" in joint
+
+
+def test_the_probe_hook_exposes_state_and_scene():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "window.__studio = { state, scene, camera, controls }" in js, (
+        "the probe rig reads app state through this hook, and frames "
+        "detail captures through the camera and controls")
+
+
+def test_the_postprocessing_addons_are_vendored():
+    base = STATIC / "vendor" / "addons"
+    for name in ("postprocessing/EffectComposer.js", "postprocessing/RenderPass.js",
+                 "postprocessing/ShaderPass.js", "postprocessing/OutputPass.js",
+                 "shaders/BrightnessContrastShader.js"):
+        assert (base / name).is_file(), name
+
+
+def test_brightness_and_contrast_grade_every_render():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="brightness"' in html and 'id="contrast"' in html
+    assert "state.exposureBase * state.brightness" in _function_body(js, "applyGrade")
+    assert "contrast.value = state.contrast" in _function_body(js, "applyGrade")
+    # One render entry point; both the frame loop and the recorder use it.
+    assert "composer.render()" in _function_body(js, "renderView")
+    assert "renderView()" in _function_body(js, "frame")
+    assert "renderView()" in _function_body(js, "recordAnimation"), (
+        "recordings must carry the grade too")
+    assert js.count("renderer.render(scene, camera)") == 0, (
+        "all rendering goes through the composer now")
+    # The composer, not the renderer, must be the one resized: a live
+    # window resize and a 1080p recording that skipped composer.setSize
+    # would render into a stale-sized target and stretch or crop.
+    assert "composer.setSize" in _function_body(js, "resize")
+    assert "composer.setSize" in _function_body(js, "recordAnimation")
+    for name in ("applyGrade", "renderView", "applyShowMode"):
+        body = _function_body(js, name)
+        for banned in ("performance.now", "Date.now", "state.timeline"):
+            assert banned not in body
