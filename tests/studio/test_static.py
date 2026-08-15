@@ -1917,8 +1917,9 @@ def test_the_ground_presets_swap_one_discs_material():
 
 def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "window.__studio = { state, scene }" in js, (
-        "the probe rig reads app state through this hook")
+    assert "window.__studio = { state, scene, camera, controls }" in js, (
+        "the probe rig reads app state through this hook, and frames "
+        "detail captures through the camera and controls")
 
 
 def test_the_postprocessing_addons_are_vendored():

@@ -3042,6 +3042,9 @@ function frame(now) {
 boot();
 requestAnimationFrame(frame);
 
-window.__studio = { state, scene };
+// The probe rig reads app state through this hook. Camera and controls are
+// exported too so a capture run can frame a detail (the rim, a joint) that
+// the default framing, tuned for a full-size vault, leaves illegible.
+window.__studio = { state, scene, camera, controls };
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };
