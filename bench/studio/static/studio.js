@@ -3,6 +3,11 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContrastShader.js";
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
@@ -23,6 +28,9 @@ const state = {
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
+  brightness: 1,     // R2: multiplier on the active mode's exposure base
+  contrast: 0,       // R2: BrightnessContrastShader contrast, display space
+  exposureBase: 0.85, // written by applyEnvironment per mode and preset
   objects: {},         // shell, wires, nodes, falsework, columns, ground, loadArrows, reactionArrows
   timeline: null,      // Task 13
   userDragging: false, // Task 13
@@ -69,6 +77,27 @@ const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = studioEnvironment;
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
 
+// R2: render, tone-map to display space, then grade. Contrast pivots
+// around mid grey, which is only meaningful AFTER tone mapping, so the
+// grade pass sits last, on the OutputPass's sRGB result. samples: 4
+// keeps the antialiasing the direct canvas render had.
+const composerTarget = new THREE.WebGLRenderTarget(1, 1, { samples: 4, type: THREE.HalfFloatType });
+const composer = new EffectComposer(renderer, composerTarget);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new OutputPass());
+const gradePass = new ShaderPass(BrightnessContrastShader);
+composer.addPass(gradePass);
+
+function applyGrade() {
+  renderer.toneMappingExposure = state.exposureBase * state.brightness;
+  gradePass.uniforms.brightness.value = 0;
+  gradePass.uniforms.contrast.value = state.contrast;
+}
+
+function renderView() {
+  composer.render();
+}
+
 const sun = new THREE.DirectionalLight(0xffffff, 3.0);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -93,17 +122,17 @@ scene.add(sky);
 const WEATHER = {
   clear: {
     turbidity: 3, rayleigh: 1.2, mieCoefficient: 0.004, mieDirectionalG: 0.8,
-    sunIntensity: 3.2, sunColor: 0xfff2e0, shadowRadius: 2, exposure: 0.75,
+    sunIntensity: 3.2, sunColor: 0xfff2e0, shadowRadius: 2, exposure: 0.55,
     hemisphere: 0.35, fogColor: 0xcfd8e0, fogNear: 120, fogFar: 400, elevation: null,
   },
   hazy: {
     turbidity: 10, rayleigh: 2.2, mieCoefficient: 0.02, mieDirectionalG: 0.75,
-    sunIntensity: 2.2, sunColor: 0xffe8c8, shadowRadius: 6, exposure: 0.7,
+    sunIntensity: 2.2, sunColor: 0xffe8c8, shadowRadius: 6, exposure: 0.55,
     hemisphere: 0.45, fogColor: 0xd8d4c8, fogNear: 60, fogFar: 240, elevation: null,
   },
   overcast: {
     turbidity: 20, rayleigh: 3.5, mieCoefficient: 0.06, mieDirectionalG: 0.6,
-    sunIntensity: 0.9, sunColor: 0xe8ecf0, shadowRadius: 12, exposure: 0.65,
+    sunIntensity: 0.9, sunColor: 0xe8ecf0, shadowRadius: 12, exposure: 0.5,
     hemisphere: 0.7, fogColor: 0xc4c8cc, fogNear: 50, fogFar: 200, elevation: null,
   },
   "golden-hour": {
@@ -113,7 +142,7 @@ const WEATHER = {
   },
   night: {
     turbidity: 2, rayleigh: 0.4, mieCoefficient: 0.002, mieDirectionalG: 0.7,
-    sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.5,
+    sunIntensity: 0.25, sunColor: 0xbcd0ff, shadowRadius: 4, exposure: 0.45,
     hemisphere: 0.15, fogColor: 0x10141c, fogNear: 60, fogFar: 250, elevation: 20,
   },
 };
@@ -158,7 +187,7 @@ function applyEnvironment() {
     sun.color.set(preset.sunColor);
     sun.shadow.radius = preset.shadowRadius;
     hemi.intensity = preset.hemisphere;
-    renderer.toneMappingExposure = preset.exposure;
+    state.exposureBase = preset.exposure;
     scene.environmentIntensity = 0.6;
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
@@ -169,7 +198,7 @@ function applyEnvironment() {
     scene.backgroundRotation.set(Math.PI / 2, 0, 0);
     scene.environmentRotation.set(Math.PI / 2, 0, 0);
     hemi.intensity = 0.25;
-    renderer.toneMappingExposure = 0.8;
+    state.exposureBase = 0.7;
     scene.environmentIntensity = 1.0;
   } else {
     sky.visible = false;
@@ -184,9 +213,10 @@ function applyEnvironment() {
     hemi.intensity = 0.5;
     // Light concretes were clipping to white under the room environment plus
     // filmic tone mapping, which made three different presets look identical.
-    renderer.toneMappingExposure = 0.85;
+    state.exposureBase = 0.85;
     scene.environmentIntensity = 0.6;
   }
+  applyGrade();
 }
 
 function regenerateEnvironment() {
@@ -2191,6 +2221,14 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
   });
 }
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
+document.getElementById("brightness").addEventListener("input", (e) => {
+  state.brightness = +e.target.value;
+  applyGrade();
+});
+document.getElementById("contrast").addEventListener("input", (e) => {
+  state.contrast = +e.target.value;
+  applyGrade();
+});
 document.getElementById("environment-mode").addEventListener("change", async (e) => {
   state.environmentMode = e.target.value;
   applyEnvironment();
@@ -2829,13 +2867,14 @@ async function recordAnimation() {
   const wasPlaying = state.timeline.playing;
   state.timeline.playing = false;
   renderer.setSize(1920, 1080, false);
+  composer.setSize(1920, 1080);
   camera.aspect = 1920 / 1080;
   camera.updateProjectionMatrix();
   state.recording = true;   // resize() must skip while this is set
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
       applyTimeline(frameIndex * speed / fps);
-      renderer.render(scene, camera);
+      renderView();
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       const response = await fetch(
         "/api/frames/" + target + "?frame=" + (frameIndex + 1),
@@ -2852,6 +2891,10 @@ async function recordAnimation() {
   } catch (error) {
     status.textContent = "recording failed: " + error.message;
   } finally {
+    // No explicit canvas-size restore here: this flag flip is what lets
+    // resize() act again, and it picks the canvas back up to its CSS size
+    // (including the composer, via the resize() edit above) on the very
+    // next frame().
     state.recording = false;
     state.timeline.playing = wasPlaying;
   }
@@ -2864,6 +2907,7 @@ function resize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (canvas.width !== w || canvas.height !== h) {
     renderer.setSize(w, h, false);
+    composer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }
@@ -2933,7 +2977,7 @@ function frame(now) {
     scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   }
   controls.update();
-  renderer.render(scene, camera);
+  renderView();
   requestAnimationFrame(frame);
 }
 

@@ -1858,3 +1858,30 @@ def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert "window.__studio = { state, scene }" in js, (
         "the probe rig reads app state through this hook")
+
+
+def test_the_postprocessing_addons_are_vendored():
+    base = STATIC / "vendor" / "addons"
+    for name in ("postprocessing/EffectComposer.js", "postprocessing/RenderPass.js",
+                 "postprocessing/ShaderPass.js", "postprocessing/OutputPass.js",
+                 "shaders/BrightnessContrastShader.js"):
+        assert (base / name).is_file(), name
+
+
+def test_brightness_and_contrast_grade_every_render():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="brightness"' in html and 'id="contrast"' in html
+    assert "state.exposureBase * state.brightness" in _function_body(js, "applyGrade")
+    assert "contrast.value = state.contrast" in _function_body(js, "applyGrade")
+    # One render entry point; both the frame loop and the recorder use it.
+    assert "composer.render()" in _function_body(js, "renderView")
+    assert "renderView()" in _function_body(js, "frame")
+    assert "renderView()" in _function_body(js, "recordAnimation"), (
+        "recordings must carry the grade too")
+    assert js.count("renderer.render(scene, camera)") == 0, (
+        "all rendering goes through the composer now")
+    for name in ("applyGrade", "renderView"):
+        body = _function_body(js, name)
+        for banned in ("performance.now", "Date.now", "state.timeline"):
+            assert banned not in body
