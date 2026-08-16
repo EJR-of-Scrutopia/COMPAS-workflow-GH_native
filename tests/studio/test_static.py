@@ -2122,6 +2122,13 @@ def test_appearance_overrides_are_render_only_and_persist():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     for control in ("material-tint", "material-finish", "material-reset", "render-skin"):
         assert 'id="{}"'.format(control) in html
+    # Fix round 1: the slider floors at the spec's 0.3, not an arbitrary
+    # low bound -- roughness 0.05 gives a near-mirror gloss no registry
+    # material approaches. Pinned against the tag's own markup so the
+    # bound cannot silently drift again.
+    finish_start = html.index('id="material-finish"')
+    finish_tag = html[finish_start:html.index(">", finish_start)]
+    assert 'min="0.3"' in finish_tag
     assert "render tint only, analysis unchanged" in html
     assert '"bench-studio-appearance:"' in js
     for skin in ("white-presentation", "basalt-dark", "timber-ply"):
