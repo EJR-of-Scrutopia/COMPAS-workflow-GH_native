@@ -246,7 +246,7 @@ async function refreshHdriList(selectName) {
   try {
     ({ files } = await fetchJson("/api/hdri"));
   } catch (error) {
-    showBanner("Failed to load the HDRI list: " + error.message);
+    showBanner("Failed to load the HDRI list: " + error.message, "error");
     return null;
   }
   const select = document.getElementById("hdri-select");
@@ -297,12 +297,13 @@ async function loadHdri(name) {
     status.textContent = "";
     applyEnvironment();
     regenerateEnvironment();
+    logStudio("loaded hdri " + name);
   } catch (error) {
     // #hdri-status keeps progress text only; the failure itself goes to
     // the banner, named, so it cannot be missed off-screen or overwritten
     // by the next progress message.
     status.textContent = "";
-    showBanner("Could not load HDRI " + name + ": " + error.message);
+    showBanner("Could not load HDRI " + name + ": " + error.message, "error");
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   }
 }
@@ -791,7 +792,7 @@ async function loadColumns(names) {
       mesh.castShadow = mesh.receiveShadow = true;
       group.add(mesh);
     } catch (error) {
-      showBanner("Column file " + name + " failed to load: " + error.message);
+      showBanner("Column file " + name + " failed to load: " + error.message, "error");
     }
   }
   return group;
@@ -1546,11 +1547,62 @@ function updateHud() {
   hud.textContent = lines.join("\n");
 }
 
-function showBanner(text) {
-  const banner = document.getElementById("banner");
-  banner.textContent = text;
-  banner.classList.remove("hidden");
+// The event log is UI chrome, not scene state: the purity contract below
+// covers the scene functions (applyTimeline, applySceneAtTime and their
+// kin), which must stay pure in t so a recording is deterministic. Reading
+// the wall clock here is unrelated to that; logStudio only timestamps a
+// line for the reader, it never drives anything drawn in the scene.
+const eventLog = { lines: [], timer: null };
+
+function logStudio(message) {
+  const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  eventLog.lines.push(stamp + "  " + message);
+  while (eventLog.lines.length > 7) eventLog.lines.shift();
+  const element = document.getElementById("event-log");
+  element.textContent = "";
+  for (const line of eventLog.lines) {
+    const row = document.createElement("div");
+    row.textContent = line;
+    element.appendChild(row);
+  }
+  element.classList.remove("faded");
+  if (eventLog.timer) clearTimeout(eventLog.timer);
+  eventLog.timer = setTimeout(() => element.classList.add("faded"), 8000);
 }
+
+const bannerState = { timer: null, remaining: 0, since: 0, level: "info" };
+
+function showBanner(text, level = "info") {
+  const banner = document.getElementById("banner");
+  document.getElementById("banner-text").textContent = text;
+  banner.classList.remove("hidden");
+  bannerState.level = level;
+  bannerState.remaining = level === "error" ? 12000 : 6000;
+  if (bannerState.timer) clearTimeout(bannerState.timer);
+  bannerState.since = Date.now();
+  bannerState.timer = setTimeout(
+    () => document.getElementById("banner").classList.add("hidden"),
+    bannerState.remaining);
+  logStudio(text);
+}
+
+function armBannerTimer() {
+  if (bannerState.timer) clearTimeout(bannerState.timer);
+  bannerState.since = Date.now();
+  bannerState.timer = setTimeout(
+    () => document.getElementById("banner").classList.add("hidden"),
+    bannerState.remaining);
+}
+
+document.getElementById("banner-close").addEventListener("click", () =>
+  document.getElementById("banner").classList.add("hidden"));
+document.getElementById("banner").addEventListener("mouseenter", () => {
+  if (bannerState.timer) clearTimeout(bannerState.timer);
+  bannerState.remaining -= Date.now() - bannerState.since;
+});
+document.getElementById("banner").addEventListener("mouseleave", () => {
+  if (bannerState.remaining > 0) armBannerTimer();
+});
 
 // ---------- data panel ----------
 // The residual is the SINE of an angle, which docs/BENCH.md quotes in
@@ -2028,6 +2080,10 @@ async function loadStudy(exportName) {
     + Math.round(state.size * 1000) + " mm pieces at "
     + Math.round(state.thickness * 1000) + " mm...";
   overlay.classList.remove("hidden");
+  // Cut timing: the elapsed time reuses the very pieces the "cutting..."
+  // status text above already assembled (materialLabel, the pattern, the
+  // size) rather than recomputing them a second way.
+  const startedAt = Date.now();
   const url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
@@ -2045,11 +2101,14 @@ async function loadStudy(exportName) {
       ? { f: state.timeline.t / timelineDuration(), playing: state.timeline.playing }
       : null;
     buildScene(fresh, preserve);
+    logStudio("loaded " + exportName + " (" + materialLabel + ", "
+      + patternLabel(state.pattern) + ", " + state.size + " m) in "
+      + ((Date.now() - startedAt) / 1000).toFixed(1) + "s");
   } catch (error) {
     if (sequence !== state.loadSequence) return;
     overlay.classList.add("hidden");
     status.textContent = "";
-    showBanner("Failed to load study: " + error.message);
+    showBanner("Failed to load study: " + error.message, "error");
   }
 }
 
@@ -2086,7 +2145,7 @@ async function boot(preferredExport) {
     }
     await reloadColumns(payload.columns);
   } catch (error) {
-    showBanner("Server not reachable: " + error.message);
+    showBanner("Server not reachable: " + error.message, "error");
   }
 }
 
@@ -2129,12 +2188,16 @@ async function importExportPair() {
     status.textContent = result.pair_complete
       ? "imported " + contractPrefix
       : "stored " + contractPrefix + "; pair incomplete";
+    logStudio(result.pair_complete
+      ? "imported export pair " + contractPrefix
+      : "stored " + contractPrefix + "; pair incomplete");
     input.value = "";
     // M2 fix: select and load the export that was just imported, instead
     // of leaving boot() to fall back to studies[0].
     await boot(contractPrefix);
   } catch (error) {
     status.textContent = "import failed: " + error.message;
+    logStudio("export pair import failed: " + error.message);
   }
 }
 
@@ -2150,12 +2213,14 @@ async function importColumns() {
   try {
     await putFile("/api/uploads/columns/" + encodeURIComponent(file.name), file);
     status.textContent = "imported " + file.name;
+    logStudio("imported columns file " + file.name);
     input.value = "";
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
     await reloadColumns(payload.columns);
   } catch (error) {
     status.textContent = "import failed: " + error.message;
+    logStudio("columns import failed: " + error.message);
   }
 }
 
@@ -2264,7 +2329,7 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
     await loadHdri(file.name);
   } catch (error) {
     status.textContent = "";
-    showBanner("Failed to upload " + file.name + ": " + error.message);
+    showBanner("Failed to upload " + file.name + ": " + error.message, "error");
   } finally {
     // Always runs, success or failure, so a failed upload never jams the
     // input: without this, choosing the same filename again after a
@@ -2445,8 +2510,12 @@ function watchRun(runId, exportName, status, params) {
         clearInterval(poll);
         applyRunParamsToControls(params);
         await loadStudy(exportName);
+        logStudio("analysis finished: " + exportName);
       }
-      if (run.state === "failed") clearInterval(poll);
+      if (run.state === "failed") {
+        clearInterval(poll);
+        logStudio("analysis failed: " + exportName + (run.message ? " -- " + run.message : ""));
+      }
     } catch (error) {
       clearInterval(poll);
       status.textContent = "lost contact with the server: " + error.message;
@@ -2488,6 +2557,7 @@ async function startRun() {
         ? body.detail : "HTTP " + response.status);
       return;
     }
+    logStudio("analysis started: " + exportName);
     watchRun(body.run, exportName, status, params);
   } catch (error) {
     status.textContent = "run failed to start: " + error.message;

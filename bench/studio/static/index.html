@@ -17,7 +17,8 @@
 <body>
 <canvas id="view"></canvas>
 <div id="hud"></div>
-<div id="banner" class="hidden"></div>
+<div id="event-log"></div>
+<div id="banner" class="hidden"><span id="banner-text"></span><span id="banner-close">&#10005;</span></div>
 <div id="cut-overlay" class="hidden"><div id="cut-spinner"></div><div id="cut-status"></div></div>
 <div id="legend" class="hidden">
   <div id="legend-title"></div>
@@ -55,11 +56,11 @@
     <label>Thickness <input id="thickness-input" type="range" min="0.1" max="0.4" step="0.01" value="0.2"> <span id="thickness-value">200</span> mm</label>
     <label>Joint gap <input id="joint-gap" type="range" min="0" max="0.06" step="0.005" value="0.02"> <span id="joint-gap-value">20</span> mm at the widest corner, less nearer the centre<span id="joint-gap-note"></span></label>
     <label>Crown taper <input id="taper" type="range" min="0" max="0.5" step="0.05" value="0"> <span id="taper-value">0</span> %</label>
-    <button id="run-button">Run staged analysis</button>
-    <div id="run-status"></div>
   </details>
   <details id="analysis-section">
     <summary>Analysis</summary>
+    <button id="run-button">Run staged analysis</button>
+    <div id="run-status"></div>
     <div id="layer-toggles"></div>
     <label>Stress surface <select id="stress-surface">
       <option value="per" selected>Per surface</option>
@@ -68,8 +69,6 @@
       <option value="bottom">Bottom</option>
     </select></label>
     <label>Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
-    <label>Node size <input id="node-radius" type="range" min="0.01" max="0.10" step="0.005" value="0.03"> <span id="node-radius-value">30</span> mm</label>
-    <label>Wire size <input id="wire-radius" type="range" min="0.005" max="0.06" step="0.005" value="0.02"> <span id="wire-radius-value">20</span> mm</label>
     <button id="data-button">Data</button>
   </details>
   <details id="view-section" open>
@@ -85,6 +84,8 @@
       <option value="always">Always</option>
       <option value="hidden" selected>Hidden</option>
     </select></label>
+    <label>Node size <input id="node-radius" type="range" min="0.01" max="0.10" step="0.005" value="0.03"> <span id="node-radius-value">30</span> mm</label>
+    <label>Wire size <input id="wire-radius" type="range" min="0.005" max="0.06" step="0.005" value="0.02"> <span id="wire-radius-value">20</span> mm</label>
   </details>
   <details id="animation-section" open>
     <summary>Animation</summary>

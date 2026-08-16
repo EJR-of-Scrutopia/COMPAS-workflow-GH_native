@@ -1771,9 +1771,12 @@ def test_the_panel_reorganises_into_six_sections():
     animation = html[html.index('id="animation-section"'):html.index('id="scene-section"')]
     assert 'id="record-button"' in animation and 'id="record-status"' in animation
     # The analysis section owns the toggles and the analysis controls.
+    # node-radius/wire-radius moved to View in the finish wave (see
+    # test_the_run_button_lives_in_analysis_and_sizes_in_view); the run
+    # button moved here from Study in the same wave.
     analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
-    for control in ("layer-toggles", "stress-surface", "exaggeration",
-                    "node-radius", "wire-radius", "data-button"):
+    for control in ("run-button", "layer-toggles", "stress-surface",
+                    "exaggeration", "data-button"):
         assert control in analysis, control
 
 
@@ -1974,3 +1977,38 @@ def test_brightness_and_contrast_grade_every_render():
         body = _function_body(js, name)
         for banned in ("performance.now", "Date.now", "state.timeline"):
             assert banned not in body
+
+
+def test_the_run_button_lives_in_analysis_and_sizes_in_view():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
+    view = html[html.index('id="view-section"'):html.index('id="animation-section"')]
+    assert 'id="run-button"' in analysis and 'id="run-status"' in analysis
+    assert 'id="node-radius"' in view and 'id="wire-radius"' in view
+    study = html[html.index('id="study-section"'):html.index('id="analysis-section"')]
+    assert 'id="run-button"' not in study
+
+
+def test_the_event_log_reports_studio_events():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert 'id="event-log"' in html
+    assert "#event-log" in css and "pointer-events: none" in css.split("#event-log", 1)[1][:400]
+    body = _function_body(js, "logStudio")
+    assert "toLocaleTimeString" in body or "toTimeString" in body
+    # The banner helper mirrors into the log, and the named sites report.
+    assert "logStudio(" in _function_body(js, "showBanner")
+    assert "logStudio(" in _function_body(js, "loadStudy")
+    assert "logStudio(" in _function_body(js, "loadHdri")
+
+
+def test_banners_dismiss_themselves_and_close():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="banner-close"' in html
+    body = _function_body(js, "showBanner")
+    assert "setTimeout" in body
+    assert "mouseenter" in js and "mouseleave" in js
+    for name in ("logStudio", "showBanner"):
+        assert "state.timeline" not in _function_body(js, name)
