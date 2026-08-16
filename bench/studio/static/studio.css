@@ -23,7 +23,10 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 #hud { position: fixed; left: 16px; bottom: 16px; font-size: 13px;
        line-height: 1.5; white-space: pre; pointer-events: none;
        text-shadow: 0 1px 3px #000; }
-#event-log { position: fixed; right: 16px; bottom: 16px; font-size: 12px;
+/* F6: right: 316px clears the 300px control panel plus its own margin,
+   same fix and same number as #legend below -- the log used to paint its
+   text underneath the panel itself. */
+#event-log { position: fixed; right: 316px; bottom: 16px; font-size: 12px;
   font-family: ui-monospace, monospace; color: #fff; text-align: right;
   pointer-events: none; opacity: 1; transition: opacity 1.2s; z-index: 15;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
@@ -32,7 +35,7 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: #7a2b20; border-radius: 4px;
           font-size: 13px; z-index: 10; }
-#run-status, #cut-status, #record-status, #import-status, #pattern-note { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
+#run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note { font-size: 12px; color: #9aa0a6; min-height: 1.2em; }
 #data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
               overflow: auto; background: rgba(16, 17, 20, 0.95); padding: 14px;
               border: 1px solid #2a2c31; border-radius: 6px; z-index: 20; }

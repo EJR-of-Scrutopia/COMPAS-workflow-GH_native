@@ -2074,6 +2074,10 @@ def test_the_event_log_reports_studio_events():
     css = (STATIC / "studio.css").read_text(encoding="utf-8")
     assert 'id="event-log"' in html
     assert "#event-log" in css and "pointer-events: none" in css.split("#event-log", 1)[1][:400]
+    # F6: the log sat at right: 16px, painting over the 300px control panel
+    # (#legend already solves the identical collision at 316px); pin the
+    # same clearance here so the two cannot drift apart again.
+    assert "right: 316px" in css.split("#event-log", 1)[1][:400]
     body = _function_body(js, "logStudio")
     assert "toLocaleTimeString" in body or "toTimeString" in body
     # The banner helper mirrors into the log, and the named sites report.
@@ -2162,8 +2166,13 @@ def test_the_day_cycle_peak_is_captured_from_the_hand_set_slider_value():
 def test_appearance_overrides_are_render_only_and_persist():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
     for control in ("material-tint", "material-finish", "material-reset", "render-skin"):
         assert 'id="{}"'.format(control) in html
+    # F5: #appearance-note (the "render tint only" disclosure) must read as
+    # a note, styled like every other sibling status/note line, not as
+    # unstyled body text.
+    assert "#appearance-note" in css
     # Fix round 1: the slider floors at the spec's 0.3, not an arbitrary
     # low bound -- roughness 0.05 gives a near-mirror gloss no registry
     # material approaches. Pinned against the tag's own markup so the
