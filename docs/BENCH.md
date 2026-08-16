@@ -158,25 +158,41 @@ crown.
   Analysis, View, Animation, Scene. Record is a button inside Animation
   that writes 1080p PNG frames through the server and stitches
   `recording.mp4` with ffmpeg.
-- Analysis section holds heatmap and vector layer toggles (stress and
-  deflection per-element and per-node fields, load and reaction vectors,
-  text overlays and the integrity pulse), stress surface modes (per surface,
-  worst of both, top, bottom), deflection exaggeration, node and wire size
-  sliders, and a Data button to inspect the cut's coverage report.
-- View section holds a Show select (Framework renders the bare thrust net,
-  Shell the finished masonry, Both shows both, Timeline plays the build
-  animation and is the default) and a Formwork select which defaults to
-  Hidden; Always stands the ghost falsework clear of the shell's inner face
-  so it is actually visible.
+- Study section: material, pattern and piece size control, thickness,
+  joint gap, crown taper. A Render skin select (White presentation, Basalt
+  dark, Timber ply) with Tint and Finish (0.3 to 1.0) sliders and Reset
+  button; appearance changes are render-only, persisted per material, with
+  an on-screen note "render tint only, analysis unchanged".
+- Analysis section: Run staged analysis button; heatmap and vector layer
+  toggles (stress and deflection per-element and per-node fields, load and
+  reaction vectors, text overlays and the integrity pulse); stress surface
+  modes (per surface, worst of both, top, bottom); deflection exaggeration
+  slider; Data button to inspect the cut's coverage report.
+- View section: Show select (Framework renders the bare thrust net, Shell
+  the finished masonry, Both shows both, Timeline plays the build animation
+  and is the default); Formwork select which defaults to Hidden (Always
+  stands the ghost falsework clear of the shell's inner face); Node size
+  (0.01 to 0.10 m) and Wire size (0.005 to 0.06 m) sliders. In Both mode
+  and Timeline, the thrust net clears the shell by half the built thickness
+  plus its own wire/node radius so the crown seam vanishes; Framework mode
+  keeps the true mid-surface.
 - Scene section: Environment select offers three exclusive modes. Studio
   offers the neutral room as a backdrop (default), with a tone slider for it.
   Sky is a physical scattering shader with five weather presets (Clear, Hazy,
-  Overcast, Golden hour, Night); the sun azimuth and elevation sliders drive
-  both the light and sky and stay live across all presets, with relighting on
-  slider release. HDRI mode uses .hdr files dropped into bench/studio/hdri/
-  or uploaded from the browser at a 200 MB cap; the studio estimates the sun
-  from the image's brightest region and sets the sliders, which remain live
-  to override the estimate, though no HDRIs ship with the repo.
+  Overcast, Golden hour, Night); sun azimuth and elevation sliders drive both
+  light and sky, staying live across all presets with relighting on slider
+  release. A Sun colour picker overrides preset colours until the next preset
+  change. HDRI mode uses .hdr files dropped into bench/studio/hdri/ or
+  uploaded from the browser (any valid Radiance .hdr, no size cap); the studio
+  estimates the sun from the image's brightest region and sets the sliders,
+  which remain live to override the estimate. HDRI Projection select: Projected
+  stands the image on the ground as a dome with Scale (10 to 300 m), Height
+  (0.5 to 20 m, one correct viewpoint per Height), and Rotation sliders;
+  Infinite keeps the classic flat backdrop with Rotation only. Shadows track
+  Rotation in both modes. Day cycle block: Play button, duration 10 to 120 s,
+  During recordings checkbox; Play sweeps the sun west to east through sunrise,
+  noon and sunset; sky follows in Sky mode; with the checkbox on, recordings
+  carry the sweep deterministically.
 - Brightness (0.3 to 2) and Contrast (-0.5 to 0.5) sliders grade the exposure;
   these carry into recordings. Analysis colours (heatmaps: stress, deflection)
   are unlit data: no sun, sky or HDRI change them, so they read identically
@@ -195,6 +211,11 @@ crown.
   props appear in recordings. Clear props empties the layout.
 - Column geometry dropped into `bench/studio/columns/*.json` (either
   `{"vertices", "faces"}` or a contract-style export) renders in steel.
+- A bottom-right event log holds the last seven timestamped studio events
+  (loads, cuts, uploads, analysis runs, HDRI loads, every banner) and fades
+  when quiet. Banners self-dismiss in 6 seconds (info) or 12 seconds (errors),
+  have a close X button, and pause their countdown while hovered; the event
+  log keeps the full history.
 
 Generated outputs live under `bench/studies/<slug>/studio/` and are not
 committed. The server never imports the solver stacks; a guard test holds
