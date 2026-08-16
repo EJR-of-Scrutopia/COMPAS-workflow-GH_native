@@ -190,9 +190,9 @@ crown.
   (0.5 to 20 m, one correct viewpoint per Height), and Rotation sliders;
   Infinite keeps the classic flat backdrop with Rotation only. Shadows track
   Rotation in both modes. Day cycle block: Play button, duration 10 to 120 s,
-  During recordings checkbox; Play sweeps the sun west to east through sunrise,
-  noon and sunset; sky follows in Sky mode; with the checkbox on, recordings
-  carry the sweep deterministically.
+  During recordings checkbox; Play sweeps the sun across the sky through dawn,
+  noon and dusk colours; sky follows in Sky mode; with the checkbox on,
+  recordings carry the sweep deterministically.
 - Brightness (0.3 to 2) and Contrast (-0.5 to 0.5) sliders grade the exposure;
   these carry into recordings. Analysis colours (heatmaps: stress, deflection)
   are unlit data: no sun, sky or HDRI change them, so they read identically
