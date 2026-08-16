@@ -35,6 +35,8 @@ const state = {
   hdriHeight: 2,        // GroundedSkybox height (camera height above ground in the source photo), metres
   hdriRotation: 0,      // degrees, spins the dome/background about the world vertical
   hdriEstimateAzimuth: null, // raw pixel-estimated azimuth from the last loadHdri; lets the rotation slider re-aim the sun without re-scanning pixels
+  sunColourOverride: null,   // S5: hex string once the sun-colour input is touched; null lets a preset choose the colour again
+  dayCycle: { playing: false, t: 0, seconds: 30, peakElevation: 40, record: false }, // S5
   brightness: 1,     // R2: multiplier on the active mode's exposure base
   contrast: 0,       // R2: BrightnessContrastShader contrast, display space
   exposureBase: 0.85, // written by applyEnvironment per mode and preset
@@ -163,6 +165,23 @@ function applySunFromSliders() {
   sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
 }
 
+// S5: the day as a pure function of u in [0,1]. Azimuth sweeps west to
+// east through south; elevation is a sine arc to the peak captured at
+// start; colour and intensity ramp warm-dim, white-bright, warm-dim.
+// Writes the sliders and the colour input so the UI tells the truth.
+function applyDayCycle(u) {
+  const azimuth = 270 - 180 * u;
+  const elevation = 2 + (state.dayCycle.peakElevation - 2) * Math.sin(Math.PI * u);
+  const warmth = 1 - Math.sin(Math.PI * u);
+  const colour = new THREE.Color().setHSL(0.08, 0.55 * warmth, 0.5 + 0.3 * (1 - warmth));
+  document.getElementById("sun-azimuth").value = Math.round(((azimuth % 360) + 360) % 360);
+  document.getElementById("sun-elevation").value = Math.round(elevation);
+  document.getElementById("sun-colour").value = "#" + colour.getHexString();
+  sun.color.copy(colour);
+  sun.intensity = 0.8 + 2.4 * Math.sin(Math.PI * u);
+  applySunFromSliders();
+}
+
 function setEnvironmentTexture(texture, target) {
   // The studio texture is permanent; sky and hdri targets are disposable,
   // and leaking one per regeneration is a GPU leak the browser never
@@ -193,7 +212,7 @@ function applyEnvironment() {
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
     sun.intensity = preset.sunIntensity;
-    sun.color.set(preset.sunColor);
+    if (state.sunColourOverride === null) sun.color.set(preset.sunColor);
     sun.shadow.radius = preset.shadowRadius;
     hemi.intensity = preset.hemisphere;
     state.exposureBase = preset.exposure;
@@ -213,7 +232,7 @@ function applyEnvironment() {
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
     sun.intensity = 3.0;
-    sun.color.set(0xffffff);
+    if (state.sunColourOverride === null) sun.color.set(0xffffff);
     sun.shadow.radius = 1;
     hemi.intensity = 0.5;
     // Light concretes were clipping to white under the room environment plus
@@ -2346,6 +2365,15 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
     if (state.environmentMode === "sky") regenerateEnvironment();
   });
 }
+// S5: the colour input owns the light's colour outright once touched;
+// applyEnvironment's preset writes check the override before setting
+// sun.color, so this survives an environment/background redraw until the
+// next weather-preset change, which nulls it (colour only, no PMREM: the
+// sky uniform and the studio room environment neither one reads sun.color).
+document.getElementById("sun-colour").addEventListener("input", (e) => {
+  state.sunColourOverride = e.target.value;
+  sun.color.set(e.target.value);
+});
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
 document.getElementById("brightness").addEventListener("input", (e) => {
   state.brightness = +e.target.value;
@@ -2428,6 +2456,7 @@ document.getElementById("hdri-rotation").addEventListener("change", () => {
 });
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;
+  state.sunColourOverride = null; // a new preset picks the colour again
   const preset = WEATHER[e.target.value];
   if (preset.elevation !== null) {
     document.getElementById("sun-elevation").value = preset.elevation;
@@ -3124,6 +3153,14 @@ async function recordAnimation() {
   state.recording = true;   // resize() must skip while this is set
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
+      if (state.dayCycle.record) {
+        // Deterministic: frameIndex alone drives u, so a recording is
+        // reproducible frame for frame like applyTimeline already is. The
+        // day maps over the whole recording, so layering it with the build
+        // timeline is a deliberate choice a user who checks the box makes.
+        applyDayCycle(frameIndex / Math.max(1, total - 1));
+        if (state.environmentMode === "sky" && frameIndex % 30 === 0) regenerateEnvironment();
+      }
       applyTimeline(frameIndex * speed / fps);
       renderView();
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -3151,6 +3188,28 @@ async function recordAnimation() {
   }
 }
 document.getElementById("record-button").addEventListener("click", recordAnimation);
+
+// ---------- day cycle ----------
+// S5: frame() is the only wall-clock advancer (see below); this button
+// only arms/disarms state.dayCycle.playing and captures the elevation the
+// arc peaks at, exactly as play-button arms state.timeline.playing.
+document.getElementById("day-cycle-button").addEventListener("click", () => {
+  if (state.dayCycle.playing) {
+    state.dayCycle.playing = false;
+    document.getElementById("day-cycle-button").textContent = "Day cycle";
+    return;
+  }
+  state.dayCycle.peakElevation = +document.getElementById("sun-elevation").value;
+  state.dayCycle.t = 0;
+  state.dayCycle.playing = true;
+  document.getElementById("day-cycle-button").textContent = "Pause";
+});
+document.getElementById("day-cycle-seconds").addEventListener("input", (e) => {
+  state.dayCycle.seconds = +e.target.value;
+});
+document.getElementById("day-cycle-record").addEventListener("change", (e) => {
+  state.dayCycle.record = e.target.checked;
+});
 
 // ---------- render loop ----------
 function resize() {
@@ -3207,6 +3266,7 @@ document.getElementById("inflate-seconds").addEventListener("input", (e) => {
 
 let lastTime = performance.now();
 let playingFrameCount = 0;
+let dayCycleFrames = 0;
 function frame(now) {
   const delta = Math.min(0.1, (now - lastTime) / 1000);
   lastTime = now;
@@ -3224,6 +3284,23 @@ function frame(now) {
     playingFrameCount += 1;
     if (playingFrameCount % 15 === 0) updateHud();
   }
+  if (state.dayCycle.playing) {
+    state.dayCycle.t = Math.min(state.dayCycle.t + delta, state.dayCycle.seconds);
+    applyDayCycle(state.dayCycle.t / state.dayCycle.seconds);
+    dayCycleFrames += 1;
+    // PMREM at most every 30 frames while the sky follows the sun, and once
+    // more on the final frame so the ambient lands exactly at sunset.
+    if (state.environmentMode === "sky" && (dayCycleFrames % 30 === 0
+        || state.dayCycle.t >= state.dayCycle.seconds)) regenerateEnvironment();
+    if (state.dayCycle.t >= state.dayCycle.seconds) {
+      state.dayCycle.playing = false;
+      // The colour input holds the cycle's final (sunset) value; without
+      // this, the next applyEnvironment call (a slider nudge, a mode
+      // change) would overwrite it with the active preset's own colour.
+      state.sunColourOverride = document.getElementById("sun-colour").value;
+      document.getElementById("day-cycle-button").textContent = "Day cycle";
+    }
+  }
   if (state.timeline && document.activeElement !== scrubber) {
     scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   }
@@ -3238,6 +3315,9 @@ requestAnimationFrame(frame);
 // The probe rig reads app state through this hook. Camera and controls are
 // exported too so a capture run can frame a detail (the rim, a joint) that
 // the default framing, tuned for a full-size vault, leaves illegible.
-window.__studio = { state, scene, camera, controls };
+// applyDayCycle is exposed too (Task 3), so a probe can drive u directly
+// through the real pure function instead of re-deriving its formula in
+// probe-script JS, which would drift from the function it is meant to check.
+window.__studio = { state, scene, camera, controls, applyDayCycle };
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

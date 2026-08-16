@@ -1961,9 +1961,12 @@ def test_the_ground_presets_swap_one_discs_material():
 
 def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "window.__studio = { state, scene, camera, controls }" in js, (
+    assert "window.__studio = { state, scene, camera, controls, applyDayCycle }" in js, (
         "the probe rig reads app state through this hook, and frames "
-        "detail captures through the camera and controls")
+        "detail captures through the camera and controls; applyDayCycle is "
+        "exposed too (Task 3) so a probe can drive the day cycle directly "
+        "instead of re-deriving its formula in probe script JS, which would "
+        "drift from the pure function it is meant to be checking")
 
 
 def test_the_postprocessing_addons_are_vendored():
@@ -2031,3 +2034,27 @@ def test_banners_dismiss_themselves_and_close():
     assert "mouseenter" in js and "mouseleave" in js
     for name in ("logStudio", "showBanner"):
         assert "state.timeline" not in _function_body(js, name)
+
+
+def test_the_sun_colour_is_overridable_until_the_next_preset():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="sun-colour"' in html and 'type="color"' in html
+    assert "sunColourOverride" in js
+    # Preset changes reset the override; the override wins between presets.
+    weather = js[js.index('document.getElementById("weather-preset")'):]
+    assert "sunColourOverride = null" in weather[:600]
+
+
+def test_the_day_cycle_is_a_pure_second_clock():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for control in ("day-cycle-button", "day-cycle-seconds", "day-cycle-record"):
+        assert 'id="{}"'.format(control) in html
+    body = _function_body(js, "applyDayCycle")
+    for banned in ("performance.now", "Date.now", "state.timeline", "setTimeout"):
+        assert banned not in body
+    assert "peakElevation" in body
+    # frame() is the only advancer; recording drives u deterministically.
+    assert "state.dayCycle.t" in _function_body(js, "frame")
+    assert "applyDayCycle(" in _function_body(js, "recordAnimation")

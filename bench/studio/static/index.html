@@ -127,6 +127,12 @@
     </div>
     <label>Sun azimuth <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140"></label>
     <label>Sun elevation <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40"></label>
+    <label>Sun colour <input id="sun-colour" type="color" value="#ffffff"></label>
+    <div id="day-cycle-row">
+      <button id="day-cycle-button">Day cycle</button>
+      <label>Length <input id="day-cycle-seconds" type="range" min="10" max="120" step="5" value="30"></label>
+      <label><input id="day-cycle-record" type="checkbox"> During recordings</label>
+    </div>
     <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
     <label>Brightness <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1"></label>
     <label>Contrast <input id="contrast" type="range" min="-0.5" max="0.5" step="0.02" value="0"></label>
