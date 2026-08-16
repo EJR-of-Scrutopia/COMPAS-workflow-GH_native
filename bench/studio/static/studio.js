@@ -3063,13 +3063,23 @@ function applySceneAtTime(t) {
   // applyShowMode's comment above the "both" branch has the full diagnosis
   // and the normal-direction caveat. It is additive with the strike's own
   // drop so the net still lands 1.5 m clear of the shell once struck.
-  const netClearance = state.bundle.provenance.thickness / 2 + state.wireRadius;
+  // Fix round 1: wires and nodes are separate InstancedMeshes with separate
+  // radii (state.wireRadius, state.nodeRadius, default 0.02 / 0.03, both
+  // user-adjustable up to 0.10 via the Node/Wire size sliders) -- a shared
+  // clearance under-cleared whichever one had the bigger radius, and the
+  // Node size slider alone could push the white dots back through the
+  // shell at any clearance computed from wireRadius. Each object clears by
+  // its own radius.
+  const clearance = {
+    wires: state.bundle.provenance.thickness / 2 + state.wireRadius,
+    nodes: state.bundle.provenance.thickness / 2 + state.nodeRadius,
+  };
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
     object.visible = strikeU < 1;
     object.material.opacity = 1 - strikeU;
-    object.position.z = netClearance - 1.5 * strikeU;
+    object.position.z = clearance[key] - 1.5 * strikeU;
   }
   // The pulse is a Timeline effect: build is the elapsed drop-order clock
   // and has no meaning in Framework/Shell/Both, which show a fixed rest
@@ -3133,7 +3143,7 @@ function applyShowMode() {
   // .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-before.png
   // and the tight crown-seam-both-closeup-before.png beside it, which shows
   // one wire segment and one node sphere both breaking the surface.
-  // Pushing the net along +Z by half the built thickness plus the wire
+  // Pushing the net along +Z by half the built thickness plus its own
   // radius is a display-only fix, not a re-derivation of the true offset
   // surface: it approximates "outward along the local normal" and is only
   // guaranteed to clear the shell where that normal is close to vertical,
@@ -3142,12 +3152,19 @@ function applyShowMode() {
   // springing, where the net was already comfortably inside the shell.
   // Framework mode has no shell to clash with, so it keeps rendering the
   // net at its true mid-surface position, z = 0, for the form-finding
-  // diagram.
-  const netClearance = state.showMode === "both"
+  // diagram. Fix round 1: wires and nodes are separate InstancedMeshes at
+  // separate, independently user-adjustable radii (state.wireRadius,
+  // state.nodeRadius), so each clears the shell by its OWN radius -- a
+  // shared clearance under-cleared whichever one was bigger, and growing
+  // the Node size slider alone could push the white dots back through.
+  const wireClearance = state.showMode === "both"
     ? state.bundle.provenance.thickness / 2 + state.wireRadius
     : 0;
-  state.objects.wires.position.z = netClearance;
-  state.objects.nodes.position.z = netClearance;
+  const nodeClearance = state.showMode === "both"
+    ? state.bundle.provenance.thickness / 2 + state.nodeRadius
+    : 0;
+  state.objects.wires.position.z = wireClearance;
+  state.objects.nodes.position.z = nodeClearance;
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";

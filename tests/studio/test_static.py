@@ -1757,9 +1757,13 @@ def test_the_show_select_offers_four_exclusive_modes():
     # at the crown (test_static.py cannot see the picture; the probe
     # captures crown-seam-both-before.png / -closeup-before.png are the
     # evidence). Framework still restores the true z = 0; Both now clears
-    # the shell by half its thickness plus the wire radius instead.
+    # the shell by half its thickness plus each object's OWN radius --
+    # fix round 1 gave wires and nodes separate clearances (see
+    # test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam),
+    # since a shared wireRadius-only clearance under-cleared the nodes.
     assert 'state.showMode === "both"' in body
-    assert "position.z = netClearance" in body
+    assert "position.z = wireClearance" in body
+    assert "position.z = nodeClearance" in body
 
 
 def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():
@@ -1779,19 +1783,31 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
     #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-closeup-before.png
     #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-timeline-strike-950-before.png
     # and their -after equivalents once the fix below landed. The fix is a
-    # display-only nudge along +Z by half the built thickness plus the wire
-    # radius -- an approximation of "outward along the local normal" that
-    # only holds where that normal is close to vertical, which is exactly
-    # the shallow crown where the seam showed (see the comments beside each
-    # assertion's source for the caveat spelled out in full).
+    # display-only nudge along +Z by half the built thickness plus each
+    # object's OWN radius -- an approximation of "outward along the local
+    # normal" that only holds where that normal is close to vertical, which
+    # is exactly the shallow crown where the seam showed (see the comments
+    # beside each assertion's source for the caveat spelled out in full).
+    #
+    # Fix round 1 (review finding, Medium): the first cut shared one
+    # clearance (thickness/2 + wireRadius) between wires AND nodes, but
+    # nodes are a separate InstancedMesh at state.nodeRadius (default 0.03
+    # vs wireRadius's 0.02, independently adjustable up to 0.10 via the
+    # Node size slider) -- a node's nearest point sat at
+    # clearance - nodeRadius, under-cleared by the radius difference, and
+    # growing Node size alone could push the white dots back through the
+    # shell: the exact reported symptom. Each object now clears by its own
+    # radius, both sites.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     show_body = _function_body(js, "applyShowMode")
     assert "state.bundle.provenance.thickness / 2 + state.wireRadius" in show_body
+    assert "state.bundle.provenance.thickness / 2 + state.nodeRadius" in show_body
     scene_body = _function_body(js, "applySceneAtTime")
-    assert "const netClearance = state.bundle.provenance.thickness / 2 + state.wireRadius" in scene_body
+    assert "wires: state.bundle.provenance.thickness / 2 + state.wireRadius," in scene_body
+    assert "nodes: state.bundle.provenance.thickness / 2 + state.nodeRadius," in scene_body
     # The strike's own drop is additive with the clearance, so the net still
     # lands 1.5 m clear of the shell once fully struck (strikeU = 1).
-    assert "netClearance - 1.5 * strikeU" in scene_body
+    assert "clearance[key] - 1.5 * strikeU" in scene_body
 
 
 def test_the_formwork_default_is_hidden():
