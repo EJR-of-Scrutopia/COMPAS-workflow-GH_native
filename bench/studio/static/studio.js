@@ -36,6 +36,8 @@ const state = {
   hdriRotation: 0,      // degrees, spins the dome/background about the world vertical
   hdriEstimateAzimuth: null, // raw pixel-estimated azimuth from the last loadHdri; lets the rotation slider re-aim the sun without re-scanning pixels
   sunColourOverride: null,   // S5: hex string once the sun-colour input is touched; null lets a preset choose the colour again
+  sunIntensityOverride: null, // F4: sun.intensity captured once a day cycle finishes; null lets a preset choose the intensity again, exactly like sunColourOverride
+  sunElevationSetting: 40,   // F1: the #sun-elevation slider's own value, written only by its own input handler; the day cycle reads its peak from here, never from the slider itself (applyDayCycle also writes that slider, clamped for display -- see applyDayCycle)
   dayCycle: { playing: false, t: 0, seconds: 30, peakElevation: 40, record: false }, // S5
   brightness: 1,     // R2: multiplier on the active mode's exposure base
   contrast: 0,       // R2: BrightnessContrastShader contrast, display space
@@ -162,12 +164,20 @@ const WEATHER = {
   },
 };
 
-function applySunFromSliders() {
-  const az = THREE.MathUtils.degToRad(+document.getElementById("sun-azimuth").value);
-  const el = THREE.MathUtils.degToRad(+document.getElementById("sun-elevation").value);
+// F1: the shared position math, callable with an unclamped elevation so
+// applyDayCycle can render a genuine sub-5-degree dawn (and a captured low
+// peak) even though the slider it also writes for display cannot show a
+// value under its own min="5" -- see applyDayCycle.
+function applySunAt(azimuthDeg, elevationDeg) {
+  const az = THREE.MathUtils.degToRad(azimuthDeg);
+  const el = THREE.MathUtils.degToRad(elevationDeg);
   const r = 60;
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
   sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
+}
+
+function applySunFromSliders() {
+  applySunAt(+document.getElementById("sun-azimuth").value, +document.getElementById("sun-elevation").value);
 }
 
 // S5: the day as a pure function of u in [0,1]. Azimuth sweeps west to
@@ -175,16 +185,20 @@ function applySunFromSliders() {
 // start; colour and intensity ramp warm-dim, white-bright, warm-dim.
 // Writes the sliders and the colour input so the UI tells the truth.
 function applyDayCycle(u) {
-  const azimuth = 270 - 180 * u;
+  const azimuthDeg = ((270 - 180 * u) % 360 + 360) % 360;
   const elevation = 2 + (state.dayCycle.peakElevation - 2) * Math.sin(Math.PI * u);
   const warmth = 1 - Math.sin(Math.PI * u);
   const colour = new THREE.Color().setHSL(0.08, 0.55 * warmth, 0.5 + 0.3 * (1 - warmth));
-  document.getElementById("sun-azimuth").value = Math.round(((azimuth % 360) + 360) % 360);
-  document.getElementById("sun-elevation").value = Math.round(elevation);
+  document.getElementById("sun-azimuth").value = Math.round(azimuthDeg);
+  // F1: the slider's own min="5" cannot display a lower value, but the
+  // sun position below is driven off the unclamped elevation, not this
+  // display write -- otherwise a captured peak, or the arc's own 2 degree
+  // dawn, would flatten the instant either one touched the floor.
+  document.getElementById("sun-elevation").value = Math.round(Math.max(5, elevation));
   document.getElementById("sun-colour").value = "#" + colour.getHexString();
   sun.color.copy(colour);
   sun.intensity = 0.8 + 2.4 * Math.sin(Math.PI * u);
-  applySunFromSliders();
+  applySunAt(azimuthDeg, elevation);
 }
 
 function setEnvironmentTexture(texture, target) {
@@ -216,8 +230,17 @@ function applyEnvironment() {
     scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
-    sun.intensity = preset.sunIntensity;
-    if (state.sunColourOverride === null) sun.color.set(preset.sunColor);
+    // F4: a day cycle's captured intensity survives an environment redraw
+    // the same way its captured colour already does, below.
+    if (state.sunIntensityOverride === null) sun.intensity = preset.sunIntensity;
+    // F3: the colour input must show the truth. A preset write bypasses the
+    // input's own "input" handler (the only other place that sets
+    // sun.color), so it has to sync #sun-colour itself or the swatch keeps
+    // showing whatever an earlier override or preset left behind.
+    if (state.sunColourOverride === null) {
+      sun.color.set(preset.sunColor);
+      document.getElementById("sun-colour").value = "#" + sun.color.getHexString();
+    }
     sun.shadow.radius = preset.shadowRadius;
     hemi.intensity = preset.hemisphere;
     state.exposureBase = preset.exposure;
@@ -236,8 +259,11 @@ function applyEnvironment() {
     scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
-    sun.intensity = 3.0;
-    if (state.sunColourOverride === null) sun.color.set(0xffffff);
+    if (state.sunIntensityOverride === null) sun.intensity = 3.0;
+    if (state.sunColourOverride === null) {
+      sun.color.set(0xffffff);
+      document.getElementById("sun-colour").value = "#" + sun.color.getHexString();
+    }
     sun.shadow.radius = 1;
     hemi.intensity = 0.5;
     // Light concretes were clipping to white under the room environment plus
@@ -2402,6 +2428,15 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
     if (state.environmentMode === "sky") regenerateEnvironment();
   });
 }
+// F1: state.sunElevationSetting tracks only what the slider itself was set
+// to by hand. applyDayCycle also writes this same slider's value (clamped
+// to its min="5" for display -- see applyDayCycle), and that write must
+// NOT feed back into the day cycle's own peak, or the peak degrades toward
+// the slider's floor a little more on every play. This listener is the
+// only writer of state.sunElevationSetting.
+document.getElementById("sun-elevation").addEventListener("input", (e) => {
+  state.sunElevationSetting = +e.target.value;
+});
 // S5: the colour input owns the light's colour outright once touched;
 // applyEnvironment's preset writes check the override before setting
 // sun.color, so this survives an environment/background redraw until the
@@ -2494,6 +2529,7 @@ document.getElementById("hdri-rotation").addEventListener("change", () => {
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;
   state.sunColourOverride = null; // a new preset picks the colour again
+  state.sunIntensityOverride = null; // F4: same reset, for the intensity override
   const preset = WEATHER[e.target.value];
   if (preset.elevation !== null) {
     document.getElementById("sun-elevation").value = preset.elevation;
@@ -3330,13 +3366,23 @@ function applyTimeline(t) {
 async function recordAnimation() {
   const status = document.getElementById("record-status");
   if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
+  // F1: capture the peak from the same source the day-cycle button reads,
+  // not the slider -- applyDayCycle's own writes below clamp that slider
+  // for display, and reading it back here would let a mid-recording clamp
+  // feed into the very peak the recording is driven from.
+  if (state.dayCycle.record) state.dayCycle.peakElevation = state.sunElevationSetting;
   const target = "study-" + state.bundle.slug;
   const fps = 60;
   const speed = state.timeline.speed;
   const total = Math.ceil(timelineDuration() / speed * fps);
   status.textContent = "recording " + total + " frames at 1080p (a few MB each on disk)";
   const wasPlaying = state.timeline.playing;
+  // F2: a live day cycle must not keep advancing off frame()'s wall clock
+  // while the recording also drives it off frameIndex -- two clocks racing
+  // the same state would make a recording non-deterministic.
+  const wasDayCyclePlaying = state.dayCycle.playing;
   state.timeline.playing = false;
+  state.dayCycle.playing = false;
   renderer.setSize(1920, 1080, false);
   composer.setSize(1920, 1080);
   camera.aspect = 1920 / 1080;
@@ -3361,6 +3407,14 @@ async function recordAnimation() {
       if (!response.ok) throw new Error("frame upload failed: " + response.status);
       if (frameIndex % 30 === 0) status.textContent = "frame " + frameIndex + " / " + total;
     }
+    if (state.dayCycle.record) {
+      // F4: persist the recording's own final sun state, the same way
+      // frame()'s live day cycle already does at the end of a play, so the
+      // next redraw (a slider nudge, a mode change) does not silently
+      // revert the sun mid-review.
+      state.sunColourOverride = document.getElementById("sun-colour").value;
+      state.sunIntensityOverride = sun.intensity;
+    }
     status.textContent = "stitching...";
     const stitched = await fetch("/api/frames/" + target + "/stitch?fps=" + fps, { method: "POST" });
     const body = await stitched.json();
@@ -3376,6 +3430,7 @@ async function recordAnimation() {
     // next frame().
     state.recording = false;
     state.timeline.playing = wasPlaying;
+    state.dayCycle.playing = wasDayCyclePlaying;
   }
 }
 document.getElementById("record-button").addEventListener("click", recordAnimation);
@@ -3390,7 +3445,12 @@ document.getElementById("day-cycle-button").addEventListener("click", () => {
     document.getElementById("day-cycle-button").textContent = "Day cycle";
     return;
   }
-  state.dayCycle.peakElevation = +document.getElementById("sun-elevation").value;
+  // F1: read the slider's own last hand-set value, not its live display --
+  // applyDayCycle also writes this slider (clamped to its min="5" for
+  // display), so reading .value here would let a previous cycle's clamped
+  // display become the next cycle's peak, flattening the sun a little more
+  // on every play.
+  state.dayCycle.peakElevation = state.sunElevationSetting;
   state.dayCycle.t = 0;
   state.dayCycle.playing = true;
   document.getElementById("day-cycle-button").textContent = "Pause";
@@ -3488,7 +3548,10 @@ function frame(now) {
       // The colour input holds the cycle's final (sunset) value; without
       // this, the next applyEnvironment call (a slider nudge, a mode
       // change) would overwrite it with the active preset's own colour.
+      // F4: the intensity gets the same treatment, so a sunset that ends
+      // dim does not snap back to the preset's full daylight brightness.
       state.sunColourOverride = document.getElementById("sun-colour").value;
+      state.sunIntensityOverride = sun.intensity;
       document.getElementById("day-cycle-button").textContent = "Day cycle";
     }
   }

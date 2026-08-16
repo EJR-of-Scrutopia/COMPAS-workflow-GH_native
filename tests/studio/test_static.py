@@ -2098,9 +2098,19 @@ def test_the_sun_colour_is_overridable_until_the_next_preset():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     assert 'id="sun-colour"' in html and 'type="color"' in html
     assert "sunColourOverride" in js
+    # F4: the intensity override is a second, symmetrical flag; a captured
+    # day-cycle intensity must survive an environment redraw exactly like
+    # the captured colour already does.
+    assert "sunIntensityOverride" in js
     # Preset changes reset the override; the override wins between presets.
     weather = js[js.index('document.getElementById("weather-preset")'):]
     assert "sunColourOverride = null" in weather[:600]
+    assert "sunIntensityOverride = null" in weather[:600]
+    # F3: applyEnvironment must sync the input itself when a preset (not an
+    # override) picks the colour, or the swatch can show a stale colour --
+    # a previous preset's or an already-cleared override's -- while the sun
+    # is actually lit some other colour entirely.
+    assert 'getElementById("sun-colour")' in _function_body(js, "applyEnvironment")
 
 
 def test_the_day_cycle_is_a_pure_second_clock():
@@ -2112,9 +2122,41 @@ def test_the_day_cycle_is_a_pure_second_clock():
     for banned in ("performance.now", "Date.now", "state.timeline", "setTimeout"):
         assert banned not in body
     assert "peakElevation" in body
+    # F1: the #sun-elevation slider's own min="5" can only clamp the DISPLAY
+    # write; the real sun position must come from the unclamped elevation
+    # (through applySunAt), or a captured low peak -- or the arc's own 2
+    # degree dawn -- flattens the instant it touches the floor.
+    assert "applySunAt(" in body
+    assert "Math.max(5, elevation)" in body
     # frame() is the only advancer; recording drives u deterministically.
     assert "state.dayCycle.t" in _function_body(js, "frame")
     assert "applyDayCycle(" in _function_body(js, "recordAnimation")
+    # F2: recordAnimation must pause a live day cycle the same way it
+    # already pauses the build timeline, or the two clocks race the same
+    # state (state.dayCycle.t) while a recording drives it off frameIndex.
+    assert "dayCycle.playing" in _function_body(js, "recordAnimation")
+
+
+def test_the_day_cycle_peak_is_captured_from_the_hand_set_slider_value():
+    # F1, the headline finding: applyDayCycle writes #sun-elevation's value
+    # every frame, clamped to the slider's own min="5" for display. Both the
+    # button and a day-cycle recording used to capture their peak by
+    # re-reading that same slider, so a played-out cycle's clamped display
+    # became the NEXT cycle's peak -- the captured peak degraded to 5 after
+    # one full cycle, and every later play ran a flat sun. The peak must
+    # come from state.sunElevationSetting, written only by the slider's own
+    # input handler, never from the slider's live .value.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "sunElevationSetting: 40" in js
+    elevation_input_start = js.index('getElementById("sun-elevation").addEventListener("input"')
+    elevation_input_body = js[elevation_input_start:js.index("\n});", elevation_input_start)]
+    assert "state.sunElevationSetting = +e.target.value" in elevation_input_body
+    button_start = js.index('getElementById("day-cycle-button")')
+    button_body = js[button_start:js.index("\n});", button_start)]
+    assert "state.dayCycle.peakElevation = state.sunElevationSetting" in button_body
+    assert 'peakElevation = +document.getElementById("sun-elevation").value' not in button_body
+    record_body = _function_body(js, "recordAnimation")
+    assert "state.dayCycle.peakElevation = state.sunElevationSetting" in record_body
 
 
 def test_appearance_overrides_are_render_only_and_persist():
