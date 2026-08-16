@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
+import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
@@ -29,6 +30,15 @@ const state = {
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
+  hdriProjection: "projected", // Task 2: "projected" builds a GroundedSkybox dome; "infinite" is the flat equirect background
+  hdriScale: 60,       // GroundedSkybox radius, metres
+  hdriHeight: 2,        // GroundedSkybox height (camera height above ground in the source photo), metres
+  hdriRotation: 0,      // degrees, spins the dome/background about the world vertical
+  hdriEstimateAzimuth: null, // raw pixel-estimated azimuth from the last loadHdri; lets the rotation slider re-aim the sun without re-scanning pixels
+  sunColourOverride: null,   // S5: hex string once the sun-colour input is touched; null lets a preset choose the colour again
+  sunIntensityOverride: null, // F4: sun.intensity captured once a day cycle finishes; null lets a preset choose the intensity again, exactly like sunColourOverride
+  sunElevationSetting: 40,   // F1: the #sun-elevation slider's own value, written only by its own input handler; the day cycle reads its peak from here, never from the slider itself (applyDayCycle also writes that slider, clamped for display -- see applyDayCycle)
+  dayCycle: { playing: false, t: 0, seconds: 30, peakElevation: 40, record: false }, // S5
   brightness: 1,     // R2: multiplier on the active mode's exposure base
   contrast: 0,       // R2: BrightnessContrastShader contrast, display space
   exposureBase: 0.85, // written by applyEnvironment per mode and preset
@@ -54,6 +64,11 @@ const state = {
   patternChosen: false, // an explicit pattern choice survives material changes
   loadSequence: 0,      // bundle request token: only the newest response lands
   reloadTimer: null,    // the settle timer behind size and thickness commits
+  // Task 5: render-only overrides, keyed to the loaded ANALYSIS material
+  // and persisted per material under "bench-studio-appearance:" + material
+  // (see restoreAppearance/persistAppearance). null means no override; the
+  // registry material (or a skin) shows through untouched.
+  appearance: { tint: null, finish: null, skin: "none" },
 };
 
 const canvas = document.getElementById("view");
@@ -77,6 +92,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = studioEnvironment;
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
+let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
 
 // R2: render, tone-map to display space, then grade. Contrast pivots
 // around mid grey, which is only meaningful AFTER tone mapping, so the
@@ -148,12 +164,41 @@ const WEATHER = {
   },
 };
 
-function applySunFromSliders() {
-  const az = THREE.MathUtils.degToRad(+document.getElementById("sun-azimuth").value);
-  const el = THREE.MathUtils.degToRad(+document.getElementById("sun-elevation").value);
+// F1: the shared position math, callable with an unclamped elevation so
+// applyDayCycle can render a genuine sub-5-degree dawn (and a captured low
+// peak) even though the slider it also writes for display cannot show a
+// value under its own min="5" -- see applyDayCycle.
+function applySunAt(azimuthDeg, elevationDeg) {
+  const az = THREE.MathUtils.degToRad(azimuthDeg);
+  const el = THREE.MathUtils.degToRad(elevationDeg);
   const r = 60;
   sun.position.set(r * Math.cos(el) * Math.cos(az), r * Math.cos(el) * Math.sin(az), r * Math.sin(el));
   sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
+}
+
+function applySunFromSliders() {
+  applySunAt(+document.getElementById("sun-azimuth").value, +document.getElementById("sun-elevation").value);
+}
+
+// S5: the day as a pure function of u in [0,1]. Azimuth sweeps west to
+// east through south; elevation is a sine arc to the peak captured at
+// start; colour and intensity ramp warm-dim, white-bright, warm-dim.
+// Writes the sliders and the colour input so the UI tells the truth.
+function applyDayCycle(u) {
+  const azimuthDeg = ((270 - 180 * u) % 360 + 360) % 360;
+  const elevation = 2 + (state.dayCycle.peakElevation - 2) * Math.sin(Math.PI * u);
+  const warmth = 1 - Math.sin(Math.PI * u);
+  const colour = new THREE.Color().setHSL(0.08, 0.55 * warmth, 0.5 + 0.3 * (1 - warmth));
+  document.getElementById("sun-azimuth").value = Math.round(azimuthDeg);
+  // F1: the slider's own min="5" cannot display a lower value, but the
+  // sun position below is driven off the unclamped elevation, not this
+  // display write -- otherwise a captured peak, or the arc's own 2 degree
+  // dawn, would flatten the instant either one touched the floor.
+  document.getElementById("sun-elevation").value = Math.round(Math.max(5, elevation));
+  document.getElementById("sun-colour").value = "#" + colour.getHexString();
+  sun.color.copy(colour);
+  sun.intensity = 0.8 + 2.4 * Math.sin(Math.PI * u);
+  applySunAt(azimuthDeg, elevation);
 }
 
 function setEnvironmentTexture(texture, target) {
@@ -172,6 +217,7 @@ function applyEnvironment() {
   document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
   document.getElementById("weather-row").classList.toggle("hidden", state.environmentMode !== "sky");
   document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
+  if (state.environmentMode !== "hdri") disposeHdriDome();
   if (state.environmentMode === "sky") {
     const preset = WEATHER[state.weatherPreset];
     const uniforms = sky.material.uniforms;
@@ -184,8 +230,17 @@ function applyEnvironment() {
     scene.fog = new THREE.Fog(preset.fogColor, preset.fogNear, preset.fogFar);
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
-    sun.intensity = preset.sunIntensity;
-    sun.color.set(preset.sunColor);
+    // F4: a day cycle's captured intensity survives an environment redraw
+    // the same way its captured colour already does, below.
+    if (state.sunIntensityOverride === null) sun.intensity = preset.sunIntensity;
+    // F3: the colour input must show the truth. A preset write bypasses the
+    // input's own "input" handler (the only other place that sets
+    // sun.color), so it has to sync #sun-colour itself or the swatch keeps
+    // showing whatever an earlier override or preset left behind.
+    if (state.sunColourOverride === null) {
+      sun.color.set(preset.sunColor);
+      document.getElementById("sun-colour").value = "#" + sun.color.getHexString();
+    }
     sun.shadow.radius = preset.shadowRadius;
     hemi.intensity = preset.hemisphere;
     state.exposureBase = preset.exposure;
@@ -193,11 +248,7 @@ function applyEnvironment() {
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
     scene.fog = null;
-    // Equirects are authored Y-up; the scene is Z-up, so both samplers
-    // rotate a quarter turn about X (E3).
-    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
-    scene.backgroundRotation.set(Math.PI / 2, 0, 0);
-    scene.environmentRotation.set(Math.PI / 2, 0, 0);
+    applyHdriBackdrop();
     hemi.intensity = 0.25;
     state.exposureBase = 0.7;
     scene.environmentIntensity = 1.0;
@@ -208,8 +259,11 @@ function applyEnvironment() {
     scene.background = new THREE.Color().setHSL(0.6, 0.08, 0.06 + 0.5 * tone);
     scene.backgroundRotation.set(0, 0, 0);
     scene.environmentRotation.set(0, 0, 0);
-    sun.intensity = 3.0;
-    sun.color.set(0xffffff);
+    if (state.sunIntensityOverride === null) sun.intensity = 3.0;
+    if (state.sunColourOverride === null) {
+      sun.color.set(0xffffff);
+      document.getElementById("sun-colour").value = "#" + sun.color.getHexString();
+    }
     sun.shadow.radius = 1;
     hemi.intensity = 0.5;
     // Light concretes were clipping to white under the room environment plus
@@ -237,6 +291,55 @@ function regenerateEnvironment() {
   }
 }
 
+function disposeHdriDome() {
+  // hdriDome is a Group (the Z-up quarter turn) wrapping the one
+  // GroundedSkybox mesh (the Y-up dome); the mesh owns the disposable
+  // geometry and material.
+  if (!hdriDome) return;
+  scene.remove(hdriDome);
+  const dome = hdriDome.children[0];
+  dome.geometry.dispose();
+  dome.material.dispose();
+  hdriDome = null;
+}
+
+function applyHdriBackdrop() {
+  // Task 2: hdri mode's backdrop is either a ground-projected dome
+  // (state.hdriProjection === "projected") or the flat infinite equirect
+  // background used before this task. Both read state.hdriRotation, so a
+  // full rebuild covers projection, scale, height and rotation changes
+  // alike; the rotation slider's "input" handler moves the live dome/
+  // background directly instead of paying for a rebuild every drag tick.
+  disposeHdriDome();
+  document.getElementById("hdri-scale-row").classList.toggle("hidden", state.hdriProjection !== "projected");
+  document.getElementById("hdri-height-row").classList.toggle("hidden", state.hdriProjection !== "projected");
+  const rotation = THREE.MathUtils.degToRad(state.hdriRotation);
+  // Equirects are authored Y-up; the scene is Z-up, so the environment
+  // sampler rotates a quarter turn about X, same as the old flat backdrop.
+  scene.environmentRotation.set(Math.PI / 2, 0, rotation);
+  if (state.hdriProjection === "projected" && state.hdriTexture) {
+    const dome = new GroundedSkybox(state.hdriTexture, state.hdriHeight, state.hdriScale);
+    // GroundedSkybox is centred on the camera by default; position.y lifts
+    // its flattened ground disc up to the dome's own origin (three's own
+    // documented usage), then the wrapping group's x = PI/2 stands the
+    // whole thing up so that disc lands on the scene's z = 0 ground. The
+    // user's rotation is about the world vertical, which -- before that
+    // quarter turn is applied -- is the dome's own local Y axis, so it is
+    // set on the dome (not the group).
+    dome.position.y = state.hdriHeight;
+    dome.rotation.y = rotation;
+    const group = new THREE.Group();
+    group.rotation.x = Math.PI / 2;
+    group.add(dome);
+    scene.add(group);
+    hdriDome = group;
+    scene.background = null;
+  } else {
+    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
+    scene.backgroundRotation.set(Math.PI / 2, 0, rotation);
+  }
+}
+
 async function refreshHdriList(selectName) {
   // null signals a failed fetch, already bannered here: callers must stop
   // rather than fall through to loadHdri, which would fail the same fetch
@@ -246,7 +349,7 @@ async function refreshHdriList(selectName) {
   try {
     ({ files } = await fetchJson("/api/hdri"));
   } catch (error) {
-    showBanner("Failed to load the HDRI list: " + error.message);
+    showBanner("Failed to load the HDRI list: " + error.message, "error");
     return null;
   }
   const select = document.getElementById("hdri-select");
@@ -285,8 +388,12 @@ async function loadHdri(name) {
     // The estimator speaks image space. Three's equirect shader samples
     // u = atan2(dir.z, dir.x) / (2 * pi) + 0.5, and the backgroundRotation
     // quarter-turn is uploaded transposed, so world azimuth = 180 - image
-    // azimuth, not the negated image azimuth.
-    const azimuth = ((180 - estimate.azimuthDeg) % 360 + 360) % 360;
+    // azimuth, not the negated image azimuth. state.hdriRotation spins the
+    // dome/background on top of that, so it folds into the same sum; the
+    // raw estimate is kept so the rotation slider can redo this without
+    // re-scanning pixels (Task 2).
+    state.hdriEstimateAzimuth = estimate.azimuthDeg;
+    const azimuth = ((180 - estimate.azimuthDeg + state.hdriRotation) % 360 + 360) % 360;
     document.getElementById("sun-azimuth").value = Math.round(azimuth);
     document.getElementById("sun-elevation").value =
       Math.round(Math.min(85, Math.max(5, estimate.elevationDeg)));
@@ -297,12 +404,13 @@ async function loadHdri(name) {
     status.textContent = "";
     applyEnvironment();
     regenerateEnvironment();
+    logStudio("loaded hdri " + name);
   } catch (error) {
     // #hdri-status keeps progress text only; the failure itself goes to
     // the banner, named, so it cannot be missed off-screen or overwritten
     // by the next progress message.
     status.textContent = "";
-    showBanner("Could not load HDRI " + name + ": " + error.message);
+    showBanner("Could not load HDRI " + name + ": " + error.message, "error");
     regenerateEnvironment(); // keep the environment matching state.environmentMode even on failure
   }
 }
@@ -791,7 +899,7 @@ async function loadColumns(names) {
       mesh.castShadow = mesh.receiveShadow = true;
       group.add(mesh);
     } catch (error) {
-      showBanner("Column file " + name + " failed to load: " + error.message);
+      showBanner("Column file " + name + " failed to load: " + error.message, "error");
     }
   }
   return group;
@@ -1546,11 +1654,62 @@ function updateHud() {
   hud.textContent = lines.join("\n");
 }
 
-function showBanner(text) {
-  const banner = document.getElementById("banner");
-  banner.textContent = text;
-  banner.classList.remove("hidden");
+// The event log is UI chrome, not scene state: the purity contract below
+// covers the scene functions (applyTimeline, applySceneAtTime and their
+// kin), which must stay pure in t so a recording is deterministic. Reading
+// the wall clock here is unrelated to that; logStudio only timestamps a
+// line for the reader, it never drives anything drawn in the scene.
+const eventLog = { lines: [], timer: null };
+
+function logStudio(message) {
+  const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  eventLog.lines.push(stamp + "  " + message);
+  while (eventLog.lines.length > 7) eventLog.lines.shift();
+  const element = document.getElementById("event-log");
+  element.textContent = "";
+  for (const line of eventLog.lines) {
+    const row = document.createElement("div");
+    row.textContent = line;
+    element.appendChild(row);
+  }
+  element.classList.remove("faded");
+  if (eventLog.timer) clearTimeout(eventLog.timer);
+  eventLog.timer = setTimeout(() => element.classList.add("faded"), 8000);
 }
+
+const bannerState = { timer: null, remaining: 0, since: 0, level: "info" };
+
+function showBanner(text, level = "info") {
+  const banner = document.getElementById("banner");
+  document.getElementById("banner-text").textContent = text;
+  banner.classList.remove("hidden");
+  bannerState.level = level;
+  bannerState.remaining = level === "error" ? 12000 : 6000;
+  if (bannerState.timer) clearTimeout(bannerState.timer);
+  bannerState.since = Date.now();
+  bannerState.timer = setTimeout(
+    () => document.getElementById("banner").classList.add("hidden"),
+    bannerState.remaining);
+  logStudio(text);
+}
+
+function armBannerTimer() {
+  if (bannerState.timer) clearTimeout(bannerState.timer);
+  bannerState.since = Date.now();
+  bannerState.timer = setTimeout(
+    () => document.getElementById("banner").classList.add("hidden"),
+    bannerState.remaining);
+}
+
+document.getElementById("banner-close").addEventListener("click", () =>
+  document.getElementById("banner").classList.add("hidden"));
+document.getElementById("banner").addEventListener("mouseenter", () => {
+  if (bannerState.timer) clearTimeout(bannerState.timer);
+  bannerState.remaining -= Date.now() - bannerState.since;
+});
+document.getElementById("banner").addEventListener("mouseleave", () => {
+  if (bannerState.remaining > 0) armBannerTimer();
+});
 
 // ---------- data panel ----------
 // The residual is the SINE of an angle, which docs/BENCH.md quotes in
@@ -2016,6 +2175,11 @@ async function loadStudy(exportName) {
   // or study change fires two full server cuts instead of one.
   if (state.reloadTimer) { clearTimeout(state.reloadTimer); state.reloadTimer = null; }
   const material = document.getElementById("material-select").value;
+  // The incoming material's own stored appearance (or the defaults, if it
+  // has none) must be in place before the pieces below are built, or the
+  // first frame of a material switch briefly shows the PREVIOUS material's
+  // tint, finish and skin.
+  restoreAppearance(material);
   // The token: whoever increments last owns the screen. A response that
   // comes back to find a newer sequence number is dropped silently, so
   // two overlapping cuts can never race each other onto the canvas.
@@ -2028,6 +2192,10 @@ async function loadStudy(exportName) {
     + Math.round(state.size * 1000) + " mm pieces at "
     + Math.round(state.thickness * 1000) + " mm...";
   overlay.classList.remove("hidden");
+  // Cut timing: the elapsed time reuses the very pieces the "cutting..."
+  // status text above already assembled (materialLabel, the pattern, the
+  // size) rather than recomputing them a second way.
+  const startedAt = Date.now();
   const url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
@@ -2045,11 +2213,14 @@ async function loadStudy(exportName) {
       ? { f: state.timeline.t / timelineDuration(), playing: state.timeline.playing }
       : null;
     buildScene(fresh, preserve);
+    logStudio("loaded " + exportName + " (" + materialLabel + ", "
+      + patternLabel(state.pattern) + ", " + state.size + " m) in "
+      + ((Date.now() - startedAt) / 1000).toFixed(1) + "s");
   } catch (error) {
     if (sequence !== state.loadSequence) return;
     overlay.classList.add("hidden");
     status.textContent = "";
-    showBanner("Failed to load study: " + error.message);
+    showBanner("Failed to load study: " + error.message, "error");
   }
 }
 
@@ -2086,7 +2257,7 @@ async function boot(preferredExport) {
     }
     await reloadColumns(payload.columns);
   } catch (error) {
-    showBanner("Server not reachable: " + error.message);
+    showBanner("Server not reachable: " + error.message, "error");
   }
 }
 
@@ -2129,12 +2300,16 @@ async function importExportPair() {
     status.textContent = result.pair_complete
       ? "imported " + contractPrefix
       : "stored " + contractPrefix + "; pair incomplete";
+    logStudio(result.pair_complete
+      ? "imported export pair " + contractPrefix
+      : "stored " + contractPrefix + "; pair incomplete");
     input.value = "";
     // M2 fix: select and load the export that was just imported, instead
     // of leaving boot() to fall back to studies[0].
     await boot(contractPrefix);
   } catch (error) {
     status.textContent = "import failed: " + error.message;
+    logStudio("export pair import failed: " + error.message);
   }
 }
 
@@ -2150,21 +2325,50 @@ async function importColumns() {
   try {
     await putFile("/api/uploads/columns/" + encodeURIComponent(file.name), file);
     status.textContent = "imported " + file.name;
+    logStudio("imported columns file " + file.name);
     input.value = "";
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
     await reloadColumns(payload.columns);
   } catch (error) {
     status.textContent = "import failed: " + error.message;
+    logStudio("columns import failed: " + error.message);
   }
 }
 
 // ---------- UI wiring ----------
 document.getElementById("study-select").addEventListener("change", (e) => loadStudy(e.target.value));
 document.getElementById("material-select").addEventListener("change", (e) => {
+  // Same rule as loadStudy: the incoming material's stored appearance is
+  // restored before anything is rebuilt, never after.
+  restoreAppearance(e.target.value);
   updatePatternForMaterial(e.target.value);
   const select = document.getElementById("study-select");
   if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
+});
+document.getElementById("render-skin").addEventListener("change", (e) => {
+  state.appearance.skin = e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("material-tint").addEventListener("change", (e) => {
+  state.appearance.tint = e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("material-finish").addEventListener("input", (e) => {
+  document.getElementById("material-finish-value").textContent = Math.round(+e.target.value * 100);
+});
+document.getElementById("material-finish").addEventListener("change", (e) => {
+  state.appearance.finish = +e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("material-reset").addEventListener("click", () => {
+  state.appearance = { tint: null, finish: null, skin: "none" };
+  localStorage.removeItem(appearanceStorageKey(document.getElementById("material-select").value));
+  syncAppearanceControls();
+  rebuildAppearance();
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;
@@ -2224,6 +2428,24 @@ for (const id of ["sun-azimuth", "sun-elevation"]) {
     if (state.environmentMode === "sky") regenerateEnvironment();
   });
 }
+// F1: state.sunElevationSetting tracks only what the slider itself was set
+// to by hand. applyDayCycle also writes this same slider's value (clamped
+// to its min="5" for display -- see applyDayCycle), and that write must
+// NOT feed back into the day cycle's own peak, or the peak degrades toward
+// the slider's floor a little more on every play. This listener is the
+// only writer of state.sunElevationSetting.
+document.getElementById("sun-elevation").addEventListener("input", (e) => {
+  state.sunElevationSetting = +e.target.value;
+});
+// S5: the colour input owns the light's colour outright once touched;
+// applyEnvironment's preset writes check the override before setting
+// sun.color, so this survives an environment/background redraw until the
+// next weather-preset change, which nulls it (colour only, no PMREM: the
+// sky uniform and the studio room environment neither one reads sun.color).
+document.getElementById("sun-colour").addEventListener("input", (e) => {
+  state.sunColourOverride = e.target.value;
+  sun.color.set(e.target.value);
+});
 document.getElementById("background-tone").addEventListener("input", applyEnvironment);
 document.getElementById("brightness").addEventListener("input", (e) => {
   state.brightness = +e.target.value;
@@ -2264,7 +2486,7 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
     await loadHdri(file.name);
   } catch (error) {
     status.textContent = "";
-    showBanner("Failed to upload " + file.name + ": " + error.message);
+    showBanner("Failed to upload " + file.name + ": " + error.message, "error");
   } finally {
     // Always runs, success or failure, so a failed upload never jams the
     // input: without this, choosing the same filename again after a
@@ -2273,8 +2495,41 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
     event.target.value = "";
   }
 });
+document.getElementById("hdri-projection").addEventListener("change", (e) => {
+  state.hdriProjection = e.target.value;
+  applyHdriBackdrop();
+});
+document.getElementById("hdri-scale").addEventListener("change", (e) => {
+  state.hdriScale = +e.target.value;
+  applyHdriBackdrop();
+});
+document.getElementById("hdri-height").addEventListener("change", (e) => {
+  state.hdriHeight = +e.target.value;
+  applyHdriBackdrop();
+});
+// Dragging the rotation slider spins the live dome/background directly
+// (cheap: no geometry rebuild); releasing it re-aims the sun from the
+// stored pixel-estimate azimuth, the same formula loadHdri uses.
+document.getElementById("hdri-rotation").addEventListener("input", (e) => {
+  state.hdriRotation = +e.target.value;
+  const rotation = THREE.MathUtils.degToRad(state.hdriRotation);
+  scene.environmentRotation.set(Math.PI / 2, 0, rotation);
+  if (hdriDome) {
+    hdriDome.children[0].rotation.y = rotation;
+  } else {
+    scene.backgroundRotation.set(Math.PI / 2, 0, rotation);
+  }
+});
+document.getElementById("hdri-rotation").addEventListener("change", () => {
+  if (state.hdriEstimateAzimuth === null) return;
+  const azimuth = ((180 - state.hdriEstimateAzimuth + state.hdriRotation) % 360 + 360) % 360;
+  document.getElementById("sun-azimuth").value = Math.round(azimuth);
+  applySunFromSliders();
+});
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;
+  state.sunColourOverride = null; // a new preset picks the colour again
+  state.sunIntensityOverride = null; // F4: same reset, for the intensity override
   const preset = WEATHER[e.target.value];
   if (preset.elevation !== null) {
     document.getElementById("sun-elevation").value = preset.elevation;
@@ -2445,8 +2700,12 @@ function watchRun(runId, exportName, status, params) {
         clearInterval(poll);
         applyRunParamsToControls(params);
         await loadStudy(exportName);
+        logStudio("analysis finished: " + exportName);
       }
-      if (run.state === "failed") clearInterval(poll);
+      if (run.state === "failed") {
+        clearInterval(poll);
+        logStudio("analysis failed: " + exportName + (run.message ? " -- " + run.message : ""));
+      }
     } catch (error) {
       clearInterval(poll);
       status.textContent = "lost contact with the server: " + error.message;
@@ -2488,6 +2747,7 @@ async function startRun() {
         ? body.detail : "HTTP " + response.status);
       return;
     }
+    logStudio("analysis started: " + exportName);
     watchRun(body.run, exportName, status, params);
   } catch (error) {
     status.textContent = "run failed to start: " + error.message;
@@ -2573,6 +2833,48 @@ function pieceTint(key) {
   return (offset[0] % 1) * 0.06 - 0.03;
 }
 
+// Task 5: render skins. "none" is not a factory: it means "show the
+// registry material", which appearanceMaterialBase reads straight from
+// materials[]. The three real skins are lazily built and cached like
+// groundMaterial caches GROUNDS, since each is a MeshPhysicalMaterial with
+// its own procedural map and should not be rebuilt on every piece.
+const SKINS = {
+  none: null,
+  "white-presentation": () => new THREE.MeshPhysicalMaterial({
+    color: 0xf4f4f0, side: THREE.DoubleSide,
+    map: noiseTexture(256, 245, 8),
+    roughness: 0.55, metalness: 0.0,
+  }),
+  "basalt-dark": () => new THREE.MeshPhysicalMaterial({
+    color: 0x2e3236, side: THREE.DoubleSide,
+    roughness: 0.85, metalness: 0.0,
+  }),
+  "timber-ply": () => new THREE.MeshPhysicalMaterial({
+    color: 0xc9a86a, side: THREE.DoubleSide,
+    map: grainTexture(512),
+    roughness: 0.7, metalness: 0.0,
+  }),
+};
+
+const skinMaterialCache = {};
+
+function appearanceMaterialBase() {
+  // The base pieceMaterial clones from: a skin's material when one is
+  // chosen, else the registry entry for the loaded study's own material
+  // (unchanged from before this task). A skin only ever substitutes the
+  // BASE material a piece is built from; it carries no information back to
+  // the server and never touches state.bundle.material, so the whole-shell
+  // weld in buildPieceMeshes -- which triggers on sprayedMaterial(), i.e.
+  // the ANALYSIS material being concrete-sprayed -- keeps working exactly
+  // as before under any skin, including "none".
+  const skin = state.appearance.skin;
+  if (skin !== "none" && SKINS[skin]) {
+    if (!skinMaterialCache[skin]) skinMaterialCache[skin] = SKINS[skin]();
+    return skinMaterialCache[skin];
+  }
+  return materials[state.bundle.material] || materials.concrete;
+}
+
 function pieceMaterial(key) {
   // The tint is a property of the casting, not a one-shot at build time.
   // recolourSegments reassigns every piece's material on every call, and
@@ -2586,7 +2888,13 @@ function pieceMaterial(key) {
   // Each casting owns its instance so the pulse can write emissive per
   // piece, and so the tint never leaks into the shared registry entry
   // other code reads from.
-  const own = (materials[state.bundle.material] || materials.concrete).clone();
+  const own = appearanceMaterialBase().clone();
+  // Task 5: the tint/finish overrides are render-only and apply before the
+  // per-piece HSL variation below, which is unchanged -- a tint override
+  // still gets the same per-casting lightness nudge a plain material does.
+  const { tint, finish } = state.appearance;
+  if (tint !== null) own.color.set(tint);
+  if (finish !== null) own.roughness = finish;
   // Sprayed concrete is one continuous surface, so it gets no per piece
   // variation at all.
   if (!sprayedMaterial()) own.color.offsetHSL(0, 0, pieceTint(key));
@@ -2730,6 +3038,55 @@ function updateMaterialControls() {
     sprayed ? " (sprayed concrete is monolithic: no joints to open)" : "";
 }
 
+// ---------- Task 5: tint, finish and render skins (render-only) ----------
+function appearanceStorageKey(material) {
+  return "bench-studio-appearance:" + material;
+}
+
+function persistAppearance() {
+  const material = document.getElementById("material-select").value;
+  localStorage.setItem(appearanceStorageKey(material), JSON.stringify(state.appearance));
+}
+
+function syncAppearanceControls() {
+  document.getElementById("render-skin").value = state.appearance.skin;
+  document.getElementById("material-tint").value = state.appearance.tint || "#ffffff";
+  const finish = state.appearance.finish !== null ? state.appearance.finish : 0.5;
+  document.getElementById("material-finish").value = finish;
+  document.getElementById("material-finish-value").textContent = Math.round(finish * 100);
+}
+
+// Called from both the material-select change handler and loadStudy, both
+// BEFORE the incoming material's pieces are built, so a stored override
+// (or the lack of one) is always in state.appearance by the time
+// pieceMaterial first reads it for the material being switched to.
+function restoreAppearance(material) {
+  let appearance = { tint: null, finish: null, skin: "none" };
+  const stored = localStorage.getItem(appearanceStorageKey(material));
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      appearance = {
+        tint: parsed.tint || null,
+        finish: typeof parsed.finish === "number" ? parsed.finish : null,
+        skin: typeof parsed.skin === "string" ? parsed.skin : "none",
+      };
+    } catch (error) { /* corrupt localStorage entry: fall back to the defaults above */ }
+  }
+  state.appearance = appearance;
+  syncAppearanceControls();
+}
+
+// The joint-gap handler's exact rebuild shape, reused across the four
+// appearance controls: a tint, finish or skin change never touches the
+// bundle, so it never needs a server round trip, only a redraw.
+function rebuildAppearance() {
+  if (!state.bundle) return;
+  buildPieceMeshes();
+  recolourSegments();
+  if (state.timeline) applySceneAtTime(state.timeline.t);
+}
+
 function sceneCentroid() {
   const vertices = state.bundle.analysis_mesh.vertices;
   let x = 0, y = 0;
@@ -2865,12 +3222,34 @@ function applySceneAtTime(t) {
   // because everything here is computed from t (by way of build). The Show
   // select, not this checkbox, now owns whether the net is visible outside
   // the strike window (applyShowMode).
+  //
+  // Crown seam (2026-08-16-studio-finish task 4): the probe caught the same
+  // seam here too, in Timeline, once the crown course has landed and before
+  // the strike starts dropping the net away -- shell fully placed, wires
+  // still at opacity 1 (see
+  // .superpowers/sdd/2026-08-16-studio-finish/crown-seam-timeline-strike-950-before.png,
+  // scrubber 950/1000, strikeU still 0). The shell is drawn over the net
+  // here exactly as it is in Both mode, so the same clearance applies:
+  // applyShowMode's comment above the "both" branch has the full diagnosis
+  // and the normal-direction caveat. It is additive with the strike's own
+  // drop so the net still lands 1.5 m clear of the shell once struck.
+  // Fix round 1: wires and nodes are separate InstancedMeshes with separate
+  // radii (state.wireRadius, state.nodeRadius, default 0.02 / 0.03, both
+  // user-adjustable up to 0.10 via the Node/Wire size sliders) -- a shared
+  // clearance under-cleared whichever one had the bigger radius, and the
+  // Node size slider alone could push the white dots back through the
+  // shell at any clearance computed from wireRadius. Each object clears by
+  // its own radius.
+  const clearance = {
+    wires: state.bundle.provenance.thickness / 2 + state.wireRadius,
+    nodes: state.bundle.provenance.thickness / 2 + state.nodeRadius,
+  };
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
     object.visible = strikeU < 1;
     object.material.opacity = 1 - strikeU;
-    object.position.z = -1.5 * strikeU;
+    object.position.z = clearance[key] - 1.5 * strikeU;
   }
   // The pulse is a Timeline effect: build is the elapsed drop-order clock
   // and has no meaning in Framework/Shell/Both, which show a fixed rest
@@ -2919,8 +3298,43 @@ function applyShowMode() {
   // two properties this lens needs to restore to their built values.
   state.objects.wires.material.opacity = 1;
   state.objects.nodes.material.opacity = 1;
-  state.objects.wires.position.z = 0;
-  state.objects.nodes.position.z = 0;
+  // Crown seam (2026-08-16-studio-finish task 4). Diagnosis, probed with
+  // studio_probe.mjs against the real "Algebraic TNA method" export in Both
+  // mode, camera close on the ridge: buildWiresAndNodes draws the net
+  // straight off bundle.analysis_mesh with no display offset (z = 0, right
+  // above), i.e. the raw structural mid-surface; buildPieceMeshes offsets
+  // the opaque shell off that same mid-surface family by half the built
+  // thickness a side. Nothing keeps those two independently-built surfaces
+  // a guaranteed distance apart, and at the crown -- the shallowest, most
+  // tightly curved part of this vault -- they come close enough that the
+  // net's own wire/node radius is enough to break through the shell's
+  // extrados: Param's black line with regularly spaced white dots along
+  // the ridge, confirmed in
+  // .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-before.png
+  // and the tight crown-seam-both-closeup-before.png beside it, which shows
+  // one wire segment and one node sphere both breaking the surface.
+  // Pushing the net along +Z by half the built thickness plus its own
+  // radius is a display-only fix, not a re-derivation of the true offset
+  // surface: it approximates "outward along the local normal" and is only
+  // guaranteed to clear the shell where that normal is close to vertical,
+  // which is exactly the shallow crown region where the seam shows; it
+  // would under- or over-clear a steeply sloped stretch nearer the
+  // springing, where the net was already comfortably inside the shell.
+  // Framework mode has no shell to clash with, so it keeps rendering the
+  // net at its true mid-surface position, z = 0, for the form-finding
+  // diagram. Fix round 1: wires and nodes are separate InstancedMeshes at
+  // separate, independently user-adjustable radii (state.wireRadius,
+  // state.nodeRadius), so each clears the shell by its OWN radius -- a
+  // shared clearance under-cleared whichever one was bigger, and growing
+  // the Node size slider alone could push the white dots back through.
+  const wireClearance = state.showMode === "both"
+    ? state.bundle.provenance.thickness / 2 + state.wireRadius
+    : 0;
+  const nodeClearance = state.showMode === "both"
+    ? state.bundle.provenance.thickness / 2 + state.nodeRadius
+    : 0;
+  state.objects.wires.position.z = wireClearance;
+  state.objects.nodes.position.z = nodeClearance;
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";
@@ -2952,13 +3366,23 @@ function applyTimeline(t) {
 async function recordAnimation() {
   const status = document.getElementById("record-status");
   if (!state.timeline || !state.bundle) { status.textContent = "load a study first"; return; }
+  // F1: capture the peak from the same source the day-cycle button reads,
+  // not the slider -- applyDayCycle's own writes below clamp that slider
+  // for display, and reading it back here would let a mid-recording clamp
+  // feed into the very peak the recording is driven from.
+  if (state.dayCycle.record) state.dayCycle.peakElevation = state.sunElevationSetting;
   const target = "study-" + state.bundle.slug;
   const fps = 60;
   const speed = state.timeline.speed;
   const total = Math.ceil(timelineDuration() / speed * fps);
   status.textContent = "recording " + total + " frames at 1080p (a few MB each on disk)";
   const wasPlaying = state.timeline.playing;
+  // F2: a live day cycle must not keep advancing off frame()'s wall clock
+  // while the recording also drives it off frameIndex -- two clocks racing
+  // the same state would make a recording non-deterministic.
+  const wasDayCyclePlaying = state.dayCycle.playing;
   state.timeline.playing = false;
+  state.dayCycle.playing = false;
   renderer.setSize(1920, 1080, false);
   composer.setSize(1920, 1080);
   camera.aspect = 1920 / 1080;
@@ -2966,6 +3390,14 @@ async function recordAnimation() {
   state.recording = true;   // resize() must skip while this is set
   try {
     for (let frameIndex = 0; frameIndex < total; frameIndex++) {
+      if (state.dayCycle.record) {
+        // Deterministic: frameIndex alone drives u, so a recording is
+        // reproducible frame for frame like applyTimeline already is. The
+        // day maps over the whole recording, so layering it with the build
+        // timeline is a deliberate choice a user who checks the box makes.
+        applyDayCycle(frameIndex / Math.max(1, total - 1));
+        if (state.environmentMode === "sky" && frameIndex % 30 === 0) regenerateEnvironment();
+      }
       applyTimeline(frameIndex * speed / fps);
       renderView();
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
@@ -2974,6 +3406,14 @@ async function recordAnimation() {
         { method: "POST", body: blob });
       if (!response.ok) throw new Error("frame upload failed: " + response.status);
       if (frameIndex % 30 === 0) status.textContent = "frame " + frameIndex + " / " + total;
+    }
+    if (state.dayCycle.record) {
+      // F4: persist the recording's own final sun state, the same way
+      // frame()'s live day cycle already does at the end of a play, so the
+      // next redraw (a slider nudge, a mode change) does not silently
+      // revert the sun mid-review.
+      state.sunColourOverride = document.getElementById("sun-colour").value;
+      state.sunIntensityOverride = sun.intensity;
     }
     status.textContent = "stitching...";
     const stitched = await fetch("/api/frames/" + target + "/stitch?fps=" + fps, { method: "POST" });
@@ -2990,9 +3430,37 @@ async function recordAnimation() {
     // next frame().
     state.recording = false;
     state.timeline.playing = wasPlaying;
+    state.dayCycle.playing = wasDayCyclePlaying;
   }
 }
 document.getElementById("record-button").addEventListener("click", recordAnimation);
+
+// ---------- day cycle ----------
+// S5: frame() is the only wall-clock advancer (see below); this button
+// only arms/disarms state.dayCycle.playing and captures the elevation the
+// arc peaks at, exactly as play-button arms state.timeline.playing.
+document.getElementById("day-cycle-button").addEventListener("click", () => {
+  if (state.dayCycle.playing) {
+    state.dayCycle.playing = false;
+    document.getElementById("day-cycle-button").textContent = "Day cycle";
+    return;
+  }
+  // F1: read the slider's own last hand-set value, not its live display --
+  // applyDayCycle also writes this slider (clamped to its min="5" for
+  // display), so reading .value here would let a previous cycle's clamped
+  // display become the next cycle's peak, flattening the sun a little more
+  // on every play.
+  state.dayCycle.peakElevation = state.sunElevationSetting;
+  state.dayCycle.t = 0;
+  state.dayCycle.playing = true;
+  document.getElementById("day-cycle-button").textContent = "Pause";
+});
+document.getElementById("day-cycle-seconds").addEventListener("input", (e) => {
+  state.dayCycle.seconds = +e.target.value;
+});
+document.getElementById("day-cycle-record").addEventListener("change", (e) => {
+  state.dayCycle.record = e.target.checked;
+});
 
 // ---------- render loop ----------
 function resize() {
@@ -3049,6 +3517,7 @@ document.getElementById("inflate-seconds").addEventListener("input", (e) => {
 
 let lastTime = performance.now();
 let playingFrameCount = 0;
+let dayCycleFrames = 0;
 function frame(now) {
   const delta = Math.min(0.1, (now - lastTime) / 1000);
   lastTime = now;
@@ -3066,6 +3535,26 @@ function frame(now) {
     playingFrameCount += 1;
     if (playingFrameCount % 15 === 0) updateHud();
   }
+  if (state.dayCycle.playing) {
+    state.dayCycle.t = Math.min(state.dayCycle.t + delta, state.dayCycle.seconds);
+    applyDayCycle(state.dayCycle.t / state.dayCycle.seconds);
+    dayCycleFrames += 1;
+    // PMREM at most every 30 frames while the sky follows the sun, and once
+    // more on the final frame so the ambient lands exactly at sunset.
+    if (state.environmentMode === "sky" && (dayCycleFrames % 30 === 0
+        || state.dayCycle.t >= state.dayCycle.seconds)) regenerateEnvironment();
+    if (state.dayCycle.t >= state.dayCycle.seconds) {
+      state.dayCycle.playing = false;
+      // The colour input holds the cycle's final (sunset) value; without
+      // this, the next applyEnvironment call (a slider nudge, a mode
+      // change) would overwrite it with the active preset's own colour.
+      // F4: the intensity gets the same treatment, so a sunset that ends
+      // dim does not snap back to the preset's full daylight brightness.
+      state.sunColourOverride = document.getElementById("sun-colour").value;
+      state.sunIntensityOverride = sun.intensity;
+      document.getElementById("day-cycle-button").textContent = "Day cycle";
+    }
+  }
   if (state.timeline && document.activeElement !== scrubber) {
     scrubber.value = Math.round(1000 * state.timeline.t / timelineDuration());
   }
@@ -3080,6 +3569,9 @@ requestAnimationFrame(frame);
 // The probe rig reads app state through this hook. Camera and controls are
 // exported too so a capture run can frame a detail (the rim, a joint) that
 // the default framing, tuned for a full-size vault, leaves illegible.
-window.__studio = { state, scene, camera, controls };
+// applyDayCycle is exposed too (Task 3), so a probe can drive u directly
+// through the real pure function instead of re-deriving its formula in
+// probe-script JS, which would drift from the function it is meant to check.
+window.__studio = { state, scene, camera, controls, applyDayCycle };
 
 export { state, buildScene, setLayer, applyCut, applyTimeline, timelineDuration, rebuildTimeline };

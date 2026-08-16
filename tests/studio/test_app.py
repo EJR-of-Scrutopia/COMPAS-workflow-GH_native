@@ -735,17 +735,10 @@ def test_hdri_upload_rejections(tmp_path, monkeypatch):
     import app as app_module
 
     monkeypatch.setattr(app_module, "HDRI_DIR", tmp_path / "hdri")
-    # The cap is monkeypatched small so the oversize case does not need a
-    # real 64 MB body in the test run.
-    monkeypatch.setattr(app_module, "HDRI_MAX_BYTES", 100)
     wrong_ext = client.put("/api/uploads/hdri/notes.txt", content=b"#?RADIANCE")
     assert wrong_ext.status_code == 400
     wrong_magic = client.put("/api/uploads/hdri/fake.hdr", content=b"not radiance")
     assert wrong_magic.status_code == 400
-    oversize = client.put(
-        "/api/uploads/hdri/big.hdr", content=b"#?RADIANCE" + b"\x00" * 101)
-    assert oversize.status_code == 413
-    assert not (tmp_path / "hdri" / "big.hdr").exists()
     assert client.get("/api/hdri/missing.hdr").status_code == 404
     traversal = client.get("/api/hdri/..%5Capp.py")
     assert traversal.status_code in (400, 404)

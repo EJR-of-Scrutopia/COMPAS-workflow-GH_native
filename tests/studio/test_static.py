@@ -1750,7 +1750,64 @@ def test_the_show_select_offers_four_exclusive_modes():
     # restore both to their built values, or a mid-strike scrub leaves the
     # net faded and sunk in every other Show mode.
     assert "material.opacity = 1" in body
-    assert "position.z = 0" in body
+    # Crown seam (2026-08-16-studio-finish task 4): the flat restore to
+    # "position.z = 0" pinned since the repairs wave held for every non
+    # Timeline mode alike, but Both mode's net sits directly on the shell's
+    # mid-surface with no clearance from the extrados, and pokes through it
+    # at the crown (test_static.py cannot see the picture; the probe
+    # captures crown-seam-both-before.png / -closeup-before.png are the
+    # evidence). Framework still restores the true z = 0; Both now clears
+    # the shell by half its thickness plus each object's OWN radius --
+    # fix round 1 gave wires and nodes separate clearances (see
+    # test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam),
+    # since a shared wireRadius-only clearance under-cleared the nodes.
+    assert 'state.showMode === "both"' in body
+    assert "position.z = wireClearance" in body
+    assert "position.z = nodeClearance" in body
+
+
+def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():
+    # Task 4 of the 2026-08-16-studio-finish wave. Diagnosis: the net
+    # (buildWiresAndNodes) is drawn straight off bundle.analysis_mesh, the
+    # raw mid-surface, with no display offset; the shell (buildPieceMeshes)
+    # is offset off that same mid-surface family by half the built
+    # thickness a side. Nothing guarantees those two independently-built
+    # surfaces stay clear of one another, and at the crown -- this vault's
+    # shallowest, most tightly curved region -- the net's own wire/node
+    # radius is enough to break through the shell's extrados: a black line
+    # with regularly spaced white dots along the ridge. Probed against the
+    # real "Algebraic TNA method" export, camera close on the crown, in
+    # both Show=both and Show=timeline just before the strike hides the
+    # net; captures alongside this file:
+    #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-before.png
+    #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-closeup-before.png
+    #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-timeline-strike-950-before.png
+    # and their -after equivalents once the fix below landed. The fix is a
+    # display-only nudge along +Z by half the built thickness plus each
+    # object's OWN radius -- an approximation of "outward along the local
+    # normal" that only holds where that normal is close to vertical, which
+    # is exactly the shallow crown where the seam showed (see the comments
+    # beside each assertion's source for the caveat spelled out in full).
+    #
+    # Fix round 1 (review finding, Medium): the first cut shared one
+    # clearance (thickness/2 + wireRadius) between wires AND nodes, but
+    # nodes are a separate InstancedMesh at state.nodeRadius (default 0.03
+    # vs wireRadius's 0.02, independently adjustable up to 0.10 via the
+    # Node size slider) -- a node's nearest point sat at
+    # clearance - nodeRadius, under-cleared by the radius difference, and
+    # growing Node size alone could push the white dots back through the
+    # shell: the exact reported symptom. Each object now clears by its own
+    # radius, both sites.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    show_body = _function_body(js, "applyShowMode")
+    assert "state.bundle.provenance.thickness / 2 + state.wireRadius" in show_body
+    assert "state.bundle.provenance.thickness / 2 + state.nodeRadius" in show_body
+    scene_body = _function_body(js, "applySceneAtTime")
+    assert "wires: state.bundle.provenance.thickness / 2 + state.wireRadius," in scene_body
+    assert "nodes: state.bundle.provenance.thickness / 2 + state.nodeRadius," in scene_body
+    # The strike's own drop is additive with the clearance, so the net still
+    # lands 1.5 m clear of the shell once fully struck (strikeU = 1).
+    assert "clearance[key] - 1.5 * strikeU" in scene_body
 
 
 def test_the_formwork_default_is_hidden():
@@ -1771,9 +1828,12 @@ def test_the_panel_reorganises_into_six_sections():
     animation = html[html.index('id="animation-section"'):html.index('id="scene-section"')]
     assert 'id="record-button"' in animation and 'id="record-status"' in animation
     # The analysis section owns the toggles and the analysis controls.
+    # node-radius/wire-radius moved to View in the finish wave (see
+    # test_the_run_button_lives_in_analysis_and_sizes_in_view); the run
+    # button moved here from Study in the same wave.
     analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
-    for control in ("layer-toggles", "stress-surface", "exaggeration",
-                    "node-radius", "wire-radius", "data-button"):
+    for control in ("run-button", "layer-toggles", "stress-surface",
+                    "exaggeration", "data-button"):
         assert control in analysis, control
 
 
@@ -1840,13 +1900,16 @@ def test_the_environment_addons_are_vendored():
     # the importmap's three/addons/ prefix.
     sky = STATIC / "vendor" / "addons" / "objects" / "Sky.js"
     hdr = STATIC / "vendor" / "addons" / "loaders" / "HDRLoader.js"
-    assert sky.is_file() and hdr.is_file()
+    skybox = STATIC / "vendor" / "addons" / "objects" / "GroundedSkybox.js"
+    assert sky.is_file() and hdr.is_file() and skybox.is_file()
     assert not (STATIC / "vendor" / "addons" / "loaders" / "RGBELoader.js").exists(), "only the 0.185 HDRLoader is vendored"
     sky_text = sky.read_text(encoding="utf-8")
     hdr_text = hdr.read_text(encoding="utf-8")
+    skybox_text = skybox.read_text(encoding="utf-8")
     assert "turbidity" in sky_text, "Sky.js must be the scattering shader"
     assert "RGBE" in hdr_text, "HDRLoader.js must decode Radiance files"
-    for text in (sky_text, hdr_text):
+    assert "GroundedSkybox" in skybox_text, "GroundedSkybox.js must export the ground-projected skybox"
+    for text in (sky_text, hdr_text, skybox_text):
         assert "from 'three'" in text or 'from "three"' in text, (
             "addons must import bare 'three' so the importmap resolves them"
         )
@@ -1912,6 +1975,22 @@ def test_each_environment_mode_owns_background_fog_and_rotation():
     assert 'id="background-row"' in (STATIC / "index.html").read_text(encoding="utf-8")
 
 
+def test_the_hdri_backdrop_projects_and_rotates():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="hdri-projection"' in html
+    for control in ("hdri-scale", "hdri-height", "hdri-rotation"):
+        assert 'id="{}"'.format(control) in html
+    assert "GroundedSkybox" in js
+    body = _function_body(js, "applyHdriBackdrop")
+    assert "new GroundedSkybox(" in body and "dispose" in body
+    # Rotation tracks the sun: the estimate's azimuth gets the rotation added.
+    assert "state.hdriRotation" in _function_body(js, "loadHdri")
+    assert "HDRI_MAX_BYTES" not in (
+        (Path(__file__).resolve().parents[2] / "bench" / "studio" / "app.py")
+        .read_text(encoding="utf-8"))
+
+
 def test_environment_functions_never_read_the_clock_or_the_timeline():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     for name in ("applyEnvironment", "regenerateEnvironment", "applySunFromSliders"):
@@ -1939,9 +2018,12 @@ def test_the_ground_presets_swap_one_discs_material():
 
 def test_the_probe_hook_exposes_state_and_scene():
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "window.__studio = { state, scene, camera, controls }" in js, (
+    assert "window.__studio = { state, scene, camera, controls, applyDayCycle }" in js, (
         "the probe rig reads app state through this hook, and frames "
-        "detail captures through the camera and controls")
+        "detail captures through the camera and controls; applyDayCycle is "
+        "exposed too (Task 3) so a probe can drive the day cycle directly "
+        "instead of re-deriving its formula in probe script JS, which would "
+        "drift from the pure function it is meant to be checking")
 
 
 def test_the_postprocessing_addons_are_vendored():
@@ -1974,3 +2056,135 @@ def test_brightness_and_contrast_grade_every_render():
         body = _function_body(js, name)
         for banned in ("performance.now", "Date.now", "state.timeline"):
             assert banned not in body
+
+
+def test_the_run_button_lives_in_analysis_and_sizes_in_view():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
+    view = html[html.index('id="view-section"'):html.index('id="animation-section"')]
+    assert 'id="run-button"' in analysis and 'id="run-status"' in analysis
+    assert 'id="node-radius"' in view and 'id="wire-radius"' in view
+    study = html[html.index('id="study-section"'):html.index('id="analysis-section"')]
+    assert 'id="run-button"' not in study
+
+
+def test_the_event_log_reports_studio_events():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    assert 'id="event-log"' in html
+    assert "#event-log" in css and "pointer-events: none" in css.split("#event-log", 1)[1][:400]
+    # F6: the log sat at right: 16px, painting over the 300px control panel
+    # (#legend already solves the identical collision at 316px); pin the
+    # same clearance here so the two cannot drift apart again.
+    assert "right: 316px" in css.split("#event-log", 1)[1][:400]
+    body = _function_body(js, "logStudio")
+    assert "toLocaleTimeString" in body or "toTimeString" in body
+    # The banner helper mirrors into the log, and the named sites report.
+    assert "logStudio(" in _function_body(js, "showBanner")
+    assert "logStudio(" in _function_body(js, "loadStudy")
+    assert "logStudio(" in _function_body(js, "loadHdri")
+
+
+def test_banners_dismiss_themselves_and_close():
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="banner-close"' in html
+    body = _function_body(js, "showBanner")
+    assert "setTimeout" in body
+    assert "mouseenter" in js and "mouseleave" in js
+    for name in ("logStudio", "showBanner"):
+        assert "state.timeline" not in _function_body(js, name)
+
+
+def test_the_sun_colour_is_overridable_until_the_next_preset():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="sun-colour"' in html and 'type="color"' in html
+    assert "sunColourOverride" in js
+    # F4: the intensity override is a second, symmetrical flag; a captured
+    # day-cycle intensity must survive an environment redraw exactly like
+    # the captured colour already does.
+    assert "sunIntensityOverride" in js
+    # Preset changes reset the override; the override wins between presets.
+    weather = js[js.index('document.getElementById("weather-preset")'):]
+    assert "sunColourOverride = null" in weather[:600]
+    assert "sunIntensityOverride = null" in weather[:600]
+    # F3: applyEnvironment must sync the input itself when a preset (not an
+    # override) picks the colour, or the swatch can show a stale colour --
+    # a previous preset's or an already-cleared override's -- while the sun
+    # is actually lit some other colour entirely.
+    assert 'getElementById("sun-colour")' in _function_body(js, "applyEnvironment")
+
+
+def test_the_day_cycle_is_a_pure_second_clock():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for control in ("day-cycle-button", "day-cycle-seconds", "day-cycle-record"):
+        assert 'id="{}"'.format(control) in html
+    body = _function_body(js, "applyDayCycle")
+    for banned in ("performance.now", "Date.now", "state.timeline", "setTimeout"):
+        assert banned not in body
+    assert "peakElevation" in body
+    # F1: the #sun-elevation slider's own min="5" can only clamp the DISPLAY
+    # write; the real sun position must come from the unclamped elevation
+    # (through applySunAt), or a captured low peak -- or the arc's own 2
+    # degree dawn -- flattens the instant it touches the floor.
+    assert "applySunAt(" in body
+    assert "Math.max(5, elevation)" in body
+    # frame() is the only advancer; recording drives u deterministically.
+    assert "state.dayCycle.t" in _function_body(js, "frame")
+    assert "applyDayCycle(" in _function_body(js, "recordAnimation")
+    # F2: recordAnimation must pause a live day cycle the same way it
+    # already pauses the build timeline, or the two clocks race the same
+    # state (state.dayCycle.t) while a recording drives it off frameIndex.
+    assert "dayCycle.playing" in _function_body(js, "recordAnimation")
+
+
+def test_the_day_cycle_peak_is_captured_from_the_hand_set_slider_value():
+    # F1, the headline finding: applyDayCycle writes #sun-elevation's value
+    # every frame, clamped to the slider's own min="5" for display. Both the
+    # button and a day-cycle recording used to capture their peak by
+    # re-reading that same slider, so a played-out cycle's clamped display
+    # became the NEXT cycle's peak -- the captured peak degraded to 5 after
+    # one full cycle, and every later play ran a flat sun. The peak must
+    # come from state.sunElevationSetting, written only by the slider's own
+    # input handler, never from the slider's live .value.
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "sunElevationSetting: 40" in js
+    elevation_input_start = js.index('getElementById("sun-elevation").addEventListener("input"')
+    elevation_input_body = js[elevation_input_start:js.index("\n});", elevation_input_start)]
+    assert "state.sunElevationSetting = +e.target.value" in elevation_input_body
+    button_start = js.index('getElementById("day-cycle-button")')
+    button_body = js[button_start:js.index("\n});", button_start)]
+    assert "state.dayCycle.peakElevation = state.sunElevationSetting" in button_body
+    assert 'peakElevation = +document.getElementById("sun-elevation").value' not in button_body
+    record_body = _function_body(js, "recordAnimation")
+    assert "state.dayCycle.peakElevation = state.sunElevationSetting" in record_body
+
+
+def test_appearance_overrides_are_render_only_and_persist():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    for control in ("material-tint", "material-finish", "material-reset", "render-skin"):
+        assert 'id="{}"'.format(control) in html
+    # F5: #appearance-note (the "render tint only" disclosure) must read as
+    # a note, styled like every other sibling status/note line, not as
+    # unstyled body text.
+    assert "#appearance-note" in css
+    # Fix round 1: the slider floors at the spec's 0.3, not an arbitrary
+    # low bound -- roughness 0.05 gives a near-mirror gloss no registry
+    # material approaches. Pinned against the tag's own markup so the
+    # bound cannot silently drift again.
+    finish_start = html.index('id="material-finish"')
+    finish_tag = html[finish_start:html.index(">", finish_start)]
+    assert 'min="0.3"' in finish_tag
+    assert "render tint only, analysis unchanged" in html
+    assert '"bench-studio-appearance:"' in js
+    for skin in ("white-presentation", "basalt-dark", "timber-ply"):
+        assert '"{}"'.format(skin) in js
+    # The skin never reaches the server: no fetch uses the skin value.
+    body = _function_body(js, "appearanceMaterialBase")
+    assert "SKINS" in body
+    assert "state.appearance.skin" not in _function_body(js, "loadStudy")
