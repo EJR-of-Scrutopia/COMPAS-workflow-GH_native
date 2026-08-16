@@ -1750,7 +1750,48 @@ def test_the_show_select_offers_four_exclusive_modes():
     # restore both to their built values, or a mid-strike scrub leaves the
     # net faded and sunk in every other Show mode.
     assert "material.opacity = 1" in body
-    assert "position.z = 0" in body
+    # Crown seam (2026-08-16-studio-finish task 4): the flat restore to
+    # "position.z = 0" pinned since the repairs wave held for every non
+    # Timeline mode alike, but Both mode's net sits directly on the shell's
+    # mid-surface with no clearance from the extrados, and pokes through it
+    # at the crown (test_static.py cannot see the picture; the probe
+    # captures crown-seam-both-before.png / -closeup-before.png are the
+    # evidence). Framework still restores the true z = 0; Both now clears
+    # the shell by half its thickness plus the wire radius instead.
+    assert 'state.showMode === "both"' in body
+    assert "position.z = netClearance" in body
+
+
+def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():
+    # Task 4 of the 2026-08-16-studio-finish wave. Diagnosis: the net
+    # (buildWiresAndNodes) is drawn straight off bundle.analysis_mesh, the
+    # raw mid-surface, with no display offset; the shell (buildPieceMeshes)
+    # is offset off that same mid-surface family by half the built
+    # thickness a side. Nothing guarantees those two independently-built
+    # surfaces stay clear of one another, and at the crown -- this vault's
+    # shallowest, most tightly curved region -- the net's own wire/node
+    # radius is enough to break through the shell's extrados: a black line
+    # with regularly spaced white dots along the ridge. Probed against the
+    # real "Algebraic TNA method" export, camera close on the crown, in
+    # both Show=both and Show=timeline just before the strike hides the
+    # net; captures alongside this file:
+    #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-before.png
+    #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-closeup-before.png
+    #   .superpowers/sdd/2026-08-16-studio-finish/crown-seam-timeline-strike-950-before.png
+    # and their -after equivalents once the fix below landed. The fix is a
+    # display-only nudge along +Z by half the built thickness plus the wire
+    # radius -- an approximation of "outward along the local normal" that
+    # only holds where that normal is close to vertical, which is exactly
+    # the shallow crown where the seam showed (see the comments beside each
+    # assertion's source for the caveat spelled out in full).
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    show_body = _function_body(js, "applyShowMode")
+    assert "state.bundle.provenance.thickness / 2 + state.wireRadius" in show_body
+    scene_body = _function_body(js, "applySceneAtTime")
+    assert "const netClearance = state.bundle.provenance.thickness / 2 + state.wireRadius" in scene_body
+    # The strike's own drop is additive with the clearance, so the net still
+    # lands 1.5 m clear of the shell once fully struck (strikeU = 1).
+    assert "netClearance - 1.5 * strikeU" in scene_body
 
 
 def test_the_formwork_default_is_hidden():

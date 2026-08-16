@@ -3052,12 +3052,24 @@ function applySceneAtTime(t) {
   // because everything here is computed from t (by way of build). The Show
   // select, not this checkbox, now owns whether the net is visible outside
   // the strike window (applyShowMode).
+  //
+  // Crown seam (2026-08-16-studio-finish task 4): the probe caught the same
+  // seam here too, in Timeline, once the crown course has landed and before
+  // the strike starts dropping the net away -- shell fully placed, wires
+  // still at opacity 1 (see
+  // .superpowers/sdd/2026-08-16-studio-finish/crown-seam-timeline-strike-950-before.png,
+  // scrubber 950/1000, strikeU still 0). The shell is drawn over the net
+  // here exactly as it is in Both mode, so the same clearance applies:
+  // applyShowMode's comment above the "both" branch has the full diagnosis
+  // and the normal-direction caveat. It is additive with the strike's own
+  // drop so the net still lands 1.5 m clear of the shell once struck.
+  const netClearance = state.bundle.provenance.thickness / 2 + state.wireRadius;
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
     object.visible = strikeU < 1;
     object.material.opacity = 1 - strikeU;
-    object.position.z = -1.5 * strikeU;
+    object.position.z = netClearance - 1.5 * strikeU;
   }
   // The pulse is a Timeline effect: build is the elapsed drop-order clock
   // and has no meaning in Framework/Shell/Both, which show a fixed rest
@@ -3106,8 +3118,36 @@ function applyShowMode() {
   // two properties this lens needs to restore to their built values.
   state.objects.wires.material.opacity = 1;
   state.objects.nodes.material.opacity = 1;
-  state.objects.wires.position.z = 0;
-  state.objects.nodes.position.z = 0;
+  // Crown seam (2026-08-16-studio-finish task 4). Diagnosis, probed with
+  // studio_probe.mjs against the real "Algebraic TNA method" export in Both
+  // mode, camera close on the ridge: buildWiresAndNodes draws the net
+  // straight off bundle.analysis_mesh with no display offset (z = 0, right
+  // above), i.e. the raw structural mid-surface; buildPieceMeshes offsets
+  // the opaque shell off that same mid-surface family by half the built
+  // thickness a side. Nothing keeps those two independently-built surfaces
+  // a guaranteed distance apart, and at the crown -- the shallowest, most
+  // tightly curved part of this vault -- they come close enough that the
+  // net's own wire/node radius is enough to break through the shell's
+  // extrados: Param's black line with regularly spaced white dots along
+  // the ridge, confirmed in
+  // .superpowers/sdd/2026-08-16-studio-finish/crown-seam-both-before.png
+  // and the tight crown-seam-both-closeup-before.png beside it, which shows
+  // one wire segment and one node sphere both breaking the surface.
+  // Pushing the net along +Z by half the built thickness plus the wire
+  // radius is a display-only fix, not a re-derivation of the true offset
+  // surface: it approximates "outward along the local normal" and is only
+  // guaranteed to clear the shell where that normal is close to vertical,
+  // which is exactly the shallow crown region where the seam shows; it
+  // would under- or over-clear a steeply sloped stretch nearer the
+  // springing, where the net was already comfortably inside the shell.
+  // Framework mode has no shell to clash with, so it keeps rendering the
+  // net at its true mid-surface position, z = 0, for the form-finding
+  // diagram.
+  const netClearance = state.showMode === "both"
+    ? state.bundle.provenance.thickness / 2 + state.wireRadius
+    : 0;
+  state.objects.wires.position.z = netClearance;
+  state.objects.nodes.position.z = netClearance;
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";
