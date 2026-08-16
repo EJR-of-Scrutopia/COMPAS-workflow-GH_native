@@ -2115,3 +2115,18 @@ def test_the_day_cycle_is_a_pure_second_clock():
     # frame() is the only advancer; recording drives u deterministically.
     assert "state.dayCycle.t" in _function_body(js, "frame")
     assert "applyDayCycle(" in _function_body(js, "recordAnimation")
+
+
+def test_appearance_overrides_are_render_only_and_persist():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for control in ("material-tint", "material-finish", "material-reset", "render-skin"):
+        assert 'id="{}"'.format(control) in html
+    assert "render tint only, analysis unchanged" in html
+    assert '"bench-studio-appearance:"' in js
+    for skin in ("white-presentation", "basalt-dark", "timber-ply"):
+        assert '"{}"'.format(skin) in js
+    # The skin never reaches the server: no fetch uses the skin value.
+    body = _function_body(js, "appearanceMaterialBase")
+    assert "SKINS" in body
+    assert "state.appearance.skin" not in _function_body(js, "loadStudy")

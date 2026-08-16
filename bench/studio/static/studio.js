@@ -62,6 +62,11 @@ const state = {
   patternChosen: false, // an explicit pattern choice survives material changes
   loadSequence: 0,      // bundle request token: only the newest response lands
   reloadTimer: null,    // the settle timer behind size and thickness commits
+  // Task 5: render-only overrides, keyed to the loaded ANALYSIS material
+  // and persisted per material under "bench-studio-appearance:" + material
+  // (see restoreAppearance/persistAppearance). null means no override; the
+  // registry material (or a skin) shows through untouched.
+  appearance: { tint: null, finish: null, skin: "none" },
 };
 
 const canvas = document.getElementById("view");
@@ -2144,6 +2149,11 @@ async function loadStudy(exportName) {
   // or study change fires two full server cuts instead of one.
   if (state.reloadTimer) { clearTimeout(state.reloadTimer); state.reloadTimer = null; }
   const material = document.getElementById("material-select").value;
+  // The incoming material's own stored appearance (or the defaults, if it
+  // has none) must be in place before the pieces below are built, or the
+  // first frame of a material switch briefly shows the PREVIOUS material's
+  // tint, finish and skin.
+  restoreAppearance(material);
   // The token: whoever increments last owns the screen. A response that
   // comes back to find a newer sequence number is dropped silently, so
   // two overlapping cuts can never race each other onto the canvas.
@@ -2303,9 +2313,36 @@ async function importColumns() {
 // ---------- UI wiring ----------
 document.getElementById("study-select").addEventListener("change", (e) => loadStudy(e.target.value));
 document.getElementById("material-select").addEventListener("change", (e) => {
+  // Same rule as loadStudy: the incoming material's stored appearance is
+  // restored before anything is rebuilt, never after.
+  restoreAppearance(e.target.value);
   updatePatternForMaterial(e.target.value);
   const select = document.getElementById("study-select");
   if (select.value && !requestMatchesLoaded(e.target.value)) loadStudy(select.value);
+});
+document.getElementById("render-skin").addEventListener("change", (e) => {
+  state.appearance.skin = e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("material-tint").addEventListener("change", (e) => {
+  state.appearance.tint = e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("material-finish").addEventListener("input", (e) => {
+  document.getElementById("material-finish-value").textContent = Math.round(+e.target.value * 100);
+});
+document.getElementById("material-finish").addEventListener("change", (e) => {
+  state.appearance.finish = +e.target.value;
+  persistAppearance();
+  rebuildAppearance();
+});
+document.getElementById("material-reset").addEventListener("click", () => {
+  state.appearance = { tint: null, finish: null, skin: "none" };
+  localStorage.removeItem(appearanceStorageKey(document.getElementById("material-select").value));
+  syncAppearanceControls();
+  rebuildAppearance();
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;
@@ -2760,6 +2797,48 @@ function pieceTint(key) {
   return (offset[0] % 1) * 0.06 - 0.03;
 }
 
+// Task 5: render skins. "none" is not a factory: it means "show the
+// registry material", which appearanceMaterialBase reads straight from
+// materials[]. The three real skins are lazily built and cached like
+// groundMaterial caches GROUNDS, since each is a MeshPhysicalMaterial with
+// its own procedural map and should not be rebuilt on every piece.
+const SKINS = {
+  none: null,
+  "white-presentation": () => new THREE.MeshPhysicalMaterial({
+    color: 0xf4f4f0, side: THREE.DoubleSide,
+    map: noiseTexture(256, 245, 8),
+    roughness: 0.55, metalness: 0.0,
+  }),
+  "basalt-dark": () => new THREE.MeshPhysicalMaterial({
+    color: 0x2e3236, side: THREE.DoubleSide,
+    roughness: 0.85, metalness: 0.0,
+  }),
+  "timber-ply": () => new THREE.MeshPhysicalMaterial({
+    color: 0xc9a86a, side: THREE.DoubleSide,
+    map: grainTexture(512),
+    roughness: 0.7, metalness: 0.0,
+  }),
+};
+
+const skinMaterialCache = {};
+
+function appearanceMaterialBase() {
+  // The base pieceMaterial clones from: a skin's material when one is
+  // chosen, else the registry entry for the loaded study's own material
+  // (unchanged from before this task). A skin only ever substitutes the
+  // BASE material a piece is built from; it carries no information back to
+  // the server and never touches state.bundle.material, so the whole-shell
+  // weld in buildPieceMeshes -- which triggers on sprayedMaterial(), i.e.
+  // the ANALYSIS material being concrete-sprayed -- keeps working exactly
+  // as before under any skin, including "none".
+  const skin = state.appearance.skin;
+  if (skin !== "none" && SKINS[skin]) {
+    if (!skinMaterialCache[skin]) skinMaterialCache[skin] = SKINS[skin]();
+    return skinMaterialCache[skin];
+  }
+  return materials[state.bundle.material] || materials.concrete;
+}
+
 function pieceMaterial(key) {
   // The tint is a property of the casting, not a one-shot at build time.
   // recolourSegments reassigns every piece's material on every call, and
@@ -2773,7 +2852,13 @@ function pieceMaterial(key) {
   // Each casting owns its instance so the pulse can write emissive per
   // piece, and so the tint never leaks into the shared registry entry
   // other code reads from.
-  const own = (materials[state.bundle.material] || materials.concrete).clone();
+  const own = appearanceMaterialBase().clone();
+  // Task 5: the tint/finish overrides are render-only and apply before the
+  // per-piece HSL variation below, which is unchanged -- a tint override
+  // still gets the same per-casting lightness nudge a plain material does.
+  const { tint, finish } = state.appearance;
+  if (tint !== null) own.color.set(tint);
+  if (finish !== null) own.roughness = finish;
   // Sprayed concrete is one continuous surface, so it gets no per piece
   // variation at all.
   if (!sprayedMaterial()) own.color.offsetHSL(0, 0, pieceTint(key));
@@ -2915,6 +3000,55 @@ function updateMaterialControls() {
   document.getElementById("joint-gap").disabled = !!sprayed;
   document.getElementById("joint-gap-note").textContent =
     sprayed ? " (sprayed concrete is monolithic: no joints to open)" : "";
+}
+
+// ---------- Task 5: tint, finish and render skins (render-only) ----------
+function appearanceStorageKey(material) {
+  return "bench-studio-appearance:" + material;
+}
+
+function persistAppearance() {
+  const material = document.getElementById("material-select").value;
+  localStorage.setItem(appearanceStorageKey(material), JSON.stringify(state.appearance));
+}
+
+function syncAppearanceControls() {
+  document.getElementById("render-skin").value = state.appearance.skin;
+  document.getElementById("material-tint").value = state.appearance.tint || "#ffffff";
+  const finish = state.appearance.finish !== null ? state.appearance.finish : 0.5;
+  document.getElementById("material-finish").value = finish;
+  document.getElementById("material-finish-value").textContent = Math.round(finish * 100);
+}
+
+// Called from both the material-select change handler and loadStudy, both
+// BEFORE the incoming material's pieces are built, so a stored override
+// (or the lack of one) is always in state.appearance by the time
+// pieceMaterial first reads it for the material being switched to.
+function restoreAppearance(material) {
+  let appearance = { tint: null, finish: null, skin: "none" };
+  const stored = localStorage.getItem(appearanceStorageKey(material));
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      appearance = {
+        tint: parsed.tint || null,
+        finish: typeof parsed.finish === "number" ? parsed.finish : null,
+        skin: typeof parsed.skin === "string" ? parsed.skin : "none",
+      };
+    } catch (error) { /* corrupt localStorage entry: fall back to the defaults above */ }
+  }
+  state.appearance = appearance;
+  syncAppearanceControls();
+}
+
+// The joint-gap handler's exact rebuild shape, reused across the four
+// appearance controls: a tint, finish or skin change never touches the
+// bundle, so it never needs a server round trip, only a redraw.
+function rebuildAppearance() {
+  if (!state.bundle) return;
+  buildPieceMeshes();
+  recolourSegments();
+  if (state.timeline) applySceneAtTime(state.timeline.t);
 }
 
 function sceneCentroid() {
