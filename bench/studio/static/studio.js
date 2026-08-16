@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
+import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
@@ -29,6 +30,11 @@ const state = {
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
   hdriName: null,
+  hdriProjection: "projected", // Task 2: "projected" builds a GroundedSkybox dome; "infinite" is the flat equirect background
+  hdriScale: 60,       // GroundedSkybox radius, metres
+  hdriHeight: 2,        // GroundedSkybox height (camera height above ground in the source photo), metres
+  hdriRotation: 0,      // degrees, spins the dome/background about the world vertical
+  hdriEstimateAzimuth: null, // raw pixel-estimated azimuth from the last loadHdri; lets the rotation slider re-aim the sun without re-scanning pixels
   brightness: 1,     // R2: multiplier on the active mode's exposure base
   contrast: 0,       // R2: BrightnessContrastShader contrast, display space
   exposureBase: 0.85, // written by applyEnvironment per mode and preset
@@ -77,6 +83,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 const studioEnvironment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environment = studioEnvironment;
 let environmentTarget = null; // the disposable PMREM target behind sky/hdri modes
+let hdriDome = null; // the disposable GroundedSkybox group, hdri mode + projected only (Task 2)
 
 // R2: render, tone-map to display space, then grade. Contrast pivots
 // around mid grey, which is only meaningful AFTER tone mapping, so the
@@ -172,6 +179,7 @@ function applyEnvironment() {
   document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
   document.getElementById("weather-row").classList.toggle("hidden", state.environmentMode !== "sky");
   document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
+  if (state.environmentMode !== "hdri") disposeHdriDome();
   if (state.environmentMode === "sky") {
     const preset = WEATHER[state.weatherPreset];
     const uniforms = sky.material.uniforms;
@@ -193,11 +201,7 @@ function applyEnvironment() {
   } else if (state.environmentMode === "hdri") {
     sky.visible = false;
     scene.fog = null;
-    // Equirects are authored Y-up; the scene is Z-up, so both samplers
-    // rotate a quarter turn about X (E3).
-    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
-    scene.backgroundRotation.set(Math.PI / 2, 0, 0);
-    scene.environmentRotation.set(Math.PI / 2, 0, 0);
+    applyHdriBackdrop();
     hemi.intensity = 0.25;
     state.exposureBase = 0.7;
     scene.environmentIntensity = 1.0;
@@ -234,6 +238,55 @@ function regenerateEnvironment() {
     setEnvironmentTexture(target.texture, target);
   } else {
     setEnvironmentTexture(studioEnvironment, null);
+  }
+}
+
+function disposeHdriDome() {
+  // hdriDome is a Group (the Z-up quarter turn) wrapping the one
+  // GroundedSkybox mesh (the Y-up dome); the mesh owns the disposable
+  // geometry and material.
+  if (!hdriDome) return;
+  scene.remove(hdriDome);
+  const dome = hdriDome.children[0];
+  dome.geometry.dispose();
+  dome.material.dispose();
+  hdriDome = null;
+}
+
+function applyHdriBackdrop() {
+  // Task 2: hdri mode's backdrop is either a ground-projected dome
+  // (state.hdriProjection === "projected") or the flat infinite equirect
+  // background used before this task. Both read state.hdriRotation, so a
+  // full rebuild covers projection, scale, height and rotation changes
+  // alike; the rotation slider's "input" handler moves the live dome/
+  // background directly instead of paying for a rebuild every drag tick.
+  disposeHdriDome();
+  document.getElementById("hdri-scale-row").classList.toggle("hidden", state.hdriProjection !== "projected");
+  document.getElementById("hdri-height-row").classList.toggle("hidden", state.hdriProjection !== "projected");
+  const rotation = THREE.MathUtils.degToRad(state.hdriRotation);
+  // Equirects are authored Y-up; the scene is Z-up, so the environment
+  // sampler rotates a quarter turn about X, same as the old flat backdrop.
+  scene.environmentRotation.set(Math.PI / 2, 0, rotation);
+  if (state.hdriProjection === "projected" && state.hdriTexture) {
+    const dome = new GroundedSkybox(state.hdriTexture, state.hdriHeight, state.hdriScale);
+    // GroundedSkybox is centred on the camera by default; position.y lifts
+    // its flattened ground disc up to the dome's own origin (three's own
+    // documented usage), then the wrapping group's x = PI/2 stands the
+    // whole thing up so that disc lands on the scene's z = 0 ground. The
+    // user's rotation is about the world vertical, which -- before that
+    // quarter turn is applied -- is the dome's own local Y axis, so it is
+    // set on the dome (not the group).
+    dome.position.y = state.hdriHeight;
+    dome.rotation.y = rotation;
+    const group = new THREE.Group();
+    group.rotation.x = Math.PI / 2;
+    group.add(dome);
+    scene.add(group);
+    hdriDome = group;
+    scene.background = null;
+  } else {
+    scene.background = state.hdriTexture; // null paints the clear colour until a file loads
+    scene.backgroundRotation.set(Math.PI / 2, 0, rotation);
   }
 }
 
@@ -285,8 +338,12 @@ async function loadHdri(name) {
     // The estimator speaks image space. Three's equirect shader samples
     // u = atan2(dir.z, dir.x) / (2 * pi) + 0.5, and the backgroundRotation
     // quarter-turn is uploaded transposed, so world azimuth = 180 - image
-    // azimuth, not the negated image azimuth.
-    const azimuth = ((180 - estimate.azimuthDeg) % 360 + 360) % 360;
+    // azimuth, not the negated image azimuth. state.hdriRotation spins the
+    // dome/background on top of that, so it folds into the same sum; the
+    // raw estimate is kept so the rotation slider can redo this without
+    // re-scanning pixels (Task 2).
+    state.hdriEstimateAzimuth = estimate.azimuthDeg;
+    const azimuth = ((180 - estimate.azimuthDeg + state.hdriRotation) % 360 + 360) % 360;
     document.getElementById("sun-azimuth").value = Math.round(azimuth);
     document.getElementById("sun-elevation").value =
       Math.round(Math.min(85, Math.max(5, estimate.elevationDeg)));
@@ -2337,6 +2394,37 @@ document.getElementById("hdri-upload").addEventListener("change", async (event) 
     // the picker looks like it silently does nothing on the retry.
     event.target.value = "";
   }
+});
+document.getElementById("hdri-projection").addEventListener("change", (e) => {
+  state.hdriProjection = e.target.value;
+  applyHdriBackdrop();
+});
+document.getElementById("hdri-scale").addEventListener("change", (e) => {
+  state.hdriScale = +e.target.value;
+  applyHdriBackdrop();
+});
+document.getElementById("hdri-height").addEventListener("change", (e) => {
+  state.hdriHeight = +e.target.value;
+  applyHdriBackdrop();
+});
+// Dragging the rotation slider spins the live dome/background directly
+// (cheap: no geometry rebuild); releasing it re-aims the sun from the
+// stored pixel-estimate azimuth, the same formula loadHdri uses.
+document.getElementById("hdri-rotation").addEventListener("input", (e) => {
+  state.hdriRotation = +e.target.value;
+  const rotation = THREE.MathUtils.degToRad(state.hdriRotation);
+  scene.environmentRotation.set(Math.PI / 2, 0, rotation);
+  if (hdriDome) {
+    hdriDome.children[0].rotation.y = rotation;
+  } else {
+    scene.backgroundRotation.set(Math.PI / 2, 0, rotation);
+  }
+});
+document.getElementById("hdri-rotation").addEventListener("change", () => {
+  if (state.hdriEstimateAzimuth === null) return;
+  const azimuth = ((180 - state.hdriEstimateAzimuth + state.hdriRotation) % 360 + 360) % 360;
+  document.getElementById("sun-azimuth").value = Math.round(azimuth);
+  applySunFromSliders();
 });
 document.getElementById("weather-preset").addEventListener("change", (e) => {
   state.weatherPreset = e.target.value;

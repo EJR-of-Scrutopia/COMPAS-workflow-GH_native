@@ -27,7 +27,6 @@ import staging
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
 HDRI_DIR = Path(__file__).resolve().parent / "hdri"
-HDRI_MAX_BYTES = 200 * 1024 * 1024
 
 
 def _contained(directory: Path, name: str) -> bool:
@@ -270,8 +269,6 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if not filename.endswith(".hdr"):
             raise HTTPException(400, "hdri filename must end in .hdr")
         body = await request.body()
-        if len(body) > HDRI_MAX_BYTES:
-            raise HTTPException(413, "hdri file exceeds the 200 MB cap")
         if not (body.startswith(b"#?RADIANCE") or body.startswith(b"#?RGBE")):
             raise HTTPException(400, "not a Radiance .hdr file")
         HDRI_DIR.mkdir(parents=True, exist_ok=True)

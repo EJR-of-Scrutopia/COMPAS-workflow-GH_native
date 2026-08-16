@@ -1843,13 +1843,16 @@ def test_the_environment_addons_are_vendored():
     # the importmap's three/addons/ prefix.
     sky = STATIC / "vendor" / "addons" / "objects" / "Sky.js"
     hdr = STATIC / "vendor" / "addons" / "loaders" / "HDRLoader.js"
-    assert sky.is_file() and hdr.is_file()
+    skybox = STATIC / "vendor" / "addons" / "objects" / "GroundedSkybox.js"
+    assert sky.is_file() and hdr.is_file() and skybox.is_file()
     assert not (STATIC / "vendor" / "addons" / "loaders" / "RGBELoader.js").exists(), "only the 0.185 HDRLoader is vendored"
     sky_text = sky.read_text(encoding="utf-8")
     hdr_text = hdr.read_text(encoding="utf-8")
+    skybox_text = skybox.read_text(encoding="utf-8")
     assert "turbidity" in sky_text, "Sky.js must be the scattering shader"
     assert "RGBE" in hdr_text, "HDRLoader.js must decode Radiance files"
-    for text in (sky_text, hdr_text):
+    assert "GroundedSkybox" in skybox_text, "GroundedSkybox.js must export the ground-projected skybox"
+    for text in (sky_text, hdr_text, skybox_text):
         assert "from 'three'" in text or 'from "three"' in text, (
             "addons must import bare 'three' so the importmap resolves them"
         )
@@ -1913,6 +1916,22 @@ def test_each_environment_mode_owns_background_fog_and_rotation():
     assert "backgroundRotation" in js and "environmentRotation" in js
     # The tone slider is a studio-mode control; sky and hdri rows swap in.
     assert 'id="background-row"' in (STATIC / "index.html").read_text(encoding="utf-8")
+
+
+def test_the_hdri_backdrop_projects_and_rotates():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="hdri-projection"' in html
+    for control in ("hdri-scale", "hdri-height", "hdri-rotation"):
+        assert 'id="{}"'.format(control) in html
+    assert "GroundedSkybox" in js
+    body = _function_body(js, "applyHdriBackdrop")
+    assert "new GroundedSkybox(" in body and "dispose" in body
+    # Rotation tracks the sun: the estimate's azimuth gets the rotation added.
+    assert "state.hdriRotation" in _function_body(js, "loadHdri")
+    assert "HDRI_MAX_BYTES" not in (
+        (Path(__file__).resolve().parents[2] / "bench" / "studio" / "app.py")
+        .read_text(encoding="utf-8"))
 
 
 def test_environment_functions_never_read_the_clock_or_the_timeline():

@@ -117,6 +117,13 @@
       <label>HDRI <select id="hdri-select"></select></label>
       <label>Upload .hdr <input id="hdri-upload" type="file" accept=".hdr"></label>
       <div id="hdri-status"></div>
+      <label>Projection <select id="hdri-projection">
+        <option value="projected" selected>Projected</option>
+        <option value="infinite">Infinite</option>
+      </select></label>
+      <label id="hdri-scale-row">Scale <input id="hdri-scale" type="range" min="10" max="300" step="5" value="60"></label>
+      <label id="hdri-height-row">Height <input id="hdri-height" type="range" min="0.5" max="20" step="0.5" value="2"></label>
+      <label>Rotation <input id="hdri-rotation" type="range" min="0" max="360" step="1" value="0"></label>
     </div>
     <label>Sun azimuth <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140"></label>
     <label>Sun elevation <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40"></label>
