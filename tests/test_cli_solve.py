@@ -10,7 +10,7 @@ from ananke_equilibrium.cli.study import load_study
 from ananke_equilibrium.worker import dispatch
 
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "bench" / "studies" / "example-arch"
+EXAMPLE = Path(__file__).resolve().parent / "fixtures" / "example-arch"
 
 
 def copy_example(tmp_path):
