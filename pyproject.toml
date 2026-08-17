@@ -63,8 +63,24 @@ fab = [
 patterns = [
     "compas_skeleton==2.0.1",
 ]
+# Headless diagrams. matplotlib only; no display server needed.
+plot = [
+    "matplotlib>=3.8",
+]
+# Interactive 3D. PySide6 is large and Rhino never imports it, so it is
+# opt-in and must not move the pinned numpy, scipy, or compas.
+viz = [
+    "compas_viewer==2.0.2",
+]
+# The Bench Studio server. Pure web stack; none of these may move the
+# pinned numpy, scipy, or compas, and the pin guard test checks that.
+studio = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+]
 dev = [
     "build>=1.2,<2",
+    "httpx2>=2.10,<3",
     "numpy==2.0.2",
     "pytest>=8,<10",
     "tomli>=2,<3; python_version < '3.11'",
@@ -72,6 +88,9 @@ dev = [
 
 [project.urls]
 Repository = "https://github.com/EJR-of-Scrutopia/COMPAS-workflow-GH_native"
+
+[project.scripts]
+ananke = "ananke_equilibrium.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = [
@@ -94,3 +113,4 @@ include = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["slow: solves the full exported mesh"]

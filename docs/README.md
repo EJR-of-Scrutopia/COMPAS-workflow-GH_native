@@ -1,5 +1,18 @@
 # Documentation
 
+This repository holds the Grasshopper plugin (the Workflow): the
+components, the native worker, and the contracts they exchange. The root
+README tells the end-to-end story; these documents go deeper.
+
+Downstream of an export sits
+[Bench Studio](https://github.com/EJR-of-Scrutopia/COMPAS_UI-integration-tool),
+a separate local web UI that turns a solved thrust network into masonry,
+lets you view and cut it stage by stage, and renders the result. It ran
+inside this repository as `bench/` during development; it now ships as its
+own tool, and does not live here.
+
+## The Workflow
+
 - [Component taxonomy](component-taxonomy.md) defines the stable Grasshopper
   boundary and the staged component roadmap.
 - [Native v0.2 getting started](native-v02-getting-started.md) covers

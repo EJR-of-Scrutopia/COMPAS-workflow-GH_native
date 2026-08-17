@@ -155,6 +155,14 @@ inputs: `Height` (blank finds the natural equilibrium height) and
 implemented surface and later design-by-statics roadmap are detailed in
 [RhinoVault-style native TNA stages](docs/architecture/rhinovault-native-stages.md).
 
+## Next step: visualise and cut your export
+
+Export a solved result (`07 Delivery > Export`) and open it in
+[Bench Studio](https://github.com/EJR-of-Scrutopia/COMPAS_UI-integration-tool),
+a local web UI that turns the thrust network into masonry, lets you walk
+the cutting sequence stage by stage, and renders the result. Rhino is not
+required for that half of the workflow.
+
 ## Build and install
 
 Requirements:
