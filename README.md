@@ -181,10 +181,19 @@ Tessellation format writes the `<Name>-tessellation.json` sidecar Bench
 Studio imports as an authored cut. `Armadillo Dual` aligns to the
 result's own member forces, falling back to the form/force diagram pair
 when forces are absent; it refuses rather than guessing a curvature when
-neither is present. The Tessellation sidecar is plan-projected, so
-voussoirs on a near-vertical stretch of the surface can project
-degenerately; Bench Studio discloses any such cell rather than dropping
-it silently.
+neither is present. The Tessellation sidecar is plan-projected (z
+dropped), so a voussoir on a near-vertical stretch of the surface -- the
+funnel throat's own steep run -- can project to an outline that crosses
+itself, or to one that overlaps a different cell's once both are
+flattened. Bench Studio's import rejects the WHOLE sidecar on either
+fault, naming the offending cell, rather than dropping just that cell: an
+author cutting a steep form has to expect that whole-document rejection
+and exclude the offending cells before writing the sidecar. Only a cell
+that clears both checks but lands at a near-zero plan area (a sliver) is
+disclosed and kept, not rejected. This is a known limit of
+`bench.tessellation/1`'s plan-only domain; a surface-parameterised
+`bench.tessellation/2`, or filtering degenerate cells on the component
+side before Export, is the recorded future fix, not built for 6c.
 
 ## Build and install
 

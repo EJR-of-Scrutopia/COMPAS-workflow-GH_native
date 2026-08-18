@@ -36,6 +36,18 @@ Two things are reused rather than re-derived, both by design:
   FastAPI TestClient, no server process, no second venv: this test calls
   ``tessellation.from_document`` the same way bundle.py does, on the exact
   document Export would have written to disk.
+
+The document's own shape (schema string, cells list, unique keys, course
+ints, outline arity >= 3, no repeated final point) is ALSO proven on its
+own, unconditionally, by
+``test_the_brg_armadillo_sidecar_document_matches_the_schema_shape``: a
+separate test that never imports the UI repo at all, so it runs the same
+whether or not that sibling checkout is present. It is not a branch inside
+the cross-repo test (a passing run of that test would never execute it) --
+a document can satisfy this shape and still be one ``from_document`` itself
+would reject (a self-crossing or overlapping cell has the right shape and
+the wrong geometry), so this is a genuine fallback-strength check, not a
+substitute for the real acceptance above it.
 """
 
 from __future__ import annotations
@@ -484,9 +496,12 @@ def test_the_brg_armadillo_sidecar_is_accepted_by_the_studio():
     if studio_tessellation is None:
         pytest.skip(
             "COMPAS-UI-integration-tool checkout not found beside this repo "
-            "at {}; cross-repo studio acceptance skipped -- see this file's "
-            "module docstring for the schema-shape fallback this run "
-            "degrades to instead.".format(_UI_REPO_ROOT)
+            "at {}; real cross-repo studio acceptance skipped. The document's "
+            "own shape is still proven unconditionally by "
+            "test_the_brg_armadillo_sidecar_document_matches_the_schema_shape "
+            "below, which does not need this checkout at all -- but that is a "
+            "shape check, not proof the studio would accept the document "
+            "whole; that proof only runs here.".format(_UI_REPO_ROOT)
         )
 
     raw = _load_armadillo_mesh_dict()
@@ -512,9 +527,10 @@ def test_the_brg_armadillo_sidecar_is_accepted_by_the_studio():
         ),
     )
 
-    # Sanity on the document itself before handing it to the studio: this
-    # is the shape the schema-shape fallback (see the module docstring)
-    # would have asserted directly had the UI checkout not been reachable.
+    # Quick sanity on the document itself before handing it to the studio;
+    # the full, unconditional shape proof (no cross-repo import, always
+    # runs) is test_the_brg_armadillo_sidecar_document_matches_the_schema_shape
+    # below.
     assert document["schema"] == "bench.tessellation/1"
     assert isinstance(document["cells"], list) and document["cells"]
     keys = [cell["key"] for cell in document["cells"]]
@@ -602,3 +618,72 @@ def test_the_brg_armadillo_sidecar_is_accepted_by_the_studio():
     # in): the studio's own report never claims a z measurement for an
     # import that never supplied one.
     assert tess["z_offset_max"] is None
+
+
+@pytest.mark.skipif(
+    not ARMADILLO_JSON.exists(),
+    reason="armadillo.json not present in this worktree's bench/upstream",
+)
+def test_the_brg_armadillo_sidecar_document_matches_the_schema_shape():
+    """The schema-shape fallback, as its own always-running test -- not a
+    branch inside test_the_brg_armadillo_sidecar_is_accepted_by_the_studio
+    that a passing run of THAT test would never actually execute, and not
+    conditioned on the UI repo checkout being reachable at all: this test
+    never imports the UI repo, never touches sys.path, never names
+    ``tessellation``. It runs identically whether or not that sibling
+    checkout exists.
+
+    Validates exactly the shape ``tessellation.from_document``'s own
+    up-front checks require (bench/studio/tessellation.py,
+    COMPAS-UI-integration-tool, read directly, not re-derived from memory):
+    a "bench.tessellation/1" schema string, units "m", domain "plan", a
+    non-empty cells list, unique cell keys, integer course values, and an
+    outline with at least 3 points (from_document's own wording: "a
+    polygon needs 3") that does not repeat its first point as its last
+    (the sidecar's closed-implicit convention -- PrepareTessellationCells'
+    own closing-repeat drop, DeliveryComponents.cs).
+
+    This proves the DOCUMENT'S SHAPE, not that the studio would accept it
+    whole -- a self-crossing or an overlapping cell (the two genuine
+    findings recorded on ``build_tessellation_document``) has exactly this
+    right shape and the wrong geometry, and only the real
+    ``from_document`` call in the test above can catch that. So this test
+    intentionally builds its document WITHOUT the studio's own
+    ``is_simple``/``resolve_overlaps`` checks (those need the cross-repo
+    import this test deliberately avoids) -- it may therefore still
+    contain a cell ``from_document`` would reject, and that is fine: a
+    shape check is not a substitute for the real acceptance test, only a
+    fallback for when that real test cannot run at all.
+    """
+
+    raw = _load_armadillo_mesh_dict()
+    result = _adapt_armadillo_to_aligned_result(raw)
+    response = generate(result, size=0.75)
+
+    document, _plan_degenerate = build_tessellation_document(response["cells"])
+
+    assert document["schema"] == "bench.tessellation/1"
+    assert document["units"] == "m"
+    assert document["domain"] == "plan"
+    assert isinstance(document["cells"], list)
+    assert len(document["cells"]) > 0
+
+    keys = [cell["key"] for cell in document["cells"]]
+    assert len(keys) == len(set(keys)), "sidecar cell keys must be unique"
+
+    for cell in document["cells"]:
+        assert isinstance(cell["key"], str) and cell["key"]
+        assert isinstance(cell["course"], int)
+        outline = cell["outline"]
+        assert isinstance(outline, list)
+        assert len(outline) >= 3, "cell {!r} has an outline arity under 3".format(
+            cell["key"]
+        )
+        for point in outline:
+            assert len(point) == 2
+            assert isinstance(point[0], float) and isinstance(point[1], float)
+        first, last = outline[0], outline[-1]
+        assert not (
+            abs(first[0] - last[0]) < _COORD_TOL
+            and abs(first[1] - last[1]) < _COORD_TOL
+        ), "cell {!r} repeats its closing point".format(cell["key"])
