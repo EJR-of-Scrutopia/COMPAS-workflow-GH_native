@@ -601,6 +601,10 @@ def _band_seed_vertices(
     leaves two chosen seeds more than ``1.4*size`` apart -- a locally coarse
     stretch of the band -- one extra seed is inserted near the midpoint
     (design spec step 4's "a new line seeds where a gap exceeds 1.4S").
+
+    Disclosed approximation: this 1.4*size gap-fill applies at the
+    initial support band ONLY; streamlines that diverge later, mid-mesh,
+    do not seed new lines between them.
     """
 
     n = len(band_path)
@@ -883,6 +887,10 @@ def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
     not just within the one currently being seeded -- see that function's
     docstring for why a single-band neighbour check is not enough on a
     multi-band support set).
+
+    Disclosed approximation: new streamlines seed only at the support
+    band (via ``_band_seed_vertices``'s 1.4*size gap-fill); lines that
+    diverge beyond 1.4*size later, mid-mesh, are not backfilled.
     """
 
     if mesh.triangles.shape[0] == 0 or not mesh.support_vertex_ids or size <= 0:
@@ -1272,6 +1280,10 @@ def _extract_chains(
     loops (interior territory) or open paths (territory touching the
     mesh's own outer boundary, where a boundary mesh edge's midpoint has
     only one triangle to contribute a segment, not two).
+
+    Disclosed approximation: an open path is closed downstream by the
+    straight chord between its two ends, not by following the mesh's
+    true boundary polyline (see dual_cells).
     """
 
     adjacency: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
@@ -1384,6 +1396,10 @@ def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
     every candidate vertex in their fan, or a chain that fails hygiene) are
     simply absent from the result -- ``len(seed_points) - len(result)`` is
     exactly the dropped count ``generate`` reports.
+
+    Disclosed approximation: a cell whose territory touches the mesh's
+    open boundary closes its outline with the straight chord between the
+    open chain's two ends, not the true boundary polyline.
     """
 
     seed_points = np.asarray(seed_points, dtype=np.float64)
