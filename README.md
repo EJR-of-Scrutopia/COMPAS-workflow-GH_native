@@ -21,7 +21,7 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains twelve components:
+The native v0.2 vertical slice contains thirteen components:
 
 ```text
 01 Model
@@ -54,10 +54,20 @@ The native v0.2 vertical slice contains twelve components:
   Deconstruct  RES                            -> every data stream
 
 07 Delivery
+  Armadillo    RES, S (target voussoir
+  Dual         size, m)                       -> C closed voussoir curves,
+                                                 CO course band per cell, FL
+                                                 advected flow lines, D
+                                                 diagnostics (feeds Export's
+                                                 Cells/Courses)
   Export       RES,
-               Format (contract | compas),
+               Format (contract | compas |
+               tessellation),
                Path (optional), Write,
-               Name (optional)                -> JSON text, written file path
+               Name (optional),
+               Cells (optional, tessellation),
+               Courses (optional,
+               tessellation)                   -> JSON text, written file path
 
 90 System
   Backend Health                              -> ready, packages,
@@ -162,6 +172,19 @@ Export a solved result (`07 Delivery > Export`) and open it in
 a local web UI that turns the thrust network into masonry, lets you walk
 the cutting sequence stage by stage, and renders the result. Rhino is not
 required for that half of the workflow.
+
+For the Armadillo Vault's own cutting pattern -- a mesh aligned with the
+thrust flow whose dual becomes the blocks, so every joint runs across the
+thrust -- wire `07 Delivery > Armadillo Dual` from RES ahead of Export:
+its C and CO outputs feed Export's Cells and Courses, and Export's
+Tessellation format writes the `<Name>-tessellation.json` sidecar Bench
+Studio imports as an authored cut. `Armadillo Dual` aligns to the
+result's own member forces, falling back to the form/force diagram pair
+when forces are absent; it refuses rather than guessing a curvature when
+neither is present. The Tessellation sidecar is plan-projected, so
+voussoirs on a near-vertical stretch of the surface can project
+degenerately; Bench Studio discloses any such cell rather than dropping
+it silently.
 
 ## Build and install
 
