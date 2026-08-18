@@ -56,6 +56,7 @@ ALLOWED_COMMANDS = frozenset(
         "tna.prepare",
         "tna.solve",
         "export.compas",
+        "pattern.armadillo_dual",
     )
 )
 
@@ -525,6 +526,28 @@ def dispatch(
                     {"request_id": request_id},
                 )
             return result_response(request_id, compas_export_payload(result))
+        if command == "pattern.armadillo_dual":
+            from .patterns.armadillo_dual import PatternRefused
+            from .patterns.armadillo_dual import generate as armadillo_dual_generate
+
+            result = payload.get("result")
+            if not isinstance(result, Mapping) or result.get("kind") != "Result":
+                raise ProtocolError(
+                    "invalid_payload",
+                    "pattern.armadillo_dual requires a Result payload.",
+                    {"request_id": request_id},
+                )
+            size = payload.get("size")
+            size = 0.4 if size is None else float(size)
+            try:
+                pattern_payload = armadillo_dual_generate(result, size)
+            except PatternRefused as error:
+                raise ProtocolError(
+                    "pattern_refused",
+                    str(error),
+                    {"request_id": request_id},
+                ) from error
+            return result_response(request_id, pattern_payload)
         # Defensive only: _validate_request already enforces the allowlist.
         raise ProtocolError(
             "unknown_command",
