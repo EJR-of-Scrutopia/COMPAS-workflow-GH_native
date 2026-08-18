@@ -312,11 +312,17 @@ namespace Ananke.COMPAS.Native.Components
             }
             double courseHeight = 0.35;
             data.GetData(1, ref courseHeight);
-            if (courseHeight <= 0.0)
+            // Negated comparison, not "<= 0": NaN fails every comparison,
+            // so "NaN <= 0" would sail PAST a positivity guard and floor
+            // every face to course 0 silently, and a tiny positive (a
+            // slider dragged to nearly zero) would overflow the int cast
+            // in FaceCourses into garbage negative courses. 1 mm is the
+            // sane floor for a physical course height.
+            if (!(courseHeight > 0.001))
             {
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
-                    "Course Height must be positive; using 0.35 m.");
+                    "Course Height must be at least 1 mm; using 0.35 m.");
                 courseHeight = 0.35;
             }
 
