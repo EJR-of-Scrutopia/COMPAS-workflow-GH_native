@@ -123,6 +123,41 @@ def test_field_source_falls_back_to_diagrams_when_forces_are_absent(dome_result)
     assert mesh.edge_forces.shape == (mesh.edges.shape[0],)
     assert np.any(mesh.edge_forces != 0.0)
 
+    # A real (non-zero) force-density weighting produces a non-degenerate
+    # field: every face gets a finite, unit-length direction, not a
+    # collapsed or NaN one.
+    field = line_field(mesh)
+    assert np.isfinite(field).all()
+    assert np.allclose(np.linalg.norm(field, axis=1), 1.0, atol=1e-9)
+
+
+def test_field_source_refuses_a_weightless_diagram_pair(dome_result):
+    # The diagram pair (form_graph/force_graph) is present, but its force
+    # densities are all zero: a diagram graph alone names no direction to
+    # weight by, so this must refuse rather than silently building a
+    # zero-weight (degenerate) field.
+    result, _geometry = dome_result(include_forces=False, include_diagrams=True)
+    result["equilibrium"]["force_densities"] = [
+        0.0 for _ in result["equilibrium"]["force_densities"]
+    ]
+
+    with pytest.raises(PatternRefused) as excinfo:
+        field_source(result)
+
+    message = str(excinfo.value).lower()
+    assert "diagram pair" in message
+    assert "force densities" in message
+
+
+def test_assemble_mesh_refuses_a_weightless_diagram_pair(dome_result):
+    result, _geometry = dome_result(include_forces=False, include_diagrams=True)
+    result["equilibrium"]["force_densities"] = [
+        0.0 for _ in result["equilibrium"]["force_densities"]
+    ]
+
+    with pytest.raises(PatternRefused):
+        assemble_mesh(result)
+
 
 def test_field_source_refuses_when_neither_forces_nor_diagrams_exist(dome_result):
     result, _geometry = dome_result(include_forces=False, include_diagrams=False)

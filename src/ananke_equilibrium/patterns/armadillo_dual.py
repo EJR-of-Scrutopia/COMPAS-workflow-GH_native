@@ -30,6 +30,22 @@ in codec.py and confirmed against gh/export.py and tests/test_export_compas.py:
 - Graph vertex records carry "id" and a plain ``[x, y, z]`` "point" array;
   edge records carry "u" / "v" endpoint indices into that same vertex list.
   Face records carry a "vertices" index cycle.
+
+The "diagrams" fallback source (see ``field_source``) does NOT re-walk
+form_graph/force_graph for their own edge geometry; it reads
+``equilibrium.force_densities`` against ``equilibrium.edges`` -- the same
+edges the "forces" path already uses. This is deliberate, not a shortcut:
+the form diagram's vertex indices coincide 1:1 with the equilibrium's own
+indices (codec.py's TNA support records set "form_vertex_id" and
+"equilibrium_vertex_id" to the literal same value), so the form diagram
+IS the plan projection of the equilibrium edges, and force density is
+exactly the reciprocal-diagram quantity those edges carry. Weighting
+``equilibrium.edges``' directions by ``equilibrium.force_densities``
+therefore already IS "the form diagram's edge directions weighted by
+force density" (the design spec's wording for this fallback), in wire
+form. form_graph/force_graph are consulted only as the presence gate for
+this fallback (proof that a diagram pair actually exists), never for
+their own edge/vertex arrays.
 """
 
 from __future__ import annotations
@@ -49,7 +65,7 @@ import numpy as np
 # 2-theta neighbour-averaging passes: a constant, not a knob (see the
 # design spec's Algorithm section, step 2).
 _SMOOTHING_PASSES = 3
-_ZERO_TOLERANCE = 1.0e-9
+_ZERO_TOLERANCE = 1.0e-12
 
 
 class PatternRefused(ValueError):
@@ -130,9 +146,22 @@ def field_source(result: Mapping[str, Any]) -> str:
     """Which data aligns the pattern: "forces", or the "diagrams" fallback.
 
     Primary: the result's own member forces, non-empty and not all zero.
-    Fallback: the compas form/force diagram pair, present with a matching,
-    non-zero force-density weighting for the same edges. Raises
-    PatternRefused, naming both absences, when neither is usable.
+
+    Fallback: the compas form/force diagram pair (form_graph/force_graph),
+    used only as a PRESENCE gate -- proof a diagram pair actually exists --
+    weighted by ``equilibrium.force_densities`` against ``equilibrium.edges``.
+    That is not a shortcut: the form diagram IS the plan projection of the
+    equilibrium's own edges (see the module docstring for the identity that
+    proves it), so this already is "the form diagram's edge directions
+    weighted by force density" in wire form. The diagram graphs' own
+    vertex/edge arrays are never re-walked.
+
+    Raises PatternRefused in either of two distinct ways: naming both
+    absences when the diagram pair itself is missing (member forces AND
+    diagrams both unavailable), or naming the specific hole -- a diagram
+    pair present but carrying no usable force densities to weight the
+    field with -- when that is what leaves nothing to align with. Either
+    way, no curvature guessing, ever.
     """
 
     edges = _from_case(result, "edges")
@@ -154,12 +183,17 @@ def field_source(result: Mapping[str, Any]) -> str:
             and _any_nonzero(force_densities)
         ):
             return "diagrams"
+        raise PatternRefused(
+            "Armadillo Dual found a form/force diagram pair but it carries "
+            "no force densities to weight the field with (member forces "
+            "are also absent or all zero): equilibrium.force_densities is "
+            "absent, empty, or effectively zero for every edge."
+        )
 
     raise PatternRefused(
         "Armadillo Dual has no thrust direction to align the cutting "
         "pattern with: member forces are absent or all zero, and no "
-        "form/force diagram pair (with a matching force-density weighting) "
-        "is present in the result payload."
+        "form/force diagram pair is present in the result payload."
     )
 
 
