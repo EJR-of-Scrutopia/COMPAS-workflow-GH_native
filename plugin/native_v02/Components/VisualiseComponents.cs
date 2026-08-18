@@ -173,6 +173,15 @@ namespace Ananke.COMPAS.Native.Components
                 "RES",
                 "Solved FD or TNA result.",
                 GH_ParamAccess.item);
+            parameters.AddNumberParameter(
+                "Course Height",
+                "CH",
+                "Band height in metres for the Face Courses output: " +
+                "faces whose centroid sits within the same height band " +
+                "share a course. Zero or negative falls back to 0.35.",
+                GH_ParamAccess.item,
+                0.35);
+            parameters[1].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -281,6 +290,16 @@ namespace Ananke.COMPAS.Native.Components
                 "Tessellation format (each face an authored cutting " +
                 "cell). Empty for FD.",
                 GH_ParamAccess.list);
+            parameters.AddIntegerParameter(
+                "Face Courses",
+                "FC",
+                "The course (build row) per face, aligned one to one " +
+                "with Face Polylines -- neither list is ever sorted, so " +
+                "the pairing survives. Courses band the face centroids " +
+                "by height (Course Height per band), bottom row 0: the " +
+                "ready-made Courses input for the Export component's " +
+                "Tessellation format. Empty for FD.",
+                GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -290,6 +309,15 @@ namespace Ananke.COMPAS.Native.Components
                 goo?.Value is not ResultDto result)
             {
                 return;
+            }
+            double courseHeight = 0.35;
+            data.GetData(1, ref courseHeight);
+            if (courseHeight <= 0.0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Course Height must be positive; using 0.35 m.");
+                courseHeight = 0.35;
             }
 
             try
@@ -424,6 +452,7 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(15, diagnostics);
                 data.SetData(16, report);
                 data.SetDataList(17, FacePolylines(thrustMesh));
+                data.SetDataList(18, FaceCourses(thrustMesh, courseHeight));
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · " +
                     $"{memberLines.Length} members";
@@ -458,6 +487,45 @@ namespace Ananke.COMPAS.Native.Components
                 polylines.Add(new PolylineCurve(points));
             }
             return polylines;
+        }
+
+        /// <summary>
+        /// The course per face, aligned with <see cref="FacePolylines"/>:
+        /// centroid heights banded from the lowest face upward, so the
+        /// bottom row is 0 and nothing is ever sorted -- sorting is
+        /// exactly what would break the one-to-one pairing the Export
+        /// component's Cells/Courses inputs rely on.
+        /// </summary>
+        private static IReadOnlyList<int> FaceCourses(
+            Mesh mesh,
+            double courseHeight)
+        {
+            var centroids = new double[mesh.Faces.Count];
+            double lowest = double.PositiveInfinity;
+            for (int i = 0; i < mesh.Faces.Count; i++)
+            {
+                MeshFace face = mesh.Faces[i];
+                double z =
+                    mesh.Vertices[face.A].Z +
+                    mesh.Vertices[face.B].Z +
+                    mesh.Vertices[face.C].Z;
+                int corners = 3;
+                if (face.IsQuad)
+                {
+                    z += mesh.Vertices[face.D].Z;
+                    corners = 4;
+                }
+                centroids[i] = z / corners;
+                if (centroids[i] < lowest)
+                    lowest = centroids[i];
+            }
+            var courses = new int[mesh.Faces.Count];
+            for (int i = 0; i < mesh.Faces.Count; i++)
+            {
+                courses[i] = (int)Math.Floor(
+                    (centroids[i] - lowest) / courseHeight);
+            }
+            return courses;
         }
 
         /// <summary>Copied from <c>TnaQueryGeometry.ThrustMesh</c>.</summary>
