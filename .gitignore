@@ -58,6 +58,11 @@ Thumbs.db
 *.bak
 scratch/
 
+# Locally fetched upstream reference repos/data (compas_dem's armadillo.json
+# etc.) -- never committed, matching the convention already in place on the
+# bench-refactored branches; see docs/superpowers/specs/2026-08-18-armadillo-dual-design.md.
+upstream/
+
 # Generated Rhino environment/smoke-test reports
 scripts/rhino_environment.txt
 scripts/rhino_smoke_fd.txt
