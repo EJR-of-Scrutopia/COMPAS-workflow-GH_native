@@ -273,6 +273,14 @@ namespace Ananke.COMPAS.Native.Components
                 "Readable backend solve report. FD results gain the line " +
                 "\"FD result: no reciprocal diagram.\"",
                 GH_ParamAccess.item);
+            parameters.AddCurveParameter(
+                "Face Polylines",
+                "FP",
+                "One closed polyline per Thrust Mesh face, in face order: " +
+                "the ready-made Cells input for the Export component's " +
+                "Tessellation format (each face an authored cutting " +
+                "cell). Empty for FD.",
+                GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -415,6 +423,7 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(14, residuals);
                 data.SetDataList(15, diagnostics);
                 data.SetData(16, report);
+                data.SetDataList(17, FacePolylines(thrustMesh));
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · " +
                     $"{memberLines.Length} members";
@@ -424,6 +433,31 @@ namespace Ananke.COMPAS.Native.Components
                 Message = "Invalid";
                 ReportException("Deconstruct failed", error);
             }
+        }
+
+        /// <summary>
+        /// One closed polyline per mesh face, in face order: the Export
+        /// component's Tessellation format takes these as authored Cells
+        /// verbatim (it drops z and dedupes the closing repeat itself).
+        /// </summary>
+        private static IReadOnlyList<PolylineCurve> FacePolylines(Mesh mesh)
+        {
+            var polylines = new List<PolylineCurve>(mesh.Faces.Count);
+            for (int i = 0; i < mesh.Faces.Count; i++)
+            {
+                MeshFace face = mesh.Faces[i];
+                var points = new List<Point3d>(5)
+                {
+                    mesh.Vertices[face.A],
+                    mesh.Vertices[face.B],
+                    mesh.Vertices[face.C]
+                };
+                if (face.IsQuad)
+                    points.Add(mesh.Vertices[face.D]);
+                points.Add(points[0]);
+                polylines.Add(new PolylineCurve(points));
+            }
+            return polylines;
         }
 
         /// <summary>Copied from <c>TnaQueryGeometry.ThrustMesh</c>.</summary>
