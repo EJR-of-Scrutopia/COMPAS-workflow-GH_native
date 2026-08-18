@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components;
 
@@ -17,6 +18,16 @@ public sealed record ExportComponentTaskResult(
     string? Warning,
     Exception? Error,
     TimeSpan Elapsed);
+
+/// <summary>
+/// One authored cutting cell, already reduced to the plan outline the
+/// studio's bench.tessellation/1 sidecar carries: the curve conversion
+/// happens on the solve thread (TryReadInputs), so the background task
+/// only ever sees plain numbers, never live Rhino geometry.
+/// </summary>
+public sealed record TessellationCell(
+    int Course,
+    IReadOnlyList<double[]> Outline);
 
 /// <summary>
 /// The one delivery boundary for a solved Result: Contract mode serialises
@@ -44,7 +55,8 @@ public sealed class ExportComponent :
             new (string Label, string Value)[]
             {
                 ("Contract", "contract"),
-                ("COMPAS", "compas")
+                ("COMPAS", "compas"),
+                ("Tessellation", "tessellation")
             },
             "contract")
     };
@@ -79,9 +91,11 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Format",
             "F",
-            "Contract (portable native JSON) or COMPAS (native " +
+            "Contract (portable native JSON), COMPAS (native " +
             "json_dumps geometry produced by the worker's export.compas " +
-            "command).",
+            "command), or Tessellation (the studio's " +
+            "bench.tessellation/1 authored cutting sidecar, built from " +
+            "the Cells input).",
             GH_ParamAccess.item,
             "contract");
         parameters.AddTextParameter(
@@ -107,13 +121,34 @@ public sealed class ExportComponent :
             "Optional file name for the write. Keep it to bake over the " +
             "same file; change it to bake a new one. Applied inside a " +
             "folder Path, or replacing the file name of a file Path. " +
-            "Without an extension, -contract.json or -compas.json is " +
-            "appended so both exports of one geometry sit side by side; " +
+            "Without an extension, -contract.json, -compas.json or " +
+            "-tessellation.json is appended so the exports of one " +
+            "geometry sit side by side (and the studio finds the " +
+            "sidecar by exactly that <Name>-tessellation.json pairing); " +
             "an explicit extension is used verbatim. Blank uses " +
             "ananke-export-<format>.json.",
             GH_ParamAccess.item,
             string.Empty);
         parameters[4].Optional = true;
+        parameters.AddCurveParameter(
+            "Cells",
+            "C",
+            "Tessellation format only: one closed planar outline per " +
+            "cutting cell (a brick), authored against the solved form " +
+            "Result still carries. Projected to plan (z dropped) into " +
+            "the sidecar's outline points; non-polyline curves are " +
+            "approximated at a 5 mm chord. Ignored by the other formats.",
+            GH_ParamAccess.list);
+        parameters[5].Optional = true;
+        parameters.AddIntegerParameter(
+            "Courses",
+            "CO",
+            "Tessellation format only: the course (row) index per cell, " +
+            "same length as Cells. The studio stages the build animation " +
+            "course by course. Empty puts every cell in course 0, one " +
+            "single stage.",
+            GH_ParamAccess.list);
+        parameters[6].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -144,6 +179,8 @@ public sealed class ExportComponent :
                     out _,
                     out _,
                     out _,
+                    out IReadOnlyList<TessellationCell>? cells,
+                    out string? cellWarning,
                     report: false))
             {
                 return;
@@ -152,6 +189,8 @@ public sealed class ExportComponent :
                 () => ComputeAsync(
                     CloneResult(result!),
                     format,
+                    cells,
+                    cellWarning,
                     CancelToken),
                 CancelToken));
             return;
@@ -166,7 +205,9 @@ public sealed class ExportComponent :
                 out string postFormat,
                 out string path,
                 out bool write,
-                out string name))
+                out string name,
+                out IReadOnlyList<TessellationCell>? postCells,
+                out string? postCellWarning))
         {
             return;
         }
@@ -181,6 +222,8 @@ public sealed class ExportComponent :
             taskResult = ComputeAsync(
                     CloneResult(postResult!),
                     postFormat,
+                    postCells,
+                    postCellWarning,
                     CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
@@ -304,6 +347,8 @@ public sealed class ExportComponent :
         out string path,
         out bool write,
         out string name,
+        out IReadOnlyList<TessellationCell>? cells,
+        out string? cellWarning,
         bool report = true)
     {
         result = null;
@@ -311,11 +356,15 @@ public sealed class ExportComponent :
         path = string.Empty;
         write = false;
         name = string.Empty;
+        cells = null;
+        cellWarning = null;
         ResultGoo? resultGoo = null;
         string formatInput = "contract";
         string pathInput = string.Empty;
         bool writeInput = false;
         string nameInput = string.Empty;
+        var cellInput = new List<Curve>();
+        var courseInput = new List<int>();
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -325,13 +374,35 @@ public sealed class ExportComponent :
         data.GetData(2, ref pathInput);
         data.GetData(3, ref writeInput);
         data.GetData(4, ref nameInput);
+        data.GetDataList(5, cellInput);
+        data.GetDataList(6, courseInput);
 
         string normalisedFormat = NormaliseFormat(formatInput);
         var errors = new List<string>(resultValue.Validate());
-        if (normalisedFormat is not ("contract" or "compas"))
-            errors.Add("Format must be Contract or COMPAS.");
+        if (normalisedFormat is not ("contract" or "compas" or "tessellation"))
+            errors.Add("Format must be Contract, COMPAS or Tessellation.");
         if (writeInput && string.IsNullOrWhiteSpace(pathInput))
             errors.Add("Write requires a Path to write to.");
+        if (normalisedFormat == "tessellation")
+        {
+            if (cellInput.Count == 0)
+            {
+                errors.Add(
+                    "Tessellation needs at least one Cell outline.");
+            }
+            else if (courseInput.Count != 0 &&
+                     courseInput.Count != cellInput.Count)
+            {
+                errors.Add(
+                    $"Courses ({courseInput.Count}) must be empty or " +
+                    $"match Cells ({cellInput.Count}).");
+            }
+            else
+            {
+                cells = PrepareTessellationCells(
+                    cellInput, courseInput, errors, out cellWarning);
+            }
+        }
         if (errors.Count > 0)
         {
             // The pre phase reads quietly; the post phase repeats the read
@@ -355,6 +426,99 @@ public sealed class ExportComponent :
     }
 
     /// <summary>
+    /// Reduce each cell curve to the plan outline the sidecar carries:
+    /// polylines verbatim, anything else approximated at a 5 mm chord
+    /// (the same chord target the studio's own cutter simplifies to), z
+    /// dropped, the closing duplicate and consecutive near-duplicates
+    /// removed. Curve access is why this runs on the solve thread and
+    /// never inside the background task.
+    /// </summary>
+    private static IReadOnlyList<TessellationCell>? PrepareTessellationCells(
+        IReadOnlyList<Curve> curves,
+        IReadOnlyList<int> courses,
+        List<string> errors,
+        out string? warning)
+    {
+        warning = null;
+        var prepared = new List<TessellationCell>(curves.Count);
+        var openCells = new List<int>();
+        for (int i = 0; i < curves.Count; i++)
+        {
+            Curve? curve = curves[i];
+            if (curve is null)
+            {
+                errors.Add($"Cell {i} is null.");
+                continue;
+            }
+            if (!curve.TryGetPolyline(out Polyline polyline))
+            {
+                PolylineCurve? approximated = curve.ToPolyline(
+                    0.005, Math.PI / 90.0, 0.005, 0.0);
+                if (approximated is null ||
+                    !approximated.TryGetPolyline(out polyline))
+                {
+                    errors.Add(
+                        $"Cell {i} could not be reduced to a polyline.");
+                    continue;
+                }
+            }
+            var outline = new List<double[]>(polyline.Count);
+            foreach (Point3d point in polyline)
+            {
+                if (outline.Count > 0)
+                {
+                    double[] last = outline[outline.Count - 1];
+                    if (Math.Abs(last[0] - point.X) < 1e-9 &&
+                        Math.Abs(last[1] - point.Y) < 1e-9)
+                    {
+                        continue;
+                    }
+                }
+                outline.Add(new[] { point.X, point.Y });
+            }
+            // The studio closes rings implicitly ((i + 1) % n), so the
+            // closing repeat of a closed polyline is dropped, not kept.
+            if (outline.Count > 1)
+            {
+                double[] first = outline[0];
+                double[] final = outline[outline.Count - 1];
+                if (Math.Abs(first[0] - final[0]) < 1e-9 &&
+                    Math.Abs(first[1] - final[1]) < 1e-9)
+                {
+                    outline.RemoveAt(outline.Count - 1);
+                }
+                else if (!curve.IsClosed)
+                {
+                    openCells.Add(i);
+                }
+            }
+            if (outline.Count < 3)
+            {
+                errors.Add(
+                    $"Cell {i} has fewer than 3 distinct plan corners.");
+                continue;
+            }
+            prepared.Add(new TessellationCell(
+                courses.Count > 0 ? courses[i] : 0,
+                outline));
+        }
+        if (openCells.Count > 0)
+        {
+            warning =
+                $"{openCells.Count} cell(s) are not closed curves " +
+                $"(first: {openCells[0]}); the studio closes each " +
+                "outline implicitly.";
+        }
+        if (courses.Count == 0 && prepared.Count > 0)
+        {
+            warning = (warning is null ? string.Empty : warning + " ") +
+                "No Courses wired: every cell is course 0, so the build " +
+                "animation becomes a single stage.";
+        }
+        return errors.Count > 0 ? null : prepared;
+    }
+
+    /// <summary>
     /// <c>ContractJson.DeepClone</c> (the pattern every other solve
     /// component uses to snapshot inputs before they cross into a
     /// background task) round-trips through <c>ResultDto</c>'s own
@@ -370,6 +534,8 @@ public sealed class ExportComponent :
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
         string format,
+        IReadOnlyList<TessellationCell>? cells,
+        string? cellWarning,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -383,6 +549,13 @@ public sealed class ExportComponent :
                         result,
                         cancellationToken)
                     .ConfigureAwait(false);
+            }
+            else if (format == "tessellation")
+            {
+                // Pure serialisation of cells already reduced to plain
+                // numbers on the solve thread; no worker, no geometry.
+                json = BuildTessellationJson(cells!);
+                warning = cellWarning;
             }
             else
             {
@@ -504,7 +677,44 @@ public sealed class ExportComponent :
         {
             "" => "contract",
             "compas" or "compas.data" => "compas",
+            "tessellation" or "tess" or "sidecar" => "tessellation",
             _ => format
         };
+    }
+
+    /// <summary>
+    /// The studio's bench.tessellation/1 sidecar, verbatim: an authored
+    /// cut the server consumes through tessellation.from_document. Keys
+    /// are c&lt;course&gt;p&lt;n&gt; with n counting within each course,
+    /// matching the generated patterns' own naming so the staging plan
+    /// and the Data panel read the same either way. Units are metres and
+    /// the domain is the plan projection; both are the sidecar's fixed
+    /// contract, not options.
+    /// </summary>
+    private static string BuildTessellationJson(
+        IReadOnlyList<TessellationCell> cells)
+    {
+        var perCourse = new Dictionary<int, int>();
+        var cellPayloads = new List<Dictionary<string, object?>>(cells.Count);
+        foreach (TessellationCell cell in cells)
+        {
+            perCourse.TryGetValue(cell.Course, out int sequence);
+            perCourse[cell.Course] = sequence + 1;
+            cellPayloads.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["key"] = $"c{cell.Course}p{sequence}",
+                ["course"] = cell.Course,
+                ["outline"] = cell.Outline
+            });
+        }
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["schema"] = "bench.tessellation/1",
+            ["units"] = "m",
+            ["domain"] = "plan",
+            ["pattern"] = "authored",
+            ["cells"] = cellPayloads
+        };
+        return JsonSerializer.Serialize(payload);
     }
 }
