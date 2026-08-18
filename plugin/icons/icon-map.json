@@ -181,6 +181,12 @@
       "label": "DLV",
       "category": "05 Visualisation",
       "filename": "export.png"
+    },
+    {
+      "key": "armadillo_dual",
+      "label": "ARM",
+      "category": "05 Visualisation",
+      "filename": "armadillo_dual.png"
     }
   ]
 }
