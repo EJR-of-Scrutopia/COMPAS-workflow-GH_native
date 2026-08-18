@@ -45,27 +45,44 @@ assignment the data does not name.
 Per the brief's own escape clause ("If the armadillo.json structure cannot
 be adapted into the result shape honestly ... say exactly what it carries
 and STOP for a ruling rather than fabricating field data"): this is exactly
-that corner. The honest adapter below carries the real vertices/faces
-through, sets edges/member_forces/force_densities empty, and support IDs
-empty (none are named in the source data) -- which is exactly the input
-``field_source`` is built to refuse. The test below proves that refusal
-fires correctly on real, production-scale (1038-triangle) data: a real,
-non-fabricated assertion about this real file. The brief's literal
-acceptance bar -- ``generate`` at size 0.75 returning cells in [150, 800]
-with dropped fraction < 10% -- needs real force or diagram data for the
-armadillo primal that does not exist anywhere in this data directory; that
-bar is BLOCKED pending a ruling on where such data should come from (see
-the task report), not silently downgraded or faked here.
+that corner, and it went to a ruling (recorded in the SDD progress ledger).
+Two adapters live below, for two different, both honest, purposes:
+
+- ``_adapt_armadillo_to_bare_result``: the literal file, nothing added --
+  edges/member_forces/force_densities empty, support IDs empty (none are
+  named in the source data). This is exactly the input ``field_source`` is
+  built to refuse, and the refusal tests below prove that firing correctly
+  on real, production-scale (1038-triangle) data.
+- ``_adapt_armadillo_to_aligned_result``: the RULING's adapter. The primal
+  mesh IS the force-aligned mesh of the built Armadillo Vault -- its edge
+  directions are the alignment field BY CONSTRUCTION, which is what the BRG
+  method produced it for in the first place. So member forces are supplied
+  as each edge's own length under a uniform force density (q = 1, so
+  F = q*L): the "forces" path drives (no diagram-pair fabrication needed),
+  and the resulting line field follows the primal's own real edge
+  directions, weighted longest-edge-strongest. The field's DIRECTIONS are
+  therefore genuine, real geometry; only the force MAGNITUDE convention
+  (q = 1 everywhere) is synthetic, and is documented as exactly that, never
+  presented as a measured or solved force. Support IDs come from the
+  mesh's own boundary vertices (touching exactly one triangle) whose z
+  falls in the lowest 10% of the mesh's z-range -- the vault's ground arcs,
+  the honest reading of "springing" for a primal that names no supports of
+  its own. With this adapter the brief's literal acceptance bar --
+  ``generate`` at size 0.75 returning cells in [150, 800] with dropped
+  fraction < 10%, no exception -- is exercised for real; see the task
+  report for the actual numbers.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import time
 from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Tuple
 
 import numpy as np
 import pytest
@@ -534,20 +551,11 @@ def _load_armadillo_mesh_dict() -> Dict[str, Any]:
         return json.load(handle)
 
 
-def _adapt_armadillo_to_result(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Tests-local adapter: the real BRG armadillo.json's bare compas Mesh
-    dict shape (see this module's docstring for the full structure) into
-    Task 1's Result payload shape.
-
-    Vertices and (triangulated) faces carry straight across -- that is all
-    the source file has. It has no edges, no member forces, no force
-    densities, no diagram pair, and no named support vertices: those fields
-    are left empty/absent, honestly, rather than invented. That is exactly
-    what makes ``field_source``/``assemble_mesh`` refuse on it (proven
-    below), which is itself the honest, real-data test this file can offer
-    for the armadillo primal absent a ruling on where force data for it
-    should come from.
-    """
+def _armadillo_vertices_and_faces(
+    raw: Dict[str, Any]
+) -> Tuple[List[List[float]], List[List[int]]]:
+    """The two things every adapter below needs: real vertex positions and
+    real triangulated faces, straight off the source file."""
 
     data = raw["data"]
     vertex_dict = data["vertex"]
@@ -559,14 +567,49 @@ def _adapt_armadillo_to_result(raw: Dict[str, Any]) -> Dict[str, Any]:
         vertices[int(key)] = [float(attrs["x"]), float(attrs["y"]), float(attrs["z"])]
 
     faces = [list(int(v) for v in face) for face in face_dict.values()]
+    return vertices, faces
 
-    equilibrium = {
-        "vertices": vertices,
-        "edges": [],
-        "member_forces": [],
-        "mappings": {"resolved_support_ids": []},
-    }
 
+def _weld_coincident_vertices(
+    vertices: List[List[float]], faces: List[List[int]], decimals: int = 4
+) -> Tuple[List[List[float]], List[List[int]]]:
+    """Merge vertex records that sit at the same 3D position under separate
+    indices -- restoring connectivity the file's own export dropped, not
+    inventing any.
+
+    Checked directly: armadillo.json's 2076 vertex records collapse to only
+    608 distinct positions (rounded to ``decimals`` places). Left as-is,
+    the "mesh" is 519 topologically disconnected two-triangle islands (each
+    of the file's quad patches carries its own private corner copies, even
+    where two patches meet at the identical point in space) -- every one of
+    the 2076 vertices sits on some triangle's own boundary, so no
+    streamline can advect past the 1-2 faces of its own island. That is not
+    the single force-aligned surface the ruling describes; it is that
+    surface's own geometry with its connectivity accidentally discarded on
+    export. Welding by coincident position changes no coordinate, edge
+    count, or force -- it only merges duplicate labels for the same point.
+    Confirmed directly: after welding, the mesh is one connected component
+    covering all 1038 faces with a 180-edge outer boundary, versus 519
+    components of 2 faces each before.
+    """
+
+    canonical: Dict[Tuple[float, float, float], int] = {}
+    remap: List[int] = []
+    welded_vertices: List[List[float]] = []
+    for v in vertices:
+        key = (round(v[0], decimals), round(v[1], decimals), round(v[2], decimals))
+        if key not in canonical:
+            canonical[key] = len(welded_vertices)
+            welded_vertices.append(v)
+        remap.append(canonical[key])
+
+    welded_faces = [[remap[v] for v in face] for face in faces]
+    return welded_vertices, welded_faces
+
+
+def _result_shell(vertices, faces, equilibrium_extra):
+    equilibrium = {"vertices": vertices, "mappings": {"resolved_support_ids": []}}
+    equilibrium.update(equilibrium_extra)
     return {
         "kind": "Result",
         "solver": "tna",
@@ -575,13 +618,104 @@ def _adapt_armadillo_to_result(raw: Dict[str, Any]) -> Dict[str, Any]:
             "vertices": [
                 {"id": idx, "key": idx, "point": p} for idx, p in enumerate(vertices)
             ],
-            "edges": [],
+            "edges": [
+                {"id": idx, "u": u, "v": v}
+                for idx, (u, v) in enumerate(equilibrium.get("edges") or [])
+            ],
             "faces": [
                 {"id": idx, "key": idx, "vertices": face}
                 for idx, face in enumerate(faces)
             ],
         },
     }
+
+
+def _adapt_armadillo_to_bare_result(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Tests-local adapter: the real BRG armadillo.json's bare compas Mesh
+    dict shape (see this module's docstring for the full structure) into
+    Task 1's Result payload shape, adding NOTHING.
+
+    Vertices and (triangulated) faces carry straight across -- that is all
+    the source file has. It has no edges, no member forces, no force
+    densities, no diagram pair, and no named support vertices: those fields
+    are left empty/absent, honestly, rather than invented. That is exactly
+    what makes ``field_source``/``assemble_mesh`` refuse on it (proven
+    below) -- the honest-refusal proof on real data, kept deliberately
+    alongside ``_adapt_armadillo_to_aligned_result`` (see this module's
+    docstring for the ruling that adapter implements) rather than replaced
+    by it.
+    """
+
+    vertices, faces = _armadillo_vertices_and_faces(raw)
+    return _result_shell(vertices, faces, {"edges": [], "member_forces": []})
+
+
+def _adapt_armadillo_to_aligned_result(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Tests-local adapter implementing the ruling (see this module's
+    docstring): the primal mesh IS the Armadillo Vault's force-aligned
+    mesh, so its own edges are a genuine alignment field, not a curvature
+    guess.
+
+    - member_forces: every triangle edge's own 3D length, under a uniform
+      force density (q = 1, so F = q*L). This drives the "forces" path
+      directly (no diagram-pair fabrication). The resulting line field
+      follows the primal's real edge directions, weighted
+      longest-edge-strongest -- the DIRECTIONS are genuine real geometry;
+      only the magnitude convention (q = 1 everywhere) is synthetic, and
+      is documented as exactly that, never as a measured or solved force.
+    - support IDs: boundary vertices (touching exactly one triangle, i.e.
+      the mesh's own outer rim) whose z falls in the lowest 10% of the
+      mesh's own z-range -- the vault's ground arcs, the honest reading of
+      "springing" for a primal that names no supports of its own.
+
+    Vertices are welded by coincident position first (``_weld_coincident_vertices``)
+    -- the file's own export left 519 quad patches topologically
+    disconnected from one another despite sharing corners in space; without
+    welding, every vertex reads as a boundary vertex and no streamline can
+    advect past its own 2-triangle island. Welding is not part of the
+    ruling itself (which is about supplying an alignment field, not mesh
+    topology) but is required for that field to mean anything across faces
+    at all on this file's own export.
+    """
+
+    raw_vertices, raw_faces = _armadillo_vertices_and_faces(raw)
+    vertices, faces = _weld_coincident_vertices(raw_vertices, raw_faces)
+    vertices_arr = np.array(vertices, dtype=np.float64)
+
+    edge_face_count: Dict[Tuple[int, int], int] = {}
+    edge_order: List[Tuple[int, int]] = []
+    for face in faces:
+        for i in range(3):
+            a, b = face[i], face[(i + 1) % 3]
+            key = (a, b) if a <= b else (b, a)
+            if key not in edge_face_count:
+                edge_order.append(key)
+            edge_face_count[key] = edge_face_count.get(key, 0) + 1
+
+    member_forces = [
+        float(np.linalg.norm(vertices_arr[u] - vertices_arr[v]))
+        for u, v in edge_order
+    ]
+
+    boundary_vertices = set()
+    for (u, v), count in edge_face_count.items():
+        if count == 1:
+            boundary_vertices.add(u)
+            boundary_vertices.add(v)
+
+    z_values = vertices_arr[:, 2]
+    z_min = float(z_values.min())
+    z_max = float(z_values.max())
+    z_threshold = z_min + 0.10 * (z_max - z_min)
+    support_ids = sorted(
+        v for v in boundary_vertices if vertices_arr[v, 2] <= z_threshold
+    )
+
+    result = _result_shell(
+        vertices, faces, {"edges": [list(e) for e in edge_order], "member_forces": member_forces}
+    )
+    result["equilibrium"]["mappings"]["resolved_support_ids"] = support_ids
+    return result
 
 
 @pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
@@ -604,7 +738,7 @@ def test_armadillo_json_structure_is_a_bare_1038_triangle_mesh():
 @pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
 def test_armadillo_primal_adapts_to_a_1038_triangle_mesh_with_no_force_source():
     raw = _load_armadillo_mesh_dict()
-    result = _adapt_armadillo_to_result(raw)
+    result = _adapt_armadillo_to_bare_result(raw)
 
     mesh = None
     with pytest.raises(PatternRefused) as excinfo:
@@ -618,19 +752,64 @@ def test_armadillo_primal_adapts_to_a_1038_triangle_mesh_with_no_force_source():
 
 @pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
 def test_armadillo_primal_generate_refuses_honestly_rather_than_fabricating_a_field():
-    """The brief's literal acceptance bar (cells in [150, 800], dropped
-    fraction < 10%, no exception, at size 0.75) needs real force or diagram
-    data for the armadillo primal. None exists anywhere in
-    bench/upstream/compas_dem/data (see this module's docstring for the
-    sibling files checked and ruled out). Fabricating a field to hit that
-    number would be exactly the "curvature guessing" the design spec
-    forbids, so this test proves the honest, real-data outcome instead:
-    PatternRefused, naming both absences, on the actual 1038-triangle BRG
-    primal. This is a BLOCKED item pending a ruling -- see the task report.
+    """The bare-file reading of armadillo.json (no forces, no diagrams --
+    see this module's docstring) genuinely refuses rather than fabricating
+    a field. Kept as the honest-refusal proof on real data, alongside
+    ``test_armadillo_primal_generate_accepts_its_own_edges_as_the_alignment_field``
+    below, which exercises the brief's literal acceptance bar via the
+    ruling's adapter.
     """
 
     raw = _load_armadillo_mesh_dict()
-    result = _adapt_armadillo_to_result(raw)
+    result = _adapt_armadillo_to_bare_result(raw)
 
     with pytest.raises(PatternRefused):
         generate(result, size=0.75)
+
+
+@pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
+def test_armadillo_primal_generate_accepts_its_own_edges_as_the_alignment_field():
+    """RULING (SDD progress ledger, task 2): the primal mesh IS the
+    force-aligned mesh of the built Armadillo Vault, so its own edges are
+    a genuine alignment field -- no curvature guessing, no fabricated
+    magnitudes claimed as measured. ``_adapt_armadillo_to_aligned_result``
+    supplies a uniform force density (q = 1, so member force = edge
+    length) driving the "forces" path, and reads support IDs off the
+    boundary vertices in the lowest 10% of the mesh's z-range (the vault's
+    ground arcs). With that adapter the brief's literal acceptance bar
+    stands: cells in [150, 800], dropped fraction < 10%, no exception, at
+    size 0.75 on the real 1038-triangle primal.
+    """
+
+    raw = _load_armadillo_mesh_dict()
+    result = _adapt_armadillo_to_aligned_result(raw)
+    assert field_source(result) == "forces"
+
+    start = time.time()
+    response = generate(result, size=0.75)
+    wall_time = time.time() - start
+
+    diagnostics = response["diagnostics"]
+    cell_count = len(response["cells"])
+    seed_count = diagnostics["seed_count"]
+    dropped = diagnostics["dropped"]
+    dropped_fraction = (dropped / seed_count) if seed_count else 1.0
+
+    print(
+        "BRG armadillo.json at size 0.75: cells={} seeds={} dropped={} "
+        "dropped_fraction={:.3f} streamlines={} wall_time={:.2f}s".format(
+            cell_count,
+            seed_count,
+            dropped,
+            dropped_fraction,
+            diagnostics["streamline_count"],
+            wall_time,
+        )
+    )
+
+    assert 150 <= cell_count <= 800, "cell count {} not in [150, 800]".format(
+        cell_count
+    )
+    assert dropped_fraction < 0.10, "dropped fraction {:.3f} not < 10%".format(
+        dropped_fraction
+    )

@@ -834,28 +834,35 @@ def _advect_from(
 
 def _truncate_on_collapse(
     line: Sequence[np.ndarray],
-    previous_line: Optional[Sequence[np.ndarray]],
+    previous_points: Optional[np.ndarray],
     size: float,
     skip_arclength: float,
 ) -> List[np.ndarray]:
-    """Cut ``line`` short once it converges within ``0.6*size`` of its
-    immediate neighbour (design spec step 4) -- e.g. meridians converging
-    toward a dome's apex. ``skip_arclength`` guards the shared springing,
-    where neighbouring lines legitimately start ``size`` apart, from being
-    mistaken for a collapse.
+    """Cut ``line`` short once it converges within ``0.6*size`` of any
+    already-advected point (design spec step 4) -- e.g. meridians
+    converging toward a dome's apex.
+
+    Checked against every point advected so far, not just the one
+    immediately preceding streamline: a support band is not always a
+    single simple ring -- a real vault's ground arcs can be several
+    disjoint bands (confirmed on the BRG armadillo primal) -- so two
+    streamlines seeded from DIFFERENT bands can still run close together
+    and need the same collapse rule a same-band neighbour would get.
+    ``skip_arclength`` guards the shared springing, where neighbouring
+    lines legitimately start ``size`` apart, from being mistaken for a
+    collapse.
     """
 
-    if not previous_line or len(line) < 2:
+    if previous_points is None or previous_points.shape[0] == 0 or len(line) < 2:
         return list(line)
 
-    prev_points = np.array(previous_line, dtype=np.float64)
     cumulative = 0.0
     keep = len(line)
     for i in range(1, len(line)):
         cumulative += float(np.linalg.norm(line[i] - line[i - 1]))
         if cumulative < skip_arclength:
             continue
-        distances = np.linalg.norm(prev_points - line[i], axis=1)
+        distances = np.linalg.norm(previous_points - line[i], axis=1)
         if float(distances.min()) < _COLLAPSE_FACTOR * size:
             keep = i + 1
             break
@@ -870,11 +877,12 @@ def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
     Returns one float64 (p, 3) array per streamline. Seeding walks each
     support band (``_support_bands``) at ``size`` intervals, filling any
     locally-coarse gap wider than ``1.4*size`` with an extra seed; each
-    streamline is advected face-to-face (``_advect_from``) and then, against
-    its immediate neighbour in seed order, truncated wherever it converges
-    to within ``0.6*size`` (``_truncate_on_collapse``) -- both thresholds
-    are the two ends of the same seed-order relationship, so checking
-    neighbour-to-neighbour (not all-pairs) is enough.
+    streamline is advected face-to-face (``_advect_from``) and then
+    truncated wherever it converges to within ``0.6*size`` of any point
+    already advected (``_truncate_on_collapse``, checked across every band,
+    not just within the one currently being seeded -- see that function's
+    docstring for why a single-band neighbour check is not enough on a
+    multi-band support set).
     """
 
     if mesh.triangles.shape[0] == 0 or not mesh.support_vertex_ids or size <= 0:
@@ -889,9 +897,9 @@ def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
     mesh_centroid = mesh.vertices.mean(axis=0)
 
     lines: List[List[np.ndarray]] = []
+    advected_points: List[np.ndarray] = []
     for band_path, is_closed in _support_bands(mesh):
         seed_vertices = _band_seed_vertices(mesh, band_path, is_closed, size)
-        previous_line: Optional[List[np.ndarray]] = None
         for seed_vertex in seed_vertices:
             faces_here = vertex_face_map.get(seed_vertex)
             if not faces_here:
@@ -909,12 +917,15 @@ def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
             line = _advect_from(
                 mesh, field, bases, edge_face_map, start_point, start_face, orient_hint
             )
+            previous_points = (
+                np.array(advected_points, dtype=np.float64) if advected_points else None
+            )
             line = _truncate_on_collapse(
-                line, previous_line, size, skip_arclength=0.3 * size
+                line, previous_points, size, skip_arclength=0.3 * size
             )
             if len(line) >= 2:
                 lines.append(line)
-                previous_line = line
+                advected_points.extend(line)
 
     return [np.array(line, dtype=np.float64) for line in lines]
 
@@ -949,6 +960,9 @@ def _point_at_arclength(
     return line[idx - 1] + t * (line[idx] - line[idx - 1])
 
 
+_SEED_THIN_FACTOR = 0.5  # see the cross-line thinning note in ``seeds``.
+
+
 def seeds(
     streamline_list: Sequence[np.ndarray], size: float
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -962,6 +976,21 @@ def seeds(
     WHERE band 0 sits along the line, not its number, so neighbouring bands
     still read as the same course the way a running bond's do);
     ``streamline_id`` (int64 (s,)) is the index into ``streamline_list``.
+
+    A seed within ``0.5*size`` of an earlier-kept seed (processed in
+    generation order: streamline by streamline, band by band) is dropped
+    before it is ever returned. Within one streamline this never triggers
+    -- consecutive seeds there are always exactly ``size`` apart -- but two
+    DIFFERENT streamlines can still end up placing individual points close
+    together where they run near each other without ever formally
+    "colliding" by ``streamlines``' own 0.6*size rule (routine on a mesh
+    whose local vertex density varies, like the real BRG armadillo primal,
+    less so on the evenly-tessellated dome fixture). Such a seed was never
+    going to carve out territory distinct from its close neighbour, so it
+    is thinned here rather than reported as a ``dual_cells`` hygiene
+    failure downstream. A consequence: a streamline's own course bands are
+    monotonically increasing but not always a gap-free 0, 1, 2, ... run
+    once thinning has removed one.
     """
 
     points: List[np.ndarray] = []
@@ -994,16 +1023,170 @@ def seeds(
             np.zeros((0,), dtype=np.int64),
         )
 
+    threshold = _SEED_THIN_FACTOR * size
+    kept_points: List[np.ndarray] = []
+    kept_band: List[int] = []
+    kept_id: List[int] = []
+    for p, b, sid in zip(points, course_band, streamline_id):
+        if kept_points:
+            kept_arr = np.array(kept_points, dtype=np.float64)
+            if float(np.min(np.linalg.norm(kept_arr - p, axis=1))) < threshold:
+                continue
+        kept_points.append(p)
+        kept_band.append(b)
+        kept_id.append(sid)
+
     return (
-        np.array(points, dtype=np.float64),
-        np.array(course_band, dtype=np.int64),
-        np.array(streamline_id, dtype=np.int64),
+        np.array(kept_points, dtype=np.float64),
+        np.array(kept_band, dtype=np.int64),
+        np.array(kept_id, dtype=np.int64),
     )
 
 
 # ---------------------------------------------------------------------------
 # Dual cells (design spec Algorithm steps 6-8)
 # ---------------------------------------------------------------------------
+
+
+_DUAL_REFINEMENT_LEVELS = 1  # midpoint-subdivision passes of the mesh used
+# ONLY for dual_cells' own internal boundary extraction -- see
+# _refine_triangulation.
+
+
+def _refine_triangulation(
+    vertices: np.ndarray, triangles: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Split every triangle into 4 by adding a vertex at each edge's own
+    midpoint -- shared between the (up to two) triangles that edge
+    belongs to, so the result is a clean, still-manifold triangulation of
+    the EXACT SAME surface, not a new or approximated one. No geometry is
+    invented; every new vertex sits precisely on a straight edge the
+    original mesh already specifies.
+
+    A real mesh's own triangle size can be coarser than the seed spacing
+    ``dual_cells`` is asked to resolve (checked directly on the BRG
+    armadillo primal: median edge length roughly 1.0m against a 0.75m seed
+    spacing). Voronoi assignment is only as fine as the vertex graph it
+    runs on, so on a coarse mesh two seeds barely half a metre apart can
+    have no ORIGINAL vertex to call their own even when correctly
+    discriminated in a Dijkstra sense -- their whole distinct territory is
+    a stretch of one original edge's interior, which the unrefined mesh
+    has no vertex to represent at all. This bridges that gap.
+    """
+
+    edge_midpoint: Dict[Tuple[int, int], int] = {}
+    new_vertices: List[np.ndarray] = list(vertices)
+
+    def midpoint_index(a: int, b: int) -> int:
+        key = (a, b) if a <= b else (b, a)
+        if key not in edge_midpoint:
+            edge_midpoint[key] = len(new_vertices)
+            new_vertices.append((vertices[a] + vertices[b]) / 2.0)
+        return edge_midpoint[key]
+
+    new_triangles: List[List[int]] = []
+    for a, b, c in triangles.tolist():
+        ab = midpoint_index(a, b)
+        bc = midpoint_index(b, c)
+        ca = midpoint_index(c, a)
+        new_triangles.append([a, ab, ca])
+        new_triangles.append([ab, b, bc])
+        new_triangles.append([ca, bc, c])
+        new_triangles.append([ab, bc, ca])
+
+    return (
+        np.array(new_vertices, dtype=np.float64),
+        np.array(new_triangles, dtype=np.int64),
+    )
+
+
+def _refined_mesh_for_dual(mesh: Mesh, levels: int) -> Mesh:
+    """``mesh``'s triangulation refined (``_refine_triangulation``) ``levels``
+    times, packaged as a throwaway ``Mesh`` for ``dual_cells``' own
+    internal boundary-extraction pipeline (``_vertex_graph`` /
+    ``_cell_segments``) to run on unchanged. Only ``vertices``/``triangles``
+    are used downstream of this point, so ``edges``/``edge_forces``/
+    ``support_vertex_ids`` are left empty rather than refined too.
+    """
+
+    vertices, triangles = mesh.vertices, mesh.triangles
+    for _ in range(max(0, levels)):
+        vertices, triangles = _refine_triangulation(vertices, triangles)
+    return Mesh(
+        vertices=vertices,
+        triangles=triangles,
+        edges=np.zeros((0, 2), dtype=np.int64),
+        edge_forces=np.zeros((0,), dtype=np.float64),
+        support_vertex_ids=[],
+    )
+
+
+def _multi_source_dijkstra(
+    adjacency: Sequence[Sequence[Tuple[int, float]]],
+    sources: Sequence[Tuple[int, int, float]],
+) -> List[int]:
+    """Assign every vertex the index of its nearest source (multi-source
+    Dijkstra, heapq-based). ``sources`` is (vertex_index, seed_index,
+    initial_distance) triples -- ``initial_distance`` is the seed's real
+    Euclidean offset from that vertex (see ``_nearest_vertices_k``), not
+    always 0: a seed is rarely sitting exactly on a mesh vertex, so
+    starting every source at 0 would make any two seeds that happen to
+    share a single nearest vertex indistinguishable (whichever came first
+    in iteration order would win the vertex outright, orphaning the
+    other). Feeding in the true offset instead lets ordinary Dijkstra
+    relaxation -- keep the smaller distance -- resolve which seed a
+    contested vertex really belongs to, the same way it resolves any two
+    competing paths.
+    """
+
+    n = len(adjacency)
+    dist = [math.inf] * n
+    owner = [-1] * n
+    heap: List[Tuple[float, int, int]] = []
+    for vertex_index, seed_index, initial_distance in sources:
+        if initial_distance < dist[vertex_index]:
+            dist[vertex_index] = initial_distance
+            owner[vertex_index] = seed_index
+            heapq.heappush(heap, (initial_distance, vertex_index, seed_index))
+
+    while heap:
+        d, u, s = heapq.heappop(heap)
+        if d > dist[u] or owner[u] != s:
+            continue  # stale entry
+        for v, w in adjacency[u]:
+            nd = d + w
+            if nd < dist[v] - 1.0e-15:
+                dist[v] = nd
+                owner[v] = s
+                heapq.heappush(heap, (nd, v, s))
+
+    return owner
+
+
+_DIJKSTRA_SEED_FAN = 3  # candidate source vertices per seed point, see
+# _nearest_vertices_k.
+
+
+def _nearest_vertices_k(
+    vertices: np.ndarray, points: np.ndarray, k: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Each point's ``k`` nearest mesh vertices and its real distance to
+    each -- one seed's single nearest vertex, alone, is where two seeds
+    close together in a locally coarse patch of the mesh (few vertices
+    relative to the seed spacing -- routine on the real BRG armadillo
+    primal, less so on the finely-tessellated dome fixture) collide onto
+    the SAME nearest vertex despite sitting at genuinely different points;
+    giving each seed a fan of candidate sources with their true offsets
+    lets ``_multi_source_dijkstra`` tell them apart instead of orphaning
+    whichever loses that single vertex outright.
+    """
+
+    diff = vertices[np.newaxis, :, :] - points[:, np.newaxis, :]
+    dists = np.linalg.norm(diff, axis=2)
+    k = min(k, vertices.shape[0])
+    order = np.argsort(dists, axis=1)[:, :k]
+    nearest_dists = np.take_along_axis(dists, order, axis=1)
+    return order, nearest_dists
 
 
 def _vertex_graph(mesh: Mesh) -> List[List[Tuple[int, float]]]:
@@ -1026,45 +1209,6 @@ def _vertex_graph(mesh: Mesh) -> List[List[Tuple[int, float]]]:
             adjacency[a].append((b, weight))
             adjacency[b].append((a, weight))
     return adjacency
-
-
-def _multi_source_dijkstra(
-    adjacency: Sequence[Sequence[Tuple[int, float]]], sources: Sequence[Tuple[int, int]]
-) -> List[int]:
-    """Assign every vertex the index of its nearest source (multi-source
-    Dijkstra, heapq-based). ``sources`` is (vertex_index, seed_index)
-    pairs; when two sources share a vertex, only the first (in iteration
-    order) claims it -- the rest are left without territory, which
-    ``dual_cells`` then counts as dropped.
-    """
-
-    n = len(adjacency)
-    dist = [math.inf] * n
-    owner = [-1] * n
-    heap: List[Tuple[float, int, int]] = []
-    for vertex_index, seed_index in sources:
-        if dist[vertex_index] > 0.0:
-            dist[vertex_index] = 0.0
-            owner[vertex_index] = seed_index
-            heapq.heappush(heap, (0.0, vertex_index, seed_index))
-
-    while heap:
-        d, u, s = heapq.heappop(heap)
-        if d > dist[u] or owner[u] != s:
-            continue  # stale entry
-        for v, w in adjacency[u]:
-            nd = d + w
-            if nd < dist[v] - 1.0e-15:
-                dist[v] = nd
-                owner[v] = s
-                heapq.heappush(heap, (nd, v, s))
-
-    return owner
-
-
-def _nearest_vertices(vertices: np.ndarray, points: np.ndarray) -> np.ndarray:
-    diff = vertices[np.newaxis, :, :] - points[:, np.newaxis, :]
-    return np.argmin(np.linalg.norm(diff, axis=2), axis=1)
 
 
 def _cell_segments(
@@ -1224,22 +1368,47 @@ def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
     boundary through edge midpoints, one Laplacian smoothing pass, hygiene
     (>= 3 distinct corners, non-degenerate area) applied last.
 
-    Seeds that end up with no territory of their own (two seeds snapping to
-    the same nearest mesh vertex, or a chain that fails hygiene) are simply
-    absent from the result -- ``len(seed_points) - len(result)`` is exactly
-    the dropped count ``generate`` reports.
+    Each seed's Dijkstra source is a fan of its ``_DIJKSTRA_SEED_FAN``
+    nearest vertices, seeded at its REAL distance to each (not a single
+    nearest vertex at distance 0) -- see ``_nearest_vertices_k`` for why a
+    locally coarse patch of a real mesh needs that to keep two close seeds
+    from being treated as identical. Dijkstra and boundary extraction both
+    run on ``_refined_mesh_for_dual``'s midpoint-subdivided triangulation,
+    not ``mesh`` directly -- see that function's docstring for why a real
+    mesh's own coarseness (the armadillo primal, not the finely-tessellated
+    dome fixture) needs it; the refinement is internal, exact, and
+    fabricates no geometry, so outline points are still real points on
+    ``mesh``'s own surface.
+
+    Seeds that end up with no territory of their own (out-competed for
+    every candidate vertex in their fan, or a chain that fails hygiene) are
+    simply absent from the result -- ``len(seed_points) - len(result)`` is
+    exactly the dropped count ``generate`` reports.
     """
 
     seed_points = np.asarray(seed_points, dtype=np.float64)
     if seed_points.shape[0] == 0 or mesh.triangles.shape[0] == 0:
         return []
 
-    nearest = _nearest_vertices(mesh.vertices, seed_points)
-    adjacency = _vertex_graph(mesh)
-    sources = [(int(v), i) for i, v in enumerate(nearest.tolist())]
+    dual_mesh = _refined_mesh_for_dual(mesh, _DUAL_REFINEMENT_LEVELS)
+
+    nearest_idx, nearest_dist = _nearest_vertices_k(
+        dual_mesh.vertices, seed_points, _DIJKSTRA_SEED_FAN
+    )
+    adjacency = _vertex_graph(dual_mesh)
+    sources: List[Tuple[int, int, float]] = []
+    for seed_index in range(seed_points.shape[0]):
+        for candidate in range(nearest_idx.shape[1]):
+            sources.append(
+                (
+                    int(nearest_idx[seed_index, candidate]),
+                    seed_index,
+                    float(nearest_dist[seed_index, candidate]),
+                )
+            )
     owner = _multi_source_dijkstra(adjacency, sources)
 
-    segments_by_seed, midpoints = _cell_segments(mesh, owner)
+    segments_by_seed, midpoints = _cell_segments(dual_mesh, owner)
 
     cells: List[Cell] = []
     for seed_index in range(seed_points.shape[0]):
