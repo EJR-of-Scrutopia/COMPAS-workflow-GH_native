@@ -26,9 +26,10 @@ Delivery (it sits beside Export on the canvas and feeds it).
 
 Inputs:
 - RES (ResultParam, item): the solved FD or TNA Result.
-- S (number, item, default 0.4): target voussoir size in metres,
+- S (number, item, default 0.6): target voussoir size in metres,
   both the along-flow seed spacing and the across-flow streamline
-  spacing.
+  spacing. (The default read 0.4 as agreed; see "Retrospective
+  corrections" (d) for the measurement that changed it.)
 
 Outputs:
 - C (curves, list): one CLOSED 3D polyline per voussoir cell, on the
@@ -143,3 +144,63 @@ SCOPE for 6c.
 - No em dashes (U+2014; ASCII "--" fine); no AI attribution; commit
   per task; NEVER push; final step rebuilds and installs the .gha
   with Rhino closed and tells Param to restart Rhino.
+
+## Retrospective corrections
+
+Added by the wave's final fix review, 2026-08-19, after the plan above
+had shipped and been measured against the real BRG armadillo primal.
+
+(a) THE D OUTPUT'S PLAN-DEGENERACY DISCLOSURE ("Delivery and the
+honest limit", above) says the named limit is "recorded here and in
+the component's D output when plan-degenerate cells are detectable".
+It was recorded here only. Nothing in `generate()`'s diagnostics
+counted such cells and nothing in `FormatDiagnostics` printed one,
+while at S = 0.75 on the reference primal 15 emitted cells did
+self-cross in plan and 3 pairs overlapped once flattened -- and the
+studio rejects the WHOLE sidecar, by cell key, on the first of either.
+Now delivered: `diagnostics["plan_degenerate"]` counts emitted cells
+whose plan projection is not a simple polygon by the studio's own
+rule (a numpy port of `bench/studio/tessellation.py`'s `_is_simple`,
+checked cell by cell against that function itself in
+tests/patterns/test_armadillo_dual_studio_acceptance.py), and D
+carries a line naming the count and what to do about it. Cross-cell
+plan OVERLAP is still not counted: it is a property of a cell SET,
+not of a cell, and the acceptance script that does resolve it stays
+the place that measures it.
+
+(b) COURSE IS FLOW ORDER, NOT HEIGHT ORDER. Step 7 above defines a
+cell's course as "its seed's along-flow band index (how many S-steps
+along its streamline from the springing)", and that is exactly what
+ships. What the spec never says, and what a reader coming from Bench
+Studio's rim-to-crown reading of "course" will assume, is that the
+two coincide. On a real vault they do not: measured on the BRG primal,
+7 of 39 streamlines rise and then descend by more than 0.5 m, so
+their later bands sit LOWER than earlier ones. Course is flow order.
+`generate()`'s docstring now says so in as many words.
+
+(c) THE DUAL'S INTERNAL REFINEMENT IS ADAPTIVE. Step 6 above describes
+the geodesic Voronoi without saying anything about mesh resolution,
+and what shipped refined the mesh exactly once. On the reference
+primal that left a 0.512 m refined median edge against a 0.75 m seed
+spacing: a median seed owned 3 refined vertices, its boundary came out
+as several disconnected splinters, and `dual_cells` kept the longest
+splinter and silently discarded the rest -- 5.9% of the surface
+emitted, from an assignment that was exact and covered all of it. The
+refinement now repeats until the refined median edge is at most 0.3 * S,
+capped at 4 passes (each quadruples the triangle count) with the cap
+disclosed in diagnostics when it bites; and every chain of a seed is
+accounted for, as interior holes (`diagnostics["holes_ignored"]`) when
+they lie inside the largest chain, or as a REJECTION of the whole seed
+into the dropped count when the territory is genuinely disconnected.
+
+(d) THE S DEFAULT IS 0.6, NOT 0.4. The 0.4 agreed in the brainstorm
+was never measured on the reference vault. It is now, and it fails the
+mean-cell-size bar: at 0.4 the primal gives 687 seeds and 682 cells
+(0.7% dropped, 89.0% surface coverage) with a mean cell size of
+0.671 m against a 0.600 m ceiling, because this vault's streamlines
+fan out from the springing without mid-mesh backfill, so halving S
+does not halve the cell. Measured on a 0.05 m grid: 0.50 fails
+(0.752 against 0.750), 0.55 clears by 1.1%, 0.60 clears by 5.2%
+(0.853 against 0.900). 0.6 ships, named once in
+`armadillo_dual.DEFAULT_SIZE` and mirrored by the component's own
+`DefaultSize`.

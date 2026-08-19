@@ -48,6 +48,16 @@ public sealed record ArmadilloDualTaskResult(
 public sealed class ArmadilloDualComponent :
     NativeTaskComponentBase<ArmadilloDualTaskResult>
 {
+    /// <summary>
+    /// The shipped S default, in metres. Kept in step with the generator's
+    /// own <c>armadillo_dual.DEFAULT_SIZE</c> (the worker reads that same
+    /// constant when a request omits size). 0.6 is measured, not chosen:
+    /// it is the smallest value on a 0.1 m grid at which the reference BRG
+    /// armadillo primal clears every geometric acceptance bar. The 0.4 that
+    /// shipped with wave 6c was never measured and does not clear them.
+    /// </summary>
+    private const double DefaultSize = 0.6;
+
     public ArmadilloDualComponent()
         : base(
             "Armadillo Dual",
@@ -83,7 +93,7 @@ public sealed class ArmadilloDualComponent :
             "Target voussoir size in metres: both the along-flow seed " +
             "spacing and the across-flow streamline spacing.",
             GH_ParamAccess.item,
-            0.4);
+            DefaultSize);
     }
 
     protected override void RegisterOutputParams(
@@ -114,7 +124,10 @@ public sealed class ArmadilloDualComponent :
             "D",
             "Readable diagnostics: alignment source (forces or " +
             "diagrams), cell count, degenerate cells dropped, " +
-            "streamline and seed counts, and mean/min/max cell size.",
+            "streamline and seed counts, mean/min/max cell size, and " +
+            "the count of cells whose plan projection self-crosses -- " +
+            "the ones Bench Studio's import rejects the whole sidecar " +
+            "for.",
             GH_ParamAccess.item);
     }
 
@@ -279,9 +292,9 @@ public sealed class ArmadilloDualComponent :
         bool report = true)
     {
         result = null;
-        size = 0.4;
+        size = DefaultSize;
         ResultGoo? resultGoo = null;
-        double sizeInput = 0.4;
+        double sizeInput = DefaultSize;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -476,18 +489,29 @@ public sealed class ArmadilloDualComponent :
     /// <summary>
     /// The readable multi-line diagnostics string: the alignment source
     /// used (forces or the diagrams fallback), cell count, degenerate
-    /// cells dropped, streamline and seed counts, and mean/min/max cell
-    /// size when at least one cell exists.
+    /// cells dropped, streamline and seed counts, the plan-degeneracy
+    /// count, and mean/min/max cell size when at least one cell exists.
     /// </summary>
     private static string FormatDiagnostics(JsonElement diagnostics)
     {
+        // The design spec's "Delivery and the honest limit" promised this
+        // line and wave 6c never shipped it. Bench Studio's import rejects
+        // the WHOLE sidecar on the first cell whose plan outline crosses
+        // itself, naming that cell, so the count has to reach the author
+        // here -- on canvas, before Export writes anything.
+        int planDegenerate = OptionalInt(diagnostics, "plan_degenerate");
         var lines = new List<string>
         {
             $"Alignment source: {OptionalString(diagnostics, "field_source")}",
             $"Cells: {OptionalInt(diagnostics, "cell_count")}",
             $"Degenerate cells dropped: {OptionalInt(diagnostics, "dropped")}",
             $"Streamlines: {OptionalInt(diagnostics, "streamline_count")}",
-            $"Seeds: {OptionalInt(diagnostics, "seed_count")}"
+            $"Seeds: {OptionalInt(diagnostics, "seed_count")}",
+            planDegenerate > 0
+                ? $"Plan-degenerate cells: {planDegenerate} cell(s) will be " +
+                  "rejected by Bench Studio's import; exclude them before " +
+                  "writing the sidecar."
+                : "Plan-degenerate cells: 0"
         };
         if (diagnostics.TryGetProperty(
                 "mean_cell_size",

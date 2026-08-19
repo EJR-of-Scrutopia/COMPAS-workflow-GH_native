@@ -624,6 +624,57 @@ def test_the_brg_armadillo_sidecar_is_accepted_by_the_studio():
     not ARMADILLO_JSON.exists(),
     reason="armadillo.json not present in this worktree's bench/upstream",
 )
+def test_generate_plan_degenerate_agrees_with_the_studios_own_check():
+    """The D output's plan-degeneracy count is the studio's own verdict.
+
+    ``generate``'s ``diagnostics["plan_degenerate"]`` is produced by
+    ``armadillo_dual._plan_is_simple``, a numpy port of the studio's
+    ``tessellation._is_simple``. A port is only worth anything if it
+    answers the same way on real data, so this compares them CELL BY CELL
+    on the real BRG primal's own outlines rather than trusting the two
+    totals to coincide by luck.
+
+    Measured on the reference run at size 0.75: 7 of 294 cells, the same 7
+    on both sides. Note this counts SELF-crossing only; the acceptance test
+    above adds the studio's separate cross-cell overlap rejection to its
+    own exclusion total (0 pairs at this size, after the fix wave).
+    """
+
+    if studio_tessellation is None:
+        pytest.skip("COMPAS-UI-integration-tool checkout not found beside this repo")
+
+    from ananke_equilibrium.patterns.armadillo_dual import _plan_is_simple
+
+    raw = _load_armadillo_mesh_dict()
+    result = _adapt_armadillo_to_aligned_result(raw)
+    response = generate(result, size=0.75)
+
+    ported: List[int] = []
+    studio: List[int] = []
+    for index, cell in enumerate(response["cells"]):
+        ring = [[float(p[0]), float(p[1])] for p in cell["outline"]]
+        if not _plan_is_simple(ring):
+            ported.append(index)
+        if not studio_tessellation._is_simple(ring):
+            studio.append(index)
+
+    print(
+        "plan-degeneracy port agreement at size 0.75: ported={} studio={} "
+        "of {} cells".format(len(ported), len(studio), len(response["cells"]))
+    )
+
+    assert ported == studio
+    assert response["diagnostics"]["plan_degenerate"] == len(studio)
+    assert studio, (
+        "no cell self-crosses in plan on this run, so the port and the "
+        "studio agreeing proves nothing"
+    )
+
+
+@pytest.mark.skipif(
+    not ARMADILLO_JSON.exists(),
+    reason="armadillo.json not present in this worktree's bench/upstream",
+)
 def test_the_brg_armadillo_sidecar_document_matches_the_schema_shape():
     """The schema-shape fallback, as its own always-running test -- not a
     branch inside test_the_brg_armadillo_sidecar_is_accepted_by_the_studio

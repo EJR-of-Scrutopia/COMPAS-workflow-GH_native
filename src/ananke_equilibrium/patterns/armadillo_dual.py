@@ -81,6 +81,16 @@ _START_INSET = 0.02  # fraction of the way from a seed vertex to its face's
 # triangle corner (see ``_seed_start_point``).
 _DEGENERATE_AREA_TOLERANCE = 1.0e-9
 
+# The shipped target voussoir size in metres: the component's S default, the
+# worker's own default for a missing size, and the size the plugin's
+# reference-vault acceptance tests measure the geometric bars at. 0.6 is not
+# a taste: it is the smallest value on a 0.1 m grid at which the BRG
+# armadillo primal clears all three geometric bars (see
+# tests/patterns/test_armadillo_dual_cells.py's
+# ``test_armadillo_primal_meets_every_bar_at_the_shipped_default_size`` for
+# the measured basis, including why the wave's original 0.4 does not).
+DEFAULT_SIZE = 0.6
+
 
 class PatternRefused(ValueError):
     """Raised when a result payload has no thrust direction to align with.
@@ -1056,9 +1066,33 @@ def seeds(
 # ---------------------------------------------------------------------------
 
 
-_DUAL_REFINEMENT_LEVELS = 1  # midpoint-subdivision passes of the mesh used
-# ONLY for dual_cells' own internal boundary extraction -- see
-# _refine_triangulation.
+# Midpoint-subdivision of the mesh used ONLY for dual_cells' own internal
+# boundary extraction (see _refine_triangulation). The pass count is NOT a
+# fixed constant: refinement repeats until the refined median edge length is
+# at most _DUAL_REFINEMENT_EDGE_FACTOR * the caller's size, capped at
+# _MAX_DUAL_REFINEMENT_LEVELS passes (each pass quadruples the triangle
+# count, so the cap is what keeps a tiny size on a coarse mesh from asking
+# for a mesh nobody can hold). A fixed single pass is what shipped in the
+# wave and what the 2026-08-19 review found broken: on the BRG armadillo
+# primal it left a 0.512 m refined median edge against a 0.75 m seed
+# spacing, so a median seed owned 3 refined vertices and its boundary came
+# out as a handful of disconnected splinters rather than one closed chain.
+_DUAL_REFINEMENT_EDGE_FACTOR = 0.3
+_MAX_DUAL_REFINEMENT_LEVELS = 4
+
+
+def _median_edge_length(vertices: np.ndarray, triangles: np.ndarray) -> float:
+    """Median length of a triangulation's DISTINCT edges (each counted once)."""
+
+    if triangles.shape[0] == 0:
+        return 0.0
+    corners = np.concatenate(
+        [triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]],
+        axis=0,
+    )
+    distinct = np.unique(np.sort(corners, axis=1), axis=0)
+    spans = vertices[distinct[:, 0]] - vertices[distinct[:, 1]]
+    return float(np.median(np.linalg.norm(spans, axis=1)))
 
 
 def _refine_triangulation(
@@ -1069,7 +1103,8 @@ def _refine_triangulation(
     belongs to, so the result is a clean, still-manifold triangulation of
     the EXACT SAME surface, not a new or approximated one. No geometry is
     invented; every new vertex sits precisely on a straight edge the
-    original mesh already specifies.
+    original mesh already specifies. Every edge is exactly halved, so one
+    pass halves the median edge length exactly.
 
     A real mesh's own triangle size can be coarser than the seed spacing
     ``dual_cells`` is asked to resolve (checked directly on the BRG
@@ -1080,37 +1115,57 @@ def _refine_triangulation(
     discriminated in a Dijkstra sense -- their whole distinct territory is
     a stretch of one original edge's interior, which the unrefined mesh
     has no vertex to represent at all. This bridges that gap.
+
+    Written against numpy arrays rather than a Python midpoint dict because
+    the adaptive caller runs this up to 4 times, and the last pass on the
+    armadillo primal splits 66432 triangles into 265728.
     """
 
-    edge_midpoint: Dict[Tuple[int, int], int] = {}
-    new_vertices: List[np.ndarray] = list(vertices)
+    if triangles.shape[0] == 0:
+        return vertices, triangles
 
-    def midpoint_index(a: int, b: int) -> int:
-        key = (a, b) if a <= b else (b, a)
-        if key not in edge_midpoint:
-            edge_midpoint[key] = len(new_vertices)
-            new_vertices.append((vertices[a] + vertices[b]) / 2.0)
-        return edge_midpoint[key]
-
-    new_triangles: List[List[int]] = []
-    for a, b, c in triangles.tolist():
-        ab = midpoint_index(a, b)
-        bc = midpoint_index(b, c)
-        ca = midpoint_index(c, a)
-        new_triangles.append([a, ab, ca])
-        new_triangles.append([ab, b, bc])
-        new_triangles.append([ca, bc, c])
-        new_triangles.append([ab, bc, ca])
-
-    return (
-        np.array(new_vertices, dtype=np.float64),
-        np.array(new_triangles, dtype=np.int64),
+    corners = np.concatenate(
+        [triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]],
+        axis=0,
     )
+    distinct, inverse = np.unique(
+        np.sort(corners, axis=1), axis=0, return_inverse=True
+    )
+    inverse = np.asarray(inverse).ravel()
+    midpoints = 0.5 * (vertices[distinct[:, 0]] + vertices[distinct[:, 1]])
+    new_vertices = np.concatenate([vertices, midpoints], axis=0)
+
+    offset = vertices.shape[0]
+    count = triangles.shape[0]
+    ab = inverse[0:count] + offset
+    bc = inverse[count : 2 * count] + offset
+    ca = inverse[2 * count : 3 * count] + offset
+    a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
+    new_triangles = np.concatenate(
+        [
+            np.stack([a, ab, ca], axis=1),
+            np.stack([ab, b, bc], axis=1),
+            np.stack([ca, bc, c], axis=1),
+            np.stack([ab, bc, ca], axis=1),
+        ],
+        axis=0,
+    )
+    return new_vertices, new_triangles.astype(np.int64, copy=False)
 
 
-def _refined_mesh_for_dual(mesh: Mesh, levels: int) -> Mesh:
-    """``mesh``'s triangulation refined (``_refine_triangulation``) ``levels``
-    times, packaged as a throwaway ``Mesh`` for ``dual_cells``' own
+def _refined_mesh_for_dual(mesh: Mesh, size: float) -> Tuple[Mesh, int, bool]:
+    """``mesh``'s triangulation refined (``_refine_triangulation``) until its
+    median edge length is at most ``_DUAL_REFINEMENT_EDGE_FACTOR * size``,
+    or until ``_MAX_DUAL_REFINEMENT_LEVELS`` passes have run, whichever
+    comes first.
+
+    Returns ``(refined_mesh, levels, capped)``: ``levels`` is how many
+    passes actually ran and ``capped`` says whether the loop stopped at the
+    cap with the target still unmet -- a real limit on how faithfully the
+    dual can resolve that size on that mesh, so ``dual_cells`` reports it
+    rather than swallowing it.
+
+    The refined mesh is a throwaway ``Mesh`` for ``dual_cells``' own
     internal boundary-extraction pipeline (``_vertex_graph`` /
     ``_cell_segments``) to run on unchanged. Only ``vertices``/``triangles``
     are used downstream of this point, so ``edges``/``edge_forces``/
@@ -1118,15 +1173,28 @@ def _refined_mesh_for_dual(mesh: Mesh, levels: int) -> Mesh:
     """
 
     vertices, triangles = mesh.vertices, mesh.triangles
-    for _ in range(max(0, levels)):
-        vertices, triangles = _refine_triangulation(vertices, triangles)
-    return Mesh(
+    target = _DUAL_REFINEMENT_EDGE_FACTOR * float(size) if size > 0.0 else 0.0
+    levels = 0
+    if target > 0.0:
+        while (
+            levels < _MAX_DUAL_REFINEMENT_LEVELS
+            and _median_edge_length(vertices, triangles) > target
+        ):
+            vertices, triangles = _refine_triangulation(vertices, triangles)
+            levels += 1
+    capped = (
+        target > 0.0
+        and levels == _MAX_DUAL_REFINEMENT_LEVELS
+        and _median_edge_length(vertices, triangles) > target
+    )
+    refined = Mesh(
         vertices=vertices,
         triangles=triangles,
         edges=np.zeros((0, 2), dtype=np.int64),
         edge_forces=np.zeros((0,), dtype=np.float64),
         support_vertex_ids=[],
     )
+    return refined, levels, capped
 
 
 def _multi_source_dijkstra(
@@ -1175,6 +1243,9 @@ _DIJKSTRA_SEED_FAN = 3  # candidate source vertices per seed point, see
 # _nearest_vertices_k.
 
 
+_NEAREST_CHUNK = 64  # seed points per distance-matrix block, see below.
+
+
 def _nearest_vertices_k(
     vertices: np.ndarray, points: np.ndarray, k: int
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -1187,13 +1258,24 @@ def _nearest_vertices_k(
     giving each seed a fan of candidate sources with their true offsets
     lets ``_multi_source_dijkstra`` tell them apart instead of orphaning
     whichever loses that single vertex outright.
+
+    Computed in blocks of ``_NEAREST_CHUNK`` points: since refinement
+    became adaptive the refined mesh can carry 134303 vertices, and one
+    all-pairs difference array against 687 seeds would ask for 2.2 GB in a
+    single allocation for a result of 687 by 3 integers.
     """
 
-    diff = vertices[np.newaxis, :, :] - points[:, np.newaxis, :]
-    dists = np.linalg.norm(diff, axis=2)
     k = min(k, vertices.shape[0])
-    order = np.argsort(dists, axis=1)[:, :k]
-    nearest_dists = np.take_along_axis(dists, order, axis=1)
+    count = points.shape[0]
+    order = np.zeros((count, k), dtype=np.int64)
+    nearest_dists = np.zeros((count, k), dtype=np.float64)
+    for start in range(0, count, _NEAREST_CHUNK):
+        stop = min(start + _NEAREST_CHUNK, count)
+        diff = vertices[np.newaxis, :, :] - points[start:stop, np.newaxis, :]
+        dists = np.linalg.norm(diff, axis=2)
+        block_order = np.argsort(dists, axis=1)[:, :k]
+        order[start:stop] = block_order
+        nearest_dists[start:stop] = np.take_along_axis(dists, block_order, axis=1)
     return order, nearest_dists
 
 
@@ -1205,17 +1287,24 @@ def _vertex_graph(mesh: Mesh) -> List[List[Tuple[int, float]]]:
 
     n = mesh.vertices.shape[0]
     adjacency: List[List[Tuple[int, float]]] = [[] for _ in range(n)]
-    seen: set = set()
-    for triangle in mesh.triangles.tolist():
-        for i in range(3):
-            a, b = triangle[i], triangle[(i + 1) % 3]
-            key = (a, b) if a <= b else (b, a)
-            if key in seen:
-                continue
-            seen.add(key)
-            weight = float(np.linalg.norm(mesh.vertices[a] - mesh.vertices[b]))
-            adjacency[a].append((b, weight))
-            adjacency[b].append((a, weight))
+    if mesh.triangles.shape[0] == 0:
+        return adjacency
+
+    corners = np.concatenate(
+        [
+            mesh.triangles[:, [0, 1]],
+            mesh.triangles[:, [1, 2]],
+            mesh.triangles[:, [2, 0]],
+        ],
+        axis=0,
+    )
+    distinct = np.unique(np.sort(corners, axis=1), axis=0)
+    weights = np.linalg.norm(
+        mesh.vertices[distinct[:, 0]] - mesh.vertices[distinct[:, 1]], axis=1
+    )
+    for (a, b), weight in zip(distinct.tolist(), weights.tolist()):
+        adjacency[a].append((b, weight))
+        adjacency[b].append((a, weight))
     return adjacency
 
 
@@ -1234,6 +1323,14 @@ def _cell_segments(
     segment there; the tiny gap left between them is the deliberate
     approximation of a true Y-junction, softened further by the one
     smoothing pass ``dual_cells`` applies afterwards).
+
+    Both edges of a seed's segment always cross the assignment boundary
+    (one endpoint the seed's, one not), and every such crossed edge is
+    shared by two triangles that are both mixed for that seed, so the
+    segments of one seed meet end to end and close into a loop -- unless
+    the crossed edge sits on the mesh's own open boundary, where only one
+    triangle exists to contribute. That is the whole reason
+    ``_extract_chains`` has an open-path case at all.
     """
 
     triangles = mesh.triangles
@@ -1246,8 +1343,20 @@ def _cell_segments(
             midpoints[key] = (vertices[u] + vertices[v]) / 2.0
         return key
 
+    # Only triangles whose three vertices do not already share one owner can
+    # contribute a segment. Filtering them out here rather than inside the
+    # loop keeps the Python work proportional to the assignment BOUNDARY,
+    # not to the refined mesh (265728 triangles at the smallest sizes).
+    if triangles.shape[0] == 0:
+        return {}, midpoints
+    owner_array = np.asarray(owner, dtype=np.int64)
+    triangle_owners = owner_array[triangles]
+    candidate = (triangle_owners[:, 0] != triangle_owners[:, 1]) | (
+        triangle_owners[:, 1] != triangle_owners[:, 2]
+    )
+
     segments_by_seed: Dict[int, List[Tuple[Tuple[int, int], Tuple[int, int]]]] = {}
-    for triangle in triangles.tolist():
+    for triangle in triangles[candidate].tolist():
         tri_owners = [owner[v] for v in triangle]
         distinct = set(tri_owners)
         distinct.discard(-1)
@@ -1261,7 +1370,15 @@ def _cell_segments(
                 edge_a = (triangle[i], triangle[non_k_indices[0]])
                 edge_b = (triangle[i], triangle[non_k_indices[1]])
             elif len(k_indices) == 2:
-                j = non_k_indices[0]
+                # ``non_k_indices[0]`` is a CORNER index (0, 1 or 2); the
+                # edge endpoints are mesh vertex ids, so it has to be read
+                # through ``triangle`` exactly as the k side is. Taking it
+                # raw -- what shipped in the wave -- keyed both midpoints
+                # against whatever mesh vertex happened to carry id 0, 1 or
+                # 2, so every two-owned triangle contributed a segment
+                # somewhere else entirely on the mesh and the seed's real
+                # boundary chain broke apart there.
+                j = triangle[non_k_indices[0]]
                 edge_a = (triangle[k_indices[0]], j)
                 edge_b = (triangle[k_indices[1]], j)
             else:
@@ -1343,14 +1460,114 @@ def _smooth_closed_polyline(points: Sequence[np.ndarray]) -> List[np.ndarray]:
     return smoothed
 
 
+def _polygon_normal_3d(points: Sequence[np.ndarray]) -> np.ndarray:
+    """Newell's own (unnormalised) normal for a closed 3D polygon.
+
+    Origin-independent for a CLOSED polygon: the cross terms against any
+    shared origin cancel over the full cycle, which is exactly why this is
+    also a valid area magnitude regardless of where the polygon sits.
+    """
+
+    array = np.asarray(points, dtype=np.float64)
+    if array.shape[0] == 0:
+        return np.zeros(3, dtype=np.float64)
+    return np.cross(array, np.roll(array, -1, axis=0)).sum(axis=0)
+
+
 def _polygon_area_3d(points: Sequence[np.ndarray]) -> float:
     """Newell's formula: a valid area magnitude for a near-planar 3D polygon."""
 
-    normal = np.zeros(3, dtype=np.float64)
-    n = len(points)
-    for i in range(n):
-        normal += np.cross(points[i], points[(i + 1) % n])
-    return 0.5 * float(np.linalg.norm(normal))
+    return 0.5 * float(np.linalg.norm(_polygon_normal_3d(points)))
+
+
+def _polygon_tangent_basis(
+    points: Sequence[np.ndarray],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A polygon's own centroid and an orthonormal pair spanning its
+    best-fit (Newell) plane -- the frame ``_chain_lies_inside`` flattens
+    into, so a near-vertical cell is judged in ITS plane rather than in a
+    global plan projection that would collapse it to a line.
+    """
+
+    array = np.asarray(points, dtype=np.float64)
+    origin = array.mean(axis=0)
+    normal = _polygon_normal_3d(array)
+    magnitude = float(np.linalg.norm(normal))
+    normal = (
+        normal / magnitude
+        if magnitude > _ZERO_TOLERANCE
+        else np.array([0.0, 0.0, 1.0])
+    )
+    reference = (
+        np.array([1.0, 0.0, 0.0])
+        if abs(float(normal[0])) < 0.9
+        else np.array([0.0, 1.0, 0.0])
+    )
+    e1 = np.cross(normal, reference)
+    e1 = e1 / float(np.linalg.norm(e1))
+    e2 = np.cross(normal, e1)
+    return origin, e1, e2
+
+
+def _flatten_to_basis(
+    points: Sequence[np.ndarray],
+    origin: np.ndarray,
+    e1: np.ndarray,
+    e2: np.ndarray,
+) -> np.ndarray:
+    relative = np.asarray(points, dtype=np.float64) - origin
+    return np.stack([relative @ e1, relative @ e2], axis=1)
+
+
+def _points_inside_polygon_2d(
+    points: np.ndarray, polygon: np.ndarray
+) -> np.ndarray:
+    """Even-odd ray crossing, one boolean per point. Points exactly on the
+    polygon are not distinguished; ``_chain_lies_inside`` takes a majority
+    vote precisely so a single ambiguous vertex cannot decide anything.
+    """
+
+    ax = polygon[:, 0][np.newaxis, :]
+    ay = polygon[:, 1][np.newaxis, :]
+    bx = np.roll(polygon[:, 0], -1)[np.newaxis, :]
+    by = np.roll(polygon[:, 1], -1)[np.newaxis, :]
+    x = points[:, 0][:, np.newaxis]
+    y = points[:, 1][:, np.newaxis]
+
+    straddles = (ay > y) != (by > y)
+    denominator = np.where(straddles, by - ay, 1.0)
+    crossing = ax + (y - ay) * (bx - ax) / denominator
+    hits = straddles & (crossing > x)
+    return (hits.sum(axis=1) % 2) == 1
+
+
+def _chain_lies_inside(
+    points: Sequence[np.ndarray], outer_points: Sequence[np.ndarray]
+) -> bool:
+    """Whether one boundary chain of a seed is an interior HOLE of another.
+
+    THE INSIDE-TEST, stated once: both chains are flattened into
+    ``outer_points``' own Newell tangent plane (``_polygon_tangent_basis``)
+    and the inner chain's vertices are tested against the outer chain by
+    even-odd point-in-polygon. The outline's own plane, not the global XY
+    plan, because the Armadillo funnel's throat runs near-vertical and a
+    plan test there collapses both polygons onto a line and answers
+    nothing. A chain counts as inside when a STRICT MAJORITY of its
+    vertices fall inside: two chains of one seed can meet at a single
+    junction midpoint, and one shared vertex must not be able to flip the
+    verdict on its own.
+    """
+
+    inner = np.asarray(points, dtype=np.float64)
+    outer = np.asarray(outer_points, dtype=np.float64)
+    if inner.shape[0] == 0 or outer.shape[0] < 3:
+        return False
+    origin, e1, e2 = _polygon_tangent_basis(outer)
+    inside = _points_inside_polygon_2d(
+        _flatten_to_basis(inner, origin, e1, e2),
+        _flatten_to_basis(outer, origin, e1, e2),
+    )
+    return bool(int(inside.sum()) * 2 > inner.shape[0])
 
 
 def _finalize_outline(points: Sequence[np.ndarray]) -> Optional[List[np.ndarray]]:
@@ -1372,7 +1589,23 @@ def _finalize_outline(points: Sequence[np.ndarray]) -> Optional[List[np.ndarray]
     return deduped
 
 
-def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
+def _chain_polygon(
+    chain: Sequence[Tuple[int, int]],
+    midpoints: Mapping[Tuple[int, int], np.ndarray],
+) -> List[np.ndarray]:
+    """One chain's points, closed-implicit (a loop's repeated end dropped)."""
+
+    if len(chain) > 1 and chain[0] == chain[-1]:
+        chain = chain[:-1]
+    return [midpoints[key] for key in chain]
+
+
+def dual_cells(
+    mesh: Mesh,
+    seed_points: np.ndarray,
+    size: float,
+    report: Optional[Dict[str, Any]] = None,
+) -> List[Cell]:
     """The discrete geodesic Voronoi dual of ``seed_points`` on ``mesh``
     (design spec Algorithm steps 6-8): multi-source Dijkstra over the
     mesh's edge-weighted vertex graph assigns every vertex to its nearest
@@ -1380,22 +1613,49 @@ def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
     boundary through edge midpoints, one Laplacian smoothing pass, hygiene
     (>= 3 distinct corners, non-degenerate area) applied last.
 
+    ``size`` is the caller's target voussoir size, in metres: it sets how
+    finely the internal dual mesh is refined (see below), so the same seed
+    set at a different size is genuinely a different computation.
+
     Each seed's Dijkstra source is a fan of its ``_DIJKSTRA_SEED_FAN``
     nearest vertices, seeded at its REAL distance to each (not a single
     nearest vertex at distance 0) -- see ``_nearest_vertices_k`` for why a
     locally coarse patch of a real mesh needs that to keep two close seeds
     from being treated as identical. Dijkstra and boundary extraction both
     run on ``_refined_mesh_for_dual``'s midpoint-subdivided triangulation,
-    not ``mesh`` directly -- see that function's docstring for why a real
-    mesh's own coarseness (the armadillo primal, not the finely-tessellated
-    dome fixture) needs it; the refinement is internal, exact, and
+    not ``mesh`` directly -- the refinement repeats until that mesh's
+    median edge is at most 0.3 * ``size``, capped at 4 passes (each pass
+    quadruples the triangle count). The refinement is internal, exact, and
     fabricates no geometry, so outline points are still real points on
     ``mesh``'s own surface.
 
+    A seed's boundary segments can come out as MORE THAN ONE chain, and
+    every chain is accounted for:
+
+    - The chain enclosing the largest plan-independent area
+      (``_polygon_area_3d``) is the candidate outline.
+    - When every other chain of that seed lies inside it
+      (``_chain_lies_inside`` -- read that function for the inside-test
+      actually implemented), those others are interior HOLES. A voussoir
+      outline legitimately spans a hole, so the outline stands and the
+      holes are counted in ``report["holes_ignored"]``.
+    - When any other chain lies OUTSIDE the largest, the seed's territory
+      is genuinely disconnected -- two separate patches of surface, not one
+      voussoir -- and the seed is REJECTED into the dropped count, counted
+      in ``report["disconnected"]``. Never a silent fragment, never a
+      discarded chain without accounting.
+
     Seeds that end up with no territory of their own (out-competed for
     every candidate vertex in their fan, or a chain that fails hygiene) are
-    simply absent from the result -- ``len(seed_points) - len(result)`` is
-    exactly the dropped count ``generate`` reports.
+    likewise simply absent from the result: ``len(seed_points) -
+    len(result)`` is exactly the dropped count ``generate`` reports.
+
+    ``report``, when supplied, is filled with this run's own measurements:
+    ``refinement_levels``, ``refinement_capped`` (the 4-pass cap stopped
+    the loop with 0.3 * ``size`` still unmet), ``holes_ignored`` and
+    ``disconnected``. ``generate`` forwards the first three into the worker
+    response; ``disconnected`` stays here, a breakdown of ``dropped``
+    rather than a number of its own.
 
     Disclosed approximation: a cell whose territory touches the mesh's
     open boundary closes its outline with the straight chord between the
@@ -1403,10 +1663,19 @@ def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
     """
 
     seed_points = np.asarray(seed_points, dtype=np.float64)
+    if report is not None:
+        report.update(
+            {
+                "refinement_levels": 0,
+                "refinement_capped": False,
+                "holes_ignored": 0,
+                "disconnected": 0,
+            }
+        )
     if seed_points.shape[0] == 0 or mesh.triangles.shape[0] == 0:
         return []
 
-    dual_mesh = _refined_mesh_for_dual(mesh, _DUAL_REFINEMENT_LEVELS)
+    dual_mesh, levels, capped = _refined_mesh_for_dual(mesh, size)
 
     nearest_idx, nearest_dist = _nearest_vertices_k(
         dual_mesh.vertices, seed_points, _DIJKSTRA_SEED_FAN
@@ -1427,6 +1696,8 @@ def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
     segments_by_seed, midpoints = _cell_segments(dual_mesh, owner)
 
     cells: List[Cell] = []
+    holes_ignored = 0
+    disconnected = 0
     for seed_index in range(seed_points.shape[0]):
         segments = segments_by_seed.get(seed_index)
         if not segments:
@@ -1434,20 +1705,159 @@ def dual_cells(mesh: Mesh, seed_points: np.ndarray) -> List[Cell]:
         chains = _extract_chains(segments)
         if not chains:
             continue
-        chains.sort(key=len, reverse=True)
-        best = chains[0]
-        if len(best) > 1 and best[0] == best[-1]:
-            best = best[:-1]
-        raw_points = [midpoints[key] for key in best]
-        raw_points = _smooth_closed_polyline(raw_points)
-        outline = _finalize_outline(raw_points)
+
+        polygons = [_chain_polygon(chain, midpoints) for chain in chains]
+        areas = [
+            _polygon_area_3d(polygon) if len(polygon) >= 3 else 0.0
+            for polygon in polygons
+        ]
+        best = int(max(range(len(areas)), key=lambda i: areas[i]))
+        if areas[best] <= _DEGENERATE_AREA_TOLERANCE:
+            continue  # no chain of this seed encloses anything: hygiene
+        outer = polygons[best]
+
+        others = [
+            polygon for index, polygon in enumerate(polygons) if index != best
+        ]
+        if not all(_chain_lies_inside(polygon, outer) for polygon in others):
+            disconnected += 1
+            continue
+        holes_ignored += len(others)
+
+        outline = _finalize_outline(_smooth_closed_polyline(outer))
         if outline is None:
             continue
         cells.append(
             Cell(outline=np.array(outline, dtype=np.float64), seed_index=seed_index)
         )
 
+    if report is not None:
+        report.update(
+            {
+                "refinement_levels": int(levels),
+                "refinement_capped": bool(capped),
+                "holes_ignored": int(holes_ignored),
+                "disconnected": int(disconnected),
+            }
+        )
     return cells
+
+
+# ---------------------------------------------------------------------------
+# Plan degeneracy (design spec "Delivery and the honest limit")
+# ---------------------------------------------------------------------------
+
+
+_PLAN_TOLERANCE = 1.0e-6  # bench/studio/tessellation.py's own TOL.
+
+
+def _plan_is_simple(ring: np.ndarray) -> bool:
+    """Whether a plan ring is a simple polygon, by Bench Studio's own rule.
+
+    A numpy port of ``_is_simple`` / ``_segments_cross`` / ``on_segment``
+    in the studio's bench/studio/tessellation.py (the sibling
+    COMPAS-UI-integration-tool checkout), read directly rather than
+    recalled: the same three rejections, in the same order, at the same
+    1e-6 tolerance --
+
+    1. two points of the ring within TOL of each other (Chebyshev, exactly
+       as the studio compares them),
+    2. a proper crossing of two non-adjacent edges,
+    3. a vertex lying strictly on a non-adjacent edge.
+
+    Vectorised over the O(n^2) pairs because a refined cell outline runs to
+    dozens of points and a real run carries hundreds of cells. Overlap
+    BETWEEN cells is a separate studio rejection and is deliberately not
+    checked here: it is a property of a cell set, not of a cell.
+    """
+
+    ring = np.asarray(ring, dtype=np.float64)
+    count = ring.shape[0]
+    if count < 3:
+        return False
+
+    upper = np.triu_indices(count, k=1)
+    dx = np.abs(ring[:, 0][:, np.newaxis] - ring[:, 0][np.newaxis, :])
+    dy = np.abs(ring[:, 1][:, np.newaxis] - ring[:, 1][np.newaxis, :])
+    if bool(
+        np.any((dx[upper] <= _PLAN_TOLERANCE) & (dy[upper] <= _PLAN_TOLERANCE))
+    ):
+        return False
+
+    start = ring
+    end = np.roll(ring, -1, axis=0)
+    span = end - start
+
+    def side(target: np.ndarray) -> np.ndarray:
+        """Signed side of every edge i against every point j (rows: edges)."""
+
+        value = span[:, 0][:, np.newaxis] * (
+            target[:, 1][np.newaxis, :] - start[:, 1][:, np.newaxis]
+        ) - span[:, 1][:, np.newaxis] * (
+            target[:, 0][np.newaxis, :] - start[:, 0][:, np.newaxis]
+        )
+        return np.where(np.abs(value) < 1.0e-15, 0.0, np.sign(value))
+
+    side_start = side(start)
+    side_end = side(end)
+    straddled = (side_start * side_end) < 0  # edge i separates edge j's ends
+    crossing = straddled & straddled.T
+
+    index = np.arange(count)
+    non_adjacent = (index[np.newaxis, :] - index[:, np.newaxis]) >= 2
+    non_adjacent &= ((index[np.newaxis, :] + 1) % count) != index[:, np.newaxis]
+    if bool(np.any(crossing & non_adjacent)):
+        return False
+
+    # A vertex strictly inside a non-adjacent edge (studio ``on_segment``).
+    length = np.linalg.norm(span, axis=1)
+    usable = length >= _PLAN_TOLERANCE
+    safe_length = np.where(usable, length, 1.0)
+    to_point_x = ring[:, 0][np.newaxis, :] - start[:, 0][:, np.newaxis]
+    to_point_y = ring[:, 1][np.newaxis, :] - start[:, 1][:, np.newaxis]
+    across = (
+        to_point_x * span[:, 1][:, np.newaxis]
+        - to_point_y * span[:, 0][:, np.newaxis]
+    ) / safe_length[:, np.newaxis]
+    along = (
+        to_point_x * span[:, 0][:, np.newaxis]
+        + to_point_y * span[:, 1][:, np.newaxis]
+    ) / (safe_length ** 2)[:, np.newaxis]
+    margin = (_PLAN_TOLERANCE / safe_length)[:, np.newaxis]
+    on_edge = (
+        usable[:, np.newaxis]
+        & (np.abs(across) <= _PLAN_TOLERANCE)
+        & (along > margin)
+        & (along < 1.0 - margin)
+    )
+    owns_vertex = (index[:, np.newaxis] == index[np.newaxis, :]) | (
+        ((index[:, np.newaxis] + 1) % count) == index[np.newaxis, :]
+    )
+    if bool(np.any(on_edge & ~owns_vertex)):
+        return False
+
+    return True
+
+
+def _plan_degenerate_count(outlines: Sequence[Sequence[Sequence[float]]]) -> int:
+    """How many emitted outlines self-cross once projected to plan (z dropped).
+
+    Measured on the RAW projection, before any consecutive-duplicate dedupe
+    Export applies on the way to the sidecar: Export's dedupe works at 1e-9
+    and the studio's own simplicity test at 1e-6, so two points a hair
+    apart survive Export and are still rejected by the studio. Counting the
+    raw projection is the count an author actually has to act on.
+    """
+
+    total = 0
+    for outline in outlines:
+        ring = np.array(
+            [[float(point[0]), float(point[1])] for point in outline],
+            dtype=np.float64,
+        )
+        if not _plan_is_simple(ring):
+            total += 1
+    return total
 
 
 # ---------------------------------------------------------------------------
@@ -1460,6 +1870,23 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
     streamlines, seeds, and the dual cells (this task), wired into the
     worker response shape from the design spec's "Worker command" section.
 
+    COURSE, said plainly: a cell's "course" is its seed's ALONG-FLOW band
+    index, counted in S-steps from the springing along its own streamline.
+    On a real vault a streamline can crest and descend again (measured on
+    the BRG armadillo primal: 7 of 39 streamlines rise then fall by more
+    than 0.5 m), so course is FLOW ORDER, not strict height order. Bench
+    Studio reads courses rim-to-crown; on a form with that shape the two
+    readings part company, and course is the one this generator means.
+
+    ``diagnostics`` carries, besides the counts:
+    ``holes_ignored`` (boundary chains that turned out to be interior holes
+    of a cell's own outline -- the outline legitimately spans them),
+    ``refinement_levels`` / ``refinement_capped`` (how finely the internal
+    dual mesh resolved ``size``, and whether the 4-pass cap stopped it
+    short), and ``plan_degenerate`` (emitted cells whose PLAN projection
+    self-crosses, which Bench Studio's import rejects the WHOLE sidecar
+    for; see ``_plan_degenerate_count``).
+
     Raises ``PatternRefused`` (propagated from ``assemble_mesh`` /
     ``field_source``) when the result has no member forces and no diagram
     pair to align the pattern with -- no curvature guessing, ever.
@@ -1469,7 +1896,8 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
     field = line_field(mesh)
     lines = streamlines(mesh, field, size)
     points, course_band, _streamline_id = seeds(lines, size)
-    cells = dual_cells(mesh, points)
+    cell_report: Dict[str, Any] = {}
+    cells = dual_cells(mesh, points, size, cell_report)
 
     seed_count = int(points.shape[0])
     cell_count = len(cells)
@@ -1497,6 +1925,12 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
         "seed_count": seed_count,
         "cell_count": cell_count,
         "dropped": dropped,
+        "holes_ignored": int(cell_report.get("holes_ignored", 0)),
+        "plan_degenerate": _plan_degenerate_count(
+            [cell["outline"] for cell in cells_payload]
+        ),
+        "refinement_levels": int(cell_report.get("refinement_levels", 0)),
+        "refinement_capped": bool(cell_report.get("refinement_capped", False)),
     }
     if sizes:
         diagnostics["mean_cell_size"] = float(sum(sizes) / len(sizes))
@@ -1511,6 +1945,7 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
 
 
 __all__ = [
+    "DEFAULT_SIZE",
     "Cell",
     "Mesh",
     "PatternRefused",

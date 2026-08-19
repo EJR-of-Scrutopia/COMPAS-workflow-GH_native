@@ -79,12 +79,18 @@ def test_pattern_armadillo_dual_dispatch_returns_the_generate_response_shape(dom
     assert payload == direct
 
 
-def test_pattern_armadillo_dual_dispatch_defaults_missing_size_to_0_4(
+def test_pattern_armadillo_dual_dispatch_defaults_missing_size_to_the_shipped_default(
     monkeypatch, dome_result
 ):
     # The honest check: capture the actual size argument dispatch() passes
     # to generate(), rather than inferring the default from an observable
     # side effect of the real algorithm.
+    #
+    # Was ``..._defaults_missing_size_to_0_4``, pinning 0.4 literally. The
+    # final fix wave's ruling 4 measured 0.4 on the reference vault for the
+    # first time and it fails the mean-cell-size bar, so the shipped
+    # default is now 0.6 -- named once, in the generator's own
+    # ``DEFAULT_SIZE``, which this test reads rather than restating.
     import ananke_equilibrium.patterns.armadillo_dual as armadillo_dual_module
 
     captured = {}
@@ -102,7 +108,7 @@ def test_pattern_armadillo_dual_dispatch_defaults_missing_size_to_0_4(
     )
 
     assert response["type"] == "result"
-    assert captured["size"] == 0.4
+    assert captured["size"] == armadillo_dual_module.DEFAULT_SIZE == 0.6
     assert captured["result"] is result
 
 

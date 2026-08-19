@@ -330,7 +330,7 @@ def _hand_seeded_dome_cells(dome_result, size=1.0, n_rings=6, n_segments=12):
     field = line_field(mesh)
     lines = streamlines(mesh, field, size=size)
     points, course_band, streamline_id = seeds(lines, size)
-    cells = dual_cells(mesh, points)
+    cells = dual_cells(mesh, points, size)
     return mesh, geometry, points, course_band, streamline_id, cells
 
 
@@ -401,7 +401,7 @@ def test_dual_cells_drops_and_this_is_reflected_by_fewer_cells_than_seeds_when_s
         dtype=np.float64,
     )
 
-    cells = dual_cells(mesh, seed_points)
+    cells = dual_cells(mesh, seed_points, 1.0)
     seed_indices = {cell.seed_index for cell in cells}
     assert 1 not in seed_indices
     assert len(cells) < seed_points.shape[0]
@@ -410,7 +410,7 @@ def test_dual_cells_drops_and_this_is_reflected_by_fewer_cells_than_seeds_when_s
 def test_dual_cells_empty_seed_points_returns_no_cells(dome_result):
     result, _geometry = dome_result(n_rings=6, n_segments=12)
     mesh = assemble_mesh(result)
-    cells = dual_cells(mesh, np.zeros((0, 3), dtype=np.float64))
+    cells = dual_cells(mesh, np.zeros((0, 3), dtype=np.float64), 1.0)
     assert cells == []
 
 
@@ -427,10 +427,166 @@ def test_dual_cells_scales_with_seed_count_not_crashing_on_a_finer_dome(dome_res
     )
     many = np.array([geometry.positions[v] for v in geometry.support_vertex_ids])
 
-    few_cells = dual_cells(mesh, few)
-    many_cells = dual_cells(mesh, many)
+    few_cells = dual_cells(mesh, few, 1.0)
+    many_cells = dual_cells(mesh, many, 1.0)
 
     assert len(many_cells) >= len(few_cells)
+
+
+# ---------------------------------------------------------------------------
+# dual_cells(): adaptive refinement and honest multi-chain resolution
+# (the final fix wave, controller rulings 1-2)
+# ---------------------------------------------------------------------------
+
+
+def _flat_square_mesh(origin=(0.0, 0.0), side=1.0, first_index=0):
+    """Two triangles spanning one axis-aligned square at z = 0."""
+
+    x, y = origin
+    vertices = [
+        [x, y, 0.0],
+        [x + side, y, 0.0],
+        [x, y + side, 0.0],
+        [x + side, y + side, 0.0],
+    ]
+    triangles = [
+        [first_index + 0, first_index + 1, first_index + 2],
+        [first_index + 1, first_index + 3, first_index + 2],
+    ]
+    return vertices, triangles
+
+
+def _mesh_from(vertices, triangles):
+    from ananke_equilibrium.patterns.armadillo_dual import Mesh
+
+    return Mesh(
+        vertices=np.array(vertices, dtype=np.float64),
+        triangles=np.array(triangles, dtype=np.int64),
+        edges=np.zeros((0, 2), dtype=np.int64),
+        edge_forces=np.zeros((0,), dtype=np.float64),
+        support_vertex_ids=[],
+    )
+
+
+def test_dual_cells_refines_until_the_median_edge_resolves_the_requested_size():
+    """Ruling 1: refinement is adaptive, not a fixed single pass.
+
+    The old fixed single midpoint pass left the BRG primal's refined median
+    edge at 0.512 m against a 0.75 m seed spacing, so a median seed owned
+    only 3 refined vertices and its boundary could not close. The rule is
+    now "refine until the median refined edge is at most 0.3 * S".
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _median_edge_length
+    from ananke_equilibrium.patterns.armadillo_dual import _refined_mesh_for_dual
+
+    mesh = _mesh_from(*_flat_square_mesh())
+    assert _median_edge_length(mesh.vertices, mesh.triangles) == pytest.approx(1.0)
+
+    refined, levels, capped = _refined_mesh_for_dual(mesh, 1.0)
+
+    # 1.0 -> 0.5 -> 0.25, the first pass at or under 0.3 * 1.0
+    assert levels == 2
+    assert capped is False
+    assert _median_edge_length(
+        refined.vertices, refined.triangles
+    ) == pytest.approx(0.25)
+    assert refined.triangles.shape[0] == 2 * 4 ** 2
+
+
+def test_dual_cells_refinement_stops_at_four_levels_and_discloses_the_cap():
+    from ananke_equilibrium.patterns.armadillo_dual import _MAX_DUAL_REFINEMENT_LEVELS
+    from ananke_equilibrium.patterns.armadillo_dual import _median_edge_length
+    from ananke_equilibrium.patterns.armadillo_dual import _refined_mesh_for_dual
+
+    mesh = _mesh_from(*_flat_square_mesh())
+
+    # 0.3 * 0.05 = 0.015 m: four passes only reach 0.0625, so the cap bites.
+    refined, levels, capped = _refined_mesh_for_dual(mesh, 0.05)
+
+    assert levels == _MAX_DUAL_REFINEMENT_LEVELS == 4
+    assert capped is True
+    assert _median_edge_length(
+        refined.vertices, refined.triangles
+    ) == pytest.approx(0.0625)
+
+
+def test_dual_cells_rejects_a_seed_whose_territory_is_genuinely_disconnected():
+    """Ruling 2: a split territory is a REJECTION, never a silent fragment.
+
+    Two disjoint square patches with a narrow gap between them. The middle
+    seed's nearest-vertex fan straddles the gap, so it wins territory on
+    BOTH patches -- two boundary chains, neither enclosing the other. The
+    old extraction sorted a seed's chains by length and emitted the longest
+    one, silently discarding a whole patch's worth of that seed's own
+    territory.
+    """
+
+    left_vertices, left_triangles = _flat_square_mesh(origin=(0.0, 0.0))
+    right_vertices, right_triangles = _flat_square_mesh(
+        origin=(1.4, 0.0), first_index=4
+    )
+    mesh = _mesh_from(
+        left_vertices + right_vertices, left_triangles + right_triangles
+    )
+
+    seed_points = np.array(
+        [
+            [1.2, 0.5, 0.0],  # in the gap: its fan reaches both patches
+            [0.0, 0.5, 0.0],
+            [2.4, 0.5, 0.0],
+        ],
+        dtype=np.float64,
+    )
+
+    report: Dict[str, Any] = {}
+    cells = dual_cells(mesh, seed_points, 1.0, report)
+
+    assert 0 not in {cell.seed_index for cell in cells}
+    assert report["disconnected"] == 1
+    assert report["holes_ignored"] == 0
+
+
+def test_the_inside_test_separates_an_interior_hole_from_a_neighbour():
+    """Ruling 2's inside-test, stated: an even-odd point-in-polygon of the
+    other chain's own vertices against the outline chain, both projected
+    into the OUTLINE's Newell tangent plane (not the global XY plan, which
+    a near-vertical stretch of a real vault degenerates). A chain counts as
+    an interior hole when a strict majority of its vertices land inside.
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _chain_lies_inside
+
+    outer = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([4.0, 0.0, 0.0]),
+        np.array([4.0, 4.0, 0.0]),
+        np.array([0.0, 4.0, 0.0]),
+    ]
+    hole = [
+        np.array([1.0, 1.0, 0.0]),
+        np.array([2.0, 1.0, 0.0]),
+        np.array([2.0, 2.0, 0.0]),
+        np.array([1.0, 2.0, 0.0]),
+    ]
+    neighbour = [
+        np.array([6.0, 1.0, 0.0]),
+        np.array([7.0, 1.0, 0.0]),
+        np.array([7.0, 2.0, 0.0]),
+        np.array([6.0, 2.0, 0.0]),
+    ]
+
+    assert _chain_lies_inside(hole, outer) is True
+    assert _chain_lies_inside(neighbour, outer) is False
+
+    # The same pair stood on end: a vertical wall in the XZ plane, where a
+    # plan (z-dropped) test would collapse both polygons to a line and
+    # answer meaninglessly. The tangent-plane test still reads it right.
+    def stand_up(points):
+        return [np.array([p[0], p[2], p[1]]) for p in points]
+
+    assert _chain_lies_inside(stand_up(hole), stand_up(outer)) is True
+    assert _chain_lies_inside(stand_up(neighbour), stand_up(outer)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +695,60 @@ def test_generate_uses_the_diagrams_fallback(dome_result):
     response = generate(result, size=1.0)
     assert response["diagnostics"]["field_source"] == "diagrams"
     assert len(response["cells"]) > 0
+
+
+def test_generate_discloses_plan_degeneracy_holes_and_refinement(dome_result):
+    """Ruling 5 (and rulings 1-2's own disclosures): the D output's promise.
+
+    The design spec's "Delivery and the honest limit" promised the D output
+    would name plan-degenerate cells "when detectable"; it never shipped,
+    and the studio rejects a WHOLE sidecar on the first self-crossing cell.
+    ``plan_degenerate`` counts emitted cells whose PLAN projection (z
+    dropped) is not a simple polygon by the studio's own rule.
+    """
+
+    result, _geometry = dome_result(n_rings=6, n_segments=12)
+
+    diagnostics = generate(result, size=1.0)["diagnostics"]
+
+    for key in (
+        "plan_degenerate",
+        "holes_ignored",
+        "refinement_levels",
+    ):
+        assert key in diagnostics, "diagnostics is missing {!r}".format(key)
+        assert isinstance(diagnostics[key], int)
+        assert diagnostics[key] >= 0
+    assert isinstance(diagnostics["refinement_capped"], bool)
+    assert diagnostics["refinement_levels"] >= 1
+
+
+def test_the_plan_simplicity_port_answers_the_way_the_studio_does():
+    """Ruling 5's port, checked against hand cases with known answers.
+
+    Ported from bench/studio/tessellation.py's ``_is_simple`` /
+    ``_segments_cross`` / ``on_segment`` in the COMPAS-UI-integration-tool
+    checkout: proper crossings of non-adjacent edges, duplicate points
+    within the studio's own 1e-6 tolerance, and a vertex lying on a
+    non-adjacent edge. The real cell-by-cell agreement with the studio's
+    own function is proven in
+    tests/patterns/test_armadillo_dual_studio_acceptance.py.
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _plan_is_simple
+
+    square = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+    bowtie = np.array([[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]])
+    duplicate = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    vertex_on_edge = np.array(
+        [[0.0, 0.0], [2.0, 0.0], [1.0, 0.0], [1.0, 2.0]]
+    )
+
+    assert _plan_is_simple(square) is True
+    assert _plan_is_simple(bowtie) is False
+    assert _plan_is_simple(duplicate) is False
+    assert _plan_is_simple(vertex_on_edge) is False
+    assert _plan_is_simple(square[:2]) is False  # under 3 points is no polygon
 
 
 # ---------------------------------------------------------------------------
@@ -813,3 +1023,299 @@ def test_armadillo_primal_generate_accepts_its_own_edges_as_the_alignment_field(
     assert dropped_fraction < 0.10, "dropped fraction {:.3f} not < 10%".format(
         dropped_fraction
     )
+
+
+# ---------------------------------------------------------------------------
+# The GEOMETRIC bars: what the emitted cells actually cover
+#
+# Every bar above this line counts things -- cells, seeds, drops. A count
+# says nothing about whether an emitted cell is the whole voussoir its seed
+# owns or a splinter of it, and the whole-branch review of 2026-08-19 found
+# exactly that: on the BRG primal at S = 0.75 the emitted outlines covered
+# 26.7 m2 of a 451.9 m2 surface (5.9%) while every count-based bar passed.
+# The three bars below measure GEOMETRY instead, and are the acceptance
+# criteria of the final fix wave (controller ruling 3):
+#
+#   (a) total emitted cell area >= 75% of the mesh's own surface area,
+#   (b) mean_cell_size within [0.5 * S, 1.5 * S],
+#   (c) the median outline-area / territory-area ratio >= 0.6, with
+#       territory area read off the SAME multi-source Dijkstra assignment
+#       ``dual_cells`` extracts from (recomputed here rather than taken on
+#       the module's word, the way the review measured it).
+#
+# RED, measured against the pre-fix extraction on this exact fixture:
+# coverage 5.9%, mean_cell_size 0.272 m against a requested 0.75, ratio
+# median 0.079. GREEN numbers are recorded as constants-with-comments in
+# each bar below.
+# ---------------------------------------------------------------------------
+
+
+_BAR_RUNS: Dict[float, Dict[str, Any]] = {}
+
+
+def _mesh_surface_area(mesh) -> float:
+    """The triangulated thrust mesh's own area: the denominator of bar (a)."""
+
+    vertices = mesh.vertices
+    a = vertices[mesh.triangles[:, 0]]
+    b = vertices[mesh.triangles[:, 1]]
+    c = vertices[mesh.triangles[:, 2]]
+    return float(0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1).sum())
+
+
+def _territory_areas(mesh, seed_points, size) -> np.ndarray:
+    """Surface area owned by each seed, from the assignment itself.
+
+    Deliberately recomputed here from ``armadillo_dual``'s own primitives
+    (the refined triangulation, the seed fan, the vertex graph and the
+    multi-source Dijkstra) rather than read back out of ``dual_cells``'
+    report: bar (c) is a claim about the extraction, so its denominator has
+    to come from somewhere the extraction cannot influence. Each refined
+    triangle contributes a third of its area to each of its three vertices'
+    owners, the same split the review used.
+    """
+
+    from ananke_equilibrium.patterns import armadillo_dual as module
+
+    dual_mesh, _levels, _capped = module._refined_mesh_for_dual(mesh, size)
+    nearest_idx, nearest_dist = module._nearest_vertices_k(
+        dual_mesh.vertices, seed_points, module._DIJKSTRA_SEED_FAN
+    )
+    sources = []
+    for seed_index in range(seed_points.shape[0]):
+        for candidate in range(nearest_idx.shape[1]):
+            sources.append(
+                (
+                    int(nearest_idx[seed_index, candidate]),
+                    seed_index,
+                    float(nearest_dist[seed_index, candidate]),
+                )
+            )
+    owner = np.array(
+        module._multi_source_dijkstra(module._vertex_graph(dual_mesh), sources),
+        dtype=np.int64,
+    )
+
+    vertices = dual_mesh.vertices
+    a = vertices[dual_mesh.triangles[:, 0]]
+    b = vertices[dual_mesh.triangles[:, 1]]
+    c = vertices[dual_mesh.triangles[:, 2]]
+    triangle_area = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+
+    owners_per_corner = owner[dual_mesh.triangles].ravel()
+    area_per_corner = np.repeat(triangle_area / 3.0, 3)
+    areas = np.zeros(seed_points.shape[0], dtype=np.float64)
+    owned = owners_per_corner >= 0
+    np.add.at(areas, owners_per_corner[owned], area_per_corner[owned])
+    return areas
+
+
+def _armadillo_bars(size: float) -> Dict[str, Any]:
+    """Run the real BRG primal once per size and measure bars (a) and (b).
+
+    Cached across the bar tests below: the fix refines the dual mesh until
+    its median edge is at most 0.3 * S, so a single run of this is real
+    work (66432 triangles at S = 0.75) and several tests asking for it
+    separately would multiply that for nothing.
+
+    Bar (c)'s territory comparison is deliberately NOT computed here (see
+    ``_armadillo_outline_ratios``): it needs ``dual_cells``' own seed
+    indices, so folding it in would make bars (a) and (b) depend on that
+    call too.
+    """
+
+    if size in _BAR_RUNS:
+        return _BAR_RUNS[size]
+
+    from ananke_equilibrium.patterns.armadillo_dual import _polygon_area_3d
+
+    raw = _load_armadillo_mesh_dict()
+    result = _adapt_armadillo_to_aligned_result(raw)
+    mesh = assemble_mesh(result)
+
+    start = time.time()
+    response = generate(result, size=size)
+    wall_time = time.time() - start
+
+    emitted_area = float(
+        sum(
+            _polygon_area_3d(
+                [np.asarray(p, dtype=np.float64) for p in cell["outline"]]
+            )
+            for cell in response["cells"]
+        )
+    )
+
+    measured = {
+        "result": result,
+        "mesh": mesh,
+        "response": response,
+        "diagnostics": response["diagnostics"],
+        "mesh_area": _mesh_surface_area(mesh),
+        "emitted_area": emitted_area,
+        "wall_time": wall_time,
+    }
+    measured["coverage"] = measured["emitted_area"] / measured["mesh_area"]
+    print(
+        "BRG armadillo.json geometric bars at size {}: coverage={:.1%} "
+        "emitted={:.1f} m2 of {:.1f} m2, mean_cell_size={:.3f}, cells={}, "
+        "seeds={}, dropped={}, holes_ignored={}, plan_degenerate={}, "
+        "refinement_levels={}, wall_time={:.2f}s".format(
+            size,
+            measured["coverage"],
+            measured["emitted_area"],
+            measured["mesh_area"],
+            measured["diagnostics"].get("mean_cell_size", float("nan")),
+            measured["diagnostics"]["cell_count"],
+            measured["diagnostics"]["seed_count"],
+            measured["diagnostics"]["dropped"],
+            measured["diagnostics"].get("holes_ignored"),
+            measured["diagnostics"].get("plan_degenerate"),
+            measured["diagnostics"].get("refinement_levels"),
+            wall_time,
+        )
+    )
+    _BAR_RUNS[size] = measured
+    return measured
+
+
+def _armadillo_outline_ratios(size: float) -> List[float]:
+    """Bar (c): every emitted outline's area over its seed's territory area."""
+
+    from ananke_equilibrium.patterns.armadillo_dual import _polygon_area_3d
+
+    measured = _armadillo_bars(size)
+    if "ratios" in measured:
+        return measured["ratios"]
+
+    mesh = measured["mesh"]
+    lines = streamlines(mesh, line_field(mesh), size)
+    points, _course_band, _streamline_id = seeds(lines, size)
+    cells = dual_cells(mesh, points, size)
+    territory = _territory_areas(mesh, points, size)
+    ratios = [
+        _polygon_area_3d(list(cell.outline)) / territory[cell.seed_index]
+        for cell in cells
+        if territory[cell.seed_index] > 0.0
+    ]
+    measured["ratios"] = ratios
+    measured["ratio_median"] = float(np.median(ratios)) if ratios else 0.0
+    print(
+        "BRG armadillo.json outline/territory at size {}: median={:.3f} "
+        "mean={:.3f} over {} cells".format(
+            size,
+            measured["ratio_median"],
+            float(np.mean(ratios)) if ratios else 0.0,
+            len(ratios),
+        )
+    )
+    return ratios
+
+
+@pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
+def test_armadillo_primal_cells_cover_the_surface_at_size_075():
+    """Bar (a): the emitted voussoirs are the surface, not a sample of it.
+
+    GREEN: 392.4 m2 emitted of the mesh's own 451.9 m2, 86.8%. The
+    shortfall is honest and named: the 6 seeds dropped at this size own
+    territory nobody emits, and every outline runs through the midpoints of
+    its territory's boundary edges, so it sits a half-edge inside the true
+    territory all the way round.
+
+    RED against the pre-fix extraction: 26.7 m2, 5.9%.
+    """
+
+    measured = _armadillo_bars(0.75)
+
+    assert measured["coverage"] >= 0.75, (
+        "emitted cell area {:.1f} m2 is only {:.1%} of the mesh's own "
+        "{:.1f} m2".format(
+            measured["emitted_area"], measured["coverage"], measured["mesh_area"]
+        )
+    )
+
+
+@pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
+def test_armadillo_primal_mean_cell_size_matches_the_requested_size():
+    """Bar (b): the diagnostics' own mean_cell_size is the size that was asked for.
+
+    GREEN: 1.026 m against a requested 0.75 (bar [0.375, 1.125]). It sits
+    above S rather than at it because this vault's streamlines are seeded
+    only at the springing and never backfilled mid-mesh (a disclosed
+    approximation of ``streamlines``): 39 lines carry 300 seeds across
+    451.9 m2, so a cell's own territory averages 1.5 m2, not S squared.
+
+    RED against the pre-fix extraction: 0.272 m, a number that sat in the
+    diagnostics all along.
+    """
+
+    measured = _armadillo_bars(0.75)
+    mean_cell_size = measured["diagnostics"]["mean_cell_size"]
+
+    assert 0.5 * 0.75 <= mean_cell_size <= 1.5 * 0.75, (
+        "mean_cell_size {:.3f} is outside [{:.3f}, {:.3f}] for a requested "
+        "size of 0.75".format(mean_cell_size, 0.5 * 0.75, 1.5 * 0.75)
+    )
+
+
+@pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
+def test_armadillo_primal_outlines_enclose_their_own_territory():
+    """Bar (c): an emitted outline IS its seed's territory, not a fragment.
+
+    The multi-source Dijkstra assignment was never the broken half -- it is
+    exact, and every refined vertex is owned (``_territory_areas`` above
+    sums to the mesh's whole area). This bar pins the EXTRACTION to it.
+
+    GREEN: median ratio 0.973. RED against the pre-fix extraction: 0.079,
+    because ``dual_cells`` sorted a seed's boundary chains by length and
+    kept only the longest, silently discarding the rest.
+    """
+
+    ratios = _armadillo_outline_ratios(0.75)
+
+    assert ratios, "no cell could be matched to a territory"
+    ratio_median = float(np.median(ratios))
+    assert ratio_median >= 0.60, (
+        "median outline-area / territory-area ratio {:.3f} is under 0.60: "
+        "the emitted outlines are fragments of the territories they "
+        "claim".format(ratio_median)
+    )
+
+
+@pytest.mark.skipif(not ARMADILLO_JSON.exists(), reason="armadillo.json not present in this worktree's bench/upstream")
+def test_armadillo_primal_meets_every_bar_at_the_shipped_default_size():
+    """The shipped component default, measured on the reference vault.
+
+    Controller ruling 4: the default S that shipped with the wave (0.4) was
+    never tested. It is now, and it FAILS bar (b): at 0.4 the run gives 687
+    seeds and 682 cells (0.7% dropped, 89.0% coverage, ratio median 0.984)
+    but mean_cell_size 0.671 m against a 0.600 m ceiling -- this vault's
+    streamlines fan out from the springing without mid-mesh backfill, so
+    halving S does not halve the cell. Measured on a 0.05 m grid: 0.50
+    fails (0.752 against 0.750), 0.55 clears by 1.1% (0.816 against
+    0.825), 0.60 clears by 5.2% (0.853 against 0.900). The default shipped
+    is 0.6 -- the smallest value on the natural 0.1 m grid that clears
+    every bar, and the smallest tested value that clears the tightest bar
+    by more than the noise in a seeding pass.
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import DEFAULT_SIZE
+
+    assert DEFAULT_SIZE == 0.6
+
+    measured = _armadillo_bars(DEFAULT_SIZE)
+    diagnostics = measured["diagnostics"]
+    seed_count = diagnostics["seed_count"]
+    dropped_fraction = (diagnostics["dropped"] / seed_count) if seed_count else 1.0
+
+    # GREEN at 0.6: 422 seeds, 418 cells, 4 dropped (0.9%), coverage 87.0%,
+    # mean_cell_size 0.853, ratio median 0.967, holes_ignored 4.
+    assert 150 <= diagnostics["cell_count"] <= 800
+    assert dropped_fraction < 0.10
+    assert measured["coverage"] >= 0.75
+    assert (
+        0.5 * DEFAULT_SIZE
+        <= diagnostics["mean_cell_size"]
+        <= 1.5 * DEFAULT_SIZE
+    )
+    assert float(np.median(_armadillo_outline_ratios(DEFAULT_SIZE))) >= 0.60

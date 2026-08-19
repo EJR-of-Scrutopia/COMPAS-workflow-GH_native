@@ -181,14 +181,21 @@ Tessellation format writes the `<Name>-tessellation.json` sidecar Bench
 Studio imports as an authored cut. `Armadillo Dual` aligns to the
 result's own member forces, falling back to the form/force diagram pair
 when forces are absent; it refuses rather than guessing a curvature when
-neither is present. The Tessellation sidecar is plan-projected (z
+neither is present. S defaults to 0.6 m: the smallest target voussoir
+size at which the reference BRG armadillo primal still emits whole
+voussoirs at the size asked for (measured; a smaller S on that vault
+gives more cells but each one larger than the request, because
+streamlines are seeded at the springing and never backfilled mid-mesh).
+The Tessellation sidecar is plan-projected (z
 dropped), so a voussoir on a near-vertical stretch of the surface -- the
 funnel throat's own steep run -- can project to an outline that crosses
 itself, or to one that overlaps a different cell's once both are
 flattened. Bench Studio's import rejects the WHOLE sidecar on either
 fault, naming the offending cell, rather than dropping just that cell: an
 author cutting a steep form has to expect that whole-document rejection
-and exclude the offending cells before writing the sidecar. Only a cell
+and exclude the offending cells before writing the sidecar. The D output
+names how many cells self-cross in plan, so that count is visible on
+canvas before Export writes anything. Only a cell
 that clears both checks but lands at a near-zero plan area (a sliver) is
 disclosed and kept, not rejected. This is a known limit of
 `bench.tessellation/1`'s plan-only domain; a surface-parameterised

@@ -527,6 +527,7 @@ def dispatch(
                 )
             return result_response(request_id, compas_export_payload(result))
         if command == "pattern.armadillo_dual":
+            from .patterns.armadillo_dual import DEFAULT_SIZE
             from .patterns.armadillo_dual import PatternRefused
             from .patterns.armadillo_dual import generate as armadillo_dual_generate
 
@@ -538,7 +539,10 @@ def dispatch(
                     {"request_id": request_id},
                 )
             size = payload.get("size")
-            size = 0.4 if size is None else float(size)
+            # The generator owns the default (armadillo_dual.DEFAULT_SIZE),
+            # so the worker's fallback and the component's S default cannot
+            # drift apart.
+            size = DEFAULT_SIZE if size is None else float(size)
             try:
                 pattern_payload = armadillo_dual_generate(result, size)
             except PatternRefused as error:

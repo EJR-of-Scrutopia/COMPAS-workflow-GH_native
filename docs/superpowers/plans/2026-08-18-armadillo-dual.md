@@ -59,7 +59,7 @@
 - Consumes: Task 2's `generate`.
 - Produces: the wire command "pattern.armadillo_dual" with payload {"result": ..., "size": float} and the spec's response shape; refusals surface as the worker's existing error envelope with PatternRefused's message intact.
 
-- [ ] Failing dispatch tests: happy path returns cells/flowlines/diagnostics for the dome fixture result; missing size defaults to 0.4; PatternRefused maps to the error envelope with the message verbatim; unknown-command behaviour unchanged (pin the ALLOWED_COMMANDS addition).
+- [ ] Failing dispatch tests: happy path returns cells/flowlines/diagnostics for the dome fixture result; missing size defaults to the generator's own DEFAULT_SIZE (0.4 as planned; 0.6 as shipped after the final fix wave measured it -- see the design spec's "Retrospective corrections" (d)); PatternRefused maps to the error envelope with the message verbatim; unknown-command behaviour unchanged (pin the ALLOWED_COMMANDS addition).
 - [ ] Implement; full worker test files green; commit `feat(worker): pattern.armadillo_dual command`.
 
 ### Task 4: The Armadillo Dual component
@@ -70,7 +70,7 @@
 
 **Interfaces:**
 - Consumes: the worker command from Task 3 via WorkerRuntime.Host.RequestAsync, the RawWire-or-serialised result convention copied from ExportComponent's BuildCompasJsonAsync.
-- Produces: inputs RES (ResultParam, item), S (number, item, default 0.4); outputs C (curves, list), CO (integers, list), FL (curves, list), D (text, item). Response conversion: each cells[i].outline -> closed PolylineCurve (append first point), course -> CO, flowlines -> open PolylineCurves, diagnostics dict -> a readable multi-line string.
+- Produces: inputs RES (ResultParam, item), S (number, item, default 0.4 as planned, 0.6 as shipped -- see the design spec's "Retrospective corrections" (d)); outputs C (curves, list), CO (integers, list), FL (curves, list), D (text, item). Response conversion: each cells[i].outline -> closed PolylineCurve (append first point), course -> CO, flowlines -> open PolylineCurves, diagnostics dict -> a readable multi-line string.
 
 - [ ] Implement following the NativeTaskComponentBase pattern (pre-solve validate + dispatch, post-solve convert; no Rhino geometry into the task; the no-RawWire warning copied from Export). S <= 0 or NaN: reject with a named message (the Course Height lesson: `!(s > 0.001)`).
 - [ ] `dotnet build -c Release` 0 warnings; commit `feat(plugin): the Armadillo Dual component, force-aligned voussoirs on canvas`.
