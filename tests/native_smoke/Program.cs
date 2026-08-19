@@ -374,6 +374,36 @@ internal static class Program
                 $"ResultGoo RawWire snapshot: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateExportCoursesValidation(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.HasNegativeCourse: flags every " +
+                "offending index/value and leaves a clean Courses list " +
+                "alone.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.HasNegativeCourse: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportTessellationJsonOptions(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.BuildTessellationJson: shape and " +
+                "byte content match the studio's bench.tessellation/1 " +
+                "sidecar contract under the shared ContractJson.Options.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.BuildTessellationJson: " +
+                $"{DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1103,6 +1133,121 @@ internal static class Program
         return plugin.GetType($"{ContractsNamespace}.{typeName}", throwOnError: true)
             ?? throw new InvalidOperationException(
                 $"Type '{ContractsNamespace}.{typeName}' was not found.");
+    }
+
+    private static Type RequireComponentType(Assembly plugin, string typeName)
+    {
+        const string ComponentsNamespace = "Ananke.COMPAS.Native.Components";
+        return plugin.GetType($"{ComponentsNamespace}.{typeName}", throwOnError: true)
+            ?? throw new InvalidOperationException(
+                $"Type '{ComponentsNamespace}.{typeName}' was not found.");
+    }
+
+    /// <summary>
+    /// Finding 1 of the 2026-08-20 plugin sweep: a negative Courses value
+    /// becomes a "c-1p0"-style key deep in the studio's
+    /// tessellation.from_document import (which pins course &gt;= 0 and
+    /// refuses it), so ExportComponent now catches it itself, naming
+    /// every offending index and value. <c>SolveInstance</c> needs a live
+    /// <c>IGH_DataAccess</c>/Grasshopper document this harness never
+    /// launches (it never calls SolveInstance on anything, only
+    /// constructors and static contract methods), so the standalone
+    /// guard behind that check -- <c>HasNegativeCourse</c> -- is as far
+    /// as this repo's reflection-based pattern reaches; the component
+    /// wiring around it (AddRuntimeMessage, "no file written") is not
+    /// exercised here.
+    /// </summary>
+    private static void ValidateExportCoursesValidation(Assembly plugin)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo method = exportType.GetMethod(
+            "HasNegativeCourse",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.HasNegativeCourse was not found.");
+
+        object?[] negativeArgs = { new List<int> { 0, -1, 2, -3 }, null };
+        var flagged = (bool)method.Invoke(null, negativeArgs)!;
+        var detail = (string)negativeArgs[1]!;
+        if (!flagged)
+        {
+            throw new InvalidOperationException(
+                "HasNegativeCourse did not flag a Courses list containing " +
+                "negative values.");
+        }
+        if (!detail.Contains("index 1 = -1", StringComparison.Ordinal) ||
+            !detail.Contains("index 3 = -3", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "HasNegativeCourse did not name every offending index " +
+                $"and value; received '{detail}'.");
+        }
+
+        object?[] validArgs = { new List<int> { 0, 1, 2 }, null };
+        var flaggedValid = (bool)method.Invoke(null, validArgs)!;
+        if (flaggedValid)
+        {
+            throw new InvalidOperationException(
+                "HasNegativeCourse flagged a Courses list with no " +
+                "negative values.");
+        }
+    }
+
+    /// <summary>
+    /// Finding 2 of the 2026-08-20 plugin sweep: BuildTessellationJson now
+    /// serialises through the shared ContractJson.Options rather than
+    /// default JsonSerializer options. Every field in this payload is
+    /// non-null and every key is already a camelCase literal, so no
+    /// option ContractJson.Options sets actually changes a byte for this
+    /// shape (confirmed separately, outside this harness, by comparing
+    /// the built .gha's output before and after the change); what this
+    /// asserts is that the exact schema the studio's
+    /// tessellation.from_document expects -- key/course/outline per
+    /// cell, the bench.tessellation/1 envelope -- still comes out
+    /// byte-for-byte as written.
+    /// </summary>
+    private static void ValidateExportTessellationJsonOptions(Assembly plugin)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        Type cellType = RequireComponentType(plugin, "TessellationCell");
+        MethodInfo method = exportType.GetMethod(
+            "BuildTessellationJson",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.BuildTessellationJson was not found.");
+
+        var outline = new List<double[]>
+        {
+            new[] { 0.0, 0.0 },
+            new[] { 1.0, 0.0 },
+            new[] { 0.0, 1.0 }
+        };
+        object cell = Activator.CreateInstance(cellType, 0, outline)
+            ?? throw new InvalidOperationException(
+                $"Could not construct {cellType.FullName}.");
+        Type cellListType = typeof(List<>).MakeGenericType(cellType);
+        object cellList = Activator.CreateInstance(cellListType)
+            ?? throw new InvalidOperationException(
+                $"Could not construct {cellListType.FullName}.");
+        MethodInfo addMethod = cellListType.GetMethod("Add")
+            ?? throw new InvalidOperationException(
+                $"{cellListType.FullName} does not expose Add.");
+        addMethod.Invoke(cellList, new[] { cell });
+
+        var json = method.Invoke(null, new[] { cellList }) as string
+            ?? throw new InvalidOperationException(
+                "BuildTessellationJson returned an unexpected type.");
+        const string expected =
+            "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
+            "\"domain\":\"plan\",\"pattern\":\"authored\",\"cells\":[" +
+            "{\"key\":\"c0p0\",\"course\":0," +
+            "\"outline\":[[0,0],[1,0],[0,1]]}]}";
+        if (!string.Equals(json, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "BuildTessellationJson output changed shape; expected " +
+                $"'{expected}', received '{json}'.");
+        }
     }
 
     // A minimal, internally consistent triangle fixture (3 vertices, 3

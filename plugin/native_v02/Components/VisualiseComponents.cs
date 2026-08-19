@@ -471,6 +471,27 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// One mesh face's corner points, in winding order: three for a
+        /// triangle, four for a quad. <see cref="FacePolylines"/> and
+        /// <see cref="FaceCourses"/> both read a face's corners this
+        /// way, so the corner/count logic is written once, not twice.
+        /// </summary>
+        private static IReadOnlyList<Point3d> FaceCorners(
+            Mesh mesh,
+            MeshFace face)
+        {
+            var points = new List<Point3d>(4)
+            {
+                mesh.Vertices[face.A],
+                mesh.Vertices[face.B],
+                mesh.Vertices[face.C]
+            };
+            if (face.IsQuad)
+                points.Add(mesh.Vertices[face.D]);
+            return points;
+        }
+
+        /// <summary>
         /// One closed polyline per mesh face, in face order: the Export
         /// component's Tessellation format takes these as authored Cells
         /// verbatim (it drops z and dedupes the closing repeat itself).
@@ -480,15 +501,10 @@ namespace Ananke.COMPAS.Native.Components
             var polylines = new List<PolylineCurve>(mesh.Faces.Count);
             for (int i = 0; i < mesh.Faces.Count; i++)
             {
-                MeshFace face = mesh.Faces[i];
-                var points = new List<Point3d>(5)
-                {
-                    mesh.Vertices[face.A],
-                    mesh.Vertices[face.B],
-                    mesh.Vertices[face.C]
-                };
-                if (face.IsQuad)
-                    points.Add(mesh.Vertices[face.D]);
+                IReadOnlyList<Point3d> corners =
+                    FaceCorners(mesh, mesh.Faces[i]);
+                var points = new List<Point3d>(corners.Count + 1);
+                points.AddRange(corners);
                 points.Add(points[0]);
                 polylines.Add(new PolylineCurve(points));
             }
@@ -510,18 +526,12 @@ namespace Ananke.COMPAS.Native.Components
             double lowest = double.PositiveInfinity;
             for (int i = 0; i < mesh.Faces.Count; i++)
             {
-                MeshFace face = mesh.Faces[i];
-                double z =
-                    mesh.Vertices[face.A].Z +
-                    mesh.Vertices[face.B].Z +
-                    mesh.Vertices[face.C].Z;
-                int corners = 3;
-                if (face.IsQuad)
-                {
-                    z += mesh.Vertices[face.D].Z;
-                    corners = 4;
-                }
-                centroids[i] = z / corners;
+                IReadOnlyList<Point3d> corners =
+                    FaceCorners(mesh, mesh.Faces[i]);
+                double z = 0.0;
+                foreach (Point3d corner in corners)
+                    z += corner.Z;
+                centroids[i] = z / corners.Count;
                 if (centroids[i] < lowest)
                     lowest = centroids[i];
             }

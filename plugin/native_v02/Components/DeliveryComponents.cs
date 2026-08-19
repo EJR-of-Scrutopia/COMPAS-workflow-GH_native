@@ -170,117 +170,133 @@ public sealed class ExportComponent :
 
     protected override void SolveInstance(IGH_DataAccess data)
     {
-        if (InPreSolve)
+        // FdSolve/Deconstruct sibling parity: without a local catch here,
+        // an unexpected exception (most plausibly out of the Rhino curve
+        // reads in TryReadInputs/PrepareTessellationCells, which run on
+        // this thread) would climb out of SolveInstance and land on
+        // Grasshopper's own framework-level handler, which reports a far
+        // uglier message than AddRuntimeMessage does.
+        try
         {
+            if (InPreSolve)
+            {
+                if (!TryReadInputs(
+                        data,
+                        out ResultDto? result,
+                        out string format,
+                        out _,
+                        out _,
+                        out _,
+                        out IReadOnlyList<TessellationCell>? cells,
+                        out string? cellWarning,
+                        report: false))
+                {
+                    return;
+                }
+                TaskList.Add(Task.Run(
+                    () => ComputeAsync(
+                        CloneResult(result!),
+                        format,
+                        cells,
+                        cellWarning,
+                        CancelToken),
+                    CancelToken));
+                return;
+            }
+
+            // The post phase re-reads Write and Path itself: the disk
+            // write is a side effect and belongs on this thread, where a
+            // Button's release re-solve cannot cancel it mid-flight.
             if (!TryReadInputs(
                     data,
-                    out ResultDto? result,
-                    out string format,
-                    out _,
-                    out _,
-                    out _,
-                    out IReadOnlyList<TessellationCell>? cells,
-                    out string? cellWarning,
-                    report: false))
+                    out ResultDto? postResult,
+                    out string postFormat,
+                    out string path,
+                    out bool write,
+                    out string name,
+                    out IReadOnlyList<TessellationCell>? postCells,
+                    out string? postCellWarning))
             {
                 return;
             }
-            TaskList.Add(Task.Run(
-                () => ComputeAsync(
-                    CloneResult(result!),
-                    format,
-                    cells,
-                    cellWarning,
-                    CancelToken),
-                CancelToken));
-            return;
-        }
-
-        // The post phase re-reads Write and Path itself: the disk write is
-        // a side effect and belongs on this thread, where a Button's
-        // release re-solve cannot cancel it mid-flight.
-        if (!TryReadInputs(
-                data,
-                out ResultDto? postResult,
-                out string postFormat,
-                out string path,
-                out bool write,
-                out string name,
-                out IReadOnlyList<TessellationCell>? postCells,
-                out string? postCellWarning))
-        {
-            return;
-        }
-        ExportComponentTaskResult taskResult;
-        bool haveTaskResult = GetSolveResults(data, out taskResult!);
-        if (!haveTaskResult ||
-            taskResult.Error is OperationCanceledException)
-        {
-            // A cancelled background task is a scheduling race, not a
-            // verdict on the current inputs; recompute synchronously so a
-            // late cancellation cannot strand the canvas on "Cancelled".
-            taskResult = ComputeAsync(
-                    CloneResult(postResult!),
-                    postFormat,
-                    postCells,
-                    postCellWarning,
-                    CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-        }
-
-        if (taskResult.Error is not null)
-        {
-            Message = taskResult.Error is OperationCanceledException
-                ? "Cancelled"
-                : "Failed";
-            AddRuntimeMessage(
-                taskResult.Error is OperationCanceledException
-                    ? GH_RuntimeMessageLevel.Warning
-                    : GH_RuntimeMessageLevel.Error,
-                "Export: " + taskResult.Error.GetBaseException().Message);
-            return;
-        }
-        if (taskResult.Json is null)
-        {
-            Message = "Failed";
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Error,
-                "Export produced no JSON.");
-            return;
-        }
-        if (taskResult.Warning is not null)
-        {
-            AddRuntimeMessage(
-                GH_RuntimeMessageLevel.Warning,
-                "Export: " + taskResult.Warning);
-        }
-
-        if (write && !string.IsNullOrWhiteSpace(path))
-        {
-            try
+            ExportComponentTaskResult taskResult;
+            bool haveTaskResult = GetSolveResults(data, out taskResult!);
+            if (!haveTaskResult ||
+                taskResult.Error is OperationCanceledException)
             {
-                string resolved = ResolveWritePath(path, postFormat, name);
-                File.WriteAllText(resolved, taskResult.Json);
-                _lastWrittenPath = resolved;
-                _lastWrittenAt = DateTime.Now;
+                // A cancelled background task is a scheduling race, not a
+                // verdict on the current inputs; recompute synchronously
+                // so a late cancellation cannot strand the canvas on
+                // "Cancelled".
+                taskResult = ComputeAsync(
+                        CloneResult(postResult!),
+                        postFormat,
+                        postCells,
+                        postCellWarning,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
             }
-            catch (Exception writeException)
+
+            if (taskResult.Error is not null)
             {
+                Message = taskResult.Error is OperationCanceledException
+                    ? "Cancelled"
+                    : "Failed";
+                AddRuntimeMessage(
+                    taskResult.Error is OperationCanceledException
+                        ? GH_RuntimeMessageLevel.Warning
+                        : GH_RuntimeMessageLevel.Error,
+                    "Export: " + taskResult.Error.GetBaseException().Message);
+                return;
+            }
+            if (taskResult.Json is null)
+            {
+                Message = "Failed";
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Error,
-                    "Export: failed to write file: " +
-                    writeException.Message);
+                    "Export produced no JSON.");
+                return;
             }
-        }
+            if (taskResult.Warning is not null)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Export: " + taskResult.Warning);
+            }
 
-        data.SetData(0, taskResult.Json);
-        data.SetData(1, _lastWrittenPath ?? string.Empty);
-        Message = _lastWrittenPath is null
-            ? $"{taskResult.Json.Length} chars · not written"
-            : $"{taskResult.Json.Length} chars · wrote " +
-              $"{Path.GetFileName(_lastWrittenPath)} " +
-              $"{_lastWrittenAt:HH:mm:ss}";
+            if (write && !string.IsNullOrWhiteSpace(path))
+            {
+                try
+                {
+                    string resolved =
+                        ResolveWritePath(path, postFormat, name);
+                    File.WriteAllText(resolved, taskResult.Json);
+                    _lastWrittenPath = resolved;
+                    _lastWrittenAt = DateTime.Now;
+                }
+                catch (Exception writeException)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Error,
+                        "Export: failed to write file: " +
+                        writeException.Message);
+                }
+            }
+
+            data.SetData(0, taskResult.Json);
+            data.SetData(1, _lastWrittenPath ?? string.Empty);
+            Message = _lastWrittenPath is null
+                ? $"{taskResult.Json.Length} chars · not written"
+                : $"{taskResult.Json.Length} chars · wrote " +
+                  $"{Path.GetFileName(_lastWrittenPath)} " +
+                  $"{_lastWrittenAt:HH:mm:ss}";
+        }
+        catch (Exception error)
+        {
+            Message = "Failed";
+            ReportException("Export failed", error);
+        }
     }
 
     /// <summary>
@@ -397,6 +413,17 @@ public sealed class ExportComponent :
                     $"Courses ({courseInput.Count}) must be empty or " +
                     $"match Cells ({cellInput.Count}).");
             }
+            else if (HasNegativeCourse(courseInput, out string negative))
+            {
+                // A negative course survives all the way to the studio's
+                // "c-1p0"-style key, which tessellation.from_document
+                // pins course >= 0 and refuses -- late, remote, and
+                // confusing. Catch it here instead, naming every
+                // offending index and value, and write nothing.
+                errors.Add(
+                    "Courses must be zero or greater; negative at " +
+                    negative + ".");
+            }
             else
             {
                 cells = PrepareTessellationCells(
@@ -423,6 +450,28 @@ public sealed class ExportComponent :
         write = writeInput;
         name = nameInput ?? string.Empty;
         return true;
+    }
+
+    /// <summary>
+    /// True when any Courses entry is negative, naming every offending
+    /// index and value (not just the first) so the fix on the canvas is
+    /// immediate. The Courses input is an Integer parameter, so
+    /// Grasshopper itself already handles non-integer values before
+    /// SolveInstance runs; this only guards the bound the studio's import
+    /// actually enforces.
+    /// </summary>
+    private static bool HasNegativeCourse(
+        IReadOnlyList<int> courses,
+        out string detail)
+    {
+        var offending = new List<string>();
+        for (int i = 0; i < courses.Count; i++)
+        {
+            if (courses[i] < 0)
+                offending.Add($"index {i} = {courses[i]}");
+        }
+        detail = string.Join(", ", offending);
+        return offending.Count > 0;
     }
 
     /// <summary>
@@ -715,6 +764,12 @@ public sealed class ExportComponent :
             ["pattern"] = "authored",
             ["cells"] = cellPayloads
         };
-        return JsonSerializer.Serialize(payload);
+        // The shared wire options every other codec in this component
+        // already uses (BuildCompasJson below, ContractJson.Serialize
+        // elsewhere): no field here is ever null and every key is
+        // already a camelCase literal, so this changes no byte today --
+        // it only stops this one call site from silently drifting from
+        // the rest of the plugin's JSON shape later.
+        return JsonSerializer.Serialize(payload, ContractJson.Options);
     }
 }
