@@ -204,3 +204,18 @@ does not halve the cell. Measured on a 0.05 m grid: 0.50 fails
 (0.853 against 0.900). 0.6 ships, named once in
 `armadillo_dual.DEFAULT_SIZE` and mirrored by the component's own
 `DefaultSize`.
+
+(e) THE DOMINANT CAUSE OF THE 5.9% WAS AN INDEXING DEFECT, NOT THE
+REFINEMENT. Correction (c) above records under-refinement and the
+longest-chain discard; both were real, but neither was the dominant
+mechanism. `_cell_segments`' two-owned-vertices branch read the
+non-owned CORNER INDEX (a local 0/1/2) as a mesh VERTEX ID, so the
+boundary broke apart at every such triangle -- 12179 of the 12670
+mixed triangles on the reference run at S = 0.75, 96% of the whole
+assignment boundary. Measured by the merge re-review with the old
+branch body restored against the otherwise-fixed module: 0 cells of
+300 seeds, 299 territories reading as disconnected. Adaptive
+refinement alone could not have recovered a single voussoir. The fix
+is one line (`j = triangle[non_k_indices[0]]`), recorded beside the
+code with this history; the module was swept and no other site mixes
+the two index spaces.
