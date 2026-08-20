@@ -11,4 +11,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The harness's asset convention: fixtures live beside Program.cs
+         under assets/, copied to the build output and resolved at run
+         time relative to AppContext.BaseDirectory, so the checks work
+         regardless of the working directory dotnet run is invoked from. -->
+    <None Include="assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

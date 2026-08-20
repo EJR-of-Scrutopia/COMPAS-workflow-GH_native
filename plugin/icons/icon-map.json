@@ -187,6 +187,12 @@
       "label": "ARM",
       "category": "05 Visualisation",
       "filename": "armadillo_dual.png"
+    },
+    {
+      "key": "import_pieces",
+      "label": "PCS",
+      "category": "05 Visualisation",
+      "filename": "import_pieces.png"
     }
   ]
 }

@@ -7,7 +7,12 @@ dependencies into .NET without starting Rhino. It:
 - rejects any component whose base-type chain refers to `RhinoCodePluginGH`;
 - constructs every component and persistent contract parameter;
 - checks unique document GUIDs, embedded 24×24 icons, and intentional
-  bundle-input flattening; and
+  bundle-input flattening;
+- drives `ImportPiecesComponent.ParseDocument` with the committed
+  `assets/fixture-pieces.json` (a real bench.pieces/1 document; see
+  `assets/README.md` for its provenance), asserting piece count, order
+  preservation, vertex/face array shapes, and the schema/units refusal
+  messages against doctored copies; and
 - reports component and parameter pass/fail counts.
 
 From the repository root:
