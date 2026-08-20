@@ -63,7 +63,14 @@ from typing import Tuple
 
 import pytest
 
+from ananke_equilibrium.patterns.armadillo_dual import assemble_mesh
+from ananke_equilibrium.patterns.armadillo_dual import dual_cells
 from ananke_equilibrium.patterns.armadillo_dual import generate
+from ananke_equilibrium.patterns.armadillo_dual import line_field
+from ananke_equilibrium.patterns.armadillo_dual import seeds
+from ananke_equilibrium.patterns.armadillo_dual import streamlines
+
+import param_vault as pv
 
 
 # ---------------------------------------------------------------------------
@@ -625,19 +632,38 @@ def test_the_brg_armadillo_sidecar_is_accepted_by_the_studio():
     reason="armadillo.json not present in this worktree's bench/upstream",
 )
 def test_generate_plan_degenerate_agrees_with_the_studios_own_check():
-    """The D output's plan-degeneracy count is the studio's own verdict.
+    """The port's self-crossing verdict agrees with the studio's own, cell
+    by cell, on real data -- not merely on totals that could coincide by
+    luck.
 
-    ``generate``'s ``diagnostics["plan_degenerate"]`` is produced by
-    ``armadillo_dual._plan_is_simple``, a numpy port of the studio's
-    ``tessellation._is_simple``. A port is only worth anything if it
-    answers the same way on real data, so this compares them CELL BY CELL
-    on the real BRG primal's own outlines rather than trusting the two
-    totals to coincide by luck.
+    TWO findings from task 3's own fix wave changed both WHAT this has to
+    be measured on and WHAT it finds:
 
-    Measured on the reference run at size 0.75: 7 of 294 cells, the same 7
-    on both sides. Note this counts SELF-crossing only; the acceptance test
-    above adds the studio's separate cross-cell overlap rejection to its
-    own exclusion total (0 pairs at this size, after the fix wave).
+    1. M5: ``generate()`` now drops every self-crossing cell itself before
+       returning, so ``response["cells"]`` never contains one to compare
+       on. The agreement this test exists to prove is therefore checked
+       on the RAW ``dual_cells`` output -- the same pre-filter population
+       ``generate()`` itself runs the port against before dropping
+       anything -- reproducing ``dual_cells``' own internal pipeline
+       (mesh/field/streamlines/seeds) by hand up to that point.
+    2. M4: closing an open chain along the mesh's own boundary polyline,
+       instead of the straight chord that used to chamfer the funnel
+       throat, was the SAME fix that used to leave 7 of 294 cells
+       self-crossing in plan at this size (design spec, "Delivery and the
+       honest limit": the near-vertical throat cell the studio's
+       ``_is_simple`` used to reject was exactly a chamfered one). At this
+       task's HEAD, the raw population is CLEAN: zero self-crossing cells,
+       confirmed both by the port and the studio, agreeing on an empty set
+       rather than a shared non-empty one. That is a genuinely stronger
+       outcome than the port merely matching the studio on which cells are
+       bad -- there are none left to disagree about -- so this test
+       asserts the (now empty) agreement directly rather than requiring a
+       non-empty one, and leans on the existing synthetic bowtie fixtures
+       (this file's own ``test_build_tessellation_document_excludes_a_
+       self_crossing_plan_projection``, and test_armadillo_dual_cells.py's
+       ``test_the_plan_simplicity_port_answers_the_way_the_studio_does``)
+       to prove the port still DETECTS a real self-crossing shape when one
+       exists.
     """
 
     if studio_tessellation is None:
@@ -647,28 +673,42 @@ def test_generate_plan_degenerate_agrees_with_the_studios_own_check():
 
     raw = _load_armadillo_mesh_dict()
     result = _adapt_armadillo_to_aligned_result(raw)
-    response = generate(result, size=0.75)
+    size = 0.75
+
+    mesh = assemble_mesh(result)
+    field = line_field(mesh)
+    lines = streamlines(mesh, field, size)
+    points, _course_band, _streamline_id = seeds(lines, size)
+    raw_cells = dual_cells(mesh, points, size)
 
     ported: List[int] = []
     studio: List[int] = []
-    for index, cell in enumerate(response["cells"]):
-        ring = [[float(p[0]), float(p[1])] for p in cell["outline"]]
+    for index, cell in enumerate(raw_cells):
+        ring = [[float(p[0]), float(p[1])] for p in cell.outline.tolist()]
         if not _plan_is_simple(ring):
             ported.append(index)
         if not studio_tessellation._is_simple(ring):
             studio.append(index)
 
     print(
-        "plan-degeneracy port agreement at size 0.75: ported={} studio={} "
-        "of {} cells".format(len(ported), len(studio), len(response["cells"]))
+        "plan-degeneracy port agreement at size 0.75 (raw dual_cells "
+        "output): ported={} studio={} of {} cells".format(
+            len(ported), len(studio), len(raw_cells)
+        )
     )
 
     assert ported == studio
-    assert response["diagnostics"]["plan_degenerate"] == len(studio)
-    assert studio, (
-        "no cell self-crosses in plan on this run, so the port and the "
-        "studio agreeing proves nothing"
+    assert not studio, (
+        "a cell now self-crosses in plan where M4's fix round measured "
+        "none -- re-check M4's own boundary-closure regression before "
+        "trusting this comparison"
     )
+
+    # And the direct, working proof: generate()'s own diagnostics agree
+    # there is nothing left to drop, on this same population.
+    response = generate(result, size=size)
+    assert response["diagnostics"]["plan_degenerate"] == 0
+    assert response["diagnostics"]["plan_degenerate_dropped"] == []
 
 
 @pytest.mark.skipif(
@@ -738,3 +778,85 @@ def test_the_brg_armadillo_sidecar_document_matches_the_schema_shape():
             abs(first[0] - last[0]) < _COORD_TOL
             and abs(first[1] - last[1]) < _COORD_TOL
         ), "cell {!r} repeats its closing point".format(cell["key"])
+
+
+# ---------------------------------------------------------------------------
+# Task 3's own M5 bar: Param's REAL vault at S = 0.2 -- the run that
+# actually triggered this wave (findings.md's own trigger). Extends the
+# 6c cross-repo acceptance pattern above from the BRG primal to the vault,
+# with ZERO rejections: ``generate()`` itself now drops every
+# plan-degenerate and plan-overlapping cell before returning, so a
+# sidecar built straight from its own output -- no extra filtering by
+# this script -- has to be accepted whole.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_the_vault_sidecar_at_s_02_is_accepted_by_the_studio_with_zero_rejections():
+    """The task 3 brief's own bar, in its own words: "the S = 0.2 vault
+    output written as a bench.tessellation/1 sidecar is ACCEPTED by the
+    studio's real from_document with ZERO rejections". Unlike the BRG
+    primal test above, this document is built WITHOUT the studio's own
+    ``is_simple`` / ``resolve_overlaps`` pre-filters -- straight from
+    ``generate()``'s own ``response["cells"]`` -- because the whole point
+    of M5 is that ``generate()`` no longer needs that safety net: it has
+    already dropped every self-crossing and overlapping cell itself.
+    """
+
+    if studio_tessellation is None:
+        pytest.skip(
+            "COMPAS-UI-integration-tool checkout not found beside this repo "
+            "at {}; real cross-repo studio acceptance skipped.".format(_UI_REPO_ROOT)
+        )
+
+    result = pv.load_param_vault()
+
+    start = time.time()
+    response = generate(result, size=0.2)
+    generate_wall_time = time.time() - start
+
+    diagnostics = response["diagnostics"]
+    for key in ("plan_degenerate_dropped", "plan_overlap_dropped"):
+        assert key in diagnostics and isinstance(diagnostics[key], list)
+    # M5's own residual check: nothing self-crossing survived generate()'s
+    # own filter to reach this document at all.
+    assert diagnostics["plan_degenerate"] == 0
+
+    # No is_simple / resolve_overlaps here, deliberately: this is the RAW
+    # sidecar a Grasshopper author would write straight off generate()'s
+    # own output, with no acceptance-script safety net of its own.
+    document, script_plan_degenerate = build_tessellation_document(response["cells"])
+    assert script_plan_degenerate == 0, (
+        "the acceptance script's OWN (redundant) filter still found {} cell(s) "
+        "to exclude -- generate()'s own M5 filtering did not catch "
+        "everything".format(script_plan_degenerate)
+    )
+    assert len(document["cells"]) == len(response["cells"])
+
+    start = time.time()
+    tess = studio_tessellation.from_document(document, _no_surface_height)
+    from_document_wall_time = time.time() - start
+
+    accepted_count = len(tess["cells"])
+    print(
+        "Param's vault sidecar acceptance at S=0.2: generate_cells={} "
+        "sidecar_cells={} studio_accepted={} plan_degenerate_dropped={} "
+        "plan_overlap_dropped={} sliver_count={} folded_count={} "
+        "generate_wall_time={:.2f}s from_document_wall_time={:.2f}s".format(
+            len(response["cells"]),
+            len(document["cells"]),
+            accepted_count,
+            len(diagnostics["plan_degenerate_dropped"]),
+            len(diagnostics["plan_overlap_dropped"]),
+            len(tess["report"]["slivers"]),
+            len(tess["report"]["folded"]),
+            generate_wall_time,
+            from_document_wall_time,
+        )
+    )
+
+    # ZERO rejections: every cell the sidecar carried, the studio kept.
+    assert accepted_count == len(document["cells"]) == len(response["cells"])
+    assert tess["z_offset_max"] is None
