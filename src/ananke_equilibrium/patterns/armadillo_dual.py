@@ -52,11 +52,13 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Mapping
+from typing import NamedTuple
 from typing import Optional
 from typing import Sequence
 from typing import Tuple
@@ -69,16 +71,30 @@ import numpy as np
 _SMOOTHING_PASSES = 3
 _ZERO_TOLERANCE = 1.0e-12
 
-# Streamline spacing thresholds, relative to the caller's "size" (design
-# spec Algorithm step 4): a line terminates once it converges within 0.6*S
-# of a neighbour, and a gap wider than 1.4*S along the seed band gets an
-# extra line.
-_COLLAPSE_FACTOR = 0.6
-_GAP_FACTOR = 1.4
+# Streamline spacing: ONE threshold pair, relative to the caller's "size"
+# (2026-08-20 dual-quality wave, M1+M2 -- see
+# docs/superpowers/specs/2026-08-20-dual-quality-design.md and
+# .superpowers/sdd/2026-08-20-dual-quality-diagnosis/findings.md). A
+# candidate seed is accepted only if it is at least _ACCEPT_FACTOR * size
+# (i.e. size itself) from every already-accepted line; an accepted line's
+# own advection stops once it comes within _TERMINATE_FACTOR * size of an
+# already-accepted line. This single pair REPLACES the old
+# 0.6*S-collapse / 1.4*S-gap-fill asymmetry, which is what pinned the line
+# count at the support band's own vertex count for every S (the band
+# gap-fill snapped to an existing vertex rather than interpolating a fresh
+# point, so it was a no-op whenever the band was denser than 1.4*S -- see
+# the diagnosis's M1a finding).
+_ACCEPT_FACTOR = 1.0
+_TERMINATE_FACTOR = 0.5
+# The accepted-line spatial index (``_SegmentIndex``) is built from each
+# accepted line RESAMPLED at this fraction of size -- honest point-to-
+# SEGMENT distance at a bounded resolution, not the raw (and highly
+# variable) mesh-crossing spacing a real advected polyline actually has.
+_INDEX_RESAMPLE_FACTOR = 0.5
 _MAX_ADVECTION_STEPS = 20000
-_START_INSET = 0.02  # fraction of the way from a seed vertex to its face's
-# centroid, used only to keep the very first advection step off an exact
-# triangle corner (see ``_seed_start_point``).
+_START_INSET = 0.02  # fraction of the way from a seed point to its face's
+# centroid, used only to keep the very first advection/offset step off an
+# exact triangle edge or corner (see ``_band_candidate_points``).
 _DEGENERATE_AREA_TOLERANCE = 1.0e-9
 
 # The shipped target voussoir size in metres: the component's S default, the
@@ -525,16 +541,6 @@ def _edge_face_map(triangles: np.ndarray) -> Dict[Tuple[int, int], List[int]]:
     return mapping
 
 
-def _vertex_face_map(triangles: np.ndarray) -> Dict[int, List[int]]:
-    """Mesh vertex index -> the triangle indices it belongs to."""
-
-    mapping: Dict[int, List[int]] = {}
-    for f, triangle in enumerate(triangles.tolist()):
-        for v in triangle:
-            mapping.setdefault(v, []).append(f)
-    return mapping
-
-
 def _connected_component(adjacency: Mapping[int, Sequence[int]], start: int) -> set:
     seen = {start}
     stack = [start]
@@ -600,32 +606,44 @@ def _support_bands(mesh: Mesh) -> List[Tuple[List[int], bool]]:
     return bands
 
 
-def _band_seed_vertices(
-    mesh: Mesh, band_path: Sequence[int], is_closed: bool, size: float
-) -> List[int]:
-    """Support vertices spaced roughly ``size`` apart along one band.
+def _band_candidate_points(
+    mesh: Mesh,
+    band_path: Sequence[int],
+    is_closed: bool,
+    size: float,
+    edge_face_map: Mapping[Tuple[int, int], Sequence[int]],
+) -> List[Tuple[np.ndarray, int]]:
+    """Points spaced roughly ``size`` apart along one support band --
+    interpolated directly on the band's own polyline, NEVER snapped to an
+    existing band vertex.
 
-    Seeds snap to the nearest existing band vertex rather than interpolating
-    a fresh point (matching the face-based, mesh-resolution-limited
-    advection the streamlines themselves use). Wherever that snapping
-    leaves two chosen seeds more than ``1.4*size`` apart -- a locally coarse
-    stretch of the band -- one extra seed is inserted near the midpoint
-    (design spec step 4's "a new line seeds where a gap exceeds 1.4S").
+    That snap-to-nearest-vertex behaviour was the M1a defect (the diagnosis,
+    findings.md): wherever the band's own vertex spacing was denser than
+    ``1.4*size``, the old gap-fill snapped straight back onto a vertex
+    already chosen, so streamline_count was pinned at the band's own vertex
+    count for every S. Interpolating a genuine point along the band edge
+    (then insetting it a hair toward an adjoining face's centroid, exactly
+    the way ``_seed_start_point`` used to inset off a vertex corner --
+    keeps the very first ray-exit search off the band edge itself) removes
+    the snap entirely: these are the QUEUE's own INITIAL candidates
+    (``streamlines``), run through the exact same accept/terminate
+    machinery as every LEFT/RIGHT candidate a growing line offers later, so
+    no separate gap-fill logic is needed here at all -- the unified
+    accept-at-``size`` threshold does that job on its own.
 
-    Disclosed approximation: this 1.4*size gap-fill applies at the
-    initial support band ONLY; streamlines that diverge later, mid-mesh,
-    do not seed new lines between them.
+    Returns ``(point, face)`` pairs, ``face`` being one of the (up to two)
+    triangles touching the band edge that point sits on -- a valid face for
+    the caller to start advection or an offset walk from.
     """
 
     n = len(band_path)
-    if n == 0:
+    if n == 0 or size <= 0:
         return []
-    if n == 1 or size <= 0:
-        return [band_path[0]]
 
     positions = mesh.vertices
-    index_of = {v: i for i, v in enumerate(band_path)}
     seg_count = n if is_closed else n - 1
+    if seg_count == 0:
+        return []
     cumulative = [0.0]
     for i in range(seg_count):
         a = positions[band_path[i]]
@@ -633,71 +651,275 @@ def _band_seed_vertices(
         cumulative.append(cumulative[-1] + float(np.linalg.norm(b - a)))
     total = cumulative[-1]
     if total <= _ZERO_TOLERANCE:
-        return [band_path[0]]
+        return []
 
-    def nearest_vertex(s: float) -> int:
+    def locate(s: float) -> Optional[Tuple[np.ndarray, int]]:
         s_wrapped = (s % total) if is_closed else min(max(s, 0.0), total)
-        limit = seg_count if is_closed else seg_count + 1
-        best_i = min(range(limit), key=lambda i: abs(cumulative[i] - s_wrapped))
-        return band_path[best_i % n]
+        seg = int(np.searchsorted(cumulative, s_wrapped)) - 1
+        seg = min(max(seg, 0), seg_count - 1)
+        span = cumulative[seg + 1] - cumulative[seg]
+        t = 0.0 if span <= _ZERO_TOLERANCE else (s_wrapped - cumulative[seg]) / span
+        a_v = band_path[seg]
+        b_v = band_path[(seg + 1) % n]
+        point = positions[a_v] + t * (positions[b_v] - positions[a_v])
+        key = (a_v, b_v) if a_v <= b_v else (b_v, a_v)
+        faces = edge_face_map.get(key)
+        if not faces:
+            return None
+        face = faces[0]
+        centroid = positions[mesh.triangles[face]].mean(axis=0)
+        inset_point = point * (1.0 - _START_INSET) + centroid * _START_INSET
+        return inset_point, face
 
-    seen: set = set()
-    chosen: List[int] = []
+    candidates: List[Tuple[np.ndarray, int]] = []
     s = 0.0
     while True:
-        v = nearest_vertex(s)
-        if v not in seen:
-            seen.add(v)
-            chosen.append(v)
+        located = locate(s)
+        if located is not None:
+            candidates.append(located)
         if not is_closed and s >= total:
             break
         s += size
         if is_closed and s >= total:
             break
-    if not chosen:
-        chosen = [band_path[0]]
-
-    if len(chosen) < 2:
-        return chosen
-
-    pair_count = len(chosen) if is_closed else len(chosen) - 1
-    filled = [chosen[0]]
-    for i in range(pair_count):
-        a_v = chosen[i]
-        b_v = chosen[(i + 1) % len(chosen)]
-        gap = float(np.linalg.norm(positions[a_v] - positions[b_v]))
-        if gap > _GAP_FACTOR * size:
-            a_s = cumulative[index_of[a_v]]
-            b_s = cumulative[index_of[b_v]]
-            if is_closed and (i + 1) == len(chosen):
-                mid_s = (a_s + total + b_s) / 2.0
-            else:
-                mid_s = (a_s + b_s) / 2.0
-            extra = nearest_vertex(mid_s)
-            if extra not in seen:
-                seen.add(extra)
-                filled.append(extra)
-        if (i + 1) < len(chosen):
-            filled.append(b_v)
-    return filled
+    return candidates
 
 
-def _seed_start_point(
-    mesh: Mesh, seed_vertex: int, start_face: int
-) -> np.ndarray:
-    """A point just inside ``start_face`` near ``seed_vertex``.
+class _Candidate(NamedTuple):
+    """One offered seed waiting in the Jobard-Lefebvre queue.
 
-    Advecting from the exact triangle corner is a genuine degenerate case (a
-    vertex's interior wedge can reject one of the two field-line signs
-    outright); insetting a small, fixed fraction toward the face centroid
-    keeps the ray-exit search well-posed while staying visually and
-    numerically indistinguishable from the springing itself.
+    ``point``/``face`` are a genuine, unsnapped 3D position and the mesh
+    face it sits in; ``hint`` is only ever used to pick a canonical sign for
+    the two field directions ``_advect_branch`` could otherwise start with
+    (a line field has no inherent sign of its own) -- since it is fed once
+    as +hint and once as -hint to advect the accepted line both ways, its
+    OWN sign never matters, only that it is a genuine, non-degenerate
+    direction near this point.
     """
 
-    triangle = mesh.triangles[start_face]
-    centroid = mesh.vertices[triangle].mean(axis=0)
-    corner = mesh.vertices[seed_vertex]
-    return corner * (1.0 - _START_INSET) + centroid * _START_INSET
+    point: np.ndarray
+    face: int
+    hint: np.ndarray
+
+
+class _SegmentIndex:
+    """A stdlib bucket grid over segment bounding boxes, answering "is
+    ``point`` within ``radius`` of any indexed segment" without an O(all
+    segments) scan every time -- the spatial index the design spec asks
+    for, sized to the module's own existing bucket-grid style
+    (``_nearest_vertices_k``'s chunking is the same "do not allocate the
+    all-pairs array" instinct; this is the segment analogue).
+
+    Every query in this module is against a genuine SEGMENT, never just a
+    resampled point's own position: ``min_distance`` clamps the projection
+    onto each nearby segment before measuring, so a point sitting squarely
+    beside the MIDDLE of a long segment (not near either of its resampled
+    endpoints) is still measured honestly.
+    """
+
+    def __init__(self, cell_size: float) -> None:
+        self.cell_size = max(float(cell_size), _ZERO_TOLERANCE)
+        self.buckets: Dict[Tuple[int, int, int], List[int]] = {}
+        self.starts: List[np.ndarray] = []
+        self.ends: List[np.ndarray] = []
+
+    def _cell_of(self, point: np.ndarray) -> Tuple[int, int, int]:
+        return (
+            int(math.floor(float(point[0]) / self.cell_size)),
+            int(math.floor(float(point[1]) / self.cell_size)),
+            int(math.floor(float(point[2]) / self.cell_size)),
+        )
+
+    def _add_segment(self, a: np.ndarray, b: np.ndarray) -> None:
+        index = len(self.starts)
+        self.starts.append(a)
+        self.ends.append(b)
+        lo = self._cell_of(np.minimum(a, b))
+        hi = self._cell_of(np.maximum(a, b))
+        for ix in range(lo[0], hi[0] + 1):
+            for iy in range(lo[1], hi[1] + 1):
+                for iz in range(lo[2], hi[2] + 1):
+                    self.buckets.setdefault((ix, iy, iz), []).append(index)
+
+    def add_polyline(self, points: Sequence[np.ndarray], step: float) -> None:
+        """Index one accepted line's own segments, RESAMPLED at ``step``
+        arclength spacing first (endpoints kept) -- the spec's own "resample
+        accepted lines to ~0.5*size for the index" so a point-to-segment
+        query is honest at a bounded resolution instead of running against
+        the raw, highly variable mesh-crossing spacing an advected polyline
+        actually has (and without being O(every raw crossing point)
+        either). Reuses ``_cumulative_arclength``/``_point_at_arclength`` --
+        the very functions ``seeds`` itself already advects along.
+        """
+
+        line = np.asarray(points, dtype=np.float64)
+        if line.shape[0] < 2:
+            return
+        cumulative = _cumulative_arclength(line)
+        total = float(cumulative[-1])
+        if total <= _ZERO_TOLERANCE:
+            return
+        count = max(2, int(total / step) + 1)
+        samples = [
+            _point_at_arclength(line, cumulative, s)
+            for s in np.linspace(0.0, total, count)
+        ]
+        for a, b in zip(samples[:-1], samples[1:]):
+            self._add_segment(np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64))
+
+    def min_distance(self, point: np.ndarray, radius: float) -> float:
+        """The true distance from ``point`` to its nearest indexed segment,
+        or +inf if nothing indexed lies within ``radius`` -- callers here
+        only ever need to compare against one threshold, never the exact
+        minimum beyond that, so the search radius doubles as its own cheap
+        upper bound.
+        """
+
+        reach = int(math.ceil(radius / self.cell_size)) + 1
+        cx, cy, cz = self._cell_of(point)
+        seen: set = set()
+        best = math.inf
+        for ix in range(cx - reach, cx + reach + 1):
+            for iy in range(cy - reach, cy + reach + 1):
+                for iz in range(cz - reach, cz + reach + 1):
+                    bucket = self.buckets.get((ix, iy, iz))
+                    if not bucket:
+                        continue
+                    for index in bucket:
+                        if index in seen:
+                            continue
+                        seen.add(index)
+                        a, b = self.starts[index], self.ends[index]
+                        ab = b - a
+                        denom = float(np.dot(ab, ab))
+                        t = 0.0 if denom <= _ZERO_TOLERANCE else float(
+                            np.dot(point - a, ab) / denom
+                        )
+                        t = min(1.0, max(0.0, t))
+                        projection = a + t * ab
+                        distance = float(np.linalg.norm(point - projection))
+                        if distance < best:
+                            best = distance
+        return best
+
+    def is_clear(self, point: np.ndarray, radius: float) -> bool:
+        """Whether every indexed segment is at least ``radius`` away."""
+
+        return self.min_distance(point, radius) >= radius
+
+    def approaches(self, point: np.ndarray, radius: float) -> bool:
+        """Whether some indexed segment is closer than ``radius``."""
+
+        return self.min_distance(point, radius) < radius
+
+
+def _cross_flow_direction(
+    basis: Tuple[np.ndarray, np.ndarray, np.ndarray],
+    direction3d: np.ndarray,
+    sign: float,
+) -> np.ndarray:
+    """``direction3d`` rotated 90 degrees within ``basis``'s own face plane
+    (e1, e2) -- the TRUE geometric cross-flow direction a LEFT/RIGHT
+    candidate offsets along (design spec M1+M2), never a direction read off
+    anything but this face's own local frame. ``sign`` is +1.0 for one side
+    and -1.0 for the other; which is "left" and which is "right" is never
+    distinguished (nor does it need to be -- both are always offered).
+    """
+
+    e1, e2, normal = basis
+    in_plane = direction3d - float(np.dot(direction3d, normal)) * normal
+    norm_ = float(np.linalg.norm(in_plane))
+    if norm_ <= _ZERO_TOLERANCE:
+        in_plane, norm_ = e1, 1.0
+    unit = in_plane / norm_
+    dx = float(np.dot(unit, e1))
+    dy = float(np.dot(unit, e2))
+    return sign * ((-dy) * e1 + dx * e2)
+
+
+def _walk_tangent(
+    mesh: Mesh,
+    bases: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray]],
+    edge_face_map: Mapping[Tuple[int, int], Sequence[int]],
+    start_point: np.ndarray,
+    start_face: int,
+    direction3d: np.ndarray,
+    distance: float,
+) -> Optional[Tuple[np.ndarray, int]]:
+    """Walk a TRUE geometric straight offset of ``distance`` from
+    ``start_point`` along ``direction3d``, face by face, landing wherever it
+    lands -- never snapped to a mesh vertex (design spec M1+M2). At each
+    face crossing the carried direction is parallel-transported into the
+    new face's own tangent plane (projected off that face's normal,
+    renormalised) rather than replaced by that face's field direction --
+    unlike ``_advect_branch``'s streamline-following walk, this one is not
+    tracking the field at all, only continuing as straight as a
+    piecewise-planar mesh allows.
+
+    Returns ``(point, face)``, or ``None`` when the walk runs off the
+    mesh's own boundary (or a hole's) before covering the full ``distance``
+    -- the design spec's own "a candidate landing off-mesh or in a hole is
+    discarded" -- or when the direction degenerates in some face along the
+    way (edge-on to that face, or the very first ray-cast fails outright:
+    both routine right at a point that itself sits exactly on another
+    face's edge, and both an honest discard rather than a guess).
+    """
+
+    pos3d = np.array(start_point, dtype=np.float64)
+    face = start_face
+    direction = np.array(direction3d, dtype=np.float64)
+    remaining = float(distance)
+    if remaining <= _ZERO_TOLERANCE:
+        return pos3d, face
+
+    for _ in range(_MAX_ADVECTION_STEPS):
+        e1, e2, normal = bases[face]
+        triangle = mesh.triangles[face]
+        origin = mesh.vertices[int(triangle[0])]
+        tri2d = _triangle_local(mesh.vertices, triangle, origin, e1, e2)
+        pos2d = _nudge_off_corner(_local_coords(pos3d, origin, e1, e2), tri2d)
+
+        in_plane = direction - float(np.dot(direction, normal)) * normal
+        in_plane_norm = float(np.linalg.norm(in_plane))
+        if in_plane_norm <= _ZERO_TOLERANCE:
+            return None
+        dir2d = np.array(
+            [float(np.dot(in_plane, e1)), float(np.dot(in_plane, e2))]
+        ) / in_plane_norm
+
+        hit = _ray_triangle_exit(pos2d, dir2d, tri2d)
+        if hit is None:
+            return None
+        edge_local_i, s = hit
+        exit2d = tri2d[edge_local_i] + s * (
+            tri2d[(edge_local_i + 1) % 3] - tri2d[edge_local_i]
+        )
+        exit3d = origin + exit2d[0] * e1 + exit2d[1] * e2
+        step_len = float(np.linalg.norm(exit3d - pos3d))
+
+        if step_len >= remaining:
+            t = 0.0 if step_len <= _ZERO_TOLERANCE else remaining / step_len
+            return pos3d + t * (exit3d - pos3d), face
+
+        remaining -= step_len
+        v_a = int(triangle[edge_local_i])
+        v_b = int(triangle[(edge_local_i + 1) % 3])
+        key = (v_a, v_b) if v_a <= v_b else (v_b, v_a)
+        neighbours = [f for f in edge_face_map.get(key, ()) if f != face]
+        if not neighbours:
+            return None  # ran off the mesh's own boundary (or a hole's)
+
+        next_face = neighbours[0]
+        _e1n, _e2n, normaln = bases[next_face]
+        projected = direction - float(np.dot(direction, normaln)) * normaln
+        projected_norm = float(np.linalg.norm(projected))
+        if projected_norm <= _ZERO_TOLERANCE:
+            return None
+        direction = projected / projected_norm
+        pos3d = exit3d
+        face = next_face
+
+    return None
 
 
 def _local_coords(
@@ -769,7 +991,71 @@ def _ray_triangle_exit(
     return edge_local_i, s
 
 
-def _advect_from(
+_ENTRY_CORNER_MARGIN = 0.05  # fraction of a triangle's own shortest edge,
+# measured from each of its 3 corners -- see ``_nudge_off_corner``.
+
+
+def _nudge_off_corner(pos2d: np.ndarray, tri2d: np.ndarray) -> np.ndarray:
+    """``pos2d`` unchanged, unless it sits within ``_ENTRY_CORNER_MARGIN`` of
+    one of ``tri2d``'s own 3 corners -- the ENTRY-side counterpart to
+    ``_CORNER_MARGIN``'s exit-side clamp, needed once streamlines advect
+    from far more starting points than the old band-only seeding ever
+    produced (2026-08-20 dual-quality wave, M1+M2).
+
+    A face-crossing exit point genuinely, routinely lands close to a
+    shared mesh vertex (the previous face's own exit is always exactly on
+    a shared EDGE, and a coarse triangulation's edges are short relative
+    to a real streamline's course). Ray-casting the NEXT step from a point
+    that close to a vertex is where two of that vertex's own edges can
+    register an almost-identical, tiny forward distance (``t`` in
+    ``_ray_triangle_exit``) -- one genuinely representing the field
+    direction's own intended continuation, the other an accident of which
+    edge's ``t`` happened to round a hair smaller. Measured directly on a
+    dome fixture: about 1.4% of segments (worst case 86 degrees off
+    meridian, confirmed absent on the pre-wave one-directional-only
+    seeding, which never advected from a point that close to an interior
+    vertex) before this nudge; zero afterwards, at every density this
+    wave's own report table measures. Nudged toward the triangle's own 2D
+    centroid by ``_START_INSET`` -- the same fraction ``_seed_start_point``
+    used to keep an actual seed off an exact vertex corner -- which is
+    enough to resolve the tie honestly in favour of the edge the field
+    direction actually means, while leaving every comfortably-interior
+    ray-cast (the overwhelming majority) untouched.
+    """
+
+    edges = (tri2d[1] - tri2d[0], tri2d[2] - tri2d[1], tri2d[0] - tri2d[2])
+    scale = min(float(np.linalg.norm(e)) for e in edges)
+    if scale <= _ZERO_TOLERANCE:
+        return pos2d
+    threshold = _ENTRY_CORNER_MARGIN * scale
+    for corner in tri2d:
+        if float(np.linalg.norm(pos2d - corner)) < threshold:
+            centroid2d = tri2d.mean(axis=0)
+            return pos2d * (1.0 - _START_INSET) + centroid2d * _START_INSET
+    return pos2d
+
+
+class _Branch(NamedTuple):
+    """One direction of one accepted line's advection: parallel arrays --
+    ``points[i]`` / ``faces[i]`` / ``directions[i]`` describe the same
+    point ``i``, for every point on this branch. ``faces[i]`` is a TUPLE
+    of every face genuinely touching ``points[i]`` (one, for the branch's
+    own start point or a point that terminated at the mesh boundary; two,
+    for every ordinary interior point, which always sits exactly on the
+    mesh edge shared by the face advection was leaving and the face it was
+    entering) -- deliberately unordered and reversal-safe, so a caller
+    offering a cross-flow candidate from ``points[i]`` can try every face
+    that actually touches it (see ``streamlines``'s own offering loop for
+    why one alone is not always enough) regardless of whether this branch
+    ended up read forwards or reversed into a combined line.
+    """
+
+    points: List[np.ndarray]
+    faces: List[Tuple[int, ...]]
+    directions: List[np.ndarray]
+
+
+def _advect_branch(
     mesh: Mesh,
     field: np.ndarray,
     bases: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray]],
@@ -777,20 +1063,29 @@ def _advect_from(
     start_point: np.ndarray,
     start_face: int,
     orient_hint: np.ndarray,
-) -> List[np.ndarray]:
+    index: _SegmentIndex,
+    terminate_radius: float,
+) -> _Branch:
     """Advect one polyline across faces along ``field``, from a starting
-    face and point, until it exits the mesh boundary or ``field`` collapses
-    to zero underneath it.
+    face and point, until it exits the mesh boundary, ``field`` collapses
+    to zero underneath it, or it comes within ``terminate_radius`` of a
+    segment already in ``index`` -- design spec M1+M2's own termination
+    rule, checked against ALREADY-ACCEPTED lines only (``index`` never
+    contains this branch's own points, or its sibling branch's, until
+    ``streamlines`` adds the finished line afterwards, so "not self" is
+    automatic rather than a separate guard).
 
     At every face the streamline follows THAT face's own line-field
-    direction (never a direction smoothed or transported in from elsewhere)
-    -- the sign ambiguity a line field carries is resolved by picking
-    whichever of the two candidate directions does not reverse against the
-    previous step (design spec step 4), starting from ``orient_hint`` for
-    the very first face, where there is no previous step yet.
+    direction (never a direction smoothed or transported in from
+    elsewhere) -- the sign ambiguity a line field carries is resolved by
+    picking whichever of the two candidate directions does not reverse
+    against the previous step, starting from ``orient_hint`` for the very
+    first face, where there is no previous step yet. ``streamlines`` calls
+    this twice per accepted seed, with +hint and -hint, to advect the line
+    both ways (design spec: "an accepted line advects BOTH ways along the
+    field").
     """
 
-    polyline = [np.array(start_point, dtype=np.float64)]
     pos3d = np.array(start_point, dtype=np.float64)
     face = start_face
 
@@ -800,12 +1095,16 @@ def _advect_from(
     if float(np.dot(direction, orient_hint)) < 0.0:
         direction = -direction
 
+    points: List[np.ndarray] = [pos3d]
+    faces: List[Tuple[int, ...]] = [(face,)]
+    directions: List[np.ndarray] = [direction]
+
     for _ in range(_MAX_ADVECTION_STEPS):
         e1, e2, normal = bases[face]
         triangle = mesh.triangles[face]
         origin = mesh.vertices[int(triangle[0])]
         tri2d = _triangle_local(mesh.vertices, triangle, origin, e1, e2)
-        pos2d = _local_coords(pos3d, origin, e1, e2)
+        pos2d = _nudge_off_corner(_local_coords(pos3d, origin, e1, e2), tri2d)
 
         in_plane = direction - float(np.dot(direction, normal)) * normal
         in_plane_norm = float(np.linalg.norm(in_plane))
@@ -823,84 +1122,129 @@ def _advect_from(
             tri2d[(edge_local_i + 1) % 3] - tri2d[edge_local_i]
         )
         exit3d = origin + exit2d[0] * e1 + exit2d[1] * e2
-        polyline.append(exit3d)
 
         v_a = int(triangle[edge_local_i])
         v_b = int(triangle[(edge_local_i + 1) % 3])
         key = (v_a, v_b) if v_a <= v_b else (v_b, v_a)
-        neighbours = [f for f in edge_face_map.get(key, ()) if f != face]
-        if not neighbours:
-            break  # mesh boundary
+        edge_faces = tuple(edge_face_map.get(key, (face,)))
+        neighbours = [f for f in edge_faces if f != face]
+        next_face = neighbours[0] if neighbours else None
 
-        next_face = neighbours[0]
-        fx2, fy2 = field[next_face]
-        e1n, e2n, _normaln = bases[next_face]
-        next_direction = fx2 * e1n + fy2 * e2n
-        if float(np.dot(next_direction, direction)) < 0.0:
-            next_direction = -next_direction
+        if next_face is not None:
+            fx2, fy2 = field[next_face]
+            e1n, e2n, _normaln = bases[next_face]
+            next_direction = fx2 * e1n + fy2 * e2n
+            if float(np.dot(next_direction, direction)) < 0.0:
+                next_direction = -next_direction
+        else:
+            next_direction = direction  # mesh boundary: nothing to continue into
+
+        points.append(exit3d)
+        faces.append(edge_faces)
+        directions.append(next_direction)
+
+        if index.approaches(exit3d, terminate_radius):
+            return _Branch(points, faces, directions)
+        if next_face is None:
+            break  # mesh boundary
 
         direction = next_direction
         pos3d = exit3d
         face = next_face
 
-    return polyline
+    return _Branch(points, faces, directions)
 
 
-def _truncate_on_collapse(
-    line: Sequence[np.ndarray],
-    previous_points: Optional[np.ndarray],
-    size: float,
-    skip_arclength: float,
-) -> List[np.ndarray]:
-    """Cut ``line`` short once it converges within ``0.6*size`` of any
-    already-advected point (design spec step 4) -- e.g. meridians
-    converging toward a dome's apex.
+def _resampled_offer_points(
+    line_points: Sequence[np.ndarray],
+    line_faces: Sequence[Tuple[int, ...]],
+    line_directions: Sequence[np.ndarray],
+    step: float,
+) -> List[Tuple[np.ndarray, Tuple[int, ...], np.ndarray]]:
+    """Extra LEFT/RIGHT offering points along one accepted line, resampled
+    at roughly ``step`` arclength spacing IN ADDITION to the line's own raw
+    face-crossing points (``streamlines``'s own offering loop always visits
+    those too).
 
-    Checked against every point advected so far, not just the one
-    immediately preceding streamline: a support band is not always a
-    single simple ring -- a real vault's ground arcs can be several
-    disjoint bands (confirmed on the BRG armadillo primal) -- so two
-    streamlines seeded from DIFFERENT bands can still run close together
-    and need the same collapse rule a same-band neighbour would get.
-    ``skip_arclength`` guards the shared springing, where neighbouring
-    lines legitimately start ``size`` apart, from being mistaken for a
-    collapse.
+    A real mesh's own triangle size can be coarser than ``size`` (Param's
+    vault: median mesh edge 0.438 m against S = 0.2 m), so a line's raw
+    crossings alone -- one candidate offer roughly per triangle it passes
+    through -- can leave offering opportunities too sparse to reach every
+    part of a locally coarse patch, most visibly right around a mesh
+    boundary or hole where a spare crossing or two is also where an offer
+    is most likely to walk straight off the edge. Confirmed directly:
+    without this, S = 0.2 on Param's vault left a 231-triangle (7.5% of
+    area) starved cluster concentrated around one such feature even after
+    the multi-face offering fix; this closes most of the remaining gap by
+    guaranteeing a MINIMUM offering density regardless of local mesh
+    coarseness, at the same ``_INDEX_RESAMPLE_FACTOR * size`` spacing the
+    accepted-line spatial index already resamples at.
+
+    Each resampled point's candidate face list is the union of its two
+    bracketing raw points' own touching faces (deduplicated, order
+    preserved): a point strictly between two raw crossings always lies in
+    whichever single face that segment was actually advected through,
+    which is necessarily a member of both bracketing points' own tuples.
     """
 
-    if previous_points is None or previous_points.shape[0] == 0 or len(line) < 2:
-        return list(line)
+    line = np.asarray(line_points, dtype=np.float64)
+    if line.shape[0] < 2 or step <= _ZERO_TOLERANCE:
+        return []
+    cumulative = _cumulative_arclength(line)
+    total = float(cumulative[-1])
+    if total <= _ZERO_TOLERANCE:
+        return []
 
-    cumulative = 0.0
-    keep = len(line)
-    for i in range(1, len(line)):
-        cumulative += float(np.linalg.norm(line[i] - line[i - 1]))
-        if cumulative < skip_arclength:
-            continue
-        distances = np.linalg.norm(previous_points - line[i], axis=1)
-        if float(distances.min()) < _COLLAPSE_FACTOR * size:
-            keep = i + 1
-            break
-    return list(line[:keep])
+    extra: List[Tuple[np.ndarray, Tuple[int, ...], np.ndarray]] = []
+    s = step
+    while s < total:
+        idx = int(np.searchsorted(cumulative, s))
+        idx = max(1, min(idx, line.shape[0] - 1))
+        point = _point_at_arclength(line, cumulative, s)
+        faces_here = tuple(
+            dict.fromkeys(list(line_faces[idx - 1]) + list(line_faces[idx]))
+        )
+        direction = line_directions[idx - 1]
+        extra.append((point, faces_here, direction))
+        s += step
+    return extra
 
 
 def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
-    """Advect polylines across the mesh's faces along ``field``, from the
-    support band, spaced roughly ``size`` apart (design spec Algorithm
-    step 4).
+    """Evenly spaced streamlines (Jobard & Lefebvre 1997, mapped to ``size``
+    -- design spec M1+M2, the dual-quality wave's dominant fix): a FIFO
+    queue of candidate seed points, each accepted only if farther than
+    ``size`` from every line already accepted, then advected BOTH ways
+    along ``field`` (``_advect_branch``) until it comes within
+    ``_TERMINATE_FACTOR * size`` of an accepted line. Accepting a line
+    offers a fresh LEFT/RIGHT candidate at ``size`` in the true geometric
+    cross-flow direction (``_cross_flow_direction`` / ``_walk_tangent``)
+    from every one of its own points -- both its raw face-crossing points
+    AND a resampled set at ``_INDEX_RESAMPLE_FACTOR * size`` spacing
+    (``_resampled_offer_points``, needed once a real mesh's own
+    triangulation is coarser than ``size``, so raw crossings alone leave
+    offering opportunities too sparse to close every gap) -- feeding the
+    same queue, so the line population grows to fill the mesh in TWO
+    dimensions, not just along the support band. Each offer tries every
+    face genuinely touching its source point (ordinarily two, for an
+    interior point sitting exactly on a shared mesh edge) before being
+    discarded, since the true cross-flow direction can point into either
+    one.
 
-    Returns one float64 (p, 3) array per streamline. Seeding walks each
-    support band (``_support_bands``) at ``size`` intervals, filling any
-    locally-coarse gap wider than ``1.4*size`` with an extra seed; each
-    streamline is advected face-to-face (``_advect_from``) and then
-    truncated wherever it converges to within ``0.6*size`` of any point
-    already advected (``_truncate_on_collapse``, checked across every band,
-    not just within the one currently being seeded -- see that function's
-    docstring for why a single-band neighbour check is not enough on a
-    multi-band support set).
+    The queue's own INITIAL candidates come from every support band
+    (``_support_bands``, ``_band_candidate_points``) -- the springing still
+    governs where the cut starts -- and are unsnapped exactly like every
+    later LEFT/RIGHT offer; there is no separate seeding rule for the band
+    versus mid-mesh, and no separate gap-fill logic, because ONE
+    accept/terminate threshold pair (``_ACCEPT_FACTOR * size`` /
+    ``_TERMINATE_FACTOR * size``) governs every candidate this function
+    ever considers. This replaces the old 0.6*size-collapse /
+    1.4*size-gap-fill asymmetry (the diagnosis's M1+M2 findings) outright.
 
-    Disclosed approximation: new streamlines seed only at the support
-    band (via ``_band_seed_vertices``'s 1.4*size gap-fill); lines that
-    diverge beyond 1.4*size later, mid-mesh, are not backfilled.
+    Returns one float64 (p, 3) array per accepted line, in acceptance
+    order (``seeds``' own alternating-stagger numbering reads this same
+    order, unaffected by this change: "Seeds along each line and courses
+    stay as today").
     """
 
     if mesh.triangles.shape[0] == 0 or not mesh.support_vertex_ids or size <= 0:
@@ -911,39 +1255,79 @@ def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
         for f in range(mesh.triangles.shape[0])
     ]
     edge_face_map = _edge_face_map(mesh.triangles)
-    vertex_face_map = _vertex_face_map(mesh.triangles)
     mesh_centroid = mesh.vertices.mean(axis=0)
 
-    lines: List[List[np.ndarray]] = []
-    advected_points: List[np.ndarray] = []
+    accept_radius = _ACCEPT_FACTOR * size
+    terminate_radius = _TERMINATE_FACTOR * size
+    resample_step = _INDEX_RESAMPLE_FACTOR * size
+
+    index = _SegmentIndex(cell_size=size)
+    queue: "deque[_Candidate]" = deque()
+
     for band_path, is_closed in _support_bands(mesh):
-        seed_vertices = _band_seed_vertices(mesh, band_path, is_closed, size)
-        for seed_vertex in seed_vertices:
-            faces_here = vertex_face_map.get(seed_vertex)
-            if not faces_here:
-                continue
-            start_face = faces_here[0]
-            start_point = _seed_start_point(mesh, seed_vertex, start_face)
+        for point, face in _band_candidate_points(
+            mesh, band_path, is_closed, size, edge_face_map
+        ):
+            hint = mesh_centroid - point
+            if float(np.linalg.norm(hint)) <= _ZERO_TOLERANCE:
+                triangle = mesh.triangles[face]
+                hint = mesh.vertices[triangle].mean(axis=0) - point
+            queue.append(_Candidate(point, face, hint))
 
-            orient_hint = mesh_centroid - mesh.vertices[seed_vertex]
-            if float(np.linalg.norm(orient_hint)) <= _ZERO_TOLERANCE:
-                triangle = mesh.triangles[start_face]
-                orient_hint = (
-                    mesh.vertices[triangle].mean(axis=0) - mesh.vertices[seed_vertex]
-                )
+    lines: List[List[np.ndarray]] = []
 
-            line = _advect_from(
-                mesh, field, bases, edge_face_map, start_point, start_face, orient_hint
-            )
-            previous_points = (
-                np.array(advected_points, dtype=np.float64) if advected_points else None
-            )
-            line = _truncate_on_collapse(
-                line, previous_points, size, skip_arclength=0.3 * size
-            )
-            if len(line) >= 2:
-                lines.append(line)
-                advected_points.extend(line)
+    while queue:
+        candidate = queue.popleft()
+        if not index.is_clear(candidate.point, accept_radius):
+            continue  # too close to an already-accepted line: reject
+
+        forward = _advect_branch(
+            mesh, field, bases, edge_face_map,
+            candidate.point, candidate.face, candidate.hint,
+            index, terminate_radius,
+        )
+        backward = _advect_branch(
+            mesh, field, bases, edge_face_map,
+            candidate.point, candidate.face, -candidate.hint,
+            index, terminate_radius,
+        )
+        line_points = list(reversed(backward.points[1:])) + forward.points
+        if len(line_points) < 2:
+            continue  # degenerate: the field collapsed at both ends
+        line_faces = list(reversed(backward.faces[1:])) + forward.faces
+        line_directions = list(reversed(backward.directions[1:])) + forward.directions
+
+        lines.append(line_points)
+        index.add_polyline(line_points, resample_step)
+
+        offer_sources = list(zip(line_points, line_faces, line_directions))
+        offer_sources.extend(
+            _resampled_offer_points(line_points, line_faces, line_directions, resample_step)
+        )
+        for point, touching_faces, direction in offer_sources:
+            for sign in (1.0, -1.0):
+                offered = None
+                # An interior point sits exactly on the edge between TWO
+                # faces; the true cross-flow direction can point into
+                # either one (which is essentially a coin flip -- a
+                # rotated field direction has no reason to favour
+                # whichever face this point's own bookkeeping happens to
+                # be read from), so every touching face gets a genuine
+                # try, each with its OWN face-local perpendicular, before
+                # this offer is given up as off-mesh (confirmed the
+                # dominant discard mode before this fallback: ~37% of all
+                # offers failed on their very first ray-cast alone).
+                for face in touching_faces:
+                    perpendicular = _cross_flow_direction(bases[face], direction, sign)
+                    offered = _walk_tangent(
+                        mesh, bases, edge_face_map, point, face, perpendicular, size
+                    )
+                    if offered is not None:
+                        break
+                if offered is None:
+                    continue  # off-mesh or in a hole on every touching face: discarded per the spec
+                offered_point, offered_face = offered
+                queue.append(_Candidate(offered_point, offered_face, direction))
 
     return [np.array(line, dtype=np.float64) for line in lines]
 
@@ -1077,8 +1461,17 @@ def seeds(
 # primal it left a 0.512 m refined median edge against a 0.75 m seed
 # spacing, so a median seed owned 3 refined vertices and its boundary came
 # out as a handful of disconnected splinters rather than one closed chain.
-_DUAL_REFINEMENT_EDGE_FACTOR = 0.3
-_MAX_DUAL_REFINEMENT_LEVELS = 4
+#
+# M6 (2026-08-20 dual-quality wave): the target tightens from 0.3*size to
+# 0.15*size and the cap lifts from 4 to 5 passes. The diagnosis measured
+# this in isolation on Param's own vault at S=0.2 -- forcing 0.15*size
+# changed no shape statistic (mean_cell_size, ribbon population) but lifted
+# coverage 93.0% -> 98.7% and disconnected seeds 15 -> 2, because the
+# assignment boundary a coarser refined mesh can express is coarser than
+# the seed spacing it is being asked to resolve, independent of anything
+# the streamline seeding itself does.
+_DUAL_REFINEMENT_EDGE_FACTOR = 0.15
+_MAX_DUAL_REFINEMENT_LEVELS = 5
 
 
 def _median_edge_length(vertices: np.ndarray, triangles: np.ndarray) -> float:
@@ -1624,7 +2017,7 @@ def dual_cells(
     from being treated as identical. Dijkstra and boundary extraction both
     run on ``_refined_mesh_for_dual``'s midpoint-subdivided triangulation,
     not ``mesh`` directly -- the refinement repeats until that mesh's
-    median edge is at most 0.3 * ``size``, capped at 4 passes (each pass
+    median edge is at most 0.15 * ``size``, capped at 5 passes (each pass
     quadruples the triangle count). The refinement is internal, exact, and
     fabricates no geometry, so outline points are still real points on
     ``mesh``'s own surface.
@@ -1651,8 +2044,8 @@ def dual_cells(
     len(result)`` is exactly the dropped count ``generate`` reports.
 
     ``report``, when supplied, is filled with this run's own measurements:
-    ``refinement_levels``, ``refinement_capped`` (the 4-pass cap stopped
-    the loop with 0.3 * ``size`` still unmet), ``holes_ignored`` and
+    ``refinement_levels``, ``refinement_capped`` (the 5-pass cap stopped
+    the loop with 0.15 * ``size`` still unmet), ``holes_ignored`` and
     ``disconnected``. ``generate`` forwards the first three into the worker
     response; ``disconnected`` stays here, a breakdown of ``dropped``
     rather than a number of its own.
@@ -1882,7 +2275,7 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
     ``holes_ignored`` (boundary chains that turned out to be interior holes
     of a cell's own outline -- the outline legitimately spans them),
     ``refinement_levels`` / ``refinement_capped`` (how finely the internal
-    dual mesh resolved ``size``, and whether the 4-pass cap stopped it
+    dual mesh resolved ``size``, and whether the 5-pass cap stopped it
     short), and ``plan_degenerate`` (emitted cells whose PLAN projection
     self-crosses, which Bench Studio's import rejects the WHOLE sidecar
     for; see ``_plan_degenerate_count``).

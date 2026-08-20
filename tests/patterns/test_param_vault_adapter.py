@@ -1,22 +1,37 @@
-"""Task 1 of the dual-quality wave: the adapter's own sanity check, plus the
-pre-fix baseline characterisation ``generate()`` at S = 0.2 Tasks 2-3 flip.
+"""Task 1's adapter sanity check, plus Task 2's own spec-bar acceptance
+tests on Param's real vault at S = 0.2 / S = 0.4.
 
 Binding sources: docs/superpowers/specs/2026-08-20-dual-quality-design.md
 ("Test data" and the acceptance-bars list) and
 .superpowers/sdd/2026-08-20-dual-quality-diagnosis/findings.md (the recovery
-method and the measured pre-fix numbers this file documents). param_vault.py
-carries the recovery + the metric helpers; this file is only the tests.
+method and the measured pre-fix numbers). param_vault.py carries the
+recovery + the metric helpers; this file is only the tests.
+
+``test_baseline_before_the_fix`` (dated 2026-08-20, pre-M1+M2) is REPLACED
+WHOLESALE here, per its own module-level flip note, by
+``test_the_vault_spec_bars_at_s_02`` / ``..._s_04``: the evenly spaced
+streamline seeding (M1+M2) and the tightened dual-graph refinement (M6)
+this task ships change every one of that baseline's numbers, so editing
+those old assertions upward piecemeal would document nothing.
 """
 
 from __future__ import annotations
 
 import math
+import time
+from typing import Any
+from typing import Dict
 
 import numpy as np
 import pytest
 
 from ananke_equilibrium.patterns.armadillo_dual import Mesh
+from ananke_equilibrium.patterns.armadillo_dual import assemble_mesh
+from ananke_equilibrium.patterns.armadillo_dual import dual_cells
 from ananke_equilibrium.patterns.armadillo_dual import generate
+from ananke_equilibrium.patterns.armadillo_dual import line_field
+from ananke_equilibrium.patterns.armadillo_dual import seeds
+from ananke_equilibrium.patterns.armadillo_dual import streamlines
 
 import param_vault as pv
 
@@ -98,70 +113,258 @@ def test_load_param_vault_returns_the_shape_generate_consumes():
 
 
 # ---------------------------------------------------------------------------
-# BASELINE, PRE-FIX characterisation at S = 0.2, dated 2026-08-20 -- before
-# the dual-quality wave's M1-M7 fixes land on this branch. This documents
-# what generate() actually does TODAY on Param's own vault: streamline
-# count pinned at his support-vertex count (34, M1's own signature), cells
-# oversized relative to S (mean/S > 1.4), and a real ribbon population
-# (elongation > 3 in more than 10% of cells) -- the exact defects the
-# diagnosis measured and this wave's spec commits to fixing.
+# Task 2/3's own acceptance bars (design spec "Acceptance bars"), Param's
+# real vault, S = 0.2 and S = 0.4 -- REPLACES test_baseline_before_the_fix
+# WHOLESALE (see the module docstring). One run per size is cached across
+# every bar test below (``_vault_run``), the same pattern
+# test_armadillo_dual_cells.py's own ``_armadillo_bars`` uses for the BRG
+# primal: S = 0.2 on a real ~1500-face vault is genuinely slow work (tens of
+# seconds), and a dozen separate bar assertions asking for it separately
+# would multiply that for nothing.
 #
-# FLIP MECHANISM: Task 2 (streamline seeding) and Task 3 (the acceptance
-# bars) REPLACE THIS TEST WHOLESALE -- delete
-# ``test_baseline_before_the_fix`` in its entirety and write the spec's own
-# acceptance bars (streamline_count >= 70, mean/S in [0.8, 1.3], ribbons
-# <= 2% of cells / 6% of area, etc.) in its place. Do not edit these
-# assertions upward piecemeal as fixes land -- the name says so on purpose.
+# FUNNEL/MID BUCKET RE-EXAMINATION (carried ruling from Task 1's review):
+# ``funnel_mid_ratio``'s default bucket thresholds (crowded_min=3,
+# sparse_max=0, radius=1.75*S) were tuned to the PRE-FIX 34-line population,
+# where "0 lines within 1.75*S" genuinely meant ordinary, uncrowded coursing
+# and "3+" meant a real funnel knot. Measured directly against the crowding
+# distribution M1+M2 actually produces at S=0.2 (2934 cells): {0: 9, 1: 55,
+# 2: 166, 3: 1415, 4: 713, 5: 514, 6: 53, 7: 8, 8: 1} -- the OLD buckets no
+# longer discriminate anything: "sparse" (count==0) is 9 cells (0.3%, almost
+# certainly edge noise, not a meaningful "ordinary" population) against a
+# "crowded" (count>=3) bucket of 2704 cells (92%, now the norm rather than
+# the exception). The buckets below are re-centred on this run's own median
+# crowding count (3, matching the population's actual mode) with a one-tier
+# buffer on each side excluded from both buckets, so "sparse" and "crowded"
+# again mean two genuinely different, non-trivial local-density regimes
+# rather than a near-empty outlier bucket against everything else.
 # ---------------------------------------------------------------------------
+
+
+_FUNNEL_SPARSE_MAX = 2
+_FUNNEL_CROWDED_MIN = 5
+
+_VAULT_RUNS: Dict[float, Dict[str, Any]] = {}
+
+
+def _vault_run(size: float) -> Dict[str, Any]:
+    if size in _VAULT_RUNS:
+        return _VAULT_RUNS[size]
+
+    result = pv.load_param_vault()
+    mesh = assemble_mesh(result)
+
+    start = time.time()
+    response = generate(result, size)
+    wall_time = time.time() - start
+
+    diagnostics = response["diagnostics"]
+    cells = response["cells"]
+    flowlines = response["flowlines"]
+
+    elongations = pv.cell_elongations(cells)
+    ribbon_mask = elongations > 3.0
+    ribbon_fraction_cells = float(ribbon_mask.mean()) if cells else float("nan")
+    ribbon_cells = [c for c, is_ribbon in zip(cells, ribbon_mask.tolist()) if is_ribbon]
+    covered = pv.covered_area(cells)
+    ribbon_fraction_area = (
+        pv.covered_area(ribbon_cells) / covered if covered > 0.0 else float("nan")
+    )
+
+    mesh_area_total = pv.mesh_area(mesh)
+    coverage = (covered / mesh_area_total) if mesh_area_total > 0.0 else float("nan")
+    starvation = pv.cross_flow_starvation(mesh, flowlines, size, k=2.0)
+    funnel_ratio = pv.funnel_mid_ratio(
+        mesh,
+        cells,
+        flowlines,
+        size,
+        crowded_min=_FUNNEL_CROWDED_MIN,
+        sparse_max=_FUNNEL_SPARSE_MAX,
+    )
+
+    measured = {
+        "result": result,
+        "mesh": mesh,
+        "response": response,
+        "diagnostics": diagnostics,
+        "wall_time": wall_time,
+        "mean_over_s": (
+            (diagnostics["mean_cell_size"] / size) if cells else float("nan")
+        ),
+        "ribbon_fraction_cells": ribbon_fraction_cells,
+        "ribbon_fraction_area": ribbon_fraction_area,
+        "coverage": coverage,
+        "starvation": starvation,
+        "funnel_mid_ratio": funnel_ratio,
+    }
+    print(
+        "Param's vault at S={}: streamlines={} cells={} seeds={} dropped={} "
+        "mean/S={:.3f} ribbons(cells)={:.2%} ribbons(area)={:.2%} "
+        "coverage={:.2%} starvation={:.2%} funnel/mid={:.3f} "
+        "wall_time={:.2f}s".format(
+            size,
+            diagnostics["streamline_count"],
+            diagnostics["cell_count"],
+            diagnostics["seed_count"],
+            diagnostics["dropped"],
+            measured["mean_over_s"],
+            ribbon_fraction_cells,
+            ribbon_fraction_area,
+            coverage,
+            starvation,
+            funnel_ratio,
+            wall_time,
+        )
+    )
+    _VAULT_RUNS[size] = measured
+    return measured
+
+
+def _vault_disconnected(size: float) -> int:
+    """The dual_cells report's own ``disconnected`` count -- not part of
+    ``generate()``'s own diagnostics dict, so this replays mesh/field/
+    streamlines/seeds once more directly (the same computation
+    ``generate()`` itself does internally) to reach ``dual_cells``'
+    ``report`` argument. A second S=0.2 pass; not timed against the 90s
+    wall-time bar, which is specifically about ``generate()``'s own call.
+    """
+
+    result = pv.load_param_vault()
+    mesh = assemble_mesh(result)
+    field = line_field(mesh)
+    lines = streamlines(mesh, field, size)
+    points, _course_band, _streamline_id = seeds(lines, size)
+    report: Dict[str, Any] = {}
+    dual_cells(mesh, points, size, report)
+    return int(report["disconnected"])
 
 
 @pytest.mark.skipif(
     not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
 )
-def test_baseline_before_the_fix():
-    """PRE-FIX characterisation, S = 0.2, Param's own vault. Task 2 flips
-    this test wholesale (see the module-level note above) once the
-    evenly-spaced streamline seeding (M1+M2) replaces the band-only
-    seeding this test's numbers are still measuring.
-    """
-
-    size = 0.2
-    result = pv.load_param_vault()
-    response = generate(result, size)
-    diagnostics = response["diagnostics"]
-
-    # M1: streamline count pinned at the support-vertex count regardless
-    # of S (the diagnosis's own headline finding); measured 34 at S=0.2
-    # AND at S=0.4 on this vault.
-    assert diagnostics["streamline_count"] == 34, (
-        "streamline_count {} != 34 -- if this moved, M1's band-seed "
-        "snapping defect this baseline documents may already be fixed; "
-        "replace this whole test per the module-level flip note rather "
-        "than editing this number".format(diagnostics["streamline_count"])
+def test_vault_streamline_count_meets_the_spec_bar_at_s_02():
+    diagnostics = _vault_run(0.2)["diagnostics"]
+    streamline_count = diagnostics["streamline_count"]
+    assert streamline_count >= 70, (
+        "streamline_count {} is not >= 70 -- M1+M2's own floor (was 34, "
+        "pinned at the support-vertex count regardless of S)".format(
+            streamline_count
+        )
     )
 
-    # Cells oversized relative to the requested voussoir size (the
-    # diagnosis measured mean/S = 1.55, outside the wave's own
-    # [0.5S, 1.5S] design bar).
-    mean_over_s = diagnostics["mean_cell_size"] / size
-    assert mean_over_s > 1.4, (
-        "mean_cell_size/S {:.3f} is not > 1.4 -- the diagnosis measured "
-        "1.55; if this dropped, M1+M2 may already be fixed".format(
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_cell_count_meets_the_spec_bar_at_s_02():
+    diagnostics = _vault_run(0.2)["diagnostics"]
+    cell_count = diagnostics["cell_count"]
+    assert cell_count >= 2000, (
+        "cell_count {} is not >= 2000 (was 1055 against ~3135 implied by "
+        "the mesh area)".format(cell_count)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_mean_cell_size_meets_the_spec_bar_at_s_02():
+    mean_over_s = _vault_run(0.2)["mean_over_s"]
+    assert 0.8 <= mean_over_s <= 1.3, (
+        "mean_cell_size/S {:.3f} is outside [0.8, 1.3] (was 1.55)".format(
             mean_over_s
         )
     )
 
-    # Ribbon population: cells whose elongation (max corner span /
-    # sqrt(area)) exceeds 3 -- the diagnosis measured 11.8% of cells
-    # holding 28.1% of covered area.
-    elongations = pv.cell_elongations(response["cells"])
-    ribbon = elongations > 3.0
-    ribbon_fraction = float(ribbon.mean())
-    assert ribbon_fraction > 0.10, (
-        "ribbon fraction {:.3f} is not > 10% -- the diagnosis measured "
-        "11.8%; if this dropped, the fix may already have landed".format(
-            ribbon_fraction
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_ribbon_population_meets_the_spec_bars_at_s_02():
+    measured = _vault_run(0.2)
+    assert measured["ribbon_fraction_cells"] <= 0.02, (
+        "ribbon fraction (by cell count) {:.2%} is not <= 2% (was "
+        "11.8%)".format(measured["ribbon_fraction_cells"])
+    )
+    assert measured["ribbon_fraction_area"] <= 0.06, (
+        "ribbon fraction (by covered area) {:.2%} is not <= 6% (was "
+        "28.1%)".format(measured["ribbon_fraction_area"])
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_starvation_meets_the_spec_bar_at_s_02():
+    starvation = _vault_run(0.2)["starvation"]
+    assert starvation <= 0.05, (
+        "cross-flow starvation (area beyond 2*S from a streamline) {:.2%} "
+        "is not <= 5% (was 26.8%)".format(starvation)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_coverage_meets_the_spec_bar_at_s_02():
+    coverage = _vault_run(0.2)["coverage"]
+    assert coverage >= 0.97, (
+        "coverage {:.2%} is not >= 97% (was 93.0%)".format(coverage)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_disconnected_meets_the_spec_bar_at_s_02():
+    disconnected = _vault_disconnected(0.2)
+    assert disconnected <= 3, (
+        "disconnected {} is not <= 3 (was 15)".format(disconnected)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_funnel_mid_ratio_meets_the_spec_bar_at_s_02():
+    ratio = _vault_run(0.2)["funnel_mid_ratio"]
+    assert math.isfinite(ratio), "funnel/mid ratio is not finite -- one of the re-centred buckets is empty"
+    assert ratio <= 1.5, (
+        "funnel/mid median cell size ratio {:.3f} is not <= 1.5 (was "
+        "2.4, crowded_min={}, sparse_max={})".format(
+            ratio, _FUNNEL_CROWDED_MIN, _FUNNEL_SPARSE_MAX
         )
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_wall_time_at_s_02_is_under_90_seconds():
+    wall_time = _vault_run(0.2)["wall_time"]
+    assert wall_time <= 90.0, (
+        "generate() at S=0.2 took {:.1f}s, over the 90s bar".format(wall_time)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_no_regression_at_s_04():
+    """Design spec: "No regression at S = 0.4 on his vault: mean/S stays
+    in [0.8, 1.3], ribbons <= 4% of cells."
+    """
+
+    measured = _vault_run(0.4)
+    mean_over_s = measured["mean_over_s"]
+    assert 0.8 <= mean_over_s <= 1.3, (
+        "mean_cell_size/S {:.3f} is outside [0.8, 1.3] at S=0.4".format(
+            mean_over_s
+        )
+    )
+    assert measured["ribbon_fraction_cells"] <= 0.04, (
+        "ribbon fraction (by cell count) {:.2%} is not <= 4% at "
+        "S=0.4".format(measured["ribbon_fraction_cells"])
     )
 
 
