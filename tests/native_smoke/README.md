@@ -9,12 +9,14 @@ dependencies into .NET without starting Rhino. It:
 - checks unique document GUIDs, embedded 24×24 icons, and intentional
   bundle-input flattening;
 - drives `ImportPiecesComponent.ParseDocument` with the committed
-  `assets/fixture-pieces.json` (a real bench.pieces/1 document; see
-  `assets/README.md` for its provenance), asserting piece count, order
-  preservation, vertex/face array shapes, base_mesh presence and shape,
-  base_mesh-absence tolerance (a doctored copy with the key removed
-  still parses), and the schema/units refusal messages against doctored
-  copies; and
+  `assets/fixture-pieces.json` (a real bench.pieces/1 document, 2
+  courses/14 pieces; see `assets/README.md` for its provenance),
+  asserting piece count, full document-order preservation, vertex/face
+  array shapes, base_mesh presence and shape, the course-tree
+  partitioning contract MEASURED against exact per-course counts and
+  in-branch order (not merely inspected), base_mesh-absence tolerance
+  (a doctored copy with the key removed still parses), and the
+  schema/units refusal messages against doctored copies; and
 - reports component and parameter pass/fail counts.
 
 From the repository root:

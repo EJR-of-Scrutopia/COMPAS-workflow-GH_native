@@ -421,9 +421,12 @@ internal static class Program
                 "PASS  ImportPiecesComponent.ParseDocument: piece count, " +
                 "drop-order preservation, vertex/face array shapes, and " +
                 "base_mesh presence/shape match the committed " +
-                "bench.pieces/1 fixture; a doctored copy with no " +
-                "base_mesh key still parses (BaseMesh null); doctored " +
-                "schema/units copies are refused naming what was found.");
+                "bench.pieces/1 fixture (2 courses, 14 pieces); the " +
+                "course-tree partitioning is MEASURED against the exact " +
+                "per-course counts and in-branch order; a doctored copy " +
+                "with no base_mesh key still parses (BaseMesh null); " +
+                "doctored schema/units copies are refused naming what " +
+                "was found.");
         }
         catch (Exception exception)
         {
@@ -1297,6 +1300,16 @@ internal static class Program
     /// the property wholesale from an in-memory JSON copy, not merely
     /// nulling it, so old documents (written before this addendum) are
     /// proven to stay loadable.
+    ///
+    /// Addendum follow-up, 2026-08-20: the fixture was regenerated again
+    /// (size 0.6, not 0.9) so it cuts 2 courses instead of 1 -- a
+    /// single-course fixture could assert order preservation but never
+    /// the addendum's actual point, that M/K/S PARTITION by course. This
+    /// method now groups the parsed PieceRecords by Course (the same
+    /// field SolveInstance keys GH_Path on) and asserts the exact
+    /// per-course counts and in-branch document order against the
+    /// fixture's own known shape, measuring the partitioning contract
+    /// instead of merely inspecting the component's source for it.
     /// </summary>
     private static void ValidateImportPiecesParsing(Assembly plugin)
     {
@@ -1326,10 +1339,21 @@ internal static class Program
                 "ParseDocument returned null for the committed fixture.");
         Type documentType = document.GetType();
 
-        // The fixture's own document order (piece keys, verbatim): course
-        // 0, five pieces, not the sorted/alphabetical order the keys
-        // would fall into on their own.
-        var expectedKeys = new[] { "c0p3", "c0p4", "c0p0", "c0p1", "c0p2" };
+        // The fixture's own document order (piece keys, verbatim), across
+        // BOTH of its courses: 10 course-0 pieces, then 4 course-1 pieces,
+        // not the sorted/alphabetical order the keys would fall into on
+        // their own, and not grouped by course in the document itself
+        // (that grouping is exactly what GH_Path(piece.Course) partitions
+        // out downstream -- asserted separately below). Addendum
+        // follow-up, 2026-08-20: regenerated at size 0.6 (was 0.9) so the
+        // fixture actually cuts 2 courses; a single-course fixture could
+        // never prove the tree PARTITIONS.
+        var expectedKeys = new[]
+        {
+            "c0p5", "c0p6", "c0p7", "c0p8", "c0p9",
+            "c0p0", "c0p1", "c0p2", "c0p3", "c0p4",
+            "c1p2", "c1p3", "c1p0", "c1p1",
+        };
 
         object? pieceCountValue =
             documentType.GetProperty("PieceCount")?.GetValue(document);
@@ -1406,6 +1430,98 @@ internal static class Program
                     throw new InvalidOperationException(
                         $"Piece '{key}' has a face with fewer than 3 " +
                         "corners.");
+                }
+            }
+        }
+
+        // Addendum follow-up, 2026-08-20: the partitioning contract,
+        // MEASURED rather than merely inspected by reading the
+        // component's source. Groups the parsed PieceRecords by their
+        // own Course value -- the exact field ImportPiecesComponent's
+        // SolveInstance keys GH_Path(piece.Course) on -- in document
+        // order, then asserts the result against the committed fixture's
+        // own known shape: 2 distinct course branches, exact per-course
+        // counts, and document order preserved WITHIN each branch. This
+        // is what GH_Path(course) partitioning produces without needing
+        // to run inside Grasshopper: Append-in-order grouped by key is
+        // the same operation either way.
+        var courseOrder = new List<int>();
+        var courseGroups = new Dictionary<int, List<string>>();
+        foreach (object piece in pieces)
+        {
+            Type pieceType = piece.GetType();
+            object? courseValue =
+                pieceType.GetProperty("Course")?.GetValue(piece);
+            if (courseValue is not int pieceCourse)
+            {
+                throw new InvalidOperationException(
+                    "PieceRecord.Course could not be inspected.");
+            }
+            string pieceKey =
+                pieceType.GetProperty("Key")?.GetValue(piece) as string
+                ?? string.Empty;
+
+            if (!courseGroups.TryGetValue(pieceCourse, out List<string>? keys))
+            {
+                keys = new List<string>();
+                courseGroups[pieceCourse] = keys;
+                courseOrder.Add(pieceCourse);
+            }
+            keys.Add(pieceKey);
+        }
+
+        if (courseGroups.Count < 2)
+        {
+            throw new InvalidOperationException(
+                "The fixture must carry >= 2 distinct course values to " +
+                $"prove tree partitioning; found {courseGroups.Count}.");
+        }
+
+        var expectedCourseGroups = new (int Course, string[] Keys)[]
+        {
+            (0, new[]
+            {
+                "c0p5", "c0p6", "c0p7", "c0p8", "c0p9",
+                "c0p0", "c0p1", "c0p2", "c0p3", "c0p4",
+            }),
+            (1, new[] { "c1p2", "c1p3", "c1p0", "c1p1" }),
+        };
+
+        if (courseOrder.Count != expectedCourseGroups.Length)
+        {
+            throw new InvalidOperationException(
+                $"Expected {expectedCourseGroups.Length} distinct course " +
+                $"branches (the GH_Path partitioning this fixture must " +
+                $"prove); found {courseOrder.Count}.");
+        }
+
+        foreach ((int course, string[] expectedCourseKeys) in expectedCourseGroups)
+        {
+            if (!courseGroups.TryGetValue(course, out List<string>? actualKeys))
+            {
+                throw new InvalidOperationException(
+                    $"Course {course} branch is missing from the parsed " +
+                    "pieces.");
+            }
+            if (actualKeys.Count != expectedCourseKeys.Length)
+            {
+                throw new InvalidOperationException(
+                    $"Course {course} branch (GH_Path({course})) must " +
+                    $"carry {expectedCourseKeys.Length} piece(s); found " +
+                    $"{actualKeys.Count}.");
+            }
+            for (int index = 0; index < expectedCourseKeys.Length; index++)
+            {
+                if (!string.Equals(
+                        actualKeys[index],
+                        expectedCourseKeys[index],
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Course {course} branch item {index} must be " +
+                        $"'{expectedCourseKeys[index]}' (document order " +
+                        "preserved within the branch); received " +
+                        $"'{actualKeys[index]}'.");
                 }
             }
         }
