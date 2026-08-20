@@ -1711,16 +1711,19 @@ def _armadillo_outline_ratios(size: float) -> List[float]:
 def test_armadillo_primal_cells_cover_the_surface_at_size_075():
     """Bar (a): the emitted voussoirs are the surface, not a sample of it.
 
-    RE-PIN, 2026-08-20 dual-quality wave, task 2 fix round 1 (M1+M2 evenly
-    spaced streamlines, verified directly at this commit -- see
-    task-2-report.md's re-pin table for why the number moved twice since
-    the wave's own first commit): 427.0 m2 emitted of the mesh's own
-    451.9 m2, 94.5% -- was 392.4 m2 / 86.8% pre-wave. 2 seeds drop at this
-    size now (was 6): the old band-only seeding left territory nobody
-    emitted; evenly spaced seeding covers nearly all of it. The residual
-    shortfall is the same honest, structural one either way: every outline
-    runs through the midpoints of its territory's boundary edges, so it
-    sits a half-edge inside the true territory all the way round.
+    RE-PIN, 2026-08-20 dual-quality wave, THIRD measurement (task 3's M4
+    boundary-walk closure moved it again -- see the wave's final review):
+    440.1 m2 emitted of the mesh's own 451.9 m2, 97.4% -- was 392.4 m2 /
+    86.8% pre-wave and 427.0 m2 / 94.5% after task 2's fix round. 1 seed
+    drops at this size now (was 6 pre-wave): the old band-only seeding
+    left territory nobody emitted; evenly spaced seeding covers nearly
+    all of it. The residual shortfall is smaller and differently shaped
+    than it was: INTERIOR outlines still run through the midpoints of
+    their territory's boundary edges (a half-edge inside the true
+    territory), but rim-adjacent cells now reach the rim itself -- M4
+    splices real mesh-boundary points in place of chords, so the old
+    "half-edge inset all the way round" description no longer applies at
+    the boundary.
 
     RED against the pre-fix extraction (before EITHER wave): 26.7 m2, 5.9%.
     """
@@ -1739,10 +1742,11 @@ def test_armadillo_primal_cells_cover_the_surface_at_size_075():
 def test_armadillo_primal_mean_cell_size_matches_the_requested_size():
     """Bar (b): the diagnostics' own mean_cell_size is the size that was asked for.
 
-    RE-PIN, 2026-08-20 dual-quality wave, task 2 fix round 1 (M1+M2):
-    0.779 m against a requested 0.75 (bar [0.375, 1.125]) -- was 1.026 m
-    pre-wave. Evenly spaced streamlines now backfill mid-mesh, not just
-    the springing: 70 lines carry 663 seeds across 451.9 m2 (was 39
+    RE-PIN, 2026-08-20 dual-quality wave, THIRD measurement (task 3
+    moved it again): 0.773 m against a requested 0.75 (bar
+    [0.375, 1.125]) -- was 1.026 m pre-wave, 0.779 after task 2's fix
+    round. Evenly spaced streamlines now backfill mid-mesh, not just
+    the springing: 69 lines carry 688 seeds across 451.9 m2 (was 39
     lines / 300 seeds), so a cell's own territory averages close to S
     squared instead of 1.5 m2.
 
@@ -1811,25 +1815,24 @@ def test_armadillo_primal_meets_every_bar_at_the_shipped_default_size():
     anything -- it explains a historical choice, not a current one. The
     RE-PIN below is what M1+M2 actually does to the same size.
 
-    RE-PIN, 2026-08-20 dual-quality wave, task 2 fix round 1 (M1+M2 evenly
-    spaced streamlines + M6's 0.15*S/5-pass refinement, verified directly
-    at this commit): at 0.6, 1064 seeds and 1062 cells (0.19% dropped, was
-    422/418/4/0.9% pre-wave), coverage 94.6% (was 87.0%), mean_cell_size
-    0.612 (was 0.853 -- now close to S itself, since evenly spaced seeding
-    backfills mid-mesh instead of only fanning from the springing), ratio
-    median 0.988 (was 0.967), holes_ignored 0 (was 4). This is the SECOND
-    re-pin of this number: the wave's own first commit measured 1095/1094
-    (0.623 mean) before ``_nudge_off_corner`` and the resampled-offer
-    density fix landed, and fix round 1's own review measured 1193/1192
-    (0.600 mean) at that commit; this task's own fix-round-1 changes
-    (removing a direction-array reversal bug in the offering tangent, see
-    task-2-report.md) moved it again, to the value above. The old
-    [150, 800] cell_count ceiling assumed the old, support-band-limited
-    line population; the seed/cell count at a fixed S now tracks the
-    SURFACE the mesh actually covers rather than its own support-vertex
-    count, so the ceiling widens to accommodate that -- with headroom
-    (1062 against 1300, 22.4%), not a tight re-fit, since the exact count
-    is not itself a design target.
+    RE-PIN, 2026-08-20 dual-quality wave, THIRD measurement (M1+M2 evenly
+    spaced streamlines + M6's 0.15*S/5-pass refinement + task 3's
+    M3/M4/M5 chain-level changes, verified directly at this commit): at
+    0.6, 976 seeds and 969 cells (1 dropped, was 422/418/4/0.9%
+    pre-wave), coverage 97.1% (was 87.0%), mean_cell_size 0.634 (was
+    0.853 -- now close to S itself, since evenly spaced seeding
+    backfills mid-mesh instead of only fanning from the springing),
+    ratio median 0.983 (was 0.967), holes_ignored 1 (was 4). The number
+    has moved at every geometry-touching commit of this wave -- 1095/1094
+    at the wave's first commit, 1064/1062 after task 2's fix round,
+    the value above after task 3 -- which is exactly why the assertion
+    binds a RANGE, not the point value: the old [150, 800] cell_count
+    ceiling assumed the support-band-limited line population; the
+    seed/cell count at a fixed S now tracks the SURFACE the mesh
+    actually covers rather than its own support-vertex count, so the
+    ceiling widens to accommodate that with headroom (969 against 1300,
+    25.5%), not a tight re-fit, since the exact count is not itself a
+    design target.
     """
 
     from ananke_equilibrium.patterns.armadillo_dual import DEFAULT_SIZE
