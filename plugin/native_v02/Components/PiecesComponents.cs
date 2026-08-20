@@ -9,6 +9,8 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Data;
+using Grasshopper.Kernel.Types;
 using Rhino;
 using Rhino.Geometry;
 
@@ -28,9 +30,22 @@ public sealed record PieceRecord(
     IReadOnlyList<int[]> Faces);
 
 /// <summary>
+/// The document's optional top-level base_mesh (Addendum, 2026-08-20):
+/// the study's analysis mesh (the thrust wireframe), copied verbatim by
+/// the route from the bundle's own analysis_mesh. Plain numbers only,
+/// same reason as <see cref="PieceRecord"/> -- built into a Rhino mesh
+/// only in the post phase, on the solve thread.
+/// </summary>
+public sealed record BaseMeshRecord(
+    IReadOnlyList<double[]> Vertices,
+    IReadOnlyList<int[]> Faces);
+
+/// <summary>
 /// The parsed bench.pieces/1 document: the schema/units contract already
 /// checked, pieces in the document's own order (the studio's drop order),
-/// untouched.
+/// untouched. BaseMesh is null when the document has none -- an export
+/// written before the base_mesh addendum stays loadable, since base_mesh
+/// is optional-additive and the schema is still "bench.pieces/1".
 /// </summary>
 public sealed record PiecesDocument(
     string Schema,
@@ -39,7 +54,8 @@ public sealed record PiecesDocument(
     int PieceCount,
     double Thickness,
     IReadOnlyList<string> DegenerateDropped,
-    IReadOnlyList<PieceRecord> Pieces);
+    IReadOnlyList<PieceRecord> Pieces,
+    BaseMeshRecord? BaseMesh);
 
 public sealed record ImportPiecesTaskResult(
     PiecesDocument? Document,
@@ -48,9 +64,14 @@ public sealed record ImportPiecesTaskResult(
 
 /// <summary>
 /// Reads a bench.pieces/1 export and lands the studio's final cut-block
-/// solids on the canvas: one mesh per piece, plus its course/key/support
-/// flag, all in the document's own order (course ascending from the rim,
-/// anticlockwise within a course -- the studio's drop order).
+/// solids on the canvas: one mesh per piece, plus its key/support flag,
+/// as Grasshopper DATA TREES branched by course -- path {course}, items
+/// in the document's own drop order within each branch (course ascending
+/// from the rim, anticlockwise within a course -- the studio's drop
+/// order, merely partitioned; Addendum, 2026-08-20, superseding the
+/// originally reviewed flat-list contract on the owner's live feedback).
+/// The optional base_mesh -- the study's analysis mesh -- lands as a
+/// single item, null when the document has none.
 ///
 /// File read + JSON parse happen off the solve thread (the background
 /// task only ever produces plain arrays, never live Rhino geometry);
@@ -71,8 +92,8 @@ public sealed class ImportPiecesComponent :
             "Import Pieces",
             "Pieces",
             "Read a bench.pieces/1 export and land the studio's final " +
-            "cut-block solids on the canvas as aligned mesh/course/" +
-            "key/support lists, in the export's own drop order.",
+            "cut-block solids on the canvas as mesh/key/support trees " +
+            "branched by course, plus the study's base wireframe mesh.",
             ComponentCategories.Delivery,
             "import_pieces")
     {
@@ -95,40 +116,51 @@ public sealed class ImportPiecesComponent :
     protected override void RegisterOutputParams(
         GH_OutputParamManager parameters)
     {
+        // Addendum, 2026-08-20: M/K/S are DATA TREES, branched by course
+        // (path {course}, 0-up from the rim); the flat Courses (C) output
+        // is REMOVED -- the branch path IS the course, documented in D.
+        // Courses need not be contiguous, and a course with no pieces
+        // simply has no branch (branches are never pre-created empty).
         parameters.AddMeshParameter(
             "Meshes",
             "M",
-            "One closed solid mesh per piece, in the document's own " +
-            "order. A piece that failed to build is a null placeholder " +
-            "in this list, so Courses/Keys/Supports stay index-aligned " +
-            "with Meshes; cross-reference Keys at that index to find " +
-            "which piece dropped out.",
-            GH_ParamAccess.list);
-        parameters.AddIntegerParameter(
-            "Courses",
-            "C",
-            "The course index of each piece (0-up from the rim), " +
-            "aligned with Meshes.",
-            GH_ParamAccess.list);
+            "One closed solid mesh per piece, as a tree branched by " +
+            "course (path = course, 0-up from the rim); items within " +
+            "each branch keep the document's own drop order. A piece " +
+            "that failed to build is a null placeholder in its course " +
+            "branch, so Keys/Supports stay index-aligned with Meshes " +
+            "within that branch; cross-reference Keys at that index to " +
+            "find which piece dropped out.",
+            GH_ParamAccess.tree);
         parameters.AddTextParameter(
             "Keys",
             "K",
-            "The piece key (for example c0p3) of each piece, aligned " +
-            "with Meshes.",
-            GH_ParamAccess.list);
+            "The piece key (for example c0p3) of each piece, branched " +
+            "and ordered exactly as Meshes.",
+            GH_ParamAccess.tree);
         parameters.AddBooleanParameter(
             "Supports",
             "S",
-            "True where the piece is a support/base piece, aligned " +
-            "with Meshes.",
-            GH_ParamAccess.list);
+            "True where the piece is a support/base piece, branched " +
+            "and ordered exactly as Meshes.",
+            GH_ParamAccess.tree);
+        parameters.AddMeshParameter(
+            "Base Mesh",
+            "B",
+            "The study's analysis mesh (the thrust wireframe), copied " +
+            "verbatim from the bundle by the export route -- null when " +
+            "the document carries no base_mesh (an export written " +
+            "before the addendum stays loadable; see Diagnostics).",
+            GH_ParamAccess.item);
         parameters.AddTextParameter(
             "Diagnostics",
             "D",
             "Schema, units, piece count, courses, thickness, the " +
             "degenerate_dropped keys the export already reported, the " +
-            "metres-to-model-units factor applied, and a warning line " +
-            "naming any piece that failed to build.",
+            "metres-to-model-units factor applied, whether base_mesh " +
+            "was present, a note that each Meshes/Keys/Supports branch " +
+            "path IS the course, and a warning line naming any piece " +
+            "that failed to build.",
             GH_ParamAccess.item);
     }
 
@@ -259,7 +291,10 @@ public sealed class ImportPiecesComponent :
     /// safe, no file I/O of its own. Schema and units are checked first
     /// and refused with a message naming exactly what was found -- the
     /// binding spec's "component Error naming what was found." Pieces
-    /// are returned in the document's own order, untouched.
+    /// are returned in the document's own order, untouched. base_mesh is
+    /// OPTIONAL (Addendum, 2026-08-20): its absence is not an error --
+    /// an export written before the addendum stays loadable, and
+    /// BaseMesh comes back null.
     /// </summary>
     private static PiecesDocument ParseDocument(string json)
     {
@@ -295,6 +330,15 @@ public sealed class ImportPiecesComponent :
         foreach (JsonElement pieceElement in piecesElement.EnumerateArray())
             pieces.Add(ParsePiece(pieceElement));
 
+        BaseMeshRecord? baseMesh = null;
+        if (root.TryGetProperty("base_mesh", out JsonElement baseMeshElement) &&
+            baseMeshElement.ValueKind == JsonValueKind.Object)
+        {
+            (List<double[]> baseMeshVertices, List<int[]> baseMeshFaces) =
+                ParseVerticesAndFaces(baseMeshElement, "base_mesh");
+            baseMesh = new BaseMeshRecord(baseMeshVertices, baseMeshFaces);
+        }
+
         return new PiecesDocument(
             schema,
             units,
@@ -302,7 +346,8 @@ public sealed class ImportPiecesComponent :
             pieceCount,
             thickness,
             degenerateDropped,
-            pieces);
+            pieces,
+            baseMesh);
     }
 
     private static PieceRecord ParsePiece(JsonElement element)
@@ -313,11 +358,27 @@ public sealed class ImportPiecesComponent :
             element.TryGetProperty("is_support", out JsonElement supportElement)
             && supportElement.ValueKind == JsonValueKind.True;
 
+        (List<double[]> vertices, List<int[]> faces) =
+            ParseVerticesAndFaces(element, $"piece '{key}'");
+
+        return new PieceRecord(key, course, isSupport, vertices, faces);
+    }
+
+    /// <summary>
+    /// Reads a "vertices"/"faces" pair off any element that carries them
+    /// -- a piece, or the document's own base_mesh -- with the same
+    /// shape checks either way (an [x, y, z] triple per vertex, at least
+    /// 3 corners per face). ownerLabel names the offending owner in a
+    /// thrown message, matching each call site's own error style.
+    /// </summary>
+    private static (List<double[]> Vertices, List<int[]> Faces)
+        ParseVerticesAndFaces(JsonElement element, string ownerLabel)
+    {
         if (!element.TryGetProperty("vertices", out JsonElement verticesElement) ||
             verticesElement.ValueKind != JsonValueKind.Array)
         {
             throw new InvalidDataException(
-                $"piece '{key}' has no 'vertices' array.");
+                $"{ownerLabel} has no 'vertices' array.");
         }
         var vertices = new List<double[]>(verticesElement.GetArrayLength());
         foreach (JsonElement vertexElement in verticesElement.EnumerateArray())
@@ -326,7 +387,7 @@ public sealed class ImportPiecesComponent :
                 vertexElement.GetArrayLength() != 3)
             {
                 throw new InvalidDataException(
-                    $"piece '{key}' has a vertex that is not an " +
+                    $"{ownerLabel} has a vertex that is not an " +
                     "[x, y, z] triple.");
             }
             var xyz = new double[3];
@@ -340,7 +401,7 @@ public sealed class ImportPiecesComponent :
             facesElement.ValueKind != JsonValueKind.Array)
         {
             throw new InvalidDataException(
-                $"piece '{key}' has no 'faces' array.");
+                $"{ownerLabel} has no 'faces' array.");
         }
         var faces = new List<int[]>(facesElement.GetArrayLength());
         foreach (JsonElement faceElement in facesElement.EnumerateArray())
@@ -349,7 +410,7 @@ public sealed class ImportPiecesComponent :
                 faceElement.GetArrayLength() < 3)
             {
                 throw new InvalidDataException(
-                    $"piece '{key}' has a face with fewer than 3 corners.");
+                    $"{ownerLabel} has a face with fewer than 3 corners.");
             }
             var corners = new int[faceElement.GetArrayLength()];
             int index = 0;
@@ -358,7 +419,7 @@ public sealed class ImportPiecesComponent :
             faces.Add(corners);
         }
 
-        return new PieceRecord(key, course, isSupport, vertices, faces);
+        return (vertices, faces);
     }
 
     private static string RequireString(JsonElement element, string propertyName)
@@ -418,24 +479,28 @@ public sealed class ImportPiecesComponent :
     /// piece (the TnaResultGeometry.ThrustMesh pattern, minus the weld
     /// pass the document's exact vertices do not need), scales every
     /// point by the active RhinoDoc's metres-to-model-units factor, and
-    /// writes the four aligned lists plus Diagnostics.
+    /// writes Meshes/Keys/Supports as trees branched by course (path =
+    /// piece.Course; branches are appended to in document order, never
+    /// pre-created, so a course with no pieces has no branch at all --
+    /// Addendum, 2026-08-20), plus the optional Base Mesh item and
+    /// Diagnostics.
     /// </summary>
     private void BuildOutputs(IGH_DataAccess data, PiecesDocument document)
     {
         double unitFactor = ResolveUnitFactor();
 
-        var meshes = new List<Mesh?>(document.Pieces.Count);
-        var courses = new List<int>(document.Pieces.Count);
-        var keys = new List<string>(document.Pieces.Count);
-        var supports = new List<bool>(document.Pieces.Count);
+        var meshTree = new GH_Structure<GH_Mesh>();
+        var keyTree = new GH_Structure<GH_String>();
+        var supportTree = new GH_Structure<GH_Boolean>();
         var failedKeys = new List<string>();
 
         foreach (PieceRecord piece in document.Pieces)
         {
+            var path = new GH_Path(piece.Course);
             Mesh? mesh;
             try
             {
-                mesh = BuildPieceMesh(piece, unitFactor);
+                mesh = BuildMeshFromArrays(piece.Vertices, piece.Faces, unitFactor);
                 if (mesh.Faces.Count == 0 || mesh.Vertices.Count == 0)
                     mesh = null;
             }
@@ -444,26 +509,57 @@ public sealed class ImportPiecesComponent :
                 // A malformed piece (an out-of-range face index, most
                 // plausibly) must not take the whole import down with
                 // it: the GH idiom here is a null Mesh entry at this
-                // piece's index -- Grasshopper renders it as an empty/
-                // "null" branch item rather than collapsing the list, so
-                // Courses/Keys/Supports stay index-aligned with Meshes.
+                // piece's slot in its course branch -- Grasshopper
+                // renders it as an empty/"null" branch item rather than
+                // collapsing the branch, so Keys/Supports stay
+                // index-aligned with Meshes within that branch.
                 mesh = null;
             }
 
             if (mesh is null)
                 failedKeys.Add(piece.Key);
 
-            meshes.Add(mesh);
-            courses.Add(piece.Course);
-            keys.Add(piece.Key);
-            supports.Add(piece.IsSupport);
+            // GH_Structure<T>.Append's signature is non-nullable, but a
+            // null tree item is exactly Grasshopper's own "null
+            // placeholder" idiom (the pre-tree list output used the same
+            // shape via List<Mesh?>) -- the null-forgiving operator only
+            // silences the static warning, it does not change what
+            // Grasshopper does with a null branch item at runtime.
+            meshTree.Append(mesh is null ? null! : new GH_Mesh(mesh), path);
+            keyTree.Append(new GH_String(piece.Key), path);
+            supportTree.Append(new GH_Boolean(piece.IsSupport), path);
         }
 
-        data.SetDataList(0, meshes);
-        data.SetDataList(1, courses);
-        data.SetDataList(2, keys);
-        data.SetDataList(3, supports);
-        data.SetData(4, BuildDiagnostics(document, unitFactor, failedKeys));
+        Mesh? baseMesh = null;
+        bool baseMeshPresent = document.BaseMesh is not null;
+        if (document.BaseMesh is not null)
+        {
+            try
+            {
+                baseMesh = BuildMeshFromArrays(
+                    document.BaseMesh.Vertices,
+                    document.BaseMesh.Faces,
+                    unitFactor);
+                if (baseMesh.Faces.Count == 0 || baseMesh.Vertices.Count == 0)
+                    baseMesh = null;
+            }
+            catch (Exception)
+            {
+                // Same non-fatal shape as a malformed piece: base_mesh
+                // present but unbuildable still leaves B null rather
+                // than taking the whole import down.
+                baseMesh = null;
+            }
+        }
+
+        data.SetDataTree(0, meshTree);
+        data.SetDataTree(1, keyTree);
+        data.SetDataTree(2, supportTree);
+        data.SetData(3, baseMesh);
+        data.SetData(
+            4,
+            BuildDiagnostics(
+                document, unitFactor, failedKeys, baseMeshPresent, baseMesh));
 
         if (failedKeys.Count > 0)
         {
@@ -471,8 +567,8 @@ public sealed class ImportPiecesComponent :
                 GH_RuntimeMessageLevel.Warning,
                 $"Import Pieces: {failedKeys.Count} piece(s) failed to " +
                 $"build ({string.Join(", ", failedKeys)}); Meshes carries " +
-                "a null placeholder at each so Courses/Keys/Supports stay " +
-                "aligned.");
+                "a null placeholder at each, in its own course branch, " +
+                "so Keys/Supports stay aligned within that branch.");
         }
 
         Message = string.Format(
@@ -486,22 +582,26 @@ public sealed class ImportPiecesComponent :
     /// The TnaResultGeometry.ThrustMesh pattern (Vertices.Add, Faces.
     /// AddFace for 3/4-corner faces with a fan fallback beyond 4,
     /// ComputeNormals, Compact) with one deliberate omission: no weld
-    /// pass. The binding spec is explicit that the document's vertices
-    /// ship exactly as materialized -- caps disjoint by design at any
+    /// pass. The binding spec is explicit that a piece's vertices ship
+    /// exactly as materialized -- caps disjoint by design at any
     /// thickness >= 0.05 m -- so welding here would silently undo the
-    /// server's own geometry.
+    /// server's own geometry. Shared by piece meshes and the base mesh:
+    /// both are plain vertex/face arrays scaled and built identically.
     /// </summary>
-    private static Mesh BuildPieceMesh(PieceRecord piece, double unitFactor)
+    private static Mesh BuildMeshFromArrays(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces,
+        double unitFactor)
     {
         var mesh = new Mesh();
-        foreach (double[] vertex in piece.Vertices)
+        foreach (double[] vertex in vertices)
         {
             mesh.Vertices.Add(
                 vertex[0] * unitFactor,
                 vertex[1] * unitFactor,
                 vertex[2] * unitFactor);
         }
-        foreach (int[] face in piece.Faces)
+        foreach (int[] face in faces)
         {
             if (face.Length == 3)
             {
@@ -541,7 +641,9 @@ public sealed class ImportPiecesComponent :
     private static string BuildDiagnostics(
         PiecesDocument document,
         double unitFactor,
-        IReadOnlyList<string> failedKeys)
+        IReadOnlyList<string> failedKeys,
+        bool baseMeshPresent,
+        Mesh? baseMesh)
     {
         var lines = new List<string>
         {
@@ -559,7 +661,20 @@ public sealed class ImportPiecesComponent :
             document.DegenerateDropped.Count > 0
                 ? "degenerate_dropped: " +
                   string.Join(", ", document.DegenerateDropped)
-                : "degenerate_dropped: none"
+                : "degenerate_dropped: none",
+            // Addendum, 2026-08-20: Meshes/Keys/Supports are trees; the
+            // branch path IS the course (0-up from the rim), replacing
+            // the removed flat Courses (C) output.
+            "Meshes/Keys/Supports are trees: branch path = course; " +
+                "branches need not be contiguous and are never " +
+                "pre-created for a course with no pieces.",
+            !baseMeshPresent
+                ? "base_mesh: absent (this export predates the " +
+                  "base_mesh addendum; B is null)"
+                : baseMesh is not null
+                    ? "base_mesh: present; B carries it"
+                    : "base_mesh: present but failed to build a valid " +
+                      "mesh; B is null"
         };
         if (failedKeys.Count > 0)
         {

@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Text.Json.Nodes;
 
 namespace Ananke.COMPAS.NativeSmoke;
 
@@ -156,7 +157,10 @@ internal static class Program
                     "Pieces",
                     "07 Delivery",
                     new[] { "P" },
-                    new[] { "M", "C", "K", "S", "D" })
+                    // Addendum, 2026-08-20: the flat Courses (C) output is
+                    // removed; M/K/S are trees branched by course, B is
+                    // the new base-mesh item.
+                    new[] { "M", "K", "S", "B", "D" })
             };
 
     public static int Main(string[] args)
@@ -415,8 +419,10 @@ internal static class Program
             ValidateImportPiecesParsing(plugin);
             Console.WriteLine(
                 "PASS  ImportPiecesComponent.ParseDocument: piece count, " +
-                "drop-order preservation, and vertex/face array shapes " +
-                "match the committed bench.pieces/1 fixture, and doctored " +
+                "drop-order preservation, vertex/face array shapes, and " +
+                "base_mesh presence/shape match the committed " +
+                "bench.pieces/1 fixture; a doctored copy with no " +
+                "base_mesh key still parses (BaseMesh null); doctored " +
                 "schema/units copies are refused naming what was found.");
         }
         catch (Exception exception)
@@ -1283,6 +1289,14 @@ internal static class Program
     /// naming what it found -- the binding spec's "component Error naming
     /// what was found," as far as this harness's reflection-only reach
     /// (no live Rhino document, no SolveInstance) can exercise it.
+    ///
+    /// Addendum, 2026-08-20: also asserts BaseMesh's shape against the
+    /// committed fixture (regenerated with base_mesh present via the UI
+    /// route's real code), and separately proves ParseDocument tolerates
+    /// a document with NO base_mesh key at all -- doctored by removing
+    /// the property wholesale from an in-memory JSON copy, not merely
+    /// nulling it, so old documents (written before this addendum) are
+    /// proven to stay loadable.
     /// </summary>
     private static void ValidateImportPiecesParsing(Assembly plugin)
     {
@@ -1396,6 +1410,74 @@ internal static class Program
             }
         }
 
+        // Addendum, 2026-08-20: base_mesh shape, against the committed
+        // fixture (regenerated to carry one).
+        object? baseMeshValue =
+            documentType.GetProperty("BaseMesh")?.GetValue(document);
+        if (baseMeshValue is null)
+        {
+            throw new InvalidOperationException(
+                "PiecesDocument.BaseMesh must be present for the " +
+                "committed fixture (regenerated with base_mesh); found " +
+                "null.");
+        }
+        Type baseMeshType = baseMeshValue.GetType();
+        IList baseMeshVertices =
+            baseMeshType.GetProperty("Vertices")?.GetValue(baseMeshValue)
+                as IList
+            ?? throw new InvalidOperationException(
+                "BaseMesh.Vertices could not be inspected.");
+        IList baseMeshFaces =
+            baseMeshType.GetProperty("Faces")?.GetValue(baseMeshValue)
+                as IList
+            ?? throw new InvalidOperationException(
+                "BaseMesh.Faces could not be inspected.");
+        if (baseMeshVertices.Count == 0 || baseMeshFaces.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "BaseMesh must carry at least one vertex and one face " +
+                "for the committed fixture.");
+        }
+        foreach (object? vertex in baseMeshVertices)
+        {
+            if (vertex is not double[] xyz || xyz.Length != 3)
+            {
+                throw new InvalidOperationException(
+                    "BaseMesh has a vertex that is not an [x, y, z] " +
+                    "triple.");
+            }
+        }
+        foreach (object? face in baseMeshFaces)
+        {
+            if (face is not int[] corners || corners.Length < 3)
+            {
+                throw new InvalidOperationException(
+                    "BaseMesh has a face with fewer than 3 corners.");
+            }
+        }
+
+        // Addendum, 2026-08-20: absence tolerance. Strip base_mesh from
+        // an in-memory copy of the fixture's own JSON (property removed
+        // entirely, not nulled) and confirm ParseDocument still succeeds
+        // with BaseMesh coming back null -- an export written before
+        // this addendum must stay loadable.
+        string jsonWithoutBaseMesh = RemoveJsonProperty(json, "base_mesh");
+        object documentWithoutBaseMesh =
+            parseMethod.Invoke(null, new object[] { jsonWithoutBaseMesh })
+            ?? throw new InvalidOperationException(
+                "ParseDocument returned null for a fixture doctored to " +
+                "omit base_mesh.");
+        object? baseMeshWhenAbsent = documentType
+            .GetProperty("BaseMesh")
+            ?.GetValue(documentWithoutBaseMesh);
+        if (baseMeshWhenAbsent is not null)
+        {
+            throw new InvalidOperationException(
+                "PiecesDocument.BaseMesh must be null when the document " +
+                "has no base_mesh key; ParseDocument must tolerate " +
+                "absence, not fabricate a value.");
+        }
+
         RequireParseRefusal(
             parseMethod,
             json.Replace(
@@ -1412,6 +1494,23 @@ internal static class Program
             "units",
             "mm",
             "a doctored bad-units copy");
+    }
+
+    /// <summary>
+    /// Removes one top-level property from a JSON document, returning the
+    /// re-serialized text -- used to prove ParseDocument tolerates a
+    /// document with a key entirely ABSENT, not merely present-and-null,
+    /// which a simple string replace of the property's value could not
+    /// distinguish.
+    /// </summary>
+    private static string RemoveJsonProperty(string json, string propertyName)
+    {
+        JsonNode node = JsonNode.Parse(json)
+            ?? throw new InvalidOperationException(
+                "JSON did not parse to a node.");
+        JsonObject root = node.AsObject();
+        root.Remove(propertyName);
+        return root.ToJsonString();
     }
 
     /// <summary>
