@@ -122,26 +122,34 @@ def test_load_param_vault_returns_the_shape_generate_consumes():
 # seconds), and a dozen separate bar assertions asking for it separately
 # would multiply that for nothing.
 #
-# FUNNEL/MID BUCKET RE-EXAMINATION (carried ruling from Task 1's review):
-# ``funnel_mid_ratio``'s default bucket thresholds (crowded_min=3,
-# sparse_max=0, radius=1.75*S) were tuned to the PRE-FIX 34-line population,
-# where "0 lines within 1.75*S" genuinely meant ordinary, uncrowded coursing
-# and "3+" meant a real funnel knot. Measured directly against the crowding
-# distribution M1+M2 actually produces at S=0.2 (2934 cells): {0: 9, 1: 55,
-# 2: 166, 3: 1415, 4: 713, 5: 514, 6: 53, 7: 8, 8: 1} -- the OLD buckets no
-# longer discriminate anything: "sparse" (count==0) is 9 cells (0.3%, almost
-# certainly edge noise, not a meaningful "ordinary" population) against a
-# "crowded" (count>=3) bucket of 2704 cells (92%, now the norm rather than
-# the exception). The buckets below are re-centred on this run's own median
-# crowding count (3, matching the population's actual mode) with a one-tier
-# buffer on each side excluded from both buckets, so "sparse" and "crowded"
-# again mean two genuinely different, non-trivial local-density regimes
-# rather than a near-empty outlier bucket against everything else.
+# FUNNEL/MID METRIC (fix round 1, per task-2-review.md's Important 1):
+# ``funnel_mid_ratio`` now buckets by PERCENTILE RANK of the crowding-count
+# distribution (default low_percentile=10, high_percentile=90), not fixed
+# absolute counts -- see the function's own docstring in param_vault.py for
+# the full "why", and the module-level table below for the two numbers this
+# change is actually keyed to. A fixed-count re-tune (tried first, and
+# shipped in this task's original commit) turned out to be incommensurable
+# with the baseline it was compared against: re-tuned thresholds that
+# discriminate the post-fix population (98 streamlines) give an EMPTY
+# crowded bucket -- NaN -- on the pre-fix population (34 streamlines, max
+# crowding count 4), and the pre-fix population's OWN fixed thresholds
+# measure 2.0062 (a FAIL against the 1.5 bar) on the post-fix population,
+# not the 1.48 the original commit reported. Percentile ranks are
+# population-relative by construction, so the same call means "the
+# least/most-crowded tenth" on either population and the two numbers below
+# are a genuine, comparable measurement of the same metric:
+#
+#   pre-fix (34 streamlines, S=0.2):  2.4156  (reproduces the diagnosis's
+#                                              own fixed-threshold reading
+#                                              to six figures -- p10 of
+#                                              that population IS count==0
+#                                              and p90 IS count>=3)
+#   post-fix (98 streamlines, S=0.2): 1.2208  (19% headroom under the 1.5
+#                                              bar, against 1.7% headroom
+#                                              for the withdrawn fixed
+#                                              re-tune)
 # ---------------------------------------------------------------------------
 
-
-_FUNNEL_SPARSE_MAX = 2
-_FUNNEL_CROWDED_MIN = 5
 
 _VAULT_RUNS: Dict[float, Dict[str, Any]] = {}
 
@@ -173,14 +181,10 @@ def _vault_run(size: float) -> Dict[str, Any]:
     mesh_area_total = pv.mesh_area(mesh)
     coverage = (covered / mesh_area_total) if mesh_area_total > 0.0 else float("nan")
     starvation = pv.cross_flow_starvation(mesh, flowlines, size, k=2.0)
-    funnel_ratio = pv.funnel_mid_ratio(
-        mesh,
-        cells,
-        flowlines,
-        size,
-        crowded_min=_FUNNEL_CROWDED_MIN,
-        sparse_max=_FUNNEL_SPARSE_MAX,
-    )
+    # Percentile buckets (10/90, the function's own default) -- see the
+    # module-level note above and param_vault.py's own docstring for why
+    # this replaced fixed absolute crowding-count thresholds.
+    funnel_ratio = pv.funnel_mid_ratio(mesh, cells, flowlines, size)
 
     measured = {
         "result": result,
@@ -328,12 +332,11 @@ def test_vault_disconnected_meets_the_spec_bar_at_s_02():
 )
 def test_vault_funnel_mid_ratio_meets_the_spec_bar_at_s_02():
     ratio = _vault_run(0.2)["funnel_mid_ratio"]
-    assert math.isfinite(ratio), "funnel/mid ratio is not finite -- one of the re-centred buckets is empty"
+    assert math.isfinite(ratio), "funnel/mid ratio is not finite -- the p10 or p90 bucket is empty"
     assert ratio <= 1.5, (
-        "funnel/mid median cell size ratio {:.3f} is not <= 1.5 (was "
-        "2.4, crowded_min={}, sparse_max={})".format(
-            ratio, _FUNNEL_CROWDED_MIN, _FUNNEL_SPARSE_MAX
-        )
+        "funnel/mid median cell size ratio (p10/p90 crowding buckets) "
+        "{:.4f} is not <= 1.5 (pre-fix baseline, same metric: "
+        "2.4156)".format(ratio)
     )
 
 
@@ -457,14 +460,17 @@ def test_funnel_mid_ratio_reports_the_crowded_bucket_as_the_smaller_one():
     }
     lines = [np.array([[0.0, 0.0, 0.0], [0.2, 0.2, 0.0]]) for _ in range(4)]
 
+    # Percentile buckets (the shipped default, 10/90): with 4 cells and
+    # counts [4, 4, 4, 0], p10 lands strictly between 0 and 4 (so only the
+    # 0-count cell is "sparse") and p90 lands at 4 (so all three 4-count
+    # cells are "crowded") -- the same two buckets a fixed (crowded_min=3,
+    # sparse_max=0) reading would have picked, on this small a population.
     ratio = pv.funnel_mid_ratio(
         mesh,
         crowded_cells + [sparse_cell],
         lines,
         s=0.1,
         radius=0.3,
-        crowded_min=3,
-        sparse_max=0,
     )
     assert math.isfinite(ratio)
     assert ratio > 1.0

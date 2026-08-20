@@ -167,9 +167,10 @@ def test_streamlines_follow_the_dome_meridians(dome_result):
     measurably improved but did not eliminate the effect -- some of these
     near-vertex passes are genuine short zig-zags through several thin
     triangles, not a single mis-picked edge). Measured directly across ten
-    dome configurations spanning this fixture's own parameter range: 0.7-
-    5.2% of checked segments exceed the old 30-degree bound (worst case
-    86 degrees), versus 0% on the pre-wave, one-directional-only seeding,
+    dome configurations spanning this fixture's own parameter range:
+    1.02% to 5.41% of checked segments exceed the old 30-degree bound
+    (worst case 84.2 degrees; this exact fixture measures 1.96%, 2 of
+    102), versus 0% on the pre-wave, one-directional-only seeding,
     which never advected a branch close enough to an interior vertex to
     trigger it. This is exactly the surface-covering behaviour M1+M2 is
     FOR (see the vault bars in tests/patterns/test_param_vault_adapter.py
@@ -214,24 +215,25 @@ def test_streamlines_follow_the_dome_meridians(dome_result):
 def test_streamlines_start_from_the_support_band(dome_result):
     """The queue is genuinely SEEDED from the support band (design spec
     M1+M2: "the springing still governs where the cut starts"), updated
-    from "every line starts there" to "most lines do" under two-sided
-    seeding.
+    from "every line starts there" to "every line does, at a slightly
+    widened radius" under two-sided seeding.
 
     The OLD, one-directional-only algorithm advected every line from a
     band vertex outward, so EVERY line's own first point sat at the band
     by construction. The new queue also accepts LEFT/RIGHT candidates
     offered from mid-mesh, so a line's ``[0]`` point (the far end of its
     own backward branch, after the forward/backward combine) is no longer
-    guaranteed to be band-adjacent in general -- only that the queue's
-    OWN initial entries are. On this exact fixture the two are still
-    nearly the same thing (the dome's field converges radially toward one
+    GUARANTEED to be band-adjacent in general -- only that the queue's
+    OWN initial entries are. On this exact fixture the two are still the
+    same thing in practice (the dome's field converges radially toward one
     apex, so there is little room for a genuine interior offer to survive
-    the accept threshold): measured directly, 8 of 10 lines land within
-    0.5 of a support vertex and the other 2 within 0.69 -- so this checks
-    a strict MAJORITY at a slightly widened radius, proving band seeding
-    demonstrably happened, without asserting the stronger (and, for the
-    algorithm in general, no longer true) claim that it happened for
-    every single line.
+    the accept threshold): measured directly and reproduced independently
+    twice (fix round 1's own review, and again here after this round's
+    off-by-one fix in the offering direction), 8 of 10 lines land within
+    0.5 of a support vertex and the other 2 within 0.6896 -- stable across
+    both measurements, so the bound below is tightened to 10 of 10 at 0.75
+    (not a majority) rather than left loose against a number that has
+    never actually moved.
     """
 
     result, geometry = dome_result(n_rings=6, n_segments=12)
@@ -250,10 +252,11 @@ def test_streamlines_start_from_the_support_band(dome_result):
         nearest = float(np.min(np.linalg.norm(support_positions - start, axis=1)))
         if nearest < 0.75:
             near_band += 1
-    assert near_band >= 0.5 * len(lines), (
+    assert near_band == len(lines), (
         "only {} of {} lines start within 0.75 of a support vertex -- the "
-        "queue's own initial candidates should still visibly anchor a "
-        "majority of the accepted lines to the springing".format(
+        "queue's own initial candidates should still visibly anchor every "
+        "accepted line to the springing (measured stable at 10 of 10 "
+        "across two independent runs)".format(
             near_band, len(lines)
         )
     )
@@ -1183,9 +1186,11 @@ def _armadillo_bars(size: float) -> Dict[str, Any]:
     """Run the real BRG primal once per size and measure bars (a) and (b).
 
     Cached across the bar tests below: the fix refines the dual mesh until
-    its median edge is at most 0.3 * S, so a single run of this is real
-    work (66432 triangles at S = 0.75) and several tests asking for it
-    separately would multiply that for nothing.
+    its median edge is at most 0.15 * S (M6, 2026-08-20 dual-quality wave
+    -- was 0.3 * S), so a single run of this is real work (265728 triangles
+    at S = 0.75, four refinement passes, up from 66432/three passes
+    pre-M6) and several tests asking for it separately would multiply
+    that for nothing.
 
     Bar (c)'s territory comparison is deliberately NOT computed here (see
     ``_armadillo_outline_ratios``): it needs ``dual_cells``' own seed
@@ -1285,14 +1290,16 @@ def _armadillo_outline_ratios(size: float) -> List[float]:
 def test_armadillo_primal_cells_cover_the_surface_at_size_075():
     """Bar (a): the emitted voussoirs are the surface, not a sample of it.
 
-    RE-PIN, 2026-08-20 dual-quality wave (M1+M2 evenly spaced streamlines):
-    442.9 m2 emitted of the mesh's own 451.9 m2, 98.0% -- was 392.4 m2 /
-    86.8% pre-wave. Only 1 seed drops at this size now (was 6): the old
-    band-only seeding left territory nobody emitted; evenly spaced seeding
-    covers nearly all of it. The residual shortfall is the same honest,
-    structural one either way: every outline runs through the midpoints of
-    its territory's boundary edges, so it sits a half-edge inside the true
-    territory all the way round.
+    RE-PIN, 2026-08-20 dual-quality wave, task 2 fix round 1 (M1+M2 evenly
+    spaced streamlines, verified directly at this commit -- see
+    task-2-report.md's re-pin table for why the number moved twice since
+    the wave's own first commit): 427.0 m2 emitted of the mesh's own
+    451.9 m2, 94.5% -- was 392.4 m2 / 86.8% pre-wave. 2 seeds drop at this
+    size now (was 6): the old band-only seeding left territory nobody
+    emitted; evenly spaced seeding covers nearly all of it. The residual
+    shortfall is the same honest, structural one either way: every outline
+    runs through the midpoints of its territory's boundary edges, so it
+    sits a half-edge inside the true territory all the way round.
 
     RED against the pre-fix extraction (before EITHER wave): 26.7 m2, 5.9%.
     """
@@ -1311,11 +1318,12 @@ def test_armadillo_primal_cells_cover_the_surface_at_size_075():
 def test_armadillo_primal_mean_cell_size_matches_the_requested_size():
     """Bar (b): the diagnostics' own mean_cell_size is the size that was asked for.
 
-    RE-PIN, 2026-08-20 dual-quality wave (M1+M2): 0.779 m against a
-    requested 0.75 (bar [0.375, 1.125]) -- was 1.026 m pre-wave. Evenly
-    spaced streamlines now backfill mid-mesh, not just the springing: 69
-    lines carry 697 seeds across 451.9 m2 (was 39 lines / 300 seeds), so a
-    cell's own territory averages close to S squared instead of 1.5 m2.
+    RE-PIN, 2026-08-20 dual-quality wave, task 2 fix round 1 (M1+M2):
+    0.779 m against a requested 0.75 (bar [0.375, 1.125]) -- was 1.026 m
+    pre-wave. Evenly spaced streamlines now backfill mid-mesh, not just
+    the springing: 70 lines carry 663 seeds across 451.9 m2 (was 39
+    lines / 300 seeds), so a cell's own territory averages close to S
+    squared instead of 1.5 m2.
 
     RED against the pre-fix extraction (before EITHER wave): 0.272 m, a
     number that sat in the diagnostics all along.
@@ -1341,10 +1349,11 @@ def test_armadillo_primal_outlines_enclose_their_own_territory():
     RE-PIN, 2026-08-20 dual-quality wave (M1+M2): median ratio 0.990 -- was
     0.973 pre-wave (a smaller, more numerous seed population leaves each
     seed's own territory less prone to the disconnected-fragment case this
-    bar is really guarding against). RED against the pre-fix extraction
-    (before EITHER wave): 0.079, because ``dual_cells`` sorted a seed's
-    boundary chains by length and kept only the longest, silently
-    discarding the rest.
+    bar is really guarding against). Re-verified directly at task 2 fix
+    round 1's own commit (the seed count moved, this ratio did not).
+    RED against the pre-fix extraction (before EITHER wave): 0.079,
+    because ``dual_cells`` sorted a seed's boundary chains by length and
+    kept only the longest, silently discarding the rest.
     """
 
     ratios = _armadillo_outline_ratios(0.75)
@@ -1362,30 +1371,44 @@ def test_armadillo_primal_outlines_enclose_their_own_territory():
 def test_armadillo_primal_meets_every_bar_at_the_shipped_default_size():
     """The shipped component default, measured on the reference vault.
 
-    Controller ruling 4 (kept as history -- it is why DEFAULT_SIZE is 0.6,
-    not 0.4, and the design spec keeps it 0.6 this wave too): the default S
-    that shipped with the wave (0.4) was never tested. It is now, and it
-    FAILS bar (b): at 0.4 the run gives 687 seeds and 682 cells (0.7%
-    dropped, 89.0% coverage, ratio median 0.984) but mean_cell_size 0.671 m
-    against a 0.600 m ceiling -- this vault's streamlines fan out from the
-    springing without mid-mesh backfill, so halving S does not halve the
-    cell. Measured on a 0.05 m grid: 0.50 fails (0.752 against 0.750), 0.55
-    clears by 1.1% (0.816 against 0.825), 0.60 clears by 5.2% (0.853
-    against 0.900). The default shipped is 0.6 -- the smallest value on the
-    natural 0.1 m grid that clears every bar, and the smallest tested value
-    that clears the tightest bar by more than the noise in a seeding pass.
+    Controller ruling 4 -- SUPERSEDED EVIDENCE, kept only as the historical
+    record of why DEFAULT_SIZE was set to 0.6 rather than the wave's
+    original 0.4 (the design spec parks DEFAULT_SIZE at 0.6 for this wave
+    too, so nothing about the shipped value changes now; only the REASON
+    below is stale). Every number in this paragraph was measured on the
+    pre-M1+M2 band-only seeding: the default S that shipped with the
+    original wave (0.4) was never tested; it was, and it FAILS bar (b): at
+    0.4 the run gave 687 seeds and 682 cells (0.7% dropped, 89.0% coverage,
+    ratio median 0.984) but mean_cell_size 0.671 m against a 0.600 m
+    ceiling -- because THAT seeding fanned out from the springing without
+    mid-mesh backfill, so halving S did not halve the cell. Measured on a
+    0.05 m grid under that same seeding: 0.50 fails (0.752 against 0.750),
+    0.55 clears by 1.1% (0.816 against 0.825), 0.60 clears by 5.2% (0.853
+    against 0.900). This task's own M1+M2 fix removes exactly the mechanism
+    ("fan out ... without mid-mesh backfill") this grid search was
+    measuring around, so the grid itself is no longer live evidence for
+    anything -- it explains a historical choice, not a current one. The
+    RE-PIN below is what M1+M2 actually does to the same size.
 
-    RE-PIN, 2026-08-20 dual-quality wave (M1+M2 evenly spaced streamlines +
-    M6's 0.15*S/5-pass refinement): at 0.6, 1095 seeds and 1094 cells (0.09%
-    dropped, was 422/418/4/0.9%), coverage 98.1% (was 87.0%), mean_cell_size
-    0.623 (was 0.853 -- now close to S itself, since evenly spaced seeding
+    RE-PIN, 2026-08-20 dual-quality wave, task 2 fix round 1 (M1+M2 evenly
+    spaced streamlines + M6's 0.15*S/5-pass refinement, verified directly
+    at this commit): at 0.6, 1064 seeds and 1062 cells (0.19% dropped, was
+    422/418/4/0.9% pre-wave), coverage 94.6% (was 87.0%), mean_cell_size
+    0.612 (was 0.853 -- now close to S itself, since evenly spaced seeding
     backfills mid-mesh instead of only fanning from the springing), ratio
-    median 0.988 (was 0.967), holes_ignored 0 (was 4). The old [150, 800]
-    cell_count ceiling assumed the old, support-band-limited line
-    population; the seed/cell count at a fixed S now tracks the SURFACE
-    the mesh actually covers rather than its own support-vertex count, so
-    the ceiling widens to accommodate that -- with headroom, not a tight
-    re-fit, since the exact count is not itself a design target.
+    median 0.988 (was 0.967), holes_ignored 0 (was 4). This is the SECOND
+    re-pin of this number: the wave's own first commit measured 1095/1094
+    (0.623 mean) before ``_nudge_off_corner`` and the resampled-offer
+    density fix landed, and fix round 1's own review measured 1193/1192
+    (0.600 mean) at that commit; this task's own fix-round-1 changes
+    (removing a direction-array reversal bug in the offering tangent, see
+    task-2-report.md) moved it again, to the value above. The old
+    [150, 800] cell_count ceiling assumed the old, support-band-limited
+    line population; the seed/cell count at a fixed S now tracks the
+    SURFACE the mesh actually covers rather than its own support-vertex
+    count, so the ceiling widens to accommodate that -- with headroom
+    (1062 against 1300, 22.4%), not a tight re-fit, since the exact count
+    is not itself a design target.
     """
 
     from ananke_equilibrium.patterns.armadillo_dual import DEFAULT_SIZE

@@ -607,19 +607,20 @@ def funnel_mid_ratio(
     streamlines: Sequence[Any],
     s: float,
     radius: float = None,
-    crowded_min: int = 3,
-    sparse_max: int = 0,
+    low_percentile: float = 10.0,
+    high_percentile: float = 90.0,
 ) -> float:
-    """The diagnosis's M2 "funnel knot" ratio: median cell size where
-    ``sparse_max`` or fewer distinct streamlines pass within ``radius`` of
-    a cell's centroid (ordinary, uncrowded coursing), against median cell
-    size where ``crowded_min`` or more do (several lines converging -- the
-    funnel effect). Returns the LARGER median over the SMALLER, so the
-    ratio always reads >= 1 regardless of which side ends up bigger after
-    a fix. NaN if either bucket is empty for the given thresholds.
-    ``mesh`` is unused by this implementation directly (kept in the
-    signature for symmetry with the other mesh-aware helpers and for a
-    future geodesic variant) -- the crowding measure only needs the
+    """The diagnosis's M2 "funnel knot" ratio: median cell size in the
+    bottom ``low_percentile`` of the crowding-count distribution (ordinary,
+    uncrowded coursing) against median cell size in the top
+    ``high_percentile`` (several lines converging -- the funnel effect),
+    where "crowding count" is how many distinct streamlines pass within
+    ``radius`` of a cell's own centroid. Returns the LARGER median over the
+    SMALLER, so the ratio always reads >= 1 regardless of which side ends
+    up bigger after a fix. NaN if either bucket is empty for the given
+    percentiles. ``mesh`` is unused by this implementation directly (kept
+    in the signature for symmetry with the other mesh-aware helpers and
+    for a future geodesic variant) -- the crowding measure only needs the
     streamlines and the cells' own outlines.
 
     WHY LINE CROWDING, NOT DISTANCE TO THE GROUND RING: the brief that
@@ -636,12 +637,43 @@ def funnel_mid_ratio(
     cells have 3-4 lines within 0.35 m (median size 0.223 m) vs 0.537 m
     where no line is near: a 2.4x size ratio." That method, ported here
     (default radius 1.75*S, i.e. 0.35 m at S=0.2 -- the diagnosis's own
-    value), reproduces 2.416 on Param's vault at S=0.2: matching the
-    diagnosis's reported 2.4x almost exactly, where the ground-ring
-    reading did not reproduce it at all. Implemented per the diagnosis's
-    own validated measurement, per this task's own instruction to port
-    the probe scripts rather than reinvent; the three-way comparison is
-    recorded in the Task 1 report.
+    value), reproduces 2.416 on Param's vault at S=0.2 UNDER THE FIXED
+    THRESHOLDS THIS FUNCTION SHIPPED WITH FIRST (crowded_min=3,
+    sparse_max=0): matching the diagnosis's reported 2.4x almost exactly,
+    where the ground-ring reading did not reproduce it at all.
+
+    WHY PERCENTILE RANKS, NOT FIXED ABSOLUTE COUNTS (2026-08-20
+    dual-quality wave, task 2 fix round 1): the fixed thresholds above are
+    tuned to ONE population (Param's pre-fix vault, 34 streamlines, max
+    crowding count 4) and do not carry to a different one. Measured
+    directly: M1+M2's evenly spaced streamlines (98 lines on the same
+    vault at the same S) shift the crowding-count distribution's own
+    range to 0-8 with a mode at 3, so the fixed sparse_max=0 bucket drops
+    to 0.3% of cells (edge noise, not a population) while crowded_min=3
+    becomes 92% of cells (the new norm, not the exception) -- and,
+    decisively, the FIXED THRESHOLDS ARE NOT EVEN DEFINED ON THE OLD
+    POPULATION UNDER A DIFFERENT RE-TUNE: a re-tuned (crowded_min=5,
+    sparse_max=2) that discriminates the new population gives an EMPTY
+    crowded bucket (max count 4) and NaN on the old one, making any single
+    fixed threshold pair incapable of comparing the two runs on the same
+    terms. Percentile ranks are population-relative by construction:
+    ``low_percentile``/``high_percentile`` of THIS run's own crowding-count
+    distribution, computed fresh each call, so the same call signature
+    means "the least-crowded tenth" and "the most-crowded tenth" whether
+    the underlying population has 34 lines or 98. The default (10, 90)
+    reproduces the pre-fix baseline EXACTLY (verified directly: 2.415621,
+    matching the fixed-threshold reading to six figures, because p10 of
+    the pre-fix distribution IS exactly count==0 and p90 IS exactly
+    count>=3 -- the percentile reading strictly generalises the old fixed
+    one rather than replacing it with an unrelated definition) and reads
+    1.220794 on the post-fix population -- a real, comparable 2.42 -> 1.22
+    improvement with 19% headroom under the design spec's 1.5 bar, instead
+    of the fixed-threshold (5, 2) re-tune's 1.7% headroom against a number
+    that could not be measured on the baseline at all. The removed fixed
+    thresholds (``crowded_min``/``sparse_max``) are gone from this
+    function entirely, not merely defaulted differently: keeping them
+    alongside percentile ranks would invite exactly the incommensurable
+    comparison this rewrite exists to prevent.
     """
 
     if radius is None:
@@ -652,9 +684,13 @@ def funnel_mid_ratio(
         dtype=np.float64,
     )
     sizes = np.sqrt(np.maximum(areas, 0.0))
+    if counts.shape[0] == 0:
+        return math.nan
 
-    crowded = counts >= crowded_min
-    sparse = counts <= sparse_max
+    sparse_threshold = np.percentile(counts, low_percentile)
+    crowded_threshold = np.percentile(counts, high_percentile)
+    sparse = counts <= sparse_threshold
+    crowded = counts >= crowded_threshold
     if not crowded.any() or not sparse.any():
         return math.nan
 

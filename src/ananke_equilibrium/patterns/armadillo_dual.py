@@ -92,9 +92,11 @@ _TERMINATE_FACTOR = 0.5
 # variable) mesh-crossing spacing a real advected polyline actually has.
 _INDEX_RESAMPLE_FACTOR = 0.5
 _MAX_ADVECTION_STEPS = 20000
-_START_INSET = 0.02  # fraction of the way from a seed point to its face's
-# centroid, used only to keep the very first advection/offset step off an
-# exact triangle edge or corner (see ``_band_candidate_points``).
+_START_INSET = 0.02  # fraction of the way from a point to its triangle's
+# own centroid, used to keep a point off an exact edge or corner: once at
+# a band candidate's own start (``_band_candidate_points``), and again at
+# EVERY advection/offset step where ``_nudge_off_corner`` finds one
+# sitting suspiciously close to a vertex, not only the first.
 _DEGENERATE_AREA_TOLERANCE = 1.0e-9
 
 # The shipped target voussoir size in metres: the component's S default, the
@@ -743,12 +745,17 @@ class _SegmentIndex:
 
     def add_polyline(self, points: Sequence[np.ndarray], step: float) -> None:
         """Index one accepted line's own segments, RESAMPLED at ``step``
-        arclength spacing first (endpoints kept) -- the spec's own "resample
-        accepted lines to ~0.5*size for the index" so a point-to-segment
+        arclength spacing first (endpoints kept) so a point-to-segment
         query is honest at a bounded resolution instead of running against
         the raw, highly variable mesh-crossing spacing an advected polyline
         actually has (and without being O(every raw crossing point)
-        either). Reuses ``_cumulative_arclength``/``_point_at_arclength`` --
+        either). ``step`` is chosen here, matching M3's own resampling
+        spacing (design.md's "every chain is RESAMPLED at ~0.5*S spacing"
+        -- M3 resamples EXTRACTED CHAINS, a different object, on Task 3's
+        own later pass; M1+M2's own text asks only for "point-to-SEGMENT
+        against a spatial index", not a specific resolution), a sensible
+        precedent to reuse rather than a spec requirement on this index
+        itself. Reuses ``_cumulative_arclength``/``_point_at_arclength`` --
         the very functions ``seeds`` itself already advects along.
         """
 
@@ -768,11 +775,18 @@ class _SegmentIndex:
             self._add_segment(np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64))
 
     def min_distance(self, point: np.ndarray, radius: float) -> float:
-        """The true distance from ``point`` to its nearest indexed segment,
-        or +inf if nothing indexed lies within ``radius`` -- callers here
-        only ever need to compare against one threshold, never the exact
-        minimum beyond that, so the search radius doubles as its own cheap
-        upper bound.
+        """The true minimum distance from ``point`` to every indexed
+        segment found in the ``radius``-sized cell neighbourhood searched
+        (``+inf`` only if that neighbourhood holds no segment at all).
+        This is NOT clamped to ``radius``: a segment can register in a
+        searched cell while its own nearest point to ``point`` sits
+        farther away than ``radius`` (the cell, not the segment's exact
+        distance, is what bounds the search), so the return value is
+        routinely finite and larger than ``radius``. Both current callers
+        (``is_clear``/``approaches``) only ever threshold the result
+        against that same ``radius``, so this never mattered in practice,
+        but it means the true CONTRACT is "the minimum over what was
+        searched", not "the minimum, or +inf beyond radius".
         """
 
         reach = int(math.ceil(radius / self.cell_size)) + 1
@@ -954,7 +968,8 @@ def _ray_triangle_exit(
     dome fixture's meridians -- otherwise grazes that edge and exits within
     machine epsilon of a vertex, landing the next face's local position
     exactly on ITS corner too and cascading into the same degenerate case
-    ``_seed_start_point`` exists to avoid at the very first step.
+    ``_nudge_off_corner`` exists to catch at every subsequent step (the
+    entry-side counterpart to this function's own exit-side clamp).
 
     The acceptance window on ``s`` is deliberately wider than [0, 1]
     (``_CORNER_MARGIN`` beyond each end): entering a face exactly through
@@ -1014,13 +1029,26 @@ def _nudge_off_corner(pos2d: np.ndarray, tri2d: np.ndarray) -> np.ndarray:
     dome fixture: about 1.4% of segments (worst case 86 degrees off
     meridian, confirmed absent on the pre-wave one-directional-only
     seeding, which never advected from a point that close to an interior
-    vertex) before this nudge; zero afterwards, at every density this
-    wave's own report table measures. Nudged toward the triangle's own 2D
-    centroid by ``_START_INSET`` -- the same fraction ``_seed_start_point``
-    used to keep an actual seed off an exact vertex corner -- which is
-    enough to resolve the tie honestly in favour of the edge the field
-    direction actually means, while leaving every comfortably-interior
-    ray-cast (the overwhelming majority) untouched.
+    vertex) before this nudge.
+
+    NOT ZERO AFTERWARDS -- this REDUCES the effect, it does not eliminate
+    it (an earlier draft of this docstring claimed zero; that was false,
+    corrected in fix round 1 of the same task's review). Measured directly
+    on the exact fixture the dome meridian test uses (n_rings=6,
+    n_segments=12, size=1.0): 1.96% of segments (2 of 102) still land
+    >= 30 degrees off meridian, worst case 78.8 degrees. Across ten dome
+    configurations spanning this fixture's own parameter range: 1.02% to
+    5.41%, worst case 84.2 degrees. Some of what remains is a genuine
+    short zig-zag through several thin triangles fanning out from one
+    vertex, not a single mis-picked edge this nudge could ever catch --
+    the honest contract is the dome meridian test's own 10% AGGREGATE
+    bound, not a per-segment guarantee. Nudged toward the triangle's own
+    2D centroid by ``_START_INSET`` -- the same fraction
+    ``_seed_start_point`` used to keep an actual seed off an exact vertex
+    corner before that function was deleted -- which is enough to resolve
+    the tie honestly in favour of the edge the field direction actually
+    means, while leaving every comfortably-interior ray-cast (the
+    overwhelming majority) untouched.
     """
 
     edges = (tri2d[1] - tri2d[0], tri2d[2] - tri2d[1], tri2d[0] - tri2d[2])
@@ -1037,22 +1065,36 @@ def _nudge_off_corner(pos2d: np.ndarray, tri2d: np.ndarray) -> np.ndarray:
 
 class _Branch(NamedTuple):
     """One direction of one accepted line's advection: parallel arrays --
-    ``points[i]`` / ``faces[i]`` / ``directions[i]`` describe the same
-    point ``i``, for every point on this branch. ``faces[i]`` is a TUPLE
-    of every face genuinely touching ``points[i]`` (one, for the branch's
-    own start point or a point that terminated at the mesh boundary; two,
-    for every ordinary interior point, which always sits exactly on the
-    mesh edge shared by the face advection was leaving and the face it was
-    entering) -- deliberately unordered and reversal-safe, so a caller
-    offering a cross-flow candidate from ``points[i]`` can try every face
-    that actually touches it (see ``streamlines``'s own offering loop for
-    why one alone is not always enough) regardless of whether this branch
+    ``points[i]`` / ``faces[i]`` describe the same point ``i``, for every
+    point on this branch. ``faces[i]`` is a TUPLE of every face genuinely
+    touching ``points[i]`` (one, for the branch's own start point or a
+    point that terminated at the mesh boundary; two, for every ordinary
+    interior point, which always sits exactly on the mesh edge shared by
+    the face advection was leaving and the face it was entering) --
+    deliberately unordered and reversal-safe, so a caller offering a
+    cross-flow candidate from ``points[i]`` can try every face that
+    actually touches it (see ``streamlines``'s own offering loop for why
+    one alone is not always enough) regardless of whether this branch
     ended up read forwards or reversed into a combined line.
+
+    Deliberately does NOT also carry a per-point field direction (an
+    earlier version of this branch did, and fix round 1 removed it): a
+    single direction vector has an inherent orientation ("the segment
+    LEAVING this point, in THIS branch's own advection sense") that
+    ``streamlines()``'s own `reversed(backward.faces[1:]) + forward.faces`
+    combine silently inverts on the reversed half -- unlike `faces`, which
+    is an unordered tuple and survives reversal for free, a direction
+    vector does not. ``streamlines()`` and ``_resampled_offer_points``
+    instead derive a local tangent directly from the COMBINED line's own
+    consecutive points (``_line_point_tangents``), which is correct by
+    construction regardless of which branch or which half a point came
+    from, and is exactly as valid for seeding a cross-flow rotation as a
+    stored field direction was (only its SIGN could ever have differed,
+    and sign never matters here -- both +1 and -1 are always tried).
     """
 
     points: List[np.ndarray]
     faces: List[Tuple[int, ...]]
-    directions: List[np.ndarray]
 
 
 def _advect_branch(
@@ -1097,7 +1139,6 @@ def _advect_branch(
 
     points: List[np.ndarray] = [pos3d]
     faces: List[Tuple[int, ...]] = [(face,)]
-    directions: List[np.ndarray] = [direction]
 
     for _ in range(_MAX_ADVECTION_STEPS):
         e1, e2, normal = bases[face]
@@ -1141,10 +1182,9 @@ def _advect_branch(
 
         points.append(exit3d)
         faces.append(edge_faces)
-        directions.append(next_direction)
 
         if index.approaches(exit3d, terminate_radius):
-            return _Branch(points, faces, directions)
+            return _Branch(points, faces)
         if next_face is None:
             break  # mesh boundary
 
@@ -1152,13 +1192,46 @@ def _advect_branch(
         pos3d = exit3d
         face = next_face
 
-    return _Branch(points, faces, directions)
+    return _Branch(points, faces)
+
+
+def _line_point_tangents(line_points: Sequence[np.ndarray]) -> List[np.ndarray]:
+    """A local tangent direction at every point of a (possibly forward and
+    reversed-backward-branch-concatenated) polyline, derived directly from
+    the points themselves -- correct by construction regardless of which
+    original branch a point came from or which half of a combined line it
+    sits in (fix round 1: an earlier version stored a per-point field
+    direction on ``_Branch`` instead, which has an inherent "leaving this
+    point, in this branch's own advection sense" orientation that
+    ``streamlines()``'s own ``reversed(backward...[1:]) + forward...``
+    combine silently inverted on the reversed half; see ``_Branch``'s own
+    docstring).
+
+    Point ``i``'s tangent is the incoming segment (``points[i] -
+    points[i-1]``) where that is not degenerate, falling back to the
+    outgoing segment (``points[i+1] - points[i]``) for the line's own
+    first point or a repeated point -- only ever used to seed
+    ``_cross_flow_direction``, where sign never matters (both +1 and -1
+    are always tried), so which of the two adjacent segments is used, and
+    which way it points, has no bearing on correctness.
+    """
+
+    line = np.asarray(line_points, dtype=np.float64)
+    n = line.shape[0]
+    tangents: List[np.ndarray] = []
+    for i in range(n):
+        vec = line[i] - line[i - 1] if i > 0 else np.zeros(3)
+        norm = float(np.linalg.norm(vec))
+        if norm <= _ZERO_TOLERANCE and i + 1 < n:
+            vec = line[i + 1] - line[i]
+            norm = float(np.linalg.norm(vec))
+        tangents.append(vec / norm if norm > _ZERO_TOLERANCE else np.array([1.0, 0.0, 0.0]))
+    return tangents
 
 
 def _resampled_offer_points(
     line_points: Sequence[np.ndarray],
     line_faces: Sequence[Tuple[int, ...]],
-    line_directions: Sequence[np.ndarray],
     step: float,
 ) -> List[Tuple[np.ndarray, Tuple[int, ...], np.ndarray]]:
     """Extra LEFT/RIGHT offering points along one accepted line, resampled
@@ -1185,6 +1258,11 @@ def _resampled_offer_points(
     preserved): a point strictly between two raw crossings always lies in
     whichever single face that segment was actually advected through,
     which is necessarily a member of both bracketing points' own tuples.
+    The resampled point's own tangent is read straight off the SAME
+    bracketing pair (``line[idx] - line[idx - 1]``), not looked up from
+    any per-point direction bookkeeping -- see ``_line_point_tangents``
+    for why that lookup is the wrong shape for a combined (forward +
+    reversed) line in general.
     """
 
     line = np.asarray(line_points, dtype=np.float64)
@@ -1204,7 +1282,13 @@ def _resampled_offer_points(
         faces_here = tuple(
             dict.fromkeys(list(line_faces[idx - 1]) + list(line_faces[idx]))
         )
-        direction = line_directions[idx - 1]
+        segment = line[idx] - line[idx - 1]
+        segment_norm = float(np.linalg.norm(segment))
+        direction = (
+            segment / segment_norm
+            if segment_norm > _ZERO_TOLERANCE
+            else np.array([1.0, 0.0, 0.0])
+        )
         extra.append((point, faces_here, direction))
         s += step
     return extra
@@ -1295,14 +1379,19 @@ def streamlines(mesh: Mesh, field: np.ndarray, size: float) -> List[np.ndarray]:
         if len(line_points) < 2:
             continue  # degenerate: the field collapsed at both ends
         line_faces = list(reversed(backward.faces[1:])) + forward.faces
-        line_directions = list(reversed(backward.directions[1:])) + forward.directions
 
         lines.append(line_points)
         index.add_polyline(line_points, resample_step)
 
-        offer_sources = list(zip(line_points, line_faces, line_directions))
+        # Tangents are read straight off the COMBINED line's own points
+        # (_line_point_tangents), not off either branch's own "direction
+        # leaving this point" bookkeeping -- see _Branch's docstring for
+        # why that bookkeeping's orientation does not survive the reversed
+        # half of ``reversed(backward...[1:]) + forward...`` (fix round 1).
+        tangents = _line_point_tangents(line_points)
+        offer_sources = list(zip(line_points, line_faces, tangents))
         offer_sources.extend(
-            _resampled_offer_points(line_points, line_faces, line_directions, resample_step)
+            _resampled_offer_points(line_points, line_faces, resample_step)
         )
         for point, touching_faces, direction in offer_sources:
             for sign in (1.0, -1.0):
@@ -1510,8 +1599,9 @@ def _refine_triangulation(
     has no vertex to represent at all. This bridges that gap.
 
     Written against numpy arrays rather than a Python midpoint dict because
-    the adaptive caller runs this up to 4 times, and the last pass on the
-    armadillo primal splits 66432 triangles into 265728.
+    the adaptive caller runs this up to 5 times (M6, 2026-08-20
+    dual-quality wave -- was 4), and the last pass on the armadillo primal
+    splits 265728 triangles into 1062912.
     """
 
     if triangles.shape[0] == 0:
