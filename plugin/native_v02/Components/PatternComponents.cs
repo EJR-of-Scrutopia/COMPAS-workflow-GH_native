@@ -489,17 +489,24 @@ public sealed class ArmadilloDualComponent :
     /// <summary>
     /// The readable multi-line diagnostics string: the alignment source
     /// used (forces or the diagrams fallback), cell count, degenerate
-    /// cells dropped, streamline and seed counts, the plan-degeneracy
-    /// count, and mean/min/max cell size when at least one cell exists.
+    /// cells dropped, streamline and seed counts, the two M5 (2026-08-20
+    /// dual-quality wave) plan-projection dropped counts, and mean/min/max
+    /// cell size when at least one cell exists.
     /// </summary>
     private static string FormatDiagnostics(JsonElement diagnostics)
     {
-        // The design spec's "Delivery and the honest limit" promised this
-        // line and wave 6c never shipped it. Bench Studio's import rejects
-        // the WHOLE sidecar on the first cell whose plan outline crosses
-        // itself, naming that cell, so the count has to reach the author
-        // here -- on canvas, before Export writes anything.
-        int planDegenerate = OptionalInt(diagnostics, "plan_degenerate");
+        // The design spec's "Delivery and the honest limit" promised a
+        // plan-degeneracy count and wave 6c never shipped it. M5
+        // (2026-08-20 dual-quality wave) closed that gap the OTHER
+        // direction: generate() now DROPS a self-crossing cell, and any
+        // cell that still overlaps another surviving one, itself, before
+        // the response ever reaches this component -- so the sidecar it
+        // writes always imports. What the author needs on canvas is no
+        // longer "you must exclude these before writing the sidecar" (the
+        // cells are already gone); it is simply how many were, and of
+        // which kind, so a surprising drop is visible rather than silent.
+        int planDegenerateDropped = ArrayLength(diagnostics, "plan_degenerate_dropped");
+        int planOverlapDropped = ArrayLength(diagnostics, "plan_overlap_dropped");
         var lines = new List<string>
         {
             $"Alignment source: {OptionalString(diagnostics, "field_source")}",
@@ -507,11 +514,10 @@ public sealed class ArmadilloDualComponent :
             $"Degenerate cells dropped: {OptionalInt(diagnostics, "dropped")}",
             $"Streamlines: {OptionalInt(diagnostics, "streamline_count")}",
             $"Seeds: {OptionalInt(diagnostics, "seed_count")}",
-            planDegenerate > 0
-                ? $"Plan-degenerate cells: {planDegenerate} cell(s) will be " +
-                  "rejected by Bench Studio's import; exclude them before " +
-                  "writing the sidecar."
-                : "Plan-degenerate cells: 0"
+            $"Plan-degenerate cells dropped: {planDegenerateDropped} (self-crossing " +
+                "in plan; excluded automatically so the sidecar imports)",
+            $"Plan-overlap cells dropped: {planOverlapDropped} (overlapped another " +
+                "surviving cell in plan; excluded automatically so the sidecar imports)",
         };
         if (diagnostics.TryGetProperty(
                 "mean_cell_size",
@@ -621,6 +627,22 @@ public sealed class ArmadilloDualComponent :
         return root.TryGetProperty(propertyName, out JsonElement value) &&
             value.TryGetInt32(out int result)
                 ? result
+                : 0;
+    }
+
+    /// <summary>
+    /// The length of an array-valued diagnostics entry (M5's
+    /// ``plan_degenerate_dropped`` / ``plan_overlap_dropped``: lists of
+    /// the dropped cells' own seed indices, not bare counts -- D reports
+    /// only how many, the list itself is for anyone reading the raw
+    /// response). 0 when the key is absent or not an array, the same
+    /// "missing reads as none" convention ``OptionalInt`` uses.
+    /// </summary>
+    private static int ArrayLength(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out JsonElement value) &&
+            value.ValueKind == JsonValueKind.Array
+                ? value.GetArrayLength()
                 : 0;
     }
 }

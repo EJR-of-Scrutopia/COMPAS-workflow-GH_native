@@ -88,6 +88,7 @@ import numpy as np
 import pytest
 
 from ananke_equilibrium.patterns.armadillo_dual import Cell
+from ananke_equilibrium.patterns.armadillo_dual import Mesh
 from ananke_equilibrium.patterns.armadillo_dual import PatternRefused
 from ananke_equilibrium.patterns.armadillo_dual import assemble_mesh
 from ananke_equilibrium.patterns.armadillo_dual import dual_cells
@@ -168,12 +169,16 @@ def test_streamlines_follow_the_dome_meridians(dome_result):
     near-vertex passes are genuine short zig-zags through several thin
     triangles, not a single mis-picked edge). Measured directly across ten
     dome configurations spanning this fixture's own parameter range:
-    1.02% to 5.41% of checked segments exceed the old 30-degree bound
-    (worst case 84.2 degrees; this exact fixture measures 1.96%, 2 of
-    102), versus 0% on the pre-wave, one-directional-only seeding,
-    which never advected a branch close enough to an interior vertex to
-    trigger it. This is exactly the surface-covering behaviour M1+M2 is
-    FOR (see the vault bars in tests/patterns/test_param_vault_adapter.py
+    1.04% to 5.48% of checked segments exceed the old 30-degree bound
+    (worst case 84.2 degrees; this exact fixture measures 2 of 99 = 2.02%
+    -- see ``_nudge_off_corner``'s own docstring for why the bad-segment
+    COUNT and worst ANGLE, not the percentage, are the numbers to trust
+    across runs: the checked-segment denominator moves a little between
+    otherwise-identical runs), versus 0% on the pre-wave, one-directional-
+    only seeding, which never advected a branch close enough to an
+    interior vertex to trigger it. This is exactly the surface-covering
+    behaviour M1+M2 is FOR (see the vault bars in
+    tests/patterns/test_param_vault_adapter.py
     for the real acceptance criteria this feeds), so the bound below
     switches from "every segment" to "the overwhelming majority" -- still
     strict enough to catch a genuine field-following regression (which
@@ -821,6 +826,422 @@ def test_the_plan_simplicity_port_answers_the_way_the_studio_does():
     assert _plan_is_simple(duplicate) is False
     assert _plan_is_simple(vertex_on_edge) is False
     assert _plan_is_simple(square[:2]) is False  # under 3 points is no polygon
+
+
+# ---------------------------------------------------------------------------
+# M5 (2026-08-20 dual-quality wave, task 3): generate() drops plan-degenerate
+# AND plan-overlapping cells itself rather than leaving them for Bench
+# Studio's from_document to reject the whole sidecar over.
+# ---------------------------------------------------------------------------
+
+
+def test_the_plan_overlap_port_answers_the_way_the_studio_does():
+    """Ported from bench/studio/tessellation.py's ``_reject_overlaps`` (via
+    ``_segments_cross`` / ``on_segment`` / ``point_strictly_in_cell``), the
+    same simplified two-case reading
+    tests/patterns/test_armadillo_dual_studio_acceptance.py's own
+    ``_rings_conflict`` uses: a proper edge crossing, or a vertex of one
+    ring strictly inside the other. Touching (a shared edge or corner,
+    boundary-only) is NOT a conflict -- ``_reject_overlaps``' own docstring
+    calls that "strictly inside means inside and not on the boundary".
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _plan_rings_conflict
+
+    square_a = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+    disjoint = [[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 6.0]]
+    overlapping = [[0.5, 0.5], [1.5, 0.5], [1.5, 1.5], [0.5, 1.5]]
+    touching = [[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]]  # shares an edge
+    engulfing = [[-1.0, -1.0], [2.0, -1.0], [2.0, 2.0], [-1.0, 2.0]]
+
+    assert _plan_rings_conflict(square_a, disjoint) is False
+    assert _plan_rings_conflict(square_a, overlapping) is True
+    assert _plan_rings_conflict(square_a, touching) is False
+    assert _plan_rings_conflict(square_a, engulfing) is True
+
+
+def test_drop_plan_overlaps_keeps_the_larger_cell_of_a_conflicting_pair():
+    """Fix round: an unavoidable drop should cost as little covered area
+    as possible -- when ``areas`` is supplied, ``_drop_plan_overlaps``
+    drops the SMALLER of a genuinely conflicting pair, not merely
+    whichever has the later index (measured directly, task 3's own fix
+    round: this alone moved coverage on Param's vault at S=0.2 from
+    96.99% to 97.22%, the SAME 13 cells excluded either way).
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _drop_plan_overlaps
+
+    small = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]  # index 0, area 1
+    large = [[0.5, 0.5], [3.5, 0.5], [3.5, 3.5], [0.5, 3.5]]  # index 1, area 9, overlaps small
+    rings = {0: small, 1: large}
+    areas = {0: 1.0, 1: 9.0}
+
+    # Without areas: the plain later-index rule (matches the acceptance
+    # script's own convention) drops index 1 regardless of size.
+    kept_by_index, dropped_by_index = _drop_plan_overlaps([0, 1], rings, bucket_size=10.0)
+    assert kept_by_index == [0]
+    assert dropped_by_index == [1]
+
+    # With areas: the smaller cell (index 0, area 1) is dropped instead,
+    # keeping the larger one (index 1, area 9) -- the opposite choice.
+    kept_by_area, dropped_by_area = _drop_plan_overlaps(
+        [0, 1], rings, bucket_size=10.0, areas=areas
+    )
+    assert kept_by_area == [1]
+    assert dropped_by_area == [0]
+
+
+def test_generate_drops_plan_degenerate_and_overlapping_cells_and_discloses_them(
+    dome_result, monkeypatch
+):
+    """The design spec's M5, wired end to end through ``generate`` itself:
+    a self-crossing cell and one member of a genuinely overlapping pair
+    are both dropped before the response is built, and disclosed by seed
+    index in the new ``plan_degenerate_dropped`` / ``plan_overlap_dropped``
+    diagnostics keys -- not merely counted, per the task 3 brief's own
+    "(lists of keys)" wording. ``dual_cells`` is monkeypatched to return a
+    hand-built, deterministic cell set (real dome streamline output would
+    make which cells happen to conflict a matter of luck, not a pinned
+    fixture) -- everything upstream of it (mesh/field/streamlines/seeds)
+    still runs for real off a real dome result.
+    """
+
+    import ananke_equilibrium.patterns.armadillo_dual as armadillo_dual_module
+
+    result, _geometry = dome_result(n_rings=6, n_segments=12)
+
+    def square(x0, y0, x1, y1, seed_index):
+        return armadillo_dual_module.Cell(
+            outline=np.array(
+                [[x0, y0, 0.0], [x1, y0, 0.0], [x1, y1, 0.0], [x0, y1, 0.0]],
+                dtype=np.float64,
+            ),
+            seed_index=seed_index,
+        )
+
+    clean_a = square(0.0, 0.0, 1.0, 1.0, 0)
+    clean_b = square(10.0, 0.0, 11.0, 1.0, 1)
+    bowtie = armadillo_dual_module.Cell(
+        outline=np.array(
+            [[20.0, 0.0, 0.0], [21.0, 1.0, 0.0], [21.0, 0.0, 0.0], [20.0, 1.0, 0.0]],
+            dtype=np.float64,
+        ),
+        seed_index=2,
+    )
+    overlap_a = square(30.0, 0.0, 32.0, 2.0, 3)
+    overlap_b = square(31.0, 1.0, 33.0, 3.0, 4)
+    injected = [clean_a, clean_b, bowtie, overlap_a, overlap_b]
+
+    def fake_dual_cells(mesh, seed_points, size, report=None):
+        if report is not None:
+            report.update(
+                {
+                    "refinement_levels": 1,
+                    "refinement_capped": False,
+                    "holes_ignored": 0,
+                    "disconnected": 0,
+                }
+            )
+        return injected
+
+    monkeypatch.setattr(armadillo_dual_module, "dual_cells", fake_dual_cells)
+
+    response = armadillo_dual_module.generate(result, size=1.0)
+    diagnostics = response["diagnostics"]
+
+    assert diagnostics["plan_degenerate_dropped"] == [2]
+    assert diagnostics["plan_overlap_dropped"] == [4]
+    # the residual, post-filter check on the SURVIVING cells: nothing left
+    # to flag, proof the filter actually ran before this count was taken.
+    assert diagnostics["plan_degenerate"] == 0
+    assert len(response["cells"]) == 3
+
+
+def test_generate_diagnostics_carry_the_new_dropped_keys_even_when_empty(
+    dome_result,
+):
+    """Shape/wiring check on real (non-monkeypatched) output: the two new
+    keys are always present, always lists of ints, even when nothing was
+    dropped -- the clean dome fixture is not expected to produce a single
+    self-crossing or overlapping cell.
+    """
+
+    result, _geometry = dome_result(n_rings=6, n_segments=12)
+    diagnostics = generate(result, size=1.0)["diagnostics"]
+
+    for key in ("plan_degenerate_dropped", "plan_overlap_dropped"):
+        assert key in diagnostics, "diagnostics is missing {!r}".format(key)
+        assert isinstance(diagnostics[key], list)
+        assert all(isinstance(v, int) for v in diagnostics[key])
+
+
+# ---------------------------------------------------------------------------
+# M4 (2026-08-20 dual-quality wave, task 3): an open chain whose two ends
+# both lie on the mesh's own boundary closes by walking that boundary
+# polyline, not the straight chord ``_extract_chains`` used to leave in
+# place for every open chain unconditionally.
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_loops_walks_the_dual_meshs_own_rim():
+    from ananke_equilibrium.patterns.armadillo_dual import _boundary_loops
+
+    # A 2x1 rectangle split into two triangles sharing the diagonal: the
+    # outer 4 edges are boundary (one triangle each); the diagonal is
+    # interior (two triangles) and must NOT appear in the loop.
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
+    )
+    triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
+    mesh = Mesh(
+        vertices=vertices,
+        triangles=triangles,
+        edges=np.zeros((0, 2), dtype=np.int64),
+        edge_forces=np.zeros(0, dtype=np.float64),
+        support_vertex_ids=[],
+    )
+
+    loops = _boundary_loops(mesh)
+    assert len(loops) == 1
+    assert sorted(loops[0]) == [0, 1, 2, 3]
+    assert len(loops[0]) == 4  # closed-implicit: the walk's own start is not repeated
+
+
+def test_boundary_arc_indices_picks_the_expected_forward_and_backward_spans():
+    from ananke_equilibrium.patterns.armadillo_dual import _boundary_arc_indices
+
+    n = 8
+    forward = _boundary_arc_indices(n, i_last=2, i_first=5, forward=True)
+    assert forward == [3, 4, 5]
+    backward = _boundary_arc_indices(n, i_last=2, i_first=5, forward=False)
+    assert backward == [2, 1, 0, 7, 6]
+    # adjacent edges: exactly the one shared vertex between them.
+    assert _boundary_arc_indices(n, i_last=3, i_first=4, forward=True) == [4]
+    # the same edge at both ends: nothing between them either way.
+    assert _boundary_arc_indices(n, i_last=3, i_first=3, forward=True) == []
+    assert _boundary_arc_indices(n, i_last=3, i_first=3, forward=False) == []
+
+
+def test_boundary_closure_arc_walks_the_shorter_real_arc():
+    from ananke_equilibrium.patterns.armadillo_dual import _boundary_closure_arc
+
+    # A regular octagon, geometric adjacency order i -> i+1 -- but the loop
+    # names vertex IDS in a PERMUTED, non-identity order (loop position i
+    # is mesh vertex ``vertex_ids[i]``, never == i itself), specifically so
+    # a regression that indexes ``vertices`` by loop POSITION instead of
+    # mapping through ``loop[i]`` to the real vertex id (exactly the bug
+    # this closure arc shipped with once, on the real BRG primal: a
+    # "shorter" arc came out 109 m long, because it read arbitrary,
+    # unrelated vertices) fails loudly here instead of accidentally
+    # passing on an identity-mapped fixture that could never catch it.
+    n = 8
+    vertex_ids = [30, 4, 17, 2, 25, 11, 8, 19]
+    vertices = np.full((31, 3), 999.0)  # every UNUSED slot: an obviously wrong point
+    for i, vertex_id in enumerate(vertex_ids):
+        vertices[vertex_id] = [
+            math.cos(2.0 * math.pi * i / n),
+            math.sin(2.0 * math.pi * i / n),
+            0.0,
+        ]
+    loop = vertex_ids
+    boundary_loops = [loop]
+    boundary_positions = {}
+    for i in range(n):
+        a, b = loop[i], loop[(i + 1) % n]
+        key = (a, b) if a <= b else (b, a)
+        boundary_positions[key] = (0, i)
+
+    # last = edge (loop pos 0, loop pos 1); first = edge (loop pos 2, loop
+    # pos 3): the shorter arc from edge0's midpoint to edge2's midpoint
+    # runs FORWARD through loop positions 1 and 2 (2 points, real ids
+    # vertex_ids[1]=4 and vertex_ids[2]=17); the long way runs backward
+    # through the other 5.
+    last_key = tuple(sorted((loop[0], loop[1])))
+    first_key = tuple(sorted((loop[2], loop[3])))
+    last_point = (vertices[loop[0]] + vertices[loop[1]]) / 2.0
+    first_point = (vertices[loop[2]] + vertices[loop[3]]) / 2.0
+
+    ids, points = _boundary_closure_arc(
+        first_key,
+        last_key,
+        boundary_positions,
+        boundary_loops,
+        vertices,
+        first_point,
+        last_point,
+        tolerance=1.0e-6,
+    )
+    assert ids == [("vertex", vertex_ids[1]), ("vertex", vertex_ids[2])]
+    assert len(points) == 2
+    assert np.allclose(points[0], vertices[vertex_ids[1]])
+    assert np.allclose(points[1], vertices[vertex_ids[2]])
+
+
+def test_boundary_closure_arc_declines_an_interior_break():
+    """Neither end names a real boundary edge of the (only) loop -- the
+    disclosed "interior break" case (findings.md's own ~2.4%): the caller
+    reads an empty return as "no closure, fall back to the chord"."""
+
+    from ananke_equilibrium.patterns.armadillo_dual import _boundary_closure_arc
+
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
+    )
+    boundary_loops = [[0, 1, 2, 3]]
+    boundary_positions = {
+        (0, 1): (0, 0),
+        (1, 2): (0, 1),
+        (2, 3): (0, 2),
+        (0, 3): (0, 3),
+    }
+
+    ids, points = _boundary_closure_arc(
+        (5, 6),
+        (7, 8),
+        boundary_positions,
+        boundary_loops,
+        vertices,
+        np.array([0.5, 0.5, 0.0]),
+        np.array([0.6, 0.6, 0.0]),
+        tolerance=1.0e-6,
+    )
+    assert ids == []
+    assert points == []
+
+
+# ---------------------------------------------------------------------------
+# M3 (2026-08-20 dual-quality wave, task 3): every extracted (and M4-closed)
+# chain is resampled at ~0.5*S spacing, with a wall shared between two
+# neighbouring cells resampled exactly ONCE and handed to both.
+# ---------------------------------------------------------------------------
+
+
+def test_wall_runs_groups_consecutive_same_neighbour_edges_and_isolates_the_rest():
+    from ananke_equilibrium.patterns.armadillo_dual import _wall_runs
+
+    # Two touching seed-7 edges, one seed-9 edge, then three tags that must
+    # NEVER merge with a real neighbour: unassigned territory, an
+    # ambiguous triple point, and one of M4's own closure arcs/chords.
+    tags = [7, 7, 9, -1, -2, -3]
+    runs = _wall_runs(tags)
+    assert runs == [(0, 2, 7), (2, 1, 9), (3, 1, -1), (4, 1, -2), (5, 1, -3)]
+
+
+def test_wall_runs_treats_a_fully_uniform_loop_as_one_run():
+    from ananke_equilibrium.patterns.armadillo_dual import _wall_runs
+
+    assert _wall_runs([4, 4, 4, 4]) == [(0, 4, 4)]
+
+
+def test_wall_runs_never_splits_a_run_that_wraps_the_arrays_own_start():
+    from ananke_equilibrium.patterns.armadillo_dual import _wall_runs
+
+    # tag 5's own run wraps across the array's start/end -- reported as
+    # ONE run of length 3, not split into a length-1 and a length-2 piece.
+    runs = _wall_runs([5, 5, 2, 5])
+    assert len(runs) == 2
+    lengths_by_tag = {tag: length for _start, length, tag in runs}
+    assert lengths_by_tag[5] == 3
+    assert lengths_by_tag[2] == 1
+
+
+def test_smooth_closed_polyline_leaves_protected_points_exactly_unchanged():
+    """M4/M3 fix round: a point named in ``protect`` survives the Laplacian
+    pass bit-for-bit (it is still used as a NEIGHBOUR when smoothing the
+    points around it, just never itself averaged toward them) -- how
+    ``dual_cells`` keeps M4's own boundary-arc points exactly on the
+    mesh's true rim instead of the same pass that smooths the rest of the
+    chain quietly blurring them inward.
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _smooth_closed_polyline
+
+    points = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.5, 0.0]),  # will be protected
+        np.array([2.0, 0.0, 0.0]),
+        np.array([1.0, -0.5, 0.0]),
+    ]
+
+    unprotected = _smooth_closed_polyline(points)
+    assert not np.array_equal(unprotected[1], points[1]), (
+        "fixture is not exercising anything -- point 1 must actually move "
+        "when unprotected"
+    )
+
+    protected = _smooth_closed_polyline(points, protect=[1])
+    assert np.array_equal(protected[1], points[1])
+    # points 0, 2, 3 still smooth normally, using point 1's ORIGINAL
+    # (unmoved) position as a neighbour where relevant.
+    assert np.array_equal(
+        protected[0], 0.25 * points[3] + 0.5 * points[0] + 0.25 * points[1]
+    )
+    assert np.array_equal(
+        protected[2], 0.25 * points[1] + 0.5 * points[2] + 0.25 * points[3]
+    )
+
+
+def test_resample_wall_keeps_both_endpoints_and_spaces_evenly():
+    from ananke_equilibrium.patterns.armadillo_dual import _resample_wall
+
+    points = [
+        np.array([0.0, 0.0, 0.0]),
+        np.array([1.0, 0.0, 0.0]),
+        np.array([2.0, 0.0, 0.0]),
+    ]
+    resampled = _resample_wall(points, target=1.0)
+    assert np.array_equal(resampled[0], points[0])
+    assert np.array_equal(resampled[-1], points[-1])
+    assert len(resampled) == 3  # total length 2.0, target 1.0 -> 2 intervals
+
+
+def test_resample_outline_shares_bit_identical_joints_between_two_cells():
+    """M3's own acceptance bar: two neighbouring cells' shared wall,
+    resampled from each cell's own outline (walked in opposite directions,
+    the rest of each cell's own geometry unrelated), comes out as the
+    EXACT SAME floating-point points -- not merely close -- because the
+    wall is resampled ONCE and cached (the task 3 brief's own "resample
+    each welded chain ONCE; both cells reference the same points").
+    """
+
+    from ananke_equilibrium.patterns.armadillo_dual import _resample_outline
+
+    p0 = np.array([0.0, 0.0, 0.0])
+    p1 = np.array([3.0, 0.0, 0.0])
+
+    # Cell A: a triangle; its edge 0 (p0 -> p1) borders seed 9 -- everything
+    # else is untagged (real, but not a shared wall).
+    a_points = [p0, p1, np.array([0.0, 5.0, 0.0])]
+    a_ids = [("mid", 0, 1), ("mid", 1, 2), ("mid", 2, 0)]
+    a_tags = [9, -1, -1]
+
+    # Cell B: a DIFFERENT triangle walking the SAME wall (mid(0,1) ->
+    # mid(1,2), i.e. the SAME two physical points p1/p0) in reverse.
+    b_points = [p1, p0, np.array([9.0, 9.0, 0.0])]
+    b_ids = [("mid", 1, 2), ("mid", 0, 1), ("mid", 42, 42)]
+    b_tags = [9, -1, -1]
+
+    cache: Dict[Any, Any] = {}
+    a_resampled = _resample_outline(a_points, a_ids, a_tags, target=1.0, wall_cache=cache)
+    b_resampled = _resample_outline(b_points, b_ids, b_tags, target=1.0, wall_cache=cache)
+
+    # 3.0 m at 1.0 m target -> 3 intervals -> 4 points; the wall is run 0
+    # in BOTH chains (their own first tagged edge), so it lands as the
+    # first 4 points of each cell's own resampled outline.
+    a_wall = a_resampled[:4]
+    b_wall = b_resampled[:4]
+    assert len(a_wall) == 4
+    for a_point, b_point in zip(a_wall, reversed(b_wall)):
+        assert np.array_equal(a_point, b_point), (
+            "shared wall points are not bit-identical: {} vs {}".format(
+                a_point, b_point
+            )
+        )
+    # and it is a REAL resample, not a no-op: the endpoints survive exactly,
+    # the interior points are genuinely new.
+    assert np.array_equal(a_wall[0], p0)
+    assert np.array_equal(a_wall[-1], p1)
+    assert not np.array_equal(a_wall[1], p0) and not np.array_equal(a_wall[1], p1)
 
 
 # ---------------------------------------------------------------------------

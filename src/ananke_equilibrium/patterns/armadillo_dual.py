@@ -70,6 +70,13 @@ import numpy as np
 # design spec's Algorithm section, step 2).
 _SMOOTHING_PASSES = 3
 _ZERO_TOLERANCE = 1.0e-12
+# M7 (2026-08-20 dual-quality wave, findings.md's own wording): a face's
+# raw coherence -- see ``_face_raw_direction`` -- below this is "the ~8%
+# of numerically arbitrary faces" the diagnosis named; ``_smooth_pass``
+# clamps a neighbour's own vote to full strength AT and ABOVE it, so only
+# that named tail is discounted (see ``_smooth_pass``'s own docstring for
+# the measured reason a plain, unclamped weight-by-coherence is not used).
+_ARBITRARY_COHERENCE_THRESHOLD = 0.2
 
 # Streamline spacing: ONE threshold pair, relative to the caller's "size"
 # (2026-08-20 dual-quality wave, M1+M2 -- see
@@ -98,6 +105,27 @@ _START_INSET = 0.02  # fraction of the way from a point to its triangle's
 # EVERY advection/offset step where ``_nudge_off_corner`` finds one
 # sitting suspiciously close to a vertex, not only the first.
 _DEGENERATE_AREA_TOLERANCE = 1.0e-9
+
+# M3/M4 (2026-08-20 dual-quality wave, task 3): a per-EDGE "opposite
+# neighbour" tag, used to group an extracted chain's edges into shared
+# WALLS (``_wall_runs``) for joint resampling. Real neighbours are their
+# own (>= 0) seed index; these three are the sentinels that must never be
+# merged with anything, including each other:
+_UNASSIGNED_NEIGHBOUR = -1  # the far side of this edge has no owner (owner -1)
+_AMBIGUOUS_NEIGHBOUR = -2  # a triple point: more than one owner shares the far side
+_NO_NEIGHBOUR = -3  # one of M4's own closure-arc edges, or the plain chord fallback
+# Both ends of an open chain within this distance (metres) of the SAME
+# mesh-boundary edge are treated as genuinely ON the boundary (M4) -- a
+# chain endpoint IS, by construction, the midpoint of a boundary edge
+# whenever it is open because of the mesh's own rim (see _cell_segments'
+# docstring), so this is a real distance check honouring the design
+# spec's own "within the weld tolerance" wording, not a live filter that
+# is expected to reject often.
+_BOUNDARY_WELD_TOLERANCE = 1.0e-6
+# M3's own resample spacing, a fraction of the caller's target voussoir
+# size -- ~8-12 points per cell reads as a joint line (the diagnosis's own
+# words), against a pre-fix median of ~38.
+_RESAMPLE_FACTOR = 0.5
 
 # The shipped target voussoir size in metres: the component's S default, the
 # worker's own default for a missing size, and the size the plugin's
@@ -400,17 +428,32 @@ def _face_raw_direction(
     e1: np.ndarray,
     e2: np.ndarray,
     edge_lookup: Mapping[Tuple[int, int], float],
-) -> Tuple[float, float]:
-    """A face's initial line direction.
+) -> Tuple[float, float, float]:
+    """A face's initial line direction, plus its own RAW COHERENCE.
 
-    The force-weighted doubled-angle sum of its own edges' directions,
-    projected into (e1, e2). Falls back to (1, 0) (the e1 direction) when
-    none of the face's edges carry a weight -- keeps the field defined
-    everywhere, including quad-diagonal edges the member-force network
-    never registered.
+    The direction is the force-weighted doubled-angle sum of its own
+    edges' directions, projected into (e1, e2) -- unchanged. Falls back to
+    (1, 0) (the e1 direction) when none of the face's edges carry a weight
+    -- keeps the field defined everywhere, including quad-diagonal edges
+    the member-force network never registered.
+
+    The coherence (2026-08-20 dual-quality wave, M7 --
+    docs/superpowers/specs/2026-08-20-dual-quality-design.md and
+    .superpowers/sdd/2026-08-20-dual-quality-diagnosis/findings.md) is
+    ``|that same doubled sum| / sum(|weight|)`` over the identical edges,
+    in [0, 1]: 1.0 when every weighted edge agrees on a line direction
+    (their doubled vectors add up, not cancel), 0.0 when they cancel --
+    the near-equilateral-triangle case the diagnosis measured on about 8%
+    of Param's own vault's faces, where three edges 60 degrees apart
+    double to 120 degrees apart and sum to (near) zero at equal weight, so
+    ``_undouble``'s own output there is numerically arbitrary noise, not a
+    real measurement of anything. A face with no weighted edge at all
+    (the (1, 0) fallback above) reports coherence 1.0: a fixed default is
+    not a contested vote, so ``_smooth_pass`` should never discount it.
     """
 
     doubled = np.zeros(2, dtype=np.float64)
+    weight_total = 0.0
     count = len(triangle)
     for i in range(count):
         a, b = int(triangle[i]), int(triangle[(i + 1) % count])
@@ -429,8 +472,16 @@ def _face_raw_direction(
         if planar_norm <= _ZERO_TOLERANCE:
             continue
         dx, dy = dx / planar_norm, dy / planar_norm
-        doubled += abs(weight) * _double(dx, dy)
-    return _undouble(doubled)
+        weight_magnitude = abs(weight)
+        doubled += weight_magnitude * _double(dx, dy)
+        weight_total += weight_magnitude
+    direction_x, direction_y = _undouble(doubled)
+    coherence = (
+        float(np.linalg.norm(doubled)) / weight_total
+        if weight_total > _ZERO_TOLERANCE
+        else 1.0
+    )
+    return direction_x, direction_y, coherence
 
 
 def _face_adjacency(triangles: np.ndarray) -> List[List[int]]:
@@ -459,8 +510,42 @@ def _smooth_pass(
     bases: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray]],
     states: Sequence[Tuple[float, float]],
     adjacency: Sequence[Sequence[int]],
+    coherence: Sequence[float],
 ) -> List[Tuple[float, float]]:
-    """One Jacobi-style neighbour-averaging pass in doubled-angle space."""
+    """One Jacobi-style neighbour-averaging pass in doubled-angle space.
+
+    Each neighbour's own contribution is scaled by ITS OWN raw coherence
+    (2026-08-20 dual-quality wave, M7: ``coherence[neighbour]``, computed
+    ONCE from the field's raw, pre-smoothing state by
+    ``_face_raw_direction`` and held fixed across every one of
+    ``line_field``'s passes), CLAMPED to full (1.0) strength at and above
+    ``_ARBITRARY_COHERENCE_THRESHOLD`` -- a face whose own edges disagree
+    badly enough to be numerically arbitrary noise (the near-equilateral
+    case, coherence near 0, the diagnosis's own "~8% of faces coherence
+    <0.2") should not get to vote on its neighbours as though it were, but
+    a face with ANY real signal should still vote at the SAME full
+    strength Task 2 already measured and accepted.
+
+    THE CLAMP IS NOT OPTIONAL POLISH -- measured directly, and load-
+    bearing: RAW (unclamped) coherence is a CONTINUOUS, mostly-moderate
+    quantity on a real mesh (Param's own vault: median 0.558, only 8.0%
+    below 0.2, 96.9% below 0.95), an artefact of doubled-angle space
+    itself (three edges even a modest, GEOMETRICALLY NORMAL spread apart
+    double to a much wider spread, denting the resultant's own magnitude
+    for perfectly healthy triangles, not just noisy ones). Weighting
+    EVERY neighbour by that raw value -- tried first -- discounts the
+    92% of ordinary faces along with the 8% actually meant, changing
+    EVERY face's own final direction (checked directly: fraction of faces
+    changed 100%) and regressing Task 2's own established, already-
+    measured vault bars (streamline_count 103 -> 99, cross-flow
+    starvation 1.03% -> 6.16%, both confirmed by isolating this one
+    change). Clamping at the diagnosis's own named boundary keeps the fix
+    exactly as narrow as its own wording ("the ~8% of numerically
+    arbitrary faces stop voting at full strength", not "every face votes
+    less") and reproduces Task 2's own field almost exactly for the other
+    92% (streamline_count 103 -- identical; starvation 1.077%, 0.04
+    points off 1.034% -- confirmed directly with the clamp in place).
+    """
 
     directions_3d = [
         state[0] * bases[f][0] + state[1] * bases[f][1]
@@ -486,7 +571,10 @@ def _smooth_pass(
             planar_norm = math.hypot(gx, gy)
             if planar_norm <= _ZERO_TOLERANCE:
                 continue
-            accumulated += _double(gx / planar_norm, gy / planar_norm)
+            weight = min(
+                1.0, float(coherence[neighbour]) / _ARBITRARY_COHERENCE_THRESHOLD
+            )
+            accumulated += weight * _double(gx / planar_norm, gy / planar_norm)
 
         new_states.append(_undouble(accumulated))
     return new_states
@@ -512,16 +600,21 @@ def line_field(mesh: Mesh) -> np.ndarray:
         face_basis(mesh.vertices, mesh.triangles[f]) for f in range(face_count)
     ]
 
-    states = [
+    raw = [
         _face_raw_direction(
             mesh.vertices, mesh.triangles[f], bases[f][0], bases[f][1], edge_lookup
         )
         for f in range(face_count)
     ]
+    states: List[Tuple[float, float]] = [(dx, dy) for dx, dy, _coherence in raw]
+    # M7: each face's own raw coherence, fixed from the UNSMOOTHED field and
+    # reused for every pass below (not recomputed per pass) -- see
+    # ``_face_raw_direction`` and ``_smooth_pass``.
+    coherence = np.array([c for _dx, _dy, c in raw], dtype=np.float64)
 
     adjacency = _face_adjacency(mesh.triangles)
     for _ in range(_SMOOTHING_PASSES):
-        states = _smooth_pass(bases, states, adjacency)
+        states = _smooth_pass(bases, states, adjacency, coherence)
 
     return np.array(states, dtype=np.float64)
 
@@ -1035,12 +1128,32 @@ def _nudge_off_corner(pos2d: np.ndarray, tri2d: np.ndarray) -> np.ndarray:
     it (an earlier draft of this docstring claimed zero; that was false,
     corrected in fix round 1 of the same task's review). Measured directly
     on the exact fixture the dome meridian test uses (n_rings=6,
-    n_segments=12, size=1.0): 1.96% of segments (2 of 102) still land
-    >= 30 degrees off meridian, worst case 78.8 degrees. Across ten dome
-    configurations spanning this fixture's own parameter range: 1.02% to
-    5.41%, worst case 84.2 degrees. Some of what remains is a genuine
-    short zig-zag through several thin triangles fanning out from one
-    vertex, not a single mis-picked edge this nudge could ever catch --
+    n_segments=12, size=1.0): 2 of 99 segments (2.02%) still land >= 30
+    degrees off meridian, worst case 78.8 degrees. Across ten dome
+    configurations spanning this fixture's own parameter range: 1.04% to
+    5.48%, worst case 84.2 degrees (config rings=8/segs=8).
+
+    PRECISION NOTE (task 3, re-measuring task 2's own disclosed numbers
+    three independent ways, all agreeing): the BAD-SEGMENT COUNTS and
+    WORST ANGLES above reproduce exactly and are the honest contract; the
+    PERCENTAGES themselves depend on the checked-segment DENOMINATOR
+    (which segments a given sweep run happens to check), so two runs of
+    the identical fixture can read a few hundredths of a percent apart
+    (e.g. "2 of 102 = 1.96%" and "2 of 99 = 2.02%" are the SAME 2 bad
+    segments, at the SAME worst angle, over a different total) -- read the
+    counts and angles as the pinned numbers, the percentages as derived
+    from whatever denominator that run measured. Separately, "the fix
+    improved the worst-case config" does NOT mean any config's own before/
+    after numbers moved together: the IMPROVING config is rings=4,segs=8
+    (this docstring's earlier fix-round-1 correction measured it 7.58% ->
+    4.94%, i.e. genuinely reduced by the off-by-one repair); rings=4,
+    segs=12 -- the config that happens to set the CEILING above, 5.48% --
+    is UNAFFECTED by that same repair (4 of 73 bad segments both before
+    and after, unchanged): the sweep's own worst-case number moved because
+    a DIFFERENT, previously-worse config improved past it, not because the
+    now-worst config itself changed. Some of what remains either way is a
+    genuine short zig-zag through several thin triangles fanning out from
+    one vertex, not a single mis-picked edge this nudge could ever catch --
     the honest contract is the dome meridian test's own 10% AGGREGATE
     bound, not a per-segment guarantee. Nudged toward the triangle's own
     2D centroid by ``_START_INSET`` -- the same fraction
@@ -1793,7 +1906,10 @@ def _vertex_graph(mesh: Mesh) -> List[List[Tuple[int, float]]]:
 
 def _cell_segments(
     mesh: Mesh, owner: Sequence[int]
-) -> Tuple[Dict[int, List[Tuple[Tuple[int, int], Tuple[int, int]]]], Dict[Tuple[int, int], np.ndarray]]:
+) -> Tuple[
+    Dict[int, List[Tuple[Tuple[int, int], Tuple[int, int], int]]],
+    Dict[Tuple[int, int], np.ndarray],
+]:
     """Per-seed boundary segments through every mixed triangle, and the
     shared midpoint positions they reference.
 
@@ -1814,6 +1930,16 @@ def _cell_segments(
     the crossed edge sits on the mesh's own open boundary, where only one
     triangle exists to contribute. That is the whole reason
     ``_extract_chains`` has an open-path case at all.
+
+    Each segment's own third element (2026-08-20 dual-quality wave, M3) is
+    its OPPOSITE neighbour: the OTHER owner(s) this same triangle also
+    names, on the far side of this segment from ``k``. A plain two-owner
+    triangle names it unambiguously; a triple point (all three owners
+    distinct) makes it genuinely ambiguous for the 1-vertex owner in that
+    triangle (``_AMBIGUOUS_NEIGHBOUR``); an owner of -1 on the far side is
+    ``_UNASSIGNED_NEIGHBOUR``. ``dual_cells``' own ``_wall_runs`` groups a
+    chain's consecutive same-opposite segments into one shared WALL,
+    resampled once for both bordering cells.
     """
 
     triangles = mesh.triangles
@@ -1838,7 +1964,7 @@ def _cell_segments(
         triangle_owners[:, 1] != triangle_owners[:, 2]
     )
 
-    segments_by_seed: Dict[int, List[Tuple[Tuple[int, int], Tuple[int, int]]]] = {}
+    segments_by_seed: Dict[int, List[Tuple[Tuple[int, int], Tuple[int, int], int]]] = {}
     for triangle in triangles[candidate].tolist():
         tri_owners = [owner[v] for v in triangle]
         distinct = set(tri_owners)
@@ -1852,6 +1978,14 @@ def _cell_segments(
                 i = k_indices[0]
                 edge_a = (triangle[i], triangle[non_k_indices[0]])
                 edge_b = (triangle[i], triangle[non_k_indices[1]])
+                far_owners = {tri_owners[non_k_indices[0]], tri_owners[non_k_indices[1]]}
+                far_owners.discard(-1)
+                if len(far_owners) == 1:
+                    opposite = next(iter(far_owners))
+                elif len(far_owners) == 0:
+                    opposite = _UNASSIGNED_NEIGHBOUR
+                else:
+                    opposite = _AMBIGUOUS_NEIGHBOUR
             elif len(k_indices) == 2:
                 # ``non_k_indices[0]`` is a CORNER index (0, 1 or 2); the
                 # edge endpoints are mesh vertex ids, so it has to be read
@@ -1864,11 +1998,13 @@ def _cell_segments(
                 j = triangle[non_k_indices[0]]
                 edge_a = (triangle[k_indices[0]], j)
                 edge_b = (triangle[k_indices[1]], j)
+                far_owner = tri_owners[non_k_indices[0]]
+                opposite = far_owner if far_owner != -1 else _UNASSIGNED_NEIGHBOUR
             else:
                 continue  # k owns all 3 -- not actually mixed for k
             key_a = midpoint_key(*edge_a)
             key_b = midpoint_key(*edge_b)
-            segments_by_seed.setdefault(k, []).append((key_a, key_b))
+            segments_by_seed.setdefault(k, []).append((key_a, key_b, opposite))
 
     return segments_by_seed, midpoints
 
@@ -1928,14 +2064,33 @@ def _extract_chains(
     return chains
 
 
-def _smooth_closed_polyline(points: Sequence[np.ndarray]) -> List[np.ndarray]:
-    """One Laplacian smoothing pass on a closed (wrap-around) polyline."""
+def _smooth_closed_polyline(
+    points: Sequence[np.ndarray], protect: Optional[Sequence[int]] = None
+) -> List[np.ndarray]:
+    """One Laplacian smoothing pass on a closed (wrap-around) polyline.
+
+    ``protect`` (2026-08-20 dual-quality wave, M4/M3 fix round): indices
+    left EXACTLY unchanged -- still used as neighbours for smoothing the
+    points around them, just never themselves averaged toward those
+    neighbours. ``dual_cells`` passes the indices M4's own boundary-arc
+    splice contributed: those points already sit exactly on the mesh's
+    true rim, and blurring them inward by the SAME pass that smooths the
+    rest of the chain would quietly give back some of the area M4 closure
+    exists to recover (measured directly: coverage on Param's own vault
+    at S=0.2 gained about 0.6 points protecting them, closing the design
+    spec's own >= 97% bar with real headroom instead of missing it by a
+    hundredth of a point).
+    """
 
     n = len(points)
     if n < 3:
         return list(points)
+    protect_set = set(protect) if protect else frozenset()
     smoothed = []
     for i in range(n):
+        if i in protect_set:
+            smoothed.append(points[i])
+            continue
         prev_p = points[(i - 1) % n]
         curr_p = points[i]
         next_p = points[(i + 1) % n]
@@ -2072,15 +2227,388 @@ def _finalize_outline(points: Sequence[np.ndarray]) -> Optional[List[np.ndarray]
     return deduped
 
 
+def _chain_nodes(chain: Sequence[Tuple[int, int]]) -> Sequence[Tuple[int, int]]:
+    """``chain`` with a closed loop's own repeated start vertex dropped --
+    the one dedupe both ``_chain_polygon`` and ``_chain_point_ids`` need,
+    factored out so the two never drift apart on what "closed-implicit"
+    means."""
+
+    if len(chain) > 1 and chain[0] == chain[-1]:
+        return chain[:-1]
+    return chain
+
+
 def _chain_polygon(
     chain: Sequence[Tuple[int, int]],
     midpoints: Mapping[Tuple[int, int], np.ndarray],
 ) -> List[np.ndarray]:
     """One chain's points, closed-implicit (a loop's repeated end dropped)."""
 
-    if len(chain) > 1 and chain[0] == chain[-1]:
-        chain = chain[:-1]
-    return [midpoints[key] for key in chain]
+    return [midpoints[key] for key in _chain_nodes(chain)]
+
+
+def _chain_point_ids(chain: Sequence[Tuple[int, int]]) -> List[Tuple[Any, ...]]:
+    """One chain's own point IDENTITIES, aligned 1:1 with ``_chain_polygon``'s
+    output -- a mesh-EDGE midpoint's own two vertex ids, tagged ``"mid"``
+    so they never collide with M4's own ``("vertex", w)`` ids for a single
+    mesh VERTEX spliced in by ``_boundary_closure_arc``. ``_resample_outline``
+    keys its shared-wall cache on these, not on coordinates: two cells
+    walking the identical mesh edge from opposite directions must hash to
+    the SAME identity regardless of any floating-point noise a coordinate
+    comparison could introduce.
+    """
+
+    return [("mid",) + key for key in _chain_nodes(chain)]
+
+
+def _segment_opposite_lookup(
+    segments: Sequence[Tuple[Tuple[int, int], Tuple[int, int], int]]
+) -> Dict[frozenset, List[int]]:
+    """One seed's own ``_cell_segments`` output, reindexed by its
+    (unordered) pair of midpoint keys -> the OPPOSITE tag(s) that pair
+    carries -- a list, not a bare value, only because a pathological
+    duplicate segment (the same two midpoints contributed twice) must
+    still be poppable once per genuine occurrence rather than silently
+    overwritten."""
+
+    lookup: Dict[frozenset, List[int]] = {}
+    for key_a, key_b, opposite in segments:
+        lookup.setdefault(frozenset((key_a, key_b)), []).append(opposite)
+    return lookup
+
+
+def _chain_edge_tags(
+    chain: Sequence[Tuple[int, int]], lookup: Mapping[frozenset, Sequence[int]]
+) -> List[int]:
+    """The OPPOSITE tag of every edge of ``chain`` as extracted (RAW, before
+    any M4 closure splice) -- ``tags[i]`` is the edge from ``chain[i]`` to
+    ``chain[i + 1]``. Length is always ``len(chain) - 1``: for a closed
+    loop (``chain[0] == chain[-1]``, ``m + 1`` raw nodes) that is exactly
+    ``m`` tags, one per point ``_chain_polygon`` returns, cyclically
+    aligned (``tags[i]`` = the edge from point ``i`` to point
+    ``(i + 1) % m``); for an open chain (``n`` raw nodes, no repeat) it is
+    ``n - 1``, one short of the point count -- there is no tag for the
+    chain's own two open ends meeting, because in the raw data they never
+    do (``dual_cells`` appends the M4/chord tag for that edge itself).
+    """
+
+    remaining = {key: list(values) for key, values in lookup.items()}
+    tags: List[int] = []
+    for i in range(len(chain) - 1):
+        key = frozenset((chain[i], chain[i + 1]))
+        candidates = remaining.get(key)
+        if candidates:
+            tags.append(candidates.pop())
+        else:
+            tags.append(_UNASSIGNED_NEIGHBOUR)
+    return tags
+
+
+def _boundary_loops(mesh: Mesh) -> List[List[int]]:
+    """``mesh``'s own boundary vertex loops (edges touching exactly one
+    triangle), each closed-implicit (the walk's own repeated start vertex
+    dropped) -- the polyline M4's chain closure walks. Built ONCE per
+    ``dual_cells`` call on the REFINED dual mesh (a chain's own open ends
+    are midpoints of ITS edges, not the caller's unrefined ``mesh``'s), and
+    shared by every seed. Mirrors tests/patterns/param_vault.py's own
+    ``mesh_boundary_loops`` (that file's port of loader.py's
+    ``boundary_loops``), but returns VERTEX INDICES rather than points --
+    M4 needs to locate a specific edge's own POSITION within its loop, not
+    only its geometry.
+    """
+
+    count: Dict[Tuple[int, int], int] = {}
+    for triangle in mesh.triangles.tolist():
+        for i in range(3):
+            a, b = triangle[i], triangle[(i + 1) % 3]
+            key = (a, b) if a <= b else (b, a)
+            count[key] = count.get(key, 0) + 1
+    boundary_edges = [edge for edge, c in count.items() if c == 1]
+
+    adjacency: Dict[int, List[int]] = {}
+    for a, b in boundary_edges:
+        adjacency.setdefault(a, []).append(b)
+        adjacency.setdefault(b, []).append(a)
+
+    loops: List[List[int]] = []
+    unvisited = set(boundary_edges)
+    while unvisited:
+        a, b = next(iter(unvisited))
+        unvisited.discard((a, b))
+        loop = [a, b]
+        current, previous = b, a
+        closed = False
+        while True:
+            candidates = [n for n in adjacency[current] if n != previous]
+            if not candidates:
+                break
+            step = candidates[0]
+            key = (current, step) if current <= step else (step, current)
+            if key not in unvisited:
+                break
+            unvisited.discard(key)
+            loop.append(step)
+            previous, current = current, step
+            if step == a:
+                closed = True
+                break
+        if closed:
+            loop.pop()  # drop the walk's own repeat of the start vertex
+        loops.append(loop)
+
+    return loops
+
+
+def _boundary_edge_positions(
+    boundary_loops: Sequence[Sequence[int]],
+) -> Dict[Tuple[int, int], Tuple[int, int]]:
+    """Every boundary edge of every loop, keyed by its own canonical
+    (u, v) -> (which loop, its own position ``i`` within that loop, i.e.
+    the edge from ``loop[i]`` to ``loop[(i + 1) % len(loop)]``). Built
+    ONCE per ``dual_cells`` call and reused by every open chain's own M4
+    closure attempt."""
+
+    positions: Dict[Tuple[int, int], Tuple[int, int]] = {}
+    for loop_index, loop in enumerate(boundary_loops):
+        n = len(loop)
+        for i in range(n):
+            a, b = loop[i], loop[(i + 1) % n]
+            key = (a, b) if a <= b else (b, a)
+            positions[key] = (loop_index, i)
+    return positions
+
+
+def _boundary_arc_indices(n: int, i_last: int, i_first: int, forward: bool) -> List[int]:
+    """The loop VERTEX indices strictly between boundary-edge position
+    ``i_last`` and boundary-edge position ``i_first`` (each edge ``i``
+    running from ``loop[i]`` to ``loop[(i + 1) % n]``), walking either
+    FORWARD (increasing index, away from ``i_last``'s own far vertex) or
+    BACKWARD (decreasing index, away from ``i_last``'s own near vertex).
+    Empty when the two positions name the same edge (nothing lies between
+    them on that side)."""
+
+    if forward:
+        count = (i_first - i_last) % n
+        return [(i_last + 1 + k) % n for k in range(count)]
+    count = (i_last - i_first) % n
+    return [(i_last - k) % n for k in range(count)]
+
+
+def _polyline_length(points: Sequence[np.ndarray]) -> float:
+    if len(points) < 2:
+        return 0.0
+    array = np.asarray(points, dtype=np.float64)
+    return float(np.linalg.norm(np.diff(array, axis=0), axis=1).sum())
+
+
+def _distance_point_to_segment(point: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    """Point-to-SEGMENT distance (clamped projection), not point-to-nearest-
+    endpoint -- the design spec's own "within the weld tolerance" wording
+    for M4's boundary match."""
+
+    ab = b - a
+    denom = float(np.dot(ab, ab))
+    if denom <= _ZERO_TOLERANCE:
+        return float(np.linalg.norm(point - a))
+    t = float(np.dot(point - a, ab)) / denom
+    t = min(max(t, 0.0), 1.0)
+    projection = a + t * ab
+    return float(np.linalg.norm(point - projection))
+
+
+def _boundary_closure_arc(
+    first_key: Tuple[int, int],
+    last_key: Tuple[int, int],
+    boundary_positions: Mapping[Tuple[int, int], Tuple[int, int]],
+    boundary_loops: Sequence[Sequence[int]],
+    vertices: np.ndarray,
+    first_point: np.ndarray,
+    last_point: np.ndarray,
+    tolerance: float,
+) -> Tuple[List[Tuple[str, int]], List[np.ndarray]]:
+    """M4: an open chain whose two ends (``first_key`` the chain's own
+    first node, ``last_key`` its own last) both lie on -- within
+    ``tolerance`` of -- the SAME mesh boundary loop closes by walking that
+    loop's own polyline between them: the SHORTER of its two arcs, by real
+    3D length, so a cell's own small stretch of rim is chosen over the
+    long way around. An end that does not name a genuine boundary edge at
+    all, or whose match sits on a DIFFERENT loop than the other end, is
+    the disclosed "interior break" case (findings.md's own ~2.4%) and
+    returns ``([], [])`` -- the caller reads that as "no closure, keep the
+    chord".
+
+    Returns the arc's own INTERIOR vertices only (as ``(point_ids,
+    points)``, never repeating either of the chain's own two end points):
+    the caller splices them in between the chain's last and first points
+    and lets the outline's usual implicit-closing wraparound connect the
+    arc's own last point back to the chain's first.
+    """
+
+    first_loc = boundary_positions.get(first_key)
+    last_loc = boundary_positions.get(last_key)
+    if first_loc is None or last_loc is None:
+        return [], []
+    first_loop, i_first = first_loc
+    last_loop, i_last = last_loc
+    if first_loop != last_loop:
+        return [], []
+    loop = boundary_loops[first_loop]
+    n = len(loop)
+
+    if (
+        _distance_point_to_segment(
+            first_point, vertices[loop[i_first]], vertices[loop[(i_first + 1) % n]]
+        )
+        > tolerance
+    ):
+        return [], []
+    if (
+        _distance_point_to_segment(
+            last_point, vertices[loop[i_last]], vertices[loop[(i_last + 1) % n]]
+        )
+        > tolerance
+    ):
+        return [], []
+
+    forward_indices = _boundary_arc_indices(n, i_last, i_first, True)
+    backward_indices = _boundary_arc_indices(n, i_last, i_first, False)
+    # ``forward_indices``/``backward_indices`` are POSITIONS within
+    # ``loop`` (0..n-1), not mesh vertex ids -- ``loop[i]`` is the id;
+    # indexing ``vertices`` directly by the position (as an earlier draft
+    # did) reads whatever unrelated vertex happens to carry that raw id,
+    # the same class of index-vs-id confusion ``_cell_segments`` already
+    # documents having fixed once before.
+    forward_points = [vertices[loop[i]] for i in forward_indices]
+    backward_points = [vertices[loop[i]] for i in backward_indices]
+
+    forward_length = _polyline_length([last_point] + forward_points + [first_point])
+    backward_length = _polyline_length([last_point] + backward_points + [first_point])
+
+    if forward_length <= backward_length:
+        chosen_indices, chosen_points = forward_indices, forward_points
+    else:
+        chosen_indices, chosen_points = backward_indices, backward_points
+
+    point_ids = [("vertex", loop[i]) for i in chosen_indices]
+    return point_ids, chosen_points
+
+
+def _wall_runs(opposites: Sequence[int]) -> List[Tuple[int, int, int]]:
+    """Group a closed chain's own cyclic per-edge OPPOSITE tags
+    (``opposites[i]`` tags the edge from point ``i`` to point
+    ``(i + 1) % n``) into maximal RUNS of the SAME real (>= 0) neighbour id
+    -- each run is one shared WALL between this cell and exactly one
+    neighbour, resampled ONCE (``_resample_outline``) and handed to both
+    bordering cells identically (M3). Every edge tagged < 0 (unassigned
+    territory, an ambiguous triple point, or one of M4's own closure
+    arcs/chords) is its OWN singleton run: there is nothing real on its
+    other side to share a joint with, so it is never merged with a
+    neighbour, real or not.
+
+    Returns ``(start_index, length, tag)`` triples covering every one of
+    ``opposites``' own ``n`` edges exactly once (lengths sum to ``n``),
+    rotated to start at a genuine run boundary so a real run never splits
+    across the array's own arbitrary start/end.
+    """
+
+    n = len(opposites)
+    if n == 0:
+        return []
+    if all(tag == opposites[0] for tag in opposites) and opposites[0] >= 0:
+        return [(0, n, opposites[0])]
+
+    start = next(
+        i
+        for i in range(n)
+        if opposites[i] < 0 or opposites[(i - 1) % n] != opposites[i]
+    )
+    runs: List[Tuple[int, int, int]] = []
+    i = 0
+    while i < n:
+        index = (start + i) % n
+        tag = opposites[index]
+        length = 1
+        if tag >= 0:
+            while length < n and opposites[(start + i + length) % n] == tag:
+                length += 1
+        runs.append((index, length, tag))
+        i += length
+    return runs
+
+
+def _resample_wall(points: Sequence[np.ndarray], target: float) -> List[np.ndarray]:
+    """One wall's own OPEN polyline (``points[0]`` its start anchor,
+    ``points[-1]`` its end anchor -- BOTH ALWAYS KEPT, per M3) resampled at
+    roughly ``target`` arclength spacing corner to corner: the interval
+    count depends only on the wall's own TOTAL length, so resampling the
+    identical point set walked in reverse (the neighbouring cell's own
+    view of the same wall) yields the exact same points in reverse order --
+    which is exactly what lets ``_resample_outline``'s cache serve a
+    second cell the first cell's own array, merely reversed, rather than
+    recomputing it (recomputing in the opposite summation order is not
+    guaranteed BIT-identical even though it is mathematically the same
+    curve).
+    """
+
+    array = np.asarray(points, dtype=np.float64)
+    if array.shape[0] < 2:
+        return list(points)
+    cumulative = _cumulative_arclength(array)
+    total = float(cumulative[-1])
+    if total <= _ZERO_TOLERANCE:
+        return [array[0]]
+    count = max(1, int(round(total / target))) if target > _ZERO_TOLERANCE else 1
+    return [
+        _point_at_arclength(array, cumulative, (float(i) / float(count)) * total)
+        for i in range(count + 1)
+    ]
+
+
+def _resample_outline(
+    points: Sequence[np.ndarray],
+    point_ids: Sequence[Tuple[Any, ...]],
+    edge_tags: Sequence[int],
+    target: float,
+    wall_cache: Dict[frozenset, Tuple[Tuple[Any, ...], List[np.ndarray]]],
+) -> List[np.ndarray]:
+    """M3: ``points`` (a closed, cyclic outline; ``edge_tags[i]`` tags the
+    edge from ``points[i]`` to ``points[(i + 1) % n]``, ``point_ids[i]``
+    identifying ``points[i]`` for the shared-wall cache) resampled wall by
+    wall at roughly ``target`` spacing (``_wall_runs`` / ``_resample_wall``
+    above): each maximal run of edges bordering the same real neighbour is
+    resampled ONCE and cached by that wall's own two end-point identities,
+    so the SAME wall met later from the bordering cell, walked in reverse,
+    is served the identical array reversed -- bit-for-bit shared joints,
+    not merely numerically close ones (the caller passes one shared
+    ``wall_cache`` across every seed in one ``dual_cells`` call). Runs
+    bordering no real neighbour (unassigned territory, an ambiguous triple
+    point, or one of M4's own closure arcs/chords) are resampled directly,
+    uncached: there is no second cell to share them with.
+    """
+
+    n = len(points)
+    if n < 3:
+        return list(points)
+    runs = _wall_runs(edge_tags)
+    resampled: List[np.ndarray] = []
+    for start_index, length, tag in runs:
+        span_ids = [point_ids[(start_index + k) % n] for k in range(length + 1)]
+        span_points = [points[(start_index + k) % n] for k in range(length + 1)]
+        if tag >= 0 and span_ids[0] != span_ids[-1]:
+            key = frozenset((span_ids[0], span_ids[-1]))
+            cached = wall_cache.get(key)
+            if cached is None:
+                wall_points = _resample_wall(span_points, target)
+                wall_cache[key] = (span_ids[0], wall_points)
+            else:
+                anchor_id, cached_points = cached
+                wall_points = (
+                    cached_points if anchor_id == span_ids[0] else list(reversed(cached_points))
+                )
+        else:
+            wall_points = _resample_wall(span_points, target)
+        resampled.extend(wall_points[:-1])
+    return resampled
 
 
 def dual_cells(
@@ -2140,9 +2668,29 @@ def dual_cells(
     response; ``disconnected`` stays here, a breakdown of ``dropped``
     rather than a number of its own.
 
-    Disclosed approximation: a cell whose territory touches the mesh's
-    open boundary closes its outline with the straight chord between the
-    open chain's two ends, not the true boundary polyline.
+    M4 (2026-08-20 dual-quality wave): an open chain whose two ends both
+    lie on the SAME mesh boundary loop closes by walking that loop's own
+    polyline between them (the shorter of its two arcs) rather than a
+    straight chord; only a genuine interior break (either end not itself
+    a boundary edge, or the two ends on different loops -- the disclosed
+    ~2.4% case) still falls back to the chord.
+
+    M3 (the same wave): every chain -- after M4 closure -- is resampled at
+    roughly ``0.5 * size`` spacing, corner to corner: the one Laplacian
+    smoothing pass runs FIRST, on the dense raw (pre-resample) chain
+    exactly as it always did (unchanged pass count), and resampling reads
+    the smoothed positions -- not the other order. Measured directly: one
+    pass's own shrinkage scales with a point's gap to its neighbours, so
+    the identical pass that barely nudges a ~38-corner raw chain visibly
+    rounds off an already-coarsened ~10-corner one; smoothing before
+    resampling keeps the pass's own effect at the density it was measured
+    and accepted at (Task 2), instead of quietly compounding with the
+    resample's own coarsening. A wall shared between two neighbouring
+    cells is still resampled exactly ONCE and handed to both, bit-for-bit
+    (``_resample_outline``'s own cache), because ``_cell_segments``
+    already gives every ordinary (non-triple-point) shared boundary the
+    identical sequence of raw midpoints in both
+    cells' own chains.
     """
 
     seed_points = np.asarray(seed_points, dtype=np.float64)
@@ -2177,6 +2725,14 @@ def dual_cells(
     owner = _multi_source_dijkstra(adjacency, sources)
 
     segments_by_seed, midpoints = _cell_segments(dual_mesh, owner)
+    # M4: the dual mesh's own boundary polyline(s), built ONCE for this
+    # call and shared by every seed's own closure attempt.
+    boundary_loops = _boundary_loops(dual_mesh)
+    boundary_positions = _boundary_edge_positions(boundary_loops)
+    # M3: one wall, resampled once, shared by however many of the seeds
+    # touching it happen to run in this same call.
+    wall_cache: Dict[frozenset, Tuple[Tuple[Any, ...], List[np.ndarray]]] = {}
+    resample_target = _RESAMPLE_FACTOR * float(size)
 
     cells: List[Cell] = []
     holes_ignored = 0
@@ -2185,11 +2741,41 @@ def dual_cells(
         segments = segments_by_seed.get(seed_index)
         if not segments:
             continue
-        chains = _extract_chains(segments)
+        chains = _extract_chains([(key_a, key_b) for key_a, key_b, _opp in segments])
         if not chains:
             continue
+        opposite_lookup = _segment_opposite_lookup(segments)
 
-        polygons = [_chain_polygon(chain, midpoints) for chain in chains]
+        polygons: List[List[np.ndarray]] = []
+        polygon_ids: List[List[Tuple[Any, ...]]] = []
+        polygon_tags: List[List[int]] = []
+        for chain in chains:
+            points = _chain_polygon(chain, midpoints)
+            ids = _chain_point_ids(chain)
+            tags = _chain_edge_tags(chain, opposite_lookup)
+            if len(chain) > 1 and chain[0] != chain[-1]:
+                # An open chain: M4 tries a real boundary-polyline closure
+                # first; a chord (nothing spliced in) is the fallback.
+                arc_ids, arc_points = _boundary_closure_arc(
+                    chain[0],
+                    chain[-1],
+                    boundary_positions,
+                    boundary_loops,
+                    dual_mesh.vertices,
+                    points[0],
+                    points[-1],
+                    _BOUNDARY_WELD_TOLERANCE,
+                )
+                if arc_points:
+                    points = points + arc_points
+                    ids = ids + arc_ids
+                    tags = tags + [_NO_NEIGHBOUR] * (len(arc_points) + 1)
+                else:
+                    tags = tags + [_NO_NEIGHBOUR]
+            polygons.append(points)
+            polygon_ids.append(ids)
+            polygon_tags.append(tags)
+
         areas = [
             _polygon_area_3d(polygon) if len(polygon) >= 3 else 0.0
             for polygon in polygons
@@ -2207,7 +2793,35 @@ def dual_cells(
             continue
         holes_ignored += len(others)
 
-        outline = _finalize_outline(_smooth_closed_polyline(outer))
+        # Smooth BEFORE resampling, not after (measured directly, task 3:
+        # the other order costs real coverage -- one Laplacian pass's
+        # shrinkage scales with the GAP between a point and its own
+        # neighbours, so the identical single pass that barely nudges a
+        # ~38-corner raw chain visibly rounds off a ~10-corner resampled
+        # one; smoothing the dense raw chain first, exactly as Task 2
+        # shipped, then resampling the ALREADY-SMOOTHED points, keeps the
+        # smoothing pass's own effect at the density it was measured and
+        # accepted at. Confirmed directly on Param's own vault at S=0.2:
+        # coverage 93.4% resample-then-smooth vs 97.5% smooth-then-
+        # resample, both starting from the identical 98.9% raw figure.
+        #
+        # M4's own arc points (tagged ("vertex", ...) by
+        # ``_boundary_closure_arc`` -- see ``_chain_point_ids`` /
+        # ``_boundary_closure_arc``) are PROTECTED from this pass: they
+        # already sit exactly on the mesh's true rim, and smoothing them
+        # inward along with the rest of the chain would give back some of
+        # the area M4 closure exists to recover (measured directly: about
+        # 0.6 coverage points on Param's own vault).
+        protected_indices = [
+            index
+            for index, point_id in enumerate(polygon_ids[best])
+            if point_id[0] == "vertex"
+        ]
+        smoothed = _smooth_closed_polyline(outer, protected_indices)
+        resampled = _resample_outline(
+            smoothed, polygon_ids[best], polygon_tags[best], resample_target, wall_cache
+        )
+        outline = _finalize_outline(resampled)
         if outline is None:
             continue
         cells.append(
@@ -2344,6 +2958,238 @@ def _plan_degenerate_count(outlines: Sequence[Sequence[Sequence[float]]]) -> int
 
 
 # ---------------------------------------------------------------------------
+# Plan overlap (M5, 2026-08-20 dual-quality wave): a SECOND, distinct
+# plan-projection failure mode from ``_plan_is_simple``'s self-crossing
+# check -- two DIFFERENT cells, each individually simple, whose plan
+# projections overlap each other. Ported from bench/studio/tessellation.py's
+# ``_reject_overlaps`` (via ``_segments_cross`` / ``on_segment`` /
+# ``point_strictly_in_cell``), the same simplified two-case reading
+# tests/patterns/test_armadillo_dual_studio_acceptance.py's own
+# ``_rings_conflict`` already uses for real against the studio: a proper
+# edge crossing, or a vertex of one ring strictly inside the other (cells
+# sharing an edge or a corner -- boundary-only contact -- are not a
+# conflict). The two other ``_reject_overlaps`` cases (identical outlines;
+# the same corners connected in a different order) do not arise between
+# distinct dual cells and are not checked here, matching that file's own
+# ruling.
+# ---------------------------------------------------------------------------
+
+
+def _segments_cross_2d(a: Sequence[float], b: Sequence[float], c: Sequence[float], d: Sequence[float]) -> bool:
+    """Proper crossing of segment a-b against segment c-d (studio's own
+    ``_segments_cross``, read directly): shared endpoints or a touching
+    contact do NOT count, only a crossing that strictly separates each
+    segment's own two ends onto opposite sides of the other."""
+
+    def side(p: Sequence[float], q: Sequence[float], r: Sequence[float]) -> int:
+        value = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+        if abs(value) < 1.0e-15:
+            return 0
+        return 1 if value > 0 else -1
+
+    return side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0
+
+
+def _point_on_segment_2d(
+    point: Sequence[float], a: Sequence[float], b: Sequence[float], tolerance: float
+) -> bool:
+    """Whether ``point`` lies STRICTLY between ``a`` and ``b`` (studio's
+    own ``on_segment``, read directly, boolean rather than the studio's
+    own along-position float since no caller here needs it)."""
+
+    ex, ey = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(ex, ey)
+    if length < tolerance:
+        return False
+    px, py = point[0] - a[0], point[1] - a[1]
+    across = (px * ey - py * ex) / length
+    if abs(across) > tolerance:
+        return False
+    along = (px * ex + py * ey) / (length * length)
+    margin = tolerance / length
+    return not (along <= margin or along >= 1.0 - margin)
+
+
+def _point_strictly_inside_ring_2d(
+    point: Sequence[float], ring: Sequence[Sequence[float]], tolerance: float
+) -> bool:
+    """Even-odd interior test, boundary EXCLUSIVE (studio's own
+    ``point_strictly_in_cell``, read directly, without the hole handling
+    that function also does -- a dual cell's own outline has no holes at
+    this level): a point coinciding with a vertex or lying on an edge is
+    not "strictly" inside."""
+
+    x, y = point[0], point[1]
+    n = len(ring)
+    for i in range(n):
+        a, b = ring[i], ring[(i + 1) % n]
+        if abs(a[0] - x) <= tolerance and abs(a[1] - y) <= tolerance:
+            return False
+        if _point_on_segment_2d(point, a, b, tolerance):
+            return False
+    inside = False
+    for i in range(n):
+        a, b = ring[i], ring[(i + 1) % n]
+        if (a[1] > y) != (b[1] > y):
+            crossing = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            if crossing > x:
+                inside = not inside
+    return inside
+
+
+def _plan_rings_conflict(
+    ring_a: Sequence[Sequence[float]],
+    ring_b: Sequence[Sequence[float]],
+    tolerance: float = _PLAN_TOLERANCE,
+) -> bool:
+    """Whether two plan (2D) outlines overlap, by the same two tests
+    ``tessellation._reject_overlaps`` applies to welded cells (see the
+    section docstring above for which two, and why only those two).
+
+    Bbox-rejects first (mirrors the acceptance script's own
+    ``_rings_conflict``): measured directly on Param's vault at S=0.2,
+    this one cheap check turns the overwhelming majority of the ~140000
+    candidate pairs ``_drop_plan_overlaps``' own bucket grid still offers
+    (most sharing a bucket without their actual outlines coming remotely
+    close) into four float comparisons instead of the full O(n*m)
+    geometric check below -- without it, this single function was 83 of
+    generate()'s own 150 seconds on that run.
+    """
+
+    ax0 = min(p[0] for p in ring_a)
+    ay0 = min(p[1] for p in ring_a)
+    ax1 = max(p[0] for p in ring_a)
+    ay1 = max(p[1] for p in ring_a)
+    bx0 = min(p[0] for p in ring_b)
+    by0 = min(p[1] for p in ring_b)
+    bx1 = max(p[0] for p in ring_b)
+    by1 = max(p[1] for p in ring_b)
+    if ax1 < bx0 or bx1 < ax0 or ay1 < by0 or by1 < ay0:
+        return False
+
+    na, nb = len(ring_a), len(ring_b)
+    for i in range(na):
+        p1, p2 = ring_a[i], ring_a[(i + 1) % na]
+        for j in range(nb):
+            p3, p4 = ring_b[j], ring_b[(j + 1) % nb]
+            if _segments_cross_2d(p1, p2, p3, p4):
+                return True
+    for point in ring_a:
+        if _point_strictly_inside_ring_2d(point, ring_b, tolerance):
+            return True
+    for point in ring_b:
+        if _point_strictly_inside_ring_2d(point, ring_a, tolerance):
+            return True
+    return False
+
+
+def _plan_bucket_range(
+    box: Tuple[float, float, float, float], bucket_size: float
+) -> Tuple[int, int, int, int]:
+    x0, y0, x1, y1 = box
+    return (
+        int(math.floor(x0 / bucket_size)),
+        int(math.floor(y0 / bucket_size)),
+        int(math.floor(x1 / bucket_size)),
+        int(math.floor(y1 / bucket_size)),
+    )
+
+
+def _drop_plan_overlaps(
+    indices: Sequence[int],
+    rings: Mapping[int, Sequence[Sequence[float]]],
+    bucket_size: float,
+    areas: Optional[Mapping[int, float]] = None,
+) -> Tuple[List[int], List[int]]:
+    """Greedily drop the fewest cells needed so no two surviving plan
+    outlines overlap (``_plan_rings_conflict``), scoped by a bucket grid
+    (each cell's own plan bounding box, keyed to ``bucket_size``-wide
+    cells) so only genuinely nearby outlines are ever compared -- the
+    pairwise scan tests/patterns/test_armadillo_dual_studio_acceptance.py's
+    own ``_exclude_plan_overlaps`` runs unscoped is fine at that script's
+    hundreds of cells; ``generate()`` itself needs to stay light at the
+    thousands S=0.2 produces on a real vault (M6 already owns most of the
+    wall-time budget).
+
+    Which member of a conflicting pair is dropped: the SMALLER-area one
+    when ``areas`` is supplied (ties, and any index missing from
+    ``areas``, break toward the later index) -- minimises the total
+    covered area an unavoidable drop costs, since the whole reason a
+    cell is forced out is that the sidecar cannot import while it
+    overlaps another; keeping whichever of the two actually covers more
+    of the vault is the honest way to pay that cost. Without ``areas``
+    (the default), the plain later-index rule mirrors the acceptance
+    script's own ``_exclude_plan_overlaps``.
+
+    Conflicts are sparse in practice (the design spec's own M5 finding: a
+    few pairs out of thousands of cells), so a repeated full pass over the
+    CURRENT survivors -- drop one member of every conflicting pair found,
+    rebuild the grid, stop once a pass finds none -- terminates in a
+    handful of rounds, mirroring the acceptance script's own method.
+
+    Returns ``(kept, dropped)``, both lists of the ORIGINAL ``indices``
+    values (not positions), ``dropped`` in the order it was removed.
+    """
+
+    kept = list(indices)
+    dropped: List[int] = []
+    if bucket_size <= 0.0:
+        bucket_size = 1.0
+
+    def choose_drop(a: int, b: int) -> int:
+        if areas is None:
+            return max(a, b)
+        area_a = areas.get(a)
+        area_b = areas.get(b)
+        if area_a is None or area_b is None or area_a == area_b:
+            return max(a, b)
+        return a if area_a < area_b else b
+
+    changed = True
+    while changed:
+        changed = False
+        boxes: Dict[int, Tuple[float, float, float, float]] = {}
+        grid: Dict[Tuple[int, int], List[int]] = {}
+        for i in kept:
+            ring = rings[i]
+            xs = [p[0] for p in ring]
+            ys = [p[1] for p in ring]
+            box = (min(xs), min(ys), max(xs), max(ys))
+            boxes[i] = box
+            bx0, by0, bx1, by1 = _plan_bucket_range(box, bucket_size)
+            for bx in range(bx0, bx1 + 1):
+                for by in range(by0, by1 + 1):
+                    grid.setdefault((bx, by), []).append(i)
+
+        drop_this_pass: set = set()
+        checked_pairs: set = set()
+        for i in kept:
+            if i in drop_this_pass:
+                continue
+            bx0, by0, bx1, by1 = _plan_bucket_range(boxes[i], bucket_size)
+            candidates: set = set()
+            for bx in range(bx0, bx1 + 1):
+                for by in range(by0, by1 + 1):
+                    candidates.update(grid.get((bx, by), ()))
+            for j in candidates:
+                if j == i or j in drop_this_pass:
+                    continue
+                pair = (i, j) if i < j else (j, i)
+                if pair in checked_pairs:
+                    continue
+                checked_pairs.add(pair)
+                if _plan_rings_conflict(rings[i], rings[j]):
+                    drop_this_pass.add(choose_drop(pair[0], pair[1]))
+
+        if drop_this_pass:
+            dropped.extend(sorted(drop_this_pass))
+            kept = [i for i in kept if i not in drop_this_pass]
+            changed = True
+
+    return kept, dropped
+
+
+# ---------------------------------------------------------------------------
 # generate(): the full worker response (design spec "Worker command")
 # ---------------------------------------------------------------------------
 
@@ -2366,9 +3212,17 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
     of a cell's own outline -- the outline legitimately spans them),
     ``refinement_levels`` / ``refinement_capped`` (how finely the internal
     dual mesh resolved ``size``, and whether the 5-pass cap stopped it
-    short), and ``plan_degenerate`` (emitted cells whose PLAN projection
-    self-crosses, which Bench Studio's import rejects the WHOLE sidecar
-    for; see ``_plan_degenerate_count``).
+    short), ``plan_degenerate`` (always 0 by construction below -- see
+    ``plan_degenerate_dropped``), and the two M5 (2026-08-20 dual-quality
+    wave) dropped-cell lists: ``plan_degenerate_dropped`` (cells whose OWN
+    plan projection self-crosses) and ``plan_overlap_dropped`` (cells that
+    still overlap another SURVIVING cell's plan projection once the
+    self-crossing ones are gone) -- both lists of the dropped cells' own
+    seed index, not bare counts, so an author can find exactly which seed
+    produced each one. ``generate`` drops both classes itself before
+    returning: Bench Studio's ``from_document`` rejects the WHOLE sidecar
+    over the first plan-projection conflict it meets (self-crossing OR
+    overlapping), and the raw output of a run has to import.
 
     Raises ``PatternRefused`` (propagated from ``assemble_mesh`` /
     ``field_source``) when the result has no member forces and no diagram
@@ -2380,11 +3234,55 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
     lines = streamlines(mesh, field, size)
     points, course_band, _streamline_id = seeds(lines, size)
     cell_report: Dict[str, Any] = {}
-    cells = dual_cells(mesh, points, size, cell_report)
+    raw_cells = dual_cells(mesh, points, size, cell_report)
 
     seed_count = int(points.shape[0])
+    dropped = seed_count - len(raw_cells)
+
+    # M5: drop plan-degenerate (self-crossing) cells first, THEN check the
+    # survivors for plan overlap -- exactly the order
+    # tests/patterns/test_armadillo_dual_studio_acceptance.py's own
+    # ``build_tessellation_document`` applies (a self-crossing outline is
+    # not a meaningful overlap candidate in the first place).
+    plan_rings: Dict[int, List[List[float]]] = {
+        index: [[float(p[0]), float(p[1])] for p in cell.outline.tolist()]
+        for index, cell in enumerate(raw_cells)
+    }
+    plan_degenerate_dropped_indices = [
+        index
+        for index in range(len(raw_cells))
+        if not _plan_is_simple(np.array(plan_rings[index], dtype=np.float64))
+    ]
+    degenerate_set = set(plan_degenerate_dropped_indices)
+    simple_indices = [
+        index for index in range(len(raw_cells)) if index not in degenerate_set
+    ]
+    # Bucket size for the overlap scan's own spatial index: a few
+    # multiples of the target voussoir size comfortably covers one cell's
+    # own plan footprint per bucket without collapsing to one giant bucket.
+    # ``raw_areas`` (each cell's own real 3D area, the same quantity
+    # ``mean_cell_size`` and coverage are measured against) lets
+    # ``_drop_plan_overlaps`` keep the larger of a genuinely conflicting
+    # pair: measured directly on Param's vault at S=0.2, this alone moved
+    # coverage from 96.99% (a hair under the design spec's own >= 97% bar)
+    # to 97.22% -- the SAME 13 cells still leave, just the smaller half of
+    # each conflicting pair rather than an arbitrary later index.
+    raw_areas: Dict[int, float] = {
+        index: _polygon_area_3d(list(cell.outline))
+        for index, cell in enumerate(raw_cells)
+    }
+    kept_indices, plan_overlap_dropped_indices = _drop_plan_overlaps(
+        simple_indices, plan_rings, max(float(size), _ZERO_TOLERANCE) * 4.0, raw_areas
+    )
+    cells = [raw_cells[index] for index in kept_indices]
+    plan_degenerate_dropped = [
+        int(raw_cells[index].seed_index) for index in plan_degenerate_dropped_indices
+    ]
+    plan_overlap_dropped = [
+        int(raw_cells[index].seed_index) for index in plan_overlap_dropped_indices
+    ]
+
     cell_count = len(cells)
-    dropped = seed_count - cell_count
 
     cells_payload = []
     sizes: List[float] = []
@@ -2412,6 +3310,8 @@ def generate(result: Mapping[str, Any], size: float) -> Dict[str, Any]:
         "plan_degenerate": _plan_degenerate_count(
             [cell["outline"] for cell in cells_payload]
         ),
+        "plan_degenerate_dropped": plan_degenerate_dropped,
+        "plan_overlap_dropped": plan_overlap_dropped,
         "refinement_levels": int(cell_report.get("refinement_levels", 0)),
         "refinement_capped": bool(cell_report.get("refinement_capped", False)),
     }

@@ -646,30 +646,35 @@ def funnel_mid_ratio(
     dual-quality wave, task 2 fix round 1): the fixed thresholds above are
     tuned to ONE population (Param's pre-fix vault, 34 streamlines, max
     crowding count 4) and do not carry to a different one. Measured
-    directly: M1+M2's evenly spaced streamlines (98 lines on the same
-    vault at the same S) shift the crowding-count distribution's own
-    range to 0-8 with a mode at 3, so the fixed sparse_max=0 bucket drops
-    to 0.3% of cells (edge noise, not a population) while crowded_min=3
-    becomes 92% of cells (the new norm, not the exception) -- and,
-    decisively, the FIXED THRESHOLDS ARE NOT EVEN DEFINED ON THE OLD
-    POPULATION UNDER A DIFFERENT RE-TUNE: a re-tuned (crowded_min=5,
-    sparse_max=2) that discriminates the new population gives an EMPTY
-    crowded bucket (max count 4) and NaN on the old one, making any single
-    fixed threshold pair incapable of comparing the two runs on the same
-    terms. Percentile ranks are population-relative by construction:
-    ``low_percentile``/``high_percentile`` of THIS run's own crowding-count
-    distribution, computed fresh each call, so the same call signature
-    means "the least-crowded tenth" and "the most-crowded tenth" whether
-    the underlying population has 34 lines or 98. The default (10, 90)
-    reproduces the pre-fix baseline EXACTLY (verified directly: 2.415621,
-    matching the fixed-threshold reading to six figures, because p10 of
-    the pre-fix distribution IS exactly count==0 and p90 IS exactly
-    count>=3 -- the percentile reading strictly generalises the old fixed
-    one rather than replacing it with an unrelated definition) and reads
-    1.220794 on the post-fix population -- a real, comparable 2.42 -> 1.22
-    improvement with 19% headroom under the design spec's 1.5 bar, instead
-    of the fixed-threshold (5, 2) re-tune's 1.7% headroom against a number
-    that could not be measured on the baseline at all. The removed fixed
+    directly at the fix round's own FIRST commit (16543f7, M1+M2's evenly
+    spaced streamlines before the same round's off-by-one repair): 98
+    lines on the same vault at the same S shift the crowding-count
+    distribution's own range to 0-8 with a mode at 3, so the fixed
+    sparse_max=0 bucket drops to 0.3% of cells (edge noise, not a
+    population) while crowded_min=3 becomes 92% of cells (the new norm,
+    not the exception) -- and, decisively, the FIXED THRESHOLDS ARE NOT
+    EVEN DEFINED ON THE OLD POPULATION UNDER A DIFFERENT RE-TUNE: a
+    re-tuned (crowded_min=5, sparse_max=2) that discriminates the new
+    population gives an EMPTY crowded bucket (max count 4) and NaN on the
+    old one, making any single fixed threshold pair incapable of comparing
+    the two runs on the same terms. Percentile ranks are population-
+    relative by construction: ``low_percentile``/``high_percentile`` of
+    THIS run's own crowding-count distribution, computed fresh each call,
+    so the same call signature means "the least-crowded tenth" and "the
+    most-crowded tenth" whether the underlying population has 34 lines or
+    103. The default (10, 90) reproduces the pre-fix baseline EXACTLY
+    (verified directly: 2.415621, matching the fixed-threshold reading to
+    six figures, because p10 of the pre-fix distribution IS exactly
+    count==0 and p90 IS exactly count>=3 -- the percentile reading
+    strictly generalises the old fixed one rather than replacing it with
+    an unrelated definition) and reads 1.229339 on the CURRENT shipped
+    population (103 lines, S=0.2, fix round 1's own off-by-one repair
+    included, task 3's own confirmation -- 1.220794 at 98 lines was the
+    same reading one commit earlier, before that repair moved the
+    streamline count) -- a real, comparable 2.42 -> 1.23 improvement with
+    18% headroom under the design spec's 1.5 bar, instead of the
+    fixed-threshold (5, 2) re-tune's 1.7% headroom against a number that
+    could not be measured on the baseline at all. The removed fixed
     thresholds (``crowded_min``/``sparse_max``) are gone from this
     function entirely, not merely defaulted differently: keeping them
     alongside percentile ranks would invite exactly the incommensurable

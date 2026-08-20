@@ -17,6 +17,8 @@ those old assertions upward piecemeal would document nothing.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import time
 from typing import Any
@@ -128,26 +130,30 @@ def test_load_param_vault_returns_the_shape_generate_consumes():
 # absolute counts -- see the function's own docstring in param_vault.py for
 # the full "why", and the module-level table below for the two numbers this
 # change is actually keyed to. A fixed-count re-tune (tried first, and
-# shipped in this task's original commit) turned out to be incommensurable
-# with the baseline it was compared against: re-tuned thresholds that
-# discriminate the post-fix population (98 streamlines) give an EMPTY
+# shipped in this task's original commit, 16543f7, 98 streamlines) turned
+# out to be incommensurable with the baseline it was compared against:
+# re-tuned thresholds that discriminate that population give an EMPTY
 # crowded bucket -- NaN -- on the pre-fix population (34 streamlines, max
 # crowding count 4), and the pre-fix population's OWN fixed thresholds
-# measure 2.0062 (a FAIL against the 1.5 bar) on the post-fix population,
-# not the 1.48 the original commit reported. Percentile ranks are
-# population-relative by construction, so the same call means "the
-# least/most-crowded tenth" on either population and the two numbers below
-# are a genuine, comparable measurement of the same metric:
+# measure 2.0062 (a FAIL against the 1.5 bar) on the 98-streamline
+# population, not the 1.48 the original commit reported (both figures
+# measured at 16543f7, before the SAME round's off-by-one repair moved the
+# streamline count to 103 -- withdrawn thresholds, never re-measured
+# against that later population, and do not need to be: see below).
+# Percentile ranks are population-relative by construction, so the same
+# call means "the least/most-crowded tenth" on either population and the
+# two numbers below are a genuine, comparable measurement of the same
+# metric, current as of task 3 (c677a0e and onward):
 #
-#   pre-fix (34 streamlines, S=0.2):  2.4156  (reproduces the diagnosis's
-#                                              own fixed-threshold reading
-#                                              to six figures -- p10 of
-#                                              that population IS count==0
-#                                              and p90 IS count>=3)
-#   post-fix (98 streamlines, S=0.2): 1.2208  (19% headroom under the 1.5
-#                                              bar, against 1.7% headroom
-#                                              for the withdrawn fixed
-#                                              re-tune)
+#   pre-fix (34 streamlines, S=0.2):   2.4156  (reproduces the diagnosis's
+#                                               own fixed-threshold reading
+#                                               to six figures -- p10 of
+#                                               that population IS count==0
+#                                               and p90 IS count>=3)
+#   post-fix (103 streamlines, S=0.2): 1.229339  (18% headroom under the
+#                                               1.5 bar, against 1.7%
+#                                               headroom for the withdrawn
+#                                               fixed re-tune)
 # ---------------------------------------------------------------------------
 
 
@@ -369,6 +375,126 @@ def test_vault_no_regression_at_s_04():
         "ribbon fraction (by cell count) {:.2%} is not <= 4% at "
         "S=0.4".format(measured["ribbon_fraction_cells"])
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 3's own bars (M3/M4), Param's real vault, S = 0.2.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_chamfer_population_meets_the_spec_bar_at_s_02():
+    """M4's own bar: boundary chamfers drop to <= 3% of cells once an open
+    chain closes along the mesh boundary polyline instead of a straight
+    chord (baseline 17.06% by THIS implementation of ``chamfer_population``,
+    tolerance 0.15 m -- see Task 1's report; the design spec's own
+    parenthetical, 19.4%, came from a differently-thresholded probe)."""
+
+    measured = _vault_run(0.2)
+    boundary_loops = pv.mesh_boundary_loops(measured["mesh"])
+    flags = pv.chamfer_population(
+        measured["response"]["cells"], boundary_loops, tolerance=0.15
+    )
+    fraction = float(flags.mean()) if flags.shape[0] else float("nan")
+    assert fraction <= 0.03, (
+        "chamfer population {:.2%} is not <= 3% (baseline 17.06%)".format(fraction)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_median_corner_count_meets_the_spec_bar_at_s_02():
+    """M3's own bar: median corner count per cell drops to <= 16 (was
+    ~38) once every chain is resampled at roughly 0.5*S."""
+
+    cells = _vault_run(0.2)["response"]["cells"]
+    corner_counts = [len(cell["outline"]) for cell in cells]
+    median = float(np.median(corner_counts))
+    assert median <= 16.0, (
+        "median corner count per cell {:.1f} is not <= 16 (was ~38)".format(median)
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_shares_bit_identical_joints_between_neighbouring_cells_at_s_02():
+    """M3's own acceptance bar, on the real vault rather than a synthetic
+    fixture (the synthetic, mechanism-level proof is
+    test_armadillo_dual_cells.py's own
+    ``test_resample_outline_shares_bit_identical_joints_between_two_cells``):
+    at least a real, non-trivial number of outline points survive, bit-for-
+    bit identical, in TWO different cells' own final outlines -- resampled
+    ONCE (``_resample_outline``'s own cache, shared across every seed in
+    one ``dual_cells`` call) rather than independently recomputed and
+    merely close.
+
+    Calls ``dual_cells`` directly (not through ``generate``) to get each
+    ``Cell``'s own ``seed_index`` -- ``generate``'s own JSON cell payload
+    does not carry it. A wall's own two END points (shared with a THIRD
+    neighbour, or a triple point) are not part of this guarantee -- only
+    genuine wall-INTERIOR points are, which needs a wall resampled to at
+    least 3 points -- so this asserts existence at scale, not that every
+    point of every cell is shared.
+    """
+
+    result = pv.load_param_vault()
+    mesh = assemble_mesh(result)
+    field = line_field(mesh)
+    lines = streamlines(mesh, field, 0.2)
+    points, _course_band, _streamline_id = seeds(lines, 0.2)
+    cells = dual_cells(mesh, points, 0.2)
+
+    owners_by_point: Dict[Tuple[float, float, float], set] = {}
+    for cell in cells:
+        for p in cell.outline:
+            key = (float(p[0]), float(p[1]), float(p[2]))
+            owners_by_point.setdefault(key, set()).add(cell.seed_index)
+
+    shared = {key: owners for key, owners in owners_by_point.items() if len(owners) >= 2}
+    print(
+        "Param's vault at S=0.2: {} outline points shared bit-identically "
+        "between >= 2 cells, of {} distinct points across {} cells".format(
+            len(shared), len(owners_by_point), len(cells)
+        )
+    )
+    assert len(shared) >= 20, (
+        "only {} outline points are shared bit-identically between two "
+        "different cells -- M3's own resampling cache did not fire at "
+        "any real scale".format(len(shared))
+    )
+
+
+@pytest.mark.skipif(
+    not pv.VAULT_JSON.is_file(), reason="Param's vault export not found"
+)
+def test_vault_generate_is_deterministic_across_two_runs():
+    """Task 3's own non-regression check: two ``generate()`` calls on the
+    identical vault input produce byte-identical output -- a cheap
+    two-run digest compare (task-2-review.md's own method, re-run here
+    against task 3's HEAD rather than trusted from that separate review).
+    S = 0.4, not 0.2, purely to keep this specific check cheap; the
+    mechanism under test (wall-caching, boundary closure, plan filtering)
+    is identical code at either size.
+    """
+
+    result = pv.load_param_vault()
+
+    first = generate(result, 0.4)
+    second = generate(result, 0.4)
+
+    first_cells = hashlib.sha256(
+        json.dumps(first["cells"], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    second_cells = hashlib.sha256(
+        json.dumps(second["cells"], sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    assert first_cells == second_cells, "cells digest differs between two runs"
+    assert first["flowlines"] == second["flowlines"]
+    assert first["diagnostics"] == second["diagnostics"]
 
 
 # ---------------------------------------------------------------------------

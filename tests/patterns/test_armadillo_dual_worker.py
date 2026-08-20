@@ -79,6 +79,27 @@ def test_pattern_armadillo_dual_dispatch_returns_the_generate_response_shape(dom
     assert payload == direct
 
 
+def test_pattern_armadillo_dual_dispatch_carries_the_m5_dropped_keys(dome_result):
+    """M5 (2026-08-20 dual-quality wave): the two new diagnostics keys the
+    GH component's own D output reads (``PatternComponents.cs``'s
+    ``FormatDiagnostics``) reach the wire response, not just ``generate``'s
+    own in-process return value -- the same JSON-plain dict, so this is
+    really pinning that dispatch's own pass-through does not drop them.
+    """
+
+    result, _geometry = dome_result(n_rings=6, n_segments=12)
+
+    response = dispatch(
+        request("pattern.armadillo_dual", payload={"result": result, "size": 1.0})
+    )
+
+    diagnostics = response["result"]["diagnostics"]
+    for key in ("plan_degenerate_dropped", "plan_overlap_dropped"):
+        assert key in diagnostics
+        assert isinstance(diagnostics[key], list)
+        assert all(isinstance(v, int) for v in diagnostics[key])
+
+
 def test_pattern_armadillo_dual_dispatch_defaults_missing_size_to_the_shipped_default(
     monkeypatch, dome_result
 ):
