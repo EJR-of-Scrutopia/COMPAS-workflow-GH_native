@@ -620,21 +620,7 @@ namespace Ananke.COMPAS.Native.Components
                             .Where(i => group[i] == g).ToArray();
                         if (mine.Length == 0)
                             continue;
-                        // THE GEOMETRIC centre of the columns it carries, not
-                        // the force-weighted one.
-                        //
-                        // A foot placed where the trunks BALANCE is the
-                        // structurally clever answer and it is why the shared
-                        // foot kept coming out off centre: the geometric median
-                        // is very sensitive, so a couple of percent of noise in
-                        // the solved load moves it a long way, and a Type 1
-                        // arch put its one foot visibly to one side. Under a
-                        // symmetric set of columns the plain centre is
-                        // symmetric by construction and cannot drift. What that
-                        // costs is the thrust the foot no longer balances, and
-                        // that is measured below rather than avoided.
-                        double sx = 0.0;
-                        double sy = 0.0;
+                        Point3d centre = SharedFoot(trunkTop, mine, ground);
                         double fx = 0.0;
                         double fy = 0.0;
                         double sw = 0.0;
@@ -642,14 +628,10 @@ namespace Ananke.COMPAS.Native.Components
                         {
                             double w = Math.Max(
                                 Math.Abs(trunkForce[i].Z), 1.0e-9);
-                            sx += trunkTop[i].X;
-                            sy += trunkTop[i].Y;
                             fx += trunkTop[i].X * w;
                             fy += trunkTop[i].Y * w;
                             sw += w;
                         }
-                        var centre = new Point3d(
-                            sx / mine.Length, sy / mine.Length, ground);
                         footDrift = Math.Max(
                             footDrift,
                             Math.Sqrt(MouldGeometry.PlanDistanceSquared(
@@ -975,6 +957,49 @@ namespace Ananke.COMPAS.Native.Components
             for (int i = 0; i < label.Length; i++)
                 label[i] = renumber[label[i]];
             return label;
+        }
+
+        /// <summary>
+        /// Where a shared foot stands: MIDWAY BETWEEN THE OUTERMOST columns it
+        /// carries, not at their average.
+        ///
+        /// This is the whole of the Type 1 offset, and Param narrowed it to it:
+        /// five columns or more and the one foot lands to one side, four or
+        /// fewer and it is fine.
+        ///
+        /// An average is pulled by where the columns CROWD. With an even count
+        /// the columns are mirrored pairs and the average happens to land dead
+        /// centre, which is why four and under looked right. The moment there
+        /// is a CENTRE COLUMN the count is odd, and a centre column sits on
+        /// whichever notch is NEAREST the middle, which on a bar with no node
+        /// exactly at its midpoint is half a bay off. That single unpaired
+        /// column drags the average off by its own offset divided by the
+        /// count, every time, in the same direction. Five columns, seven
+        /// columns, or six with a centre added: all offset. Four: not.
+        ///
+        /// The midpoint of the outermost pair has no such weakness. Mirrored
+        /// columns give mirrored extremes, so it is exactly centred however
+        /// many there are and wherever the middle one sits, and it does not
+        /// care how they crowd in between.
+        /// </summary>
+        private static Point3d SharedFoot(
+            List<Point3d> tops,
+            int[] members,
+            double ground)
+        {
+            double minX = double.MaxValue;
+            double maxX = double.MinValue;
+            double minY = double.MaxValue;
+            double maxY = double.MinValue;
+            foreach (int i in members)
+            {
+                minX = Math.Min(minX, tops[i].X);
+                maxX = Math.Max(maxX, tops[i].X);
+                minY = Math.Min(minY, tops[i].Y);
+                maxY = Math.Max(maxY, tops[i].Y);
+            }
+            return new Point3d(
+                0.5 * (minX + maxX), 0.5 * (minY + maxY), ground);
         }
 
         /// <summary>The angle between two vectors, in degrees.</summary>

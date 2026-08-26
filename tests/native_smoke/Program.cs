@@ -548,6 +548,22 @@ internal static class Program
                 + $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateSharedFoot(plugin);
+            Console.WriteLine(
+                "PASS  ColumnFinder.SharedFoot: an odd set of columns whose "
+                + "middle one is off centre still puts its shared foot dead "
+                + "centre, which the average did not: Param's Type 1 offset at "
+                + "five columns and above, reproduced and refused. Four "
+                + "mirrored columns, which always looked right, still do.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ColumnFinder.SharedFoot: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -2192,6 +2208,97 @@ internal static class Program
             throw new InvalidOperationException(
                 "Two lines that merely CROSS share one node and are still two "
                 + $"bars; {crossing} came back.");
+        }
+    }
+
+    /// <summary>
+    /// <c>ColumnFinderComponent.SharedFoot</c>: where the one ground point of a
+    /// Type 1 column set stands.
+    ///
+    /// Param narrowed this to the case: Type 1 with FIVE COLUMNS OR MORE puts
+    /// its foot to one side, four or fewer is fine. That narrowing is the whole
+    /// diagnosis, because it separates the two possibilities cleanly.
+    ///
+    /// The foot was the AVERAGE of the columns it carries. An average is pulled
+    /// by where they crowd. With an EVEN count they are mirrored pairs and the
+    /// average lands dead centre by luck of the symmetry, which is why four and
+    /// under always looked right. The moment there is a CENTRE COLUMN the count
+    /// is odd, and a centre column stands on whichever notch is NEAREST the
+    /// middle, which on a bar with no node exactly at its midpoint is half a
+    /// bay off. That one unpaired column drags the average off by its own
+    /// offset over the count, in the same direction, every time.
+    ///
+    /// Five columns at -4, -2, +0.6, +2, +4 is exactly that: four in mirrored
+    /// pairs and a middle one 0.6 off. The average is 0.12 and the answer is 0.
+    ///
+    /// The midpoint of the outermost pair has no such weakness. Mirrored
+    /// columns give mirrored extremes, so it is centred however many there are
+    /// and wherever the middle one sits.
+    /// </summary>
+    private static void ValidateSharedFoot(Assembly plugin)
+    {
+        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
+        MethodInfo shared = RequireStatic(finder, "SharedFoot");
+        Type pointList = shared.GetParameters()[0].ParameterType;
+        Type point3d = pointList.GetGenericArguments()[0];
+
+        (double X, double Y) Foot(params double[] columns)
+        {
+            object tops = Activator.CreateInstance(pointList)!;
+            MethodInfo add = pointList.GetMethod("Add")!;
+            foreach (double x in columns)
+            {
+                add.Invoke(tops, new[]
+                {
+                    Activator.CreateInstance(point3d, x, 0.0, 5.0),
+                });
+            }
+            int[] members = Enumerable.Range(0, columns.Length).ToArray();
+            object at = shared.Invoke(
+                null, new object?[] { tops, members, 0.0 })!;
+            return (
+                (double)point3d.GetProperty("X")!.GetValue(at)!,
+                (double)point3d.GetProperty("Y")!.GetValue(at)!);
+        }
+
+        // FIVE, with the middle one off centre. This is the reported case.
+        (double x, double y) five = Foot(-4.0, -2.0, 0.6, 2.0, 4.0);
+        if (Math.Abs(five.x) > 1.0e-9 || Math.Abs(five.y) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Five columns in mirrored pairs about a middle one that is 0.6 "
+                + "off still belong on a foot at 0; it went to "
+                + $"({five.x:G6}, {five.y:G6}). Their AVERAGE is 0.12, so that "
+                + "number means the average is back.");
+        }
+
+        // SEVEN, the same fault one step further out.
+        (double x, double y) seven = Foot(-6.0, -4.0, -2.0, 0.6, 2.0, 4.0, 6.0);
+        if (Math.Abs(seven.x) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Seven columns about an off-centre middle belong on a foot at "
+                + $"0; it went to {seven.x:G6}.");
+        }
+
+        // FOUR, which always looked right and must stay right.
+        (double x, double y) four = Foot(-4.0, -2.0, 2.0, 4.0);
+        if (Math.Abs(four.x) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Four mirrored columns belong on a foot at 0; it went to "
+                + $"{four.x:G6}.");
+        }
+
+        // And it must still follow the columns when they are genuinely to one
+        // side, rather than always answering zero.
+        (double x, double y) offset = Foot(10.0, 12.0, 14.0);
+        if (Math.Abs(offset.x - 12.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Columns at 10, 12 and 14 belong on a foot at 12; it went to "
+                + $"{offset.x:G6}. The foot follows its columns; it is not "
+                + "pinned to the origin.");
         }
     }
 
