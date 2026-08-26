@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Rhino.Display;
 using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components
@@ -70,6 +72,91 @@ namespace Ananke.COMPAS.Native.Components
 
         public override Guid ComponentGuid =>
             new("c47a1e93-8b25-4d60-a1f7-6e29b3c05d84");
+
+        /// <summary>
+        /// Blue for the columns: the one thing on screen that is not part of
+        /// the net. Green already means a support, red a notched bar, so the
+        /// three families of member stay legible without reading a number.
+        /// </summary>
+        private static readonly Color ColumnColour =
+            Color.FromArgb(40, 85, 175);
+
+        private Mesh? _previewMesh;
+        private readonly List<Line> _previewCables = new();
+        private readonly List<Line> _previewPrincipal = new();
+        private readonly List<Line> _previewColumns = new();
+        private readonly List<Point3d> _previewSupports = new();
+        private BoundingBox _clippingBox = BoundingBox.Empty;
+
+        public override bool IsPreviewCapable => true;
+
+        public override BoundingBox ClippingBox => _clippingBox;
+
+        protected override void BeforeSolveInstance()
+        {
+            base.BeforeSolveInstance();
+            _previewMesh = null;
+            _previewCables.Clear();
+            _previewPrincipal.Clear();
+            _previewColumns.Clear();
+            _previewSupports.Clear();
+            _clippingBox = BoundingBox.Empty;
+        }
+
+        /// <summary>
+        /// Draw the finished mould the way TNA Solve and Animate draw theirs:
+        /// same shaded material, same wire colour, same support points, so the
+        /// three read as one object seen at three moments rather than as three
+        /// different drawings. On top of that goes the one thing only this
+        /// component knows, the columns, and the bars they hold.
+        ///
+        /// The geometry outputs stay hidden, as on Animate, so nothing draws
+        /// twice; their data is untouched and still feeds downstream.
+        /// </summary>
+        public override void DrawViewportMeshes(IGH_PreviewArgs args)
+        {
+            if (Hidden || _previewMesh is null || _previewMesh.Faces.Count == 0)
+                return;
+            args.Display.DrawMeshShaded(
+                _previewMesh,
+                new DisplayMaterial(Color.FromArgb(225, 222, 215), 0.35));
+        }
+
+        public override void DrawViewportWires(IGH_PreviewArgs args)
+        {
+            if (Hidden)
+                return;
+            base.DrawViewportWires(args);
+            if (_previewMesh is not null && _previewMesh.Faces.Count > 0)
+            {
+                args.Display.DrawMeshWires(
+                    _previewMesh, Color.FromArgb(95, 95, 100));
+            }
+            else
+            {
+                // No faces to shade, an FD result for instance, so the net
+                // itself carries the drawing.
+                foreach (Line cable in _previewCables)
+                    args.Display.DrawLine(cable, Color.FromArgb(95, 95, 100));
+            }
+            foreach (Line bar in _previewPrincipal)
+            {
+                args.Display.DrawLine(
+                    bar,
+                    TnaWorkflowPreview.PrincipalColour,
+                    TnaWorkflowPreview.PrincipalWeight);
+            }
+            foreach (Line column in _previewColumns)
+                args.Display.DrawLine(column, ColumnColour, 3);
+            foreach (Point3d point in _previewSupports)
+            {
+                args.Display.DrawPoint(
+                    point,
+                    PointStyle.RoundControlPoint,
+                    4,
+                    Color.FromArgb(30, 165, 85));
+            }
+        }
 
         protected override void RegisterInputParams(
             GH_InputParamManager parameters)
@@ -326,6 +413,26 @@ namespace Ananke.COMPAS.Native.Components
                     thrust, meshToNode, MouldGeometry.BuildAdjacency(n, edges), n);
                 var footPts = members.Select(m => m.From).ToList();
                 var headPts = members.Select(m => m.To).ToList();
+
+                _previewMesh = thrust;
+                _previewCables.Clear();
+                _previewCables.AddRange(edges.Select(
+                    e => new Line(nodes[e.Item1], nodes[e.Item2])));
+                _previewPrincipal.Clear();
+                foreach (List<int> bar in bars)
+                {
+                    for (int k = 0; k + 1 < bar.Count; k++)
+                        _previewPrincipal.Add(
+                            new Line(nodes[bar[k]], nodes[bar[k + 1]]));
+                }
+                _previewColumns.Clear();
+                _previewColumns.AddRange(members);
+                _previewSupports.Clear();
+                _previewSupports.AddRange(
+                    anchors.OrderBy(i => i).Select(i => nodes[i]));
+                _clippingBox = TnaWorkflowPreview.Box(
+                    _previewCables.Concat(_previewColumns),
+                    _previewSupports);
                 data.SetData(5, new MouldStateGoo(MouldGeometry.BuildState(
                     "final", ground, nodes, edges, edgeSource, equilibrium,
                     bars.SelectMany(b => b), anchors, perimeter,
