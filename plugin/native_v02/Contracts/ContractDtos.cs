@@ -45,6 +45,23 @@ public sealed record TopologyDto : ContractDto
 
     public string LengthUnit { get; init; } = "m";
 
+    /// <summary>
+    /// Runs of vertex indices marking the principal lines: the notched bars a
+    /// reconfigurable mould holds rigid, ordered along each bar.
+    ///
+    /// They are resolved HERE, on the pattern, because this is the one place
+    /// where the curves an author draws and the geometry they are drawn on
+    /// still agree. Downstream the surface rises and the curves do not follow
+    /// it, so a curve can no longer find its own nodes; indices survive that,
+    /// curves do not. Every consumer therefore reads runs and never snaps.
+    ///
+    /// Purely an annotation: the solvers pass it through untouched and it is
+    /// deliberately NOT part of the topology fingerprint, since marking which
+    /// vertices form a bar does not make it a different topology.
+    /// </summary>
+    public IReadOnlyList<IReadOnlyList<int>> PrincipalRuns { get; init; } =
+        Array.Empty<IReadOnlyList<int>>();
+
     public string TopologyHash { get; init; } = string.Empty;
 
     public static TopologyDto Create(
@@ -55,7 +72,8 @@ public sealed record TopologyDto : ContractDto
         IEnumerable<string>? sourceVertexIds = null,
         IEnumerable<string>? sourceEdgeIds = null,
         string lengthUnit = "m",
-        IReadOnlyDictionary<string, string>? provenance = null)
+        IReadOnlyDictionary<string, string>? provenance = null,
+        IEnumerable<IEnumerable<int>>? principalRuns = null)
     {
         ArgumentNullException.ThrowIfNull(vertices);
         ArgumentNullException.ThrowIfNull(edges);
@@ -71,6 +89,10 @@ public sealed record TopologyDto : ContractDto
             SourceVertexIds = (sourceVertexIds ?? Array.Empty<string>()).ToArray(),
             SourceEdgeIds = (sourceEdgeIds ?? Array.Empty<string>()).ToArray(),
             LengthUnit = lengthUnit,
+            PrincipalRuns = (principalRuns ?? Array.Empty<IEnumerable<int>>())
+                .Select(run => (IReadOnlyList<int>)run.ToArray())
+                .Where(run => run.Count >= 2)
+                .ToArray(),
             Provenance = ContractData.FreezeStrings(provenance)
         };
         return draft with { TopologyHash = TopologyFingerprint.Compute(draft) };
@@ -81,6 +103,26 @@ public sealed record TopologyDto : ContractDto
         string networkKind = (NetworkKind ?? string.Empty).Trim().ToLowerInvariant();
         if (networkKind is not ("line" or "faced"))
             errors.Add("networkKind must be 'line' or 'faced'.");
+
+        int runVertexCount = Vertices?.Count ?? 0;
+        for (int run = 0; run < PrincipalRuns.Count; run++)
+        {
+            IReadOnlyList<int> indices = PrincipalRuns[run];
+            if (indices is null || indices.Count < 2)
+            {
+                errors.Add(
+                    $"principalRuns[{run}] must name at least two vertices.");
+                continue;
+            }
+            for (int step = 0; step < indices.Count; step++)
+            {
+                if (indices[step] < 0 || indices[step] >= runVertexCount)
+                {
+                    errors.Add(
+                        $"principalRuns[{run}][{step}] is not a vertex index.");
+                }
+            }
+        }
 
         if (Vertices is null || Vertices.Count == 0)
         {

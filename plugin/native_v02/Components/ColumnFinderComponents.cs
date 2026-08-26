@@ -230,17 +230,17 @@ namespace Ananke.COMPAS.Native.Components
                 var anchors = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
 
-                List<List<int>> bars = curves
-                    .Where(c => c is not null)
-                    .Select(c => MouldGeometry.SnapCurveToNodes(c, nodes, edges))
-                    .Where(run => run.Count >= 2)
-                    .ToList();
+                // Prefer the runs the Pattern resolved and carried down the
+                // chain; curves wired here remain a per-component override.
+                List<List<int>> bars = MouldGeometry.PrincipalRuns(
+                    equilibrium, curves, nodes, edges, out bool fromContract);
                 if (bars.Count == 0)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "No principal line caught a node. The bars must lie on "
-                            + "the Result's net.");
+                        "No principal lines. Either give the Pattern its "
+                            + "Principal Lines or a Rib Spacing, or wire curves "
+                            + "here to override it.");
                     return;
                 }
 
@@ -340,7 +340,7 @@ namespace Ananke.COMPAS.Native.Components
                     footPts, headPts, force)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
-                    trees, depth, ground));
+                    trees, depth, ground, fromContract));
             }
             catch (Exception ex)
             {
@@ -358,7 +358,8 @@ namespace Ananke.COMPAS.Native.Components
             List<Point3d> feet,
             int trees,
             int depth,
-            double ground)
+            double ground,
+            bool fromContract)
         {
             var lines = new List<string>
             {
@@ -367,6 +368,10 @@ namespace Ananke.COMPAS.Native.Components
                     + $"{feet.Count} feet, {members.Count} members",
                 $"the arms carry {headLoad.Sum():0} N between them, ground read "
                     + $"as {ground:0.###}",
+                fromContract
+                    ? "principal lines came from the Pattern via the contract"
+                    : "principal lines came from curves wired here, overriding "
+                        + "the Pattern",
                 string.Empty,
                 "arm positions are SOLVED, not spaced: a loaded bar wants its "
                     + "supports about a fifth of its length in from each end, "

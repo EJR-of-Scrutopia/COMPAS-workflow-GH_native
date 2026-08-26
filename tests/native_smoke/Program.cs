@@ -108,7 +108,10 @@ internal static class Program
                     "Pattern",
                     "Pattern",
                     "01 Model",
-                    new[] { "G", "M", "R", "Tol" },
+                    // P/RS/RD joined 2026-08-26: the principal lines are
+                    // resolved to vertex runs HERE, where the curves and the
+                    // geometry still agree, and carried down the contract.
+                    new[] { "G", "M", "R", "Tol", "P", "RS", "RD" },
                     new[] { "PAT" }),
                 ["Ananke.COMPAS.Native.Components.SupportsComponent"] = (
                     "Supports",

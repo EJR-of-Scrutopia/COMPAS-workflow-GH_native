@@ -288,11 +288,12 @@ namespace Ananke.COMPAS.Native.Components
                 var anchorIds = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
 
-                List<List<int>> bars = curves
-                    .Where(c => c is not null)
-                    .Select(c => MouldGeometry.SnapCurveToNodes(c, target, edges))
-                    .Where(run => run.Count >= 2)
-                    .ToList();
+                // Prefer the runs the Pattern already resolved and carried
+                // down the chain: they were matched where the curves and the
+                // geometry still agreed, and indices survive a surface that
+                // rises. Curves wired here remain a per-component override.
+                List<List<int>> bars = MouldGeometry.PrincipalRuns(
+                    equilibrium, curves, target, edges, out bool fromContract);
                 var principalIds = new HashSet<int>(bars.SelectMany(b => b));
                 if (principalIds.Count == 0)
                 {
@@ -379,6 +380,11 @@ namespace Ananke.COMPAS.Native.Components
                         + $"{principalIds.Count} notches",
                     $"anchors {anchorIds.Count}, perimeter nodes "
                         + $"{perimeterIds.Length}",
+                    fromContract
+                        ? "principal lines read from the Pattern via the "
+                            + "contract, so nothing was snapped here"
+                        : "principal lines snapped from the curves wired to "
+                            + "this component, overriding the Pattern",
                     fromPattern
                         ? "starting from the ORIGINAL PATTERN read back through "
                             + "the Result's problem, so frame zero is the plan "
@@ -542,6 +548,48 @@ namespace Ananke.COMPAS.Native.Components
         /// nothing at all. A principal line is a line in plan; which nodes it
         /// picks up is a plan question, and their heights come from the Result.
         /// </summary>
+        /// <summary>
+        /// The principal-line runs for a solved Result.
+        ///
+        /// The Pattern resolves these once, where the curves an author drew and
+        /// the geometry they were drawn on still agree, and the contract
+        /// carries them down as vertex indices. Preferring them means the
+        /// snapping happens once for the whole definition rather than in every
+        /// component on every frame, and it cannot go wrong on a raised
+        /// surface, because there is no curve left to match. Curves passed here
+        /// still win, as a per-component override.
+        /// </summary>
+        public static List<List<int>> PrincipalRuns(
+            EquilibriumResultDto equilibrium,
+            IReadOnlyList<Curve> curves,
+            Point3d[] nodes,
+            (int, int)[] edges,
+            out bool fromContract)
+        {
+            var live = curves.Where(c => c is not null).ToList();
+            if (live.Count > 0)
+            {
+                fromContract = false;
+                return live
+                    .Select(c => SnapCurveToNodes(c, nodes, edges))
+                    .Where(run => run.Count >= 2)
+                    .ToList();
+            }
+
+            fromContract = true;
+            IReadOnlyList<IReadOnlyList<int>>? runs =
+                equilibrium.Problem?.Topology?.PrincipalRuns;
+            if (runs is null)
+                return new List<List<int>>();
+            return runs
+                .Where(run => run is not null && run.Count >= 2)
+                .Select(run => run
+                    .Where(i => i >= 0 && i < nodes.Length)
+                    .ToList())
+                .Where(run => run.Count >= 2)
+                .ToList();
+        }
+
         public static List<int> SnapCurveToNodes(
             Curve curve,
             Point3d[] nodes,

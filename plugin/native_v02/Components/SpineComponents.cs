@@ -91,6 +91,35 @@ public sealed class PatternComponent : NativePreviewComponentBase
             "Maximum distance used to weld coincident topology nodes.",
             GH_ParamAccess.item,
             1.0e-6);
+        parameters.AddCurveParameter(
+            "Principal Lines",
+            "P",
+            "Optional. The notched bars a reconfigurable mould holds rigid, " +
+            "drawn as curves over this pattern. They are matched HERE, in " +
+            "plan, to runs of pattern vertices and carried downstream as " +
+            "indices, because once the surface rises the curves no longer sit " +
+            "on it and cannot find their own nodes. Leave empty and use Rib " +
+            "Spacing to take them from the mesh instead.",
+            GH_ParamAccess.list);
+        parameters.AddIntegerParameter(
+            "Rib Spacing",
+            "RS",
+            "Optional. With no Principal Lines drawn, take every RS-th edge " +
+            "loop of the mesh as a bar. On a quad pattern the bars run along " +
+            "one of the two mesh directions anyway, so this gives evenly " +
+            "spaced bars that follow the mesh exactly. Zero means none.",
+            GH_ParamAccess.item,
+            0);
+        parameters.AddIntegerParameter(
+            "Rib Direction",
+            "RD",
+            "Which of the two mesh directions the derived bars follow, 0 or " +
+            "1. Ignored when Principal Lines are drawn.",
+            GH_ParamAccess.item,
+            0);
+        parameters[4].Optional = true;
+        parameters[5].Optional = true;
+        parameters[6].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -122,6 +151,13 @@ public sealed class PatternComponent : NativePreviewComponentBase
         data.GetData(1, ref modeInput);
         data.GetData(2, ref resolution);
         data.GetData(3, ref tolerance);
+        var principalCurves = new List<Curve>();
+        data.GetDataList(4, principalCurves);
+        principalCurves.RemoveAll(curve => curve is null);
+        int ribSpacing = 0;
+        int ribDirection = 0;
+        data.GetData(5, ref ribSpacing);
+        data.GetData(6, ref ribDirection);
 
         try
         {
@@ -171,18 +207,48 @@ public sealed class PatternComponent : NativePreviewComponentBase
                     registered.ConnectedComponents.ToString(
                         CultureInfo.InvariantCulture)
             };
+            // Resolve the principal lines HERE, where the curves an author
+            // drew and the geometry they were drawn on still agree, and carry
+            // them downstream as vertex indices. Curves cannot follow a
+            // surface that rises; indices can.
+            var patternPoints = registered.Vertices.Select(ToPoint).ToArray();
+            var patternEdges = registered.Edges
+                .Select(edge => new EdgeDto(edge.U, edge.V)).ToArray();
+            var patternVertices = patternPoints
+                .Select(pt => new Point3d(pt.X, pt.Y, pt.Z)).ToList();
+
+            List<List<int>> principalRuns = principalCurves.Count > 0
+                ? PrincipalRunFinder.FromCurves(
+                    principalCurves, patternVertices, patternEdges)
+                : PrincipalRunFinder.Derive(
+                    patternVertices,
+                    registered.Faces
+                        .Select(f => (IReadOnlyList<int>)f.ToArray()).ToArray(),
+                    ribSpacing,
+                    ribDirection);
+            if (principalCurves.Count > 0 &&
+                principalRuns.Count < principalCurves.Count)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{principalCurves.Count - principalRuns.Count} of " +
+                    $"{principalCurves.Count} principal lines caught fewer " +
+                    "than two pattern vertices and were dropped. They must " +
+                    "lie over the pattern in plan.");
+            }
+
             TopologyDto topology = TopologyDto.Create(
                 registered.Kind,
-                registered.Vertices.Select(ToPoint),
-                registered.Edges.Select(
-                    edge => new EdgeDto(edge.U, edge.V)),
+                patternPoints,
+                patternEdges,
                 registered.Faces,
                 sourceVertexIds: Enumerable.Range(
                     0,
                     registered.Vertices.Count).Select(index => $"v{index}"),
                 sourceEdgeIds: registered.SourceEdgeIds,
                 lengthUnit: lengthUnit,
-                provenance: provenance);
+                provenance: provenance,
+                principalRuns: principalRuns);
             var pattern = new TnaPatternDto
             {
                 PatternMode = mode,
