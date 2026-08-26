@@ -385,6 +385,7 @@ namespace Ananke.COMPAS.Native.Components
                 var members = new List<Line>();
                 var carried = new List<double>();
                 var feet = new List<Point3d>();
+                double treeResidual = 0.0;
 
                 if (trees <= 0)
                 {
@@ -410,8 +411,9 @@ namespace Ananke.COMPAS.Native.Components
                 else
                 {
                     Forest forest = TreeBuilder.Build(
-                        heads.ToArray(), headLoad.ToArray(),
+                        heads.ToArray(), headLoad.ToArray(), headAim.ToArray(),
                         Math.Max(trees, 1), Math.Max(depth, 0), ground);
+                    treeResidual = forest.WorstTipAngle;
                     for (int s = 0; s < forest.Segments.Count; s++)
                     {
                         (int child, int parent) = forest.Segments[s];
@@ -427,6 +429,19 @@ namespace Ananke.COMPAS.Native.Components
                         carried.Add(forest.CarriedLoad[s]);
                     }
                     feet.AddRange(forest.FootIndices.Select(i => forest.Points[i]));
+                }
+
+                if (trees > 0 && treeResidual > 5.0)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Remark,
+                        $"A tree branch meets its arm {treeResidual:0.#} "
+                            + "degrees off the line of thrust that arm carries. "
+                            + "The junctions are in equilibrium; a fixed "
+                            + "branching topology simply cannot always reach "
+                            + "every tip along its own force. That angle is "
+                            + "bending for the notch joint to take, so either "
+                            + "accept it or change Trees and Depth.");
                 }
 
                 var force = new List<double>(members.Count);
@@ -1036,6 +1051,15 @@ namespace Ananke.COMPAS.Native.Components
         public List<double> CarriedLoad { get; } = new();
 
         public List<int> FootIndices { get; } = new();
+
+        /// <summary>
+        /// The worst angle, in degrees, between a tip member and the force that
+        /// tip actually hands the tree. Zero means every arm meets its tree
+        /// along its own line of thrust. A fixed topology cannot always reach
+        /// zero, and what is left is bending the notch joint has to take, so it
+        /// is reported rather than hidden.
+        /// </summary>
+        public double WorstTipAngle { get; set; }
     }
 
     /// <summary>
@@ -1052,6 +1076,7 @@ namespace Ananke.COMPAS.Native.Components
         public static Forest Build(
             Point3d[] heads,
             double[] load,
+            Vector3d[] aim,
             int trees,
             int depth,
             double ground)
@@ -1073,8 +1098,16 @@ namespace Ananke.COMPAS.Native.Components
 
                 Point3d[] tips = members.Select(i => heads[i]).ToArray();
                 double[] tipW = members.Select(i => load[i]).ToArray();
+
+                // The force each arm hands the tree: its own aim, scaled so the
+                // vertical component is the load that arm carries. This is what
+                // makes the tree a force problem rather than a spacing one.
+                Vector3d[] tipF = members
+                    .Select(i => aim[i] * (load[i] / Math.Max(aim[i].Z, 1.0e-9)))
+                    .ToArray();
+
                 int maxTips = Math.Max(1, (int)Math.Pow(2, depth));
-                (tips, tipW) = AggregateTips(tips, tipW, maxTips);
+                (tips, tipW, tipF) = AggregateTips(tips, tipW, tipF, maxTips);
                 (Point3d[] junctions, List<(int, int)> segs, int apex) =
                     MergeTopology(tips);
 
@@ -1084,7 +1117,17 @@ namespace Ananke.COMPAS.Native.Components
                 int footLocal = local.Count - 1;
                 segs.Add((apex, footLocal));
 
-                double[] carried = AccumulateLoads(segs, tips.Length, tipW, local.Count);
+                Vector3d[] flow = AccumulateForces(segs, tipF, local.Count);
+                RelaxToForces(local, segs, flow, tips.Length, footLocal, ground);
+                forest.WorstTipAngle = Math.Max(
+                    forest.WorstTipAngle,
+                    WorstTipDeviation(local, segs, tipF, tips.Length));
+
+                // Vertical share of the force flowing up each member, so the
+                // axial force downstream is still this over the lean's cosine.
+                var carried = new double[segs.Count];
+                for (int s = 0; s < segs.Count; s++)
+                    carried[s] = flow[segs[s].Item1].Z;
                 int baseIndex = forest.Points.Count;
                 forest.Points.AddRange(local);
                 for (int s = 0; s < segs.Count; s++)
@@ -1215,11 +1258,12 @@ namespace Ananke.COMPAS.Native.Components
             return feet;
         }
 
-        private static (Point3d[], double[]) AggregateTips(
-            Point3d[] xyz, double[] w, int maxTips)
+        private static (Point3d[], double[], Vector3d[]) AggregateTips(
+            Point3d[] xyz, double[] w, Vector3d[] f, int maxTips)
         {
             var pts = xyz.ToList();
             var weights = w.ToList();
+            var forces = f.ToList();
             maxTips = Math.Max(1, maxTips);
             while (pts.Count > maxTips && pts.Count > 1)
             {
@@ -1247,10 +1291,15 @@ namespace Ananke.COMPAS.Native.Components
                     ((pts[bi].Y * wi) + (pts[bj].Y * wj)) / sum,
                     ((pts[bi].Z * wi) + (pts[bj].Z * wj)) / sum);
                 weights[bi] = sum;
+                // Two arms merged into one tip hand the tree the SUM of their
+                // forces, which is a vector sum: two arms leaning opposite ways
+                // partly cancel, and a plain magnitude would miss that.
+                forces[bi] = forces[bi] + forces[bj];
                 pts.RemoveAt(bj);
                 weights.RemoveAt(bj);
+                forces.RemoveAt(bj);
             }
-            return (pts.ToArray(), weights.ToArray());
+            return (pts.ToArray(), weights.ToArray(), forces.ToArray());
         }
 
         private static (Point3d[], List<(int, int)>, int) MergeTopology(Point3d[] tips)
@@ -1305,12 +1354,24 @@ namespace Ananke.COMPAS.Native.Components
             return (junctions, segments, active[0]);
         }
 
-        private static double[] AccumulateLoads(
-            List<(int, int)> segments, int tips, double[] tipWeights, int nodeCount)
+        /// <summary>
+        /// The force flowing up out of every node, summed from the tips.
+        ///
+        /// Deliberately a VECTOR sum. In a tree in equilibrium the force in a
+        /// parent member is the vector sum of its children's, so these totals
+        /// are fixed by the tip forces alone and do not depend on where the
+        /// junctions end up. That is what lets the relaxation below use them as
+        /// weights and still be a plain weighted median rather than a fixed
+        /// point chasing its own geometry.
+        /// </summary>
+        private static Vector3d[] AccumulateForces(
+            List<(int, int)> segments,
+            Vector3d[] tipForce,
+            int nodeCount)
         {
-            var nodeWeight = new double[nodeCount];
-            for (int i = 0; i < tips && i < tipWeights.Length; i++)
-                nodeWeight[i] = tipWeights[i];
+            var total = new Vector3d[nodeCount];
+            for (int i = 0; i < tipForce.Length && i < nodeCount; i++)
+                total[i] = tipForce[i];
 
             var parent = new Dictionary<int, int>();
             foreach ((int child, int up) in segments)
@@ -1321,13 +1382,122 @@ namespace Ananke.COMPAS.Native.Components
             for (int id = 0; id < nodeCount; id++)
             {
                 if (parent.TryGetValue(id, out int up))
-                    nodeWeight[up] += nodeWeight[id];
+                    total[up] += total[id];
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// Move every junction to where the forces meeting it balance.
+        ///
+        /// They were being put at the plain MIDPOINT of the two nodes they
+        /// merged. A midpoint carries no forces at all: it is in equilibrium
+        /// only when its two branches happen to be symmetric and equally
+        /// loaded, and everything else was bending the tree.
+        ///
+        /// What a junction has to satisfy is that the member forces meeting it
+        /// sum to zero. For a fixed topology the position that does it is the
+        /// FORCE-WEIGHTED Fermat point: the minimum of sum(f * |x - p|), whose
+        /// stationary condition is exactly sum(f * unit(x - p)) = 0. Solved by
+        /// weighted Weiszfeld iteration one node at a time, which is the same
+        /// cyclic coordinate descent tools/tree_forest/steiner.py runs.
+        ///
+        /// FREI OTTO'S 120 DEGREES IS THE EQUAL-FORCE CASE OF THIS. Three
+        /// members of equal force can only balance at 120 degrees apart, and
+        /// the UNWEIGHTED geometric median finds exactly that; steiner.py says
+        /// as much, and says in the same breath that it applies no loads.
+        /// Weighting by the real forces is the general rule that 120 degrees is
+        /// one corner of, which is why the branches of a genuinely loaded tree
+        /// do not come out at 120 and should not be made to.
+        ///
+        /// The foot stays ON the ground but slides across it, which is the
+        /// freedom this machine actually has.
+        /// </summary>
+        private static void RelaxToForces(
+            List<Point3d> nodes,
+            List<(int, int)> segments,
+            Vector3d[] flow,
+            int tipCount,
+            int footIndex,
+            double ground)
+        {
+            var neighbours = new List<(int Other, double Force)>[nodes.Count];
+            for (int i = 0; i < nodes.Count; i++)
+                neighbours[i] = new List<(int, double)>();
+            foreach ((int child, int up) in segments)
+            {
+                double force = flow[child].Length;
+                neighbours[child].Add((up, force));
+                neighbours[up].Add((child, force));
             }
 
-            var carried = new double[segments.Count];
-            for (int s = 0; s < segments.Count; s++)
-                carried[s] = nodeWeight[segments[s].Item1];
-            return carried;
+            for (int sweep = 0; sweep < 400; sweep++)
+            {
+                double shifted = 0.0;
+                for (int v = tipCount; v < nodes.Count; v++)
+                {
+                    if (neighbours[v].Count < 2)
+                        continue;
+                    double sx = 0.0;
+                    double sy = 0.0;
+                    double sz = 0.0;
+                    double sw = 0.0;
+                    foreach ((int other, double force) in neighbours[v])
+                    {
+                        double distance = nodes[v].DistanceTo(nodes[other]);
+                        if (distance <= 1.0e-9 || force <= 0.0)
+                            continue;
+                        double weight = force / distance;
+                        sx += nodes[other].X * weight;
+                        sy += nodes[other].Y * weight;
+                        sz += nodes[other].Z * weight;
+                        sw += weight;
+                    }
+                    if (sw <= 0.0)
+                        continue;
+                    var next = new Point3d(
+                        sx / sw,
+                        sy / sw,
+                        v == footIndex ? ground : sz / sw);
+                    shifted = Math.Max(shifted, nodes[v].DistanceTo(next));
+                    nodes[v] = next;
+                }
+                if (shifted < 1.0e-9)
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// How far each tip member ends up off the force its arm hands the
+        /// tree, worst case in degrees. A branching topology fixed in advance
+        /// cannot always reach every tip along its own line of thrust, and what
+        /// is left over is bending at the notch joint. Measured and reported
+        /// rather than assumed away.
+        /// </summary>
+        private static double WorstTipDeviation(
+            List<Point3d> nodes,
+            List<(int, int)> segments,
+            Vector3d[] tipForce,
+            int tipCount)
+        {
+            double worst = 0.0;
+            foreach ((int child, int up) in segments)
+            {
+                if (child >= tipCount || child >= tipForce.Length)
+                    continue;
+                Vector3d wanted = tipForce[child];
+                Vector3d actual = nodes[up] - nodes[child];
+                double a = wanted.Length;
+                double b = actual.Length;
+                if (a <= 1.0e-12 || b <= 1.0e-12)
+                    continue;
+                double cosine = ((wanted.X * actual.X) + (wanted.Y * actual.Y)
+                    + (wanted.Z * actual.Z)) / (a * b);
+                cosine = Math.Min(Math.Max(cosine, -1.0), 1.0);
+                worst = Math.Max(
+                    worst, Math.Acos(cosine) * 180.0 / Math.PI);
+            }
+            return worst;
         }
 
         private static double Plan2(Point3d a, Point3d b) =>
