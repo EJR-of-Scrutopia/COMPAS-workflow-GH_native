@@ -364,6 +364,7 @@ namespace Ananke.COMPAS.Native.Components
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, n);
                 int overlapping = 0;
+                var barShape = new List<string>();
 
                 // Two bars sharing notches are one bar traced twice, and each
                 // would be given its own full set of columns. Say so: it is
@@ -390,6 +391,28 @@ namespace Ananke.COMPAS.Native.Components
                         a = bars.Count;
                         break;
                     }
+                }
+
+                // What each bar actually is. A principal line should run
+                // from one anchor strip to the other, so BOTH its ends are
+                // anchors and it holds as many notches as the mesh is wide.
+                // A bar with one anchored end is half a line: it stops
+                // somewhere in the middle, its beam is a cantilever, its arms
+                // bunch toward the free end, and the midpoint it mirrors about
+                // is a quarter point of the real arch. Nothing downstream can
+                // recover from that, and none of it is visible in the viewport
+                // because the bar draws the same either way.
+                foreach (List<int> bar in bars)
+                {
+                    bool startTied = bar.Count > 0 && anchors.Contains(bar[0]);
+                    bool endTied = bar.Count > 0 &&
+                        anchors.Contains(bar[bar.Count - 1]);
+                    string ends = startTied && endTied
+                        ? "anchored at both ends"
+                        : startTied || endTied
+                            ? "ANCHORED AT ONE END ONLY, so it is half a line"
+                            : "NOT ANCHORED AT EITHER END";
+                    barShape.Add($"{bar.Count} notches, {ends}");
                 }
 
                 if (bars.Count == 0)
@@ -717,7 +740,7 @@ namespace Ananke.COMPAS.Native.Components
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     columnType, branches, forkPct, ground, alongToAnchors,
                     acrossToColumns, plumbArms, symmetricBars, symmetryCost,
-                    lopsided, centreAdded, footDrift, overlapping));
+                    lopsided, centreAdded, footDrift, overlapping, barShape));
             }
             catch (Exception ex)
             {
@@ -987,7 +1010,8 @@ namespace Ananke.COMPAS.Native.Components
             double lopsided,
             int centreAdded,
             double footDrift,
-            int overlapping)
+            int overlapping,
+            List<string> barShape)
         {
             var lines = new List<string>
             {
@@ -997,6 +1021,9 @@ namespace Ananke.COMPAS.Native.Components
                         + "two full sets of columns. Nothing below will look "
                         + "symmetric until that is fixed."
                     : "each principal line is distinct",
+                string.Join(
+                    Environment.NewLine,
+                    barShape.Select((shape, i) => $"  bar {i}: {shape}")),
                 $"{bars.Count} bars, {armsPerBar.Sum()} arms "
                     + $"({string.Join(" + ", armsPerBar)} per bar), "
                     + $"{feet.Count} feet, {members.Count} members",
@@ -1428,8 +1455,26 @@ namespace Ananke.COMPAS.Native.Components
                 yield break;
             }
 
+            // A station whose MIRROR is not itself usable cannot be half of
+            // a pair.
+            //
+            // This is the asymmetry Param saw as "one side always getting one
+            // node short of the other", and it was in this method. The pool
+            // excludes anchored stations, but the mirror was taken straight
+            // from the map without checking it against the pool. When it landed
+            // on an anchor, that half of the pair was an anchor: it went into
+            // the arrangement, and then dropped out again when the arms were
+            // separated from the anchors, because an anchor holds the bar
+            // without costing an arm. What came back was a lone column on one
+            // side with no partner on the other, and a count one short of what
+            // was asked for. The report showed it plainly, as six asked for and
+            // five delivered, on both bars.
+            var usable = new HashSet<int>(pool);
             int[] left = pool
-                .Where(s => along[coarse[s]] < middle - 1.0e-9 && s != centre)
+                .Where(s => along[coarse[s]] < middle - 1.0e-9 &&
+                    s != centre &&
+                    usable.Contains(mirrorOf[s]) &&
+                    mirrorOf[s] != s)
                 .ToArray();
             if (left.Length < pairs)
                 yield break;
