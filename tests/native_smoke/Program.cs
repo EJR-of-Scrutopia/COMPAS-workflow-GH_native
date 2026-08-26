@@ -501,7 +501,10 @@ internal static class Program
                 + "textbook 0.2232L; the arms the solver picks are SYMMETRIC "
                 + "on a symmetric bar even though an asymmetric pair droops "
                 + "less, land within one station of that inset, beat evenly "
-                + "spaced arms, and their reactions sum to the whole load.");
+                + "spaced arms, and their reactions sum to the whole load. "
+                + "Symmetry survives a load a tenth off mirrored, "
+                + "which every solved net's is and which defeated the first "
+                + "attempt at this.");
         }
         catch (Exception exception)
         {
@@ -1941,6 +1944,36 @@ internal static class Program
                     + "Evenly spaced arms would read 0.25, so that is the "
                     + "likeliest way to fail this.");
             }
+        }
+
+        // AND WITH THE LOAD NOT QUITE MIRRORED, which is the case that
+        // actually matters. The first attempt at enforcing symmetry tested the
+        // load as well as the shape, and no solved net has a load profile that
+        // mirrors to one percent: iteration residuals alone are bigger than
+        // that, so every real bar failed the test and quietly went back to free
+        // placement. Nothing changed on screen and the arch stayed lopsided.
+        //
+        // Symmetry is a property of the FORM. A tenth of a percent of noise in
+        // the load is not a reason to build an arch with its columns in
+        // different places on the two halves.
+        var noisy = (double[])load.Clone();
+        for (int index = 0; index < noisy.Length; index++)
+            noisy[index] = 1.0 + (0.10 * index / last);
+        object noisyResult = arms.Invoke(
+            null,
+            new object?[] { bar, nodes, noisy, new HashSet<int>(), 2, 1.0 })!;
+        var noisyChosen = ((IEnumerable)noisyResult.GetType()
+            .GetField("Item1")!.GetValue(noisyResult)!)
+            .Cast<int>()
+            .OrderBy(value => value)
+            .ToArray();
+        if (noisyChosen.Length != 2 || noisyChosen[0] + noisyChosen[1] != last)
+        {
+            throw new InvalidOperationException(
+                "A bar whose SHAPE is symmetric must still get symmetric arms "
+                + "when its load is a tenth off mirrored, which every "
+                + "solved net's is; they landed at "
+                + $"{string.Join(", ", noisyChosen)}.");
         }
 
         double solvedPeak = PeakDeflection(response, arc, load, chosen);

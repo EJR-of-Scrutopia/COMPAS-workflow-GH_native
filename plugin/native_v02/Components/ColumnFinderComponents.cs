@@ -207,6 +207,19 @@ namespace Ananke.COMPAS.Native.Components
                     + "is a pair, and so on.",
                 GH_ParamAccess.item,
                 0);
+            parameters.AddNumberParameter(
+                "Fork",
+                "F",
+                "Where a branching column forks, as a percent of its height off "
+                    + "the ground. 0 forks at the foot, which makes a fan; 100 "
+                    + "forks right under the notches. This is an ARCHITECTURAL "
+                    + "choice and not a structural one, which is why it is an "
+                    + "input: on a near-vertical set of columns the statics are "
+                    + "degenerate, and both minimum material and minimum "
+                    + "bending prefer the fan. A tree costs a little more and "
+                    + "looks like a tree. Ignored when Branches is 0.",
+                GH_ParamAccess.item,
+                65.0);
             parameters.AddIntegerParameter(
                 "Branches",
                 "B",
@@ -221,6 +234,7 @@ namespace Ananke.COMPAS.Native.Components
             parameters[1].Optional = true;
             parameters[2].Optional = true;
             parameters[3].Optional = true;
+            parameters[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -297,10 +311,13 @@ namespace Ananke.COMPAS.Native.Components
 
             int perLine = 3;
             int columnType = 0;
+            double forkPct = 65.0;
             int branches = 0;
             data.GetData(1, ref perLine);
             data.GetData(2, ref columnType);
-            data.GetData(3, ref branches);
+            data.GetData(3, ref forkPct);
+            data.GetData(4, ref branches);
+            double forkHeight = Math.Min(Math.Max(forkPct, 0.0), 100.0) / 100.0;
             branches = Math.Max(branches, 0);
             // Type 0 stands every column on its own foot; anything else IS
             // the number of ground points they all gather onto.
@@ -485,8 +502,7 @@ namespace Ananke.COMPAS.Native.Components
                         ? MouldGeometry.ForkOnLine(
                             reach[0],
                             MouldGeometry.AimFrom(-pushes[0]),
-                            reach.Skip(1).ToList(),
-                            pushes.Skip(1).ToList(),
+                            forkHeight,
                             ground)
                         : reach[0];
 
@@ -646,7 +662,7 @@ namespace Ananke.COMPAS.Native.Components
                     footPts, headPts, force)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
-                    columnType, branches, ground, alongToAnchors,
+                    columnType, branches, forkPct, ground, alongToAnchors,
                     acrossToColumns, plumbArms, symmetricBars, symmetryCost,
                     lopsided));
             }
@@ -809,10 +825,19 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Split the columns into that many groups by where they stand in plan,
-        /// so a shared foot gathers the ones actually near it. Furthest-first
-        /// seeds then nearest assignment, the same shape the old clustering
-        /// used, kept because it is deterministic.
+        /// Split the columns into that many groups for their shared feet.
+        ///
+        /// The groups must be CONTIGUOUS along the run of columns, or two
+        /// trunks heading for different feet cross each other on the way down.
+        /// Clustering by plan distance does not guarantee that and did not
+        /// deliver it: near the crown, where the columns crowd, a column could
+        /// be handed to a foot on the far side of its neighbour.
+        ///
+        /// So the columns are laid out along the line they actually run on,
+        /// which is the first principal axis of where they stand in plan, and
+        /// cut into blocks carrying roughly equal load. Contiguous by
+        /// construction, so no two trunks can cross, and balanced so no foot
+        /// takes far more than its share.
         /// </summary>
         private static int[] GroupByPlan(List<Point3d> points, int groups)
         {
@@ -820,65 +845,36 @@ namespace Ananke.COMPAS.Native.Components
             if (groups <= 1 || points.Count == 0)
                 return label;
 
-            var seeds = new List<int> { 0 };
-            while (seeds.Count < groups && seeds.Count < points.Count)
+            // The axis the columns run along: the direction in plan with the
+            // most spread. Two sums are enough for that.
+            double cx = points.Average(p => p.X);
+            double cy = points.Average(p => p.Y);
+            double sxx = 0.0;
+            double syy = 0.0;
+            double sxy = 0.0;
+            foreach (Point3d p in points)
             {
-                int best = 0;
-                double furthest = -1.0;
-                for (int i = 0; i < points.Count; i++)
-                {
-                    double nearest = seeds.Min(
-                        s => MouldGeometry.PlanDistanceSquared(
-                            points[i], points[s]));
-                    if (nearest > furthest)
-                    {
-                        furthest = nearest;
-                        best = i;
-                    }
-                }
-                seeds.Add(best);
+                double dx = p.X - cx;
+                double dy = p.Y - cy;
+                sxx += dx * dx;
+                syy += dy * dy;
+                sxy += dx * dy;
             }
+            double angle = 0.5 * Math.Atan2(2.0 * sxy, sxx - syy);
+            double ax = Math.Cos(angle);
+            double ay = Math.Sin(angle);
 
-            for (int pass = 0; pass < 30; pass++)
+            int[] order = Enumerable.Range(0, points.Count)
+                .OrderBy(i => ((points[i].X - cx) * ax) +
+                    ((points[i].Y - cy) * ay))
+                .ToArray();
+
+            // Equal blocks by count, which is the balance that also keeps the
+            // feet evenly spread along the run.
+            for (int rank = 0; rank < order.Length; rank++)
             {
-                for (int i = 0; i < points.Count; i++)
-                {
-                    int best = 0;
-                    double closest = double.MaxValue;
-                    for (int g = 0; g < seeds.Count; g++)
-                    {
-                        double d = MouldGeometry.PlanDistanceSquared(
-                            points[i], points[seeds[g]]);
-                        if (d < closest)
-                        {
-                            closest = d;
-                            best = g;
-                        }
-                    }
-                    label[i] = best;
-                }
-                bool moved = false;
-                for (int g = 0; g < seeds.Count; g++)
-                {
-                    int[] mine = Enumerable.Range(0, points.Count)
-                        .Where(i => label[i] == g).ToArray();
-                    if (mine.Length == 0)
-                        continue;
-                    double cx = mine.Average(i => points[i].X);
-                    double cy = mine.Average(i => points[i].Y);
-                    int centre = mine
-                        .OrderBy(i =>
-                            ((points[i].X - cx) * (points[i].X - cx)) +
-                            ((points[i].Y - cy) * (points[i].Y - cy)))
-                        .First();
-                    if (centre != seeds[g])
-                    {
-                        seeds[g] = centre;
-                        moved = true;
-                    }
-                }
-                if (!moved)
-                    break;
+                int block = (int)((long)rank * groups / order.Length);
+                label[order[rank]] = Math.Min(block, groups - 1);
             }
             return label;
         }
@@ -906,6 +902,7 @@ namespace Ananke.COMPAS.Native.Components
             List<Point3d> feet,
             int columnType,
             int branches,
+            double forkPct,
             double ground,
             double alongToAnchors,
             double acrossToColumns,
@@ -949,7 +946,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "not built lopsided for it."
                 : symmetricBars == 0
                     ? $"no bar reads as symmetric: the worst is {lopsided * 100:0.#}% "
-                        + "off being a mirror of itself, against a 1% "
+                        + "off being a mirror of itself in SHAPE, against a 2% "
                         + "tolerance. The arms are placed freely, so they will "
                         + "not match side to side."
                     : $"{symmetricBars} of {bars.Count} bars read as symmetric "
@@ -976,9 +973,20 @@ namespace Ananke.COMPAS.Native.Components
             lines.Add(branches <= 0
                 ? "Branches 0: each column carries only its own notch."
                 : $"Branches {branches}: each column reaches {branches} further "
-                    + "notch(es) along its own principal line, and forks where "
-                    + "those branches come closest to standing on their own "
-                    + "lines of thrust. That height is SOLVED, not set.");
+                    + "notch(es) along its own principal line, never past a "
+                    + $"neighbour, and forks at {forkPct:0}% of its height.");
+            if (branches > 0)
+            {
+                lines.Add(
+                    "the fork height is an ARCHITECTURAL choice, not a "
+                        + "structural one, and it is an input for an honest "
+                        + "reason: with the columns near vertical the statics "
+                        + "are degenerate. A branch leaning less costs less "
+                        + "bending AND less material, so both criteria run the "
+                        + "fork all the way down to the foot and give a fan. "
+                        + "Forking higher makes a tree and costs a little; how "
+                        + "much is a decision, not a solve.");
+            }
 
             if (headLoad.Count > 0)
                 lines.Add($"arm load {headLoad.Min():0} to {headLoad.Max():0} N");
@@ -1095,7 +1103,7 @@ namespace Ananke.COMPAS.Native.Components
             // with its columns in different places on the two halves is not
             // worth a few percent of droop. So the grid's trick is refused, and
             // the cost of refusing it is reported instead of hidden.
-            int[] mirrorOf = MirrorMap(arc, load, coarse, out double lopsided);
+            int[] mirrorOf = MirrorMap(arc, coarse, out double lopsided);
             bool symmetric = mirrorOf.Length > 0;
 
             List<int>? best = null;
@@ -1168,16 +1176,23 @@ namespace Ananke.COMPAS.Native.Components
         /// Each coarse station's mirror about the middle of the bar, or an
         /// empty array when the bar is not symmetric enough to bother.
         ///
-        /// Symmetry is judged on both the SHAPE and the LOAD, at one percent,
-        /// which is loose enough for a solved mesh that is symmetric to solver
-        /// precision and tight enough that a genuinely lopsided bar is left
-        /// alone. The measured lopsidedness comes back either way, so a bar
-        /// that just missed can be seen to have missed rather than silently
-        /// treated as crooked.
+        /// Judged on the SHAPE ALONE, deliberately.
+        ///
+        /// It used to test the load as well, and that was why nothing changed
+        /// when symmetry was first enforced: no solved net has a load profile
+        /// that mirrors to one percent. Iteration residuals alone are bigger
+        /// than that, so every bar failed the test and every bar went back to
+        /// free placement.
+        ///
+        /// Symmetry is a property of the FORM. If an author drew a symmetric
+        /// arch, the columns belong in the same places on both halves, and a
+        /// fraction of a percent of solver noise in the load is not a reason to
+        /// build it lopsided. Two percent on the geometry, which is loose
+        /// enough to survive a plan relaxation and tight enough that a
+        /// genuinely crooked bar is left alone.
         /// </summary>
         private static int[] MirrorMap(
             double[] arc,
-            double[] load,
             int[] coarse,
             out double lopsided)
         {
@@ -1186,10 +1201,7 @@ namespace Ananke.COMPAS.Native.Components
             double span = arc[n - 1];
             if (span <= 0.0 || n < 3)
                 return Array.Empty<int>();
-            double heaviest = Math.Max(load.Max(), 1.0e-12);
-
-            // Does every station have a partner at span minus its own arc,
-            // carrying the same load?
+            // Does every station have a partner at span minus its own arc?
             for (int k = 0; k < n; k++)
             {
                 double want = span - arc[k];
@@ -1205,10 +1217,8 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
                 lopsided = Math.Max(lopsided, closest / span);
-                lopsided = Math.Max(
-                    lopsided, Math.Abs(load[partner] - load[k]) / heaviest);
             }
-            if (lopsided > 0.01)
+            if (lopsided > 0.02)
                 return Array.Empty<int>();
 
             var mirrorOf = new int[coarse.Length];

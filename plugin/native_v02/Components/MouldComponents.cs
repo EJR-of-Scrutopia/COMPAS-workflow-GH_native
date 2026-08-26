@@ -638,9 +638,29 @@ namespace Ananke.COMPAS.Native.Components
                             bool onGround = tree.Feet.Contains(v);
                             if (!onGround)
                             {
-                                at[v] = reach.Count > 1
-                                    ? MouldGeometry.ForkPoint(
-                                        reach, pushes, ground)
+                                // The fork rides the MAIN column's line at the
+                                // height it was built at. Both are read off the
+                                // built geometry rather than guessed: the main
+                                // branch is the one most nearly in line with
+                                // the trunk below, which is the invariant
+                                // ForkOnLine creates, and the height is the
+                                // fraction it sits at. Re-solving the fork by
+                                // force here instead would put it somewhere
+                                // Column Finder never placed it, and the column
+                                // would change shape as it rose.
+                                int main = MouldGeometry.MainBranch(tree, v);
+                                double builtRise =
+                                    tree.Nodes[main].Z - ground;
+                                double fraction = builtRise > 1.0e-9
+                                    ? (tree.Nodes[v].Z - ground) / builtRise
+                                    : 1.0;
+                                at[v] = reach.Count > 1 &&
+                                    liveAim.Count > 0
+                                    ? MouldGeometry.ForkOnLine(
+                                        at[main],
+                                        MouldGeometry.AimFrom(-flow[main]),
+                                        Math.Min(Math.Max(fraction, 0.0), 1.0),
+                                        ground)
                                     : reach[0];
                             }
                             else
@@ -1327,67 +1347,38 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Where a column forks when its branches sprout OFF A MAIN COLUMN
-        /// rather than meeting it as equals.
+        /// Where a branching column forks, on the MAIN column's own line.
         ///
-        /// A fork found freely puts the trunk and every branch on the same
-        /// footing, so nothing on screen reads as the column: three members
-        /// meet at a point and go their own ways. What a Frei Otto tree looks
-        /// like, and what Param asked for, is a main column you can follow from
-        /// its foot to its own notch with limbs leaving it on the way up.
+        /// Constraining it to that line is what makes the column read as one
+        /// member from foot to notch with limbs leaving it, which is the Frei
+        /// Otto shape, instead of three members meeting at a point and going
+        /// their own ways.
         ///
-        /// So the fork is CONSTRAINED to the main column's own line of thrust,
-        /// and only its HEIGHT along that line is solved: the point where the
-        /// branches come closest to standing on their own lines. The main
-        /// member stays perfectly axial and perfectly straight, which is what
-        /// makes it read as one column, and the branches carry whatever
-        /// misalignment is left, which is reported.
+        /// The HEIGHT along that line is given, not solved, and that is an
+        /// honest admission rather than a shortcut. Solving it from force was
+        /// tried and is degenerate here: with the columns near vertical, every
+        /// branch aim is nearly parallel to the trunk's, the least-squares
+        /// system goes singular, and the fork slides all the way to the
+        /// ground. That is not a bug in the solve. A branch that leans less
+        /// costs less bending AND less material, so BOTH criteria genuinely
+        /// prefer the fan, and the fan is what they gave: every branch a
+        /// full-height spoke from one point, crossing its neighbours.
         ///
-        /// One unknown, so one equation. Writing the fork as m - s*a and
-        /// minimising the force-weighted squared distance to each branch ray
-        /// gives s directly.
+        /// Frei Otto's trees branch high because his loads spread over a wide
+        /// canopy and the branches meet at real angles to each other. Notches a
+        /// metre apart and nearly overhead do not. So the fork height here is
+        /// an architectural decision, and it belongs to whoever is designing.
         /// </summary>
         public static Point3d ForkOnLine(
             Point3d mainNotch,
             Vector3d mainAim,
-            IReadOnlyList<Point3d> branchAt,
-            IReadOnlyList<Vector3d> branchPush,
+            double heightFraction,
             double ground)
         {
-            double num = 0.0;
-            double den = 0.0;
-            double[] a = { mainAim.X, mainAim.Y, mainAim.Z };
-            for (int i = 0; i < branchAt.Count; i++)
-            {
-                double weight = branchPush[i].Length;
-                if (weight <= 1.0e-12)
-                    continue;
-                Vector3d aim = AimFrom(-branchPush[i]);
-                double[] d = { aim.X, aim.Y, aim.Z };
-                double[] c =
-                {
-                    mainNotch.X - branchAt[i].X,
-                    mainNotch.Y - branchAt[i].Y,
-                    mainNotch.Z - branchAt[i].Z,
-                };
-                double ca = (c[0] * a[0]) + (c[1] * a[1]) + (c[2] * a[2]);
-                double cd = (c[0] * d[0]) + (c[1] * d[1]) + (c[2] * d[2]);
-                double ad = (a[0] * d[0]) + (a[1] * d[1]) + (a[2] * d[2]);
-                num += weight * (ca - (cd * ad));
-                den += weight * (1.0 - (ad * ad));
-            }
-
-            // Every branch parallel to the main column: nothing to solve, so
-            // fork just below the lowest notch the branches reach.
-            double along = den <= 1.0e-12
-                ? (mainNotch.Z - branchAt.Min(p => p.Z)) /
-                    Math.Max(mainAim.Z, 1.0e-9)
-                : num / den;
-
             double toGround = mainAim.Z > 1.0e-9
                 ? (mainNotch.Z - ground) / mainAim.Z
                 : 0.0;
-            along = Math.Min(Math.Max(along, 0.0), toGround);
+            double along = (1.0 - heightFraction) * toGround;
             return new Point3d(
                 mainNotch.X - (along * mainAim.X),
                 mainNotch.Y - (along * mainAim.Y),
@@ -1601,6 +1592,52 @@ namespace Ananke.COMPAS.Native.Components
 
             /// <summary>Upper ends of each node, nearest the notches.</summary>
             public List<int>[] Above { get; set; } = Array.Empty<List<int>>();
+        }
+
+        /// <summary>
+        /// Which of a fork's branches is the MAIN column: the one most nearly
+        /// in line with the trunk below it. That collinearity is not an
+        /// accident, it is the invariant <see cref="ForkOnLine"/> creates by
+        /// putting the fork on the main column's own line, so reading it back
+        /// recovers which branch that was without carrying a label across the
+        /// wire.
+        /// </summary>
+        public static int MainBranch(ColumnTree tree, int fork)
+        {
+            List<int> above = tree.Above[fork];
+            if (above.Count == 1)
+                return above[0];
+
+            // The trunk below this fork, if there is one.
+            var down = Vector3d.Zero;
+            foreach ((int lower, int upper) in tree.Members)
+            {
+                if (upper != fork)
+                    continue;
+                down = tree.Nodes[fork] - tree.Nodes[lower];
+                break;
+            }
+            double downLength = down.Length;
+            if (downLength <= 1.0e-12)
+                return above[0];
+
+            int best = above[0];
+            double straightest = -2.0;
+            foreach (int candidate in above)
+            {
+                Vector3d up = tree.Nodes[candidate] - tree.Nodes[fork];
+                double length = up.Length;
+                if (length <= 1.0e-12)
+                    continue;
+                double score = ((down.X * up.X) + (down.Y * up.Y) +
+                    (down.Z * up.Z)) / (downLength * length);
+                if (score > straightest)
+                {
+                    straightest = score;
+                    best = candidate;
+                }
+            }
+            return best;
         }
 
         public static ColumnTree BuildColumnTree(
