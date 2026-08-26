@@ -323,30 +323,62 @@ namespace Ananke.COMPAS.Native.Components
                     return;
                 }
 
-                // The load each notch hands its bar, straight from the solve.
-                var nodeLoad = new double[n];
-                foreach (NodalVectorDto reaction in equilibrium.Reactions)
+                // What the net hands each node, from the solve's own member
+                // forces. NOT from equilibrium.Reactions, which was the bug
+                // this replaces: reactions exist only at SUPPORTS, so every
+                // interior notch read zero and each bar was being solved as a
+                // beam with no load anywhere along it. The arms were placed on
+                // an empty problem and the forces they reported were zero.
+                var edgeForce = new double[edges.Length];
+                for (int e = 0; e < edges.Length; e++)
                 {
-                    if (reaction.NodeId >= 0 && reaction.NodeId < n)
-                        nodeLoad[reaction.NodeId] = Math.Abs(reaction.Vector.Z);
+                    int src = e < edgeSource.Length ? edgeSource[e] : e;
+                    edgeForce[e] = src < equilibrium.MemberForces.Count
+                        ? equilibrium.MemberForces[src]
+                        : 0.0;
+                }
+                var incident = new List<(int Other, double Force)>[n];
+                for (int i = 0; i < n; i++)
+                    incident[i] = new List<(int, double)>();
+                for (int e = 0; e < edges.Length; e++)
+                {
+                    incident[edges[e].Item1].Add((edges[e].Item2, edgeForce[e]));
+                    incident[edges[e].Item2].Add((edges[e].Item1, edgeForce[e]));
                 }
 
                 var heads = new List<Point3d>();
                 var headLoad = new List<double>();
+                var headAim = new List<Vector3d>();
                 var armsPerBar = new List<int>();
+                double alongToAnchors = 0.0;
+                double acrossToColumns = 0.0;
 
                 foreach (List<int> bar in bars)
                 {
+                    Vector3d[] pull = BarLoads(bar, nodes, incident);
+                    Vector3d[] across = BarTransverse(bar, nodes, pull);
+                    for (int k = 0; k < bar.Count; k++)
+                    {
+                        alongToAnchors += (pull[k] - across[k]).Length;
+                        acrossToColumns += across[k].Length;
+                    }
+
+                    double[] barLoad = across
+                        .Select(v => Math.Abs(v.Z)).ToArray();
                     (List<int> chosen, double _droop, double[] reactions) =
                         BeamSolver.ArmsForBar(
-                            bar, nodes, nodeLoad, anchors, perLine,
+                            bar, nodes, barLoad, anchors, perLine,
                             placementStiffness);
                     armsPerBar.Add(chosen.Count);
-                    foreach (int k in chosen)
+                    Vector3d[] aim = ArmAim(bar, nodes, across, chosen, anchors);
+                    for (int c = 0; c < chosen.Count; c++)
                     {
+                        int k = chosen[c];
                         heads.Add(nodes[bar[k]]);
-                        headLoad.Add(reactions.Length > k ? Math.Max(reactions[k], 0.0)
-                            : nodeLoad[bar[k]]);
+                        headLoad.Add(reactions.Length > k
+                            ? Math.Max(reactions[k], 0.0)
+                            : barLoad[k]);
+                        headAim.Add(aim[c]);
                     }
                 }
 
@@ -356,12 +388,20 @@ namespace Ananke.COMPAS.Native.Components
 
                 if (trees <= 0)
                 {
-                    // Every arm its own straight post.
+                    // Every arm its own post, standing along the line of the
+                    // force it carries rather than plumb. Where the net pulls
+                    // a notch straight down the aim IS vertical and the post
+                    // is the plumb one it always was.
                     for (int i = 0; i < heads.Count; i++)
                     {
-                        var foot = new Point3d(heads[i].X, heads[i].Y, ground);
-                        if (heads[i].Z - ground <= 0.0)
+                        double rise = heads[i].Z - ground;
+                        if (rise <= 0.0)
                             continue;
+                        Vector3d up = headAim[i];
+                        var foot = new Point3d(
+                            heads[i].X - (up.X * rise / up.Z),
+                            heads[i].Y - (up.Y * rise / up.Z),
+                            ground);
                         members.Add(new Line(foot, heads[i]));
                         carried.Add(headLoad[i]);
                         feet.Add(foot);
@@ -439,12 +479,197 @@ namespace Ananke.COMPAS.Native.Components
                     footPts, headPts, force)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
-                    trees, depth, ground));
+                    trees, depth, ground, alongToAnchors, acrossToColumns));
             }
             catch (Exception ex)
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// What the NET hands each notch of a bar, as a force vector in three
+        /// dimensions.
+        ///
+        /// Only the infill cables count. The edges running ALONG the bar are
+        /// the bar itself, and a beam does not load itself, so they are left
+        /// out. Positive is tension, so a member pulls its node toward the far
+        /// end and a negative one pushes it away.
+        /// </summary>
+        private static Vector3d[] BarLoads(
+            List<int> bar,
+            Point3d[] nodes,
+            List<(int Other, double Force)>[] incident)
+        {
+            var along = new HashSet<long>();
+            for (int k = 0; k + 1 < bar.Count; k++)
+                along.Add(EdgeKey(bar[k], bar[k + 1]));
+
+            var pull = new Vector3d[bar.Count];
+            for (int k = 0; k < bar.Count; k++)
+            {
+                int node = bar[k];
+                var total = Vector3d.Zero;
+                foreach ((int other, double force) in incident[node])
+                {
+                    if (along.Contains(EdgeKey(node, other)))
+                        continue;
+                    Vector3d step = nodes[other] - nodes[node];
+                    double length = step.Length;
+                    if (length <= 1.0e-12)
+                        continue;
+                    total += (force / length) * step;
+                }
+                pull[k] = total;
+            }
+            return pull;
+        }
+
+        private static long EdgeKey(int a, int b) =>
+            a < b
+                ? ((long)a << 32) | (uint)b
+                : ((long)b << 32) | (uint)a;
+
+        /// <summary>
+        /// The part of that pull the COLUMNS have to take.
+        ///
+        /// This is where Gaudi's rule lands in this machine, and it lands
+        /// differently from how it reads at first. Inclining a column pays only
+        /// when the force arriving at its head is ALREADY inclined; under a
+        /// purely vertical load a lean costs axial force (P over cos) and hands
+        /// the foot a sideways push (P times tan) that something then has to
+        /// resist. Gaudi's columns lean because the vault delivers thrust, and
+        /// the lean is what removes the buttress.
+        ///
+        /// Here the buttresses already exist: every principal bar runs from one
+        /// anchor strip to the other and BOTH ITS ENDS ARE TIED TO THE GROUND,
+        /// so the pull running along a bar travels to those anchors, not to the
+        /// columns. Leaning a column to take that component would double up on
+        /// work the anchors are already doing.
+        ///
+        /// What no one takes is the pull ACROSS the bar. The bars curve in
+        /// plan, so the infill cables pull them sideways and their own tension
+        /// around that plan curve pushes sideways too, and nothing resists it
+        /// but the bar's own bending. That component, plus the weight, is the
+        /// columns' share and it is what their lean should follow.
+        ///
+        /// So: project the pull off the bar's local tangent and keep the rest.
+        /// On a bar lying in a vertical plane the remainder is vertical and the
+        /// columns come out plumb, which is the right answer for that case.
+        /// </summary>
+        private static Vector3d[] BarTransverse(
+            List<int> bar,
+            Point3d[] nodes,
+            Vector3d[] pull)
+        {
+            var across = new Vector3d[bar.Count];
+            for (int k = 0; k < bar.Count; k++)
+            {
+                int before = Math.Max(k - 1, 0);
+                int after = Math.Min(k + 1, bar.Count - 1);
+                Vector3d tangent = nodes[bar[after]] - nodes[bar[before]];
+                double length = tangent.Length;
+                if (length <= 1.0e-12)
+                {
+                    across[k] = pull[k];
+                    continue;
+                }
+                // Divided rather than Unitized: Vector3d.Unitize P/Invokes into
+                // Rhino's native core, which puts it out of reach of the smoke
+                // harness, and this runs per node per bar per solve anyway.
+                tangent = new Vector3d(
+                    tangent.X / length, tangent.Y / length, tangent.Z / length);
+                across[k] = pull[k] - ((pull[k] * tangent) * tangent);
+            }
+            return across;
+        }
+
+        /// <summary>
+        /// Which way each arm has to push: the direction of the load it
+        /// gathers, so the column stands along the line of its own force and
+        /// works in pure compression.
+        ///
+        /// A notch belongs to whichever support is nearest along the bar, and
+        /// the anchors count as supports here exactly as they do in the beam
+        /// solve: an anchor takes its share whether or not it costs an arm, so
+        /// a notch beside one is not the arm's to carry.
+        ///
+        /// The lean is capped at sixty degrees. Past that a column pushes
+        /// sideways more than it holds up, and the sliding joint cannot reach
+        /// the angle anyway; holding it there leaves the difference visible as
+        /// residual thrust rather than drawing a column nobody can build.
+        /// </summary>
+        private static Vector3d[] ArmAim(
+            List<int> bar,
+            Point3d[] nodes,
+            Vector3d[] across,
+            List<int> chosen,
+            HashSet<int> anchors)
+        {
+            var aim = new Vector3d[chosen.Count];
+            if (chosen.Count == 0)
+                return aim;
+
+            var arc = new double[bar.Count];
+            for (int k = 1; k < bar.Count; k++)
+                arc[k] = arc[k - 1] + nodes[bar[k - 1]].DistanceTo(nodes[bar[k]]);
+
+            var supports = new List<int>(chosen);
+            for (int k = 0; k < bar.Count; k++)
+            {
+                if (anchors.Contains(bar[k]) && !supports.Contains(k))
+                    supports.Add(k);
+            }
+
+            var gathered = new Vector3d[chosen.Count];
+            for (int k = 0; k < bar.Count; k++)
+            {
+                int nearest = -1;
+                double best = double.MaxValue;
+                foreach (int support in supports)
+                {
+                    double distance = Math.Abs(arc[k] - arc[support]);
+                    if (distance < best)
+                    {
+                        best = distance;
+                        nearest = support;
+                    }
+                }
+                int index = chosen.IndexOf(nearest);
+                if (index >= 0)
+                    gathered[index] += across[k];
+            }
+
+            double cap = Math.Tan(Math.PI / 3.0);
+            for (int c = 0; c < chosen.Count; c++)
+            {
+                // The arm supplies the opposite of what the net pulls.
+                Vector3d supply = -gathered[c];
+                if (supply.Z <= 1.0e-9)
+                {
+                    // The net is trying to pull this notch DOWN through its
+                    // column, which a column cannot do. The beam solve already
+                    // rejects arrangements that need an arm to pull; stand this
+                    // one plumb rather than invent a direction for it.
+                    aim[c] = Vector3d.ZAxis;
+                    continue;
+                }
+                double horizontal = Math.Sqrt(
+                    (supply.X * supply.X) + (supply.Y * supply.Y));
+                double allowed = cap * supply.Z;
+                if (horizontal > allowed && horizontal > 1.0e-12)
+                {
+                    double scale = allowed / horizontal;
+                    supply = new Vector3d(
+                        supply.X * scale, supply.Y * scale, supply.Z);
+                }
+                double length = supply.Length;
+                aim[c] = length > 1.0e-12
+                    ? new Vector3d(
+                        supply.X / length, supply.Y / length, supply.Z / length)
+                    : Vector3d.ZAxis;
+            }
+            return aim;
         }
 
         private static string Report(
@@ -457,7 +682,9 @@ namespace Ananke.COMPAS.Native.Components
             List<Point3d> feet,
             int trees,
             int depth,
-            double ground)
+            double ground,
+            double alongToAnchors,
+            double acrossToColumns)
         {
             var lines = new List<string>
             {
@@ -473,6 +700,15 @@ namespace Ananke.COMPAS.Native.Components
                     + "and every arrangement of notches was tried. Bar "
                     + "stiffness is not asked for because it cancels out of "
                     + "that comparison.",
+                string.Empty,
+                $"of the net's pull on the bars, {alongToAnchors:0} N runs "
+                    + "ALONG them and goes to the anchors, which are this "
+                    + "machine's buttresses because both ends of every bar are "
+                    + $"tied to the ground. The {acrossToColumns:0} N ACROSS "
+                    + "them is the columns' to take, and it is what sets their "
+                    + "lean: each post stands along the line of the force it "
+                    + "carries, so it works in pure compression and its foot "
+                    + "takes no sideways push it was not given.",
             };
 
             lines.Add(trees <= 0
@@ -514,7 +750,7 @@ namespace Ananke.COMPAS.Native.Components
         public static (List<int>, double, double[]) ArmsForBar(
             List<int> bar,
             Point3d[] nodes,
-            double[] nodeLoad,
+            double[] barLoad,
             HashSet<int> anchors,
             int perLine,
             double EI)
@@ -525,7 +761,9 @@ namespace Ananke.COMPAS.Native.Components
                 arc[k] = arc[k - 1] + nodes[bar[k - 1]].DistanceTo(nodes[bar[k]]);
             double span = arc[count - 1];
 
-            double[] load = bar.Select(i => nodeLoad[i]).ToArray();
+            // Already the bar's own load, position by position: what the
+            // infill cables pull at each notch, across the bar.
+            double[] load = barLoad;
             var anchored = new List<int>();
             for (int k = 0; k < count; k++)
             {

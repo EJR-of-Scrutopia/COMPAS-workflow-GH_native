@@ -458,6 +458,23 @@ internal static class Program
                 + $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateColumnAim(plugin);
+            Console.WriteLine(
+                "PASS  ColumnFinder load and aim: a symmetric bay pulls a notch "
+                + "straight down and the column comes out plumb; a one-sided "
+                + "bay at 45 degrees leans the column 45 degrees the other way, "
+                + "its foot on the side the cable pulls toward; a nearly "
+                + "horizontal pull is held at the 60-degree cap. Measured "
+                + "against hand-computed vectors, not inspected.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ColumnFinder load and aim: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1363,6 +1380,188 @@ internal static class Program
                 $"A principal line {label} must report an offset of "
                 + $"{expectedOffset:G3} from the curve that asked for it; it "
                 + $"reported {offset:G6}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>ColumnFinderComponent</c>'s load path and column aiming, measured
+    /// against vectors worked out by hand.
+    ///
+    /// This path had never had a number checked, and when it finally was, it
+    /// was reading the load off <c>equilibrium.Reactions</c>, which exist only
+    /// at SUPPORTS: every interior notch read zero, so each bar was solved as a
+    /// beam with no load on it. The load now comes from the solve's own member
+    /// forces, and the direction that falls out of it aims the column.
+    ///
+    /// Three bars, each three notches long, running along Y at x = 0, one metre
+    /// up. Only the middle notch is loaded, and only its infill cables differ:
+    ///
+    ///   SYMMETRIC   cables to (-1, y, 0) and (1, y, 0), 100 N each. The
+    ///               horizontal halves cancel and the pull is straight down, so
+    ///               the column must come out PLUMB. Leaning it would cost
+    ///               axial force and hand its foot a sideways push for nothing,
+    ///               which is the whole reason a lean has to be earned.
+    ///
+    ///   ONE-SIDED   one cable to (1, y, 0), 100 N, so the pull runs down and
+    ///               toward +x at 45 degrees. The column supplies the opposite,
+    ///               so it aims up and toward -x at 45 degrees and its FOOT
+    ///               lands on the +x side: it leans against the pull. This is
+    ///               Gaudi's rule, and the sign is the half of it that is easy
+    ///               to get backwards.
+    ///
+    ///   SHALLOW     one cable to (1, y, 0.9), so the pull is nearly
+    ///               horizontal and would want a 84-degree lean. Held at the
+    ///               60-degree cap instead, because past that a column pushes
+    ///               sideways more than it holds up and the sliding joint
+    ///               cannot reach the angle.
+    ///
+    /// The bar runs along Y throughout, so its tangent is Y and the projection
+    /// that sends along-bar pull to the anchors takes nothing away here. That
+    /// is deliberate: it keeps these three cases about the aiming.
+    /// </summary>
+    private static void ValidateColumnAim(Assembly plugin)
+    {
+        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
+        MethodInfo loads = RequireStatic(finder, "BarLoads");
+        MethodInfo transverse = RequireStatic(finder, "BarTransverse");
+        MethodInfo armAim = RequireStatic(finder, "ArmAim");
+
+        Type point3d = loads.GetParameters()[1].ParameterType.GetElementType()
+            ?? throw new InvalidOperationException(
+                "BarLoads' node parameter is not an array.");
+        Type incidentArray = loads.GetParameters()[2].ParameterType;
+        Type incidentList = incidentArray.GetElementType()
+            ?? throw new InvalidOperationException(
+                "BarLoads' incident parameter is not an array.");
+
+        CheckOneAim(
+            loads, transverse, armAim, point3d, incidentArray, incidentList,
+            farX: 1.0, farZ: 0.0, twoSided: true,
+            expectedX: 0.0, expectedZ: 1.0, label: "symmetric bay");
+        CheckOneAim(
+            loads, transverse, armAim, point3d, incidentArray, incidentList,
+            farX: 1.0, farZ: 0.0, twoSided: false,
+            expectedX: -Math.Sqrt(0.5), expectedZ: Math.Sqrt(0.5),
+            label: "one-sided bay");
+
+        // Capped: the direction is held at sixty degrees from vertical, so the
+        // horizontal part is sin(60) and the vertical cos(60), leaning toward
+        // -x as before.
+        CheckOneAim(
+            loads, transverse, armAim, point3d, incidentArray, incidentList,
+            farX: 1.0, farZ: 0.9, twoSided: false,
+            expectedX: -Math.Sin(Math.PI / 3.0),
+            expectedZ: Math.Cos(Math.PI / 3.0),
+            label: "capped shallow pull");
+    }
+
+    private static object Step(string name, Func<object?> call)
+    {
+        try
+        {
+            return call()
+                ?? throw new InvalidOperationException($"{name} returned null.");
+        }
+        catch (TargetInvocationException error)
+        {
+            throw new InvalidOperationException(
+                $"{name} threw: {DescribeException(error.InnerException ?? error)}",
+                error);
+        }
+    }
+
+    private static MethodInfo RequireStatic(Type owner, string name) =>
+        owner.GetMethod(
+            name,
+            BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException(
+            $"{owner.Name}.{name} was not found.");
+
+    private static void CheckOneAim(
+        MethodInfo loads,
+        MethodInfo transverse,
+        MethodInfo armAim,
+        Type point3d,
+        Type incidentArray,
+        Type incidentList,
+        double farX,
+        double farZ,
+        bool twoSided,
+        double expectedX,
+        double expectedZ,
+        string label)
+    {
+        // 0,1,2 are the bar along Y at x = 0, z = 1. 3 and 4 are the far ends
+        // of the middle notch's infill cables.
+        var coordinates = new List<(double X, double Y, double Z)>
+        {
+            (0.0, 0.0, 1.0),
+            (0.0, 1.0, 1.0),
+            (0.0, 2.0, 1.0),
+            (farX, 1.0, farZ),
+            (-farX, 1.0, farZ),
+        };
+        Array nodes = Array.CreateInstance(point3d, coordinates.Count);
+        for (int index = 0; index < coordinates.Count; index++)
+        {
+            (double x, double y, double z) = coordinates[index];
+            nodes.SetValue(Activator.CreateInstance(point3d, x, y, z), index);
+        }
+
+        // Positive is tension, so each cable pulls node 1 toward its far end.
+        var cables = new List<(int Node, int Other)> { (1, 3) };
+        if (twoSided)
+            cables.Add((1, 4));
+
+        Array incident = Array.CreateInstance(
+            incidentList, coordinates.Count);
+        MethodInfo add = incidentList.GetMethod("Add")
+            ?? throw new InvalidOperationException("List.Add was not found.");
+        for (int index = 0; index < coordinates.Count; index++)
+            incident.SetValue(Activator.CreateInstance(incidentList), index);
+        foreach ((int node, int other) in cables)
+        {
+            add.Invoke(
+                incident.GetValue(node),
+                new object[] { (other, 100.0) });
+            add.Invoke(
+                incident.GetValue(other),
+                new object[] { (node, 100.0) });
+        }
+        // The bar's own edges, which BarLoads must leave out.
+        add.Invoke(incident.GetValue(0), new object[] { (1, 50.0) });
+        add.Invoke(incident.GetValue(1), new object[] { (0, 50.0) });
+        add.Invoke(incident.GetValue(1), new object[] { (2, 50.0) });
+        add.Invoke(incident.GetValue(2), new object[] { (1, 50.0) });
+
+        var bar = new List<int> { 0, 1, 2 };
+        object pull = Step("BarLoads", () => loads.Invoke(
+            null, new object?[] { bar, nodes, incident }));
+        object across = Step("BarTransverse", () => transverse.Invoke(
+            null, new object?[] { bar, nodes, pull }));
+
+        var chosen = new List<int> { 1 };
+        var anchors = new HashSet<int>();
+        object aim = Step("ArmAim", () => armAim.Invoke(
+            null, new object?[] { bar, nodes, across, chosen, anchors }));
+
+        object direction = ((Array)aim).GetValue(0)
+            ?? throw new InvalidOperationException("ArmAim returned no vector.");
+        Type vector3d = direction.GetType();
+        double aimX = (double)vector3d.GetProperty("X")!.GetValue(direction)!;
+        double aimY = (double)vector3d.GetProperty("Y")!.GetValue(direction)!;
+        double aimZ = (double)vector3d.GetProperty("Z")!.GetValue(direction)!;
+
+        const double tolerance = 1.0e-9;
+        if (Math.Abs(aimX - expectedX) > tolerance ||
+            Math.Abs(aimY) > tolerance ||
+            Math.Abs(aimZ - expectedZ) > tolerance)
+        {
+            throw new InvalidOperationException(
+                $"The column for a {label} must aim ("
+                + $"{expectedX:G6}, 0, {expectedZ:G6}); it aims "
+                + $"({aimX:G6}, {aimY:G6}, {aimZ:G6}). A wrong sign on X means "
+                + "the column leans WITH the pull instead of against it.");
         }
     }
 
