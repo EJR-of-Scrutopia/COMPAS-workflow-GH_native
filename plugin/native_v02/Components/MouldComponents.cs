@@ -146,12 +146,34 @@ namespace Ananke.COMPAS.Native.Components
                     + "blank falls back to even spacing.",
                 GH_ParamAccess.item,
                 0.0);
+            parameters.AddNumberParameter(
+                "Time",
+                "T",
+                "0 to 100. ONE slider for the whole build sequence, which is "
+                    + "what an animation wants. Connected, it overrides Sag and "
+                    + "Height and runs the three phases in order: reel the net "
+                    + "part way down while it is still flat, lift it on the "
+                    + "columns, then reel the rest of the way and tension both "
+                    + "axes against the columns holding the bars. Leave it "
+                    + "blank to drive Sag and Height by hand.",
+                GH_ParamAccess.item);
+            parameters.AddNumberParameter(
+                "Pre-Sag",
+                "PS",
+                "0 to 100. How much of the sag is reeled in BEFORE the columns "
+                    + "lift, when Time is driving. The rest is reeled after, "
+                    + "which is the part that tightens the form against the "
+                    + "bars.",
+                GH_ParamAccess.item,
+                40.0);
             parameters[2].Optional = true;
             parameters[3].Optional = true;
             parameters[4].Optional = true;
             parameters[5].Optional = true;
             parameters[6].Optional = true;
             parameters[7].Optional = true;
+            parameters[8].Optional = true;
+            parameters[9].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -230,6 +252,21 @@ namespace Ananke.COMPAS.Native.Components
                     + "can do.",
                 GH_ParamAccess.list);
             parameters.AddTextParameter(
+                "Phase",
+                "PH",
+                "Which phase of the build the current Time is in, in words, so "
+                    + "the animation can caption itself.",
+                GH_ParamAccess.item);
+            parameters.AddNumberParameter(
+                "Arm Value",
+                "AV",
+                "What the last arm on each bar is worth, in mm of droop it "
+                    + "removes. This is the evidence for the arm COUNT: when "
+                    + "the next arm buys almost nothing, the bar has enough. "
+                    + "One value per principal line, and empty unless EI was "
+                    + "given.",
+                GH_ParamAccess.list);
+            parameters.AddTextParameter(
                 "Report",
                 "Out",
                 "What the animation is showing, and the stepper and column "
@@ -257,11 +294,48 @@ namespace Ananke.COMPAS.Native.Components
             double ground = 0.0;
             int perLine = 3;
             double barEi = 0.0;
+            double preSag = 40.0;
             data.GetData(3, ref sagPct);
             data.GetData(4, ref heightPct);
             data.GetData(5, ref ground);
             data.GetData(6, ref perLine);
             data.GetData(7, ref barEi);
+            data.GetData(9, ref preSag);
+
+            // Time, when wired, drives the whole sequence from one slider.
+            // Sag and Height stay independent terms underneath, so either order
+            // is reachable; the timeline just scripts the order you build in.
+            string phase = "manual: Sag and Height driven by hand";
+            double timeVal = double.NaN;
+            if (data.GetData(8, ref timeVal) && !double.IsNaN(timeVal))
+            {
+                double time = Math.Min(Math.Max(timeVal, 0.0), 100.0) / 100.0;
+                double pre = Math.Min(Math.Max(preSag, 0.0), 100.0);
+                if (time < 1.0 / 3.0)
+                {
+                    double u = time * 3.0;
+                    sagPct = pre * u;
+                    heightPct = 0.0;
+                    phase = $"1 of 3, reeling flat on the ground: sag {sagPct:0}% "
+                        + $"of {pre:0}% pre-sag";
+                }
+                else if (time < 2.0 / 3.0)
+                {
+                    double u = (time - (1.0 / 3.0)) * 3.0;
+                    sagPct = pre;
+                    heightPct = 100.0 * u;
+                    phase = $"2 of 3, columns lifting: height {heightPct:0}% at "
+                        + $"{pre:0}% sag";
+                }
+                else
+                {
+                    double u = (time - (2.0 / 3.0)) * 3.0;
+                    sagPct = pre + ((100.0 - pre) * u);
+                    heightPct = 100.0;
+                    phase = $"3 of 3, tensioning both axes against the columns: "
+                        + $"sag {sagPct:0}%";
+                }
+            }
 
             double sag = Math.Min(Math.Max(sagPct, 0.0), 100.0) / 100.0;
             double lift = Math.Min(Math.Max(heightPct, 0.0), 100.0) / 100.0;
@@ -360,6 +434,19 @@ namespace Ananke.COMPAS.Native.Components
                     PlaceColumns(
                         bars, live, barLoad, anchorIds, ground, perLine, barEi);
 
+                // What the last arm is worth: solve each bar again with one
+                // fewer and report the droop it would have. When that number is
+                // close to the droop it already has, the bar has enough arms,
+                // which is the evidence for the COUNT rather than the position.
+                var armValue = new List<double>();
+                if (barEi > 0.0 && perLine > 2)
+                {
+                    (_, _, _, List<double> fewer) = PlaceColumns(
+                        bars, live, barLoad, anchorIds, ground, perLine - 1, barEi);
+                    for (int b = 0; b < barDroop.Count && b < fewer.Count; b++)
+                        armValue.Add(fewer[b] - barDroop[b]);
+                }
+
                 Mesh? outMesh = mesh is null ? null : DeformMesh(mesh, target, live);
 
                 data.SetData(0, outMesh);
@@ -373,10 +460,13 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(8, armForce);
                 data.SetDataList(9, barDroop);
                 data.SetDataList(10, relief.Select(r => r * 1000.0));
-                data.SetData(11, Report(
+                data.SetData(11, phase);
+                data.SetDataList(12, armValue);
+                data.SetData(13, Report(
                     n, edges.Length, bars, principalIds.Count, anchorIds.Count,
                     perimeterIds.Length, columns.Count, relief, sag, lift,
-                    ground, bare, mesh is not null, barEi, barDroop, armForce));
+                    ground, bare, mesh is not null, barEi, barDroop, armForce,
+                    phase, armValue));
             }
             catch (Exception ex)
             {
@@ -962,7 +1052,9 @@ namespace Ananke.COMPAS.Native.Components
             bool hasMesh,
             double barEi,
             List<double> barDroop,
-            List<double> armForce)
+            List<double> armForce,
+            string phase,
+            List<double> armValue)
         {
             double worstReel = relief.Length == 0
                 ? 0.0
@@ -984,6 +1076,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "it runs no equilibrium check of its own. Use the solver "
                     + "components for that.",
                 string.Empty,
+                phase,
                 $"sag {sag * 100:0}%, height {lift * 100:0}%, ground {ground:0.###}",
                 $"nodes {nodes}, cables {edges}, principal bars {bars.Count} "
                     + $"carrying {principalNodes} notches",
@@ -1009,6 +1102,17 @@ namespace Ananke.COMPAS.Native.Components
                         $"arm force {armForce.Min():0} to {armForce.Max():0} N, "
                             + $"carrying {armForce.Sum():0} N in total");
                 }
+                if (armValue.Count > 0)
+                {
+                    lines.Add(
+                        $"the last arm on each bar removes {armValue.Min():0.#} "
+                            + $"to {armValue.Max():0.#} mm of droop. When that "
+                            + "falls to near nothing the bar has enough arms.");
+                }
+                lines.Add(
+                    "for tree columns, wire Column Heads into TreeNodeFinder's "
+                        + "V and Column Force into its Wnode: the arms become "
+                        + "the tips and it branches them down to fewer feet.");
             }
             else
             {
