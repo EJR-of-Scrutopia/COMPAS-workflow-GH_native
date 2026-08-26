@@ -65,6 +65,7 @@ namespace Ananke.COMPAS.Native.Components
 
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
+        private readonly List<Line> _previewPrincipal = new();
         private readonly List<Point3d> _previewSupports = new();
         private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -80,6 +81,7 @@ namespace Ananke.COMPAS.Native.Components
             base.BeforeSolveInstance();
             _previewMesh = null;
             _previewCables.Clear();
+            _previewPrincipal.Clear();
             _previewSupports.Clear();
             _clippingBox = BoundingBox.Empty;
         }
@@ -116,6 +118,13 @@ namespace Ananke.COMPAS.Native.Components
                 // itself carries the drawing.
                 foreach (Line cable in _previewCables)
                     args.Display.DrawLine(cable, Color.FromArgb(95, 95, 100));
+            }
+            foreach (Line bar in _previewPrincipal)
+            {
+                args.Display.DrawLine(
+                    bar,
+                    TnaWorkflowPreview.PrincipalColour,
+                    TnaWorkflowPreview.PrincipalWeight);
             }
             foreach (Point3d point in _previewSupports)
             {
@@ -252,23 +261,34 @@ namespace Ananke.COMPAS.Native.Components
                 if (edges.Length == 0)
                     throw new InvalidOperationException("Result carries no edges.");
 
-                // Start from the ORIGINAL PATTERN, read back up the chain
-                // through the Result's Problem. That is the flat plan the whole
-                // definition was drawn from, so frame zero is exactly what the
-                // Pattern component holds rather than a level inferred from the
-                // solved shape. Falling back to the base of the geometry keeps
-                // an older Result working.
+                // Start from the ORIGINAL PATTERN: the plan as drawn, taken
+                // off the SPINE PROBLEM that every solver attaches to its own
+                // Result. Deliberately not the equilibrium's analysis topology,
+                // which is the network the worker actually solved and so
+                // already carries the answer; starting there put frame zero at
+                // the finished vault and left the animation with nothing to do.
                 double ground = target.Min(p => p.Z);
-                double[] startZ;
                 IReadOnlyList<Point3Dto>? pattern =
-                    equilibrium.Problem?.Topology?.Vertices;
+                    result.Problem?.Anchored?.Pattern?.Topology?.Vertices;
                 bool fromPattern = pattern is not null && pattern.Count == n;
-                if (fromPattern)
+                double[] startZ = fromPattern
+                    ? pattern!.Select(p => p.Z).ToArray()
+                    : Enumerable.Repeat(ground, n).ToArray();
+
+                // A start that already matches the solved shape node for node
+                // is not a plan, it is the answer. Lie the net flat and say so,
+                // rather than replay a still image and call it an animation.
+                double zSpan = Math.Max(target.Max(p => p.Z) - ground, 1.0e-9);
+                double startDrift = 0.0;
+                for (int i = 0; i < n; i++)
                 {
-                    startZ = pattern!.Select(p => p.Z).ToArray();
+                    startDrift = Math.Max(
+                        startDrift, Math.Abs(startZ[i] - target[i].Z));
                 }
-                else
+                bool startIsFinal = fromPattern && startDrift < 1.0e-4 * zSpan;
+                if (startIsFinal)
                 {
+                    fromPattern = false;
                     startZ = Enumerable.Repeat(ground, n).ToArray();
                 }
                 Mesh? mesh = MouldGeometry.ThrustMeshFromResult(
@@ -373,13 +393,22 @@ namespace Ananke.COMPAS.Native.Components
                         + $"{perimeterIds.Length}",
                     "principal lines read from the contract, resolved "
                         + "upstream by Supports or Pattern",
-                    fromPattern
-                        ? "starting from the ORIGINAL PATTERN read back through "
-                            + "the Result's problem, so frame zero is the plan "
-                            + "as drawn"
-                        : $"this Result carries no problem topology, so the net "
-                            + $"starts flat at {ground:0.###}, the base of the "
-                            + "solved geometry",
+                    startIsFinal
+                        ? "the pattern this Result carries IS its own solved "
+                            + "shape, so there was nothing to rise from; the "
+                            + $"net starts flat at {ground:0.###} instead"
+                        : fromPattern
+                            ? "starting from the ORIGINAL PATTERN, the plan as "
+                                + "drawn, read off the Result's own Problem, so "
+                                + "frame zero is what Pattern holds"
+                            : "this Result carries no source pattern, so the "
+                                + $"net starts flat at {ground:0.###}, the base "
+                                + "of the solved geometry",
+                    $"net travels from {startZ.Min():0.###}/{startZ.Max():0.###} "
+                        + $"at frame zero to {ground:0.###}/"
+                        + $"{target.Max(p => p.Z):0.###} at the end, "
+                        + $"reeling {relief.Max(Math.Abs) * 1000.0:0.#} mm at "
+                        + "the deepest node",
                     $"steppers required {principalIds.Count * 2} "
                         + "(two per notch, one pulling each side)",
                     $"bars risen {barRise * 1000.0:0.#} mm at this frame",
@@ -412,6 +441,13 @@ namespace Ananke.COMPAS.Native.Components
                 _previewMesh = framed;
                 _previewCables.Clear();
                 _previewCables.AddRange(cables);
+                _previewPrincipal.Clear();
+                foreach (List<int> run in bars)
+                {
+                    for (int k = 0; k + 1 < run.Count; k++)
+                        _previewPrincipal.Add(
+                            new Line(live[run[k]], live[run[k + 1]]));
+                }
                 _previewSupports.Clear();
                 _previewSupports.AddRange(
                     anchorIds.OrderBy(i => i).Select(i => live[i]));
