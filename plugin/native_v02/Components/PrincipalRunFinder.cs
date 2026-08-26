@@ -72,33 +72,63 @@ namespace Ananke.COMPAS.Native.Components
             //
             // Two runs sharing most of their nodes are one bar. Compare what
             // they are made of, not where they stop.
-            var kept = new List<HashSet<int>>();
             foreach (List<int> strip in Strips(anchors, neighbours))
             {
                 foreach (int start in StartsAlong(strip, ribsPerStrip))
                 {
                     List<int> run = WalkAcross(
                         start, vertices, neighbours, anchors);
-                    if (run.Count < 2)
-                        continue;
-                    var nodes = new HashSet<int>(run);
-                    bool duplicate = false;
-                    foreach (HashSet<int> already in kept)
-                    {
-                        int shared = nodes.Count(already.Contains);
-                        if (2 * shared > Math.Min(nodes.Count, already.Count))
-                        {
-                            duplicate = true;
-                            break;
-                        }
-                    }
-                    if (duplicate)
-                        continue;
-                    kept.Add(nodes);
-                    runs.Add(run);
+                    if (run.Count >= 2)
+                        runs.Add(run);
                 }
             }
-            return runs;
+            return Deduplicate(runs);
+        }
+
+        /// <summary>
+        /// One bar, however many times it was traced.
+        ///
+        /// The same physical line arrives twice more easily than it looks. From
+        /// the ANCHORS, a line traced from one strip reaches the other, so the
+        /// strip opposite traces it backwards. From DRAWN CURVES, two curves
+        /// laid near the same run of nodes both snap to it. Either way the
+        /// duplicate is invisible in the viewport, because the second bar draws
+        /// exactly on top of the first, and it is ruinous downstream: each bar
+        /// is given its OWN full set of columns, each mirrored about its own
+        /// slightly different midpoint, so the columns land on one line at two
+        /// offset spacings and read as hopelessly lopsided.
+        ///
+        /// This lived on the anchor path alone at first, which fixed nothing
+        /// for anyone drawing their lines as curves. It belongs to both.
+        ///
+        /// Matched on WHAT THEY ARE MADE OF, not on where they stop. Endpoints
+        /// were tried and could not catch it: two traces of one line rarely
+        /// finish on exactly the same node. Two runs sharing more than half
+        /// their nodes are one bar, and the longer trace is the one kept.
+        /// </summary>
+        private static List<List<int>> Deduplicate(List<List<int>> runs)
+        {
+            var kept = new List<List<int>>();
+            var keptNodes = new List<HashSet<int>>();
+            foreach (List<int> run in runs.OrderByDescending(r => r.Count))
+            {
+                var nodes = new HashSet<int>(run);
+                bool duplicate = false;
+                for (int i = 0; i < keptNodes.Count; i++)
+                {
+                    int shared = nodes.Count(keptNodes[i].Contains);
+                    if (2 * shared > Math.Min(nodes.Count, keptNodes[i].Count))
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate)
+                    continue;
+                keptNodes.Add(nodes);
+                kept.Add(run);
+            }
+            return kept;
         }
 
         private static List<int>[] Adjacency(
@@ -348,7 +378,7 @@ namespace Ananke.COMPAS.Native.Components
                 runs.Add(run);
                 worstOffset = Math.Max(worstOffset, offset);
             }
-            return runs;
+            return Deduplicate(runs);
         }
     }
 }

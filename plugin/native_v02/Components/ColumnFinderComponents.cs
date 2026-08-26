@@ -363,6 +363,8 @@ namespace Ananke.COMPAS.Native.Components
                 // Supports from the anchors or by Pattern from drawn curves.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, n);
+                int overlapping = 0;
+
                 // Two bars sharing notches are one bar traced twice, and each
                 // would be given its own full set of columns. Say so: it is
                 // invisible in the viewport and it makes everything downstream
@@ -375,6 +377,7 @@ namespace Ananke.COMPAS.Native.Components
                         int shared = bars[b].Count(left.Contains);
                         if (2 * shared <= Math.Min(bars[a].Count, bars[b].Count))
                             continue;
+                        overlapping = Math.Max(overlapping, shared);
                         AddRuntimeMessage(
                             GH_RuntimeMessageLevel.Warning,
                             $"Principal lines {a} and {b} share {shared} "
@@ -714,7 +717,7 @@ namespace Ananke.COMPAS.Native.Components
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     columnType, branches, forkPct, ground, alongToAnchors,
                     acrossToColumns, plumbArms, symmetricBars, symmetryCost,
-                    lopsided, centreAdded, footDrift));
+                    lopsided, centreAdded, footDrift, overlapping));
             }
             catch (Exception ex)
             {
@@ -983,10 +986,17 @@ namespace Ananke.COMPAS.Native.Components
             double symmetryCost,
             double lopsided,
             int centreAdded,
-            double footDrift)
+            double footDrift,
+            int overlapping)
         {
             var lines = new List<string>
             {
+                overlapping > 0
+                    ? $"WARNING: two principal lines share {overlapping} "
+                        + "notches, so ONE bar is being traced twice and given "
+                        + "two full sets of columns. Nothing below will look "
+                        + "symmetric until that is fixed."
+                    : "each principal line is distinct",
                 $"{bars.Count} bars, {armsPerBar.Sum()} arms "
                     + $"({string.Join(" + ", armsPerBar)} per bar), "
                     + $"{feet.Count} feet, {members.Count} members",

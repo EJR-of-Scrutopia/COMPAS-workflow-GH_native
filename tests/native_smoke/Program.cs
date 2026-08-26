@@ -530,6 +530,24 @@ internal static class Program
                 $"MouldGeometry.BuildColumnTree: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateRunDeduplication(plugin);
+            Console.WriteLine(
+                "PASS  PrincipalRunFinder.Deduplicate: one line traced from "
+                + "both ends is ONE bar even when the two traces finish on "
+                + "different nodes, which is the case matching their endpoints "
+                + "could not catch and which gave one line two full sets of "
+                + "columns; separate lines and merely crossing lines both "
+                + "survive as two.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"PrincipalRunFinder deduplication: "
+                + $"{DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -2087,6 +2105,93 @@ internal static class Program
             throw new InvalidOperationException(
                 "A shared foot carries both trunks; it carries "
                 + $"{shared.aboveFoot.Count}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>PrincipalRunFinder.FromCurves</c>: one bar, however many times it
+    /// was traced.
+    ///
+    /// The same physical line arrives twice more easily than it looks. From the
+    /// anchors, a line traced from one strip reaches the other, so the strip
+    /// opposite traces it backwards. From drawn curves, two curves laid near
+    /// the same run of nodes both snap to it. The duplicate is INVISIBLE in the
+    /// viewport, because the second bar draws exactly on top of the first, and
+    /// it is ruinous downstream: each bar is given its own full set of columns,
+    /// each mirrored about its own slightly different midpoint, so the columns
+    /// land on one line at two offset spacings and read as hopelessly
+    /// lopsided.
+    ///
+    /// This is measured because the fix was written once for the ANCHOR path
+    /// and shipped, and it fixed nothing at all for a definition whose lines
+    /// come from curves. A rule that has two callers needs a check that covers
+    /// both, so this drives the curve path and the shared rule under it.
+    ///
+    /// Five nodes in a row with a curve down them, twice, is one bar. A second
+    /// curve down a genuinely different row is a second bar.
+    /// </summary>
+    private static void ValidateRunDeduplication(Assembly plugin)
+    {
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PrincipalRunFinder",
+            throwOnError: true)!;
+        MethodInfo dedupe = finder.GetMethod(
+            "Deduplicate", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        int Kept(params int[][] runs)
+        {
+            var input = new List<List<int>>();
+            foreach (int[] run in runs)
+                input.Add(new List<int>(run));
+            object result = dedupe.Invoke(null, new object?[] { input })!;
+            return ((IEnumerable)result).Cast<object>().Count();
+        }
+
+        // The same five nodes, traced twice, ending one node apart. One bar.
+        int doubled = Kept(
+            new[] { 0, 1, 2, 3, 4 },
+            new[] { 4, 3, 2, 1, 0 });
+        if (doubled != 1)
+        {
+            throw new InvalidOperationException(
+                "One line traced from both ends is one bar; "
+                + $"{doubled} came back.");
+        }
+
+        // The realistic case: the two traces disagree at their ends, which is
+        // exactly why matching endpoints could not catch this.
+        int ragged = Kept(
+            new[] { 0, 1, 2, 3, 4 },
+            new[] { 5, 3, 2, 1, 0 });
+        if (ragged != 1)
+        {
+            throw new InvalidOperationException(
+                "Two traces of one line that finish on DIFFERENT nodes are "
+                + $"still one bar; {ragged} came back. Matching their ends is "
+                + "what failed before, so this is the case that matters.");
+        }
+
+        // A genuinely separate line must survive.
+        int separate = Kept(
+            new[] { 0, 1, 2, 3, 4 },
+            new[] { 10, 11, 12, 13, 14 });
+        if (separate != 2)
+        {
+            throw new InvalidOperationException(
+                "Two lines sharing no nodes are two bars; "
+                + $"{separate} came back. Deduplication must not swallow a "
+                + "real second line.");
+        }
+
+        // Crossing at one node is not the same line.
+        int crossing = Kept(
+            new[] { 0, 1, 2, 3, 4 },
+            new[] { 20, 21, 2, 22, 23 });
+        if (crossing != 2)
+        {
+            throw new InvalidOperationException(
+                "Two lines that merely CROSS share one node and are still two "
+                + $"bars; {crossing} came back.");
         }
     }
 
