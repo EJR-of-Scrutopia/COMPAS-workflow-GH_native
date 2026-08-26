@@ -13,10 +13,11 @@ namespace Ananke.COMPAS.Native.Components
     /// Column Finder: solve where the column arms stand under the notched bars,
     /// and grow them down to the ground as posts or as branching trees.
     ///
-    /// It takes the solved Result as its form finder, projects the principal
-    /// lines onto it to find the notches, and reads the load the net hands each
-    /// notch straight off the Result's own reactions. Nothing has to be told to
-    /// it twice.
+    /// It takes the solved Result as its form finder. The principal lines
+    /// travel in the contract, resolved once upstream by Supports from the
+    /// anchors or by Pattern from drawn curves, and the load each notch hands
+    /// its bar is read straight off the Result's own reactions. Nothing has to
+    /// be told to it twice, and nothing is snapped here.
     ///
     /// WHERE the arms go is a beam problem, not a spacing one. A bar on two or
     /// three arms is a beam, and a loaded beam wants its supports about a fifth
@@ -81,12 +82,6 @@ namespace Ananke.COMPAS.Native.Components
                     + "gives the notches and its reactions give the load each "
                     + "one hands the bar.",
                 GH_ParamAccess.item);
-            parameters.AddCurveParameter(
-                "Principal Lines",
-                "P",
-                "The notched bars. Each is projected onto the Result to find "
-                    + "which nodes are its notches.",
-                GH_ParamAccess.list);
             parameters.AddIntegerParameter(
                 "Columns Per Line",
                 "C",
@@ -109,9 +104,9 @@ namespace Ananke.COMPAS.Native.Components
                 "How many times a tree may fork. Ignored when Trees is 0.",
                 GH_ParamAccess.item,
                 2);
+            parameters[1].Optional = true;
             parameters[2].Optional = true;
             parameters[3].Optional = true;
-            parameters[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -186,15 +181,12 @@ namespace Ananke.COMPAS.Native.Components
                 return;
             }
 
-            var curves = new List<Curve>();
-            data.GetDataList(1, curves);
-
             int perLine = 3;
             int trees = 0;
             int depth = 2;
-            data.GetData(2, ref perLine);
-            data.GetData(3, ref trees);
-            data.GetData(4, ref depth);
+            data.GetData(1, ref perLine);
+            data.GetData(2, ref trees);
+            data.GetData(3, ref depth);
             perLine = Math.Max(perLine, 2);
 
             // Stiffness cancels out of the placement, so any positive value
@@ -230,17 +222,17 @@ namespace Ananke.COMPAS.Native.Components
                 var anchors = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
 
-                // Prefer the runs the Pattern resolved and carried down the
-                // chain; curves wired here remain a per-component override.
+                // The runs travel in the contract, resolved once upstream by
+                // Supports from the anchors or by Pattern from drawn curves.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
-                    equilibrium, curves, nodes, edges, out bool fromContract);
+                    equilibrium, n);
                 if (bars.Count == 0)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "No principal lines. Either give the Pattern its "
-                            + "Principal Lines or a Rib Spacing, or wire curves "
-                            + "here to override it.");
+                        "The Result carries no principal lines. Set Ribs on "
+                            + "Supports to derive them from the anchors, or "
+                            + "draw Principal Lines on Pattern.");
                     return;
                 }
 
@@ -340,7 +332,7 @@ namespace Ananke.COMPAS.Native.Components
                     footPts, headPts, force)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
-                    trees, depth, ground, fromContract));
+                    trees, depth, ground));
             }
             catch (Exception ex)
             {
@@ -358,8 +350,7 @@ namespace Ananke.COMPAS.Native.Components
             List<Point3d> feet,
             int trees,
             int depth,
-            double ground,
-            bool fromContract)
+            double ground)
         {
             var lines = new List<string>
             {
@@ -368,10 +359,7 @@ namespace Ananke.COMPAS.Native.Components
                     + $"{feet.Count} feet, {members.Count} members",
                 $"the arms carry {headLoad.Sum():0} N between them, ground read "
                     + $"as {ground:0.###}",
-                fromContract
-                    ? "principal lines came from the Pattern via the contract"
-                    : "principal lines came from curves wired here, overriding "
-                        + "the Pattern",
+                "principal lines came from the contract, resolved upstream",
                 string.Empty,
                 "arm positions are SOLVED, not spaced: a loaded bar wants its "
                     + "supports about a fifth of its length in from each end, "

@@ -137,13 +137,6 @@ namespace Ananke.COMPAS.Native.Components
                 "Solved FD or TNA result. Its geometry IS the final state, so "
                     + "the sag and the lift are read from it rather than set.",
                 GH_ParamAccess.item);
-            parameters.AddCurveParameter(
-                "Principal Lines",
-                "P",
-                "The notched bars. Each curve is snapped to the run of net "
-                    + "nodes along it; those nodes are carried by the columns, "
-                    + "everything else hangs between them.",
-                GH_ParamAccess.list);
             parameters.AddNumberParameter(
                 "Time",
                 "T",
@@ -162,8 +155,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "the bars.",
                 GH_ParamAccess.item,
                 40.0);
+            parameters[1].Optional = true;
             parameters[2].Optional = true;
-            parameters[3].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -230,13 +223,10 @@ namespace Ananke.COMPAS.Native.Components
                 return;
             }
 
-            var curves = new List<Curve>();
-            data.GetDataList(1, curves);
-
             double timePct = 100.0;
             double preSag = 40.0;
-            data.GetData(2, ref timePct);
-            data.GetData(3, ref preSag);
+            data.GetData(1, ref timePct);
+            data.GetData(2, ref preSag);
 
             try
             {
@@ -288,19 +278,20 @@ namespace Ananke.COMPAS.Native.Components
                 var anchorIds = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
 
-                // Prefer the runs the Pattern already resolved and carried
-                // down the chain: they were matched where the curves and the
-                // geometry still agreed, and indices survive a surface that
-                // rises. Curves wired here remain a per-component override.
+                // The runs travel in the contract, resolved once by Supports
+                // from the anchors or by Pattern from drawn curves. Nothing is
+                // snapped here, which is why there is no curve input: indices
+                // survive a surface that rises and curves do not.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
-                    equilibrium, curves, target, edges, out bool fromContract);
+                    equilibrium, target.Length);
                 var principalIds = new HashSet<int>(bars.SelectMany(b => b));
                 if (principalIds.Count == 0)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "No principal line caught a node, so nothing is held and "
-                            + "there is nothing to lift. The bars must lie on the net.");
+                        "The Result carries no principal lines, so nothing is "
+                            + "held and there is nothing to lift. Set Ribs on "
+                            + "Supports, or draw Principal Lines on Pattern.");
                 }
 
                 var pinned = new bool[n];
@@ -380,11 +371,8 @@ namespace Ananke.COMPAS.Native.Components
                         + $"{principalIds.Count} notches",
                     $"anchors {anchorIds.Count}, perimeter nodes "
                         + $"{perimeterIds.Length}",
-                    fromContract
-                        ? "principal lines read from the Pattern via the "
-                            + "contract, so nothing was snapped here"
-                        : "principal lines snapped from the curves wired to "
-                            + "this component, overriding the Pattern",
+                    "principal lines read from the contract, resolved "
+                        + "upstream by Supports or Pattern",
                     fromPattern
                         ? "starting from the ORIGINAL PATTERN read back through "
                             + "the Result's problem, so frame zero is the plan "
@@ -551,32 +539,17 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// The principal-line runs for a solved Result.
         ///
-        /// The Pattern resolves these once, where the curves an author drew and
-        /// the geometry they were drawn on still agree, and the contract
-        /// carries them down as vertex indices. Preferring them means the
-        /// snapping happens once for the whole definition rather than in every
-        /// component on every frame, and it cannot go wrong on a raised
-        /// surface, because there is no curve left to match. Curves passed here
-        /// still win, as a per-component override.
+        /// They are resolved once upstream, by Supports from the anchors or by
+        /// Pattern from drawn curves, and the contract carries them down as
+        /// vertex indices. So the matching happens once for the whole
+        /// definition rather than in every component on every frame, and it
+        /// cannot go wrong on a raised surface, because by here there is no
+        /// curve left to match.
         /// </summary>
         public static List<List<int>> PrincipalRuns(
             EquilibriumResultDto equilibrium,
-            IReadOnlyList<Curve> curves,
-            Point3d[] nodes,
-            (int, int)[] edges,
-            out bool fromContract)
+            int nodeCount)
         {
-            var live = curves.Where(c => c is not null).ToList();
-            if (live.Count > 0)
-            {
-                fromContract = false;
-                return live
-                    .Select(c => SnapCurveToNodes(c, nodes, edges))
-                    .Where(run => run.Count >= 2)
-                    .ToList();
-            }
-
-            fromContract = true;
             IReadOnlyList<IReadOnlyList<int>>? runs =
                 equilibrium.Problem?.Topology?.PrincipalRuns;
             if (runs is null)
@@ -584,7 +557,7 @@ namespace Ananke.COMPAS.Native.Components
             return runs
                 .Where(run => run is not null && run.Count >= 2)
                 .Select(run => run
-                    .Where(i => i >= 0 && i < nodes.Length)
+                    .Where(i => i >= 0 && i < nodeCount)
                     .ToList())
                 .Where(run => run.Count >= 2)
                 .ToList();

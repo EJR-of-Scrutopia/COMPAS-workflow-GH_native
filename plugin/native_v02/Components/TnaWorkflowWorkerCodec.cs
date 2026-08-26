@@ -694,6 +694,24 @@ internal static class TnaWorkflowWorkerCodec
             ["worker_analysis_topology_hash"] =
                 OptionalString(root, "topology_hash")
         };
+        // The principal-line runs are a C# annotation and never went to the
+        // worker, so they have to be carried across this rebuild or the
+        // downstream components find none on a TNA result. Carried only when
+        // the analysis kept the source's vertex count, which is the same
+        // condition under which the source vertex IDs are carried above: it is
+        // what says the indices still mean the same vertices. Where the count
+        // changed the runs are dropped rather than reindexed by guesswork.
+        bool indicesHold = source.Vertices.Count == vertices.Length;
+        IEnumerable<IEnumerable<int>>? principalRuns =
+            indicesHold && source.PrincipalRuns.Count > 0
+                ? source.PrincipalRuns
+                : null;
+        if (!indicesHold && source.PrincipalRuns.Count > 0)
+        {
+            provenance["principal_runs_dropped"] =
+                "analysis vertex count differs from the source";
+        }
+
         TopologyDto topology = TopologyDto.Create(
             "faced",
             vertices,
@@ -702,7 +720,8 @@ internal static class TnaWorkflowWorkerCodec
             sourceVertexIds,
             sourceEdgeIds,
             source.LengthUnit,
-            provenance);
+            provenance,
+            principalRuns);
         EnsureValid(topology);
         return topology;
     }
