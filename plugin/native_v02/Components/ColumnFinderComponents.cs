@@ -463,7 +463,7 @@ namespace Ananke.COMPAS.Native.Components
                         total += push;
 
                     Point3d fork = reach.Count > 1
-                        ? ForkPoint(reach, pushes, ground)
+                        ? MouldGeometry.ForkPoint(reach, pushes, ground)
                         : reach[0];
 
                     // The branches, each from its own notch down to the fork.
@@ -761,119 +761,6 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
             return served;
-        }
-
-        /// <summary>
-        /// Where a column forks, solved from the forces rather than set.
-        ///
-        /// Each notch the column reaches wants its branch to run along its own
-        /// line of thrust, which puts the fork somewhere on the ray dropping
-        /// from that notch along that line. With more than one notch those rays
-        /// do not meet in general, so the fork goes where they come CLOSEST:
-        /// the point minimising the force-weighted squared distance to every
-        /// ray at once. That is a three-by-three solve, and it is what makes
-        /// the fork height a consequence of the load rather than a number
-        /// somebody picked.
-        ///
-        /// A branch that pulls its notch DOWN has no thrust line to stand on,
-        /// so it contributes as a plumb one, which is the same fallback the
-        /// arms use.
-        /// </summary>
-        private static Point3d ForkPoint(
-            List<Point3d> reach,
-            List<Vector3d> pushes,
-            double ground)
-        {
-            // Sum of w * (I - d d^T) for each ray, and the matching right side.
-            var a = new double[3, 3];
-            var rhs = new double[3];
-            for (int i = 0; i < reach.Count; i++)
-            {
-                Vector3d push = pushes[i];
-                double weight = push.Length;
-                if (weight <= 1.0e-12)
-                    continue;
-                Vector3d d = MouldGeometry.AimFrom(-push);
-                double[] u = { d.X, d.Y, d.Z };
-                double[] p = { reach[i].X, reach[i].Y, reach[i].Z };
-                for (int r = 0; r < 3; r++)
-                {
-                    for (int s = 0; s < 3; s++)
-                    {
-                        double m = (r == s ? 1.0 : 0.0) - (u[r] * u[s]);
-                        a[r, s] += weight * m;
-                        rhs[r] += weight * m * p[s];
-                    }
-                }
-            }
-
-            if (!Solve3(a, rhs, out double x, out double y, out double z))
-            {
-                // Degenerate, which means every branch is parallel: the rays
-                // never converge, so drop straight below the load centre.
-                double sw = 0.0;
-                double sx = 0.0;
-                double sy = 0.0;
-                double lowest = double.MaxValue;
-                for (int i = 0; i < reach.Count; i++)
-                {
-                    double w = Math.Max(pushes[i].Length, 1.0e-9);
-                    sx += reach[i].X * w;
-                    sy += reach[i].Y * w;
-                    sw += w;
-                    lowest = Math.Min(lowest, reach[i].Z);
-                }
-                return new Point3d(sx / sw, sy / sw, lowest);
-            }
-
-            // A fork stands UNDER the notches it carries and ABOVE the floor.
-            double ceiling = reach.Min(p => p.Z);
-            return new Point3d(
-                x, y, Math.Min(Math.Max(z, ground), ceiling));
-        }
-
-        /// <summary>Gaussian elimination on three unknowns.</summary>
-        private static bool Solve3(
-            double[,] a, double[] b, out double x, out double y, out double z)
-        {
-            x = 0.0;
-            y = 0.0;
-            z = 0.0;
-            var m = new double[3, 4];
-            for (int r = 0; r < 3; r++)
-            {
-                for (int c = 0; c < 3; c++)
-                    m[r, c] = a[r, c];
-                m[r, 3] = b[r];
-            }
-            for (int col = 0; col < 3; col++)
-            {
-                int pivot = col;
-                for (int r = col + 1; r < 3; r++)
-                {
-                    if (Math.Abs(m[r, col]) > Math.Abs(m[pivot, col]))
-                        pivot = r;
-                }
-                if (Math.Abs(m[pivot, col]) < 1.0e-9)
-                    return false;
-                if (pivot != col)
-                {
-                    for (int c = 0; c < 4; c++)
-                        (m[col, c], m[pivot, c]) = (m[pivot, c], m[col, c]);
-                }
-                for (int r = 0; r < 3; r++)
-                {
-                    if (r == col)
-                        continue;
-                    double factor = m[r, col] / m[col, col];
-                    for (int c = col; c < 4; c++)
-                        m[r, c] -= factor * m[col, c];
-                }
-            }
-            x = m[0, 3] / m[0, 0];
-            y = m[1, 3] / m[1, 1];
-            z = m[2, 3] / m[2, 2];
-            return true;
         }
 
         /// <summary>

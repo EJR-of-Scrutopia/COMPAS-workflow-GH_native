@@ -434,6 +434,7 @@ namespace Ananke.COMPAS.Native.Components
                 // on it at the end. Same formula Column Finder places by, which
                 // is the point of it living in MouldGeometry.
                 var liveAim = new Dictionary<int, Vector3d>();
+                var liveLoad = new Dictionary<int, double>();
 
                 var live = new Point3d[n];
                 for (int i = 0; i < n; i++)
@@ -480,7 +481,10 @@ namespace Ananke.COMPAS.Native.Components
                         Vector3d[] across =
                             MouldGeometry.BarTransverse(run, live, pull);
                         for (int k = 0; k < run.Count; k++)
+                        {
                             liveAim[run[k]] = MouldGeometry.AimFrom(across[k]);
+                            liveLoad[run[k]] = across[k].Length;
+                        }
                     }
                 }
 
@@ -555,135 +559,174 @@ namespace Ananke.COMPAS.Native.Components
                             + "machine does not have.");
                 }
 
-                // The columns, raised with the net.
+                // The columns, raised with the net, branches and all.
                 //
                 // A column is NOT telescopic over its whole length. It has a
                 // fixed body and a ram, so it can never be shorter than its
-                // retracted length, and the previous version drove it to almost
-                // nothing early on and buried it under the floor. What the
-                // machine actually does is SLIDE and then EXTEND:
+                // retracted length, and driving it to nothing early on buried
+                // it under the floor. What the machine does is SLIDE and then
+                // EXTEND, and both fall out of one equation rather than a
+                // schedule: a foot sits at whatever horizontal distance keeps
+                // its member at the retracted length, until that distance falls
+                // inside the finished one and the ram takes over.
                 //
-                //   while the notch is still low, the strut stays RETRACTED and
-                //   its foot lies far out along the rail, so the column is
-                //   almost lying down and pointing up at its notch;
-                //
-                //   as the notch rises, the foot it needs comes IN along the
-                //   rail, still at the retracted length, which is the slide;
-                //
-                //   once the foot has come in as far as the finished one, it
-                //   stops and the RAM drives out to keep the head on the notch,
-                //   which is the extension.
-                //
-                // Neither phase is scheduled. Both fall out of one equation:
-                // the foot lies on the ground at whatever horizontal distance
-                // keeps the strut at its retracted length, until that distance
-                // is shorter than the finished one and the ram takes over.
-                //
-                // The AZIMUTH the foot lies along is the live thrust direction,
-                // recomputed from this frame's own geometry, so the column
-                // tracks the line of force the whole way up rather than only
-                // arriving on it. Its LEAN cannot follow: while the strut is
-                // retracted the lean is whatever the length dictates.
+                // A FORKED column is solved, not interpolated. Its notches are
+                // wherever the net has got to; its fork goes where the branches
+                // come closest to standing on their own lines of thrust, which
+                // is the same force-weighted solve Column Finder placed it by,
+                // run on THIS FRAME's geometry and this frame's forces. So the
+                // fork rises with its own branches and the whole assembly stays
+                // in equilibrium the whole way up instead of only at the end.
                 double extend = Math.Min(Math.Max(extendPct, 0.0), 95.0) / 100.0;
                 var liveColumns = new List<Line>();
                 double shortest = double.MaxValue;
                 double longest = 0.0;
                 double slid = 0.0;
+                double overRun = 0.0;
                 int belowGround = 0;
-                foreach (Line finished in columnLines)
+
+                if (columnLines.Count > 0)
                 {
-                    if (finished.Length <= 1.0e-9)
-                        continue;
-                    int head = MouldGeometry.NearestNodeInPlan(
-                        finished.To, target);
-                    if (head < 0)
-                        continue;
-                    Point3d top = live[head];
-                    double rise = top.Z - ground;
-                    if (rise <= 1.0e-9)
+                    double weld = 1.0e-6 * Math.Max(
+                        new BoundingBox(target).Diagonal.Length, 1.0);
+                    MouldGeometry.ColumnTree tree =
+                        MouldGeometry.BuildColumnTree(columnLines, weld);
+
+                    int count = tree.Nodes.Count;
+                    var at = new Point3d[count];
+                    var flow = new Vector3d[count];
+                    var known = new bool[count];
+
+                    // The notches are wherever the net has got to.
+                    foreach (int notch in tree.Notches)
                     {
-                        // The notch has not cleared the floor, so there is
-                        // nothing for a column to stand under yet.
-                        belowGround++;
-                        continue;
+                        int node = MouldGeometry.NearestNodeInPlan(
+                            tree.Nodes[notch], target);
+                        if (node < 0)
+                            continue;
+                        at[notch] = live[node];
+                        flow[notch] = liveAim.TryGetValue(node, out Vector3d a)
+                            ? a * Math.Max(liveLoad.TryGetValue(
+                                node, out double w) ? w : 0.0, 1.0e-9)
+                            : Vector3d.ZAxis;
+                        known[notch] = true;
                     }
 
-                    double full = finished.Length;
-                    double retracted = full * (1.0 - extend);
-                    var under = new Point3d(top.X, top.Y, ground);
-
-                    // Along the rail: the live thrust azimuth, falling back to
-                    // the direction of the finished foot when the net is
-                    // pulling this notch straight down.
-                    double railX = liveAim.TryGetValue(head, out Vector3d a)
-                        ? a.X : 0.0;
-                    double railY = liveAim.TryGetValue(head, out Vector3d b)
-                        ? b.Y : 0.0;
-                    double railLength = Math.Sqrt(
-                        (railX * railX) + (railY * railY));
-                    if (railLength <= 1.0e-9)
+                    // Then downward: a node can be placed once everything above
+                    // it is placed, which for this shape needs no ordering pass
+                    // beyond repeating until nothing new resolves.
+                    for (int pass = 0; pass < count + 2; pass++)
                     {
-                        railX = finished.From.X - under.X;
-                        railY = finished.From.Y - under.Y;
-                        railLength = Math.Sqrt(
-                            (railX * railX) + (railY * railY));
-                    }
-                    if (railLength <= 1.0e-9)
-                    {
-                        railX = 1.0;
-                        railY = 0.0;
-                        railLength = 1.0;
-                    }
-                    // The aim points UP the column, so the foot lies the other
-                    // way along it.
-                    railX = -railX / railLength;
-                    railY = -railY / railLength;
+                        bool moved = false;
+                        for (int v = 0; v < count; v++)
+                        {
+                            if (known[v] || tree.Above[v].Count == 0)
+                                continue;
+                            if (tree.Above[v].Any(u => !known[u]))
+                                continue;
 
-                    double finishedOut = Math.Sqrt(
-                        MouldGeometry.PlanDistanceSquared(under, finished.From));
-                    double retractedOut = retracted > rise
-                        ? Math.Sqrt((retracted * retracted) - (rise * rise))
-                        : 0.0;
+                            var reach = new List<Point3d>();
+                            var pushes = new List<Vector3d>();
+                            var total = Vector3d.Zero;
+                            foreach (int u in tree.Above[v])
+                            {
+                                reach.Add(at[u]);
+                                pushes.Add(flow[u]);
+                                total += flow[u];
+                            }
+                            flow[v] = total;
 
-                    Point3d foot;
-                    if (retractedOut > finishedOut)
-                    {
-                        // Sliding: strut still retracted, foot out on the rail.
-                        foot = new Point3d(
-                            under.X + (railX * retractedOut),
-                            under.Y + (railY * retractedOut),
-                            ground);
-                        slid = Math.Max(slid, retractedOut - finishedOut);
-                    }
-                    else
-                    {
-                        // Extending: the foot has arrived, the ram drives out.
-                        foot = new Point3d(
-                            finished.From.X, finished.From.Y, ground);
+                            bool onGround = tree.Feet.Contains(v);
+                            if (!onGround)
+                            {
+                                at[v] = reach.Count > 1
+                                    ? MouldGeometry.ForkPoint(
+                                        reach, pushes, ground)
+                                    : reach[0];
+                            }
+                            else
+                            {
+                                // A foot: slide along its rail, then let the ram
+                                // finish. Several trunks on one foot are served
+                                // by their force-weighted centre, because that
+                                // is the point the foot actually carries.
+                                double sw = 0.0;
+                                double sx = 0.0;
+                                double sy = 0.0;
+                                double sz = 0.0;
+                                double full = 0.0;
+                                foreach (int u in tree.Above[v])
+                                {
+                                    double w = Math.Max(flow[u].Length, 1.0e-9);
+                                    sx += at[u].X * w;
+                                    sy += at[u].Y * w;
+                                    sz += at[u].Z * w;
+                                    sw += w;
+                                    full = Math.Max(
+                                        full,
+                                        tree.Nodes[v].DistanceTo(tree.Nodes[u]));
+                                }
+                                var head = new Point3d(sx / sw, sy / sw, sz / sw);
+                                at[v] = MouldGeometry.FootOnRail(
+                                    head, tree.Nodes[v], flow[v], full, extend,
+                                    ground, ref slid);
+                            }
+                            known[v] = true;
+                            moved = true;
+                        }
+                        if (!moved)
+                            break;
                     }
 
-                    liveColumns.Add(new Line(foot, top));
-                    double length = foot.DistanceTo(top);
-                    shortest = Math.Min(shortest, length);
-                    longest = Math.Max(longest, length);
+                    foreach ((int lower, int upper) in tree.Members)
+                    {
+                        if (!known[lower] || !known[upper])
+                            continue;
+                        if (at[upper].Z - ground <= 1.0e-9)
+                        {
+                            belowGround++;
+                            continue;
+                        }
+                        var member = new Line(at[lower], at[upper]);
+                        liveColumns.Add(member);
+                        double length = member.Length;
+                        shortest = Math.Min(shortest, length);
+                        longest = Math.Max(longest, length);
+
+                        // What the ram on this member has to deliver, against
+                        // what it was built with.
+                        double built = tree.Nodes[lower]
+                            .DistanceTo(tree.Nodes[upper]);
+                        overRun = Math.Max(overRun, length - built);
+                    }
                 }
+
                 if (liveColumns.Count > 0)
                 {
                     report.Add(string.Empty);
                     report.Add(
-                        $"{liveColumns.Count} columns at this frame, "
+                        $"{liveColumns.Count} column members at this frame, "
                             + $"{shortest:0.###} to {longest:0.###} long, with "
-                            + $"a ram worth {extendPct:0}% of full length. The "
-                            + "foot lies out on its rail while the strut is "
-                            + "retracted, slides in as the notch rises, then "
-                            + "stops and lets the ram finish the reach. Furthest "
-                            + $"any foot still has to slide: {slid:0.###}.");
+                            + $"rams worth {extendPct:0}% of built length. "
+                            + "Feet lie out on their rails while retracted, "
+                            + "slide in as the notches rise, then stop and let "
+                            + "the rams finish. Furthest a foot still has to "
+                            + $"slide: {slid:0.###}.");
+                    if (overRun > 1.0e-9)
+                    {
+                        report.Add(
+                            $"longest member overshoots its built length by "
+                                + $"{overRun:0.###} at this frame. A fork moves "
+                                + "with its own branches, so a branch can be "
+                                + "asked for more than it finishes at; that is "
+                                + "the reach its own ram needs.");
+                    }
                 }
                 if (belowGround > 0)
                 {
                     report.Add(
-                        $"{belowGround} columns are not drawn at this frame: "
-                            + "their notch has not cleared the floor yet, so "
+                        $"{belowGround} column members are not drawn: their "
+                            + "upper end has not cleared the floor yet, so "
                             + "there is nothing for them to stand under.");
                 }
 
@@ -1213,6 +1256,270 @@ namespace Ananke.COMPAS.Native.Components
                 ? new Vector3d(
                     supply.X / length, supply.Y / length, supply.Z / length)
                 : Vector3d.ZAxis;
+        }
+
+        /// <summary>
+        /// Where a column forks, solved from the forces rather than set.
+        ///
+        /// Each notch the column reaches wants its branch to run along its own
+        /// line of thrust, which puts the fork somewhere on the ray dropping
+        /// from that notch along that line. With more than one notch those rays
+        /// do not meet in general, so the fork goes where they come CLOSEST:
+        /// the point minimising the force-weighted squared distance to every
+        /// ray at once. That is a three-by-three solve, and it is what makes
+        /// the fork height a consequence of the load rather than a number
+        /// somebody picked.
+        ///
+        /// A branch that pulls its notch DOWN has no thrust line to stand on,
+        /// so it contributes as a plumb one, which is the same fallback the
+        /// arms use.
+        /// </summary>
+        public static Point3d ForkPoint(
+            List<Point3d> reach,
+            List<Vector3d> pushes,
+            double ground)
+        {
+            // Sum of w * (I - d d^T) for each ray, and the matching right side.
+            var a = new double[3, 3];
+            var rhs = new double[3];
+            for (int i = 0; i < reach.Count; i++)
+            {
+                Vector3d push = pushes[i];
+                double weight = push.Length;
+                if (weight <= 1.0e-12)
+                    continue;
+                Vector3d d = AimFrom(-push);
+                double[] u = { d.X, d.Y, d.Z };
+                double[] p = { reach[i].X, reach[i].Y, reach[i].Z };
+                for (int r = 0; r < 3; r++)
+                {
+                    for (int s = 0; s < 3; s++)
+                    {
+                        double m = (r == s ? 1.0 : 0.0) - (u[r] * u[s]);
+                        a[r, s] += weight * m;
+                        rhs[r] += weight * m * p[s];
+                    }
+                }
+            }
+
+            if (!Solve3(a, rhs, out double x, out double y, out double z))
+            {
+                // Degenerate, which means every branch is parallel: the rays
+                // never converge, so drop straight below the load centre.
+                double sw = 0.0;
+                double sx = 0.0;
+                double sy = 0.0;
+                double lowest = double.MaxValue;
+                for (int i = 0; i < reach.Count; i++)
+                {
+                    double w = Math.Max(pushes[i].Length, 1.0e-9);
+                    sx += reach[i].X * w;
+                    sy += reach[i].Y * w;
+                    sw += w;
+                    lowest = Math.Min(lowest, reach[i].Z);
+                }
+                return new Point3d(sx / sw, sy / sw, lowest);
+            }
+
+            // A fork stands UNDER the notches it carries and ABOVE the floor.
+            double ceiling = reach.Min(p => p.Z);
+            return new Point3d(
+                x, y, Math.Min(Math.Max(z, ground), ceiling));
+        }
+
+        /// <summary>Gaussian elimination on three unknowns.</summary>
+        public static bool Solve3(
+            double[,] a, double[] b, out double x, out double y, out double z)
+        {
+            x = 0.0;
+            y = 0.0;
+            z = 0.0;
+            var m = new double[3, 4];
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                    m[r, c] = a[r, c];
+                m[r, 3] = b[r];
+            }
+            for (int col = 0; col < 3; col++)
+            {
+                int pivot = col;
+                for (int r = col + 1; r < 3; r++)
+                {
+                    if (Math.Abs(m[r, col]) > Math.Abs(m[pivot, col]))
+                        pivot = r;
+                }
+                if (Math.Abs(m[pivot, col]) < 1.0e-9)
+                    return false;
+                if (pivot != col)
+                {
+                    for (int c = 0; c < 4; c++)
+                        (m[col, c], m[pivot, c]) = (m[pivot, c], m[col, c]);
+                }
+                for (int r = 0; r < 3; r++)
+                {
+                    if (r == col)
+                        continue;
+                    double factor = m[r, col] / m[col, col];
+                    for (int c = col; c < 4; c++)
+                        m[r, c] -= factor * m[col, c];
+                }
+            }
+            x = m[0, 3] / m[0, 0];
+            y = m[1, 3] / m[1, 1];
+            z = m[2, 3] / m[2, 2];
+            return true;
+        }
+
+        /// <summary>
+        /// Where a foot stands this frame.
+        ///
+        /// The strut cannot be shorter than its retracted length, so while the
+        /// head is low the foot lies far out along its rail and the member is
+        /// almost lying down. As the head rises the distance that keeps the
+        /// strut retracted shrinks, which draws the foot IN: the slide. Once it
+        /// has come in as far as the finished foot it stops there and the ram
+        /// drives out to make up the rest: the extension. Neither phase is
+        /// scheduled; the crossover is just which of the two distances is
+        /// smaller.
+        ///
+        /// The rail runs along the LIVE thrust azimuth, so the foot tracks the
+        /// line of force the whole way rather than only arriving on it. The
+        /// lean cannot track it while the strut is retracted, because then the
+        /// lean is whatever the length dictates.
+        /// </summary>
+        public static Point3d FootOnRail(
+            Point3d head,
+            Point3d finished,
+            Vector3d carrying,
+            double full,
+            double extend,
+            double ground,
+            ref double slid)
+        {
+            double rise = head.Z - ground;
+            var under = new Point3d(head.X, head.Y, ground);
+            double retracted = full * (1.0 - extend);
+
+            double railX = -carrying.X;
+            double railY = -carrying.Y;
+            double railLength = Math.Sqrt((railX * railX) + (railY * railY));
+            if (railLength <= 1.0e-9)
+            {
+                railX = finished.X - under.X;
+                railY = finished.Y - under.Y;
+                railLength = Math.Sqrt((railX * railX) + (railY * railY));
+            }
+            if (railLength <= 1.0e-9)
+            {
+                railX = 1.0;
+                railY = 0.0;
+                railLength = 1.0;
+            }
+            railX /= railLength;
+            railY /= railLength;
+
+            double finishedOut = Math.Sqrt(
+                PlanDistanceSquared(under, finished));
+            double retractedOut = retracted > rise
+                ? Math.Sqrt((retracted * retracted) - (rise * rise))
+                : 0.0;
+
+            if (retractedOut > finishedOut)
+            {
+                slid = Math.Max(slid, retractedOut - finishedOut);
+                return new Point3d(
+                    under.X + (railX * retractedOut),
+                    under.Y + (railY * retractedOut),
+                    ground);
+            }
+            return new Point3d(finished.X, finished.Y, ground);
+        }
+
+        /// <summary>
+        /// Rebuild a branching column out of the bare lines Column Finder
+        /// hands over.
+        ///
+        /// The wire between the two components carries geometry, not topology,
+        /// so a forked column arrives as a heap of segments with nothing saying
+        /// which branch belongs to which trunk. Animating them one at a time
+        /// treated every branch as though it stood on the ground, which is what
+        /// left a fork hanging in mid air.
+        ///
+        /// Two facts make the tree recoverable without a new contract. Every
+        /// member runs LOWER end to UPPER end, an invariant Column Finder keeps
+        /// deliberately, and a fork is one point shared exactly. So welding the
+        /// endpoints and reading the direction back gives the whole structure:
+        /// a node that is only ever an upper end is a NOTCH, one that is only
+        /// ever a lower end is a FOOT, and anything that is both is a FORK.
+        /// </summary>
+        public sealed class ColumnTree
+        {
+            public List<Point3d> Nodes { get; } = new();
+
+            public List<(int Lower, int Upper)> Members { get; } = new();
+
+            public List<int> Notches { get; } = new();
+
+            public List<int> Feet { get; } = new();
+
+            /// <summary>Upper ends of each node, nearest the notches.</summary>
+            public List<int>[] Above { get; set; } = Array.Empty<List<int>>();
+        }
+
+        public static ColumnTree BuildColumnTree(
+            IReadOnlyList<Line> columns,
+            double weldTolerance)
+        {
+            var tree = new ColumnTree();
+            double squared = weldTolerance * weldTolerance;
+
+            int Weld(Point3d point)
+            {
+                for (int i = 0; i < tree.Nodes.Count; i++)
+                {
+                    if (tree.Nodes[i].DistanceToSquared(point) <= squared)
+                        return i;
+                }
+                tree.Nodes.Add(point);
+                return tree.Nodes.Count - 1;
+            }
+
+            foreach (Line member in columns)
+            {
+                if (member.Length <= 1.0e-9)
+                    continue;
+                // Lower end first, which is the invariant Column Finder keeps.
+                Point3d lower = member.From.Z <= member.To.Z
+                    ? member.From : member.To;
+                Point3d upper = member.From.Z <= member.To.Z
+                    ? member.To : member.From;
+                int a = Weld(lower);
+                int b = Weld(upper);
+                if (a != b)
+                    tree.Members.Add((a, b));
+            }
+
+            var above = new List<int>[tree.Nodes.Count];
+            for (int i = 0; i < tree.Nodes.Count; i++)
+                above[i] = new List<int>();
+            var isLower = new bool[tree.Nodes.Count];
+            var isUpper = new bool[tree.Nodes.Count];
+            foreach ((int lower, int upper) in tree.Members)
+            {
+                above[lower].Add(upper);
+                isLower[lower] = true;
+                isUpper[upper] = true;
+            }
+            tree.Above = above;
+            for (int i = 0; i < tree.Nodes.Count; i++)
+            {
+                if (isUpper[i] && !isLower[i])
+                    tree.Notches.Add(i);
+                else if (isLower[i] && !isUpper[i])
+                    tree.Feet.Add(i);
+            }
+            return tree;
         }
 
         /// <summary>

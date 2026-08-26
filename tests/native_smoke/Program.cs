@@ -525,6 +525,23 @@ internal static class Program
                 $"ColumnFinder.ForkPoint: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateColumnTree(plugin);
+            Console.WriteLine(
+                "PASS  MouldGeometry.BuildColumnTree: a forked column arriving "
+                + "as bare lines is rebuilt into its own tree. Two notches, one "
+                + "fork, one foot, and the FORK IS NOT A FOOT, which is the "
+                + "regression that left branches animated as if each stood on "
+                + "the ground; a shared foot under two forks is read as one "
+                + "foot carrying both.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"MouldGeometry.BuildColumnTree: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1969,8 +1986,10 @@ internal static class Program
     /// </summary>
     private static void ValidateForkPoint(Assembly plugin)
     {
-        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
-        MethodInfo fork = RequireStatic(finder, "ForkPoint");
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo fork = finder.GetMethod(
+            "ForkPoint", BindingFlags.Public | BindingFlags.Static)!;
         Type listOfPoints = fork.GetParameters()[0].ParameterType;
         Type point3d = listOfPoints.GetGenericArguments()[0];
         Type listOfVectors = fork.GetParameters()[1].ParameterType;
@@ -2029,6 +2048,118 @@ internal static class Program
                 "Two PLUMB branches never cross, so a three-to-one load must "
                 + "fall back to the weighted centre (-0.5, 0, 2); it went to ("
                 + $"{parallel.x:G6}, {parallel.y:G6}, {parallel.z:G6}).");
+        }
+    }
+
+    /// <summary>
+    /// <c>MouldGeometry.BuildColumnTree</c>: recovering a branching column from
+    /// the bare lines the wire carries.
+    ///
+    /// The wire between Column Finder and Animate carries geometry, not
+    /// topology. Animating the segments one at a time treated every branch as
+    /// though it stood on the ground, which left forks hanging in mid air the
+    /// moment Branches went above zero.
+    ///
+    /// Two facts make the tree recoverable without a new contract: every member
+    /// runs LOWER end to UPPER end, which Column Finder keeps deliberately, and
+    /// a fork is one point shared exactly. So a node that is only ever an upper
+    /// end is a notch, only ever a lower end is a foot, and both is a fork.
+    ///
+    /// FORKED, the shape Branches makes:      SHARED, the shape Type makes:
+    ///
+    ///    notch      notch                      notch notch  notch notch
+    ///        \     /                              \   /        \   /
+    ///         \   /                                fork          fork
+    ///          fork                                   \          /
+    ///            |                                     \        /
+    ///           foot                                      foot
+    ///
+    /// The assertion that matters is the negative one: the fork must NOT come
+    /// back as a foot. Everything else follows from it.
+    /// </summary>
+    private static void ValidateColumnTree(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo build = geometry.GetMethod(
+            "BuildColumnTree", BindingFlags.Public | BindingFlags.Static)!;
+        Type lineArray = build.GetParameters()[0].ParameterType;
+        Type line = lineArray.GetGenericArguments()[0];
+        Type point3d = line.GetProperty("From")!.PropertyType;
+
+        object Point(double x, double y, double z) =>
+            Activator.CreateInstance(point3d, x, y, z)!;
+
+        object Segment(object from, object to) =>
+            Activator.CreateInstance(line, from, to)!;
+
+        (int Notches, int Feet, List<int> AboveFoot) Read(object[] members)
+        {
+            Type listOfLines = typeof(List<>).MakeGenericType(line);
+            object list = Activator.CreateInstance(listOfLines)!;
+            MethodInfo add = listOfLines.GetMethod("Add")!;
+            foreach (object member in members)
+                add.Invoke(list, new[] { member });
+
+            object tree = build.Invoke(null, new object?[] { list, 1.0e-6 })!;
+            Type shape = tree.GetType();
+            var notches = ((IEnumerable)shape.GetProperty("Notches")!
+                .GetValue(tree)!).Cast<int>().ToList();
+            var feet = ((IEnumerable)shape.GetProperty("Feet")!
+                .GetValue(tree)!).Cast<int>().ToList();
+            var above = (Array)shape.GetProperty("Above")!.GetValue(tree)!;
+            var aboveFoot = feet.Count == 1
+                ? ((IEnumerable)above.GetValue(feet[0])!).Cast<int>().ToList()
+                : new List<int>();
+            return (notches.Count, feet.Count, aboveFoot);
+        }
+
+        object forkAt = Point(0.0, 0.0, 1.0);
+        object footAt = Point(0.0, 0.0, 0.0);
+        (int notches, int feet, List<int> aboveFoot) forked = Read(new[]
+        {
+            Segment(forkAt, Point(-1.0, 0.0, 2.0)),
+            Segment(forkAt, Point(1.0, 0.0, 2.0)),
+            Segment(footAt, forkAt),
+        });
+        if (forked.notches != 2 || forked.feet != 1)
+        {
+            throw new InvalidOperationException(
+                "A forked column is two notches over one fork over one foot; "
+                + $"it read as {forked.notches} notches and {forked.feet} "
+                + "feet. A fork counted as a foot is the bug that left "
+                + "branches standing on nothing.");
+        }
+        if (forked.aboveFoot.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "The foot of a forked column carries exactly one member, its "
+                + $"trunk; it carries {forked.aboveFoot.Count}.");
+        }
+
+        object leftFork = Point(-2.0, 0.0, 1.0);
+        object rightFork = Point(2.0, 0.0, 1.0);
+        (int notches, int feet, List<int> aboveFoot) shared = Read(new[]
+        {
+            Segment(leftFork, Point(-3.0, 0.0, 2.0)),
+            Segment(leftFork, Point(-1.0, 0.0, 2.0)),
+            Segment(rightFork, Point(1.0, 0.0, 2.0)),
+            Segment(rightFork, Point(3.0, 0.0, 2.0)),
+            Segment(footAt, leftFork),
+            Segment(footAt, rightFork),
+        });
+        if (shared.notches != 4 || shared.feet != 1)
+        {
+            throw new InvalidOperationException(
+                "Two forks sharing one ground point is four notches, two forks "
+                + $"and ONE foot; it read as {shared.notches} notches and "
+                + $"{shared.feet} feet.");
+        }
+        if (shared.aboveFoot.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "A shared foot carries both trunks; it carries "
+                + $"{shared.aboveFoot.Count}.");
         }
     }
 
