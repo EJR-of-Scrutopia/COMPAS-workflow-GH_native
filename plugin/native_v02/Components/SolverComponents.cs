@@ -79,15 +79,15 @@ public sealed class TnaRelaxComponent :
             GH_ParamAccess.item,
             10.0);
         parameters.AddPointParameter(
-            "Fixed Plan Points",
-            "Fix",
-            "Optional plan-only anchors: nodes held in place while the " +
-            "boundary relaxes, WITHOUT becoming structural supports. An " +
-            "oculus rim belongs here rather than on Supports. Held in plan, " +
-            "the ring keeps its shape at any sag; left off the support set, " +
-            "its height stays free for the vertical solve, so the opening " +
-            "floats at the crown instead of being pinned to the springing " +
-            "plane.",
+            "Floating Anchors",
+            "FA",
+            "Anchors that hold their plan position but not their height. " +
+            "Nodes named here are held while the boundary relaxes, WITHOUT " +
+            "joining the support set. An oculus rim belongs here rather than " +
+            "on Supports: held in plan the ring keeps its shape at any sag, " +
+            "and left off the support set its height stays free for the " +
+            "vertical solve, so the opening floats at the crown instead of " +
+            "being pinned to the springing plane.",
             GH_ParamAccess.list);
         parameters[3].Optional = true;
         parameters[3].DataMapping = GH_DataMapping.Flatten;
@@ -372,7 +372,7 @@ public sealed class TnaRelaxComponent :
                     topology,
                     fixedPoints,
                     value.Anchored.SnapTolerance,
-                    "Fixed plan point");
+                    "Floating anchor");
                 fixedNodeIds = snappedFixed.NodeIds.Distinct().ToArray();
             }
             catch (Exception error)
@@ -380,7 +380,7 @@ public sealed class TnaRelaxComponent :
                 Message = "Invalid";
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Error,
-                    "Fixed Plan Points failed: " + error.Message);
+                    "Floating Anchors failed: " + error.Message);
                 return false;
             }
         }
