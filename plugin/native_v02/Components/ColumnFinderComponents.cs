@@ -188,7 +188,12 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddIntegerParameter(
                 "Depth",
                 "D",
-                "How many times a tree may fork. Ignored when Trees is 0.",
+                "How many times a tree may FORK on the way down. 0 sends every "
+                    + "arm straight to the foot as a fan; 1 pairs them once "
+                    + "and takes the pairs down; higher keeps forking until "
+                    + "one trunk is left, after which more has no effect. "
+                    + "Every arm is kept whatever the depth. Ignored when "
+                    + "Trees is 0.",
                 GH_ParamAccess.item,
                 2);
             parameters[1].Optional = true;
@@ -354,6 +359,7 @@ namespace Ananke.COMPAS.Native.Components
                 var armsPerBar = new List<int>();
                 double alongToAnchors = 0.0;
                 double acrossToColumns = 0.0;
+                int plumbArms = 0;
 
                 foreach (List<int> bar in bars)
                 {
@@ -373,6 +379,7 @@ namespace Ananke.COMPAS.Native.Components
                             placementStiffness);
                     armsPerBar.Add(chosen.Count);
                     Vector3d[] aim = ArmAim(bar, nodes, across, chosen, anchors);
+                    plumbArms += LastPlumbFallbacks;
                     for (int c = 0; c < chosen.Count; c++)
                     {
                         int k = chosen[c];
@@ -496,7 +503,8 @@ namespace Ananke.COMPAS.Native.Components
                     footPts, headPts, force)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
-                    trees, depth, ground, alongToAnchors, acrossToColumns));
+                    trees, depth, ground, alongToAnchors, acrossToColumns,
+                    plumbArms));
             }
             catch (Exception ex)
             {
@@ -535,7 +543,19 @@ namespace Ananke.COMPAS.Native.Components
                     double length = step.Length;
                     if (length <= 1.0e-12)
                         continue;
-                    total += (force / length) * step;
+                    // MAGNITUDE, deliberately. Every infill member of this
+                    // mould is a CABLE and pulls its notch toward the far end,
+                    // whatever sign the analysis attached to it. A Result's
+                    // sign convention is not fixed: Display reads it off the
+                    // Result rather than assuming, and a TNA thrust network is
+                    // the COMPRESSION MIRROR of the net that will be built, so
+                    // its member forces come back negative under positive
+                    // tension. Taking the signed value flipped every pull
+                    // upward, which made the aim ask a column to hold its notch
+                    // DOWN, which no column can do, so every one of them fell
+                    // back to plumb. That is what put straight posts under a
+                    // steeply inclined bar and collapsed the trees to a fan.
+                    total += (Math.Abs(force) / length) * step;
                 }
                 pull[k] = total;
             }
@@ -658,6 +678,7 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             double cap = Math.Tan(Math.PI / 3.0);
+            int plumbFallbacks = 0;
             for (int c = 0; c < chosen.Count; c++)
             {
                 // The arm supplies the opposite of what the net pulls.
@@ -669,6 +690,7 @@ namespace Ananke.COMPAS.Native.Components
                     // rejects arrangements that need an arm to pull; stand this
                     // one plumb rather than invent a direction for it.
                     aim[c] = Vector3d.ZAxis;
+                    plumbFallbacks++;
                     continue;
                 }
                 double horizontal = Math.Sqrt(
@@ -686,8 +708,18 @@ namespace Ananke.COMPAS.Native.Components
                         supply.X / length, supply.Y / length, supply.Z / length)
                     : Vector3d.ZAxis;
             }
+            LastPlumbFallbacks = plumbFallbacks;
             return aim;
         }
+
+        /// <summary>
+        /// How many arms in the last bar could not be aimed and stood plumb
+        /// because the net was pulling their notch DOWN through the column. It
+        /// happens legitimately at a notch the net wants to hold down, and it
+        /// happened to EVERY arm once, from a sign error, and looked like a
+        /// design decision. Counted so it is visible.
+        /// </summary>
+        private static int LastPlumbFallbacks { get; set; }
 
         private static string Report(
             List<List<int>> bars,
@@ -701,7 +733,8 @@ namespace Ananke.COMPAS.Native.Components
             int depth,
             double ground,
             double alongToAnchors,
-            double acrossToColumns)
+            double acrossToColumns,
+            int plumbArms)
         {
             var lines = new List<string>
             {
@@ -727,6 +760,16 @@ namespace Ananke.COMPAS.Native.Components
                     + "carries, so it works in pure compression and its foot "
                     + "takes no sideways push it was not given.",
             };
+
+            if (plumbArms > 0)
+            {
+                lines.Add(string.Empty);
+                lines.Add(
+                    $"{plumbArms} arms stand PLUMB because the net pulls their "
+                        + "notch down onto the column rather than off it, so "
+                        + "there is no thrust line for them to follow. If that "
+                        + "is ALL of them, the aiming is not working.");
+            }
 
             lines.Add(trees <= 0
                 ? "Trees 0: every arm drops straight to its own foot."
@@ -1098,8 +1141,11 @@ namespace Ananke.COMPAS.Native.Components
                 if (members.Length == 0)
                     continue;
 
+                // EVERY arm is a tip. They were being aggregated down to two
+                // to the power of Depth first, which threw away arm positions
+                // the beam solve had just worked out: a low Depth silently
+                // merged most of the arms away instead of branching less.
                 Point3d[] tips = members.Select(i => heads[i]).ToArray();
-                double[] tipW = members.Select(i => load[i]).ToArray();
 
                 // The force each arm hands the tree: its own aim, scaled so the
                 // vertical component is the load that arm carries. This is what
@@ -1108,16 +1154,15 @@ namespace Ananke.COMPAS.Native.Components
                     .Select(i => aim[i] * (load[i] / Math.Max(aim[i].Z, 1.0e-9)))
                     .ToArray();
 
-                int maxTips = Math.Max(1, (int)Math.Pow(2, depth));
-                (tips, tipW, tipF) = AggregateTips(tips, tipW, tipF, maxTips);
-                (Point3d[] junctions, List<(int, int)> segs, int apex) =
-                    MergeTopology(tips);
+                (Point3d[] junctions, List<(int, int)> segs, List<int> roots) =
+                    MergeTopology(tips, depth);
 
                 var local = new List<Point3d>(tips);
                 local.AddRange(junctions);
                 local.Add(feet[c]);
                 int footLocal = local.Count - 1;
-                segs.Add((apex, footLocal));
+                foreach (int root in roots)
+                    segs.Add((root, footLocal));
 
                 Vector3d[] flow = AccumulateForces(segs, tipF, local.Count);
                 RelaxToForces(local, segs, flow, tips.Length, footLocal, ground);
@@ -1260,72 +1305,56 @@ namespace Ananke.COMPAS.Native.Components
             return feet;
         }
 
-        private static (Point3d[], double[], Vector3d[]) AggregateTips(
-            Point3d[] xyz, double[] w, Vector3d[] f, int maxTips)
-        {
-            var pts = xyz.ToList();
-            var weights = w.ToList();
-            var forces = f.ToList();
-            maxTips = Math.Max(1, maxTips);
-            while (pts.Count > maxTips && pts.Count > 1)
-            {
-                int bi = 0;
-                int bj = 1;
-                double best = double.MaxValue;
-                for (int i = 0; i < pts.Count; i++)
-                {
-                    for (int j = i + 1; j < pts.Count; j++)
-                    {
-                        double d = pts[i].DistanceToSquared(pts[j]);
-                        if (d < best)
-                        {
-                            best = d;
-                            bi = i;
-                            bj = j;
-                        }
-                    }
-                }
-                double wi = weights[bi];
-                double wj = weights[bj];
-                double sum = wi + wj;
-                pts[bi] = new Point3d(
-                    ((pts[bi].X * wi) + (pts[bj].X * wj)) / sum,
-                    ((pts[bi].Y * wi) + (pts[bj].Y * wj)) / sum,
-                    ((pts[bi].Z * wi) + (pts[bj].Z * wj)) / sum);
-                weights[bi] = sum;
-                // Two arms merged into one tip hand the tree the SUM of their
-                // forces, which is a vector sum: two arms leaning opposite ways
-                // partly cancel, and a plain magnitude would miss that.
-                forces[bi] = forces[bi] + forces[bj];
-                pts.RemoveAt(bj);
-                weights.RemoveAt(bj);
-                forces.RemoveAt(bj);
-            }
-            return (pts.ToArray(), weights.ToArray(), forces.ToArray());
-        }
-
-        private static (Point3d[], List<(int, int)>, int) MergeTopology(Point3d[] tips)
+        /// <summary>
+        /// Gather the arms into a branching tree, forking at most
+        /// <paramref name="depth"/> times on the way down.
+        ///
+        /// Depth counts LEVELS OF FORK, which is the thing an author is
+        /// actually choosing, and every arm is kept whatever it is set to. It
+        /// used to cap the number of TIPS at two to the power of Depth, which
+        /// aggregated arms away: a low Depth did not branch less, it silently
+        /// merged most of the arms the beam solve had just placed, and 0 and 1
+        /// collapsed nearly everything into one or two posts.
+        ///
+        /// So 0 forks nothing and every arm runs to the foot as a fan; 1 pairs
+        /// them once; higher keeps forking until one trunk is left, past which
+        /// more has no effect. Whatever is still unmerged when the depth runs
+        /// out becomes a root and goes to the foot.
+        /// </summary>
+        private static (Point3d[], List<(int, int)>, List<int>) MergeTopology(
+            Point3d[] tips, int depth)
         {
             int t = tips.Length;
             var segments = new List<(int, int)>();
-            if (t <= 1)
-                return (Array.Empty<Point3d>(), segments, 0);
+            var active = Enumerable.Range(0, t).ToList();
+            if (t <= 1 || depth <= 0)
+                return (Array.Empty<Point3d>(), segments, active);
 
             var position = new Dictionary<int, Point3d>();
+            var level = new Dictionary<int, int>();
             for (int i = 0; i < t; i++)
+            {
                 position[i] = tips[i];
-            var active = Enumerable.Range(0, t).ToList();
+                level[i] = 0;
+            }
             int next = t;
 
             while (active.Count > 1)
             {
-                int ai = 0;
-                int bi = 1;
+                int ai = -1;
+                int bi = -1;
                 double best = double.MaxValue;
                 for (int i = 0; i < active.Count; i++)
                 {
                     for (int j = i + 1; j < active.Count; j++)
                     {
+                        // A merge adds a level; refuse the ones that would
+                        // fork deeper than asked.
+                        if (Math.Max(level[active[i]], level[active[j]]) + 1
+                            > depth)
+                        {
+                            continue;
+                        }
                         double d = position[active[i]]
                             .DistanceToSquared(position[active[j]]);
                         if (d < best)
@@ -1336,12 +1365,15 @@ namespace Ananke.COMPAS.Native.Components
                         }
                     }
                 }
+                if (ai < 0)
+                    break;      // nothing left that may fork again
                 int a = active[ai];
                 int b = active[bi];
                 position[next] = new Point3d(
                     (position[a].X + position[b].X) / 2.0,
                     (position[a].Y + position[b].Y) / 2.0,
                     (position[a].Z + position[b].Z) / 2.0);
+                level[next] = Math.Max(level[a], level[b]) + 1;
                 segments.Add((a, next));
                 segments.Add((b, next));
                 active.RemoveAt(bi);
@@ -1353,7 +1385,7 @@ namespace Ananke.COMPAS.Native.Components
             var junctions = new Point3d[next - t];
             for (int i = t; i < next; i++)
                 junctions[i - t] = position[i];
-            return (junctions, segments, active[0]);
+            return (junctions, segments, active);
         }
 
         /// <summary>

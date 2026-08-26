@@ -68,6 +68,7 @@ namespace Ananke.COMPAS.Native.Components
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
         private readonly List<Line> _previewPrincipal = new();
+        private readonly List<Line> _previewColumns = new();
         private readonly List<Point3d> _previewSupports = new();
         private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -84,6 +85,7 @@ namespace Ananke.COMPAS.Native.Components
             _previewMesh = null;
             _previewCables.Clear();
             _previewPrincipal.Clear();
+            _previewColumns.Clear();
             _previewSupports.Clear();
             _clippingBox = BoundingBox.Empty;
         }
@@ -128,6 +130,10 @@ namespace Ananke.COMPAS.Native.Components
                     TnaWorkflowPreview.PrincipalColour,
                     TnaWorkflowPreview.PrincipalWeight);
             }
+            // The same blue Column Finder draws its columns in, so a raising
+            // column reads as the same member at a different moment.
+            foreach (Line column in _previewColumns)
+                args.Display.DrawLine(column, Color.FromArgb(40, 85, 175), 3);
             foreach (Point3d point in _previewSupports)
             {
                 args.Display.DrawPoint(
@@ -166,8 +172,20 @@ namespace Ananke.COMPAS.Native.Components
                     + "the bars.",
                 GH_ParamAccess.item,
                 40.0);
+            parameters.AddLineParameter(
+                "Columns",
+                "C",
+                "Optional. The columns from Column Finder. Given them, the "
+                    + "animation raises them WITH the net instead of leaving "
+                    + "them at their finished positions: each foot slides "
+                    + "linearly across the ground from under its own notch to "
+                    + "where it finally stands, while the column extends to "
+                    + "keep its head on that notch. Both at once, which is the "
+                    + "two jobs the mechanism actually has to do.",
+                GH_ParamAccess.list);
             parameters[1].Optional = true;
             parameters[2].Optional = true;
+            parameters[3].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -223,6 +241,14 @@ namespace Ananke.COMPAS.Native.Components
                     + "and how far the bars have risen, and a warning naming "
                     + "any node the net cannot reach.",
                 GH_ParamAccess.item);
+            parameters.AddLineParameter(
+                "Columns",
+                "C",
+                "The columns at THIS frame: foot part way along its slide, "
+                    + "head on the notch wherever the net has got to. Empty "
+                    + "unless columns are wired in. Their lengths are the "
+                    + "extension the struts have to deliver.",
+                GH_ParamAccess.list);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -238,6 +264,8 @@ namespace Ananke.COMPAS.Native.Components
             double preSag = 40.0;
             data.GetData(1, ref timePct);
             data.GetData(2, ref preSag);
+            var columnLines = new List<Line>();
+            data.GetDataList(3, columnLines);
 
             try
             {
@@ -476,6 +504,61 @@ namespace Ananke.COMPAS.Native.Components
                             + "machine does not have.");
                 }
 
+                // The columns, raised with the net rather than left at the
+                // positions they finish in.
+                //
+                // A column here does TWO things at once, because the mechanism
+                // does: its foot SLIDES across the ground, linearly, from
+                // directly under its own notch to where it finally stands, and
+                // the strut EXTENDS so its head stays on that notch the whole
+                // way. Neither alone would work. A foot fixed at the finish
+                // would have the column lying at an impossible angle while the
+                // net is still down; a strut of fixed length could not reach a
+                // notch that is rising.
+                //
+                // The slide follows LIFT, not sag: it is the columns coming up,
+                // not the steppers reeling. So through the whole first phase
+                // each foot sits under its notch and tracks the reeling in
+                // plan, and only then starts travelling out.
+                var liveColumns = new List<Line>();
+                double shortest = double.MaxValue;
+                double longest = 0.0;
+                double travelled = 0.0;
+                foreach (int column in
+                    MouldGeometry.ColumnHeads(columnLines, target))
+                {
+                    Line finished = columnLines[column];
+                    int head = MouldGeometry.NearestNodeInPlan(
+                        finished.To, target);
+                    if (head < 0)
+                        continue;
+                    Point3d top = live[head];
+                    var under = new Point3d(top.X, top.Y, ground);
+                    var foot = new Point3d(
+                        under.X + (lift * (finished.From.X - under.X)),
+                        under.Y + (lift * (finished.From.Y - under.Y)),
+                        ground);
+                    liveColumns.Add(new Line(foot, top));
+                    double length = foot.DistanceTo(top);
+                    shortest = Math.Min(shortest, length);
+                    longest = Math.Max(longest, length);
+                    travelled = Math.Max(
+                        travelled,
+                        Math.Sqrt(MouldGeometry.PlanDistanceSquared(
+                            under, finished.From)));
+                }
+                if (liveColumns.Count > 0)
+                {
+                    report.Add(string.Empty);
+                    report.Add(
+                        $"{liveColumns.Count} columns at this frame, "
+                            + $"{shortest:0.###} to {longest:0.###} long. Each "
+                            + "foot slides as the lift goes on and the strut "
+                            + $"extends to follow its notch; the longest slide "
+                            + $"is {travelled:0.###} at full height, which is "
+                            + "the travel the base has to have.");
+                }
+
                 Mesh? framed = mesh is null
                     ? null
                     : MouldGeometry.DeformMesh(mesh, meshToNode, live);
@@ -493,10 +576,13 @@ namespace Ananke.COMPAS.Native.Components
                         _previewPrincipal.Add(
                             new Line(live[run[k]], live[run[k + 1]]));
                 }
+                _previewColumns.Clear();
+                _previewColumns.AddRange(liveColumns);
                 _previewSupports.Clear();
                 _previewSupports.AddRange(
                     anchorIds.OrderBy(i => i).Select(i => live[i]));
-                _clippingBox = new BoundingBox(live);
+                _clippingBox = new BoundingBox(
+                    live.Concat(liveColumns.Select(c => c.From)));
 
                 data.SetData(0, framed);
                 data.SetDataList(1, cables);
@@ -510,6 +596,7 @@ namespace Ananke.COMPAS.Native.Components
                     Array.Empty<Point3d>(), Array.Empty<Point3d>(),
                     Array.Empty<double>())));
                 data.SetData(7, string.Join(Environment.NewLine, report));
+                data.SetDataList(8, liveColumns);
             }
             catch (Exception ex)
             {
@@ -856,6 +943,45 @@ namespace Ananke.COMPAS.Native.Components
                     held = (held * 37) + i;
             }
             return $"{target.Length}:{rolling}:{held}";
+        }
+
+        /// <summary>
+        /// The index of the node nearest a point IN PLAN. Plan, because a
+        /// column drawn against the finished shape has to find its notch on a
+        /// net that is still on the ground.
+        /// </summary>
+        public static int NearestNodeInPlan(Point3d point, Point3d[] nodes)
+        {
+            int best = -1;
+            double closest = double.MaxValue;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                double d = PlanDistanceSquared(point, nodes[i]);
+                if (d < closest)
+                {
+                    closest = d;
+                    best = i;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// The indices of the columns worth animating: those with a real line
+        /// and a head above their foot. A tree's branches come through here
+        /// too, and a branch whose head is not on the net finds the nearest
+        /// node in plan, which is the junction's own notch.
+        /// </summary>
+        public static IEnumerable<int> ColumnHeads(
+            IReadOnlyList<Line> columns,
+            Point3d[] nodes)
+        {
+            for (int i = 0; i < columns.Count; i++)
+            {
+                if (columns[i].Length <= 1.0e-9 || nodes.Length == 0)
+                    continue;
+                yield return i;
+            }
         }
 
         /// <summary>Squared distance in plan, height ignored.</summary>

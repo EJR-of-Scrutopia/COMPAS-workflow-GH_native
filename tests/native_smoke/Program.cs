@@ -509,6 +509,22 @@ internal static class Program
                 $"BeamSolver.ArmsForBar: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateTreeDepth(plugin);
+            Console.WriteLine(
+                "PASS  TreeBuilder.MergeTopology: Depth counts FORKS and loses "
+                + "no arms. Eight arms give 0 junctions and 8 roots at depth 0, "
+                + "4 and 4 at depth 1, 6 and 2 at depth 2, 7 and 1 at depth 3, "
+                + "and saturate there; every arm is still a leaf at every "
+                + "depth, which the old tip-capping rule could not say.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"TreeBuilder.MergeTopology: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1927,6 +1943,108 @@ internal static class Program
             ?? throw new InvalidOperationException(
                 "Response gave no deflections for a valid support set.");
         return deflection.Select(Math.Abs).Max();
+    }
+
+    /// <summary>
+    /// <c>TreeBuilder.MergeTopology</c>: what Depth means, and that no arm is
+    /// ever lost to it.
+    ///
+    /// It used to cap the number of TIPS at two to the power of Depth. That
+    /// reads like a depth control and is not one: the tips ARE the arms, so a
+    /// low Depth did not branch less, it threw away arm positions the beam
+    /// solve had just worked out. Depth 0 aggregated every arm on a bar into a
+    /// single post and Depth 1 into two, which is why the low numbers behaved
+    /// so badly.
+    ///
+    /// Depth now counts LEVELS OF FORK, which is the thing an author is
+    /// choosing, and every arm stays a leaf. Eight arms in a row:
+    ///
+    ///   depth 0   no fork at all, 8 roots straight to the foot: a fan
+    ///   depth 1   4 pairs, 4 roots
+    ///   depth 2   those pairs pair, 2 roots
+    ///   depth 3   one trunk
+    ///   depth 9   the same as 3; past a full binary tree there is nothing
+    ///             left to merge, so it saturates instead of misbehaving
+    ///
+    /// The junction counts follow from that, and the last assertion is the one
+    /// that matters most: at every depth all eight arms are still leaves.
+    /// </summary>
+    private static void ValidateTreeDepth(Assembly plugin)
+    {
+        Type builder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TreeBuilder", throwOnError: true)
+            ?? throw new InvalidOperationException("TreeBuilder not found.");
+        MethodInfo merge = RequireStatic(builder, "MergeTopology");
+        Type point3d = merge.GetParameters()[0].ParameterType.GetElementType()
+            ?? throw new InvalidOperationException(
+                "MergeTopology' tips parameter is not an array.");
+
+        const int count = 8;
+        Array tips = Array.CreateInstance(point3d, count);
+        for (int index = 0; index < count; index++)
+        {
+            tips.SetValue(
+                Activator.CreateInstance(point3d, (double)index, 0.0, 1.0),
+                index);
+        }
+
+        var expected = new (int Depth, int Junctions, int Roots)[]
+        {
+            (0, 0, 8),
+            (1, 4, 4),
+            (2, 6, 2),
+            (3, 7, 1),
+            (9, 7, 1),
+        };
+
+        foreach ((int depth, int wantJunctions, int wantRoots) in expected)
+        {
+            object result = merge.Invoke(null, new object?[] { tips, depth })
+                ?? throw new InvalidOperationException(
+                    "MergeTopology returned null.");
+            Type shape = result.GetType();
+            var junctions = (Array)shape.GetField("Item1")!.GetValue(result)!;
+            var segments = (IEnumerable)shape.GetField("Item2")!.GetValue(result)!;
+            var roots = (IEnumerable)shape.GetField("Item3")!.GetValue(result)!;
+
+            int rootCount = roots.Cast<int>().Count();
+            if (junctions.Length != wantJunctions || rootCount != wantRoots)
+            {
+                throw new InvalidOperationException(
+                    $"At depth {depth}, {count} arms must give "
+                    + $"{wantJunctions} junctions and {wantRoots} roots; they "
+                    + $"gave {junctions.Length} and {rootCount}.");
+            }
+
+            // Every arm still a leaf: it is either a root of its own or the
+            // child of exactly one segment, and never a parent.
+            var parents = new HashSet<int>();
+            var children = new HashSet<int>();
+            foreach (object pair in segments)
+            {
+                Type edge = pair.GetType();
+                children.Add((int)edge.GetField("Item1")!.GetValue(pair)!);
+                parents.Add((int)edge.GetField("Item2")!.GetValue(pair)!);
+            }
+            var rootSet = new HashSet<int>(roots.Cast<int>());
+            for (int arm = 0; arm < count; arm++)
+            {
+                if (parents.Contains(arm))
+                {
+                    throw new InvalidOperationException(
+                        $"At depth {depth}, arm {arm} is carrying another "
+                        + "member. An arm is a leaf; only a junction forks.");
+                }
+                if (!children.Contains(arm) && !rootSet.Contains(arm))
+                {
+                    throw new InvalidOperationException(
+                        $"At depth {depth}, arm {arm} vanished: it is neither "
+                        + "joined to a junction nor a root of its own. Depth "
+                        + "must change how the arms gather, never how many "
+                        + "there are.");
+                }
+            }
+        }
     }
 
     private static Type RequireComponentType(Assembly plugin, string typeName)
