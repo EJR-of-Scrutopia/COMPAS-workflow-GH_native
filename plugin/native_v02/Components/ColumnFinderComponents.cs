@@ -28,6 +28,16 @@ namespace Ananke.COMPAS.Native.Components
     /// count as supports but cost no arm, and any arrangement that would need an
     /// arm to PULL DOWN is rejected: a column can only push.
     ///
+    /// The bar's stiffness deliberately does not appear. Deflection scales as
+    /// one over EI, so EI is a common factor across every candidate arrangement
+    /// and cancels out of the comparison: the best arm positions are identical
+    /// whatever the bar is made of, which was checked across seven orders of
+    /// magnitude. Stiffness would only be needed to turn the droop into
+    /// millimetres, and that is a capacity to establish by testing rather than
+    /// to assume here. The same goes for allowable stress and member sizing.
+    /// This component finds WHERE the columns stand and WHAT they carry; how
+    /// strong they have to be is the next question, not this one.
+    ///
     /// HOW they reach the ground is Trees. At zero every arm drops straight to
     /// its own foot. Above zero the arms are gathered into that many branching
     /// trees in the Frei Otto manner, clustered by equal load, and Depth sets
@@ -99,34 +109,9 @@ namespace Ananke.COMPAS.Native.Components
                 "How many times a tree may fork. Ignored when Trees is 0.",
                 GH_ParamAccess.item,
                 2);
-            parameters.AddNumberParameter(
-                "Bar Stiffness",
-                "EI",
-                "Bending stiffness of a notched bar, N m2, used to solve the "
-                    + "arm positions and report how far the bar droops between "
-                    + "them. Zero falls back to even spacing, which is the "
-                    + "wrong rule for a bar on two or three arms.",
-                GH_ParamAccess.item,
-                0.0);
-            parameters.AddNumberParameter(
-                "Ground",
-                "G",
-                "Elevation the feet stand on.",
-                GH_ParamAccess.item,
-                0.0);
-            parameters.AddNumberParameter(
-                "Allowable Stress",
-                "S",
-                "Allowable axial stress, N/m2, used to size each member. 235e6 "
-                    + "is mild steel, 20e6 a fair working figure for timber.",
-                GH_ParamAccess.item,
-                235e6);
             parameters[2].Optional = true;
             parameters[3].Optional = true;
             parameters[4].Optional = true;
-            parameters[5].Optional = true;
-            parameters[6].Optional = true;
-            parameters[7].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -135,49 +120,52 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddLineParameter(
                 "Columns",
                 "C",
-                "Every column member, from the arm head down to the ground. "
-                    + "With Trees at 0 these are straight posts; above 0 they "
-                    + "are the branches of each tree. Force and Radius align "
-                    + "with this.",
+                "The final column members as built lines, each running from its "
+                    + "foot on the ground up to the notch it holds. The line "
+                    + "IS the column, so its direction is the lean the arm has "
+                    + "to stand at. With Trees at 0 there is one straight post "
+                    + "per arm; above 0 these are the branches of each tree. "
+                    + "Force and Angle align with this list.",
                 GH_ParamAccess.list);
             parameters.AddPointParameter(
                 "Heads",
                 "H",
-                "Where the arms meet the bars: the notches the columns hold.",
+                "The top of each column: the notch on the bar that this arm "
+                    + "carries. These are the points the mechanism has to reach, "
+                    + "and they are chosen by solving the bar, not by spacing.",
                 GH_ParamAccess.list);
             parameters.AddPointParameter(
                 "Feet",
                 "F",
-                "Where the columns stand on the ground.",
+                "The bottom of each column, on the ground. With Trees at 0 a "
+                    + "foot sits directly under its head; above 0 the feet are "
+                    + "the load-weighted centres of each tree, so there are "
+                    + "fewer of them than there are arms and each one takes a "
+                    + "whole tree's load.",
                 GH_ParamAccess.list);
             parameters.AddNumberParameter(
                 "Force",
                 "FO",
-                "Axial force in each member, N. A leaning member carries more "
-                    + "than the weight above it, by one over its vertical "
-                    + "cosine, and that surplus is what the foot resists "
-                    + "sideways.",
+                "Axial force along each column, N: what that member actually "
+                    + "carries, for sizing and for testing later. A leaning "
+                    + "column carries MORE than the weight above it, by one "
+                    + "over its vertical cosine, and the surplus is the "
+                    + "horizontal thrust its foot has to resist. No capacity is "
+                    + "assumed anywhere; this is the demand, not a verdict.",
                 GH_ParamAccess.list);
             parameters.AddNumberParameter(
-                "Radius",
-                "R",
-                "Radius each member needs at the allowable stress, m. Pipe the "
-                    + "columns by this and the taper is the load path made "
-                    + "visible.",
-                GH_ParamAccess.list);
-            parameters.AddNumberParameter(
-                "Bar Droop",
-                "BD",
-                "Worst droop of each bar between its own arms, mm, one per "
-                    + "principal line. This lands in the cast surface on top of "
-                    + "the sag of the net, so it has to sit inside tolerance "
-                    + "too. Empty unless Bar Stiffness was given.",
+                "Angle",
+                "A",
+                "Lean of each column from vertical, degrees. This is the angle "
+                    + "the arm stands at, and the number that decides whether "
+                    + "the sliding joint can reach it. Past about sixty degrees "
+                    + "a column is doing more pushing sideways than holding up.",
                 GH_ParamAccess.list);
             parameters.AddTextParameter(
                 "Report",
                 "Out",
-                "Where the arms went and why, what they carry, and whether the "
-                    + "load is all accounted for.",
+                "How many arms went on each bar and where, what they carry, and "
+                    + "how the load divides between the feet.",
                 GH_ParamAccess.item);
         }
 
@@ -196,16 +184,14 @@ namespace Ananke.COMPAS.Native.Components
             int perLine = 3;
             int trees = 0;
             int depth = 2;
-            double barEi = 0.0;
-            double ground = 0.0;
-            double allowable = 235e6;
             data.GetData(2, ref perLine);
             data.GetData(3, ref trees);
             data.GetData(4, ref depth);
-            data.GetData(5, ref barEi);
-            data.GetData(6, ref ground);
-            data.GetData(7, ref allowable);
             perLine = Math.Max(perLine, 2);
+
+            // Stiffness cancels out of the placement, so any positive value
+            // gives the same arms. One keeps the arithmetic well conditioned.
+            const double placementStiffness = 1.0;
 
             try
             {
@@ -225,6 +211,10 @@ namespace Ananke.COMPAS.Native.Components
                     .Where(e => e.U >= 0 && e.U < n && e.V >= 0 && e.V < n && e.U != e.V)
                     .Select(e => (e.U, e.V))
                     .ToArray();
+
+                // The feet stand on the base of the geometry, which is where
+                // the anchors already are; nothing to set.
+                double ground = nodes.Min(p => p.Z);
 
                 var anchors = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
@@ -253,15 +243,15 @@ namespace Ananke.COMPAS.Native.Components
 
                 var heads = new List<Point3d>();
                 var headLoad = new List<double>();
-                var barDroop = new List<double>();
+                var armsPerBar = new List<int>();
 
                 foreach (List<int> bar in bars)
                 {
-                    (List<int> chosen, double droop, double[] reactions) =
+                    (List<int> chosen, double _droop, double[] reactions) =
                         BeamSolver.ArmsForBar(
-                            bar, nodes, nodeLoad, anchors, perLine, barEi);
-                    if (barEi > 0.0)
-                        barDroop.Add(droop * 1000.0);
+                            bar, nodes, nodeLoad, anchors, perLine,
+                            placementStiffness);
+                    armsPerBar.Add(chosen.Count);
                     foreach (int k in chosen)
                     {
                         heads.Add(nodes[bar[k]]);
@@ -302,28 +292,25 @@ namespace Ananke.COMPAS.Native.Components
                 }
 
                 var force = new List<double>(members.Count);
-                var radius = new List<double>(members.Count);
+                var angle = new List<double>(members.Count);
                 for (int i = 0; i < members.Count; i++)
                 {
                     Vector3d v = members[i].To - members[i].From;
                     double length = v.Length;
                     double cos = length > 1e-12 ? Math.Abs(v.Z) / length : 1.0;
-                    double axial = cos > 1e-6 ? carried[i] / cos : carried[i];
-                    force.Add(axial);
-                    radius.Add(allowable > 0.0
-                        ? Math.Sqrt(axial / (Math.PI * allowable))
-                        : 0.0);
+                    force.Add(cos > 1e-6 ? carried[i] / cos : carried[i]);
+                    angle.Add(Rhino.RhinoMath.ToDegrees(
+                        Math.Acos(Math.Min(Math.Max(cos, -1.0), 1.0))));
                 }
 
                 data.SetDataList(0, members);
                 data.SetDataList(1, heads);
                 data.SetDataList(2, feet);
                 data.SetDataList(3, force);
-                data.SetDataList(4, radius);
-                data.SetDataList(5, barDroop);
-                data.SetData(6, Report(
-                    bars, heads, headLoad, members, force, radius, feet,
-                    barDroop, trees, depth, barEi, allowable));
+                data.SetDataList(4, angle);
+                data.SetData(5, Report(
+                    bars, armsPerBar, headLoad, members, force, angle, feet,
+                    trees, depth, ground));
             }
             catch (Exception ex)
             {
@@ -333,68 +320,57 @@ namespace Ananke.COMPAS.Native.Components
 
         private static string Report(
             List<List<int>> bars,
-            List<Point3d> heads,
+            List<int> armsPerBar,
             List<double> headLoad,
             List<Line> members,
             List<double> force,
-            List<double> radius,
+            List<double> angle,
             List<Point3d> feet,
-            List<double> barDroop,
             int trees,
             int depth,
-            double barEi,
-            double allowable)
+            double ground)
         {
-            double total = headLoad.Sum();
             var lines = new List<string>
             {
-                $"{bars.Count} bars, {heads.Count} arms, {feet.Count} feet, "
-                    + $"{members.Count} members",
-                $"the arms carry {total:0} N between them",
+                $"{bars.Count} bars, {armsPerBar.Sum()} arms "
+                    + $"({string.Join(" + ", armsPerBar)} per bar), "
+                    + $"{feet.Count} feet, {members.Count} members",
+                $"the arms carry {headLoad.Sum():0} N between them, ground read "
+                    + $"as {ground:0.###}",
+                string.Empty,
+                "arm positions are SOLVED, not spaced: a loaded bar wants its "
+                    + "supports about a fifth of its length in from each end, "
+                    + "and every arrangement of notches was tried. Bar "
+                    + "stiffness is not asked for because it cancels out of "
+                    + "that comparison.",
             };
-
-            if (barEi > 0.0)
-            {
-                lines.Add(
-                    "arm positions SOLVED as a beam: a loaded bar wants its "
-                        + "supports about a fifth of its length in from each "
-                        + "end, never spread to the ends.");
-                if (barDroop.Count > 0)
-                {
-                    lines.Add(
-                        $"bar droop between arms {barDroop.Min():0.#} to "
-                            + $"{barDroop.Max():0.#} mm. This adds to the sag of "
-                            + "the net, so check it against the same tolerance.");
-                }
-            }
-            else
-            {
-                lines.Add(
-                    "arms SPACED EVENLY, which is the wrong rule for a bar on "
-                        + "two or three supports. Give Bar Stiffness and they "
-                        + "will be solved instead.");
-            }
 
             lines.Add(trees <= 0
                 ? "Trees 0: every arm drops straight to its own foot."
                 : $"Trees {trees} at depth {depth}: the arms are gathered into "
-                    + "branching trees clustered by equal load.");
+                    + "branching trees clustered by equal load, so the feet are "
+                    + "fewer than the arms.");
 
             if (headLoad.Count > 0)
-            {
-                lines.Add(
-                    $"arm force {headLoad.Min():0} to {headLoad.Max():0} N");
-            }
+                lines.Add($"arm load {headLoad.Min():0} to {headLoad.Max():0} N");
             if (force.Count > 0)
-            {
                 lines.Add($"axial force up to {force.Max():0} N");
-            }
-            if (radius.Count > 0 && allowable > 0.0)
+            if (angle.Count > 0)
             {
-                lines.Add(
-                    $"member radius {radius.Min() * 1000.0:0.#} to "
-                        + $"{radius.Max() * 1000.0:0.#} mm at {allowable / 1e6:0.#} MPa");
+                lines.Add($"lean {angle.Min():0.#} to {angle.Max():0.#} degrees "
+                    + "from vertical");
+                if (angle.Max() > 60.0)
+                {
+                    lines.Add(
+                        "WARNING: a column leans past sixty degrees, so it is "
+                            + "pushing sideways more than it is holding up. "
+                            + "Check the sliding joint can reach that angle.");
+                }
             }
+            lines.Add(string.Empty);
+            lines.Add(
+                "no capacity is assumed anywhere here: Force is the demand, to "
+                    + "size and test against, not a pass or a fail.");
             return string.Join(Environment.NewLine, lines);
         }
     }

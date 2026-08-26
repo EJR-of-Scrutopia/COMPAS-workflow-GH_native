@@ -38,8 +38,8 @@ namespace Ananke.COMPAS.Native.Components
     {
         public MouldAnimateComponent()
             : base(
-                "Mould Animate",
-                "Mould",
+                "Animate",
+                "AN",
                 "Replay the mould building itself from one timeline slider: the "
                     + "steppers reeling the net into shape on the ground, the "
                     + "columns lifting it, then the final tensioning. Sag and "
@@ -92,23 +92,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "the bars.",
                 GH_ParamAccess.item,
                 40.0);
-            parameters.AddMeshParameter(
-                "Mesh",
-                "M",
-                "Optional surface to deform, usually Deconstruct's Thrust Mesh. "
-                    + "Without it there is no shaded surface and the perimeter "
-                    + "falls back to a topology guess.",
-                GH_ParamAccess.item);
-            parameters.AddNumberParameter(
-                "Ground",
-                "G",
-                "Elevation the net starts flat at.",
-                GH_ParamAccess.item,
-                0.0);
             parameters[2].Optional = true;
             parameters[3].Optional = true;
-            parameters[4].Optional = true;
-            parameters[5].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -117,7 +102,9 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddMeshParameter(
                 "Mesh",
                 "M",
-                "The formwork surface at this frame.",
+                "The formwork surface at this frame, rebuilt from the Result's "
+                    + "own faces. Empty for an FD result, which carries no "
+                    + "faces to rebuild from.",
                 GH_ParamAccess.item);
             parameters.AddLineParameter(
                 "Cables",
@@ -149,19 +136,21 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Reel",
                 "R",
-                "Stepper travel per node at this frame, in millimetres, aligned "
-                    + "with the Result's vertices. NEGATIVE marks a node asking "
-                    + "to be pushed UP, which no reel can do.",
+                "How far each infill cable has been reeled in at this frame, in "
+                    + "millimetres, aligned with the Result's vertices. This is "
+                    + "the stepper travel the machine has to deliver, so it is "
+                    + "a specification for the hardware rather than a "
+                    + "structural number. A node reading near zero needs no "
+                    + "stepper at all. A NEGATIVE reading is a node asking to "
+                    + "be pushed UP, which a reel cannot do, and marks where "
+                    + "the geometry wants curvature a cable net cannot make.",
                 GH_ParamAccess.list);
-            parameters.AddTextParameter(
-                "Phase",
-                "PH",
-                "Which phase of the build this frame is in, for captioning.",
-                GH_ParamAccess.item);
             parameters.AddTextParameter(
                 "Report",
                 "Out",
-                "Stepper count, travel, lift, and any node the net cannot reach.",
+                "Which phase of the build this frame is in, the stepper count "
+                    + "and travel, how far the bars have risen, and a warning "
+                    + "naming any node the net cannot reach.",
                 GH_ParamAccess.item);
         }
 
@@ -179,12 +168,8 @@ namespace Ananke.COMPAS.Native.Components
 
             double timePct = 100.0;
             double preSag = 40.0;
-            Mesh? mesh = null;
-            double ground = 0.0;
             data.GetData(2, ref timePct);
             data.GetData(3, ref preSag);
-            data.GetData(4, ref mesh);
-            data.GetData(5, ref ground);
 
             try
             {
@@ -206,6 +191,12 @@ namespace Ananke.COMPAS.Native.Components
                     .ToArray();
                 if (edges.Length == 0)
                     throw new InvalidOperationException("Result carries no edges.");
+
+                // The ground is the base of the geometry, not a number to set:
+                // the net starts flat at the lowest point the Result reaches,
+                // which is where its anchors already sit.
+                double ground = target.Min(p => p.Z);
+                Mesh? mesh = MouldGeometry.ThrustMeshFromResult(result);
 
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
                 var anchorIds = new HashSet<int>(
@@ -300,7 +291,8 @@ namespace Ananke.COMPAS.Native.Components
                     string.Empty,
                     $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
                         + $"{principalIds.Count} notches",
-                    $"anchors {anchorIds.Count}, perimeter nodes {perimeterIds.Length}",
+                    $"anchors {anchorIds.Count}, perimeter nodes "
+                        + $"{perimeterIds.Length}, ground read as {ground:0.###}",
                     $"steppers required {principalIds.Count * 2} "
                         + "(two per notch, one pulling each side)",
                     $"longest stepper travel {worstReel:0.#} mm, bars risen "
@@ -309,8 +301,9 @@ namespace Ananke.COMPAS.Native.Components
                 if (mesh is null)
                 {
                     report.Add(
-                        "no Mesh given: no shaded surface, and the perimeter is a "
-                            + "topology guess. Wire Deconstruct's Thrust Mesh in.");
+                        "this Result carries no faces, so there is no shaded "
+                            + "surface and the perimeter is read from the net's "
+                            + "topology instead. That is expected for FD.");
                 }
                 if (wantsPush > 0)
                 {
@@ -333,8 +326,7 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(4, anchorIds.OrderBy(i => i).Select(i => live[i]));
                 data.SetDataList(5, perimeterIds.Select(i => live[i]));
                 data.SetDataList(6, relief.Select(r => r * sag * 1000.0));
-                data.SetData(7, phase);
-                data.SetData(8, string.Join(Environment.NewLine, report));
+                data.SetData(7, string.Join(Environment.NewLine, report));
             }
             catch (Exception ex)
             {
@@ -483,6 +475,86 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
             return best;
+        }
+
+        /// <summary>
+        /// Rebuild the thrust mesh from a Result's own form faces, so neither
+        /// component needs a mesh wired in. Returns null for an FD result,
+        /// which carries no faces, and null rather than throwing if the
+        /// mapping is incomplete: a missing surface should not stop the
+        /// animation.
+        /// </summary>
+        public static Mesh? ThrustMeshFromResult(ResultDto result)
+        {
+            EquilibriumResultDto? equilibrium = result.Equilibrium;
+            TnaDiagramGraphDto? formGraph = result.FormGraph;
+            TnaMappingsDto? mappings = result.Mappings;
+            if (equilibrium is null || formGraph is null || mappings is null)
+                return null;
+
+            try
+            {
+                var formToEquilibrium = new Dictionary<int, int>();
+                foreach (var item in mappings.SourceVertexToFormVertex)
+                {
+                    if (!item.FormVertexId.HasValue ||
+                        !item.EquilibriumVertexId.HasValue)
+                    {
+                        continue;
+                    }
+                    formToEquilibrium[item.FormVertexId.Value] =
+                        item.EquilibriumVertexId.Value;
+                }
+
+                var mesh = new Mesh();
+                var formToMesh = new Dictionary<int, int>();
+                foreach (TnaGraphVertexDto vertex in
+                         formGraph.Vertices.OrderBy(item => item.Id))
+                {
+                    if (!formToEquilibrium.TryGetValue(vertex.Id, out int eqId) ||
+                        eqId < 0 || eqId >= equilibrium.Vertices.Count)
+                    {
+                        return null;
+                    }
+                    Point3Dto p = equilibrium.Vertices[eqId];
+                    formToMesh[vertex.Id] = mesh.Vertices.Add(p.X, p.Y, p.Z);
+                }
+
+                foreach (TnaGraphFaceDto face in
+                         formGraph.Faces.OrderBy(item => item.Id))
+                {
+                    var ids = new List<int>();
+                    foreach (int id in face.Vertices)
+                    {
+                        if (!formToMesh.TryGetValue(id, out int meshId))
+                            return null;
+                        ids.Add(meshId);
+                    }
+                    if (ids.Count == 3)
+                    {
+                        mesh.Faces.AddFace(ids[0], ids[1], ids[2]);
+                    }
+                    else if (ids.Count == 4)
+                    {
+                        mesh.Faces.AddFace(ids[0], ids[1], ids[2], ids[3]);
+                    }
+                    else
+                    {
+                        for (int i = 1; i < ids.Count - 1; i++)
+                            mesh.Faces.AddFace(ids[0], ids[i], ids[i + 1]);
+                    }
+                }
+
+                if (mesh.Faces.Count == 0)
+                    return null;
+                mesh.Normals.ComputeNormals();
+                mesh.Compact();
+                return mesh;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         public static Mesh DeformMesh(Mesh source, Point3d[] target, Point3d[] live)
