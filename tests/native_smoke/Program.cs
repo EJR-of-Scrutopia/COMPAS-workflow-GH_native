@@ -126,7 +126,7 @@ internal static class Program
                     "TNA Relax",
                     "TNA Relax",
                     "02 Form Finding",
-                    new[] { "PRB", "q", "Sag %" },
+                    new[] { "PRB", "q", "Sag %", "FA" },
                     new[] { "RLX" }),
                 ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = (
                     "TNA Solve",
@@ -334,10 +334,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 12)
+        if (parameterTypes.Length != 13)
         {
             failures.Add(
-                $"Expected 12 public persistent contract parameters, found " +
+                $"Expected 13 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");

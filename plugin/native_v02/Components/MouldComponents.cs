@@ -182,10 +182,13 @@ namespace Ananke.COMPAS.Native.Components
                 if (n == 0)
                     throw new InvalidOperationException("Result carries no vertices.");
 
-                var edges = equilibrium.Edges
-                    .Where(e => e.U >= 0 && e.U < n && e.V >= 0 && e.V < n && e.U != e.V)
-                    .Select(e => (e.U, e.V))
-                    .ToArray();
+                // Keep the ORIGINAL edge index alongside each kept edge. The
+                // filter drops invalid and self edges, so a filtered position
+                // no longer matches the Result's own MemberForces array, and
+                // indexing forces by it would silently attach every force
+                // after the first dropped edge to the wrong member.
+                (int, int)[] edges = MouldGeometry.ValidEdges(
+                    equilibrium, n, out int[] edgeSource);
                 if (edges.Length == 0)
                     throw new InvalidOperationException("Result carries no edges.");
 
@@ -193,7 +196,8 @@ namespace Ananke.COMPAS.Native.Components
                 // the net starts flat at the lowest point the Result reaches,
                 // which is where its anchors already sit.
                 double ground = target.Min(p => p.Z);
-                Mesh? mesh = MouldGeometry.ThrustMeshFromResult(result);
+                Mesh? mesh = MouldGeometry.ThrustMeshFromResult(
+                    result, out int[] meshToNode);
 
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
                 var anchorIds = new HashSet<int>(
@@ -263,8 +267,8 @@ namespace Ananke.COMPAS.Native.Components
                     live[i] = new Point3d(target[i].X, target[i].Y, z);
                 }
 
-                int[] perimeterIds =
-                    MouldGeometry.PerimeterNodes(mesh, target, neighbours, n);
+                int[] perimeterIds = MouldGeometry.PerimeterNodes(
+                    mesh, meshToNode, neighbours, n);
 
                 var barCurves = new List<Curve>();
                 foreach (List<int> run in bars)
@@ -311,7 +315,7 @@ namespace Ananke.COMPAS.Native.Components
 
                 data.SetData(0, mesh is null
                     ? null
-                    : MouldGeometry.DeformMesh(mesh, target, live));
+                    : MouldGeometry.DeformMesh(mesh, meshToNode, live));
                 data.SetDataList(1, edges.Select(
                     e => new Line(live[e.Item1], live[e.Item2])));
                 data.SetDataList(2, barCurves);
@@ -319,8 +323,8 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(4, anchorIds.OrderBy(i => i).Select(i => live[i]));
                 data.SetDataList(5, perimeterIds.Select(i => live[i]));
                 data.SetData(6, new MouldStateGoo(MouldGeometry.BuildState(
-                    phase, ground, live, edges, equilibrium, principalIds,
-                    anchorIds, perimeterIds,
+                    phase, ground, live, edges, edgeSource, equilibrium,
+                    principalIds, anchorIds, perimeterIds,
                     Array.Empty<Point3d>(), Array.Empty<Point3d>(),
                     Array.Empty<double>())));
                 data.SetData(7, string.Join(Environment.NewLine, report));
@@ -338,6 +342,34 @@ namespace Ananke.COMPAS.Native.Components
     /// </summary>
     internal static class MouldGeometry
     {
+        /// <summary>
+        /// The Result's edges, minus any that are out of range or join a node
+        /// to itself, with the original index of each survivor returned
+        /// alongside. Callers need that index because the Result's per-edge
+        /// arrays (member forces, force densities) are still in the unfiltered
+        /// order.
+        /// </summary>
+        public static (int, int)[] ValidEdges(
+            EquilibriumResultDto equilibrium,
+            int nodeCount,
+            out int[] source)
+        {
+            var kept = new List<(int, int)>();
+            var origin = new List<int>();
+            for (int i = 0; i < equilibrium.Edges.Count; i++)
+            {
+                EdgeDto e = equilibrium.Edges[i];
+                if (e.U < 0 || e.U >= nodeCount || e.V < 0 || e.V >= nodeCount)
+                    continue;
+                if (e.U == e.V)
+                    continue;
+                kept.Add((e.U, e.V));
+                origin.Add(i);
+            }
+            source = origin.ToArray();
+            return kept.ToArray();
+        }
+
         public static List<int>[] BuildAdjacency(int count, (int, int)[] edges)
         {
             var neighbours = new List<int>[count];
@@ -396,19 +428,54 @@ namespace Ananke.COMPAS.Native.Components
         public static List<int> SnapCurveToNodes(
             Curve curve,
             Point3d[] nodes,
-            (int, int)[] edges)
+            (int, int)[] edges,
+            int samples = 512)
         {
             double catchRadius = 0.6 * MedianEdgeLength(nodes, edges);
-            var hits = new List<(double Parameter, int Index)>();
+            double catchSquared = catchRadius * catchRadius;
+
+            // Sample the curve once and compare in plain arithmetic, rather
+            // than asking Rhino for a closest point per node. ClosestPoint on a
+            // NURBS curve is not cheap, and this runs for every node of every
+            // bar on every solve, which an animation does on every frame.
+            double[]? ts = curve.DivideByCount(samples, true);
+            if (ts is null || ts.Length == 0)
+            {
+                var fallback = new List<(double, int)>();
+                for (int i = 0; i < nodes.Length; i++)
+                {
+                    if (curve.ClosestPoint(nodes[i], out double t) &&
+                        nodes[i].DistanceToSquared(curve.PointAt(t)) < catchSquared)
+                    {
+                        fallback.Add((t, i));
+                    }
+                }
+                return fallback.OrderBy(h => h.Item1).Select(h => h.Item2).ToList();
+            }
+
+            var sampled = new Point3d[ts.Length];
+            for (int s = 0; s < ts.Length; s++)
+                sampled[s] = curve.PointAt(ts[s]);
+
+            var hits = new List<(double Order, int Index)>();
             for (int i = 0; i < nodes.Length; i++)
             {
-                if (!curve.ClosestPoint(nodes[i], out double t))
-                    continue;
-                if (nodes[i].DistanceTo(curve.PointAt(t)) < catchRadius)
-                    hits.Add((t, i));
+                int best = -1;
+                double bestDistance = double.MaxValue;
+                for (int s = 0; s < sampled.Length; s++)
+                {
+                    double d = nodes[i].DistanceToSquared(sampled[s]);
+                    if (d < bestDistance)
+                    {
+                        bestDistance = d;
+                        best = s;
+                    }
+                }
+                if (best >= 0 && bestDistance < catchSquared)
+                    hits.Add((ts[best], i));
             }
             return hits
-                .OrderBy(hit => hit.Parameter)
+                .OrderBy(hit => hit.Order)
                 .Select(hit => hit.Index)
                 .ToList();
         }
@@ -425,23 +492,28 @@ namespace Ananke.COMPAS.Native.Components
 
         public static int[] PerimeterNodes(
             Mesh? mesh,
-            Point3d[] target,
+            int[] meshToNode,
             List<int>[] neighbours,
             int count)
         {
-            if (mesh is not null && mesh.Vertices.Count > 0)
+            if (mesh is not null && mesh.Vertices.Count > 0 &&
+                meshToNode.Length == mesh.Vertices.Count)
             {
                 bool[] naked = mesh.GetNakedEdgePointStatus();
                 if (naked is not null && naked.Length == mesh.Vertices.Count)
                 {
+                    // The mesh was built from these very nodes, so the mapping
+                    // is exact and no nearest-point search is needed. A set
+                    // keeps this linear; List.Contains made it quadratic.
                     var found = new List<int>();
+                    var seen = new HashSet<int>();
                     for (int v = 0; v < mesh.Vertices.Count; v++)
                     {
                         if (!naked[v])
                             continue;
-                        int nearest = NearestNode(new Point3d(mesh.Vertices[v]), target);
-                        if (nearest >= 0 && !found.Contains(nearest))
-                            found.Add(nearest);
+                        int node = meshToNode[v];
+                        if (node >= 0 && node < count && seen.Add(node))
+                            found.Add(node);
                     }
                     if (found.Count > 0)
                         return found.ToArray();
@@ -458,22 +530,6 @@ namespace Ananke.COMPAS.Native.Components
                 .ToArray();
         }
 
-        public static int NearestNode(Point3d point, Point3d[] nodes)
-        {
-            int best = -1;
-            double bestDistance = double.MaxValue;
-            for (int i = 0; i < nodes.Length; i++)
-            {
-                double distance = point.DistanceToSquared(nodes[i]);
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    best = i;
-                }
-            }
-            return best;
-        }
-
         /// <summary>
         /// Rebuild the thrust mesh from a Result's own form faces, so neither
         /// component needs a mesh wired in. Returns null for an FD result,
@@ -481,8 +537,11 @@ namespace Ananke.COMPAS.Native.Components
         /// mapping is incomplete: a missing surface should not stop the
         /// animation.
         /// </summary>
-        public static Mesh? ThrustMeshFromResult(ResultDto result)
+        public static Mesh? ThrustMeshFromResult(
+            ResultDto result,
+            out int[] meshToNode)
         {
+            meshToNode = Array.Empty<int>();
             EquilibriumResultDto? equilibrium = result.Equilibrium;
             TnaDiagramGraphDto? formGraph = result.FormGraph;
             TnaMappingsDto? mappings = result.Mappings;
@@ -505,6 +564,7 @@ namespace Ananke.COMPAS.Native.Components
 
                 var mesh = new Mesh();
                 var formToMesh = new Dictionary<int, int>();
+                var map = new List<int>();
                 foreach (TnaGraphVertexDto vertex in
                          formGraph.Vertices.OrderBy(item => item.Id))
                 {
@@ -515,6 +575,7 @@ namespace Ananke.COMPAS.Native.Components
                     }
                     Point3Dto p = equilibrium.Vertices[eqId];
                     formToMesh[vertex.Id] = mesh.Vertices.Add(p.X, p.Y, p.Z);
+                    map.Add(eqId);
                 }
 
                 foreach (TnaGraphFaceDto face in
@@ -545,7 +606,10 @@ namespace Ananke.COMPAS.Native.Components
                 if (mesh.Faces.Count == 0)
                     return null;
                 mesh.Normals.ComputeNormals();
-                mesh.Compact();
+                // Compact would renumber vertices and break the mapping, and
+                // there is nothing to compact: every vertex was just added and
+                // every face references one.
+                meshToNode = map.ToArray();
                 return mesh;
             }
             catch (Exception)
@@ -565,6 +629,7 @@ namespace Ananke.COMPAS.Native.Components
             double ground,
             Point3d[] live,
             (int, int)[] edges,
+            int[] edgeSource,
             EquilibriumResultDto equilibrium,
             IEnumerable<int> principalIds,
             IEnumerable<int> anchorIds,
@@ -589,11 +654,13 @@ namespace Ananke.COMPAS.Native.Components
             var densities = new double[edges.Length];
             for (int e = 0; e < edges.Length; e++)
             {
-                forces[e] = e < equilibrium.MemberForces.Count
-                    ? equilibrium.MemberForces[e]
+                // Index by where the edge came from, not by where it ended up.
+                int src = e < edgeSource.Length ? edgeSource[e] : e;
+                forces[e] = src < equilibrium.MemberForces.Count
+                    ? equilibrium.MemberForces[src]
                     : 0.0;
-                densities[e] = e < equilibrium.ForceDensities.Count
-                    ? equilibrium.ForceDensities[e]
+                densities[e] = src < equilibrium.ForceDensities.Count
+                    ? equilibrium.ForceDensities[src]
                     : 0.0;
             }
 
@@ -618,17 +685,18 @@ namespace Ananke.COMPAS.Native.Components
             };
         }
 
-        public static Mesh DeformMesh(Mesh source, Point3d[] target, Point3d[] live)
+        public static Mesh DeformMesh(Mesh source, int[] meshToNode, Point3d[] live)
         {
             Mesh deformed = source.DuplicateMesh();
-            for (int v = 0; v < deformed.Vertices.Count; v++)
+            for (int v = 0; v < deformed.Vertices.Count && v < meshToNode.Length; v++)
             {
-                var point = new Point3d(deformed.Vertices[v]);
-                int nearest = NearestNode(point, target);
-                if (nearest < 0)
+                int node = meshToNode[v];
+                if (node < 0 || node >= live.Length)
                     continue;
-                deformed.Vertices.SetVertex(
-                    v, new Point3d(point.X, point.Y, live[nearest].Z));
+                // Exact, from the mapping the mesh was built with, rather than
+                // a nearest-point search that cost one pass over every node for
+                // every vertex on every frame.
+                deformed.Vertices.SetVertex(v, live[node]);
             }
             deformed.Normals.ComputeNormals();
             deformed.Compact();

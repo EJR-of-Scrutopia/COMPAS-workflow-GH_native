@@ -215,10 +215,13 @@ namespace Ananke.COMPAS.Native.Components
                 if (n == 0)
                     throw new InvalidOperationException("Result carries no vertices.");
 
-                var edges = equilibrium.Edges
-                    .Where(e => e.U >= 0 && e.U < n && e.V >= 0 && e.V < n && e.U != e.V)
-                    .Select(e => (e.U, e.V))
-                    .ToArray();
+                // Keep the ORIGINAL edge index alongside each kept edge. The
+                // filter drops invalid and self edges, so a filtered position
+                // no longer matches the Result's own MemberForces array, and
+                // indexing forces by it would silently attach every force
+                // after the first dropped edge to the wrong member.
+                (int, int)[] edges = MouldGeometry.ValidEdges(
+                    equilibrium, n, out int[] edgeSource);
 
                 // The feet stand on the base of the geometry, which is where
                 // the anchors already are; nothing to set.
@@ -293,7 +296,15 @@ namespace Ananke.COMPAS.Native.Components
                     for (int s = 0; s < forest.Segments.Count; s++)
                     {
                         (int child, int parent) = forest.Segments[s];
-                        members.Add(new Line(forest.Points[child], forest.Points[parent]));
+                        Point3d a = forest.Points[child];
+                        Point3d b = forest.Points[parent];
+                        // Every column member runs LOWER end to UPPER end, so
+                        // that From is always the foot side and To the head
+                        // side. A tree branch is stored child to parent, which
+                        // runs the other way, and leaving it would silently
+                        // swap the meaning of foot and head the moment Trees
+                        // went above zero.
+                        members.Add(a.Z <= b.Z ? new Line(a, b) : new Line(b, a));
                         carried.Add(forest.CarriedLoad[s]);
                     }
                     feet.AddRange(forest.FootIndices.Select(i => forest.Points[i]));
@@ -317,13 +328,14 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(3, force);
                 data.SetDataList(4, angle);
 
+                Mesh? thrust = MouldGeometry.ThrustMeshFromResult(
+                    result, out int[] meshToNode);
                 var perimeter = MouldGeometry.PerimeterNodes(
-                    MouldGeometry.ThrustMeshFromResult(result), nodes,
-                    MouldGeometry.BuildAdjacency(n, edges), n);
+                    thrust, meshToNode, MouldGeometry.BuildAdjacency(n, edges), n);
                 var footPts = members.Select(m => m.From).ToList();
                 var headPts = members.Select(m => m.To).ToList();
                 data.SetData(5, new MouldStateGoo(MouldGeometry.BuildState(
-                    "final", ground, nodes, edges, equilibrium,
+                    "final", ground, nodes, edges, edgeSource, equilibrium,
                     bars.SelectMany(b => b), anchors, perimeter,
                     footPts, headPts, force)));
                 data.SetData(6, Report(
