@@ -52,6 +52,27 @@ namespace Ananke.COMPAS.Native.Components
     /// </summary>
     public sealed class ColumnFinderComponent : NativeComponentBase
     {
+        private static readonly ComponentValueListSpec[] ValueLists =
+        {
+            new(
+                2,
+                "Column Type",
+                new (string Label, string Value)[]
+                {
+                    ("0 · standalone", "0"),
+                    ("1 · one central point", "1"),
+                    ("2 · two points", "2"),
+                    ("3 · three points", "3"),
+                    ("4 · four points", "4"),
+                    ("5 · five points", "5"),
+                    ("6 · six points", "6")
+                },
+                "0")
+        };
+
+        private protected override IReadOnlyList<ComponentValueListSpec>
+            SuggestedValueLists => ValueLists;
+
         public ColumnFinderComponent()
             : base(
                 "Column Finder",
@@ -178,24 +199,25 @@ namespace Ananke.COMPAS.Native.Components
                 GH_ParamAccess.item,
                 3);
             parameters.AddIntegerParameter(
-                "Trees",
+                "Type",
                 "T",
-                "0 gives every arm its own straight column to the ground. Any "
-                    + "higher number gathers all the arms into that many "
-                    + "branching trees, clustered by equal load.",
+                "How the columns meet the ground. 0 stands each one on its "
+                    + "own foot; any other number is how many ground points "
+                    + "they all gather onto, so 1 is a single central point, 2 "
+                    + "is a pair, and so on.",
                 GH_ParamAccess.item,
                 0);
             parameters.AddIntegerParameter(
-                "Depth",
-                "D",
-                "How many times a tree may FORK on the way down. 0 sends every "
-                    + "arm straight to the foot as a fan; 1 pairs them once "
-                    + "and takes the pairs down; higher keeps forking until "
-                    + "one trunk is left, after which more has no effect. "
-                    + "Every arm is kept whatever the depth. Ignored when "
-                    + "Trees is 0.",
+                "Branches",
+                "B",
+                "How many internal branches sprout from each main column. Each "
+                    + "one reaches the nearest notch along its own principal "
+                    + "line that no other column has taken, so a column with 2 "
+                    + "branches carries three notches. Where they FORK is not "
+                    + "set: it is solved, as the point where the branches come "
+                    + "closest to standing on their own lines of thrust.",
                 GH_ParamAccess.item,
-                2);
+                0);
             parameters[1].Optional = true;
             parameters[2].Optional = true;
             parameters[3].Optional = true;
@@ -274,11 +296,15 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             int perLine = 3;
-            int trees = 0;
-            int depth = 2;
+            int columnType = 0;
+            int branches = 0;
             data.GetData(1, ref perLine);
-            data.GetData(2, ref trees);
-            data.GetData(3, ref depth);
+            data.GetData(2, ref columnType);
+            data.GetData(3, ref branches);
+            branches = Math.Max(branches, 0);
+            // Type 0 stands every column on its own foot; anything else IS
+            // the number of ground points they all gather onto.
+            int sharedFeet = Math.Max(columnType, 0);
             perLine = Math.Max(perLine, 2);
 
             // Stiffness cancels out of the placement, so any positive value
@@ -356,6 +382,8 @@ namespace Ananke.COMPAS.Native.Components
                 var heads = new List<Point3d>();
                 var headLoad = new List<double>();
                 var headAim = new List<Vector3d>();
+                var columnReach = new List<List<Point3d>>();
+                var columnForce = new List<List<Vector3d>>();
                 var armsPerBar = new List<int>();
                 double alongToAnchors = 0.0;
                 double acrossToColumns = 0.0;
@@ -380,13 +408,38 @@ namespace Ananke.COMPAS.Native.Components
                     armsPerBar.Add(chosen.Count);
                     Vector3d[] aim = ArmAim(bar, nodes, across, chosen, anchors);
                     plumbArms += LastPlumbFallbacks;
+
+                    // Each main column claims its branch notches: the nearest
+                    // along ITS OWN principal line that nothing else has taken.
+                    // Round by round, so a column beside a crowded neighbour is
+                    // not left with none.
+                    List<int>[] served = ClaimBranches(
+                        bar, nodes, chosen, anchors, branches);
+
                     for (int c = 0; c < chosen.Count; c++)
                     {
                         int k = chosen[c];
-                        heads.Add(nodes[bar[k]]);
-                        headLoad.Add(reactions.Length > k
+                        var reach = new List<Point3d>();
+                        var reachForce = new List<Vector3d>();
+                        double load = reactions.Length > k
                             ? Math.Max(reactions[k], 0.0)
-                            : barLoad[k]);
+                            : barLoad[k];
+                        reach.Add(nodes[bar[k]]);
+                        reachForce.Add(aim[c] * (load / Math.Max(aim[c].Z, 1e-9)));
+                        foreach (int b in served[c])
+                        {
+                            Vector3d branchAim =
+                                MouldGeometry.AimFrom(across[b]);
+                            double branchLoad = Math.Abs(across[b].Z);
+                            reach.Add(nodes[bar[b]]);
+                            reachForce.Add(branchAim *
+                                (branchLoad / Math.Max(branchAim.Z, 1e-9)));
+                            load += branchLoad;
+                        }
+                        columnReach.Add(reach);
+                        columnForce.Add(reachForce);
+                        heads.Add(nodes[bar[k]]);
+                        headLoad.Add(load);
                         headAim.Add(aim[c]);
                     }
                 }
@@ -394,63 +447,125 @@ namespace Ananke.COMPAS.Native.Components
                 var members = new List<Line>();
                 var carried = new List<double>();
                 var feet = new List<Point3d>();
-                double treeResidual = 0.0;
+                double branchOff = 0.0;
+                double trunkOff = 0.0;
 
-                if (trees <= 0)
+                // Every column: its notches, the fork solved from their
+                // forces, and a trunk down the line of what it all adds up to.
+                var trunkTop = new List<Point3d>();
+                var trunkForce = new List<Vector3d>();
+                for (int c = 0; c < columnReach.Count; c++)
                 {
-                    // Every arm its own post, standing along the line of the
-                    // force it carries rather than plumb. Where the net pulls
-                    // a notch straight down the aim IS vertical and the post
-                    // is the plumb one it always was.
-                    for (int i = 0; i < heads.Count; i++)
+                    List<Point3d> reach = columnReach[c];
+                    List<Vector3d> pushes = columnForce[c];
+                    Vector3d total = Vector3d.Zero;
+                    foreach (Vector3d push in pushes)
+                        total += push;
+
+                    Point3d fork = reach.Count > 1
+                        ? ForkPoint(reach, pushes, ground)
+                        : reach[0];
+
+                    // The branches, each from its own notch down to the fork.
+                    if (reach.Count > 1)
                     {
-                        double rise = heads[i].Z - ground;
+                        for (int r = 0; r < reach.Count; r++)
+                        {
+                            if (reach[r].DistanceTo(fork) <= 1.0e-9)
+                                continue;
+                            members.Add(new Line(fork, reach[r]));
+                            carried.Add(Math.Abs(pushes[r].Z));
+                            branchOff = Math.Max(
+                                branchOff, AngleBetween(
+                                    reach[r] - fork, pushes[r]));
+                        }
+                    }
+                    trunkTop.Add(fork);
+                    trunkForce.Add(total);
+                }
+
+                if (sharedFeet <= 0)
+                {
+                    // Standalone: every trunk drops on its own line of thrust.
+                    for (int c = 0; c < trunkTop.Count; c++)
+                    {
+                        Point3d top = trunkTop[c];
+                        double rise = top.Z - ground;
                         if (rise <= 0.0)
                             continue;
-                        Vector3d up = headAim[i];
+                        Vector3d up = MouldGeometry.AimFrom(-trunkForce[c]);
                         var foot = new Point3d(
-                            heads[i].X - (up.X * rise / up.Z),
-                            heads[i].Y - (up.Y * rise / up.Z),
+                            top.X - (up.X * rise / up.Z),
+                            top.Y - (up.Y * rise / up.Z),
                             ground);
-                        members.Add(new Line(foot, heads[i]));
-                        carried.Add(headLoad[i]);
+                        members.Add(new Line(foot, top));
+                        carried.Add(Math.Abs(trunkForce[c].Z));
                         feet.Add(foot);
                     }
                 }
                 else
                 {
-                    Forest forest = TreeBuilder.Build(
-                        heads.ToArray(), headLoad.ToArray(), headAim.ToArray(),
-                        Math.Max(trees, 1), Math.Max(depth, 0), ground);
-                    treeResidual = forest.WorstTipAngle;
-                    for (int s = 0; s < forest.Segments.Count; s++)
+                    // Shared: the trunks gather onto that many ground points,
+                    // each relaxed to where the trunks meeting it balance. The
+                    // same weighted-median rule the forks use, run on the
+                    // ground plane because a foot stands on it.
+                    int wanted = Math.Min(sharedFeet, trunkTop.Count);
+                    int[] group = GroupByPlan(trunkTop, wanted);
+                    var nodesLocal = new List<Point3d>(trunkTop);
+                    var segs = new List<(int, int)>();
+                    var flow = new List<Vector3d>(trunkForce);
+                    for (int g = 0; g < wanted; g++)
                     {
-                        (int child, int parent) = forest.Segments[s];
-                        Point3d a = forest.Points[child];
-                        Point3d b = forest.Points[parent];
-                        // Every column member runs LOWER end to UPPER end, so
-                        // that From is always the foot side and To the head
-                        // side. A tree branch is stored child to parent, which
-                        // runs the other way, and leaving it would silently
-                        // swap the meaning of foot and head the moment Trees
-                        // went above zero.
-                        members.Add(a.Z <= b.Z ? new Line(a, b) : new Line(b, a));
-                        carried.Add(forest.CarriedLoad[s]);
+                        int[] mine = Enumerable.Range(0, trunkTop.Count)
+                            .Where(i => group[i] == g).ToArray();
+                        if (mine.Length == 0)
+                            continue;
+                        double sx = 0.0;
+                        double sy = 0.0;
+                        double sw = 0.0;
+                        foreach (int i in mine)
+                        {
+                            double w = Math.Max(
+                                Math.Abs(trunkForce[i].Z), 1.0e-9);
+                            sx += trunkTop[i].X * w;
+                            sy += trunkTop[i].Y * w;
+                            sw += w;
+                        }
+                        nodesLocal.Add(new Point3d(sx / sw, sy / sw, ground));
+                        flow.Add(Vector3d.Zero);
+                        int foot = nodesLocal.Count - 1;
+                        foreach (int i in mine)
+                            segs.Add((i, foot));
                     }
-                    feet.AddRange(forest.FootIndices.Select(i => forest.Points[i]));
+                    TreeBuilder.RelaxOnGround(
+                        nodesLocal, segs, flow.ToArray(), trunkTop.Count,
+                        ground);
+                    foreach ((int child, int foot) in segs)
+                    {
+                        members.Add(new Line(
+                            nodesLocal[foot], nodesLocal[child]));
+                        carried.Add(Math.Abs(trunkForce[child].Z));
+                        trunkOff = Math.Max(
+                            trunkOff,
+                            AngleBetween(
+                                nodesLocal[child] - nodesLocal[foot],
+                                trunkForce[child]));
+                    }
+                    for (int i = trunkTop.Count; i < nodesLocal.Count; i++)
+                        feet.Add(nodesLocal[i]);
                 }
 
-                if (trees > 0 && treeResidual > 5.0)
+                if (branchOff > 5.0 || trunkOff > 5.0)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Remark,
-                        $"A tree branch meets its arm {treeResidual:0.#} "
-                            + "degrees off the line of thrust that arm carries. "
-                            + "The junctions are in equilibrium; a fixed "
-                            + "branching topology simply cannot always reach "
-                            + "every tip along its own force. That angle is "
-                            + "bending for the notch joint to take, so either "
-                            + "accept it or change Trees and Depth.");
+                        $"Members stand up to {Math.Max(branchOff, trunkOff):0.#} "
+                            + "degrees off their own line of thrust: "
+                            + $"{branchOff:0.#} on the branches, {trunkOff:0.#} "
+                            + "on the trunks. A fork can only be in one place "
+                            + "and a shared foot can only be under one point, "
+                            + "so some of this is unavoidable; what is left is "
+                            + "bending for the joints to take.");
                 }
 
                 var force = new List<double>(members.Count);
@@ -503,8 +618,8 @@ namespace Ananke.COMPAS.Native.Components
                     footPts, headPts, force)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
-                    trees, depth, ground, alongToAnchors, acrossToColumns,
-                    plumbArms));
+                    columnType, branches, ground, alongToAnchors,
+                    acrossToColumns, plumbArms));
             }
             catch (Exception ex)
             {
@@ -588,6 +703,267 @@ namespace Ananke.COMPAS.Native.Components
         /// </summary>
         private static int LastPlumbFallbacks { get; set; }
 
+        /// <summary>
+        /// Which notches each main column reaches with its internal branches:
+        /// the nearest ones along ITS OWN principal line that nothing else has
+        /// taken.
+        ///
+        /// Claimed round by round rather than column by column, so a column
+        /// standing beside a crowded neighbour is not left with none while that
+        /// neighbour takes everything within reach. Anchors are never claimed:
+        /// the ground already holds those.
+        /// </summary>
+        private static List<int>[] ClaimBranches(
+            List<int> bar,
+            Point3d[] nodes,
+            List<int> chosen,
+            HashSet<int> anchors,
+            int branches)
+        {
+            var served = new List<int>[chosen.Count];
+            for (int c = 0; c < chosen.Count; c++)
+                served[c] = new List<int>();
+            if (branches <= 0 || chosen.Count == 0)
+                return served;
+
+            var arc = new double[bar.Count];
+            for (int k = 1; k < bar.Count; k++)
+                arc[k] = arc[k - 1] + nodes[bar[k - 1]].DistanceTo(nodes[bar[k]]);
+
+            var taken = new HashSet<int>(chosen);
+            for (int k = 0; k < bar.Count; k++)
+            {
+                if (anchors.Contains(bar[k]))
+                    taken.Add(k);
+            }
+
+            for (int round = 0; round < branches; round++)
+            {
+                for (int c = 0; c < chosen.Count; c++)
+                {
+                    int best = -1;
+                    double closest = double.MaxValue;
+                    for (int k = 0; k < bar.Count; k++)
+                    {
+                        if (taken.Contains(k))
+                            continue;
+                        double gap = Math.Abs(arc[k] - arc[chosen[c]]);
+                        if (gap < closest)
+                        {
+                            closest = gap;
+                            best = k;
+                        }
+                    }
+                    if (best < 0)
+                        return served;
+                    served[c].Add(best);
+                    taken.Add(best);
+                }
+            }
+            return served;
+        }
+
+        /// <summary>
+        /// Where a column forks, solved from the forces rather than set.
+        ///
+        /// Each notch the column reaches wants its branch to run along its own
+        /// line of thrust, which puts the fork somewhere on the ray dropping
+        /// from that notch along that line. With more than one notch those rays
+        /// do not meet in general, so the fork goes where they come CLOSEST:
+        /// the point minimising the force-weighted squared distance to every
+        /// ray at once. That is a three-by-three solve, and it is what makes
+        /// the fork height a consequence of the load rather than a number
+        /// somebody picked.
+        ///
+        /// A branch that pulls its notch DOWN has no thrust line to stand on,
+        /// so it contributes as a plumb one, which is the same fallback the
+        /// arms use.
+        /// </summary>
+        private static Point3d ForkPoint(
+            List<Point3d> reach,
+            List<Vector3d> pushes,
+            double ground)
+        {
+            // Sum of w * (I - d d^T) for each ray, and the matching right side.
+            var a = new double[3, 3];
+            var rhs = new double[3];
+            for (int i = 0; i < reach.Count; i++)
+            {
+                Vector3d push = pushes[i];
+                double weight = push.Length;
+                if (weight <= 1.0e-12)
+                    continue;
+                Vector3d d = MouldGeometry.AimFrom(-push);
+                double[] u = { d.X, d.Y, d.Z };
+                double[] p = { reach[i].X, reach[i].Y, reach[i].Z };
+                for (int r = 0; r < 3; r++)
+                {
+                    for (int s = 0; s < 3; s++)
+                    {
+                        double m = (r == s ? 1.0 : 0.0) - (u[r] * u[s]);
+                        a[r, s] += weight * m;
+                        rhs[r] += weight * m * p[s];
+                    }
+                }
+            }
+
+            if (!Solve3(a, rhs, out double x, out double y, out double z))
+            {
+                // Degenerate, which means every branch is parallel: the rays
+                // never converge, so drop straight below the load centre.
+                double sw = 0.0;
+                double sx = 0.0;
+                double sy = 0.0;
+                double lowest = double.MaxValue;
+                for (int i = 0; i < reach.Count; i++)
+                {
+                    double w = Math.Max(pushes[i].Length, 1.0e-9);
+                    sx += reach[i].X * w;
+                    sy += reach[i].Y * w;
+                    sw += w;
+                    lowest = Math.Min(lowest, reach[i].Z);
+                }
+                return new Point3d(sx / sw, sy / sw, lowest);
+            }
+
+            // A fork stands UNDER the notches it carries and ABOVE the floor.
+            double ceiling = reach.Min(p => p.Z);
+            return new Point3d(
+                x, y, Math.Min(Math.Max(z, ground), ceiling));
+        }
+
+        /// <summary>Gaussian elimination on three unknowns.</summary>
+        private static bool Solve3(
+            double[,] a, double[] b, out double x, out double y, out double z)
+        {
+            x = 0.0;
+            y = 0.0;
+            z = 0.0;
+            var m = new double[3, 4];
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 3; c++)
+                    m[r, c] = a[r, c];
+                m[r, 3] = b[r];
+            }
+            for (int col = 0; col < 3; col++)
+            {
+                int pivot = col;
+                for (int r = col + 1; r < 3; r++)
+                {
+                    if (Math.Abs(m[r, col]) > Math.Abs(m[pivot, col]))
+                        pivot = r;
+                }
+                if (Math.Abs(m[pivot, col]) < 1.0e-9)
+                    return false;
+                if (pivot != col)
+                {
+                    for (int c = 0; c < 4; c++)
+                        (m[col, c], m[pivot, c]) = (m[pivot, c], m[col, c]);
+                }
+                for (int r = 0; r < 3; r++)
+                {
+                    if (r == col)
+                        continue;
+                    double factor = m[r, col] / m[col, col];
+                    for (int c = col; c < 4; c++)
+                        m[r, c] -= factor * m[col, c];
+                }
+            }
+            x = m[0, 3] / m[0, 0];
+            y = m[1, 3] / m[1, 1];
+            z = m[2, 3] / m[2, 2];
+            return true;
+        }
+
+        /// <summary>
+        /// Split the columns into that many groups by where they stand in plan,
+        /// so a shared foot gathers the ones actually near it. Furthest-first
+        /// seeds then nearest assignment, the same shape the old clustering
+        /// used, kept because it is deterministic.
+        /// </summary>
+        private static int[] GroupByPlan(List<Point3d> points, int groups)
+        {
+            var label = new int[points.Count];
+            if (groups <= 1 || points.Count == 0)
+                return label;
+
+            var seeds = new List<int> { 0 };
+            while (seeds.Count < groups && seeds.Count < points.Count)
+            {
+                int best = 0;
+                double furthest = -1.0;
+                for (int i = 0; i < points.Count; i++)
+                {
+                    double nearest = seeds.Min(
+                        s => MouldGeometry.PlanDistanceSquared(
+                            points[i], points[s]));
+                    if (nearest > furthest)
+                    {
+                        furthest = nearest;
+                        best = i;
+                    }
+                }
+                seeds.Add(best);
+            }
+
+            for (int pass = 0; pass < 30; pass++)
+            {
+                for (int i = 0; i < points.Count; i++)
+                {
+                    int best = 0;
+                    double closest = double.MaxValue;
+                    for (int g = 0; g < seeds.Count; g++)
+                    {
+                        double d = MouldGeometry.PlanDistanceSquared(
+                            points[i], points[seeds[g]]);
+                        if (d < closest)
+                        {
+                            closest = d;
+                            best = g;
+                        }
+                    }
+                    label[i] = best;
+                }
+                bool moved = false;
+                for (int g = 0; g < seeds.Count; g++)
+                {
+                    int[] mine = Enumerable.Range(0, points.Count)
+                        .Where(i => label[i] == g).ToArray();
+                    if (mine.Length == 0)
+                        continue;
+                    double cx = mine.Average(i => points[i].X);
+                    double cy = mine.Average(i => points[i].Y);
+                    int centre = mine
+                        .OrderBy(i =>
+                            ((points[i].X - cx) * (points[i].X - cx)) +
+                            ((points[i].Y - cy) * (points[i].Y - cy)))
+                        .First();
+                    if (centre != seeds[g])
+                    {
+                        seeds[g] = centre;
+                        moved = true;
+                    }
+                }
+                if (!moved)
+                    break;
+            }
+            return label;
+        }
+
+        /// <summary>The angle between two vectors, in degrees.</summary>
+        private static double AngleBetween(Vector3d a, Vector3d b)
+        {
+            double la = a.Length;
+            double lb = b.Length;
+            if (la <= 1.0e-12 || lb <= 1.0e-12)
+                return 0.0;
+            double cosine =
+                ((a.X * b.X) + (a.Y * b.Y) + (a.Z * b.Z)) / (la * lb);
+            cosine = Math.Min(Math.Max(cosine, -1.0), 1.0);
+            return Math.Acos(cosine) * 180.0 / Math.PI;
+        }
+
         private static string Report(
             List<List<int>> bars,
             List<int> armsPerBar,
@@ -596,8 +972,8 @@ namespace Ananke.COMPAS.Native.Components
             List<double> force,
             List<double> angle,
             List<Point3d> feet,
-            int trees,
-            int depth,
+            int columnType,
+            int branches,
             double ground,
             double alongToAnchors,
             double acrossToColumns,
@@ -638,11 +1014,18 @@ namespace Ananke.COMPAS.Native.Components
                         + "is ALL of them, the aiming is not working.");
             }
 
-            lines.Add(trees <= 0
-                ? "Trees 0: every arm drops straight to its own foot."
-                : $"Trees {trees} at depth {depth}: the arms are gathered into "
-                    + "branching trees clustered by equal load, so the feet are "
-                    + "fewer than the arms.");
+            lines.Add(columnType <= 0
+                ? "Type 0: every column stands on its own foot, on the line of "
+                    + "the force it carries."
+                : $"Type {columnType}: the columns gather onto {columnType} "
+                    + "ground point(s), each settled where the trunks meeting "
+                    + "it balance.");
+            lines.Add(branches <= 0
+                ? "Branches 0: each column carries only its own notch."
+                : $"Branches {branches}: each column reaches {branches} further "
+                    + "notch(es) along its own principal line, and forks where "
+                    + "those branches come closest to standing on their own "
+                    + "lines of thrust. That height is SOLVED, not set.");
 
             if (headLoad.Count > 0)
                 lines.Add($"arm load {headLoad.Min():0} to {headLoad.Max():0} N");
@@ -954,366 +1337,25 @@ namespace Ananke.COMPAS.Native.Components
         }
     }
 
-    internal sealed class Forest
-    {
-        public List<Point3d> Points { get; } = new();
-
-        public List<(int Child, int Parent)> Segments { get; } = new();
-
-        public List<double> CarriedLoad { get; } = new();
-
-        public List<int> FootIndices { get; } = new();
-
-        /// <summary>
-        /// The worst angle, in degrees, between a tip member and the force that
-        /// tip actually hands the tree. Zero means every arm meets its tree
-        /// along its own line of thrust. A fixed topology cannot always reach
-        /// zero, and what is left is bending the notch joint has to take, so it
-        /// is reported rather than hidden.
-        /// </summary>
-        public double WorstTipAngle { get; set; }
-    }
-
-    /// <summary>
-    /// Branching tree columns in the Frei Otto manner, ported from
-    /// tools/tree_forest/core.py, which stays the tested source. Points are
-    /// clustered into trees of roughly equal load, a foot is dropped at each
-    /// cluster's load-weighted centroid, the cluster is merged into a binary
-    /// branching topology by repeatedly joining the nearest pair, and load is
-    /// accumulated up the tree. Deterministic, so the same input always draws
-    /// the same trees.
-    /// </summary>
     internal static class TreeBuilder
     {
-        public static Forest Build(
-            Point3d[] heads,
-            double[] load,
-            Vector3d[] aim,
-            int trees,
-            int depth,
+        public static void RelaxOnGround(
+            List<Point3d> nodes,
+            List<(int, int)> segments,
+            Vector3d[] flow,
+            int fixedCount,
             double ground)
         {
-            var forest = new Forest();
-            if (heads.Length == 0)
-                return forest;
-
-            trees = Math.Max(1, Math.Min(trees, heads.Length));
-            int[] labels = EqualLoadClusters(heads, load, trees);
-            Point3d[] feet = ClusterFeet(heads, load, labels, ground, trees);
-
-            for (int c = 0; c < trees; c++)
+            // The trunks' own forces are the weights; a foot carries whatever
+            // reaches it, so its own entry stays empty and is never read as a
+            // child.
+            RelaxToForces(nodes, segments, flow, fixedCount, -1, ground);
+            for (int i = fixedCount; i < nodes.Count; i++)
             {
-                int[] members = Enumerable.Range(0, heads.Length)
-                    .Where(i => labels[i] == c).ToArray();
-                if (members.Length == 0)
-                    continue;
-
-                // EVERY arm is a tip. They were being aggregated down to two
-                // to the power of Depth first, which threw away arm positions
-                // the beam solve had just worked out: a low Depth silently
-                // merged most of the arms away instead of branching less.
-                Point3d[] tips = members.Select(i => heads[i]).ToArray();
-
-                // The force each arm hands the tree: its own aim, scaled so the
-                // vertical component is the load that arm carries. This is what
-                // makes the tree a force problem rather than a spacing one.
-                Vector3d[] tipF = members
-                    .Select(i => aim[i] * (load[i] / Math.Max(aim[i].Z, 1.0e-9)))
-                    .ToArray();
-
-                (Point3d[] junctions, List<(int, int)> segs, List<int> roots) =
-                    MergeTopology(tips, depth);
-
-                var local = new List<Point3d>(tips);
-                local.AddRange(junctions);
-                local.Add(feet[c]);
-                int footLocal = local.Count - 1;
-                foreach (int root in roots)
-                    segs.Add((root, footLocal));
-
-                Vector3d[] flow = AccumulateForces(segs, tipF, local.Count);
-                RelaxToForces(local, segs, flow, tips.Length, footLocal, ground);
-                forest.WorstTipAngle = Math.Max(
-                    forest.WorstTipAngle,
-                    WorstTipDeviation(local, segs, tipF, tips.Length));
-
-                // Vertical share of the force flowing up each member, so the
-                // axial force downstream is still this over the lean's cosine.
-                var carried = new double[segs.Count];
-                for (int s = 0; s < segs.Count; s++)
-                    carried[s] = flow[segs[s].Item1].Z;
-                int baseIndex = forest.Points.Count;
-                forest.Points.AddRange(local);
-                for (int s = 0; s < segs.Count; s++)
-                {
-                    forest.Segments.Add(
-                        (segs[s].Item1 + baseIndex, segs[s].Item2 + baseIndex));
-                    forest.CarriedLoad.Add(carried[s]);
-                }
-                forest.FootIndices.Add(baseIndex + footLocal);
-            }
-            return forest;
-        }
-
-        private static int[] EqualLoadClusters(Point3d[] xy, double[] w, int k)
-        {
-            int n = xy.Length;
-            var labels = new int[n];
-            if (n == 0 || k <= 1)
-                return labels;
-
-            var seeds = new List<int> { ArgMax(w) };
-            for (int c = 1; c < k; c++)
-            {
-                int best = 0;
-                double bestDistance = -1.0;
-                for (int i = 0; i < n; i++)
-                {
-                    double nearest = seeds.Min(s => Plan2(xy[i], xy[s]));
-                    if (nearest > bestDistance)
-                    {
-                        bestDistance = nearest;
-                        best = i;
-                    }
-                }
-                seeds.Add(best);
-            }
-            var centroid = seeds.Select(s => new Point2d(xy[s].X, xy[s].Y)).ToArray();
-
-            for (int it = 0; it < 50; it++)
-            {
-                var updated = new int[n];
-                for (int i = 0; i < n; i++)
-                {
-                    int best = 0;
-                    double bestDistance = double.MaxValue;
-                    for (int c = 0; c < k; c++)
-                    {
-                        double d = Plan2(xy[i], centroid[c]);
-                        if (d < bestDistance)
-                        {
-                            bestDistance = d;
-                            best = c;
-                        }
-                    }
-                    updated[i] = best;
-                }
-                bool same = it > 0 && updated.SequenceEqual(labels);
-                labels = updated;
-                if (same)
-                    break;
-                Recentre(xy, w, labels, centroid, k);
-            }
-
-            for (int pass = 0; pass < 200; pass++)
-            {
-                var loads = new double[k];
-                for (int i = 0; i < n; i++)
-                    loads[labels[i]] += w[i];
-                int hi = ArgMax(loads);
-                int lo = ArgMin(loads);
-                if (loads[hi] - loads[lo] < 1e-9)
-                    break;
-                int[] members = Enumerable.Range(0, n)
-                    .Where(i => labels[i] == hi).ToArray();
-                if (members.Length <= 1)
-                    break;
-                int move = members.OrderBy(i => Plan2(xy[i], centroid[lo])).First();
-                if (loads[lo] + w[move] >= loads[hi] - 1e-9)
-                    break;
-                labels[move] = lo;
-                Recentre(xy, w, labels, centroid, k);
-            }
-            return labels;
-        }
-
-        private static void Recentre(
-            Point3d[] xy, double[] w, int[] labels, Point2d[] centroid, int k)
-        {
-            for (int c = 0; c < k; c++)
-            {
-                double sx = 0.0;
-                double sy = 0.0;
-                double sw = 0.0;
-                for (int i = 0; i < xy.Length; i++)
-                {
-                    if (labels[i] != c)
-                        continue;
-                    sx += xy[i].X * w[i];
-                    sy += xy[i].Y * w[i];
-                    sw += w[i];
-                }
-                if (sw > 0.0)
-                    centroid[c] = new Point2d(sx / sw, sy / sw);
+                nodes[i] = new Point3d(nodes[i].X, nodes[i].Y, ground);
             }
         }
 
-        private static Point3d[] ClusterFeet(
-            Point3d[] xy, double[] w, int[] labels, double ground, int k)
-        {
-            var feet = new Point3d[k];
-            for (int c = 0; c < k; c++)
-            {
-                double sx = 0.0;
-                double sy = 0.0;
-                double sw = 0.0;
-                for (int i = 0; i < xy.Length; i++)
-                {
-                    if (labels[i] != c)
-                        continue;
-                    sx += xy[i].X * w[i];
-                    sy += xy[i].Y * w[i];
-                    sw += w[i];
-                }
-                feet[c] = sw > 0.0
-                    ? new Point3d(sx / sw, sy / sw, ground)
-                    : new Point3d(0.0, 0.0, ground);
-            }
-            return feet;
-        }
-
-        /// <summary>
-        /// Gather the arms into a branching tree, forking at most
-        /// <paramref name="depth"/> times on the way down.
-        ///
-        /// Depth counts LEVELS OF FORK, which is the thing an author is
-        /// actually choosing, and every arm is kept whatever it is set to. It
-        /// used to cap the number of TIPS at two to the power of Depth, which
-        /// aggregated arms away: a low Depth did not branch less, it silently
-        /// merged most of the arms the beam solve had just placed, and 0 and 1
-        /// collapsed nearly everything into one or two posts.
-        ///
-        /// So 0 forks nothing and every arm runs to the foot as a fan; 1 pairs
-        /// them once; higher keeps forking until one trunk is left, past which
-        /// more has no effect. Whatever is still unmerged when the depth runs
-        /// out becomes a root and goes to the foot.
-        /// </summary>
-        private static (Point3d[], List<(int, int)>, List<int>) MergeTopology(
-            Point3d[] tips, int depth)
-        {
-            int t = tips.Length;
-            var segments = new List<(int, int)>();
-            var active = Enumerable.Range(0, t).ToList();
-            if (t <= 1 || depth <= 0)
-                return (Array.Empty<Point3d>(), segments, active);
-
-            var position = new Dictionary<int, Point3d>();
-            var level = new Dictionary<int, int>();
-            for (int i = 0; i < t; i++)
-            {
-                position[i] = tips[i];
-                level[i] = 0;
-            }
-            int next = t;
-
-            while (active.Count > 1)
-            {
-                int ai = -1;
-                int bi = -1;
-                double best = double.MaxValue;
-                for (int i = 0; i < active.Count; i++)
-                {
-                    for (int j = i + 1; j < active.Count; j++)
-                    {
-                        // A merge adds a level; refuse the ones that would
-                        // fork deeper than asked.
-                        if (Math.Max(level[active[i]], level[active[j]]) + 1
-                            > depth)
-                        {
-                            continue;
-                        }
-                        double d = position[active[i]]
-                            .DistanceToSquared(position[active[j]]);
-                        if (d < best)
-                        {
-                            best = d;
-                            ai = i;
-                            bi = j;
-                        }
-                    }
-                }
-                if (ai < 0)
-                    break;      // nothing left that may fork again
-                int a = active[ai];
-                int b = active[bi];
-                position[next] = new Point3d(
-                    (position[a].X + position[b].X) / 2.0,
-                    (position[a].Y + position[b].Y) / 2.0,
-                    (position[a].Z + position[b].Z) / 2.0);
-                level[next] = Math.Max(level[a], level[b]) + 1;
-                segments.Add((a, next));
-                segments.Add((b, next));
-                active.RemoveAt(bi);
-                active.RemoveAt(ai);
-                active.Add(next);
-                next++;
-            }
-
-            var junctions = new Point3d[next - t];
-            for (int i = t; i < next; i++)
-                junctions[i - t] = position[i];
-            return (junctions, segments, active);
-        }
-
-        /// <summary>
-        /// The force flowing up out of every node, summed from the tips.
-        ///
-        /// Deliberately a VECTOR sum. In a tree in equilibrium the force in a
-        /// parent member is the vector sum of its children's, so these totals
-        /// are fixed by the tip forces alone and do not depend on where the
-        /// junctions end up. That is what lets the relaxation below use them as
-        /// weights and still be a plain weighted median rather than a fixed
-        /// point chasing its own geometry.
-        /// </summary>
-        private static Vector3d[] AccumulateForces(
-            List<(int, int)> segments,
-            Vector3d[] tipForce,
-            int nodeCount)
-        {
-            var total = new Vector3d[nodeCount];
-            for (int i = 0; i < tipForce.Length && i < nodeCount; i++)
-                total[i] = tipForce[i];
-
-            var parent = new Dictionary<int, int>();
-            foreach ((int child, int up) in segments)
-                parent[child] = up;
-
-            // Valid as a single forward pass because every parent id exceeds
-            // its children's, by construction in MergeTopology.
-            for (int id = 0; id < nodeCount; id++)
-            {
-                if (parent.TryGetValue(id, out int up))
-                    total[up] += total[id];
-            }
-            return total;
-        }
-
-        /// <summary>
-        /// Move every junction to where the forces meeting it balance.
-        ///
-        /// They were being put at the plain MIDPOINT of the two nodes they
-        /// merged. A midpoint carries no forces at all: it is in equilibrium
-        /// only when its two branches happen to be symmetric and equally
-        /// loaded, and everything else was bending the tree.
-        ///
-        /// What a junction has to satisfy is that the member forces meeting it
-        /// sum to zero. For a fixed topology the position that does it is the
-        /// FORCE-WEIGHTED Fermat point: the minimum of sum(f * |x - p|), whose
-        /// stationary condition is exactly sum(f * unit(x - p)) = 0. Solved by
-        /// weighted Weiszfeld iteration one node at a time, which is the same
-        /// cyclic coordinate descent tools/tree_forest/steiner.py runs.
-        ///
-        /// FREI OTTO'S 120 DEGREES IS THE EQUAL-FORCE CASE OF THIS. Three
-        /// members of equal force can only balance at 120 degrees apart, and
-        /// the UNWEIGHTED geometric median finds exactly that; steiner.py says
-        /// as much, and says in the same breath that it applies no loads.
-        /// Weighting by the real forces is the general rule that 120 degrees is
-        /// one corner of, which is why the branches of a genuinely loaded tree
-        /// do not come out at 120 and should not be made to.
-        ///
-        /// The foot stays ON the ground but slides across it, which is the
-        /// freedom this machine actually has.
-        /// </summary>
         private static void RelaxToForces(
             List<Point3d> nodes,
             List<(int, int)> segments,
@@ -1366,67 +1408,6 @@ namespace Ananke.COMPAS.Native.Components
                 if (shifted < 1.0e-9)
                     break;
             }
-        }
-
-        /// <summary>
-        /// How far each tip member ends up off the force its arm hands the
-        /// tree, worst case in degrees. A branching topology fixed in advance
-        /// cannot always reach every tip along its own line of thrust, and what
-        /// is left over is bending at the notch joint. Measured and reported
-        /// rather than assumed away.
-        /// </summary>
-        private static double WorstTipDeviation(
-            List<Point3d> nodes,
-            List<(int, int)> segments,
-            Vector3d[] tipForce,
-            int tipCount)
-        {
-            double worst = 0.0;
-            foreach ((int child, int up) in segments)
-            {
-                if (child >= tipCount || child >= tipForce.Length)
-                    continue;
-                Vector3d wanted = tipForce[child];
-                Vector3d actual = nodes[up] - nodes[child];
-                double a = wanted.Length;
-                double b = actual.Length;
-                if (a <= 1.0e-12 || b <= 1.0e-12)
-                    continue;
-                double cosine = ((wanted.X * actual.X) + (wanted.Y * actual.Y)
-                    + (wanted.Z * actual.Z)) / (a * b);
-                cosine = Math.Min(Math.Max(cosine, -1.0), 1.0);
-                worst = Math.Max(
-                    worst, Math.Acos(cosine) * 180.0 / Math.PI);
-            }
-            return worst;
-        }
-
-        private static double Plan2(Point3d a, Point3d b) =>
-            ((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y));
-
-        private static double Plan2(Point3d a, Point2d b) =>
-            ((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y));
-
-        private static int ArgMax(double[] values)
-        {
-            int best = 0;
-            for (int i = 1; i < values.Length; i++)
-            {
-                if (values[i] > values[best])
-                    best = i;
-            }
-            return best;
-        }
-
-        private static int ArgMin(double[] values)
-        {
-            int best = 0;
-            for (int i = 1; i < values.Length; i++)
-            {
-                if (values[i] < values[best])
-                    best = i;
-            }
-            return best;
         }
     }
 }

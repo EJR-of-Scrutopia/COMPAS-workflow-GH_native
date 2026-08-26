@@ -511,18 +511,18 @@ internal static class Program
 
         try
         {
-            ValidateTreeDepth(plugin);
+            ValidateForkPoint(plugin);
             Console.WriteLine(
-                "PASS  TreeBuilder.MergeTopology: Depth counts FORKS and loses "
-                + "no arms. Eight arms give 0 junctions and 8 roots at depth 0, "
-                + "4 and 4 at depth 1, 6 and 2 at depth 2, 7 and 1 at depth 3, "
-                + "and saturate there; every arm is still a leaf at every "
-                + "depth, which the old tip-capping rule could not say.");
+                "PASS  ColumnFinder.ForkPoint: two branches whose thrust lines "
+                + "cross fork exactly where they cross, so the fork HEIGHT is "
+                + "a consequence of the load; two plumb branches, whose lines "
+                + "never meet, fall back to the load-weighted centre at the "
+                + "lower notch instead of solving a singular system.");
         }
         catch (Exception exception)
         {
             failures.Add(
-                $"TreeBuilder.MergeTopology: {DescribeException(exception)}");
+                $"ColumnFinder.ForkPoint: {DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -1949,104 +1949,86 @@ internal static class Program
     }
 
     /// <summary>
-    /// <c>TreeBuilder.MergeTopology</c>: what Depth means, and that no arm is
-    /// ever lost to it.
+    /// <c>ColumnFinderComponent.ForkPoint</c>: where a branching column forks,
+    /// which is now solved from the load rather than set by a Depth number.
     ///
-    /// It used to cap the number of TIPS at two to the power of Depth. That
-    /// reads like a depth control and is not one: the tips ARE the arms, so a
-    /// low Depth did not branch less, it threw away arm positions the beam
-    /// solve had just worked out. Depth 0 aggregated every arm on a bar into a
-    /// single post and Depth 1 into two, which is why the low numbers behaved
-    /// so badly.
+    /// Each notch a column reaches wants its branch to run along its own line
+    /// of thrust, which puts the fork somewhere on the ray dropping from that
+    /// notch along that line. Two such rays that CROSS have an exact answer,
+    /// and the solve must find it: two notches at (-1, 0, 2) and (1, 0, 2)
+    /// leaning inward at forty-five degrees cross at (0, 0, 1), a metre below
+    /// them. That single number is the whole claim that fork height follows
+    /// from force.
     ///
-    /// Depth now counts LEVELS OF FORK, which is the thing an author is
-    /// choosing, and every arm stays a leaf. Eight arms in a row:
-    ///
-    ///   depth 0   no fork at all, 8 roots straight to the foot: a fan
-    ///   depth 1   4 pairs, 4 roots
-    ///   depth 2   those pairs pair, 2 roots
-    ///   depth 3   one trunk
-    ///   depth 9   the same as 3; past a full binary tree there is nothing
-    ///             left to merge, so it saturates instead of misbehaving
-    ///
-    /// The junction counts follow from that, and the last assertion is the one
-    /// that matters most: at every depth all eight arms are still leaves.
+    /// Two PLUMB branches never cross, and the three-by-three system for them
+    /// is singular. That is not an error, it is the case where branching buys
+    /// nothing, so it must fall back rather than solve: to the load-weighted
+    /// centre in plan at the lower of the notches. Checked with an uneven
+    /// three-to-one load so the weighting is measured and not just the
+    /// midpoint.
     /// </summary>
-    private static void ValidateTreeDepth(Assembly plugin)
+    private static void ValidateForkPoint(Assembly plugin)
     {
-        Type builder = plugin.GetType(
-            "Ananke.COMPAS.Native.Components.TreeBuilder", throwOnError: true)
-            ?? throw new InvalidOperationException("TreeBuilder not found.");
-        MethodInfo merge = RequireStatic(builder, "MergeTopology");
-        Type point3d = merge.GetParameters()[0].ParameterType.GetElementType()
-            ?? throw new InvalidOperationException(
-                "MergeTopology' tips parameter is not an array.");
+        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
+        MethodInfo fork = RequireStatic(finder, "ForkPoint");
+        Type listOfPoints = fork.GetParameters()[0].ParameterType;
+        Type point3d = listOfPoints.GetGenericArguments()[0];
+        Type listOfVectors = fork.GetParameters()[1].ParameterType;
+        Type vector3d = listOfVectors.GetGenericArguments()[0];
 
-        const int count = 8;
-        Array tips = Array.CreateInstance(point3d, count);
-        for (int index = 0; index < count; index++)
+        (double X, double Y, double Z) Crossing(
+            (double, double, double)[] notches,
+            (double, double, double)[] pushes)
         {
-            tips.SetValue(
-                Activator.CreateInstance(point3d, (double)index, 0.0, 1.0),
-                index);
+            object reach = Activator.CreateInstance(listOfPoints)!;
+            MethodInfo addPoint = listOfPoints.GetMethod("Add")!;
+            foreach ((double x, double y, double z) in notches)
+            {
+                addPoint.Invoke(
+                    reach, new[] { Activator.CreateInstance(point3d, x, y, z) });
+            }
+            object force = Activator.CreateInstance(listOfVectors)!;
+            MethodInfo addVector = listOfVectors.GetMethod("Add")!;
+            foreach ((double x, double y, double z) in pushes)
+            {
+                addVector.Invoke(
+                    force, new[] { Activator.CreateInstance(vector3d, x, y, z) });
+            }
+            object at = fork.Invoke(null, new object?[] { reach, force, 0.0 })!;
+            return (
+                (double)point3d.GetProperty("X")!.GetValue(at)!,
+                (double)point3d.GetProperty("Y")!.GetValue(at)!,
+                (double)point3d.GetProperty("Z")!.GetValue(at)!);
         }
 
-        var expected = new (int Depth, int Junctions, int Roots)[]
+        // The aim points UP the column, so a branch reaching down and to the
+        // right from the left notch aims up and to the left.
+        double half = Math.Sqrt(0.5);
+        (double x, double y, double z) crossed = Crossing(
+            new[] { (-1.0, 0.0, 2.0), (1.0, 0.0, 2.0) },
+            new[] { (-half, 0.0, half), (half, 0.0, half) });
+        if (Math.Abs(crossed.x) > 1.0e-9 ||
+            Math.Abs(crossed.y) > 1.0e-9 ||
+            Math.Abs(crossed.z - 1.0) > 1.0e-9)
         {
-            (0, 0, 8),
-            (1, 4, 4),
-            (2, 6, 2),
-            (3, 7, 1),
-            (9, 7, 1),
-        };
+            throw new InvalidOperationException(
+                "Two branches leaning in at forty-five degrees from (-1,0,2) "
+                + "and (1,0,2) cross at (0,0,1); the fork went to ("
+                + $"{crossed.x:G6}, {crossed.y:G6}, {crossed.z:G6}). The fork "
+                + "height has to be the crossing, not a chosen depth.");
+        }
 
-        foreach ((int depth, int wantJunctions, int wantRoots) in expected)
+        (double x, double y, double z) parallel = Crossing(
+            new[] { (-1.0, 0.0, 2.0), (1.0, 0.0, 2.0) },
+            new[] { (0.0, 0.0, 3.0), (0.0, 0.0, 1.0) });
+        if (Math.Abs(parallel.x + 0.5) > 1.0e-9 ||
+            Math.Abs(parallel.y) > 1.0e-9 ||
+            Math.Abs(parallel.z - 2.0) > 1.0e-9)
         {
-            object result = merge.Invoke(null, new object?[] { tips, depth })
-                ?? throw new InvalidOperationException(
-                    "MergeTopology returned null.");
-            Type shape = result.GetType();
-            var junctions = (Array)shape.GetField("Item1")!.GetValue(result)!;
-            var segments = (IEnumerable)shape.GetField("Item2")!.GetValue(result)!;
-            var roots = (IEnumerable)shape.GetField("Item3")!.GetValue(result)!;
-
-            int rootCount = roots.Cast<int>().Count();
-            if (junctions.Length != wantJunctions || rootCount != wantRoots)
-            {
-                throw new InvalidOperationException(
-                    $"At depth {depth}, {count} arms must give "
-                    + $"{wantJunctions} junctions and {wantRoots} roots; they "
-                    + $"gave {junctions.Length} and {rootCount}.");
-            }
-
-            // Every arm still a leaf: it is either a root of its own or the
-            // child of exactly one segment, and never a parent.
-            var parents = new HashSet<int>();
-            var children = new HashSet<int>();
-            foreach (object pair in segments)
-            {
-                Type edge = pair.GetType();
-                children.Add((int)edge.GetField("Item1")!.GetValue(pair)!);
-                parents.Add((int)edge.GetField("Item2")!.GetValue(pair)!);
-            }
-            var rootSet = new HashSet<int>(roots.Cast<int>());
-            for (int arm = 0; arm < count; arm++)
-            {
-                if (parents.Contains(arm))
-                {
-                    throw new InvalidOperationException(
-                        $"At depth {depth}, arm {arm} is carrying another "
-                        + "member. An arm is a leaf; only a junction forks.");
-                }
-                if (!children.Contains(arm) && !rootSet.Contains(arm))
-                {
-                    throw new InvalidOperationException(
-                        $"At depth {depth}, arm {arm} vanished: it is neither "
-                        + "joined to a junction nor a root of its own. Depth "
-                        + "must change how the arms gather, never how many "
-                        + "there are.");
-                }
-            }
+            throw new InvalidOperationException(
+                "Two PLUMB branches never cross, so a three-to-one load must "
+                + "fall back to the weighted centre (-0.5, 0, 2); it went to ("
+                + $"{parallel.x:G6}, {parallel.y:G6}, {parallel.z:G6}).");
         }
     }
 
