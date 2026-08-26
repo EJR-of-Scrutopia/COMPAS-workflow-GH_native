@@ -78,6 +78,19 @@ public sealed class TnaRelaxComponent :
             "Target unsupported-boundary rise/span in percent.",
             GH_ParamAccess.item,
             10.0);
+        parameters.AddPointParameter(
+            "Fixed Plan Points",
+            "Fix",
+            "Optional plan-only anchors: nodes held in place while the " +
+            "boundary relaxes, WITHOUT becoming structural supports. An " +
+            "oculus rim belongs here rather than on Supports. Held in plan, " +
+            "the ring keeps its shape at any sag; left off the support set, " +
+            "its height stays free for the vertical solve, so the opening " +
+            "floats at the crown instead of being pinned to the springing " +
+            "plane.",
+            GH_ParamAccess.list);
+        parameters[3].Optional = true;
+        parameters[3].DataMapping = GH_DataMapping.Flatten;
     }
 
     protected override void RegisterOutputParams(
@@ -317,6 +330,8 @@ public sealed class TnaRelaxComponent :
         }
         data.GetData(1, ref q);
         data.GetData(2, ref sagPercent);
+        var fixedPoints = new List<Point3d>();
+        data.GetDataList(3, fixedPoints);
 
         var errors = new List<string>(value.Validate());
         if (!double.IsFinite(q) || q <= 0.0)
@@ -341,6 +356,34 @@ public sealed class TnaRelaxComponent :
         // and Anchored.Pattern.Topology are all present.
         TnaPatternDto sourcePattern = value.Anchored!.Pattern!;
         TopologyDto topology = sourcePattern.Topology!;
+        // Plan-fixed nodes are held by prepare_tna_problem's ``held_always``
+        // set, which is the union of the supports and the fixed-plan keys.
+        // Being in that set only stops the boundary relaxation's apron from
+        // recruiting them; it never marks them ``is_support``, so
+        // FormDiagram.update_boundaries still takes its zero-support branch
+        // for an unanchored hole and the vertical solve is free to lift the
+        // rim. That distinction is the whole point of this input.
+        int[] fixedNodeIds = Array.Empty<int>();
+        if (fixedPoints.Count > 0)
+        {
+            try
+            {
+                SnappedTargets snappedFixed = TopologyTargets.Resolve(
+                    topology,
+                    fixedPoints,
+                    value.Anchored.SnapTolerance,
+                    "Fixed plan point");
+                fixedNodeIds = snappedFixed.NodeIds.Distinct().ToArray();
+            }
+            catch (Exception error)
+            {
+                Message = "Invalid";
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    "Fixed Plan Points failed: " + error.Message);
+                return false;
+            }
+        }
         var supportSet = new SupportSetDto
         {
             TopologyHash = topology.TopologyHash,
@@ -365,7 +408,7 @@ public sealed class TnaRelaxComponent :
             BoundarySag = sagPercent / 100.0,
             SagIterations = 50,
             SagTolerance = 0.01,
-            FixedNodeIds = Array.Empty<int>(),
+            FixedNodeIds = fixedNodeIds,
             Metadata = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
