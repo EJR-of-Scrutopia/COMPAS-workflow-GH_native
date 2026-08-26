@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Rhino.Display;
 using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components
@@ -28,8 +30,15 @@ namespace Ananke.COMPAS.Native.Components
     ///   relief  what the steppers must reel on top of it to reach the Result.
     ///           This carries the SAG.
     ///
-    /// A frame is z = ground + height * (bare - ground) + sag * relief, with
-    /// height and sag driven by Time through three phases.
+    /// The net starts as the ORIGINAL PATTERN, read back up the chain from the
+    /// Result through its Problem's topology, so frame zero is the flat plan
+    /// the whole thing was drawn from rather than a level guessed from the
+    /// solved geometry. A frame is
+    ///
+    ///     z = pattern + height * (bare - pattern) + sag * relief
+    ///
+    /// so at height zero everything stays down on the pattern while the first
+    /// reeling happens, which is the order the machine actually builds in.
     ///
     /// This component animates. It runs no equilibrium check and it places no
     /// columns; Column Finder owns that.
@@ -54,8 +63,69 @@ namespace Ananke.COMPAS.Native.Components
             }
         }
 
+        private Mesh? _previewMesh;
+        private readonly List<Line> _previewCables = new();
+        private readonly List<Point3d> _previewSupports = new();
+        private BoundingBox _clippingBox = BoundingBox.Empty;
+
         public override Guid ComponentGuid =>
             new("b1f4c7a2-5d63-4e19-9c88-3a7e6d0b52f4");
+
+        public override bool IsPreviewCapable => true;
+
+        public override BoundingBox ClippingBox => _clippingBox;
+
+        protected override void BeforeSolveInstance()
+        {
+            base.BeforeSolveInstance();
+            _previewMesh = null;
+            _previewCables.Clear();
+            _previewSupports.Clear();
+            _clippingBox = BoundingBox.Empty;
+        }
+
+        /// <summary>
+        /// Draw the frame in the viewport the way TNA Solve draws its solved
+        /// network, with the same shaded material, wire colour and support
+        /// points, so an animation reads as the same object at a different
+        /// moment rather than as a different kind of drawing. The geometry
+        /// outputs stay hidden, as on Deconstruct, so nothing double-draws.
+        /// </summary>
+        public override void DrawViewportMeshes(IGH_PreviewArgs args)
+        {
+            if (Hidden || _previewMesh is null || _previewMesh.Faces.Count == 0)
+                return;
+            args.Display.DrawMeshShaded(
+                _previewMesh,
+                new DisplayMaterial(Color.FromArgb(225, 222, 215), 0.35));
+        }
+
+        public override void DrawViewportWires(IGH_PreviewArgs args)
+        {
+            if (Hidden)
+                return;
+            base.DrawViewportWires(args);
+            if (_previewMesh is not null && _previewMesh.Faces.Count > 0)
+            {
+                args.Display.DrawMeshWires(
+                    _previewMesh, Color.FromArgb(95, 95, 100));
+            }
+            else
+            {
+                // No faces to shade, an FD result for instance, so the net
+                // itself carries the drawing.
+                foreach (Line cable in _previewCables)
+                    args.Display.DrawLine(cable, Color.FromArgb(95, 95, 100));
+            }
+            foreach (Point3d point in _previewSupports)
+            {
+                args.Display.DrawPoint(
+                    point,
+                    PointStyle.RoundControlPoint,
+                    4,
+                    Color.FromArgb(30, 165, 85));
+            }
+        }
 
         protected override void RegisterInputParams(
             GH_InputParamManager parameters)
@@ -192,10 +262,25 @@ namespace Ananke.COMPAS.Native.Components
                 if (edges.Length == 0)
                     throw new InvalidOperationException("Result carries no edges.");
 
-                // The ground is the base of the geometry, not a number to set:
-                // the net starts flat at the lowest point the Result reaches,
-                // which is where its anchors already sit.
+                // Start from the ORIGINAL PATTERN, read back up the chain
+                // through the Result's Problem. That is the flat plan the whole
+                // definition was drawn from, so frame zero is exactly what the
+                // Pattern component holds rather than a level inferred from the
+                // solved shape. Falling back to the base of the geometry keeps
+                // an older Result working.
                 double ground = target.Min(p => p.Z);
+                double[] startZ;
+                IReadOnlyList<Point3Dto>? pattern =
+                    equilibrium.Problem?.Topology?.Vertices;
+                bool fromPattern = pattern is not null && pattern.Count == n;
+                if (fromPattern)
+                {
+                    startZ = pattern!.Select(p => p.Z).ToArray();
+                }
+                else
+                {
+                    startZ = Enumerable.Repeat(ground, n).ToArray();
+                }
                 Mesh? mesh = MouldGeometry.ThrustMeshFromResult(
                     result, out int[] meshToNode);
 
@@ -261,8 +346,11 @@ namespace Ananke.COMPAS.Native.Components
                 var live = new Point3d[n];
                 for (int i = 0; i < n; i++)
                 {
-                    double z = ground
-                        + (lift * (bare[i] - ground))
+                    // Interpolate from the pattern's own level, per node, so at
+                    // height zero the whole net stays down where it was drawn
+                    // while the first reeling happens.
+                    double z = startZ[i]
+                        + (lift * (bare[i] - startZ[i]))
                         + (sag * relief[i]);
                     live[i] = new Point3d(target[i].X, target[i].Y, z);
                 }
@@ -279,7 +367,7 @@ namespace Ananke.COMPAS.Native.Components
                 }
 
                 double barRise = principalIds.Count > 0
-                    ? lift * (principalIds.Select(i => bare[i]).Average() - ground)
+                    ? lift * (principalIds.Select(i => bare[i] - startZ[i]).Average())
                     : 0.0;
                 int wantsPush = relief.Count(r => r > 1e-9);
 
@@ -290,7 +378,14 @@ namespace Ananke.COMPAS.Native.Components
                     $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
                         + $"{principalIds.Count} notches",
                     $"anchors {anchorIds.Count}, perimeter nodes "
-                        + $"{perimeterIds.Length}, ground read as {ground:0.###}",
+                        + $"{perimeterIds.Length}",
+                    fromPattern
+                        ? "starting from the ORIGINAL PATTERN read back through "
+                            + "the Result's problem, so frame zero is the plan "
+                            + "as drawn"
+                        : $"this Result carries no problem topology, so the net "
+                            + $"starts flat at {ground:0.###}, the base of the "
+                            + "solved geometry",
                     $"steppers required {principalIds.Count * 2} "
                         + "(two per notch, one pulling each side)",
                     $"bars risen {barRise * 1000.0:0.#} mm at this frame",
@@ -313,11 +408,23 @@ namespace Ananke.COMPAS.Native.Components
                             + "machine does not have.");
                 }
 
-                data.SetData(0, mesh is null
+                Mesh? framed = mesh is null
                     ? null
-                    : MouldGeometry.DeformMesh(mesh, meshToNode, live));
-                data.SetDataList(1, edges.Select(
-                    e => new Line(live[e.Item1], live[e.Item2])));
+                    : MouldGeometry.DeformMesh(mesh, meshToNode, live);
+                var cables = edges
+                    .Select(e => new Line(live[e.Item1], live[e.Item2]))
+                    .ToList();
+
+                _previewMesh = framed;
+                _previewCables.Clear();
+                _previewCables.AddRange(cables);
+                _previewSupports.Clear();
+                _previewSupports.AddRange(
+                    anchorIds.OrderBy(i => i).Select(i => live[i]));
+                _clippingBox = new BoundingBox(live);
+
+                data.SetData(0, framed);
+                data.SetDataList(1, cables);
                 data.SetDataList(2, barCurves);
                 data.SetDataList(3, principalIds.OrderBy(i => i).Select(i => live[i]));
                 data.SetDataList(4, anchorIds.OrderBy(i => i).Select(i => live[i]));
@@ -425,6 +532,16 @@ namespace Ananke.COMPAS.Native.Components
         /// comes from the net's own edge lengths, so it scales with the model
         /// and needs no tolerance input.
         /// </summary>
+        /// <summary>
+        /// The ordered run of net nodes lying along one principal bar.
+        ///
+        /// Matching happens IN PLAN, ignoring height. The bars are drawn on the
+        /// pattern, which is flat, while the nodes they have to find live on
+        /// the solved surface, which is not: comparing in three dimensions puts
+        /// the whole raised vault out of reach of its own bars and returns
+        /// nothing at all. A principal line is a line in plan; which nodes it
+        /// picks up is a plan question, and their heights come from the Result.
+        /// </summary>
         public static List<int> SnapCurveToNodes(
             Curve curve,
             Point3d[] nodes,
@@ -445,7 +562,7 @@ namespace Ananke.COMPAS.Native.Components
                 for (int i = 0; i < nodes.Length; i++)
                 {
                     if (curve.ClosestPoint(nodes[i], out double t) &&
-                        nodes[i].DistanceToSquared(curve.PointAt(t)) < catchSquared)
+                        PlanDistanceSquared(nodes[i], curve.PointAt(t)) < catchSquared)
                     {
                         fallback.Add((t, i));
                     }
@@ -464,7 +581,7 @@ namespace Ananke.COMPAS.Native.Components
                 double bestDistance = double.MaxValue;
                 for (int s = 0; s < sampled.Length; s++)
                 {
-                    double d = nodes[i].DistanceToSquared(sampled[s]);
+                    double d = PlanDistanceSquared(nodes[i], sampled[s]);
                     if (d < bestDistance)
                     {
                         bestDistance = d;
@@ -480,10 +597,21 @@ namespace Ananke.COMPAS.Native.Components
                 .ToList();
         }
 
+        /// <summary>Squared distance in plan, height ignored.</summary>
+        public static double PlanDistanceSquared(Point3d a, Point3d b) =>
+            ((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y));
+
+        /// <summary>
+        /// Median edge length IN PLAN, so the snap radius is measured the same
+        /// way the snapping is. Using the spatial length would set too generous
+        /// a radius on a steep vault, where a short edge in plan can be long in
+        /// space.
+        /// </summary>
         public static double MedianEdgeLength(Point3d[] nodes, (int, int)[] edges)
         {
             double[] lengths = edges
-                .Select(e => nodes[e.Item1].DistanceTo(nodes[e.Item2]))
+                .Select(e => Math.Sqrt(
+                    PlanDistanceSquared(nodes[e.Item1], nodes[e.Item2])))
                 .Where(length => length > 0.0)
                 .OrderBy(length => length)
                 .ToArray();
