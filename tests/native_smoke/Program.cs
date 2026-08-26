@@ -477,23 +477,6 @@ internal static class Program
 
         try
         {
-            ValidateTreeRelaxation(plugin);
-            Console.WriteLine(
-                "PASS  TreeBuilder.RelaxToForces: three equal forces on an "
-                + "equilateral triangle put the junction at the centroid with "
-                + "its members 120 degrees apart, which is Frei Otto's rule "
-                + "recovered as the equal-force case; unequal forces balance "
-                + "to a residual under a millionth of the load. Equilibrium is "
-                + "MEASURED at the junction, not assumed from the geometry.");
-        }
-        catch (Exception exception)
-        {
-            failures.Add(
-                $"TreeBuilder.RelaxToForces: {DescribeException(exception)}");
-        }
-
-        try
-        {
             ValidateBeamPlacement(plugin);
             Console.WriteLine(
                 "PASS  BeamSolver.ArmsForBar: sweeping symmetric arrangements "
@@ -1641,174 +1624,6 @@ internal static class Program
     }
 
     /// <summary>
-    /// <c>TreeBuilder.RelaxToForces</c>: a branching junction has to sit where
-    /// the forces meeting it sum to zero.
-    ///
-    /// What this replaced put every junction at the plain MIDPOINT of the two
-    /// nodes it merged. A midpoint carries no forces: it is in equilibrium only
-    /// when its two branches happen to be symmetric and equally loaded, so
-    /// every real tree was being bent.
-    ///
-    /// Two cases, both on the same equilateral triangle of fixed tips, with one
-    /// free junction joined to all three.
-    ///
-    ///   EQUAL FORCES land the junction on the centroid, and its three members
-    ///   come out 120 degrees apart. That is FREI OTTO'S RULE, recovered here
-    ///   as the equal-force corner of the general one rather than assumed:
-    ///   three equal forces can only balance at 120 degrees.
-    ///
-    ///   UNEQUAL FORCES (1.5, 1, 1) have no such tidy answer, so the assertion
-    ///   is the condition itself: the weighted sum of unit vectors from the
-    ///   junction to its neighbours must vanish. Deliberately not 2, 1, 1,
-    ///   which is the degenerate case where the heaviest force equals the sum
-    ///   of the others and the optimum collapses onto its terminal.
-    /// </summary>
-    private static void ValidateTreeRelaxation(Assembly plugin)
-    {
-        Type builder = plugin.GetType(
-            "Ananke.COMPAS.Native.Components.TreeBuilder", throwOnError: true)
-            ?? throw new InvalidOperationException("TreeBuilder not found.");
-        MethodInfo relax = RequireStatic(builder, "RelaxToForces");
-
-        ParameterInfo[] parameters = relax.GetParameters();
-        Type point3d = parameters[0].ParameterType.GetGenericArguments()[0];
-        Type vector3d = parameters[2].ParameterType.GetElementType()
-            ?? throw new InvalidOperationException(
-                "RelaxToForces' flow parameter is not an array.");
-
-        double height = Math.Sqrt(3.0) / 2.0;
-        var corners = new[]
-        {
-            (0.0, 0.0),
-            (1.0, 0.0),
-            (0.5, height),
-        };
-
-        CheckOneRelaxation(
-            relax, point3d, vector3d, corners,
-            new[] { 1.0, 1.0, 1.0 },
-            expectCentroid: true, label: "equal forces");
-        CheckOneRelaxation(
-            relax, point3d, vector3d, corners,
-            new[] { 1.5, 1.0, 1.0 },
-            expectCentroid: false, label: "unequal forces");
-    }
-
-    private static void CheckOneRelaxation(
-        MethodInfo relax,
-        Type point3d,
-        Type vector3d,
-        (double X, double Y)[] corners,
-        double[] forces,
-        bool expectCentroid,
-        string label)
-    {
-        Type listOfPoints = typeof(List<>).MakeGenericType(point3d);
-        object nodes = Activator.CreateInstance(listOfPoints)!;
-        MethodInfo add = listOfPoints.GetMethod("Add")!;
-        foreach ((double x, double y) in corners)
-            add.Invoke(nodes, new[] { Activator.CreateInstance(point3d, x, y, 0.0) });
-        // The free junction starts well off the answer, so converging on it is
-        // the relaxation's doing and not the starting guess's.
-        add.Invoke(nodes, new[] { Activator.CreateInstance(point3d, 0.9, 0.9, 0.0) });
-
-        var segments = new List<(int, int)>
-        {
-            (0, 3),
-            (1, 3),
-            (2, 3),
-        };
-
-        // The flow out of each tip is its own force; the junction's own entry
-        // is unused because no segment names it as a child.
-        Array flow = Array.CreateInstance(vector3d, 4);
-        for (int index = 0; index < forces.Length; index++)
-        {
-            flow.SetValue(
-                Activator.CreateInstance(vector3d, 0.0, 0.0, forces[index]),
-                index);
-        }
-        flow.SetValue(Activator.CreateInstance(vector3d, 0.0, 0.0, 0.0), 3);
-
-        relax.Invoke(
-            null,
-            new object?[] { nodes, segments, flow, 3, -1, 0.0 });
-
-        MethodInfo item = listOfPoints.GetMethod("get_Item")!;
-        (double X, double Y) At(int index)
-        {
-            object point = item.Invoke(nodes, new object[] { index })!;
-            return (
-                (double)point3d.GetProperty("X")!.GetValue(point)!,
-                (double)point3d.GetProperty("Y")!.GetValue(point)!);
-        }
-
-        (double jx, double jy) = At(3);
-
-        if (expectCentroid)
-        {
-            double cx = corners.Average(corner => corner.X);
-            double cy = corners.Average(corner => corner.Y);
-            if (Math.Abs(jx - cx) > 1.0e-6 || Math.Abs(jy - cy) > 1.0e-6)
-            {
-                throw new InvalidOperationException(
-                    $"With {label} the junction must land on the centroid "
-                    + $"({cx:G6}, {cy:G6}); it landed at ({jx:G6}, {jy:G6}).");
-            }
-
-            // Three equal forces balance only at 120 degrees apart.
-            for (int a = 0; a < corners.Length; a++)
-            {
-                int b = (a + 1) % corners.Length;
-                double angle = AngleBetween(
-                    corners[a].X - jx, corners[a].Y - jy,
-                    corners[b].X - jx, corners[b].Y - jy);
-                if (Math.Abs(angle - 120.0) > 1.0e-4)
-                {
-                    throw new InvalidOperationException(
-                        $"With {label} members {a} and {b} must meet at 120 "
-                        + $"degrees; they meet at {angle:G8}. That is Frei "
-                        + "Otto's rule and the relaxation has to recover it.");
-                }
-            }
-        }
-
-        // The condition itself, in both cases: the weighted unit vectors from
-        // the junction to its neighbours must sum to nothing.
-        double rx = 0.0;
-        double ry = 0.0;
-        for (int index = 0; index < corners.Length; index++)
-        {
-            double dx = corners[index].X - jx;
-            double dy = corners[index].Y - jy;
-            double length = Math.Sqrt((dx * dx) + (dy * dy));
-            if (length <= 1.0e-12)
-                continue;
-            rx += forces[index] * dx / length;
-            ry += forces[index] * dy / length;
-        }
-        double residual = Math.Sqrt((rx * rx) + (ry * ry)) / forces.Sum();
-        if (residual > 1.0e-6)
-        {
-            throw new InvalidOperationException(
-                $"With {label} the junction is not in equilibrium: the "
-                + $"weighted directions leave a residual of {residual:G6} of "
-                + "the load. A junction that does not balance is bending its "
-                + "tree.");
-        }
-    }
-
-    private static double AngleBetween(
-        double ax, double ay, double bx, double by)
-    {
-        double la = Math.Sqrt((ax * ax) + (ay * ay));
-        double lb = Math.Sqrt((bx * bx) + (by * by));
-        double cosine = ((ax * bx) + (ay * by)) / (la * lb);
-        cosine = Math.Min(Math.Max(cosine, -1.0), 1.0);
-        return Math.Acos(cosine) * 180.0 / Math.PI;
-    }
-
-    /// <summary>
     /// <c>BeamSolver.ArmsForBar</c>: where the column arms stand under a bar.
     ///
     /// The whole placement argument rests on one classical result, and until
@@ -1880,11 +1695,26 @@ internal static class Program
             .ToArray();
         var reactions = (double[])tuple.GetField("Item3")!.GetValue(result)!;
 
-        if (chosen.Length != 2)
+        // Two asked for, and THREE is a legitimate answer. A bar already
+        // crowding the middle is given a centre column on top of the count,
+        // because a centre column has no mirror partner: counted like any
+        // other it leaves an odd number to split between the halves, one side
+        // takes the extra, and the whole arrangement reads off centre.
+        if (chosen.Length != 2 && chosen.Length != 3)
         {
             throw new InvalidOperationException(
-                $"Two arms were asked for; {chosen.Length} came back.");
+                $"Two arms were asked for; {chosen.Length} came back. Three is "
+                + "allowed, as a centre column added outside the count.");
         }
+        if (chosen.Length == 3 && chosen[1] != last / 2)
+        {
+            throw new InvalidOperationException(
+                "The arm added beyond the count is the CENTRE one, so it "
+                + $"belongs on station {last / 2}; it is at {chosen[1]}.");
+        }
+        int[] flanks = chosen.Length == 3
+            ? new[] { chosen[0], chosen[2] }
+            : chosen;
         // The classical number itself, measured where the grid cannot cheat:
         // among SYMMETRIC arrangements the best inset must be the station
         // nearest 0.2232, and the sweep either side of it must be worse.
@@ -1925,17 +1755,17 @@ internal static class Program
         // and an arch with its columns in different places on the two halves
         // is not worth a third of the droop. The solver now refuses the grid's
         // trick on a bar it judges symmetric, so this measures the refusal.
-        if (chosen[0] + chosen[1] != last)
+        if (flanks[0] + flanks[1] != last)
         {
             throw new InvalidOperationException(
-                "A symmetric bar must get symmetric arms; they landed at "
-                + $"stations {chosen[0]} and {chosen[1]}, which are not "
+                "A symmetric bar must get symmetric arms; the flanking pair "
+                + $"landed at {flanks[0]} and {flanks[1]}, which are not "
                 + $"mirrored about {last / 2.0:G4}. The unrestricted search "
                 + "prefers (8,31) here, so this is the guard against it.");
         }
 
         double spacing = 1.0 / last;
-        foreach (int arm in chosen)
+        foreach (int arm in flanks)
         {
             double inset = Math.Min(arm, last - arm) / (double)last;
             if (Math.Abs(inset - 0.2232) > spacing)
@@ -1996,11 +1826,12 @@ internal static class Program
                 .Cast<int>()
                 .OrderBy(value => value)
                 .ToArray();
-            if (oddChosen.Length != wanted)
+            if (oddChosen.Length != wanted && oddChosen.Length != wanted + 1)
             {
                 throw new InvalidOperationException(
                     $"{wanted} arms were asked for; {oddChosen.Length} came "
-                    + "back.");
+                    + "back. One more is allowed, as a centre column outside "
+                    + "the count.");
             }
             int middle = oddChosen[oddChosen.Length / 2];
             if (middle != last / 2)

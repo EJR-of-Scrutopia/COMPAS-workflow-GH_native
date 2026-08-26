@@ -406,6 +406,7 @@ namespace Ananke.COMPAS.Native.Components
                 double acrossToColumns = 0.0;
                 int plumbArms = 0;
                 int symmetricBars = 0;
+                int centreAdded = 0;
                 double symmetryCost = 0.0;
                 double lopsided = 0.0;
 
@@ -425,6 +426,8 @@ namespace Ananke.COMPAS.Native.Components
                         BeamSolver.ArmsForBar(
                             bar, nodes, barLoad, anchors, perLine,
                             placementStiffness);
+                    if (BeamSolver.LastCentreAdded)
+                        centreAdded++;
                     if (BeamSolver.LastSymmetric)
                     {
                         symmetricBars++;
@@ -479,6 +482,7 @@ namespace Ananke.COMPAS.Native.Components
                 var feet = new List<Point3d>();
                 double branchOff = 0.0;
                 double trunkOff = 0.0;
+                double footDrift = 0.0;
 
                 // Every column: its notches, the fork solved from their
                 // forces, and a trunk down the line of what it all adds up to.
@@ -564,26 +568,46 @@ namespace Ananke.COMPAS.Native.Components
                             .Where(i => group[i] == g).ToArray();
                         if (mine.Length == 0)
                             continue;
+                        // THE GEOMETRIC centre of the columns it carries, not
+                        // the force-weighted one.
+                        //
+                        // A foot placed where the trunks BALANCE is the
+                        // structurally clever answer and it is why the shared
+                        // foot kept coming out off centre: the geometric median
+                        // is very sensitive, so a couple of percent of noise in
+                        // the solved load moves it a long way, and a Type 1
+                        // arch put its one foot visibly to one side. Under a
+                        // symmetric set of columns the plain centre is
+                        // symmetric by construction and cannot drift. What that
+                        // costs is the thrust the foot no longer balances, and
+                        // that is measured below rather than avoided.
                         double sx = 0.0;
                         double sy = 0.0;
+                        double fx = 0.0;
+                        double fy = 0.0;
                         double sw = 0.0;
                         foreach (int i in mine)
                         {
                             double w = Math.Max(
                                 Math.Abs(trunkForce[i].Z), 1.0e-9);
-                            sx += trunkTop[i].X * w;
-                            sy += trunkTop[i].Y * w;
+                            sx += trunkTop[i].X;
+                            sy += trunkTop[i].Y;
+                            fx += trunkTop[i].X * w;
+                            fy += trunkTop[i].Y * w;
                             sw += w;
                         }
-                        nodesLocal.Add(new Point3d(sx / sw, sy / sw, ground));
+                        var centre = new Point3d(
+                            sx / mine.Length, sy / mine.Length, ground);
+                        footDrift = Math.Max(
+                            footDrift,
+                            Math.Sqrt(MouldGeometry.PlanDistanceSquared(
+                                centre, new Point3d(fx / sw, fy / sw, ground))));
+                        nodesLocal.Add(centre);
                         flow.Add(Vector3d.Zero);
                         int foot = nodesLocal.Count - 1;
                         foreach (int i in mine)
                             segs.Add((i, foot));
                     }
-                    TreeBuilder.RelaxOnGround(
-                        nodesLocal, segs, flow.ToArray(), trunkTop.Count,
-                        ground);
                     foreach ((int child, int foot) in segs)
                     {
                         members.Add(new Line(
@@ -664,7 +688,7 @@ namespace Ananke.COMPAS.Native.Components
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     columnType, branches, forkPct, ground, alongToAnchors,
                     acrossToColumns, plumbArms, symmetricBars, symmetryCost,
-                    lopsided));
+                    lopsided, centreAdded, footDrift));
             }
             catch (Exception ex)
             {
@@ -931,7 +955,9 @@ namespace Ananke.COMPAS.Native.Components
             int plumbArms,
             int symmetricBars,
             double symmetryCost,
-            double lopsided)
+            double lopsided,
+            int centreAdded,
+            double footDrift)
         {
             var lines = new List<string>
             {
@@ -975,6 +1001,28 @@ namespace Ananke.COMPAS.Native.Components
                         + "and got mirrored arms; the rest are up to "
                         + $"{lopsided * 100:0.#}% off being mirrors of "
                         + "themselves and were placed freely.");
+
+            if (centreAdded > 0)
+            {
+                lines.Add(
+                    $"{centreAdded} bars were given a CENTRE COLUMN on top of "
+                        + "the count asked for, because the arms were already "
+                        + "crowding the middle, which is the bar asking to be "
+                        + "held there. A centre column has no mirror partner, "
+                        + "so it stands outside the pairing rather than taking "
+                        + "one of it and pushing everything to one side.");
+            }
+            if (footDrift > 0.0)
+            {
+                lines.Add(
+                    $"a shared foot stands up to {footDrift:0.###} from the "
+                        + "point where the trunks meeting it would balance. It "
+                        + "sits at their GEOMETRIC centre instead, because the "
+                        + "balance point is sensitive enough that ordinary "
+                        + "solver noise moved it visibly off centre. That "
+                        + "distance is the price, and it is horizontal thrust "
+                        + "for the foundation.");
+            }
 
             if (plumbArms > 0)
             {
@@ -1097,7 +1145,7 @@ namespace Ananke.COMPAS.Native.Components
             var anchoredCoarse = new HashSet<int>(
                 anchored.Select(a => NearestIndex(coarse, a)));
             int[] mirrorOf = MirrorMap(arc, coarse, out double lopsided);
-            bool symmetric = mirrorOf.Length > 0;
+            bool symmetric = mirrorOf.Length > 0;   // false only on a stub bar
 
             int[] pool = Enumerable.Range(0, coarse.Length)
                 .Where(i => !anchoredCoarse.Contains(i))
@@ -1134,6 +1182,8 @@ namespace Ananke.COMPAS.Native.Components
             List<int>? fallback = null;
             double fallbackScore = double.MaxValue;
             double freeScore = double.MaxValue;
+            List<int>? centred = null;
+            double centredScore = double.MaxValue;
 
             IEnumerable<int[]> candidates = symmetric
                 ? Mirrored(pool, mirrorOf, coarse, arc, perLine)
@@ -1160,11 +1210,54 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 if (full.Any(s => reac[s] < -1e-6))
                     continue;                       // an arm cannot pull down
-                if (score < bestScore)
+
+                // Kept apart, because the two families are not competing on
+                // equal terms: one has an extra column in it.
+                bool hasCentre = combo.Length > (perLine / 2) * 2;
+                if (hasCentre)
+                {
+                    if (score < centredScore)
+                    {
+                        centredScore = score;
+                        centred = full.ToList();
+                    }
+                }
+                else if (score < bestScore)
                 {
                     bestScore = score;
                     best = full.ToList();
                 }
+            }
+
+            // Does the bar WANT a column on its centreline?
+            //
+            // Param's reading, and his trigger: an arch that needs holding at
+            // midspan drags an arm inward to do it, and under mirroring that
+            // arm's partner comes with it, so a pair ends up sitting on top of
+            // the middle pretending to be two columns. Give it ONE REAL CENTRE
+            // COLUMN instead and the pairs stay where they belong.
+            //
+            // So the trigger is the one he named: the centre being used. If the
+            // best paired arrangement has put an arm within a station of the
+            // middle, that is the bar asking, and it gets a centre on top of
+            // the count rather than eating one of it. Deliberately NOT "when a
+            // centre would reduce the droop": adding midspan support to a
+            // uniformly loaded beam almost always does, so that fired on every
+            // bar and quietly turned every even count odd.
+            bool wantsCentre = (perLine % 2) == 1;
+            if (!wantsCentre && centred is not null && best is not null)
+            {
+                double middleArc = 0.5 * arc[count - 1];
+                double station = count > 1 ? arc[count - 1] / (count - 1) : 0.0;
+                wantsCentre = best.Any(
+                    s => Math.Abs(arc[s] - middleArc) <= station);
+            }
+            LastCentreAdded = wantsCentre && (perLine % 2) == 0 &&
+                centred is not null;
+            if (wantsCentre && centred is not null)
+            {
+                best = centred;
+                bestScore = centredScore;
             }
 
             if (symmetric && best is null && fallback is null)
@@ -1249,11 +1342,10 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
-            bool odd = (perLine % 2) == 1;
             int pairs = perLine / 2;
             if (pairs == 0)
             {
-                if (odd && centre >= 0)
+                if (centre >= 0)
                     yield return new[] { centre };
                 yield break;
             }
@@ -1264,19 +1356,27 @@ namespace Ananke.COMPAS.Native.Components
             if (left.Length < pairs)
                 yield break;
 
+            // BOTH, with and without the middle. An odd count needs the centre
+            // to make up its number; an even count does not, but the bar may
+            // still want one, and whether it does is a question for the beam
+            // rather than for the arithmetic of the count. The caller compares
+            // them and keeps the centre only when it earns its place.
             foreach (int[] half in Combinations(left, pairs))
             {
                 if (half.Length != pairs)
                     continue;
-                var full = new List<int>(perLine + 1);
+                var paired = new List<int>(perLine + 1);
                 foreach (int station in half)
                 {
-                    full.Add(station);
-                    full.Add(mirrorOf[station]);
+                    paired.Add(station);
+                    paired.Add(mirrorOf[station]);
                 }
-                if (odd && centre >= 0)
-                    full.Add(centre);
-                yield return full.Distinct().ToArray();
+                yield return paired.Distinct().ToArray();
+                if (centre >= 0)
+                {
+                    var withCentre = new List<int>(paired) { centre };
+                    yield return withCentre.Distinct().ToArray();
+                }
             }
         }
 
@@ -1284,20 +1384,24 @@ namespace Ananke.COMPAS.Native.Components
         /// Each coarse station's mirror about the middle of the bar, or an
         /// empty array when the bar is not symmetric enough to bother.
         ///
-        /// Judged on the SHAPE ALONE, deliberately.
+        /// Each station's partner across the middle of the bar: whichever
+        /// station stands nearest the same arc length measured from the other
+        /// end.
         ///
-        /// It used to test the load as well, and that was why nothing changed
-        /// when symmetry was first enforced: no solved net has a load profile
-        /// that mirrors to one percent. Iteration residuals alone are bigger
-        /// than that, so every bar failed the test and every bar went back to
-        /// free placement.
+        /// ALWAYS RETURNED, never refused. This was a test twice, and both
+        /// times the test was what went wrong rather than the rule behind it.
+        /// First it demanded the LOAD mirror to one percent, which no solved
+        /// net's does. Then it demanded the SHAPE mirror to two percent, which
+        /// a run one node short at one end cannot manage. Each time the answer
+        /// was a silent fall back to free placement: the columns came out
+        /// crooked and nothing said why.
         ///
-        /// Symmetry is a property of the FORM. If an author drew a symmetric
-        /// arch, the columns belong in the same places on both halves, and a
-        /// fraction of a percent of solver noise in the load is not a reason to
-        /// build it lopsided. Two percent on the geometry, which is loose
-        /// enough to survive a plan relaxation and tight enough that a
-        /// genuinely crooked bar is left alone.
+        /// A gate that fails closed and says nothing is worse than no gate. So
+        /// there is none. Every bar is mirrored about its own midpoint, which
+        /// on a symmetric bar is exactly right and on a crooked one is the best
+        /// its own geometry allows. How far it is from being a mirror of itself
+        /// is measured and reported, so the reading is available without being
+        /// load-bearing.
         /// </summary>
         private static int[] MirrorMap(
             double[] arc,
@@ -1309,6 +1413,7 @@ namespace Ananke.COMPAS.Native.Components
             double span = arc[n - 1];
             if (span <= 0.0 || n < 3)
                 return Array.Empty<int>();
+
             // Does every station have a partner at span minus its own arc?
             for (int k = 0; k < n; k++)
             {
@@ -1326,9 +1431,6 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 lopsided = Math.Max(lopsided, closest / span);
             }
-            if (lopsided > 0.02)
-                return Array.Empty<int>();
-
             var mirrorOf = new int[coarse.Length];
             for (int i = 0; i < coarse.Length; i++)
             {
@@ -1351,6 +1453,12 @@ namespace Ananke.COMPAS.Native.Components
 
         /// <summary>Whether the last bar solved was treated as symmetric.</summary>
         public static bool LastSymmetric { get; private set; }
+
+        /// <summary>
+        /// Whether the last bar was given a centre column it did not ask for,
+        /// because holding it at midspan was worth an extra one.
+        /// </summary>
+        public static bool LastCentreAdded { get; private set; }
 
         /// <summary>How far the last bar was from being a mirror of itself.</summary>
         public static double LastLopsided { get; private set; }
@@ -1525,80 +1633,6 @@ namespace Ananke.COMPAS.Native.Components
                 x[i] = sum / a[i, i];
             }
             return x;
-        }
-    }
-
-    internal static class TreeBuilder
-    {
-        public static void RelaxOnGround(
-            List<Point3d> nodes,
-            List<(int, int)> segments,
-            Vector3d[] flow,
-            int fixedCount,
-            double ground)
-        {
-            // The trunks' own forces are the weights; a foot carries whatever
-            // reaches it, so its own entry stays empty and is never read as a
-            // child.
-            RelaxToForces(nodes, segments, flow, fixedCount, -1, ground);
-            for (int i = fixedCount; i < nodes.Count; i++)
-            {
-                nodes[i] = new Point3d(nodes[i].X, nodes[i].Y, ground);
-            }
-        }
-
-        private static void RelaxToForces(
-            List<Point3d> nodes,
-            List<(int, int)> segments,
-            Vector3d[] flow,
-            int tipCount,
-            int footIndex,
-            double ground)
-        {
-            var neighbours = new List<(int Other, double Force)>[nodes.Count];
-            for (int i = 0; i < nodes.Count; i++)
-                neighbours[i] = new List<(int, double)>();
-            foreach ((int child, int up) in segments)
-            {
-                double force = flow[child].Length;
-                neighbours[child].Add((up, force));
-                neighbours[up].Add((child, force));
-            }
-
-            for (int sweep = 0; sweep < 400; sweep++)
-            {
-                double shifted = 0.0;
-                for (int v = tipCount; v < nodes.Count; v++)
-                {
-                    if (neighbours[v].Count < 2)
-                        continue;
-                    double sx = 0.0;
-                    double sy = 0.0;
-                    double sz = 0.0;
-                    double sw = 0.0;
-                    foreach ((int other, double force) in neighbours[v])
-                    {
-                        double distance = nodes[v].DistanceTo(nodes[other]);
-                        if (distance <= 1.0e-9 || force <= 0.0)
-                            continue;
-                        double weight = force / distance;
-                        sx += nodes[other].X * weight;
-                        sy += nodes[other].Y * weight;
-                        sz += nodes[other].Z * weight;
-                        sw += weight;
-                    }
-                    if (sw <= 0.0)
-                        continue;
-                    var next = new Point3d(
-                        sx / sw,
-                        sy / sw,
-                        v == footIndex ? ground : sz / sw);
-                    shifted = Math.Max(shifted, nodes[v].DistanceTo(next));
-                    nodes[v] = next;
-                }
-                if (shifted < 1.0e-9)
-                    break;
-            }
         }
     }
 }
