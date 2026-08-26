@@ -172,28 +172,27 @@ namespace Ananke.COMPAS.Native.Components
                     + "the bars.",
                 GH_ParamAccess.item,
                 40.0);
-            parameters.AddLineParameter(
-                "Columns",
-                "C",
-                "Optional. The columns from Column Finder. Given them, the "
-                    + "animation raises them WITH the net instead of leaving "
-                    + "them at their finished positions: each foot slides "
-                    + "linearly across the ground from under its own notch to "
-                    + "where it finally stands, while the column extends to "
-                    + "keep its head on that notch. Both at once, which is the "
-                    + "two jobs the mechanism actually has to do.",
-                GH_ParamAccess.list);
             parameters.AddNumberParameter(
                 "Extension",
                 "E",
-                "How much of a column's final length its strut can extend, in "
+                "How much of a column's built length its ram can drive out, in "
                     + "percent. A column is not telescopic over its whole "
-                    + "length: it has a fixed body and a ram. 40 means the "
-                    + "strut is 60 percent of full when retracted and reaches "
-                    + "100 when driven out, so early in the build it cannot be "
-                    + "short and lies out along its rail instead.",
+                    + "length: it has a fixed body and a ram. 40 means it is 60 "
+                    + "percent of full when retracted and reaches 100 when "
+                    + "driven out, so early in the build it cannot be short and "
+                    + "lies out along its rail instead.",
                 GH_ParamAccess.item,
                 40.0);
+            parameters.AddLineParameter(
+                "Columns",
+                "C",
+                "Optional. The columns from Column Finder, branches and all. "
+                    + "Given them, the animation raises them WITH the net "
+                    + "instead of leaving them at their finished positions: "
+                    + "feet slide along their rails, rams drive out, and forks "
+                    + "are re-solved on every frame so a branching column stays "
+                    + "in equilibrium the whole way up.",
+                GH_ParamAccess.list);
             parameters[1].Optional = true;
             parameters[2].Optional = true;
             parameters[3].Optional = true;
@@ -276,10 +275,10 @@ namespace Ananke.COMPAS.Native.Components
             double preSag = 40.0;
             data.GetData(1, ref timePct);
             data.GetData(2, ref preSag);
-            var columnLines = new List<Line>();
-            data.GetDataList(3, columnLines);
             double extendPct = 40.0;
-            data.GetData(4, ref extendPct);
+            data.GetData(3, ref extendPct);
+            var columnLines = new List<Line>();
+            data.GetDataList(4, columnLines);
 
             try
             {
@@ -1054,8 +1053,77 @@ namespace Ananke.COMPAS.Native.Components
                 at = next;
             }
 
+            // FINISH BOTH ENDS. The walk above needs a STRICT advance
+            // along the curve, and at the end of one several nodes share the
+            // last sample, so nothing advances and the run stops short. One
+            // side of a symmetric bar then comes back a notch shorter than the
+            // other, which makes the beam under it asymmetric, which puts the
+            // arms in different places on the two halves and drags the shared
+            // foot off centre with them. A whole family of asymmetries from one
+            // missing node.
+            //
+            // Past the last station there is no ordering left to use, so finish
+            // by the straightest continuation instead, while still inside the
+            // catch radius. Applied at both ends, because the same thing can
+            // happen at the start.
+            Continue(run, neighbours, nodes, offset, catchSquared, used);
+            run.Reverse();
+            Continue(run, neighbours, nodes, offset, catchSquared, used);
+            run.Reverse();
+
             meanOffset = run.Average(i => Math.Sqrt(offset[i]));
             return run;
+        }
+
+        /// <summary>
+        /// Carry a run on past its last ordered node, by whichever unused
+        /// neighbour continues straightest and still lies on the line.
+        /// </summary>
+        private static void Continue(
+            List<int> run,
+            List<int>[] neighbours,
+            Point3d[] nodes,
+            double[] offset,
+            double catchSquared,
+            HashSet<int> used)
+        {
+            while (run.Count >= 2)
+            {
+                int at = run[run.Count - 1];
+                Vector3d heading = nodes[at] - nodes[run[run.Count - 2]];
+                double length = heading.Length;
+                if (length <= 1.0e-12)
+                    return;
+                heading = new Vector3d(
+                    heading.X / length, heading.Y / length, heading.Z / length);
+
+                int best = -1;
+                double bestScore = 0.0;
+                foreach (int candidate in neighbours[at])
+                {
+                    if (used.Contains(candidate))
+                        continue;
+                    if (offset[candidate] >= catchSquared)
+                        continue;
+                    Vector3d step = nodes[candidate] - nodes[at];
+                    double stepLength = step.Length;
+                    if (stepLength <= 1.0e-12)
+                        continue;
+                    double score =
+                        ((heading.X * step.X) + (heading.Y * step.Y) +
+                         (heading.Z * step.Z)) / stepLength;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        best = candidate;
+                    }
+                }
+                // A turn of more than a right angle is not a continuation.
+                if (best < 0)
+                    return;
+                run.Add(best);
+                used.Add(best);
+            }
         }
 
         /// <summary>
@@ -1256,6 +1324,74 @@ namespace Ananke.COMPAS.Native.Components
                 ? new Vector3d(
                     supply.X / length, supply.Y / length, supply.Z / length)
                 : Vector3d.ZAxis;
+        }
+
+        /// <summary>
+        /// Where a column forks when its branches sprout OFF A MAIN COLUMN
+        /// rather than meeting it as equals.
+        ///
+        /// A fork found freely puts the trunk and every branch on the same
+        /// footing, so nothing on screen reads as the column: three members
+        /// meet at a point and go their own ways. What a Frei Otto tree looks
+        /// like, and what Param asked for, is a main column you can follow from
+        /// its foot to its own notch with limbs leaving it on the way up.
+        ///
+        /// So the fork is CONSTRAINED to the main column's own line of thrust,
+        /// and only its HEIGHT along that line is solved: the point where the
+        /// branches come closest to standing on their own lines. The main
+        /// member stays perfectly axial and perfectly straight, which is what
+        /// makes it read as one column, and the branches carry whatever
+        /// misalignment is left, which is reported.
+        ///
+        /// One unknown, so one equation. Writing the fork as m - s*a and
+        /// minimising the force-weighted squared distance to each branch ray
+        /// gives s directly.
+        /// </summary>
+        public static Point3d ForkOnLine(
+            Point3d mainNotch,
+            Vector3d mainAim,
+            IReadOnlyList<Point3d> branchAt,
+            IReadOnlyList<Vector3d> branchPush,
+            double ground)
+        {
+            double num = 0.0;
+            double den = 0.0;
+            double[] a = { mainAim.X, mainAim.Y, mainAim.Z };
+            for (int i = 0; i < branchAt.Count; i++)
+            {
+                double weight = branchPush[i].Length;
+                if (weight <= 1.0e-12)
+                    continue;
+                Vector3d aim = AimFrom(-branchPush[i]);
+                double[] d = { aim.X, aim.Y, aim.Z };
+                double[] c =
+                {
+                    mainNotch.X - branchAt[i].X,
+                    mainNotch.Y - branchAt[i].Y,
+                    mainNotch.Z - branchAt[i].Z,
+                };
+                double ca = (c[0] * a[0]) + (c[1] * a[1]) + (c[2] * a[2]);
+                double cd = (c[0] * d[0]) + (c[1] * d[1]) + (c[2] * d[2]);
+                double ad = (a[0] * d[0]) + (a[1] * d[1]) + (a[2] * d[2]);
+                num += weight * (ca - (cd * ad));
+                den += weight * (1.0 - (ad * ad));
+            }
+
+            // Every branch parallel to the main column: nothing to solve, so
+            // fork just below the lowest notch the branches reach.
+            double along = den <= 1.0e-12
+                ? (mainNotch.Z - branchAt.Min(p => p.Z)) /
+                    Math.Max(mainAim.Z, 1.0e-9)
+                : num / den;
+
+            double toGround = mainAim.Z > 1.0e-9
+                ? (mainNotch.Z - ground) / mainAim.Z
+                : 0.0;
+            along = Math.Min(Math.Max(along, 0.0), toGround);
+            return new Point3d(
+                mainNotch.X - (along * mainAim.X),
+                mainNotch.Y - (along * mainAim.Y),
+                mainNotch.Z - (along * mainAim.Z));
         }
 
         /// <summary>

@@ -388,6 +388,9 @@ namespace Ananke.COMPAS.Native.Components
                 double alongToAnchors = 0.0;
                 double acrossToColumns = 0.0;
                 int plumbArms = 0;
+                int symmetricBars = 0;
+                double symmetryCost = 0.0;
+                double lopsided = 0.0;
 
                 foreach (List<int> bar in bars)
                 {
@@ -405,6 +408,16 @@ namespace Ananke.COMPAS.Native.Components
                         BeamSolver.ArmsForBar(
                             bar, nodes, barLoad, anchors, perLine,
                             placementStiffness);
+                    if (BeamSolver.LastSymmetric)
+                    {
+                        symmetricBars++;
+                        symmetryCost = Math.Max(
+                            symmetryCost, BeamSolver.LastSymmetryCost);
+                    }
+                    else
+                    {
+                        lopsided = Math.Max(lopsided, BeamSolver.LastLopsided);
+                    }
                     armsPerBar.Add(chosen.Count);
                     Vector3d[] aim = ArmAim(bar, nodes, across, chosen, anchors);
                     plumbArms += LastPlumbFallbacks;
@@ -454,6 +467,7 @@ namespace Ananke.COMPAS.Native.Components
                 // forces, and a trunk down the line of what it all adds up to.
                 var trunkTop = new List<Point3d>();
                 var trunkForce = new List<Vector3d>();
+                var trunkAim = new List<Vector3d>();
                 for (int c = 0; c < columnReach.Count; c++)
                 {
                     List<Point3d> reach = columnReach[c];
@@ -462,8 +476,18 @@ namespace Ananke.COMPAS.Native.Components
                     foreach (Vector3d push in pushes)
                         total += push;
 
+                    // The fork rides the MAIN column's own line, so that
+                    // member stays straight from foot to notch and reads as one
+                    // column with limbs leaving it, which is the Frei Otto
+                    // shape. A freely placed fork puts trunk and branches on
+                    // the same footing and no member reads as the column.
                     Point3d fork = reach.Count > 1
-                        ? MouldGeometry.ForkPoint(reach, pushes, ground)
+                        ? MouldGeometry.ForkOnLine(
+                            reach[0],
+                            MouldGeometry.AimFrom(-pushes[0]),
+                            reach.Skip(1).ToList(),
+                            pushes.Skip(1).ToList(),
+                            ground)
                         : reach[0];
 
                     // The branches, each from its own notch down to the fork.
@@ -482,6 +506,7 @@ namespace Ananke.COMPAS.Native.Components
                     }
                     trunkTop.Add(fork);
                     trunkForce.Add(total);
+                    trunkAim.Add(MouldGeometry.AimFrom(-pushes[0]));
                 }
 
                 if (sharedFeet <= 0)
@@ -493,7 +518,10 @@ namespace Ananke.COMPAS.Native.Components
                         double rise = top.Z - ground;
                         if (rise <= 0.0)
                             continue;
-                        Vector3d up = MouldGeometry.AimFrom(-trunkForce[c]);
+                        // Down the MAIN column's line, not the resultant's,
+                        // so the member above and below the fork is one
+                        // straight column rather than a kink.
+                        Vector3d up = trunkAim[c];
                         var foot = new Point3d(
                             top.X - (up.X * rise / up.Z),
                             top.Y - (up.Y * rise / up.Z),
@@ -619,7 +647,8 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     columnType, branches, ground, alongToAnchors,
-                    acrossToColumns, plumbArms));
+                    acrossToColumns, plumbArms, symmetricBars, symmetryCost,
+                    lopsided));
             }
             catch (Exception ex)
             {
@@ -748,6 +777,22 @@ namespace Ananke.COMPAS.Native.Components
                         if (taken.Contains(k))
                             continue;
                         double gap = Math.Abs(arc[k] - arc[chosen[c]]);
+                        // ONLY within this column's own stretch of bar. Taking
+                        // the nearest notch outright let a column reach past
+                        // its neighbour to a notch on the far side of it, and
+                        // the two columns' branches crossed over each other.
+                        // Around the crown, where the columns crowd together,
+                        // that is exactly the notch that looks nearest.
+                        bool mine = true;
+                        for (int o = 0; o < chosen.Count && mine; o++)
+                        {
+                            if (o == c)
+                                continue;
+                            if (Math.Abs(arc[k] - arc[chosen[o]]) < gap)
+                                mine = false;
+                        }
+                        if (!mine)
+                            continue;
                         if (gap < closest)
                         {
                             closest = gap;
@@ -755,7 +800,7 @@ namespace Ananke.COMPAS.Native.Components
                         }
                     }
                     if (best < 0)
-                        return served;
+                        continue;       // this column has run out of its own bar
                     served[c].Add(best);
                     taken.Add(best);
                 }
@@ -864,7 +909,10 @@ namespace Ananke.COMPAS.Native.Components
             double ground,
             double alongToAnchors,
             double acrossToColumns,
-            int plumbArms)
+            int plumbArms,
+            int symmetricBars,
+            double symmetryCost,
+            double lopsided)
         {
             var lines = new List<string>
             {
@@ -890,6 +938,24 @@ namespace Ananke.COMPAS.Native.Components
                     + "carries, so it works in pure compression and its foot "
                     + "takes no sideways push it was not given.",
             };
+
+            lines.Add(string.Empty);
+            lines.Add(symmetricBars == bars.Count
+                ? $"all {bars.Count} bars read as SYMMETRIC, so their arms are "
+                    + "mirrored. On a discrete bar an asymmetric pair can droop "
+                    + $"less, and here that was worth {symmetryCost * 100:0.#}%; "
+                    + "it is refused, because that gain is the grid straddling "
+                    + "the optimum, not a structural insight, and an arch is "
+                    + "not built lopsided for it."
+                : symmetricBars == 0
+                    ? $"no bar reads as symmetric: the worst is {lopsided * 100:0.#}% "
+                        + "off being a mirror of itself, against a 1% "
+                        + "tolerance. The arms are placed freely, so they will "
+                        + "not match side to side."
+                    : $"{symmetricBars} of {bars.Count} bars read as symmetric "
+                        + "and got mirrored arms; the rest are up to "
+                        + $"{lopsided * 100:0.#}% off being mirrors of "
+                        + "themselves and were placed freely.");
 
             if (plumbArms > 0)
             {
@@ -1017,10 +1083,26 @@ namespace Ananke.COMPAS.Native.Components
                     .ToArray();
             }
 
+            // Is this bar symmetric? If it is, only mirrored arrangements
+            // are allowed to win.
+            //
+            // The unrestricted search picks asymmetric arms on a symmetric bar
+            // and is RIGHT to by its own measure: with stations a fortieth of
+            // the span apart, neither 0.200 nor 0.225 is the optimum inset, and
+            // one arm at each straddles it and droops less than either matched
+            // pair. But that gain is a discretisation artefact. The continuous
+            // optimum on a symmetric problem IS symmetric, and an arch built
+            // with its columns in different places on the two halves is not
+            // worth a few percent of droop. So the grid's trick is refused, and
+            // the cost of refusing it is reported instead of hidden.
+            int[] mirrorOf = MirrorMap(arc, load, coarse, out double lopsided);
+            bool symmetric = mirrorOf.Length > 0;
+
             List<int>? best = null;
             double bestScore = double.MaxValue;
             List<int>? fallback = null;
             double fallbackScore = double.MaxValue;
+            double freeScore = double.MaxValue;
 
             foreach (int[] combo in Combinations(pool, perLine))
             {
@@ -1036,6 +1118,9 @@ namespace Ananke.COMPAS.Native.Components
                 if (defl is null || reac is null)
                     continue;
                 double score = defl.Select(Math.Abs).Max();
+                freeScore = Math.Min(freeScore, score);
+                if (symmetric && !IsMirrored(combo, mirrorOf))
+                    continue;
                 if (score < fallbackScore)
                 {
                     fallbackScore = score;
@@ -1051,11 +1136,112 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             List<int> chosen = best ?? fallback ?? new List<int> { 0, count - 1 };
+            LastSymmetric = symmetric;
+            LastLopsided = lopsided;
+            LastSymmetryCost = symmetric && freeScore > 0.0 && best is not null
+                ? (bestScore - freeScore) / freeScore
+                : 0.0;
             (double[]? d, double[]? r) = Response(arc, load, chosen.ToArray(), EI);
             double droop = d is null ? 0.0 : d.Select(Math.Abs).Max();
             List<int> arms = chosen.Where(k => !anchored.Contains(k)).ToList();
             return (arms, droop, r ?? new double[count]);
         }
+
+        /// <summary>
+        /// True when a station set is closed under mirroring, so the arms it
+        /// describes fall in the same places on both halves of the bar.
+        /// </summary>
+        private static bool IsMirrored(int[] combo, int[] mirrorOf)
+        {
+            var set = new HashSet<int>(combo);
+            foreach (int station in combo)
+            {
+                if (station < 0 || station >= mirrorOf.Length)
+                    return false;
+                if (!set.Contains(mirrorOf[station]))
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Each coarse station's mirror about the middle of the bar, or an
+        /// empty array when the bar is not symmetric enough to bother.
+        ///
+        /// Symmetry is judged on both the SHAPE and the LOAD, at one percent,
+        /// which is loose enough for a solved mesh that is symmetric to solver
+        /// precision and tight enough that a genuinely lopsided bar is left
+        /// alone. The measured lopsidedness comes back either way, so a bar
+        /// that just missed can be seen to have missed rather than silently
+        /// treated as crooked.
+        /// </summary>
+        private static int[] MirrorMap(
+            double[] arc,
+            double[] load,
+            int[] coarse,
+            out double lopsided)
+        {
+            lopsided = 0.0;
+            int n = arc.Length;
+            double span = arc[n - 1];
+            if (span <= 0.0 || n < 3)
+                return Array.Empty<int>();
+            double heaviest = Math.Max(load.Max(), 1.0e-12);
+
+            // Does every station have a partner at span minus its own arc,
+            // carrying the same load?
+            for (int k = 0; k < n; k++)
+            {
+                double want = span - arc[k];
+                int partner = 0;
+                double closest = double.MaxValue;
+                for (int j = 0; j < n; j++)
+                {
+                    double gap = Math.Abs(arc[j] - want);
+                    if (gap < closest)
+                    {
+                        closest = gap;
+                        partner = j;
+                    }
+                }
+                lopsided = Math.Max(lopsided, closest / span);
+                lopsided = Math.Max(
+                    lopsided, Math.Abs(load[partner] - load[k]) / heaviest);
+            }
+            if (lopsided > 0.01)
+                return Array.Empty<int>();
+
+            var mirrorOf = new int[coarse.Length];
+            for (int i = 0; i < coarse.Length; i++)
+            {
+                double want = span - arc[coarse[i]];
+                int partner = 0;
+                double closest = double.MaxValue;
+                for (int j = 0; j < coarse.Length; j++)
+                {
+                    double gap = Math.Abs(arc[coarse[j]] - want);
+                    if (gap < closest)
+                    {
+                        closest = gap;
+                        partner = j;
+                    }
+                }
+                mirrorOf[i] = partner;
+            }
+            return mirrorOf;
+        }
+
+        /// <summary>Whether the last bar solved was treated as symmetric.</summary>
+        public static bool LastSymmetric { get; private set; }
+
+        /// <summary>How far the last bar was from being a mirror of itself.</summary>
+        public static double LastLopsided { get; private set; }
+
+        /// <summary>
+        /// What insisting on symmetry cost the last bar in peak droop, as a
+        /// fraction of what the unrestricted search would have managed.
+        /// </summary>
+        public static double LastSymmetryCost { get; private set; }
 
         private static int NearestIndex(int[] values, int wanted)
         {

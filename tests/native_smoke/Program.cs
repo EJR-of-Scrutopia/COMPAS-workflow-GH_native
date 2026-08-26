@@ -498,10 +498,10 @@ internal static class Program
             Console.WriteLine(
                 "PASS  BeamSolver.ArmsForBar: sweeping symmetric arrangements "
                 + "puts the least droop exactly at the station nearest the "
-                + "textbook 0.2232L; the arms the solver picks land within one "
-                + "station of that inset, beat evenly spaced arms on peak "
-                + "deflection, and their reactions sum to the whole load. The "
-                + "arm-placement argument is MEASURED.");
+                + "textbook 0.2232L; the arms the solver picks are SYMMETRIC "
+                + "on a symmetric bar even though an asymmetric pair droops "
+                + "less, land within one station of that inset, beat evenly "
+                + "spaced arms, and their reactions sum to the whole load.");
         }
         catch (Exception exception)
         {
@@ -1906,14 +1906,29 @@ internal static class Program
                 + $"{(double)bestSymmetricAt / last:G4}).");
         }
 
-        // The arms the solver actually chose need not be symmetric. On a
-        // discrete bar they usually are not, and that is correct rather than a
-        // fault: with stations 0.025 apart, neither 0.200 nor 0.225 is the
-        // optimum, and one arm at each straddles it and droops less than either
-        // matched pair. Measured here: (8,31) peaks at 0.0149 against 0.0221
-        // for the symmetric (9,31). So the assertion is that both arms land
-        // within one station of the textbook inset, which evenly spaced arms
-        // at 0.25 do not.
+        // A SYMMETRIC BAR MUST GET SYMMETRIC ARMS.
+        //
+        // This assertion was dropped once and put back for a better reason.
+        // The unrestricted search really does prefer asymmetric arms here, and
+        // it is right by its own measure: with stations 0.025 apart neither
+        // 0.200 nor 0.225 is the optimum inset, so one arm at each straddles it
+        // and droops less than either matched pair. Measured: (8,31) peaks at
+        // 0.0149 against 0.0221 for the symmetric (9,31).
+        //
+        // But that gain is a discretisation artefact, not a structural
+        // insight. The continuous optimum on a symmetric problem IS symmetric,
+        // and an arch with its columns in different places on the two halves
+        // is not worth a third of the droop. The solver now refuses the grid's
+        // trick on a bar it judges symmetric, so this measures the refusal.
+        if (chosen[0] + chosen[1] != last)
+        {
+            throw new InvalidOperationException(
+                "A symmetric bar must get symmetric arms; they landed at "
+                + $"stations {chosen[0]} and {chosen[1]}, which are not "
+                + $"mirrored about {last / 2.0:G4}. The unrestricted search "
+                + "prefers (8,31) here, so this is the guard against it.");
+        }
+
         double spacing = 1.0 / last;
         foreach (int arm in chosen)
         {
