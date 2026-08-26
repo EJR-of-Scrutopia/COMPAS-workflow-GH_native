@@ -99,27 +99,9 @@ public sealed class PatternComponent : NativePreviewComponentBase
             "plan, to runs of pattern vertices and carried downstream as " +
             "indices, because once the surface rises the curves no longer sit " +
             "on it and cannot find their own nodes. Leave empty and use Rib " +
-            "Spacing to take them from the mesh instead.",
+            "Ribs on Supports to derive them from the anchors instead.",
             GH_ParamAccess.list);
-        parameters.AddIntegerParameter(
-            "Rib Spacing",
-            "RS",
-            "Optional. With no Principal Lines drawn, take every RS-th edge " +
-            "loop of the mesh as a bar. On a quad pattern the bars run along " +
-            "one of the two mesh directions anyway, so this gives evenly " +
-            "spaced bars that follow the mesh exactly. Zero means none.",
-            GH_ParamAccess.item,
-            0);
-        parameters.AddIntegerParameter(
-            "Rib Direction",
-            "RD",
-            "Which of the two mesh directions the derived bars follow, 0 or " +
-            "1. Ignored when Principal Lines are drawn.",
-            GH_ParamAccess.item,
-            0);
         parameters[4].Optional = true;
-        parameters[5].Optional = true;
-        parameters[6].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -154,10 +136,6 @@ public sealed class PatternComponent : NativePreviewComponentBase
         var principalCurves = new List<Curve>();
         data.GetDataList(4, principalCurves);
         principalCurves.RemoveAll(curve => curve is null);
-        int ribSpacing = 0;
-        int ribDirection = 0;
-        data.GetData(5, ref ribSpacing);
-        data.GetData(6, ref ribDirection);
 
         try
         {
@@ -217,15 +195,11 @@ public sealed class PatternComponent : NativePreviewComponentBase
             var patternVertices = patternPoints
                 .Select(pt => new Point3d(pt.X, pt.Y, pt.Z)).ToList();
 
-            List<List<int>> principalRuns = principalCurves.Count > 0
-                ? PrincipalRunFinder.FromCurves(
-                    principalCurves, patternVertices, patternEdges)
-                : PrincipalRunFinder.Derive(
-                    patternVertices,
-                    registered.Faces
-                        .Select(f => (IReadOnlyList<int>)f.ToArray()).ToArray(),
-                    ribSpacing,
-                    ribDirection);
+            // Only the explicit curves are resolved here. Deriving them
+            // needs the anchors, which Pattern does not have, so that lives on
+            // Supports instead.
+            List<List<int>> principalRuns = PrincipalRunFinder.FromCurves(
+                principalCurves, patternVertices, patternEdges);
             if (principalCurves.Count > 0 &&
                 principalRuns.Count < principalCurves.Count)
             {
@@ -395,7 +369,18 @@ public sealed class SupportsComponent : NativePreviewComponentBase
             "Optional maximum anchor-to-node snapping distance. Empty uses " +
             "the Pattern weld tolerance.",
             GH_ParamAccess.item);
+        parameters.AddIntegerParameter(
+            "Ribs",
+            "RB",
+            "How many principal lines to derive per anchor strip, when the " +
+            "Pattern carries none of its own. One takes the midpoint of each " +
+            "strip and runs straight off it across the form, which is how " +
+            "these lines are found in practice; more spread that many starts " +
+            "evenly along each strip. Zero derives none.",
+            GH_ParamAccess.item,
+            1);
         parameters[2].Optional = true;
+        parameters[3].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -430,6 +415,8 @@ public sealed class SupportsComponent : NativePreviewComponentBase
         }
         data.GetDataList(1, anchors);
         bool hasTolerance = data.GetData(2, ref snapTolerance);
+        int ribs = 1;
+        data.GetData(3, ref ribs);
 
         try
         {
@@ -462,16 +449,47 @@ public sealed class SupportsComponent : NativePreviewComponentBase
                     "solve will perform the topology-specific check.");
             }
 
+            // Derive the principal lines from the anchors, unless the
+            // Pattern already carries its own drawn ones. A line starts at the
+            // middle of an anchor strip and runs straight off it across the
+            // form: the anchors already say where the bars belong, so nothing
+            // has to be drawn and no mesh direction has to be chosen.
+            TnaPatternDto patternForAnchors = source;
+            if (topology.PrincipalRuns.Count == 0 && ribs > 0)
+            {
+                List<List<int>> derived = PrincipalRunFinder.DeriveFromAnchors(
+                    topology.Vertices
+                        .Select(v => new Point3d(v.X, v.Y, v.Z)).ToArray(),
+                    topology.Edges,
+                    nodeIds,
+                    ribs);
+                if (derived.Count > 0)
+                {
+                    patternForAnchors = source with
+                    {
+                        Topology = topology with
+                        {
+                            PrincipalRuns = derived
+                                .Select(r => (IReadOnlyList<int>)r.ToArray())
+                                .ToArray()
+                        }
+                    };
+                }
+            }
+
             var anchored = new AnchoredPatternDto
             {
-                Pattern = source,
+                Pattern = patternForAnchors,
                 AnchorNodeIds = nodeIds,
                 SnapTolerance = snapped.Tolerance
             };
             EnsureValid(anchored);
 
             SetPreview(topology, nodeIds);
-            Message = $"{nodeIds.Length} explicit anchors";
+            int runCount = patternForAnchors.Topology?.PrincipalRuns.Count ?? 0;
+            Message = runCount > 0
+                ? $"{nodeIds.Length} anchors, {runCount} principal lines"
+                : $"{nodeIds.Length} explicit anchors";
             data.SetData(0, new AnchoredPatternGoo(anchored));
         }
         catch (Exception error)
