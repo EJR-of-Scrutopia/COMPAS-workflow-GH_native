@@ -864,18 +864,40 @@ namespace Ananke.COMPAS.Native.Components
             double ax = Math.Cos(angle);
             double ay = Math.Sin(angle);
 
-            int[] order = Enumerable.Range(0, points.Count)
-                .OrderBy(i => ((points[i].X - cx) * ax) +
-                    ((points[i].Y - cy) * ay))
-                .ToArray();
-
-            // Equal blocks by count, which is the balance that also keeps the
-            // feet evenly spread along the run.
-            for (int rank = 0; rank < order.Length; rank++)
+            // Equal bands by POSITION, not by count. Equal counts put the
+            // band edges wherever the columns happen to fall, which is not
+            // mirrored, so an odd number of feet gave no central foot and an
+            // even number gave an off-centre pair. Equal bands about the middle
+            // are symmetric by construction, so with an odd number one band is
+            // centred on the middle and the rest come in mirrored pairs, and
+            // the CENTRAL FOOT stands outside the pairing exactly as a central
+            // column does.
+            double lo = double.MaxValue;
+            double hi = double.MinValue;
+            var along = new double[points.Count];
+            for (int i = 0; i < points.Count; i++)
             {
-                int block = (int)((long)rank * groups / order.Length);
-                label[order[rank]] = Math.Min(block, groups - 1);
+                along[i] = ((points[i].X - cx) * ax) + ((points[i].Y - cy) * ay);
+                lo = Math.Min(lo, along[i]);
+                hi = Math.Max(hi, along[i]);
             }
+            double width = (hi - lo) / groups;
+            if (width <= 1.0e-12)
+                return label;
+            for (int i = 0; i < points.Count; i++)
+            {
+                int band = (int)Math.Floor((along[i] - lo) / width);
+                label[i] = Math.Min(Math.Max(band, 0), groups - 1);
+            }
+
+            // A band nobody stands in is not a foot. Close the gaps so the
+            // count that comes out is the count that gets built.
+            int[] present = label.Distinct().OrderBy(g => g).ToArray();
+            var renumber = new Dictionary<int, int>();
+            for (int i = 0; i < present.Length; i++)
+                renumber[present[i]] = i;
+            for (int i = 0; i < label.Length; i++)
+                label[i] = renumber[label[i]];
             return label;
         }
 
@@ -1074,6 +1096,9 @@ namespace Ananke.COMPAS.Native.Components
                 .ToArray();
             var anchoredCoarse = new HashSet<int>(
                 anchored.Select(a => NearestIndex(coarse, a)));
+            int[] mirrorOf = MirrorMap(arc, coarse, out double lopsided);
+            bool symmetric = mirrorOf.Length > 0;
+
             int[] pool = Enumerable.Range(0, coarse.Length)
                 .Where(i => !anchoredCoarse.Contains(i))
                 .ToArray();
@@ -1090,21 +1115,19 @@ namespace Ananke.COMPAS.Native.Components
                     .Distinct()
                     .ToArray();
             }
-
-            // Is this bar symmetric? If it is, only mirrored arrangements
-            // are allowed to win.
-            //
-            // The unrestricted search picks asymmetric arms on a symmetric bar
-            // and is RIGHT to by its own measure: with stations a fortieth of
-            // the span apart, neither 0.200 nor 0.225 is the optimum inset, and
-            // one arm at each straddles it and droops less than either matched
-            // pair. But that gain is a discretisation artefact. The continuous
-            // optimum on a symmetric problem IS symmetric, and an arch built
-            // with its columns in different places on the two halves is not
-            // worth a few percent of droop. So the grid's trick is refused, and
-            // the cost of refusing it is reported instead of hidden.
-            int[] mirrorOf = MirrorMap(arc, coarse, out double lopsided);
-            bool symmetric = mirrorOf.Length > 0;
+            if (symmetric)
+            {
+                // Thinning the pool drops stations, and it drops them from the
+                // two halves differently, so a kept station's mirror was often
+                // no longer in the pool and no mirrored arrangement could be
+                // built at all. Put every mirror back.
+                pool = pool
+                    .Concat(pool.Select(s => mirrorOf[s]))
+                    .Where(s => !anchoredCoarse.Contains(s))
+                    .Distinct()
+                    .OrderBy(s => s)
+                    .ToArray();
+            }
 
             List<int>? best = null;
             double bestScore = double.MaxValue;
@@ -1112,7 +1135,10 @@ namespace Ananke.COMPAS.Native.Components
             double fallbackScore = double.MaxValue;
             double freeScore = double.MaxValue;
 
-            foreach (int[] combo in Combinations(pool, perLine))
+            IEnumerable<int[]> candidates = symmetric
+                ? Mirrored(pool, mirrorOf, coarse, arc, perLine)
+                : Combinations(pool, perLine);
+            foreach (int[] combo in candidates)
             {
                 var supports = new SortedSet<int>(anchoredCoarse);
                 foreach (int c in combo)
@@ -1127,8 +1153,6 @@ namespace Ananke.COMPAS.Native.Components
                     continue;
                 double score = defl.Select(Math.Abs).Max();
                 freeScore = Math.Min(freeScore, score);
-                if (symmetric && !IsMirrored(combo, mirrorOf))
-                    continue;
                 if (score < fallbackScore)
                 {
                     fallbackScore = score;
@@ -1140,6 +1164,34 @@ namespace Ananke.COMPAS.Native.Components
                 {
                     bestScore = score;
                     best = full.ToList();
+                }
+            }
+
+            if (symmetric && best is null && fallback is null)
+            {
+                // No mirrored arrangement fits, which happens on a very short
+                // bar. Better a crooked answer than none, and the report says
+                // which it was.
+                symmetric = false;
+                foreach (int[] combo in Combinations(pool, perLine))
+                {
+                    var supports = new SortedSet<int>(anchoredCoarse);
+                    foreach (int c in combo)
+                        supports.Add(c);
+                    int[] full = supports.Select(s => coarse[s]).Distinct()
+                        .OrderBy(s => s).ToArray();
+                    if (full.Length < 2)
+                        continue;
+                    (double[]? d2, double[]? r2) =
+                        Response(arc, load, full, EI);
+                    if (d2 is null || r2 is null)
+                        continue;
+                    double s2 = d2.Select(Math.Abs).Max();
+                    if (s2 < fallbackScore)
+                    {
+                        fallbackScore = s2;
+                        fallback = full.ToList();
+                    }
                 }
             }
 
@@ -1156,20 +1208,76 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// True when a station set is closed under mirroring, so the arms it
-        /// describes fall in the same places on both halves of the bar.
+        /// Arrangements that are symmetric BY CONSTRUCTION: a centre column
+        /// when an odd number is asked for, plus mirrored pairs.
+        ///
+        /// THE CENTRE COLUMN STANDS OUTSIDE THE PAIR COUNT, which is Param's
+        /// own diagnosis of what was going wrong. A column on the centreline
+        /// has no partner: it cannot be mirrored, so when it was counted like
+        /// any other it left an odd number to divide between the two halves,
+        /// one side took the extra, and everything else shifted to accommodate
+        /// it. Asking for five now means a centre and two pairs, not two on one
+        /// side and three on the other.
+        ///
+        /// Built rather than filtered, for the same reason. Generating every
+        /// arrangement and keeping the mirrored ones needs a mirrored
+        /// arrangement to exist in the first place, and after the pool is
+        /// thinned it often does not. Choosing half the pairs from the left
+        /// half and reflecting them cannot fail that way, and it searches a
+        /// square root of the space, so more stations fit in the same budget.
         /// </summary>
-        private static bool IsMirrored(int[] combo, int[] mirrorOf)
+        private static IEnumerable<int[]> Mirrored(
+            int[] pool,
+            int[] mirrorOf,
+            int[] coarse,
+            double[] arc,
+            int perLine)
         {
-            var set = new HashSet<int>(combo);
-            foreach (int station in combo)
+            double middle = 0.5 * arc[arc.Length - 1];
+
+            // The one station that may stand alone, because it is its own
+            // mirror: whichever sits nearest the middle.
+            int centre = -1;
+            double closest = double.MaxValue;
+            foreach (int station in pool)
             {
-                if (station < 0 || station >= mirrorOf.Length)
-                    return false;
-                if (!set.Contains(mirrorOf[station]))
-                    return false;
+                double gap = Math.Abs(arc[coarse[station]] - middle);
+                if (gap < closest)
+                {
+                    closest = gap;
+                    centre = station;
+                }
             }
-            return true;
+
+            bool odd = (perLine % 2) == 1;
+            int pairs = perLine / 2;
+            if (pairs == 0)
+            {
+                if (odd && centre >= 0)
+                    yield return new[] { centre };
+                yield break;
+            }
+
+            int[] left = pool
+                .Where(s => arc[coarse[s]] < middle - 1.0e-9 && s != centre)
+                .ToArray();
+            if (left.Length < pairs)
+                yield break;
+
+            foreach (int[] half in Combinations(left, pairs))
+            {
+                if (half.Length != pairs)
+                    continue;
+                var full = new List<int>(perLine + 1);
+                foreach (int station in half)
+                {
+                    full.Add(station);
+                    full.Add(mirrorOf[station]);
+                }
+                if (odd && centre >= 0)
+                    full.Add(centre);
+                yield return full.Distinct().ToArray();
+            }
         }
 
         /// <summary>

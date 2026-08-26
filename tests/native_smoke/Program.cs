@@ -504,7 +504,9 @@ internal static class Program
                 + "spaced arms, and their reactions sum to the whole load. "
                 + "Symmetry survives a load a tenth off mirrored, "
                 + "which every solved net's is and which defeated the first "
-                + "attempt at this.");
+                + "attempt at this. An odd count puts one arm ON the "
+                + "centreline and mirrors the rest, so the centre stands "
+                + "outside the pairing instead of eating one of it.");
         }
         catch (Exception exception)
         {
@@ -1974,6 +1976,52 @@ internal static class Program
                 + "when its load is a tenth off mirrored, which every "
                 + "solved net's is; they landed at "
                 + $"{string.Join(", ", noisyChosen)}.");
+        }
+
+        // AN ODD NUMBER PUTS ONE ON THE CENTRELINE AND PAIRS THE REST.
+        //
+        // This is the case Param diagnosed. A column on the centreline has no
+        // mirror partner, so when it was counted like any other it left an odd
+        // number to divide between the two halves: one side took the extra and
+        // everything else shifted to accommodate it. The centre now stands
+        // OUTSIDE the pair count, so three means a centre and one pair, and
+        // five means a centre and two pairs.
+        foreach (int wanted in new[] { 3, 5 })
+        {
+            object oddResult = arms.Invoke(
+                null,
+                new object?[] { bar, nodes, load, new HashSet<int>(), wanted, 1.0 })!;
+            var oddChosen = ((IEnumerable)oddResult.GetType()
+                .GetField("Item1")!.GetValue(oddResult)!)
+                .Cast<int>()
+                .OrderBy(value => value)
+                .ToArray();
+            if (oddChosen.Length != wanted)
+            {
+                throw new InvalidOperationException(
+                    $"{wanted} arms were asked for; {oddChosen.Length} came "
+                    + "back.");
+            }
+            int middle = oddChosen[oddChosen.Length / 2];
+            if (middle != last / 2)
+            {
+                throw new InvalidOperationException(
+                    $"With {wanted} arms the middle one belongs on the "
+                    + $"centreline, station {last / 2}; it is at {middle}. "
+                    + "A centre column has no partner, so it must stand "
+                    + "outside the pairing rather than eat one of it.");
+            }
+            for (int i = 0; i < oddChosen.Length / 2; i++)
+            {
+                int mirror = oddChosen[oddChosen.Length - 1 - i];
+                if (oddChosen[i] + mirror != last)
+                {
+                    throw new InvalidOperationException(
+                        $"With {wanted} arms, stations {oddChosen[i]} and "
+                        + $"{mirror} must be a mirrored pair about "
+                        + $"{last / 2.0:G4}; they are not.");
+                }
+            }
         }
 
         double solvedPeak = PeakDeflection(response, arc, load, chosen);
