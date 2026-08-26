@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
 using System.Text.Json;
 using Ananke.COMPAS.Native.Contracts;
@@ -238,4 +239,72 @@ internal static class TnaWorkflowPreview
 
     public static Point3d Point(Point3Dto point) =>
         new(point.X, point.Y, point.Z);
+
+    /// <summary>
+    /// The principal lines: the notched bars a reconfigurable mould holds
+    /// rigid along the net.
+    ///
+    /// Red, at the same weight as the network they lie on, so the only
+    /// distinction is colour. That is deliberate: a bar is a member of the
+    /// net, not a highlight laid over it, and drawing it heavier would say
+    /// otherwise.
+    ///
+    /// Every stage draws them from the same source, the vertex runs the
+    /// contract carries, resolved once upstream by Supports from the anchors
+    /// or by Pattern from drawn curves. So a bar cannot appear at one stage
+    /// and be missing at the next, and a definition that carries no runs
+    /// draws nothing at all rather than guessing.
+    /// </summary>
+    public static readonly Color PrincipalColour = Color.FromArgb(205, 45, 45);
+
+    public const int PrincipalWeight = 2;
+
+    public static IEnumerable<Line> PrincipalLines(
+        IReadOnlyList<Point3Dto> vertices,
+        IReadOnlyList<IReadOnlyList<int>>? runs)
+    {
+        if (runs is null)
+            yield break;
+        foreach (IReadOnlyList<int> run in runs)
+        {
+            if (run is null)
+                continue;
+            for (int index = 0; index + 1 < run.Count; index++)
+            {
+                int from = run[index];
+                int to = run[index + 1];
+                if (from < 0 || from >= vertices.Count ||
+                    to < 0 || to >= vertices.Count)
+                {
+                    continue;
+                }
+                yield return new Line(
+                    Point(vertices[from]),
+                    Point(vertices[to]));
+            }
+        }
+    }
+
+    public static IEnumerable<Line> TopologyPrincipalLines(
+        TopologyDto? topology) =>
+        topology is null
+            ? Array.Empty<Line>()
+            : PrincipalLines(topology.Vertices, topology.PrincipalRuns);
+
+    /// <summary>
+    /// The runs a solved Result carries, drawn on the solved geometry. Read
+    /// from the ANALYSIS topology hanging off the equilibrium, because that
+    /// is the one whose indices match the equilibrium vertices; the spine
+    /// Problem on the Result is in source index space and is the wrong ruler
+    /// for these points.
+    /// </summary>
+    public static IEnumerable<Line> ResultPrincipalLines(ResultDto? result)
+    {
+        EquilibriumResultDto? equilibrium = result?.Equilibrium;
+        return equilibrium is null
+            ? Array.Empty<Line>()
+            : PrincipalLines(
+                equilibrium.Vertices,
+                equilibrium.Problem?.Topology?.PrincipalRuns);
+    }
 }

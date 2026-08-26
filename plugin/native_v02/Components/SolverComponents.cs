@@ -34,6 +34,7 @@ public sealed class TnaRelaxComponent :
     private readonly List<Line> _formPreview = new();
     private readonly List<Line> _forcePreview = new();
     private readonly List<Line> _boundaryPreview = new();
+    private readonly List<Line> _principalPreview = new();
     private readonly List<Point3d> _supportPreview = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -111,6 +112,7 @@ public sealed class TnaRelaxComponent :
         _formPreview.Clear();
         _forcePreview.Clear();
         _boundaryPreview.Clear();
+        _principalPreview.Clear();
         _supportPreview.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -256,7 +258,7 @@ public sealed class TnaRelaxComponent :
                 "that can sag.");
         }
 
-        BuildPreparedPreview(result.Prepared);
+        BuildPreparedPreview(result.Prepared, problem);
         Message =
             $"{result.Prepared.BoundarySegments.Count} opening(s) - " +
             $"{result.Elapsed.TotalMilliseconds:F0} ms";
@@ -294,6 +296,13 @@ public sealed class TnaRelaxComponent :
                 edge,
                 Color.FromArgb(215, 125, 35),
                 2);
+        }
+        foreach (Line bar in _principalPreview)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
         }
         foreach (Point3d point in _supportPreview)
         {
@@ -452,12 +461,32 @@ public sealed class TnaRelaxComponent :
         }
     }
 
-    private void BuildPreparedPreview(TnaPreparedDto prepared)
+    private void BuildPreparedPreview(
+        TnaPreparedDto prepared,
+        ProblemDto? problem)
     {
         _formPreview.Clear();
         _forcePreview.Clear();
         _boundaryPreview.Clear();
+        _principalPreview.Clear();
         _supportPreview.Clear();
+
+        // The runs come from the LOCAL problem, not from the prepared source
+        // the worker echoed back: they are a native annotation that never
+        // went over the wire, so the echo cannot be trusted to carry them.
+        // The relaxed pattern's vertices are validated one-to-one against the
+        // source topology, so the source's indices are the right ruler for
+        // these points.
+        TopologyDto? sourceTopology =
+            problem?.Anchored?.Pattern?.Topology;
+        if (sourceTopology is not null &&
+            sourceTopology.Vertices.Count == prepared.Pattern.Vertices.Count)
+        {
+            _principalPreview.AddRange(
+                TnaWorkflowPreview.PrincipalLines(
+                    prepared.Pattern.Vertices,
+                    sourceTopology.PrincipalRuns));
+        }
 
         _formPreview.AddRange(
             TnaWorkflowPreview.GraphLines(
@@ -495,7 +524,8 @@ public sealed class TnaRelaxComponent :
         _clippingBox = TnaWorkflowPreview.Box(
             _formPreview
                 .Concat(_forcePreview)
-                .Concat(_boundaryPreview),
+                .Concat(_boundaryPreview)
+                .Concat(_principalPreview),
             _supportPreview);
     }
 
@@ -536,6 +566,7 @@ public class TnaSolveComponent :
     // Lazily assigned: a Mesh constructor touches Rhino's native runtime,
     // which must not happen while Grasshopper merely enumerates components.
     private Mesh? _previewMesh;
+    private readonly List<Line> _previewPrincipal = new();
     private readonly List<Point3d> _previewSupports = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -661,6 +692,7 @@ public class TnaSolveComponent :
     {
         base.BeforeSolveInstance();
         _previewMesh = null;
+        _previewPrincipal.Clear();
         _previewSupports.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -684,6 +716,13 @@ public class TnaSolveComponent :
             args.Display.DrawMeshWires(
                 _previewMesh,
                 Color.FromArgb(95, 95, 100));
+        }
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
         }
         foreach (Point3d point in _previewSupports)
         {
@@ -784,6 +823,9 @@ public class TnaSolveComponent :
         List<Line> thrustLines = TnaResultGeometry.MemberLines(result.Result);
         List<Point3d> supports = TnaResultGeometry.SupportPoints(result.Result);
         _previewMesh = thrustMesh;
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.ResultPrincipalLines(result.Result));
         _previewSupports.Clear();
         _previewSupports.AddRange(supports);
         _clippingBox = thrustMesh.Faces.Count > 0
@@ -1024,6 +1066,7 @@ public sealed class FdSolveComponent :
     NativeTaskComponentBase<FdSolveTaskResult>
 {
     private readonly List<Line> _previewLines = new();
+    private readonly List<Line> _previewPrincipal = new();
     private readonly List<Point3d> _previewSupports = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -1103,6 +1146,7 @@ public sealed class FdSolveComponent :
     {
         base.BeforeSolveInstance();
         _previewLines.Clear();
+        _previewPrincipal.Clear();
         _previewSupports.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -1114,6 +1158,13 @@ public sealed class FdSolveComponent :
         base.DrawViewportWires(args);
         foreach (Line line in _previewLines)
             args.Display.DrawLine(line, Color.FromArgb(95, 95, 100), 1);
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
+        }
         foreach (Point3d point in _previewSupports)
         {
             args.Display.DrawPoint(
@@ -1220,6 +1271,9 @@ public sealed class FdSolveComponent :
         List<Point3d> supports = TnaResultGeometry.SupportPoints(result.Result);
         _previewLines.Clear();
         _previewLines.AddRange(memberLines);
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.ResultPrincipalLines(result.Result));
         _previewSupports.Clear();
         _previewSupports.AddRange(supports);
         _clippingBox = TnaWorkflowPreview.Box(memberLines, supports);
