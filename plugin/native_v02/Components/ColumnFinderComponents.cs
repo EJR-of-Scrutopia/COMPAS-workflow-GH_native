@@ -302,12 +302,14 @@ namespace Ananke.COMPAS.Native.Components
                 (int, int)[] edges = MouldGeometry.ValidEdges(
                     equilibrium, n, out int[] edgeSource);
 
-                // The feet stand on the base of the geometry, which is where
-                // the anchors already are; nothing to set.
-                double ground = nodes.Min(p => p.Z);
-
                 var anchors = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
+
+                // The feet stand on the level the ANCHORS sit at. Not the base
+                // of the geometry: the two agree until some part of a vault
+                // hangs below its own supports, and then the base is under the
+                // dip and every column would be stood on it.
+                double ground = MouldGeometry.GroundLevel(nodes, anchors);
 
                 // The runs travel in the contract, resolved once upstream by
                 // Supports from the anchors or by Pattern from drawn curves.
@@ -707,7 +709,7 @@ namespace Ananke.COMPAS.Native.Components
                     + $"({string.Join(" + ", armsPerBar)} per bar), "
                     + $"{feet.Count} feet, {members.Count} members",
                 $"the arms carry {headLoad.Sum():0} N between them, ground read "
-                    + $"as {ground:0.###}",
+                    + $"as {ground:0.###}, the level the anchors sit at",
                 "principal lines came from the contract, resolved upstream",
                 string.Empty,
                 "arm positions are SOLVED, not spaced: a loaded bar wants its "

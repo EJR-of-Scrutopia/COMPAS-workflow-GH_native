@@ -63,6 +63,8 @@ namespace Ananke.COMPAS.Native.Components
             }
         }
 
+        private string _bareKey = string.Empty;
+        private double[]? _bareSurface;
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
         private readonly List<Line> _previewPrincipal = new();
@@ -267,7 +269,10 @@ namespace Ananke.COMPAS.Native.Components
                 // which is the network the worker actually solved and so
                 // already carries the answer; starting there put frame zero at
                 // the finished vault and left the animation with nothing to do.
-                double ground = target.Min(p => p.Z);
+                var anchorIds = new HashSet<int>(
+                    equilibrium.ResolvedSupportNodeIds
+                        .Where(i => i >= 0 && i < n));
+                double ground = MouldGeometry.GroundLevel(target, anchorIds);
                 IReadOnlyList<Point3Dto>? pattern =
                     result.Problem?.Anchored?.Pattern?.Topology?.Vertices;
                 bool fromPattern = pattern is not null && pattern.Count == n;
@@ -311,8 +316,6 @@ namespace Ananke.COMPAS.Native.Components
                     result, out int[] meshToNode);
 
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
-                var anchorIds = new HashSet<int>(
-                    equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
 
                 // The runs travel in the contract, resolved once by Supports
                 // from the anchors or by Pattern from drawn curves. Nothing is
@@ -336,7 +339,20 @@ namespace Ananke.COMPAS.Native.Components
                 foreach (int i in anchorIds)
                     pinned[i] = true;
 
-                double[] bare = MouldGeometry.BareSurface(target, neighbours, pinned);
+                // BareSurface runs 2000 relaxation sweeps and reads only the
+                // solved shape and what is pinned, neither of which Time or
+                // Pre-Sag touch. Caching it is the difference between dragging
+                // the timeline and re-solving a surface on every frame.
+                string bareKey = MouldGeometry.SurfaceKey(target, pinned);
+                if (_bareSurface is null ||
+                    _bareSurface.Length != n ||
+                    !string.Equals(_bareKey, bareKey, StringComparison.Ordinal))
+                {
+                    _bareSurface = MouldGeometry.BareSurface(
+                        target, neighbours, pinned);
+                    _bareKey = bareKey;
+                }
+                double[] bare = _bareSurface;
                 var relief = new double[n];
                 for (int i = 0; i < n; i++)
                     relief[i] = target[i].Z - bare[i];
@@ -414,6 +430,8 @@ namespace Ananke.COMPAS.Native.Components
                         + $"{principalIds.Count} notches",
                     $"anchors {anchorIds.Count}, perimeter nodes "
                         + $"{perimeterIds.Length}",
+                    $"ground read as {ground:0.###}, the level the anchors sit "
+                        + "at, which is what the columns stand on",
                     "principal lines read from the contract, resolved "
                         + "upstream by Supports or Pattern",
                     startIsFinal
@@ -780,6 +798,64 @@ namespace Ananke.COMPAS.Native.Components
 
             meanOffset = run.Average(i => Math.Sqrt(offset[i]));
             return run;
+        }
+
+        /// <summary>
+        /// Where the ground is: the level the ANCHORS sit at.
+        ///
+        /// In this machine they define it. They are tied down on the two sides
+        /// and stay there through the whole build, so the plane they lie in IS
+        /// the floor the columns stand on.
+        ///
+        /// The lowest point of the geometry is NOT the ground, though it agrees
+        /// with it whenever a vault stays above its own supports. The moment
+        /// any part of one hangs below them, taking the minimum puts the floor
+        /// under the dip and stands every column on it. The median of the
+        /// anchors, so one stray anchor cannot move the floor.
+        /// </summary>
+        public static double GroundLevel(
+            Point3d[] nodes,
+            IEnumerable<int> anchorIds)
+        {
+            double[] levels = anchorIds
+                .Where(i => i >= 0 && i < nodes.Length)
+                .Select(i => nodes[i].Z)
+                .OrderBy(z => z)
+                .ToArray();
+            if (levels.Length > 0)
+                return levels[levels.Length / 2];
+            return nodes.Length == 0 ? 0.0 : nodes.Min(p => p.Z);
+        }
+
+        /// <summary>
+        /// A key naming everything <see cref="BareSurface"/> reads, so a caller
+        /// can tell whether a cached answer still applies.
+        ///
+        /// Deliberately NOT the topology hash. That names the analysis network,
+        /// and the solved vertices are not part of it: re-solving at a
+        /// different height leaves the hash alone and moves every point, which
+        /// is exactly the case a topology-keyed cache would get wrong. Hashing
+        /// the coordinates bit for bit costs one pass and cannot drift.
+        /// </summary>
+        public static string SurfaceKey(Point3d[] target, bool[] pinned)
+        {
+            long rolling = 17;
+            for (int i = 0; i < target.Length; i++)
+            {
+                rolling = (rolling * 31) +
+                    BitConverter.DoubleToInt64Bits(target[i].X);
+                rolling = (rolling * 31) +
+                    BitConverter.DoubleToInt64Bits(target[i].Y);
+                rolling = (rolling * 31) +
+                    BitConverter.DoubleToInt64Bits(target[i].Z);
+            }
+            long held = 19;
+            for (int i = 0; i < pinned.Length; i++)
+            {
+                if (pinned[i])
+                    held = (held * 37) + i;
+            }
+            return $"{target.Length}:{rolling}:{held}";
         }
 
         /// <summary>Squared distance in plan, height ignored.</summary>

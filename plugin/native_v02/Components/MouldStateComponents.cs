@@ -232,10 +232,13 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Thrust",
                 "TH",
-                "Horizontal force at each column foot, N: the part of a leaning "
-                    + "column's load that does not go into the ground "
-                    + "vertically and has to be resisted sideways. A plumb "
-                    + "column reads zero.",
+                "Horizontal force in each column member, N: the part of a "
+                    + "leaning member's axial force that acts sideways. A plumb "
+                    + "member reads zero. Aligned with Columns, so a tree "
+                    + "branch reports its own horizontal too; only the members "
+                    + "STANDING ON THE GROUND put theirs into the foundation, "
+                    + "and the Report sums those alone. A branch's horizontal "
+                    + "is balanced at its junction by its siblings.",
                 GH_ParamAccess.list);
             parameters.AddPointParameter(
                 "Anchors",
@@ -311,6 +314,17 @@ namespace Ananke.COMPAS.Native.Components
                 var columns = new List<Line>();
                 var columnForce = new List<double>();
                 var thrust = new List<double>();
+                var standsOnGround = new List<bool>();
+                // A member counts as a foot when its lower end is on the floor.
+                // Scaled to the model so the test means the same thing in
+                // millimetres as in metres.
+                double reach = state.Vertices.Count == 0
+                    ? 1.0
+                    : Math.Max(
+                        state.Vertices.Max(v => v.Z) -
+                        state.Vertices.Min(v => v.Z),
+                        1.0e-9);
+                double onGround = (1.0e-6 * reach) + 1.0e-9;
                 for (int c = 0; c < state.ColumnFoot.Count; c++)
                 {
                     Point3Dto a = state.ColumnFoot[c];
@@ -330,6 +344,8 @@ namespace Ananke.COMPAS.Native.Components
                         ? Math.Sqrt((d.X * d.X) + (d.Y * d.Y)) / length
                         : 0.0;
                     thrust.Add(force * sin);
+                    standsOnGround.Add(
+                        Math.Abs(a.Z - state.Ground) <= onGround);
                 }
 
                 var anchorPoints = new List<Point3d>();
@@ -360,7 +376,7 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(6, thrust);
                 data.SetDataList(7, anchorPoints);
                 data.SetDataList(8, anchorForce);
-                data.SetData(9, Report(
+                data.SetData(9, ReportFor(standsOnGround, 
                     state, cableForce, barForce, columnForce, thrust,
                     anchorForce));
             }
@@ -370,7 +386,8 @@ namespace Ananke.COMPAS.Native.Components
             }
         }
 
-        private static string Report(
+        private static string ReportFor(
+            List<bool> standsOnGround,
             MouldStateDto state,
             List<double> cableForce,
             List<double> barForce,
@@ -410,11 +427,24 @@ namespace Ananke.COMPAS.Native.Components
                     $"column compression {columnForce.Min():0} to "
                         + $"{columnForce.Max():0} N, carrying "
                         + $"{columnForce.Sum():0} N in total");
-                lines.Add(
-                    $"horizontal thrust at the feet up to {thrust.Max():0} N, "
-                        + $"{thrust.Sum():0} N summed. This is what the ground "
-                        + "has to resist sideways, and it is the price of "
-                        + "leaning the arms.");
+                // Only the FEET push on the ground. A branch inside a tree
+                // leans too, but its horizontal is balanced at the junction by
+                // its siblings, which is precisely what the junctions are now
+                // placed to do. Summing every member's horizontal counted that
+                // cancelled force as load on the foundations.
+                double[] footThrust = thrust
+                    .Where((_, index) => index < standsOnGround.Count &&
+                        standsOnGround[index])
+                    .ToArray();
+                lines.Add(footThrust.Length == 0
+                    ? "no member reaches the ground in this state, so there is "
+                        + "no foundation thrust to report."
+                    : $"horizontal thrust at the {footThrust.Length} feet up to "
+                        + $"{footThrust.Max():0} N, {footThrust.Sum():0} N "
+                        + "summed. This is what the ground has to resist "
+                        + "sideways, and it is the price of leaning the arms. "
+                        + "Branches above a foot lean too, but their horizontal "
+                        + "is balanced at the junction, not by the foundation.");
             }
             else
             {
