@@ -363,8 +363,8 @@ namespace Ananke.COMPAS.Native.Components
 
                 foreach (List<int> bar in bars)
                 {
-                    Vector3d[] pull = BarLoads(bar, nodes, incident);
-                    Vector3d[] across = BarTransverse(bar, nodes, pull);
+                    Vector3d[] pull = MouldGeometry.BarLoads(bar, nodes, incident);
+                    Vector3d[] across = MouldGeometry.BarTransverse(bar, nodes, pull);
                     for (int k = 0; k < bar.Count; k++)
                     {
                         alongToAnchors += (pull[k] - across[k]).Length;
@@ -513,115 +513,6 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// What the NET hands each notch of a bar, as a force vector in three
-        /// dimensions.
-        ///
-        /// Only the infill cables count. The edges running ALONG the bar are
-        /// the bar itself, and a beam does not load itself, so they are left
-        /// out. Positive is tension, so a member pulls its node toward the far
-        /// end and a negative one pushes it away.
-        /// </summary>
-        private static Vector3d[] BarLoads(
-            List<int> bar,
-            Point3d[] nodes,
-            List<(int Other, double Force)>[] incident)
-        {
-            var along = new HashSet<long>();
-            for (int k = 0; k + 1 < bar.Count; k++)
-                along.Add(EdgeKey(bar[k], bar[k + 1]));
-
-            var pull = new Vector3d[bar.Count];
-            for (int k = 0; k < bar.Count; k++)
-            {
-                int node = bar[k];
-                var total = Vector3d.Zero;
-                foreach ((int other, double force) in incident[node])
-                {
-                    if (along.Contains(EdgeKey(node, other)))
-                        continue;
-                    Vector3d step = nodes[other] - nodes[node];
-                    double length = step.Length;
-                    if (length <= 1.0e-12)
-                        continue;
-                    // MAGNITUDE, deliberately. Every infill member of this
-                    // mould is a CABLE and pulls its notch toward the far end,
-                    // whatever sign the analysis attached to it. A Result's
-                    // sign convention is not fixed: Display reads it off the
-                    // Result rather than assuming, and a TNA thrust network is
-                    // the COMPRESSION MIRROR of the net that will be built, so
-                    // its member forces come back negative under positive
-                    // tension. Taking the signed value flipped every pull
-                    // upward, which made the aim ask a column to hold its notch
-                    // DOWN, which no column can do, so every one of them fell
-                    // back to plumb. That is what put straight posts under a
-                    // steeply inclined bar and collapsed the trees to a fan.
-                    total += (Math.Abs(force) / length) * step;
-                }
-                pull[k] = total;
-            }
-            return pull;
-        }
-
-        private static long EdgeKey(int a, int b) =>
-            a < b
-                ? ((long)a << 32) | (uint)b
-                : ((long)b << 32) | (uint)a;
-
-        /// <summary>
-        /// The part of that pull the COLUMNS have to take.
-        ///
-        /// This is where Gaudi's rule lands in this machine, and it lands
-        /// differently from how it reads at first. Inclining a column pays only
-        /// when the force arriving at its head is ALREADY inclined; under a
-        /// purely vertical load a lean costs axial force (P over cos) and hands
-        /// the foot a sideways push (P times tan) that something then has to
-        /// resist. Gaudi's columns lean because the vault delivers thrust, and
-        /// the lean is what removes the buttress.
-        ///
-        /// Here the buttresses already exist: every principal bar runs from one
-        /// anchor strip to the other and BOTH ITS ENDS ARE TIED TO THE GROUND,
-        /// so the pull running along a bar travels to those anchors, not to the
-        /// columns. Leaning a column to take that component would double up on
-        /// work the anchors are already doing.
-        ///
-        /// What no one takes is the pull ACROSS the bar. The bars curve in
-        /// plan, so the infill cables pull them sideways and their own tension
-        /// around that plan curve pushes sideways too, and nothing resists it
-        /// but the bar's own bending. That component, plus the weight, is the
-        /// columns' share and it is what their lean should follow.
-        ///
-        /// So: project the pull off the bar's local tangent and keep the rest.
-        /// On a bar lying in a vertical plane the remainder is vertical and the
-        /// columns come out plumb, which is the right answer for that case.
-        /// </summary>
-        private static Vector3d[] BarTransverse(
-            List<int> bar,
-            Point3d[] nodes,
-            Vector3d[] pull)
-        {
-            var across = new Vector3d[bar.Count];
-            for (int k = 0; k < bar.Count; k++)
-            {
-                int before = Math.Max(k - 1, 0);
-                int after = Math.Min(k + 1, bar.Count - 1);
-                Vector3d tangent = nodes[bar[after]] - nodes[bar[before]];
-                double length = tangent.Length;
-                if (length <= 1.0e-12)
-                {
-                    across[k] = pull[k];
-                    continue;
-                }
-                // Divided rather than Unitized: Vector3d.Unitize P/Invokes into
-                // Rhino's native core, which puts it out of reach of the smoke
-                // harness, and this runs per node per bar per solve anyway.
-                tangent = new Vector3d(
-                    tangent.X / length, tangent.Y / length, tangent.Z / length);
-                across[k] = pull[k] - ((pull[k] * tangent) * tangent);
-            }
-            return across;
-        }
-
-        /// <summary>
         /// Which way each arm has to push: the direction of the load it
         /// gathers, so the column stands along the line of its own force and
         /// works in pure compression.
@@ -677,36 +568,12 @@ namespace Ananke.COMPAS.Native.Components
                     gathered[index] += across[k];
             }
 
-            double cap = Math.Tan(Math.PI / 3.0);
             int plumbFallbacks = 0;
             for (int c = 0; c < chosen.Count; c++)
             {
-                // The arm supplies the opposite of what the net pulls.
-                Vector3d supply = -gathered[c];
-                if (supply.Z <= 1.0e-9)
-                {
-                    // The net is trying to pull this notch DOWN through its
-                    // column, which a column cannot do. The beam solve already
-                    // rejects arrangements that need an arm to pull; stand this
-                    // one plumb rather than invent a direction for it.
-                    aim[c] = Vector3d.ZAxis;
+                if (-gathered[c].Z <= 1.0e-9)
                     plumbFallbacks++;
-                    continue;
-                }
-                double horizontal = Math.Sqrt(
-                    (supply.X * supply.X) + (supply.Y * supply.Y));
-                double allowed = cap * supply.Z;
-                if (horizontal > allowed && horizontal > 1.0e-12)
-                {
-                    double scale = allowed / horizontal;
-                    supply = new Vector3d(
-                        supply.X * scale, supply.Y * scale, supply.Z);
-                }
-                double length = supply.Length;
-                aim[c] = length > 1.0e-12
-                    ? new Vector3d(
-                        supply.X / length, supply.Y / length, supply.Z / length)
-                    : Vector3d.ZAxis;
+                aim[c] = MouldGeometry.AimFrom(gathered[c]);
             }
             LastPlumbFallbacks = plumbFallbacks;
             return aim;

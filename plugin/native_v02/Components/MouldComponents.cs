@@ -183,9 +183,21 @@ namespace Ananke.COMPAS.Native.Components
                     + "keep its head on that notch. Both at once, which is the "
                     + "two jobs the mechanism actually has to do.",
                 GH_ParamAccess.list);
+            parameters.AddNumberParameter(
+                "Extension",
+                "E",
+                "How much of a column's final length its strut can extend, in "
+                    + "percent. A column is not telescopic over its whole "
+                    + "length: it has a fixed body and a ram. 40 means the "
+                    + "strut is 60 percent of full when retracted and reaches "
+                    + "100 when driven out, so early in the build it cannot be "
+                    + "short and lies out along its rail instead.",
+                GH_ParamAccess.item,
+                40.0);
             parameters[1].Optional = true;
             parameters[2].Optional = true;
             parameters[3].Optional = true;
+            parameters[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -266,6 +278,8 @@ namespace Ananke.COMPAS.Native.Components
             data.GetData(2, ref preSag);
             var columnLines = new List<Line>();
             data.GetDataList(3, columnLines);
+            double extendPct = 40.0;
+            data.GetData(4, ref extendPct);
 
             try
             {
@@ -415,6 +429,12 @@ namespace Ananke.COMPAS.Native.Components
                         + $"{sag * 100:0}% sag";
                 }
 
+                // Re-aim on this frame's own geometry, so a column follows
+                // the line of thrust the whole way up instead of only arriving
+                // on it at the end. Same formula Column Finder places by, which
+                // is the point of it living in MouldGeometry.
+                var liveAim = new Dictionary<int, Vector3d>();
+
                 var live = new Point3d[n];
                 for (int i = 0; i < n; i++)
                 {
@@ -431,6 +451,37 @@ namespace Ananke.COMPAS.Native.Components
                         start[i].X + (sag * (target[i].X - start[i].X)),
                         start[i].Y + (sag * (target[i].Y - start[i].Y)),
                         z);
+                }
+
+                if (columnLines.Count > 0)
+                {
+                    var edgeForce = new double[edges.Length];
+                    for (int e = 0; e < edges.Length; e++)
+                    {
+                        int src = e < edgeSource.Length ? edgeSource[e] : e;
+                        edgeForce[e] = src < equilibrium.MemberForces.Count
+                            ? equilibrium.MemberForces[src]
+                            : 0.0;
+                    }
+                    var incident = new List<(int Other, double Force)>[n];
+                    for (int i = 0; i < n; i++)
+                        incident[i] = new List<(int, double)>();
+                    for (int e = 0; e < edges.Length; e++)
+                    {
+                        incident[edges[e].Item1].Add(
+                            (edges[e].Item2, edgeForce[e]));
+                        incident[edges[e].Item2].Add(
+                            (edges[e].Item1, edgeForce[e]));
+                    }
+                    foreach (List<int> run in bars)
+                    {
+                        Vector3d[] pull =
+                            MouldGeometry.BarLoads(run, live, incident);
+                        Vector3d[] across =
+                            MouldGeometry.BarTransverse(run, live, pull);
+                        for (int k = 0; k < run.Count; k++)
+                            liveAim[run[k]] = MouldGeometry.AimFrom(across[k]);
+                    }
                 }
 
                 int[] perimeterIds = MouldGeometry.PerimeterNodes(
@@ -504,59 +555,136 @@ namespace Ananke.COMPAS.Native.Components
                             + "machine does not have.");
                 }
 
-                // The columns, raised with the net rather than left at the
-                // positions they finish in.
+                // The columns, raised with the net.
                 //
-                // A column here does TWO things at once, because the mechanism
-                // does: its foot SLIDES across the ground, linearly, from
-                // directly under its own notch to where it finally stands, and
-                // the strut EXTENDS so its head stays on that notch the whole
-                // way. Neither alone would work. A foot fixed at the finish
-                // would have the column lying at an impossible angle while the
-                // net is still down; a strut of fixed length could not reach a
-                // notch that is rising.
+                // A column is NOT telescopic over its whole length. It has a
+                // fixed body and a ram, so it can never be shorter than its
+                // retracted length, and the previous version drove it to almost
+                // nothing early on and buried it under the floor. What the
+                // machine actually does is SLIDE and then EXTEND:
                 //
-                // The slide follows LIFT, not sag: it is the columns coming up,
-                // not the steppers reeling. So through the whole first phase
-                // each foot sits under its notch and tracks the reeling in
-                // plan, and only then starts travelling out.
+                //   while the notch is still low, the strut stays RETRACTED and
+                //   its foot lies far out along the rail, so the column is
+                //   almost lying down and pointing up at its notch;
+                //
+                //   as the notch rises, the foot it needs comes IN along the
+                //   rail, still at the retracted length, which is the slide;
+                //
+                //   once the foot has come in as far as the finished one, it
+                //   stops and the RAM drives out to keep the head on the notch,
+                //   which is the extension.
+                //
+                // Neither phase is scheduled. Both fall out of one equation:
+                // the foot lies on the ground at whatever horizontal distance
+                // keeps the strut at its retracted length, until that distance
+                // is shorter than the finished one and the ram takes over.
+                //
+                // The AZIMUTH the foot lies along is the live thrust direction,
+                // recomputed from this frame's own geometry, so the column
+                // tracks the line of force the whole way up rather than only
+                // arriving on it. Its LEAN cannot follow: while the strut is
+                // retracted the lean is whatever the length dictates.
+                double extend = Math.Min(Math.Max(extendPct, 0.0), 95.0) / 100.0;
                 var liveColumns = new List<Line>();
                 double shortest = double.MaxValue;
                 double longest = 0.0;
-                double travelled = 0.0;
-                foreach (int column in
-                    MouldGeometry.ColumnHeads(columnLines, target))
+                double slid = 0.0;
+                int belowGround = 0;
+                foreach (Line finished in columnLines)
                 {
-                    Line finished = columnLines[column];
+                    if (finished.Length <= 1.0e-9)
+                        continue;
                     int head = MouldGeometry.NearestNodeInPlan(
                         finished.To, target);
                     if (head < 0)
                         continue;
                     Point3d top = live[head];
+                    double rise = top.Z - ground;
+                    if (rise <= 1.0e-9)
+                    {
+                        // The notch has not cleared the floor, so there is
+                        // nothing for a column to stand under yet.
+                        belowGround++;
+                        continue;
+                    }
+
+                    double full = finished.Length;
+                    double retracted = full * (1.0 - extend);
                     var under = new Point3d(top.X, top.Y, ground);
-                    var foot = new Point3d(
-                        under.X + (lift * (finished.From.X - under.X)),
-                        under.Y + (lift * (finished.From.Y - under.Y)),
-                        ground);
+
+                    // Along the rail: the live thrust azimuth, falling back to
+                    // the direction of the finished foot when the net is
+                    // pulling this notch straight down.
+                    double railX = liveAim.TryGetValue(head, out Vector3d a)
+                        ? a.X : 0.0;
+                    double railY = liveAim.TryGetValue(head, out Vector3d b)
+                        ? b.Y : 0.0;
+                    double railLength = Math.Sqrt(
+                        (railX * railX) + (railY * railY));
+                    if (railLength <= 1.0e-9)
+                    {
+                        railX = finished.From.X - under.X;
+                        railY = finished.From.Y - under.Y;
+                        railLength = Math.Sqrt(
+                            (railX * railX) + (railY * railY));
+                    }
+                    if (railLength <= 1.0e-9)
+                    {
+                        railX = 1.0;
+                        railY = 0.0;
+                        railLength = 1.0;
+                    }
+                    // The aim points UP the column, so the foot lies the other
+                    // way along it.
+                    railX = -railX / railLength;
+                    railY = -railY / railLength;
+
+                    double finishedOut = Math.Sqrt(
+                        MouldGeometry.PlanDistanceSquared(under, finished.From));
+                    double retractedOut = retracted > rise
+                        ? Math.Sqrt((retracted * retracted) - (rise * rise))
+                        : 0.0;
+
+                    Point3d foot;
+                    if (retractedOut > finishedOut)
+                    {
+                        // Sliding: strut still retracted, foot out on the rail.
+                        foot = new Point3d(
+                            under.X + (railX * retractedOut),
+                            under.Y + (railY * retractedOut),
+                            ground);
+                        slid = Math.Max(slid, retractedOut - finishedOut);
+                    }
+                    else
+                    {
+                        // Extending: the foot has arrived, the ram drives out.
+                        foot = new Point3d(
+                            finished.From.X, finished.From.Y, ground);
+                    }
+
                     liveColumns.Add(new Line(foot, top));
                     double length = foot.DistanceTo(top);
                     shortest = Math.Min(shortest, length);
                     longest = Math.Max(longest, length);
-                    travelled = Math.Max(
-                        travelled,
-                        Math.Sqrt(MouldGeometry.PlanDistanceSquared(
-                            under, finished.From)));
                 }
                 if (liveColumns.Count > 0)
                 {
                     report.Add(string.Empty);
                     report.Add(
                         $"{liveColumns.Count} columns at this frame, "
-                            + $"{shortest:0.###} to {longest:0.###} long. Each "
-                            + "foot slides as the lift goes on and the strut "
-                            + $"extends to follow its notch; the longest slide "
-                            + $"is {travelled:0.###} at full height, which is "
-                            + "the travel the base has to have.");
+                            + $"{shortest:0.###} to {longest:0.###} long, with "
+                            + $"a ram worth {extendPct:0}% of full length. The "
+                            + "foot lies out on its rail while the strut is "
+                            + "retracted, slides in as the notch rises, then "
+                            + "stops and lets the ram finish the reach. Furthest "
+                            + $"any foot still has to slide: {slid:0.###}.");
+                }
+                if (belowGround > 0)
+                {
+                    report.Add(
+                        $"{belowGround} columns are not drawn at this frame: "
+                            + "their notch has not cleared the floor yet, so "
+                            + "there is nothing for them to stand under.");
                 }
 
                 Mesh? framed = mesh is null
@@ -946,6 +1074,148 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// What the NET hands each notch of a bar, as a force vector in three
+        /// dimensions.
+        ///
+        /// Only the infill cables count. The edges running ALONG the bar are
+        /// the bar itself, and a beam does not load itself, so they are left
+        /// out. Positive is tension, so a member pulls its node toward the far
+        /// end and a negative one pushes it away.
+        /// </summary>
+        public static Vector3d[] BarLoads(
+            List<int> bar,
+            Point3d[] nodes,
+            List<(int Other, double Force)>[] incident)
+        {
+            var along = new HashSet<long>();
+            for (int k = 0; k + 1 < bar.Count; k++)
+                along.Add(EdgeKey(bar[k], bar[k + 1]));
+
+            var pull = new Vector3d[bar.Count];
+            for (int k = 0; k < bar.Count; k++)
+            {
+                int node = bar[k];
+                var total = Vector3d.Zero;
+                foreach ((int other, double force) in incident[node])
+                {
+                    if (along.Contains(EdgeKey(node, other)))
+                        continue;
+                    Vector3d step = nodes[other] - nodes[node];
+                    double length = step.Length;
+                    if (length <= 1.0e-12)
+                        continue;
+                    // MAGNITUDE, deliberately. Every infill member of this
+                    // mould is a CABLE and pulls its notch toward the far end,
+                    // whatever sign the analysis attached to it. A Result's
+                    // sign convention is not fixed: Display reads it off the
+                    // Result rather than assuming, and a TNA thrust network is
+                    // the COMPRESSION MIRROR of the net that will be built, so
+                    // its member forces come back negative under positive
+                    // tension. Taking the signed value flipped every pull
+                    // upward, which made the aim ask a column to hold its notch
+                    // DOWN, which no column can do, so every one of them fell
+                    // back to plumb. That is what put straight posts under a
+                    // steeply inclined bar and collapsed the trees to a fan.
+                    total += (Math.Abs(force) / length) * step;
+                }
+                pull[k] = total;
+            }
+            return pull;
+        }
+
+        public static long EdgeKey(int a, int b) =>
+            a < b
+                ? ((long)a << 32) | (uint)b
+                : ((long)b << 32) | (uint)a;
+
+        /// <summary>
+        /// The part of that pull the COLUMNS have to take.
+        ///
+        /// This is where Gaudi's rule lands in this machine, and it lands
+        /// differently from how it reads at first. Inclining a column pays only
+        /// when the force arriving at its head is ALREADY inclined; under a
+        /// purely vertical load a lean costs axial force (P over cos) and hands
+        /// the foot a sideways push (P times tan) that something then has to
+        /// resist. Gaudi's columns lean because the vault delivers thrust, and
+        /// the lean is what removes the buttress.
+        ///
+        /// Here the buttresses already exist: every principal bar runs from one
+        /// anchor strip to the other and BOTH ITS ENDS ARE TIED TO THE GROUND,
+        /// so the pull running along a bar travels to those anchors, not to the
+        /// columns. Leaning a column to take that component would double up on
+        /// work the anchors are already doing.
+        ///
+        /// What no one takes is the pull ACROSS the bar. The bars curve in
+        /// plan, so the infill cables pull them sideways and their own tension
+        /// around that plan curve pushes sideways too, and nothing resists it
+        /// but the bar's own bending. That component, plus the weight, is the
+        /// columns' share and it is what their lean should follow.
+        ///
+        /// So: project the pull off the bar's local tangent and keep the rest.
+        /// On a bar lying in a vertical plane the remainder is vertical and the
+        /// columns come out plumb, which is the right answer for that case.
+        /// </summary>
+        public static Vector3d[] BarTransverse(
+            List<int> bar,
+            Point3d[] nodes,
+            Vector3d[] pull)
+        {
+            var across = new Vector3d[bar.Count];
+            for (int k = 0; k < bar.Count; k++)
+            {
+                int before = Math.Max(k - 1, 0);
+                int after = Math.Min(k + 1, bar.Count - 1);
+                Vector3d tangent = nodes[bar[after]] - nodes[bar[before]];
+                double length = tangent.Length;
+                if (length <= 1.0e-12)
+                {
+                    across[k] = pull[k];
+                    continue;
+                }
+                // Divided rather than Unitized: Vector3d.Unitize P/Invokes into
+                // Rhino's native core, which puts it out of reach of the smoke
+                // harness, and this runs per node per bar per solve anyway.
+                tangent = new Vector3d(
+                    tangent.X / length, tangent.Y / length, tangent.Z / length);
+                across[k] = pull[k] - ((pull[k] * tangent) * tangent);
+            }
+            return across;
+        }
+
+        /// <summary>
+        /// Which way a column must push, given what the net pulls across its
+        /// bar there. One rule, used by Column Finder to place the arms and by
+        /// Animate to re-aim them on every frame, so a rising column follows
+        /// the same thrust line the finished one stands on.
+        ///
+        /// Capped at sixty degrees from vertical: past that a column pushes
+        /// sideways more than it holds up and the sliding joint cannot reach
+        /// the angle. A net pulling its notch DOWN onto the column has no
+        /// thrust line to follow at all, so that one stands plumb.
+        /// </summary>
+        public static Vector3d AimFrom(Vector3d pulled)
+        {
+            Vector3d supply = -pulled;
+            if (supply.Z <= 1.0e-9)
+                return Vector3d.ZAxis;
+
+            double horizontal = Math.Sqrt(
+                (supply.X * supply.X) + (supply.Y * supply.Y));
+            double allowed = Math.Tan(Math.PI / 3.0) * supply.Z;
+            if (horizontal > allowed && horizontal > 1.0e-12)
+            {
+                double scale = allowed / horizontal;
+                supply = new Vector3d(
+                    supply.X * scale, supply.Y * scale, supply.Z);
+            }
+            double length = supply.Length;
+            return length > 1.0e-12
+                ? new Vector3d(
+                    supply.X / length, supply.Y / length, supply.Z / length)
+                : Vector3d.ZAxis;
+        }
+
+        /// <summary>
         /// The index of the node nearest a point IN PLAN. Plan, because a
         /// column drawn against the finished shape has to find its notch on a
         /// net that is still on the ground.
@@ -966,23 +1236,6 @@ namespace Ananke.COMPAS.Native.Components
             return best;
         }
 
-        /// <summary>
-        /// The indices of the columns worth animating: those with a real line
-        /// and a head above their foot. A tree's branches come through here
-        /// too, and a branch whose head is not on the net finds the nearest
-        /// node in plan, which is the junction's own notch.
-        /// </summary>
-        public static IEnumerable<int> ColumnHeads(
-            IReadOnlyList<Line> columns,
-            Point3d[] nodes)
-        {
-            for (int i = 0; i < columns.Count; i++)
-            {
-                if (columns[i].Length <= 1.0e-9 || nodes.Length == 0)
-                    continue;
-                yield return i;
-            }
-        }
 
         /// <summary>Squared distance in plan, height ignored.</summary>
         public static double PlanDistanceSquared(Point3d a, Point3d b) =>

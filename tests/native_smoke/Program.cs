@@ -1471,10 +1471,15 @@ internal static class Program
     /// </summary>
     private static void ValidateColumnAim(Assembly plugin)
     {
-        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
-        MethodInfo loads = RequireStatic(finder, "BarLoads");
-        MethodInfo transverse = RequireStatic(finder, "BarTransverse");
-        MethodInfo armAim = RequireStatic(finder, "ArmAim");
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo loads = finder.GetMethod("BarLoads", BindingFlags.Public | BindingFlags.Static)!;
+        MethodInfo transverse = finder.GetMethod("BarTransverse", BindingFlags.Public | BindingFlags.Static)!;
+        // The aim rule itself now lives in MouldGeometry, shared: Column
+        // Finder places by it and Animate re-aims by it on every frame, so
+        // testing it once tests both.
+        MethodInfo armAim = finder.GetMethod(
+            "AimFrom", BindingFlags.Public | BindingFlags.Static)!;
 
         Type point3d = loads.GetParameters()[1].ParameterType.GetElementType()
             ?? throw new InvalidOperationException(
@@ -1590,13 +1595,11 @@ internal static class Program
         object across = Step("BarTransverse", () => transverse.Invoke(
             null, new object?[] { bar, nodes, pull }));
 
-        var chosen = new List<int> { 1 };
-        var anchors = new HashSet<int>();
-        object aim = Step("ArmAim", () => armAim.Invoke(
-            null, new object?[] { bar, nodes, across, chosen, anchors }));
-
-        object direction = ((Array)aim).GetValue(0)
-            ?? throw new InvalidOperationException("ArmAim returned no vector.");
+        object loaded = ((Array)across).GetValue(1)
+            ?? throw new InvalidOperationException(
+                "BarTransverse returned nothing for the loaded notch.");
+        object direction = Step("AimFrom", () => armAim.Invoke(
+            null, new object?[] { loaded }));
         Type vector3d = direction.GetType();
         double aimX = (double)vector3d.GetProperty("X")!.GetValue(direction)!;
         double aimY = (double)vector3d.GetProperty("Y")!.GetValue(direction)!;
