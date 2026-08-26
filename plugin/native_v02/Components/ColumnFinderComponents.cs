@@ -1102,6 +1102,38 @@ namespace Ananke.COMPAS.Native.Components
                 arc[k] = arc[k - 1] + nodes[bar[k - 1]].DistanceTo(nodes[bar[k]]);
             double span = arc[count - 1];
 
+            // WHERE A STATION STANDS IN PLAN, which is what mirroring has to be
+            // measured in.
+            //
+            // Arc length is how much bar has been travelled to reach a station,
+            // and mirroring by it assumes the nodes are spread evenly. On a
+            // mesh whose two ends are meshed differently, and they are whenever
+            // the two anchor strips hold different numbers of nodes, they are
+            // not: matching ARC puts a pair at matching distances along the bar
+            // and at quite different places in space, which is not what a
+            // mirrored pair looks like to anyone looking at it.
+            var along = new double[count];
+            Vector3d chord = nodes[bar[count - 1]] - nodes[bar[0]];
+            double chordX = chord.X;
+            double chordY = chord.Y;
+            double chordLength = Math.Sqrt(
+                (chordX * chordX) + (chordY * chordY));
+            if (chordLength > 1.0e-12)
+            {
+                chordX /= chordLength;
+                chordY /= chordLength;
+                for (int k = 0; k < count; k++)
+                {
+                    along[k] =
+                        ((nodes[bar[k]].X - nodes[bar[0]].X) * chordX) +
+                        ((nodes[bar[k]].Y - nodes[bar[0]].Y) * chordY);
+                }
+            }
+            else
+            {
+                Array.Copy(arc, along, count);
+            }
+
             // Already the bar's own load, position by position: what the
             // infill cables pull at each notch, across the bar.
             double[] load = barLoad;
@@ -1144,7 +1176,7 @@ namespace Ananke.COMPAS.Native.Components
                 .ToArray();
             var anchoredCoarse = new HashSet<int>(
                 anchored.Select(a => NearestIndex(coarse, a)));
-            int[] mirrorOf = MirrorMap(arc, coarse, out double lopsided);
+            int[] mirrorOf = MirrorMap(along, coarse, out double lopsided);
             bool symmetric = mirrorOf.Length > 0;   // false only on a stub bar
 
             int[] pool = Enumerable.Range(0, coarse.Length)
@@ -1186,7 +1218,7 @@ namespace Ananke.COMPAS.Native.Components
             double centredScore = double.MaxValue;
 
             IEnumerable<int[]> candidates = symmetric
-                ? Mirrored(pool, mirrorOf, coarse, arc, perLine)
+                ? Mirrored(pool, mirrorOf, coarse, along, perLine)
                 : Combinations(pool, perLine);
             foreach (int[] combo in candidates)
             {
@@ -1247,10 +1279,20 @@ namespace Ananke.COMPAS.Native.Components
             bool wantsCentre = (perLine % 2) == 1;
             if (!wantsCentre && centred is not null && best is not null)
             {
-                double middleArc = 0.5 * arc[count - 1];
-                double station = count > 1 ? arc[count - 1] / (count - 1) : 0.0;
+                // "The centre is being used" measured at the scale of the
+                // COLUMNS, not of the mesh. One station is a fortieth of the
+                // span, so the old threshold asked an arm to land almost
+                // exactly on the middle before it counted, and it almost never
+                // did: the pair would straddle the centre a few stations out,
+                // crowding it plainly, and nothing fired.
+                //
+                // Half a bay is the honest scale. With N columns the bays are
+                // about a span over N plus one, so an arm inside half of that
+                // from the middle is standing where a centre column belongs.
+                double middleAlong = 0.5 * along[count - 1];
+                double bay = Math.Abs(along[count - 1]) / (perLine + 1);
                 wantsCentre = best.Any(
-                    s => Math.Abs(arc[s] - middleArc) <= station);
+                    s => Math.Abs(along[s] - middleAlong) <= 0.5 * bay);
             }
             LastCentreAdded = wantsCentre && (perLine % 2) == 0 &&
                 centred is not null;
@@ -1323,10 +1365,10 @@ namespace Ananke.COMPAS.Native.Components
             int[] pool,
             int[] mirrorOf,
             int[] coarse,
-            double[] arc,
+            double[] along,
             int perLine)
         {
-            double middle = 0.5 * arc[arc.Length - 1];
+            double middle = 0.5 * along[along.Length - 1];
 
             // The one station that may stand alone, because it is its own
             // mirror: whichever sits nearest the middle.
@@ -1334,7 +1376,7 @@ namespace Ananke.COMPAS.Native.Components
             double closest = double.MaxValue;
             foreach (int station in pool)
             {
-                double gap = Math.Abs(arc[coarse[station]] - middle);
+                double gap = Math.Abs(along[coarse[station]] - middle);
                 if (gap < closest)
                 {
                     closest = gap;
@@ -1351,7 +1393,7 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             int[] left = pool
-                .Where(s => arc[coarse[s]] < middle - 1.0e-9 && s != centre)
+                .Where(s => along[coarse[s]] < middle - 1.0e-9 && s != centre)
                 .ToArray();
             if (left.Length < pairs)
                 yield break;
@@ -1404,42 +1446,42 @@ namespace Ananke.COMPAS.Native.Components
         /// load-bearing.
         /// </summary>
         private static int[] MirrorMap(
-            double[] arc,
+            double[] along,
             int[] coarse,
             out double lopsided)
         {
             lopsided = 0.0;
-            int n = arc.Length;
-            double span = arc[n - 1];
-            if (span <= 0.0 || n < 3)
+            int n = along.Length;
+            double span = along[n - 1];
+            if (Math.Abs(span) <= 1.0e-12 || n < 3)
                 return Array.Empty<int>();
 
             // Does every station have a partner at span minus its own arc?
             for (int k = 0; k < n; k++)
             {
-                double want = span - arc[k];
+                double want = span - along[k];
                 int partner = 0;
                 double closest = double.MaxValue;
                 for (int j = 0; j < n; j++)
                 {
-                    double gap = Math.Abs(arc[j] - want);
+                    double gap = Math.Abs(along[j] - want);
                     if (gap < closest)
                     {
                         closest = gap;
                         partner = j;
                     }
                 }
-                lopsided = Math.Max(lopsided, closest / span);
+                lopsided = Math.Max(lopsided, closest / Math.Abs(span));
             }
             var mirrorOf = new int[coarse.Length];
             for (int i = 0; i < coarse.Length; i++)
             {
-                double want = span - arc[coarse[i]];
+                double want = span - along[coarse[i]];
                 int partner = 0;
                 double closest = double.MaxValue;
                 for (int j = 0; j < coarse.Length; j++)
                 {
-                    double gap = Math.Abs(arc[coarse[j]] - want);
+                    double gap = Math.Abs(along[coarse[j]] - want);
                     if (gap < closest)
                     {
                         closest = gap;
