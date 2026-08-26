@@ -129,14 +129,29 @@ namespace Ananke.COMPAS.Native.Components
                     + "shared across all of them, so no bar is left with fewer "
                     + "than the rest. Arms land on notches, since a notch is "
                     + "where a crossing cable meets the bar and the arm can "
-                    + "only slide within one notch span.",
+                    + "only slide within one notch span. Positions are solved, "
+                    + "not spaced: see EI.",
                 GH_ParamAccess.item,
                 3);
+            parameters.AddNumberParameter(
+                "Bar Stiffness",
+                "EI",
+                "Bending stiffness of a notched bar, N m2. The arms are placed "
+                    + "by solving the bar as a beam on point supports under the "
+                    + "load the net hands it, and keeping the arrangement that "
+                    + "leaves it straightest. A uniformly loaded beam wants its "
+                    + "supports about a fifth of the length in from each end, "
+                    + "never spread to the ends, so spacing arms evenly is the "
+                    + "wrong rule and this input is what replaces it. Zero or "
+                    + "blank falls back to even spacing.",
+                GH_ParamAccess.item,
+                0.0);
             parameters[2].Optional = true;
             parameters[3].Optional = true;
             parameters[4].Optional = true;
             parameters[5].Optional = true;
             parameters[6].Optional = true;
+            parameters[7].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -190,6 +205,22 @@ namespace Ananke.COMPAS.Native.Components
                 "Where each arm meets its bar, aligned with Columns.",
                 GH_ParamAccess.list);
             parameters.AddNumberParameter(
+                "Column Force",
+                "CF",
+                "Upward force each arm supplies, N, aligned with Columns. "
+                    + "These sum to the load the net hands the bars. An arm "
+                    + "that would have to PULL DOWN is rejected outright, "
+                    + "because a column can only push.",
+                GH_ParamAccess.list);
+            parameters.AddNumberParameter(
+                "Bar Droop",
+                "BD",
+                "Worst droop of each bar between its own arms, mm, one per "
+                    + "principal line. This goes straight into the cast "
+                    + "surface on top of the net's own sag, so it has to sit "
+                    + "inside tolerance too. Empty unless EI was given.",
+                GH_ParamAccess.list);
+            parameters.AddNumberParameter(
                 "Relief",
                 "R",
                 "Stepper travel per node, in millimetres, aligned with the "
@@ -225,10 +256,12 @@ namespace Ananke.COMPAS.Native.Components
             double heightPct = 100.0;
             double ground = 0.0;
             int perLine = 3;
+            double barEi = 0.0;
             data.GetData(3, ref sagPct);
             data.GetData(4, ref heightPct);
             data.GetData(5, ref ground);
             data.GetData(6, ref perLine);
+            data.GetData(7, ref barEi);
 
             double sag = Math.Min(Math.Max(sagPct, 0.0), 100.0) / 100.0;
             double lift = Math.Min(Math.Max(heightPct, 0.0), 100.0) / 100.0;
@@ -298,6 +331,16 @@ namespace Ananke.COMPAS.Native.Components
                     live[i] = new Point3d(target[i].X, target[i].Y, z);
                 }
 
+                // What the net hands each notch: the vertical reaction the
+                // solve already found there. That is the line load the bar has
+                // to carry, and therefore what decides where its arms go.
+                var barLoad = new double[n];
+                foreach (NodalVectorDto reaction in equilibrium.Reactions)
+                {
+                    if (reaction.NodeId >= 0 && reaction.NodeId < n)
+                        barLoad[reaction.NodeId] = Math.Abs(reaction.Vector.Z);
+                }
+
                 int[] perimeterIds = PerimeterNodes(mesh, target, neighbours, n);
 
                 var cables = edges
@@ -312,8 +355,10 @@ namespace Ananke.COMPAS.Native.Components
                         barCurves.Add(polyline.ToNurbsCurve());
                 }
 
-                (List<Line> columns, List<Point3d> heads) =
-                    PlaceColumns(bars, live, anchorIds, ground, perLine);
+                (List<Line> columns, List<Point3d> heads,
+                 List<double> armForce, List<double> barDroop) =
+                    PlaceColumns(
+                        bars, live, barLoad, anchorIds, ground, perLine, barEi);
 
                 Mesh? outMesh = mesh is null ? null : DeformMesh(mesh, target, live);
 
@@ -325,11 +370,13 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(5, perimeterIds.Select(i => live[i]));
                 data.SetDataList(6, columns);
                 data.SetDataList(7, heads);
-                data.SetDataList(8, relief.Select(r => r * 1000.0));
-                data.SetData(9, Report(
+                data.SetDataList(8, armForce);
+                data.SetDataList(9, barDroop);
+                data.SetDataList(10, relief.Select(r => r * 1000.0));
+                data.SetData(11, Report(
                     n, edges.Length, bars, principalIds.Count, anchorIds.Count,
                     perimeterIds.Length, columns.Count, relief, sag, lift,
-                    ground, bare, mesh is not null));
+                    ground, bare, mesh is not null, barEi, barDroop, armForce));
             }
             catch (Exception ex)
             {
@@ -499,70 +546,115 @@ namespace Ananke.COMPAS.Native.Components
         /// span. Anchor nodes are skipped: the frame is already held down
         /// there, so an arm at an anchor would be lifting against its own tie.
         /// </summary>
-        private static (List<Line>, List<Point3d>) PlaceColumns(
-            List<List<int>> bars,
-            Point3d[] live,
-            HashSet<int> anchors,
-            double ground,
-            int perLine)
+        /// <summary>
+        /// Column arms under each bar, counted PER BAR so no bar ends up with
+        /// fewer arms than its neighbour, and POSITIONED by solving the bar
+        /// rather than by spacing it.
+        ///
+        /// A notched bar on two or three arms is a beam, and a beam does not
+        /// want its supports spread evenly: for a uniformly loaded one they
+        /// belong about a fifth of the length in from each end, which balances
+        /// the cantilever moment over each arm against the moment at midspan.
+        /// Spreading arms to the ends leaves the middle to droop and spends
+        /// them on a part of the bar already held by its anchor.
+        ///
+        /// Since arms can only stand at notches and there are only a handful,
+        /// every arrangement is tried and the straightest kept. Anchors count
+        /// as supports but cost no arm, and any arrangement needing an arm to
+        /// PULL DOWN is rejected, because a column can only push.
+        ///
+        /// Without EI there is nothing to solve, so it falls back to even
+        /// spacing and says so in the report.
+        /// </summary>
+        private static (List<Line>, List<Point3d>, List<double>, List<double>)
+            PlaceColumns(
+                List<List<int>> bars,
+                Point3d[] live,
+                double[] barLoad,
+                HashSet<int> anchors,
+                double ground,
+                int perLine,
+                double barEi)
         {
             var columns = new List<Line>();
             var heads = new List<Point3d>();
+            var forces = new List<double>();
+            var droops = new List<double>();
 
             foreach (List<int> bar in bars)
             {
-                List<int> usable = bar.Where(i => !anchors.Contains(i)).ToList();
-                if (usable.Count < 2)
-                    usable = bar;
-                if (usable.Count == 0)
+                if (bar.Count < 2)
                     continue;
 
-                var arc = new double[usable.Count];
-                for (int k = 1; k < usable.Count; k++)
+                var arc = new double[bar.Count];
+                for (int k = 1; k < bar.Count; k++)
                 {
                     arc[k] = arc[k - 1]
-                        + live[usable[k - 1]].DistanceTo(live[usable[k]]);
+                        + live[bar[k - 1]].DistanceTo(live[bar[k]]);
                 }
                 double span = arc[arc.Length - 1];
                 if (span <= 0.0)
                     continue;
 
-                var chosen = new SortedSet<int>();
-                for (int c = 0; c < perLine; c++)
+                double[] load = bar.Select(i => barLoad[i]).ToArray();
+                var anchored = new List<int>();
+                for (int k = 0; k < bar.Count; k++)
                 {
-                    double want = span * (c + 0.5) / perLine;
-                    int pick = 0;
-                    double best = double.MaxValue;
-                    for (int k = 0; k < arc.Length; k++)
-                    {
-                        double gap = Math.Abs(arc[k] - want);
-                        if (gap < best)
-                        {
-                            best = gap;
-                            pick = k;
-                        }
-                    }
-                    chosen.Add(pick);
+                    if (anchors.Contains(bar[k]))
+                        anchored.Add(k);
                 }
 
-                foreach (int k in chosen)
+                List<int> chosen;
+                double droop = 0.0;
+                double[]? reactions = null;
+                if (barEi > 0.0)
                 {
-                    Point3d head = live[usable[k]];
+                    (chosen, droop, reactions) = BestArms(
+                        arc, load, anchored, perLine, barEi);
+                }
+                else
+                {
+                    chosen = new List<int>();
+                    for (int c = 0; c < perLine; c++)
+                    {
+                        double want = span * (c + 0.5) / perLine;
+                        int pick = 0;
+                        double best = double.MaxValue;
+                        for (int k = 0; k < arc.Length; k++)
+                        {
+                            double gap = Math.Abs(arc[k] - want);
+                            if (gap < best)
+                            {
+                                best = gap;
+                                pick = k;
+                            }
+                        }
+                        if (!chosen.Contains(pick))
+                            chosen.Add(pick);
+                    }
+                }
+
+                if (barEi > 0.0)
+                    droops.Add(droop * 1000.0);
+
+                foreach (int k in chosen.Where(k => !anchored.Contains(k))
+                             .OrderBy(k => k))
+                {
+                    Point3d head = live[bar[k]];
                     double rise = head.Z - ground;
                     if (rise <= 0.0)
                         continue;
 
                     // Lean the arm along the slope of the bar, so it stands in
                     // the direction of the force it carries rather than plumb.
-                    int before = usable[Math.Max(k - 1, 0)];
-                    int after = usable[Math.Min(k + 1, usable.Count - 1)];
+                    int before = bar[Math.Max(k - 1, 0)];
+                    int after = bar[Math.Min(k + 1, bar.Count - 1)];
                     Vector3d along = live[after] - live[before];
                     var foot = new Point3d(head.X, head.Y, ground);
                     double run = Math.Sqrt((along.X * along.X) + (along.Y * along.Y));
                     if (run > 1e-9 && Math.Abs(along.Z) > 1e-9)
                     {
-                        double slope = along.Z / run;
-                        double offset = 0.5 * rise * slope;
+                        double offset = 0.5 * rise * (along.Z / run);
                         foot = new Point3d(
                             head.X - (along.X / run * offset),
                             head.Y - (along.Y / run * offset),
@@ -571,9 +663,266 @@ namespace Ananke.COMPAS.Native.Components
 
                     columns.Add(new Line(foot, head));
                     heads.Add(head);
+                    forces.Add(reactions is null ? 0.0 : reactions[k]);
                 }
             }
-            return (columns, heads);
+            return (columns, heads, forces, droops);
+        }
+
+        /// <summary>
+        /// Try every arrangement of arms on a coarsened bar and keep the one
+        /// that leaves it straightest, rejecting any that needs an arm to pull
+        /// down. Coarse on purpose: placement finer than a few per cent of the
+        /// bar is wasted when arms can only stand at notches.
+        /// </summary>
+        private static (List<int>, double, double[]) BestArms(
+            double[] arc,
+            double[] load,
+            List<int> anchored,
+            int perLine,
+            double EI)
+        {
+            int n = arc.Length;
+            int stations = Math.Min(n, 41);
+            int[] coarse = Enumerable.Range(0, stations)
+                .Select(i => (int)Math.Round(
+                    (double)i * (n - 1) / Math.Max(stations - 1, 1)))
+                .Distinct()
+                .ToArray();
+
+            var anchoredCoarse = new HashSet<int>(
+                anchored.Select(a => NearestIndex(coarse, a)));
+            int[] pool = Enumerable.Range(0, coarse.Length)
+                .Where(i => !anchoredCoarse.Contains(i))
+                .ToArray();
+
+            // budget the candidates so the trial count stays bounded
+            int budget = 4000;
+            int allowed = Math.Max(perLine + 1, 4);
+            while (allowed < pool.Length && Choose(allowed + 1, perLine) <= budget)
+                allowed++;
+            if (pool.Length > allowed)
+            {
+                pool = Enumerable.Range(0, allowed)
+                    .Select(i => pool[(int)Math.Round(
+                        (double)i * (pool.Length - 1) / Math.Max(allowed - 1, 1))])
+                    .Distinct()
+                    .ToArray();
+            }
+
+            List<int>? best = null;
+            double bestScore = double.MaxValue;
+            List<int>? fallback = null;
+            double fallbackScore = double.MaxValue;
+
+            foreach (int[] combo in Combinations(pool, Math.Max(perLine, 0)))
+            {
+                var supports = new SortedSet<int>(anchoredCoarse);
+                foreach (int c in combo)
+                    supports.Add(c);
+                if (supports.Count < 2)
+                    continue;
+
+                int[] full = supports.Select(s => coarse[s]).Distinct()
+                    .OrderBy(s => s).ToArray();
+                if (full.Length < 2)
+                    continue;
+
+                (double[]? defl, double[]? reac) = BeamResponse(arc, load, full, EI);
+                if (defl is null || reac is null)
+                    continue;
+
+                double score = defl.Select(Math.Abs).Max();
+                if (score < fallbackScore)
+                {
+                    fallbackScore = score;
+                    fallback = full.ToList();
+                }
+                if (full.Any(s => reac[s] < -1e-6))
+                    continue;                       // an arm cannot pull down
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = full.ToList();
+                }
+            }
+
+            List<int> chosen = best ?? fallback ?? new List<int> { 0, n - 1 };
+            (double[]? d, double[]? r) = BeamResponse(arc, load, chosen.ToArray(), EI);
+            double droop = d is null ? 0.0 : d.Select(Math.Abs).Max();
+            return (chosen, droop, r ?? new double[n]);
+        }
+
+        private static int NearestIndex(int[] values, int wanted)
+        {
+            int best = 0;
+            int bestGap = int.MaxValue;
+            for (int i = 0; i < values.Length; i++)
+            {
+                int gap = Math.Abs(values[i] - wanted);
+                if (gap < bestGap)
+                {
+                    bestGap = gap;
+                    best = i;
+                }
+            }
+            return best;
+        }
+
+        private static double Choose(int n, int k)
+        {
+            if (k <= 0 || k > n)
+                return 1.0;
+            double result = 1.0;
+            for (int i = 0; i < k; i++)
+                result = result * (n - i) / (i + 1);
+            return result;
+        }
+
+        private static IEnumerable<int[]> Combinations(int[] pool, int k)
+        {
+            if (k <= 0)
+            {
+                yield return Array.Empty<int>();
+                yield break;
+            }
+            var index = new int[k];
+            for (int i = 0; i < k; i++)
+                index[i] = i;
+            while (index[0] <= pool.Length - k)
+            {
+                yield return index.Select(i => pool[i]).ToArray();
+                int slot = k - 1;
+                while (slot >= 0 && index[slot] == pool.Length - k + slot)
+                    slot--;
+                if (slot < 0)
+                    yield break;
+                index[slot]++;
+                for (int j = slot + 1; j < k; j++)
+                    index[j] = index[j - 1] + 1;
+            }
+        }
+
+        /// <summary>
+        /// Euler-Bernoulli beam through the given arc-length stations, carrying
+        /// point loads and standing on pinned supports that hold height and let
+        /// the bar rotate, which is what a column head in a notch does.
+        /// </summary>
+        private static (double[]?, double[]?) BeamResponse(
+            double[] arc,
+            double[] load,
+            int[] supports,
+            double EI)
+        {
+            int n = arc.Length;
+            if (supports.Length < 2 || n < 2)
+                return (null, null);
+
+            int dofs = 2 * n;
+            var K = new double[dofs, dofs];
+            for (int e = 0; e < n - 1; e++)
+            {
+                double L = arc[e + 1] - arc[e];
+                if (L <= 0.0)
+                    continue;
+                double c = EI / (L * L * L);
+                double[,] k =
+                {
+                    { 12.0 * c, 6.0 * L * c, -12.0 * c, 6.0 * L * c },
+                    { 6.0 * L * c, 4.0 * L * L * c, -6.0 * L * c, 2.0 * L * L * c },
+                    { -12.0 * c, -6.0 * L * c, 12.0 * c, -6.0 * L * c },
+                    { 6.0 * L * c, 2.0 * L * L * c, -6.0 * L * c, 4.0 * L * L * c },
+                };
+                int[] map = { 2 * e, (2 * e) + 1, (2 * e) + 2, (2 * e) + 3 };
+                for (int a = 0; a < 4; a++)
+                {
+                    for (int b = 0; b < 4; b++)
+                        K[map[a], map[b]] += k[a, b];
+                }
+            }
+
+            var f = new double[dofs];
+            for (int i = 0; i < n; i++)
+                f[2 * i] = -load[i];
+
+            var held = new HashSet<int>(supports.Select(s => 2 * s));
+            int[] free = Enumerable.Range(0, dofs).Where(d => !held.Contains(d))
+                .ToArray();
+            double[]? solved = SolveDense(K, f, free);
+            if (solved is null)
+                return (null, null);
+
+            var d = new double[dofs];
+            for (int i = 0; i < free.Length; i++)
+                d[free[i]] = solved[i];
+
+            var reactions = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                double sum = 0.0;
+                for (int j = 0; j < dofs; j++)
+                    sum += K[2 * i, j] * d[j];
+                reactions[i] = sum - f[2 * i];
+            }
+
+            var deflection = new double[n];
+            for (int i = 0; i < n; i++)
+                deflection[i] = -d[2 * i];
+            return (deflection, reactions);
+        }
+
+        /// <summary>
+        /// Gaussian elimination with partial pivoting on the free rows only.
+        /// The systems here are a few dozen unknowns, so a dense solve is both
+        /// simpler and quicker than pulling in a linear-algebra dependency.
+        /// </summary>
+        private static double[]? SolveDense(double[,] K, double[] f, int[] free)
+        {
+            int m = free.Length;
+            if (m == 0)
+                return Array.Empty<double>();
+            var a = new double[m, m + 1];
+            for (int i = 0; i < m; i++)
+            {
+                for (int j = 0; j < m; j++)
+                    a[i, j] = K[free[i], free[j]];
+                a[i, m] = f[free[i]];
+            }
+
+            for (int col = 0; col < m; col++)
+            {
+                int pivot = col;
+                for (int row = col + 1; row < m; row++)
+                {
+                    if (Math.Abs(a[row, col]) > Math.Abs(a[pivot, col]))
+                        pivot = row;
+                }
+                if (Math.Abs(a[pivot, col]) < 1e-14)
+                    return null;
+                if (pivot != col)
+                {
+                    for (int j = col; j <= m; j++)
+                        (a[col, j], a[pivot, j]) = (a[pivot, j], a[col, j]);
+                }
+                for (int row = col + 1; row < m; row++)
+                {
+                    double factor = a[row, col] / a[col, col];
+                    if (factor == 0.0)
+                        continue;
+                    for (int j = col; j <= m; j++)
+                        a[row, j] -= factor * a[col, j];
+                }
+            }
+
+            var x = new double[m];
+            for (int i = m - 1; i >= 0; i--)
+            {
+                double sum = a[i, m];
+                for (int j = i + 1; j < m; j++)
+                    sum -= a[i, j] * x[j];
+                x[i] = sum / a[i, i];
+            }
+            return x;
         }
 
         private static Mesh DeformMesh(
@@ -610,7 +959,10 @@ namespace Ananke.COMPAS.Native.Components
             double lift,
             double ground,
             double[] bare,
-            bool hasMesh)
+            bool hasMesh,
+            double barEi,
+            List<double> barDroop,
+            List<double> armForce)
         {
             double worstReel = relief.Length == 0
                 ? 0.0
@@ -643,6 +995,28 @@ namespace Ananke.COMPAS.Native.Components
                 $"bars have risen to {(lift * (barHeight - ground)) * 1000.0:0.#} mm "
                     + "above the ground at this height",
             };
+
+            if (barEi > 0.0 && barDroop.Count > 0)
+            {
+                lines.Add(
+                    $"bar droop between arms, worst {barDroop.Max():0.#} mm "
+                        + $"(EI {barEi:0.###} N m2). Arms are SOLVED, not "
+                        + "spaced: a loaded bar wants them about a fifth of its "
+                        + "length in from each end.");
+                if (armForce.Count > 0)
+                {
+                    lines.Add(
+                        $"arm force {armForce.Min():0} to {armForce.Max():0} N, "
+                            + $"carrying {armForce.Sum():0} N in total");
+                }
+            }
+            else
+            {
+                lines.Add(
+                    "arms are spaced evenly, which is the WRONG rule for a bar "
+                        + "on two or three supports. Give EI and they will be "
+                        + "placed by solving the bar as a beam instead.");
+            }
 
             if (!hasMesh)
             {
