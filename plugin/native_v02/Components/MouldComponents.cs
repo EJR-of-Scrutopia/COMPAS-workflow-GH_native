@@ -133,24 +133,21 @@ namespace Ananke.COMPAS.Native.Components
                 "PRN",
                 "Nodes on the naked boundary of the net.",
                 GH_ParamAccess.list);
-            parameters.AddNumberParameter(
-                "Reel",
-                "R",
-                "How far each infill cable has been reeled in at this frame, in "
-                    + "millimetres, aligned with the Result's vertices. This is "
-                    + "the stepper travel the machine has to deliver, so it is "
-                    + "a specification for the hardware rather than a "
-                    + "structural number. A node reading near zero needs no "
-                    + "stepper at all. A NEGATIVE reading is a node asking to "
-                    + "be pushed UP, which a reel cannot do, and marks where "
-                    + "the geometry wants curvature a cable net cannot make.",
-                GH_ParamAccess.list);
+            parameters.AddParameter(
+                new MouldStateParam(),
+                "State",
+                "S",
+                "This frame bundled for Stress Analysis: geometry, member "
+                    + "forces, which members are bars and which are cables, and "
+                    + "which nodes are notches, anchors and perimeter. Carries "
+                    + "no columns; use Column Finder's State for those.",
+                GH_ParamAccess.item);
             parameters.AddTextParameter(
                 "Report",
                 "Out",
                 "Which phase of the build this frame is in, the stepper count "
-                    + "and travel, how far the bars have risen, and a warning "
-                    + "naming any node the net cannot reach.",
+                    + "and how far the bars have risen, and a warning naming "
+                    + "any node the net cannot reach.",
                 GH_ParamAccess.item);
         }
 
@@ -280,9 +277,6 @@ namespace Ananke.COMPAS.Native.Components
                 double barRise = principalIds.Count > 0
                     ? lift * (principalIds.Select(i => bare[i]).Average() - ground)
                     : 0.0;
-                double worstReel = relief.Length == 0
-                    ? 0.0
-                    : relief.Select(Math.Abs).Max() * 1000.0;
                 int wantsPush = relief.Count(r => r > 1e-9);
 
                 var report = new List<string>
@@ -295,8 +289,7 @@ namespace Ananke.COMPAS.Native.Components
                         + $"{perimeterIds.Length}, ground read as {ground:0.###}",
                     $"steppers required {principalIds.Count * 2} "
                         + "(two per notch, one pulling each side)",
-                    $"longest stepper travel {worstReel:0.#} mm, bars risen "
-                        + $"{barRise * 1000.0:0.#} mm at this frame",
+                    $"bars risen {barRise * 1000.0:0.#} mm at this frame",
                 };
                 if (mesh is null)
                 {
@@ -325,7 +318,11 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(3, principalIds.OrderBy(i => i).Select(i => live[i]));
                 data.SetDataList(4, anchorIds.OrderBy(i => i).Select(i => live[i]));
                 data.SetDataList(5, perimeterIds.Select(i => live[i]));
-                data.SetDataList(6, relief.Select(r => r * sag * 1000.0));
+                data.SetData(6, new MouldStateGoo(MouldGeometry.BuildState(
+                    phase, ground, live, edges, equilibrium, principalIds,
+                    anchorIds, perimeterIds,
+                    Array.Empty<Point3d>(), Array.Empty<Point3d>(),
+                    Array.Empty<double>())));
                 data.SetData(7, string.Join(Environment.NewLine, report));
             }
             catch (Exception ex)
@@ -555,6 +552,70 @@ namespace Ananke.COMPAS.Native.Components
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Bundle a frame into a MouldState. Member forces come from the
+        /// Result, so they are the forces of the FINAL state whatever frame the
+        /// geometry belongs to; Stress Analysis says as much rather than
+        /// letting the pairing pass unremarked.
+        /// </summary>
+        public static MouldStateDto BuildState(
+            string stage,
+            double ground,
+            Point3d[] live,
+            (int, int)[] edges,
+            EquilibriumResultDto equilibrium,
+            IEnumerable<int> principalIds,
+            IEnumerable<int> anchorIds,
+            IEnumerable<int> perimeterIds,
+            IReadOnlyList<Point3d> columnFoot,
+            IReadOnlyList<Point3d> columnHead,
+            IReadOnlyList<double> columnForce)
+        {
+            var principal = new HashSet<int>(principalIds);
+            var kinds = new string[edges.Length];
+            for (int e = 0; e < edges.Length; e++)
+            {
+                // A member joining two notches of the same bar IS the bar;
+                // everything else is an infill cable the steppers reel.
+                kinds[e] = principal.Contains(edges[e].Item1) &&
+                    principal.Contains(edges[e].Item2)
+                    ? "bar"
+                    : "infill";
+            }
+
+            var forces = new double[edges.Length];
+            var densities = new double[edges.Length];
+            for (int e = 0; e < edges.Length; e++)
+            {
+                forces[e] = e < equilibrium.MemberForces.Count
+                    ? equilibrium.MemberForces[e]
+                    : 0.0;
+                densities[e] = e < equilibrium.ForceDensities.Count
+                    ? equilibrium.ForceDensities[e]
+                    : 0.0;
+            }
+
+            return new MouldStateDto
+            {
+                Stage = stage,
+                Ground = ground,
+                Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                Edges = edges.Select(e => new EdgeDto(e.Item1, e.Item2)).ToArray(),
+                MemberForce = forces,
+                ForceDensity = densities,
+                EdgeKind = kinds,
+                PrincipalNodes = principal.OrderBy(i => i).ToArray(),
+                AnchorNodes = anchorIds.OrderBy(i => i).ToArray(),
+                PerimeterNodes = perimeterIds.ToArray(),
+                Reactions = equilibrium.Reactions.ToArray(),
+                ColumnFoot = columnFoot
+                    .Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                ColumnHead = columnHead
+                    .Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                ColumnForce = columnForce.ToArray(),
+            };
         }
 
         public static Mesh DeformMesh(Mesh source, Point3d[] target, Point3d[] live)

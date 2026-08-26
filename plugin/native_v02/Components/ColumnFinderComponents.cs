@@ -161,6 +161,14 @@ namespace Ananke.COMPAS.Native.Components
                     + "the sliding joint can reach it. Past about sixty degrees "
                     + "a column is doing more pushing sideways than holding up.",
                 GH_ParamAccess.list);
+            parameters.AddParameter(
+                new MouldStateParam(),
+                "State",
+                "S",
+                "The finished mould bundled for Stress Analysis: the net with "
+                    + "its member forces and node roles, plus the columns and "
+                    + "what each one carries.",
+                GH_ParamAccess.item);
             parameters.AddTextParameter(
                 "Report",
                 "Out",
@@ -308,7 +316,17 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(2, feet);
                 data.SetDataList(3, force);
                 data.SetDataList(4, angle);
-                data.SetData(5, Report(
+
+                var perimeter = MouldGeometry.PerimeterNodes(
+                    MouldGeometry.ThrustMeshFromResult(result), nodes,
+                    MouldGeometry.BuildAdjacency(n, edges), n);
+                var footPts = members.Select(m => m.From).ToList();
+                var headPts = members.Select(m => m.To).ToList();
+                data.SetData(5, new MouldStateGoo(MouldGeometry.BuildState(
+                    "final", ground, nodes, edges, equilibrium,
+                    bars.SelectMany(b => b), anchors, perimeter,
+                    footPts, headPts, force)));
+                data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     trees, depth, ground));
             }
