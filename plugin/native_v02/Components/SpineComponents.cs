@@ -201,7 +201,11 @@ public sealed class PatternComponent : NativePreviewComponentBase
             // needs the anchors, which Pattern does not have, so that lives on
             // Supports instead.
             List<List<int>> principalRuns = PrincipalRunFinder.FromCurves(
-                principalCurves, patternVertices, patternEdges);
+                principalCurves,
+                patternVertices,
+                patternEdges,
+                out double principalOffset,
+                out double principalGauge);
             if (principalCurves.Count > 0 &&
                 principalRuns.Count < principalCurves.Count)
             {
@@ -211,6 +215,23 @@ public sealed class PatternComponent : NativePreviewComponentBase
                     $"{principalCurves.Count} principal lines caught fewer " +
                     "than two pattern vertices and were dropped. They must " +
                     "lie over the pattern in plan.");
+            }
+            // A bar can only stand on nodes. A line drawn down the middle of a
+            // bay has no run of nodes to sit on, so the nearest one is taken
+            // and it lands half a cell off. That is a real offset in the built
+            // thing, not a drawing artefact, so it is named rather than left
+            // to be noticed in the viewport.
+            if (principalRuns.Count > 0 &&
+                principalGauge > 0.0 &&
+                principalOffset > 0.25 * principalGauge)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Remark,
+                    $"A principal line sits {principalOffset:G3} off the " +
+                    "curve that asked for it, against a mesh spacing of " +
+                    $"{principalGauge:G3}. A bar can only stand on nodes, so " +
+                    "the nearest run of them was taken. Draw the line " +
+                    "through a run of pattern nodes to place it exactly.");
             }
 
             TopologyDto topology = TopologyDto.Create(

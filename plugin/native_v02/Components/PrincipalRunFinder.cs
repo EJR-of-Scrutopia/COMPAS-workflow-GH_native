@@ -288,12 +288,22 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// Runs matched from drawn curves. Matching is in plan, so a bar drawn
         /// on the flat pattern still finds its nodes on a surface that rises.
+        ///
+        /// <paramref name="worstOffset"/> and <paramref name="gauge"/> come
+        /// back so the caller can tell the author when a line was drawn where
+        /// no run of nodes goes: the offset is how far the furthest matched bar
+        /// sits from the curve that asked for it, the gauge the mesh's own
+        /// median edge length to measure that against.
         /// </summary>
         public static List<List<int>> FromCurves(
             IReadOnlyList<Curve> curves,
             IReadOnlyList<Point3d> vertices,
-            IReadOnlyList<EdgeDto> edges)
+            IReadOnlyList<EdgeDto> edges,
+            out double worstOffset,
+            out double gauge)
         {
+            worstOffset = 0.0;
+            gauge = 0.0;
             var runs = new List<List<int>>();
             if (curves.Count == 0 || vertices.Count == 0)
                 return runs;
@@ -308,13 +318,17 @@ namespace Ananke.COMPAS.Native.Components
             if (pairs.Length == 0)
                 return runs;
 
+            gauge = MouldGeometry.MedianEdgeLength(nodes, pairs);
             foreach (Curve curve in curves)
             {
                 if (curve is null)
                     continue;
-                List<int> run = MouldGeometry.SnapCurveToNodes(curve, nodes, pairs);
-                if (run.Count >= 2)
-                    runs.Add(run);
+                List<int> run = MouldGeometry.SnapCurveToNodes(
+                    curve, nodes, pairs, out double offset);
+                if (run.Count < 2)
+                    continue;
+                runs.Add(run);
+                worstOffset = Math.Max(worstOffset, offset);
             }
             return runs;
         }

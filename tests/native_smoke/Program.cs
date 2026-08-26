@@ -438,6 +438,26 @@ internal static class Program
                 $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidatePrincipalLineSnapping(plugin);
+            Console.WriteLine(
+                "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
+                + "middle of a bay, with the node column either side of it "
+                + "inside the catch radius, matches ONE connected column end "
+                + "to end (9 nodes, every consecutive pair joined by a mesh "
+                + "edge, x constant, y strictly increasing) and reports its "
+                + "0.5 offset; a line drawn on a column matches that column "
+                + "at zero offset. The zigzag regression is MEASURED, not "
+                + "inspected.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"MouldGeometry.SnapSampledLineToNodes: "
+                + $"{DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1167,6 +1187,183 @@ internal static class Program
         return plugin.GetType($"{ContractsNamespace}.{typeName}", throwOnError: true)
             ?? throw new InvalidOperationException(
                 $"Type '{ContractsNamespace}.{typeName}' was not found.");
+    }
+
+    /// <summary>
+    /// <c>MouldGeometry.SnapCurveToNodes</c>: a drawn principal line must
+    /// match a CONNECTED run of net nodes, not merely the set of nodes near
+    /// it.
+    ///
+    /// The regression this pins, found in the viewport 2026-08-26: the obvious
+    /// implementation collects every node inside a catch radius of the curve
+    /// and sorts them by how far along the curve they lie. A line drawn down
+    /// the middle of a bay catches the column of nodes EITHER SIDE of it, and
+    /// the two columns' positions along the curve interleave, so the sorted
+    /// run crosses the bay on every step. It draws as a zigzag, and it is
+    /// worse than a drawing fault: Animate pins that run and Column Finder
+    /// solves it as a beam, so the bar has notches on both sides of a bay and
+    /// is reported at roughly twice its true length.
+    ///
+    /// The fixture is that exact case. A five-by-nine unit grid; the line
+    /// drawn at x = 1.5, halfway between the columns at x = 1 and x = 2, so
+    /// both sit 0.5 from it and the catch radius (0.6 of the unit median edge)
+    /// takes in both. A correct match picks ONE column and walks it end to
+    /// end. The sorted implementation returns 18 nodes alternating between
+    /// the two columns; the walk returns 9 on one.
+    ///
+    /// A second case draws the line ON the column at x = 2, where only that
+    /// column is inside the radius, and asserts the offset comes back at zero
+    /// so the reported offset is not merely always the same number.
+    ///
+    /// Reflection-only, in this harness's usual manner: no Rhino document and
+    /// no SolveInstance, only the static geometry method and the RhinoCommon
+    /// types it already has loaded.
+    /// </summary>
+    private static void ValidatePrincipalLineSnapping(Assembly plugin)
+    {
+        Type mouldGeometry = RequireComponentType(plugin, "MouldGeometry");
+        MethodInfo snap = mouldGeometry.GetMethod(
+            "SnapSampledLineToNodes",
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "MouldGeometry.SnapSampledLineToNodes was not found.");
+
+        // Take the Rhino types off the method's own signature rather than
+        // naming an assembly: whatever RhinoCommon the plugin was loaded
+        // against is by definition the one these arguments must satisfy.
+        // Point3d is a plain struct and needs no native core; a Curve would,
+        // which is exactly why the walk takes sampled points instead.
+        ParameterInfo[] parameters = snap.GetParameters();
+        Type point3d = parameters[0].ParameterType.GetElementType()
+            ?? throw new InvalidOperationException(
+                "SnapSampledLineToNodes' first parameter is not an array.");
+
+        const int columns = 5;
+        const int rows = 9;
+        Array nodes = Array.CreateInstance(point3d, columns * rows);
+        for (int row = 0; row < rows; row++)
+        for (int column = 0; column < columns; column++)
+        {
+            nodes.SetValue(
+                Activator.CreateInstance(
+                    point3d, (double)column, (double)row, 0.0),
+                (row * columns) + column);
+        }
+
+        var edges = new List<(int, int)>();
+        for (int row = 0; row < rows; row++)
+        for (int column = 0; column < columns; column++)
+        {
+            int id = (row * columns) + column;
+            if (column + 1 < columns)
+                edges.Add((id, id + 1));
+            if (row + 1 < rows)
+                edges.Add((id, id + columns));
+        }
+        var adjacency = new HashSet<(int, int)>();
+        foreach ((int u, int v) in edges)
+        {
+            adjacency.Add((u, v));
+            adjacency.Add((v, u));
+        }
+        (int, int)[] edgeArray = edges.ToArray();
+
+        CheckOneSnap(
+            snap, point3d, nodes, edgeArray, adjacency,
+            drawnAt: 1.5, expectedOffset: 0.5, label: "drawn down a bay");
+        CheckOneSnap(
+            snap, point3d, nodes, edgeArray, adjacency,
+            drawnAt: 2.0, expectedOffset: 0.0, label: "drawn on a column");
+    }
+
+    private static void CheckOneSnap(
+        MethodInfo snap,
+        Type point3d,
+        Array nodes,
+        (int, int)[] edges,
+        HashSet<(int, int)> adjacency,
+        double drawnAt,
+        double expectedOffset,
+        string label)
+    {
+        const int columns = 5;
+        const int rows = 9;
+
+        // The line the author drew, sampled the way the component samples it:
+        // straight down the grid at x = drawnAt, running past both ends.
+        const int samples = 512;
+        Array sampled = Array.CreateInstance(point3d, samples + 1);
+        for (int index = 0; index <= samples; index++)
+        {
+            double y = -1.0 + (10.0 * index / samples);
+            sampled.SetValue(
+                Activator.CreateInstance(point3d, drawnAt, y, 0.0),
+                index);
+        }
+
+        object?[] arguments = { sampled, nodes, edges, 0.0 };
+        object? returned = snap.Invoke(null, arguments);
+        double offset = (double)arguments[3]!;
+        List<int> run = (returned as IEnumerable
+            ?? throw new InvalidOperationException(
+                $"SnapCurveToNodes ({label}) returned no run."))
+            .Cast<int>()
+            .ToList();
+
+        if (run.Count != rows)
+        {
+            throw new InvalidOperationException(
+                $"A principal line {label} must match one node per row, "
+                + $"{rows} in all; it matched {run.Count}. "
+                + (run.Count > rows
+                    ? "More than one per row is the zigzag: the run is "
+                      + "crossing the bay instead of following it."
+                    : "Fewer means the walk stopped short of the far side."));
+        }
+
+        int first = run[0];
+        int firstColumn = first % columns;
+        for (int step = 0; step < run.Count; step++)
+        {
+            int node = run[step];
+            if (node % columns != firstColumn)
+            {
+                throw new InvalidOperationException(
+                    $"A principal line {label} left its column at step "
+                    + $"{step}: node {node} is in column {node % columns}, "
+                    + $"the run started in column {firstColumn}. A bar "
+                    + "cannot cross the bay it runs down.");
+            }
+            if (node / columns != step)
+            {
+                throw new InvalidOperationException(
+                    $"A principal line {label} is out of order at step "
+                    + $"{step}: node {node} is in row {node / columns}. The "
+                    + "run must advance one row per step, end to end.");
+            }
+            if (step > 0 && !adjacency.Contains((run[step - 1], node)))
+            {
+                throw new InvalidOperationException(
+                    $"A principal line {label} jumped at step {step}: nodes "
+                    + $"{run[step - 1]} and {node} share no mesh edge. A bar "
+                    + "is a connected chain of notches.");
+            }
+        }
+
+        // The offset is measured to the nearest SAMPLE, not perpendicular to
+        // the line, so half a sample spacing is the tightest it can honestly
+        // be pinned. Derived from the sampling rather than hardcoded, because
+        // a hardcoded number would quietly become wrong if the density
+        // changed. It still separates the two cases by fifty to one, which is
+        // the whole point: half a bay off reads as half a bay off.
+        double tolerance = (0.5 * 10.0 / samples) + 1.0e-9;
+        if (Math.Abs(offset - expectedOffset) > tolerance)
+        {
+            throw new InvalidOperationException(
+                $"A principal line {label} must report an offset of "
+                + $"{expectedOffset:G3} from the curve that asked for it; it "
+                + $"reported {offset:G6}.");
+        }
     }
 
     private static Type RequireComponentType(Assembly plugin, string typeName)

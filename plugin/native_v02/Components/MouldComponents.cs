@@ -271,25 +271,41 @@ namespace Ananke.COMPAS.Native.Components
                 IReadOnlyList<Point3Dto>? pattern =
                     result.Problem?.Anchored?.Pattern?.Topology?.Vertices;
                 bool fromPattern = pattern is not null && pattern.Count == n;
-                double[] startZ = fromPattern
-                    ? pattern!.Select(p => p.Z).ToArray()
-                    : Enumerable.Repeat(ground, n).ToArray();
 
                 // A start that already matches the solved shape node for node
                 // is not a plan, it is the answer. Lie the net flat and say so,
                 // rather than replay a still image and call it an animation.
                 double zSpan = Math.Max(target.Max(p => p.Z) - ground, 1.0e-9);
                 double startDrift = 0.0;
-                for (int i = 0; i < n; i++)
+                if (fromPattern)
                 {
-                    startDrift = Math.Max(
-                        startDrift, Math.Abs(startZ[i] - target[i].Z));
+                    for (int i = 0; i < n; i++)
+                    {
+                        startDrift = Math.Max(
+                            startDrift, Math.Abs(pattern![i].Z - target[i].Z));
+                    }
                 }
                 bool startIsFinal = fromPattern && startDrift < 1.0e-4 * zSpan;
                 if (startIsFinal)
-                {
                     fromPattern = false;
-                    startZ = Enumerable.Repeat(ground, n).ToArray();
+
+                // Frame zero is the pattern WHOLE: its plan as well as its
+                // level. Reeling an infill cable in is one operation, and while
+                // the net is still flat on the ground the only place it can
+                // show is in PLAN, as the net draws in from the plan as drawn
+                // toward the solved plan. Holding the plan at the solved one
+                // and moving only Z is what lost the first phase: the net sat
+                // flat and perfectly still until the columns began to lift.
+                Point3d[] start = fromPattern
+                    ? pattern!.Select(p => new Point3d(p.X, p.Y, p.Z)).ToArray()
+                    : target.Select(p => new Point3d(p.X, p.Y, ground)).ToArray();
+                double planTravel = 0.0;
+                for (int i = 0; i < n; i++)
+                {
+                    planTravel = Math.Max(
+                        planTravel,
+                        Math.Sqrt(MouldGeometry.PlanDistanceSquared(
+                            start[i], target[i])));
                 }
                 Mesh? mesh = MouldGeometry.ThrustMeshFromResult(
                     result, out int[] meshToNode);
@@ -358,13 +374,19 @@ namespace Ananke.COMPAS.Native.Components
                 var live = new Point3d[n];
                 for (int i = 0; i < n; i++)
                 {
-                    // Interpolate from the pattern's own level, per node, so at
-                    // height zero the whole net stays down where it was drawn
-                    // while the first reeling happens.
-                    double z = startZ[i]
-                        + (lift * (bare[i] - startZ[i]))
+                    // SAG drives the plan as well as the depth, because they
+                    // are the same operation seen twice: a cable reeled in
+                    // pulls the net toward its bar and lets it drop between
+                    // them at once. LIFT is the columns, and it moves only the
+                    // height, so at lift zero the whole net stays down where it
+                    // was drawn while the first reeling happens.
+                    double z = start[i].Z
+                        + (lift * (bare[i] - start[i].Z))
                         + (sag * relief[i]);
-                    live[i] = new Point3d(target[i].X, target[i].Y, z);
+                    live[i] = new Point3d(
+                        start[i].X + (sag * (target[i].X - start[i].X)),
+                        start[i].Y + (sag * (target[i].Y - start[i].Y)),
+                        z);
                 }
 
                 int[] perimeterIds = MouldGeometry.PerimeterNodes(
@@ -379,7 +401,8 @@ namespace Ananke.COMPAS.Native.Components
                 }
 
                 double barRise = principalIds.Count > 0
-                    ? lift * (principalIds.Select(i => bare[i] - startZ[i]).Average())
+                    ? lift * (principalIds
+                        .Select(i => bare[i] - start[i].Z).Average())
                     : 0.0;
                 int wantsPush = relief.Count(r => r > 1e-9);
 
@@ -404,11 +427,15 @@ namespace Ananke.COMPAS.Native.Components
                             : "this Result carries no source pattern, so the "
                                 + $"net starts flat at {ground:0.###}, the base "
                                 + "of the solved geometry",
-                    $"net travels from {startZ.Min():0.###}/{startZ.Max():0.###} "
-                        + $"at frame zero to {ground:0.###}/"
-                        + $"{target.Max(p => p.Z):0.###} at the end, "
-                        + $"reeling {relief.Max(Math.Abs) * 1000.0:0.#} mm at "
-                        + "the deepest node",
+                    $"net travels from {start.Min(p => p.Z):0.###}/"
+                        + $"{start.Max(p => p.Z):0.###} at frame zero to "
+                        + $"{ground:0.###}/{target.Max(p => p.Z):0.###} at the "
+                        + $"end, reeling {relief.Max(Math.Abs) * 1000.0:0.#} mm "
+                        + "at the deepest node",
+                    $"net draws in {planTravel * 1000.0:0.#} mm in plan as it "
+                        + "reels, which is the whole of phase 1 and is only "
+                        + "visible if the pattern plan and the solved plan "
+                        + "differ",
                     $"steppers required {principalIds.Count * 2} "
                         + "(two per notch, one pulling each side)",
                     $"bars risen {barRise * 1000.0:0.#} mm at this frame",
@@ -599,39 +626,91 @@ namespace Ananke.COMPAS.Native.Components
                 .ToList();
         }
 
+        /// <summary>
+        /// Match one drawn bar to the run of net nodes along it, as a WALK on
+        /// the mesh rather than a sort along the curve.
+        ///
+        /// The sort is the obvious implementation and it is wrong. A line
+        /// drawn down a bay catches the column of nodes either side of it, and
+        /// their positions along the curve interleave, so ordering the caught
+        /// nodes by how far along they lie hands back a run that crosses the
+        /// bay on every step: a zigzag, not a bar. It looks like a drawing
+        /// fault and is not one. Downstream that run is pinned by Animate and
+        /// solved as a beam by Column Finder, so the zigzag is load-bearing
+        /// nonsense: notches on both sides of a bay, and a bar reported twice
+        /// its true length.
+        ///
+        /// A bar is a CONNECTED CHAIN OF NOTCHES, so only a neighbour may
+        /// follow a node. From each node the walk takes the neighbour that
+        /// advances furthest along the curve, closest to the line where two
+        /// advance equally. A sideways step advances nothing, so it is never
+        /// preferred to a real one, and the run cannot double back. On a line
+        /// drawn at an angle to the mesh the two directions advance together
+        /// and the walk staircases, which is the honest discrete answer.
+        ///
+        /// <paramref name="meanOffset"/> reports how far the matched run sits
+        /// from the curve that asked for it, in plan. It is not zero when the
+        /// author drew between two columns of nodes: no bar can be there, the
+        /// nearest run of nodes was taken instead, and the caller can say so
+        /// rather than let the offset pass unremarked.
+        /// </summary>
         public static List<int> SnapCurveToNodes(
             Curve curve,
             Point3d[] nodes,
             (int, int)[] edges,
+            out double meanOffset,
             int samples = 512)
         {
-            double catchRadius = 0.6 * MedianEdgeLength(nodes, edges);
-            double catchSquared = catchRadius * catchRadius;
-
             // Sample the curve once and compare in plain arithmetic, rather
             // than asking Rhino for a closest point per node. ClosestPoint on a
             // NURBS curve is not cheap, and this runs for every node of every
             // bar on every solve, which an animation does on every frame.
+            //
+            // Sampling is the ONLY part of this that needs Rhino, so it is the
+            // only part that lives here. Everything below the sampling is
+            // arithmetic on arrays, and keeping it that way is what lets the
+            // smoke harness measure it: that harness never launches Rhino's
+            // native core, so a walk that asked a Curve anything could only
+            // ever be read, not run.
             double[]? ts = curve.DivideByCount(samples, true);
+            Point3d[] sampled;
             if (ts is null || ts.Length == 0)
             {
-                var fallback = new List<(double, int)>();
-                for (int i = 0; i < nodes.Length; i++)
-                {
-                    if (curve.ClosestPoint(nodes[i], out double t) &&
-                        PlanDistanceSquared(nodes[i], curve.PointAt(t)) < catchSquared)
-                    {
-                        fallback.Add((t, i));
-                    }
-                }
-                return fallback.OrderBy(h => h.Item1).Select(h => h.Item2).ToList();
+                sampled = new[] { curve.PointAtStart, curve.PointAtEnd };
             }
+            else
+            {
+                sampled = new Point3d[ts.Length];
+                for (int s = 0; s < ts.Length; s++)
+                    sampled[s] = curve.PointAt(ts[s]);
+            }
+            return SnapSampledLineToNodes(
+                sampled, nodes, edges, out meanOffset);
+        }
 
-            var sampled = new Point3d[ts.Length];
-            for (int s = 0; s < ts.Length; s++)
-                sampled[s] = curve.PointAt(ts[s]);
+        /// <summary>
+        /// The walk itself, over a line already reduced to points. See
+        /// <see cref="SnapCurveToNodes"/> for why it is a walk and not a sort.
+        /// </summary>
+        public static List<int> SnapSampledLineToNodes(
+            Point3d[] sampled,
+            Point3d[] nodes,
+            (int, int)[] edges,
+            out double meanOffset)
+        {
+            meanOffset = 0.0;
+            var run = new List<int>();
+            if (nodes.Length == 0 || edges.Length == 0 || sampled.Length == 0)
+                return run;
 
-            var hits = new List<(double Order, int Index)>();
+            double catchRadius = 0.6 * MedianEdgeLength(nodes, edges);
+            double catchSquared = catchRadius * catchRadius;
+
+            // Project every node onto the sampled curve once: which station it
+            // stands at, and how far off the line it sits. Neither changes
+            // during the walk, so neither is recomputed inside it.
+            var station = new int[nodes.Length];
+            var offset = new double[nodes.Length];
             for (int i = 0; i < nodes.Length; i++)
             {
                 int best = -1;
@@ -645,13 +724,62 @@ namespace Ananke.COMPAS.Native.Components
                         best = s;
                     }
                 }
-                if (best >= 0 && bestDistance < catchSquared)
-                    hits.Add((ts[best], i));
+                station[i] = best;
+                offset[i] = bestDistance;
             }
-            return hits
-                .OrderBy(hit => hit.Order)
-                .Select(hit => hit.Index)
-                .ToList();
+
+            // Start at the node standing at the curve's beginning: of every
+            // node inside the catch radius, the earliest station, and of those
+            // the one nearest the line.
+            int at = -1;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (offset[i] >= catchSquared)
+                    continue;
+                if (at < 0 ||
+                    station[i] < station[at] ||
+                    (station[i] == station[at] && offset[i] < offset[at]))
+                {
+                    at = i;
+                }
+            }
+            if (at < 0)
+                return run;
+
+            List<int>[] neighbours = BuildAdjacency(nodes.Length, edges);
+            var used = new HashSet<int> { at };
+            run.Add(at);
+            while (true)
+            {
+                int next = -1;
+                int bestAdvance = 0;
+                foreach (int candidate in neighbours[at])
+                {
+                    if (used.Contains(candidate))
+                        continue;
+                    if (offset[candidate] >= catchSquared)
+                        continue;
+                    int advance = station[candidate] - station[at];
+                    if (advance <= 0)
+                        continue;
+                    if (next < 0 ||
+                        advance > bestAdvance ||
+                        (advance == bestAdvance &&
+                            offset[candidate] < offset[next]))
+                    {
+                        next = candidate;
+                        bestAdvance = advance;
+                    }
+                }
+                if (next < 0)
+                    break;
+                run.Add(next);
+                used.Add(next);
+                at = next;
+            }
+
+            meanOffset = run.Average(i => Math.Sqrt(offset[i]));
+            return run;
         }
 
         /// <summary>Squared distance in plan, height ignored.</summary>
