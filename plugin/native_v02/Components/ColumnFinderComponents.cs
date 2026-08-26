@@ -363,6 +363,32 @@ namespace Ananke.COMPAS.Native.Components
                 // Supports from the anchors or by Pattern from drawn curves.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, n);
+                // Two bars sharing notches are one bar traced twice, and each
+                // would be given its own full set of columns. Say so: it is
+                // invisible in the viewport and it makes everything downstream
+                // look lopsided.
+                for (int a = 0; a < bars.Count; a++)
+                {
+                    for (int b = a + 1; b < bars.Count; b++)
+                    {
+                        var left = new HashSet<int>(bars[a]);
+                        int shared = bars[b].Count(left.Contains);
+                        if (2 * shared <= Math.Min(bars[a].Count, bars[b].Count))
+                            continue;
+                        AddRuntimeMessage(
+                            GH_RuntimeMessageLevel.Warning,
+                            $"Principal lines {a} and {b} share {shared} "
+                                + "notches, so they are one bar traced twice. "
+                                + "Each is being given its own full set of "
+                                + "columns, which crowds them onto the one line "
+                                + "at two different spacings and reads as "
+                                + "lopsided. Check Ribs on Supports, or the "
+                                + "curves on Pattern.");
+                        a = bars.Count;
+                        break;
+                    }
+                }
+
                 if (bars.Count == 0)
                 {
                     AddRuntimeMessage(

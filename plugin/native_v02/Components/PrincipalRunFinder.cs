@@ -60,7 +60,19 @@ namespace Ananke.COMPAS.Native.Components
             if (anchors.Count == 0)
                 return runs;
 
-            var seenRun = new HashSet<string>();
+            // A line traced from one anchor strip reaches the other, so the
+            // strip opposite traces THE SAME LINE BACKWARDS. That duplicate has
+            // to go, and matching its two ENDS is not enough to catch it: the
+            // two traces rarely finish on exactly the same node, so the keys
+            // differed and both were kept. What came back was two bars lying on
+            // top of each other, each given its own full set of columns, each
+            // mirrored about its own slightly different midpoint. Twelve
+            // columns crowded onto one line at two offset spacings, which reads
+            // as one lopsided bar and is the asymmetry that would not go away.
+            //
+            // Two runs sharing most of their nodes are one bar. Compare what
+            // they are made of, not where they stop.
+            var kept = new List<HashSet<int>>();
             foreach (List<int> strip in Strips(anchors, neighbours))
             {
                 foreach (int start in StartsAlong(strip, ribsPerStrip))
@@ -69,15 +81,21 @@ namespace Ananke.COMPAS.Native.Components
                         start, vertices, neighbours, anchors);
                     if (run.Count < 2)
                         continue;
-                    // A line traced from one side reaches the other, so the
-                    // strip opposite would trace the same line backwards.
-                    int first = run[0];
-                    int last = run[run.Count - 1];
-                    string key = first < last
-                        ? $"{first}:{last}"
-                        : $"{last}:{first}";
-                    if (seenRun.Add(key))
-                        runs.Add(run);
+                    var nodes = new HashSet<int>(run);
+                    bool duplicate = false;
+                    foreach (HashSet<int> already in kept)
+                    {
+                        int shared = nodes.Count(already.Contains);
+                        if (2 * shared > Math.Min(nodes.Count, already.Count))
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (duplicate)
+                        continue;
+                    kept.Add(nodes);
+                    runs.Add(run);
                 }
             }
             return runs;
