@@ -269,15 +269,21 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddPointParameter(
                 "Reaction Points",
                 "RP",
-                "Points carrying support reactions. TNA: non-zero only; " +
-                "FD: unfiltered.",
-                GH_ParamAccess.list);
+                "Points carrying support reactions, as a TREE branched and " +
+                "ordered EXACTLY as Support Points: one branch per " +
+                "connected strip of supports, walked end to end, so strip " +
+                "{i} item [k] names the same support in Node IDs, Support " +
+                "Points and here. A support carrying no reaction holds its " +
+                "slot as a zero rather than dropping out, which is what " +
+                "keeps that correspondence true.",
+                GH_ParamAccess.tree);
             parameters.AddVectorParameter(
                 "Reaction Vectors",
                 "RV",
-                "Support reactions aligned with Reaction Points. TNA: " +
-                "non-zero only; FD: unfiltered.",
-                GH_ParamAccess.list);
+                "Support reactions, branched and ordered exactly as " +
+                "Reaction Points and Support Points. Sum one branch to get " +
+                "what a single side of the vault puts into the ground.",
+                GH_ParamAccess.tree);
             parameters.AddVectorParameter(
                 "Residuals",
                 "E",
@@ -368,7 +374,12 @@ namespace Ananke.COMPAS.Native.Components
                 int[] nodeIds;
                 Point3d[] supportPoints;
                 (Point3d Point, Vector3d Vector)[] loads;
-                (Point3d Point, Vector3d Vector)[] reactions;
+                // Reactions carry the NODE they act at, not just a point.
+                // Grouping them by strip is a question about which support
+                // they belong to, and that is an index question; matching them
+                // back by coordinate would turn an exact answer into a
+                // tolerance.
+                (int Node, Point3d Point, Vector3d Vector)[] reactions;
                 // The two ends of each member as NODE INDICES, which is what
                 // says whether a member lies along a principal line. The lines
                 // themselves cannot answer that: a point is not an index, and
@@ -420,9 +431,10 @@ namespace Ananke.COMPAS.Native.Components
                         .ToArray();
                     reactions = result.Mappings!.Reactions
                         .Select(item => (
+                            item.EquilibriumVertexId,
                             Point(equilibrium.Vertices[item.EquilibriumVertexId]),
                             Vector(item.Reaction)))
-                        .Where(item => item.Item2.SquareLength > 1.0e-24)
+                        .Where(item => item.Item3.SquareLength > 1.0e-24)
                         .ToArray();
                 }
                 else
@@ -449,7 +461,8 @@ namespace Ananke.COMPAS.Native.Components
                         .Select(item => (Point(item.Point), Vector(item.Vector)))
                         .ToArray();
                     reactions = equilibrium.Reactions
-                        .Select(item => (Point(item.Point), Vector(item.Vector)))
+                        .Select(item => (
+                            item.NodeId, Point(item.Point), Vector(item.Vector)))
                         .ToArray();
                 }
 
@@ -552,10 +565,70 @@ namespace Ananke.COMPAS.Native.Components
                     strips.Select(strip => strip
                         .Where(nodeIdAt.ContainsKey)
                         .Select(id => supportPoints[nodeIdAt[id]]))));
+                // The reactions, laid out ON the support strips.
+                //
+                // Branched AND ordered exactly as Support Points, item for
+                // item, so strip {i} item [k] is the same support in all
+                // three outputs. That alignment costs something and it is
+                // worth stating: a support carrying no reaction is now a ZERO
+                // VECTOR holding its own slot rather than being dropped.
+                // Dropping it is what made the old flat list unreadable
+                // against the supports, because nothing said which support a
+                // given reaction belonged to short of matching coordinates by
+                // eye.
+                var reactionAt = new Dictionary<int, (Point3d P, Vector3d V)>();
+                foreach ((int node, Point3d p, Vector3d vec) in reactions)
+                    reactionAt[node] = (p, vec);
+
+                var reactionPointBranches = new List<List<Point3d>>();
+                var reactionVectorBranches = new List<List<Vector3d>>();
+                foreach (List<int> strip in strips)
+                {
+                    var points = new List<Point3d>();
+                    var vectors = new List<Vector3d>();
+                    foreach (int id in strip)
+                    {
+                        if (reactionAt.TryGetValue(id, out var found))
+                        {
+                            points.Add(found.P);
+                            vectors.Add(found.V);
+                        }
+                        else
+                        {
+                            points.Add(nodeIdAt.TryGetValue(id, out int at)
+                                ? supportPoints[at]
+                                : Point3d.Origin);
+                            vectors.Add(Vector3d.Zero);
+                        }
+                    }
+                    reactionPointBranches.Add(points);
+                    reactionVectorBranches.Add(vectors);
+                }
+
+                // A reaction at a node that is not a support should not exist.
+                // If one ever does it gets a branch of its own at the end,
+                // because losing it silently would be worse than an extra
+                // branch nobody expected.
+                var onAStrip = new HashSet<int>(strips.SelectMany(s => s));
+                var strayPoints = new List<Point3d>();
+                var strayVectors = new List<Vector3d>();
+                foreach ((int node, Point3d p, Vector3d vec) in reactions)
+                {
+                    if (onAStrip.Contains(node))
+                        continue;
+                    strayPoints.Add(p);
+                    strayVectors.Add(vec);
+                }
+                if (strayPoints.Count > 0)
+                {
+                    reactionPointBranches.Add(strayPoints);
+                    reactionVectorBranches.Add(strayVectors);
+                }
+
                 data.SetDataList(10, loads.Select(item => item.Point));
                 data.SetDataList(11, loads.Select(item => item.Vector));
-                data.SetDataList(12, reactions.Select(item => item.Point));
-                data.SetDataList(13, reactions.Select(item => item.Vector));
+                data.SetDataTree(12, OutputTree.Points(reactionPointBranches));
+                data.SetDataTree(13, OutputTree.Vectors(reactionVectorBranches));
                 data.SetDataList(14, residuals);
                 data.SetDataList(15, diagnostics);
                 data.SetData(16, report);
