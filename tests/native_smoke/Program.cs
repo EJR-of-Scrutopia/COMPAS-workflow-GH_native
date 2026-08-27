@@ -1714,6 +1714,60 @@ internal static class Program
                 + $"{string.Join(",", loop[0])}.");
         }
 
+        // THE WRONG-GRAPH REGRESSION, which showed as 42 branches of one node
+        // each.
+        //
+        // A TNA analysis topology carries no edge between two supports: such
+        // an edge joins two fixed nodes, contributes no unknown, and the
+        // network never needs it. Six anchors joined only to the interior and
+        // never to each other IS that graph. Grouping over it can only give
+        // singletons, and asserting it here says the walk is not at fault, so
+        // nobody goes hunting for the bug inside it.
+        int[][] byNetOnly = Groups(
+            10,
+            new[] { 0, 1, 2, 6, 7, 8 },
+            // every anchor to an interior node, and no anchor to an anchor
+            (0, 3), (1, 4), (2, 5), (6, 3), (7, 4), (8, 5));
+        if (byNetOnly.Length != 6)
+        {
+            throw new InvalidOperationException(
+                "Anchors joined only to the interior must come back as six "
+                + $"singletons; got {byNetOnly.Length} group(s). This case "
+                + "documents WHY the solved net is the wrong graph to group "
+                + "by, so it has to keep reproducing.");
+        }
+
+        // The same anchors over the UNION with the plan as drawn, where each
+        // side IS continuous. Two sides, three nodes each, walked in order.
+        int[][] byUnion = Groups(
+            10,
+            new[] { 0, 1, 2, 6, 7, 8 },
+            (0, 3), (1, 4), (2, 5), (6, 3), (7, 4), (8, 5),
+            (0, 1), (1, 2),      // side A, joined in the plan
+            (6, 7), (7, 8));     // side B, joined in the plan
+        if (byUnion.Length != 2)
+        {
+            throw new InvalidOperationException(
+                "Adding the plan's own side edges must give TWO strips; got "
+                + $"{byUnion.Length}. That union is the fix: group over the "
+                + "plan together with the solved net, not the net alone.");
+        }
+        if (!byUnion[0].SequenceEqual(new[] { 0, 1, 2 }) ||
+            !byUnion[1].SequenceEqual(new[] { 6, 7, 8 }))
+        {
+            throw new InvalidOperationException(
+                "The two sides came back as "
+                + $"[{string.Join(",", byUnion[0])}] and "
+                + $"[{string.Join(",", byUnion[1])}]; expected 0,1,2 and "
+                + "6,7,8, each whole and walked in order.");
+        }
+
+        // Coverage note: this measures the GROUPING, which is where the
+        // observable behaviour is. MouldGeometry.GroupingAdjacency, which
+        // unions the two edge sets and guards on the pattern carrying the same
+        // vertex count, is exercised only through the components; a fixture
+        // for it needs a whole nested ResultDto.
+
         // MEMBER OWNERSHIP. Two bars, and four members put to them.
         var runs = new List<IReadOnlyList<int>>
         {

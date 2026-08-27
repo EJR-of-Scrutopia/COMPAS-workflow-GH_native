@@ -935,17 +935,45 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 cableBranches.Add(infill);
 
+                // Grouped over the PLAN AS DRAWN unioned with the solved net,
+                // not over the solved net alone. The solved net has no edge
+                // between two supports, so grouping by it alone gave every
+                // anchor a branch to itself. See GroupingAdjacency.
+                List<int>[] grouping = MouldGeometry.GroupingAdjacency(
+                    result, edges, n);
+                List<List<int>> anchorStrips =
+                    MouldGeometry.ConnectedGroups(anchorIds, neighbours: grouping);
+                List<List<int>> perimeterLoops =
+                    MouldGeometry.ConnectedGroups(perimeterIds, neighbours: grouping);
+
+                report.Add(string.Empty);
+                report.Add(
+                    $"anchors grouped into {anchorStrips.Count} "
+                        + (anchorStrips.Count == 1 ? "strip" : "strips")
+                        + $" of {string.Join("/", anchorStrips.Select(s => s.Count))}"
+                        + $", perimeter into {perimeterLoops.Count} "
+                        + (perimeterLoops.Count == 1 ? "loop" : "loops"));
+                if (anchorIds.Count > 1 &&
+                    anchorStrips.Count == anchorIds.Count)
+                {
+                    report.Add(
+                        "WARNING: every anchor came back in a branch of its "
+                            + "own, which means no two anchors are joined in "
+                            + "either the plan or the solved net. Check that "
+                            + "the Result still carries its source Pattern; "
+                            + "without it there is no graph in which a side is "
+                            + "continuous.");
+                }
+
                 data.SetData(0, framed);
                 data.SetDataTree(1, OutputTree.Lines(cableBranches));
                 data.SetDataTree(2, OutputTree.Curves(barCurves));
                 data.SetDataTree(3, OutputTree.Points(
                     bars.Select(run => run.Select(i => live[i]))));
                 data.SetDataTree(4, OutputTree.Points(
-                    MouldGeometry.ConnectedGroups(anchorIds, neighbours)
-                        .Select(strip => strip.Select(i => live[i]))));
+                    anchorStrips.Select(strip => strip.Select(i => live[i]))));
                 data.SetDataTree(5, OutputTree.Points(
-                    MouldGeometry.ConnectedGroups(perimeterIds, neighbours)
-                        .Select(loop => loop.Select(i => live[i]))));
+                    perimeterLoops.Select(loop => loop.Select(i => live[i]))));
                 data.SetData(6, new MouldStateGoo(MouldGeometry.BuildState(
                     phase, ground, live, edges, edgeSource, equilibrium,
                     principalIds, anchorIds, perimeterIds,
@@ -1006,6 +1034,53 @@ namespace Ananke.COMPAS.Native.Components
                 neighbours[v].Add(u);
             }
             return neighbours;
+        }
+
+        /// <summary>
+        /// The graph to GROUP by, which is not the graph the solver solved.
+        ///
+        /// This distinction is the whole of the "42 branches of one node each"
+        /// fault. Grouping the anchors by the EQUILIBRIUM edges gave every
+        /// anchor a branch to itself, because a TNA analysis topology carries
+        /// no edge between two supports: such an edge joins two fixed nodes, so
+        /// it contributes no unknown and the network never needs it. Every
+        /// anchor was therefore isolated from the anchor beside it, and a walk
+        /// over that graph can only return singletons. It looks like a graft
+        /// and it is not one; it is a correct walk over the wrong graph.
+        ///
+        /// The sides are connected in the PLAN AS DRAWN, which is exactly the
+        /// graph Supports itself walks when it derives one rib per anchor
+        /// strip. So the pattern's own edges are added to the solved ones and
+        /// grouping happens over the union: two nodes are together if they are
+        /// joined in either the plan or the solved network.
+        ///
+        /// The pattern is trusted only when it has the SAME NUMBER OF VERTICES
+        /// as the solved network. Anything else is a different index space, and
+        /// quietly mixing two index spaces would group nodes that have nothing
+        /// to do with one another.
+        /// </summary>
+        public static List<int>[] GroupingAdjacency(
+            ResultDto result,
+            (int, int)[] solvedEdges,
+            int nodeCount)
+        {
+            var all = new List<(int, int)>(solvedEdges);
+            TopologyDto? pattern =
+                result.Problem?.Anchored?.Pattern?.Topology;
+            if (pattern is not null && pattern.Vertices.Count == nodeCount)
+            {
+                foreach (EdgeDto edge in pattern.Edges)
+                {
+                    if (edge.U < 0 || edge.U >= nodeCount ||
+                        edge.V < 0 || edge.V >= nodeCount ||
+                        edge.U == edge.V)
+                    {
+                        continue;
+                    }
+                    all.Add((edge.U, edge.V));
+                }
+            }
+            return BuildAdjacency(nodeCount, all.ToArray());
         }
 
         /// <summary>

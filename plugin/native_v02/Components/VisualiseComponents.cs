@@ -496,10 +496,17 @@ namespace Ananke.COMPAS.Native.Components
                 }
 
                 // The supports, split into the strips they physically form.
+                //
+                // Grouped over the plan as drawn unioned with the solved net.
+                // The solved net alone is the wrong graph here: it carries no
+                // edge between two supports, because such an edge joins two
+                // fixed nodes and contributes no unknown, so every anchor comes
+                // back isolated and the tree degenerates into one branch per
+                // point. See MouldGeometry.GroupingAdjacency.
                 (int, int)[] netEdges = MouldGeometry.ValidEdges(
                     equilibrium, equilibrium.Vertices.Count, out _);
-                List<int>[] neighbours = MouldGeometry.BuildAdjacency(
-                    equilibrium.Vertices.Count, netEdges);
+                List<int>[] neighbours = MouldGeometry.GroupingAdjacency(
+                    result, netEdges, equilibrium.Vertices.Count);
                 List<List<int>> strips = MouldGeometry.ConnectedGroups(
                     nodeIds, neighbours);
                 var nodeIdAt = new Dictionary<int, int>();
