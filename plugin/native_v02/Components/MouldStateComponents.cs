@@ -62,6 +62,17 @@ namespace Ananke.COMPAS.Native.Contracts
         public IReadOnlyList<int> PrincipalNodes { get; init; } =
             Array.Empty<int>();
 
+        /// <summary>
+        /// The notches of each principal line, in order along that bar.
+        ///
+        /// Carried rather than rebuilt. A bar could be recovered downstream by
+        /// walking the "bar" edges, but two bars that CROSS share a notch, and
+        /// a walk cannot tell which of the two it should carry on down. The
+        /// runs are known exactly where they are made, so they travel.
+        /// </summary>
+        public IReadOnlyList<IReadOnlyList<int>> PrincipalRuns { get; init; } =
+            Array.Empty<IReadOnlyList<int>>();
+
         public IReadOnlyList<int> AnchorNodes { get; init; } =
             Array.Empty<int>();
 
@@ -187,6 +198,24 @@ namespace Ananke.COMPAS.Native.Components
                 "A frame from Animate or Column Finder. Column Finder's state "
                     + "carries the columns; Animate's carries only the net.",
                 GH_ParamAccess.item);
+            parameters.AddNumberParameter(
+                "EI",
+                "EI",
+                "Bending stiffness of one notched bar, N.m2: Young's modulus "
+                    + "times the second moment of area of the section you mean "
+                    + "to build it from. This is the ONLY place a stiffness is "
+                    + "asked for, and it is asked for here on purpose. Where "
+                    + "the arms go does not depend on it, because stiffness "
+                    + "cancels out of that comparison, so putting a number on "
+                    + "it upstream would look like it were tuning the "
+                    + "placement when it cannot. Here it converts the bar's "
+                    + "bending into millimetres you can hold a tolerance "
+                    + "against. Steel 40x40x3 SHS is about 1.9e5; a 48.3x4 CHS "
+                    + "about 2.4e5. Zero or negative reports the shape of the "
+                    + "bending without a scale.",
+                GH_ParamAccess.item,
+                0.0);
+            parameters[1].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -252,6 +281,25 @@ namespace Ananke.COMPAS.Native.Components
                     + "the perimeter cables down, so their horizontal part is "
                     + "what the ground anchorage has to take.",
                 GH_ParamAccess.list);
+            parameters.AddPointParameter(
+                "Bar Nodes",
+                "BN",
+                "Every notch, as a TREE with one branch per principal line, in "
+                    + "order along that bar. Bar Sag aligns with this, branch "
+                    + "for branch and item for item.",
+                GH_ParamAccess.tree);
+            parameters.AddNumberParameter(
+                "Bar Sag",
+                "BS",
+                "How far the bar bends away from straight at each notch, in "
+                    + "MILLIMETRES, with EI as given. Positive is downward. "
+                    + "The bar is solved as a continuous beam on its own "
+                    + "columns and anchors, so a notch between two columns "
+                    + "sags and a notch over one does not. This is the number "
+                    + "to hold a build tolerance against; it is a demand, not "
+                    + "a verdict, and no allowable is assumed. Empty if the "
+                    + "state carries no principal runs.",
+                GH_ParamAccess.tree);
             parameters.AddTextParameter(
                 "Report",
                 "Out",
@@ -269,6 +317,9 @@ namespace Ananke.COMPAS.Native.Components
             {
                 return;
             }
+
+            double stiffness = 0.0;
+            data.GetData(1, ref stiffness);
 
             try
             {
@@ -375,15 +426,128 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(5, columnForce);
                 data.SetDataList(6, thrust);
                 data.SetDataList(7, anchorPoints);
-                data.SetDataList(8, anchorForce);
-                data.SetData(9, ReportFor(standsOnGround, 
+                (List<List<Point3d>> barNodes, List<List<double>> barSag) =
+                    BarBending(state, v, stiffness);
+                data.SetDataTree(9, OutputTree.Points(barNodes));
+                data.SetDataTree(10, OutputTree.Numbers(barSag));
+                data.SetData(11, ReportFor(standsOnGround,
                     state, cableForce, barForce, columnForce, thrust,
-                    anchorForce));
+                    anchorForce, barSag, stiffness));
             }
             catch (Exception ex)
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// How far each bar bends away from straight, in millimetres.
+        ///
+        /// EI IS ASKED FOR HERE AND NOWHERE ELSE, and that placing is the
+        /// point. Where the arms go is chosen by comparing one arrangement
+        /// against another, and stiffness is a common factor in that
+        /// comparison, so it cancels: the same arms come out whatever EI is.
+        /// Putting the number upstream would therefore have looked like a
+        /// tuning knob on the placement while doing nothing to it, and would
+        /// have put a tolerance next to a decision that cannot honour one.
+        ///
+        /// Downstream it is exactly what is missing. The placement knows the
+        /// SHAPE of the bending; only EI turns that shape into millimetres,
+        /// and millimetres are what a build tolerance is written in.
+        ///
+        /// The bar is solved the same way it was placed: an Euler-Bernoulli
+        /// beam on point supports, held wherever a column head or an anchor
+        /// meets it. Held at the same places, loaded the same way, so the sag
+        /// reported here is the sag the arms were chosen to minimise, and not
+        /// a second opinion from a different model.
+        ///
+        /// With EI at zero there is no scale to report, so the deflected shape
+        /// is returned in the solver's own units with EI of one. It still
+        /// shows WHERE the bar bends and in what proportion; it is simply not
+        /// millimetres, and the Report says so.
+        /// </summary>
+        private static (List<List<Point3d>>, List<List<double>>) BarBending(
+            MouldStateDto state,
+            Point3d[] v,
+            double stiffness)
+        {
+            var nodes = new List<List<Point3d>>();
+            var sag = new List<List<double>>();
+            if (state.PrincipalRuns.Count == 0)
+                return (nodes, sag);
+
+            double EI = stiffness > 0.0 ? stiffness : 1.0;
+
+            // Every member on every notch, so the load across a bar can be
+            // read the way Column Finder read it when it placed the arms.
+            var incident = new List<(int Other, double Force)>[v.Length];
+            for (int i = 0; i < v.Length; i++)
+                incident[i] = new List<(int, double)>();
+            for (int e = 0; e < state.Edges.Count; e++)
+            {
+                EdgeDto edge = state.Edges[e];
+                if (edge.U < 0 || edge.U >= v.Length ||
+                    edge.V < 0 || edge.V >= v.Length)
+                {
+                    continue;
+                }
+                double force = e < state.MemberForce.Count
+                    ? state.MemberForce[e] : 0.0;
+                incident[edge.U].Add((edge.V, force));
+                incident[edge.V].Add((edge.U, force));
+            }
+
+            // A notch is HELD where a column head reaches it, or where it is
+            // itself an anchor. Heads arrive as points rather than indices, so
+            // they are matched in plan, which is how they were placed.
+            var held = new HashSet<int>(
+                state.AnchorNodes.Where(i => i >= 0 && i < v.Length));
+            foreach (Point3Dto head in state.ColumnHead)
+            {
+                int at = MouldGeometry.NearestNodeInPlan(
+                    new Point3d(head.X, head.Y, head.Z), v);
+                if (at >= 0)
+                    held.Add(at);
+            }
+
+            foreach (IReadOnlyList<int> raw in state.PrincipalRuns)
+            {
+                List<int> run = raw
+                    .Where(i => i >= 0 && i < v.Length)
+                    .ToList();
+                nodes.Add(run.Select(i => v[i]).ToList());
+                if (run.Count < 2)
+                {
+                    sag.Add(new List<double>());
+                    continue;
+                }
+
+                Vector3d[] pull = MouldGeometry.BarLoads(run, v, incident);
+                Vector3d[] across = MouldGeometry.BarTransverse(run, v, pull);
+                var arc = new double[run.Count];
+                for (int k = 1; k < run.Count; k++)
+                    arc[k] = arc[k - 1] + v[run[k - 1]].DistanceTo(v[run[k]]);
+                double[] load = across.Select(a => Math.Abs(a.Z)).ToArray();
+                int[] supports = Enumerable.Range(0, run.Count)
+                    .Where(k => held.Contains(run[k]))
+                    .ToArray();
+
+                // Under two supports the bar is a mechanism, not a beam. Report
+                // nothing rather than an arbitrary number.
+                if (supports.Length < 2)
+                {
+                    sag.Add(Enumerable.Repeat(0.0, run.Count).ToList());
+                    continue;
+                }
+
+                (double[]? deflection, double[]? _) =
+                    BeamSolver.Response(arc, load, supports, EI);
+                sag.Add(deflection is null
+                    ? Enumerable.Repeat(0.0, run.Count).ToList()
+                    : deflection.Select(d => d * 1000.0).ToList());
+            }
+
+            return (nodes, sag);
         }
 
         private static string ReportFor(
@@ -393,7 +557,9 @@ namespace Ananke.COMPAS.Native.Components
             List<double> barForce,
             List<double> columnForce,
             List<double> thrust,
-            List<Vector3d> anchorForce)
+            List<Vector3d> anchorForce,
+            List<List<double>> barSag,
+            double stiffness)
         {
             var lines = new List<string>
             {
@@ -477,6 +643,35 @@ namespace Ananke.COMPAS.Native.Components
                         + "those of the finished state. Read it as where the "
                         + "structure is going, not as the load at this instant.");
             }
+            double worstSag = barSag
+                .SelectMany(b => b)
+                .Select(Math.Abs)
+                .DefaultIfEmpty(0.0)
+                .Max();
+            lines.Add(string.Empty);
+            if (barSag.Count == 0)
+            {
+                lines.Add(
+                    "bar bending not reported: this state carries no principal "
+                        + "runs, so there is no bar to solve as a beam.");
+            }
+            else if (stiffness > 0.0)
+            {
+                lines.Add(
+                    $"bars bend up to {worstSag:0.##} mm between their supports, "
+                        + $"with EI {stiffness:G4} N.m2. That is the demand to "
+                        + "hold a build tolerance against; no allowable is "
+                        + "assumed here.");
+            }
+            else
+            {
+                lines.Add(
+                    "bar bending is reported as SHAPE ONLY, because EI was "
+                        + "left at zero. It shows where the bar bends and in "
+                        + "what proportion, and it is not millimetres. Give EI "
+                        + "the section you mean to build to put a scale on it.");
+            }
+
             return string.Join(Environment.NewLine, lines);
         }
     }

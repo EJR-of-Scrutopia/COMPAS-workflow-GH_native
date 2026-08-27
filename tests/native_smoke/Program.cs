@@ -566,6 +566,22 @@ internal static class Program
 
         try
         {
+            ValidateStiffnessSeparation(plugin);
+            Console.WriteLine(
+                "PASS  EI separation: the arms come out IDENTICAL over six "
+                + "orders of magnitude of stiffness, which is why EI is asked "
+                + "for on Stress Analysis and nowhere else; and the deflection "
+                + "scales exactly as one over EI, which is what lets that one "
+                + "number turn the placement's shape into millimetres. Lean "
+                + "from vertical is measured against hand-computed angles.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"EI separation: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateOutputGrouping(plugin);
             Console.WriteLine(
                 "PASS  Output grouping: the anchors of a vault come back as "
@@ -1792,6 +1808,127 @@ internal static class Program
                 + "two notches of bar 0 by cutting the corner between them, "
                 + "which makes it INFILL: membership is consecutiveness along "
                 + "the run, not both ends lying on it.");
+        }
+    }
+
+    /// <summary>
+    /// The two halves of the EI decision, measured.
+    ///
+    /// EI is asked for on Stress Analysis and nowhere else, and that rests on
+    /// a claim that has to be true rather than merely believed: THE ARMS DO
+    /// NOT DEPEND ON IT. Placement compares one arrangement against another,
+    /// stiffness is a common factor in that comparison, so it cancels. If it
+    /// did not, the placement would be silently tuned by a number the author
+    /// picked for a section, and a tolerance would be sitting next to a
+    /// decision that cannot honour one. Six orders of magnitude is enough to
+    /// catch any real dependence.
+    ///
+    /// The other half is why EI is worth asking for at all: deflection scales
+    /// exactly as one over EI. The placement knows the SHAPE of the bending;
+    /// that exact reciprocal is what turns the shape into millimetres, which
+    /// is the unit a build tolerance is written in.
+    ///
+    /// Also checks LeanFromVertical, the rule the trunks are held to. A trunk
+    /// to a shared foot has both ends fixed, so it is brought inside the limit
+    /// by raising its fork rather than by capping an aim, and the measurement
+    /// that decides when to do so has to be right.
+    /// </summary>
+    private static void ValidateStiffnessSeparation(Assembly plugin)
+    {
+        Type solver = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.BeamSolver", throwOnError: true)!;
+        MethodInfo arms = RequirePublicStatic(solver, "ArmsForBar");
+        MethodInfo response = RequirePublicStatic(solver, "Response");
+        Type point3d = arms.GetParameters()[1].ParameterType.GetElementType()!;
+
+        const int stations = 31;
+        Array nodes = Array.CreateInstance(point3d, stations);
+        var arc = new double[stations];
+        var load = new double[stations];
+        for (int i = 0; i < stations; i++)
+        {
+            double x = (double)i / (stations - 1);
+            arc[i] = x;
+            // Deliberately NOT uniform. A flat load is the one case where a
+            // dependence on stiffness could hide behind symmetry.
+            load[i] = 1.0 + (0.4 * Math.Sin(6.0 * x));
+            nodes.SetValue(
+                Activator.CreateInstance(point3d, x, 0.0, 0.0), i);
+        }
+        var bar = Enumerable.Range(0, stations).ToList();
+
+        int[] ArmsAt(double EI)
+        {
+            object result = arms.Invoke(
+                null,
+                new object?[] { bar, nodes, load, new HashSet<int>(), 3, EI })!;
+            return ((IEnumerable)result.GetType()
+                    .GetField("Item1")!.GetValue(result)!)
+                .Cast<int>()
+                .OrderBy(v => v)
+                .ToArray();
+        }
+
+        int[] soft = ArmsAt(1.0e-3);
+        int[] mid = ArmsAt(1.0);
+        int[] stiff = ArmsAt(1.0e3);
+        if (!soft.SequenceEqual(mid) || !mid.SequenceEqual(stiff))
+        {
+            throw new InvalidOperationException(
+                "The arms must not depend on stiffness: got "
+                + $"[{string.Join(",", soft)}] at EI 1e-3, "
+                + $"[{string.Join(",", mid)}] at 1, and "
+                + $"[{string.Join(",", stiff)}] at 1e3. If these ever differ, "
+                + "EI cannot stay downstream, because it would be tuning the "
+                + "placement while claiming not to.");
+        }
+
+        // Deflection is exactly reciprocal in EI.
+        var supports = new[] { 0, stations / 2, stations - 1 };
+        double[] Deflect(double EI)
+        {
+            object result = response.Invoke(
+                null, new object?[] { arc, load, supports, EI })!;
+            return (double[])result.GetType()
+                .GetField("Item1")!.GetValue(result)!;
+        }
+
+        double[] one = Deflect(1.0);
+        double[] four = Deflect(4.0);
+        for (int i = 0; i < one.Length; i++)
+        {
+            double expected = one[i] / 4.0;
+            if (Math.Abs(four[i] - expected) > 1.0e-9 * (1.0 + Math.Abs(expected)))
+            {
+                throw new InvalidOperationException(
+                    $"Deflection must scale as one over EI: node {i} gave "
+                    + $"{four[i]:G6} at EI 4 against {expected:G6} expected "
+                    + $"from {one[i]:G6} at EI 1. Without that exact "
+                    + "reciprocal, one EI cannot convert the placement's "
+                    + "bending shape into millimetres.");
+            }
+        }
+
+        // The lean rule the trunks are held to.
+        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
+        MethodInfo lean = RequireStatic(finder, "LeanFromVertical");
+        double Lean(double dx, double rise)
+        {
+            object foot = Activator.CreateInstance(point3d, 0.0, 0.0, 0.0)!;
+            object top = Activator.CreateInstance(point3d, dx, 0.0, rise)!;
+            return (double)lean.Invoke(null, new[] { foot, top })!;
+        }
+
+        if (Math.Abs(Lean(0.0, 1.0)) > 1.0e-9)
+            throw new InvalidOperationException("A plumb member leans 0 degrees.");
+        if (Math.Abs(Lean(1.0, 1.0) - 45.0) > 1.0e-9)
+            throw new InvalidOperationException("One across, one up, is 45 degrees.");
+        if (Math.Abs(Lean(Math.Sqrt(3.0), 1.0) - 60.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Root three across, one up, is exactly 60 degrees, which is "
+                + "the limit itself and so the value that decides whether a "
+                + "fork gets raised.");
         }
     }
 

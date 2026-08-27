@@ -978,7 +978,7 @@ namespace Ananke.COMPAS.Native.Components
                     phase, ground, live, edges, edgeSource, equilibrium,
                     principalIds, anchorIds, perimeterIds,
                     Array.Empty<Point3d>(), Array.Empty<Point3d>(),
-                    Array.Empty<double>())));
+                    Array.Empty<double>(), bars)));
                 data.SetData(7, string.Join(Environment.NewLine, report));
                 data.SetDataTree(8, OutputTree.Lines(columnBranches));
             }
@@ -1640,6 +1640,19 @@ namespace Ananke.COMPAS.Native.Components
             return pull;
         }
 
+        /// <summary>
+        /// How far off vertical a column member may stand, in degrees.
+        ///
+        /// Past this a column pushes sideways more than it holds up, and the
+        /// sliding joint cannot reach the angle anyway. One constant because
+        /// two parts of the machine obey it and they must obey the same
+        /// number: a standalone column, whose aim is free and so is simply
+        /// capped here; and a trunk to a shared foot, whose ends are both
+        /// fixed and which is brought inside the limit by raising its fork
+        /// instead.
+        /// </summary>
+        public const double MaxLeanDegrees = 60.0;
+
         public static long EdgeKey(int a, int b) =>
             a < b
                 ? ((long)a << 32) | (uint)b
@@ -1718,7 +1731,8 @@ namespace Ananke.COMPAS.Native.Components
 
             double horizontal = Math.Sqrt(
                 (supply.X * supply.X) + (supply.Y * supply.Y));
-            double allowed = Math.Tan(Math.PI / 3.0) * supply.Z;
+            double allowed =
+                Math.Tan(Rhino.RhinoMath.ToRadians(MaxLeanDegrees)) * supply.Z;
             if (horizontal > allowed && horizontal > 1.0e-12)
             {
                 double scale = allowed / horizontal;
@@ -2270,7 +2284,8 @@ namespace Ananke.COMPAS.Native.Components
             IEnumerable<int> perimeterIds,
             IReadOnlyList<Point3d> columnFoot,
             IReadOnlyList<Point3d> columnHead,
-            IReadOnlyList<double> columnForce)
+            IReadOnlyList<double> columnForce,
+            IReadOnlyList<IReadOnlyList<int>>? principalRuns = null)
         {
             var principal = new HashSet<int>(principalIds);
             var kinds = new string[edges.Length];
@@ -2304,6 +2319,11 @@ namespace Ananke.COMPAS.Native.Components
                 Ground = ground,
                 Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
                 Edges = edges.Select(e => new EdgeDto(e.Item1, e.Item2)).ToArray(),
+                PrincipalRuns = principalRuns is null
+                    ? Array.Empty<IReadOnlyList<int>>()
+                    : principalRuns
+                        .Select(run => (IReadOnlyList<int>)run.ToArray())
+                        .ToArray(),
                 MemberForce = forces,
                 ForceDensity = densities,
                 EdgeKind = kinds,

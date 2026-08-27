@@ -327,6 +327,7 @@ namespace Ananke.COMPAS.Native.Components
             // Stiffness cancels out of the placement, so any positive value
             // gives the same arms. One keeps the arithmetic well conditioned.
             const double placementStiffness = 1.0;
+            const double MaxLean = MouldGeometry.MaxLeanDegrees;
 
             try
             {
@@ -541,6 +542,13 @@ namespace Ananke.COMPAS.Native.Components
                 var trunkTop = new List<Point3d>();
                 var trunkForce = new List<Vector3d>();
                 var trunkAim = new List<Vector3d>();
+                // Where each fork sits on its main column's line, as a
+                // fraction of the way up from the ground to the notch. Held as
+                // the fraction rather than the point because a shared foot may
+                // force it higher, and raising it is what steepens the trunk.
+                var forkFraction = new List<double>();
+                int forksRaised = 0;
+                double raisedTo = 0.0;
                 for (int c = 0; c < columnReach.Count; c++)
                 {
                     List<Point3d> reach = columnReach[c];
@@ -554,29 +562,20 @@ namespace Ananke.COMPAS.Native.Components
                     // column with limbs leaving it, which is the Frei Otto
                     // shape. A freely placed fork puts trunk and branches on
                     // the same footing and no member reads as the column.
-                    Point3d fork = reach.Count > 1
+                    //
+                    // The branches are NOT drawn here. On a shared foot the
+                    // fork may still have to be raised, below, to keep the
+                    // trunk under its lean limit, and a branch drawn from a
+                    // fork that then moves is a branch drawn to the wrong
+                    // place. Forks are settled first, geometry second.
+                    forkFraction.Add(reach.Count > 1 ? forkHeight : 1.0);
+                    trunkTop.Add(reach.Count > 1
                         ? MouldGeometry.ForkOnLine(
                             reach[0],
                             MouldGeometry.AimFrom(-pushes[0]),
                             forkHeight,
                             ground)
-                        : reach[0];
-
-                    // The branches, each from its own notch down to the fork.
-                    if (reach.Count > 1)
-                    {
-                        for (int r = 0; r < reach.Count; r++)
-                        {
-                            if (reach[r].DistanceTo(fork) <= 1.0e-9)
-                                continue;
-                            members.Add(new Line(fork, reach[r]));
-                            carried.Add(Math.Abs(pushes[r].Z));
-                            branchOff = Math.Max(
-                                branchOff, AngleBetween(
-                                    reach[r] - fork, pushes[r]));
-                        }
-                    }
-                    trunkTop.Add(fork);
+                        : reach[0]);
                     trunkForce.Add(total);
                     trunkAim.Add(MouldGeometry.AimFrom(-pushes[0]));
                 }
@@ -611,6 +610,75 @@ namespace Ananke.COMPAS.Native.Components
                     // ground plane because a foot stands on it.
                     int wanted = Math.Min(sharedFeet, trunkTop.Count);
                     int[] group = GroupByPlan(trunkTop, wanted);
+
+                    // RAISE THE FORKS until the trunks stand within the lean
+                    // limit.
+                    //
+                    // A standalone column drops on its own line of thrust, so
+                    // its lean is chosen and ArmAim caps it at sixty degrees. A
+                    // trunk to a SHARED foot has no such freedom: both its ends
+                    // are already fixed, the foot at the shared centre and the
+                    // top at the fork, so its lean is a consequence and it was
+                    // going past eighty degrees unchecked. Past the cap a
+                    // column pushes sideways more than it holds up and the
+                    // sliding joint cannot reach the angle anyway.
+                    //
+                    // The one real lever is the FORK HEIGHT. Lifting a fork
+                    // shortens the reach the trunk below it has to make and
+                    // steepens it. Raising a fork moves it in plan as well,
+                    // because it rides its main column's line, which moves the
+                    // shared foot, which changes the leans; so this settles by
+                    // repetition rather than in one pass. It converges because
+                    // forks only ever move UP, and never past the notch, which
+                    // is the point where the trunk simply is the column.
+                    //
+                    // A tree with no branches has no fork to raise. Nothing can
+                    // be done for those here, and the report says so rather
+                    // than pretending otherwise.
+                    for (int pass = 0; pass < 12; pass++)
+                    {
+                        Point3d[] footFor = FeetForGroups(
+                            trunkTop, group, wanted, ground);
+                        bool moved = false;
+                        for (int c = 0; c < trunkTop.Count; c++)
+                        {
+                            if (group[c] < 0 || forkFraction[c] >= 1.0)
+                                continue;
+                            Point3d foot = footFor[group[c]];
+                            if (LeanFromVertical(foot, trunkTop[c]) <= MaxLean)
+                                continue;
+
+                            // The smallest raise that answers, found by
+                            // stepping toward the notch. Deliberately the
+                            // smallest: a fork lifted further than it needs to
+                            // be is a shape nobody asked for.
+                            double from = forkFraction[c];
+                            double raised = 1.0;
+                            for (int step = 1; step <= 24; step++)
+                            {
+                                double t = from + ((1.0 - from) * step / 24.0);
+                                Point3d at = MouldGeometry.ForkOnLine(
+                                    columnReach[c][0], trunkAim[c], t, ground);
+                                if (LeanFromVertical(foot, at) <= MaxLean)
+                                {
+                                    raised = t;
+                                    break;
+                                }
+                            }
+                            if (raised <= from + 1.0e-9)
+                                continue;
+                            forkFraction[c] = raised;
+                            trunkTop[c] = MouldGeometry.ForkOnLine(
+                                columnReach[c][0], trunkAim[c], raised, ground);
+                            raisedTo = Math.Max(raisedTo, raised);
+                            moved = true;
+                        }
+                        if (!moved)
+                            break;
+                    }
+                    forksRaised = Enumerable.Range(0, trunkTop.Count)
+                        .Count(c => columnReach[c].Count > 1 &&
+                            forkFraction[c] > forkHeight + 1.0e-9);
                     var nodesLocal = new List<Point3d>(trunkTop);
                     var segs = new List<(int, int)>();
                     var flow = new List<Vector3d>(trunkForce);
@@ -655,6 +723,30 @@ namespace Ananke.COMPAS.Native.Components
                     }
                     for (int i = trunkTop.Count; i < nodesLocal.Count; i++)
                         feet.Add(nodesLocal[i]);
+                }
+
+                // THE BRANCHES, drawn last, from wherever each fork finished.
+                // Held back until now because a fork raised to keep its trunk
+                // within the lean limit takes its branches with it, and a
+                // branch drawn from where the fork used to be would hang in
+                // the air.
+                for (int c = 0; c < columnReach.Count; c++)
+                {
+                    List<Point3d> reach = columnReach[c];
+                    if (reach.Count <= 1)
+                        continue;
+                    Point3d fork = trunkTop[c];
+                    for (int r = 0; r < reach.Count; r++)
+                    {
+                        if (reach[r].DistanceTo(fork) <= 1.0e-9)
+                            continue;
+                        members.Add(new Line(fork, reach[r]));
+                        carried.Add(Math.Abs(columnForce[c][r].Z));
+                        branchOff = Math.Max(
+                            branchOff,
+                            AngleBetween(
+                                reach[r] - fork, columnForce[c][r]));
+                    }
                 }
 
                 if (branchOff > 5.0 || trunkOff > 5.0)
@@ -717,12 +809,13 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetData(5, new MouldStateGoo(MouldGeometry.BuildState(
                     "final", ground, nodes, edges, edgeSource, equilibrium,
                     bars.SelectMany(b => b), anchors, perimeter,
-                    footPts, headPts, force)));
+                    footPts, headPts, force, bars)));
                 data.SetData(6, Report(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     columnType, branches, forkPct, ground, alongToAnchors,
                     acrossToColumns, plumbArms, symmetricBars, symmetryCost,
-                    lopsided, centreAdded, footDrift, overlapping, barShape));
+                    lopsided, centreAdded, footDrift, overlapping, barShape,
+                    forksRaised, raisedTo));
             }
             catch (Exception ex)
             {
@@ -960,6 +1053,49 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// How far a member stands off vertical, in degrees.
+        ///
+        /// Measured from the two ends rather than from a force, because this
+        /// is the question the sliding joint asks: not "is the column on its
+        /// line of thrust" but "can the mechanism reach this angle".
+        /// </summary>
+        private static double LeanFromVertical(Point3d foot, Point3d top)
+        {
+            double rise = top.Z - foot.Z;
+            double out2 = Math.Sqrt(
+                MouldGeometry.PlanDistanceSquared(foot, top));
+            if (rise <= 1.0e-9)
+                return out2 <= 1.0e-9 ? 0.0 : 90.0;
+            return Rhino.RhinoMath.ToDegrees(Math.Atan2(out2, rise));
+        }
+
+        /// <summary>
+        /// The shared foot under each group, as one array indexed by group.
+        ///
+        /// Pulled out of the placement loop because the fork-raising pass has
+        /// to ask the same question repeatedly, on tops that keep moving, and
+        /// two copies of this rule would drift apart exactly where the last
+        /// asymmetry lived.
+        /// </summary>
+        private static Point3d[] FeetForGroups(
+            List<Point3d> tops,
+            int[] group,
+            int wanted,
+            double ground)
+        {
+            var feet = new Point3d[Math.Max(wanted, 0)];
+            for (int g = 0; g < wanted; g++)
+            {
+                int[] mine = Enumerable.Range(0, tops.Count)
+                    .Where(i => group[i] == g).ToArray();
+                feet[g] = mine.Length == 0
+                    ? new Point3d(0.0, 0.0, ground)
+                    : SharedFoot(tops, mine, ground);
+            }
+            return feet;
+        }
+
+        /// <summary>
         /// Where a shared foot stands: MIDWAY BETWEEN THE OUTERMOST columns it
         /// carries, not at their average.
         ///
@@ -1036,7 +1172,9 @@ namespace Ananke.COMPAS.Native.Components
             int centreAdded,
             double footDrift,
             int overlapping,
-            List<string> barShape)
+            List<string> barShape,
+            int forksRaised,
+            double raisedTo)
         {
             var lines = new List<string>
             {
@@ -1154,13 +1292,31 @@ namespace Ananke.COMPAS.Native.Components
             {
                 lines.Add($"lean {angle.Min():0.#} to {angle.Max():0.#} degrees "
                     + "from vertical");
-                if (angle.Max() > 60.0)
+                if (angle.Max() > MouldGeometry.MaxLeanDegrees + 1.0e-6)
                 {
                     lines.Add(
-                        "WARNING: a column leans past sixty degrees, so it is "
-                            + "pushing sideways more than it is holding up. "
-                            + "Check the sliding joint can reach that angle.");
+                        "WARNING: a column leans past "
+                            + $"{MouldGeometry.MaxLeanDegrees:0} degrees, so it "
+                            + "is pushing sideways more than it is holding up. "
+                            + "A trunk on a shared foot is brought inside the "
+                            + "limit by raising its fork; one still over it "
+                            + "has no fork to raise, so give that column "
+                            + "branches, or raise Type so each foot carries "
+                            + "fewer columns.");
                 }
+            }
+            if (forksRaised > 0)
+            {
+                lines.Add(
+                    $"{forksRaised} "
+                        + (forksRaised == 1 ? "fork was" : "forks were")
+                        + " raised above the Fork setting, to "
+                        + $"{raisedTo * 100.0:0}% at the highest, so their "
+                        + "trunks stand within "
+                        + $"{MouldGeometry.MaxLeanDegrees:0} degrees. A trunk "
+                        + "to a shared foot has both ends fixed, so its lean "
+                        + "is not a choice; lifting the fork shortens the "
+                        + "reach below it and is the only lever there is.");
             }
             lines.Add(string.Empty);
             lines.Add(
