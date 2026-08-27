@@ -564,6 +564,22 @@ internal static class Program
                 $"ColumnFinder.SharedFoot: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateOutputGrouping(plugin);
+            Console.WriteLine(
+                "PASS  Output grouping: the anchors of a vault come back as "
+                + "SEPARATE STRIPS rather than one merged list, each walked "
+                + "end to end instead of sorted by node index, and a closed "
+                + "loop comes back walked round. A member cutting a corner "
+                + "between two notches of one bar is infill, not part of that "
+                + "bar. This is what the new tree outputs branch by.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Output grouping: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1563,6 +1579,174 @@ internal static class Program
                 error);
         }
     }
+
+    /// <summary>
+    /// <c>MouldGeometry.ConnectedGroups</c> and
+    /// <c>MouldGeometry.MemberRunIndex</c>: the two rules the tree outputs of
+    /// Mould Animate and Deconstruct branch by.
+    ///
+    /// Param's complaint was that anchors and principal lines arrived as flat
+    /// lists that were "so difficult to organise after". The flat list is not
+    /// merely unhelpful, it is lossy: the anchors of a vault are two strips
+    /// down opposite sides, and merging them into one list sorted by node index
+    /// destroys both which strip a node was on and the order along it. Node
+    /// index order is not geometric, so node 7 can sit at the far end of the
+    /// far side from node 6.
+    ///
+    /// So the two things worth measuring are exactly the two things a flat list
+    /// threw away. First, that two strips come back as TWO groups and not one.
+    /// Second, that each group is WALKED rather than sorted, which is tested on
+    /// a strip whose node indices deliberately disagree with its geometry:
+    /// index order gives 0,1,2,3,4 and the connectivity gives 0,3,1,4,2, so a
+    /// sort cannot pass by accident.
+    ///
+    /// The member rule has one case that a naive test would miss. A cable can
+    /// join two notches of the SAME bar without being part of that bar, by
+    /// cutting a corner across the net. Membership is therefore consecutiveness
+    /// along the run, not "both ends are on it", and the corner-cutting member
+    /// has to land in the infill branch where it belongs.
+    /// </summary>
+    private static void ValidateOutputGrouping(Assembly plugin)
+    {
+        Type mouldGeometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry",
+            throwOnError: true)!;
+        MethodInfo connected = RequirePublicStatic(
+            mouldGeometry, "ConnectedGroups");
+        MethodInfo runIndex = RequirePublicStatic(
+            mouldGeometry, "MemberRunIndex");
+        MethodInfo buildAdjacency = RequirePublicStatic(
+            mouldGeometry, "BuildAdjacency");
+
+        Type edgeArrayType = buildAdjacency.GetParameters()[1].ParameterType;
+        Type edgeType = edgeArrayType.GetElementType()!;
+
+        Array Edges(params (int A, int B)[] pairs)
+        {
+            Array array = Array.CreateInstance(edgeType, pairs.Length);
+            for (int i = 0; i < pairs.Length; i++)
+            {
+                array.SetValue(
+                    Activator.CreateInstance(
+                        edgeType, pairs[i].A, pairs[i].B),
+                    i);
+            }
+            return array;
+        }
+
+        int[][] Groups(int count, int[] ids, params (int A, int B)[] pairs)
+        {
+            object neighbours = buildAdjacency.Invoke(
+                null, new object?[] { count, Edges(pairs) })!;
+            object result = connected.Invoke(
+                null, new object?[] { ids, neighbours })!;
+            return ((IEnumerable)result)
+                .Cast<IEnumerable<int>>()
+                .Select(group => group.ToArray())
+                .ToArray();
+        }
+
+        // TWO STRIPS, the case that made this necessary. Two rows of five,
+        // joined along each row and never across, asked for together.
+        int[][] sides = Groups(
+            10,
+            Enumerable.Range(0, 10).ToArray(),
+            (0, 1), (1, 2), (2, 3), (3, 4),
+            (5, 6), (6, 7), (7, 8), (8, 9));
+        if (sides.Length != 2)
+        {
+            throw new InvalidOperationException(
+                "Two anchor strips down opposite sides are TWO groups; "
+                + $"{sides.Length} came back. One group means the strips were "
+                + "merged, which is the flat list this replaces.");
+        }
+        if (!sides[0].SequenceEqual(new[] { 0, 1, 2, 3, 4 }) ||
+            !sides[1].SequenceEqual(new[] { 5, 6, 7, 8, 9 }))
+        {
+            throw new InvalidOperationException(
+                "The two strips came back as "
+                + $"[{string.Join(",", sides[0])}] and "
+                + $"[{string.Join(",", sides[1])}]; expected 0..4 and 5..9, "
+                + "each whole and in order.");
+        }
+
+        // WALKED, NOT SORTED. The chain 0-3-1-4-2 is deliberately laid out so
+        // that node index order and connectivity order disagree, so a sort
+        // cannot pass this by luck.
+        int[][] tangled = Groups(
+            5,
+            new[] { 0, 1, 2, 3, 4 },
+            (0, 3), (3, 1), (1, 4), (4, 2));
+        if (tangled.Length != 1)
+        {
+            throw new InvalidOperationException(
+                $"One connected chain is one group; {tangled.Length} came "
+                + "back.");
+        }
+        if (!tangled[0].SequenceEqual(new[] { 0, 3, 1, 4, 2 }))
+        {
+            throw new InvalidOperationException(
+                "A strip must come back WALKED, in the order its members "
+                + "connect: expected 0,3,1,4,2 and got "
+                + $"{string.Join(",", tangled[0])}. Getting 0,1,2,3,4 means it "
+                + "was sorted by node index, which is not a geometric order "
+                + "and is the thing the flat list already did.");
+        }
+
+        // A CLOSED LOOP has no end to start from, and must still come back
+        // whole and walked round rather than split.
+        int[][] loop = Groups(
+            4,
+            new[] { 0, 1, 2, 3 },
+            (0, 1), (1, 2), (2, 3), (3, 0));
+        if (loop.Length != 1 || loop[0].Length != 4)
+        {
+            throw new InvalidOperationException(
+                $"A closed boundary loop is one group of four; got "
+                + $"{loop.Length} group(s) of "
+                + $"{string.Join("/", loop.Select(g => g.Length))}.");
+        }
+        if (!loop[0].SequenceEqual(new[] { 0, 1, 2, 3 }) &&
+            !loop[0].SequenceEqual(new[] { 0, 3, 2, 1 }))
+        {
+            throw new InvalidOperationException(
+                "A loop must come back walked round, either way about: got "
+                + $"{string.Join(",", loop[0])}.");
+        }
+
+        // MEMBER OWNERSHIP. Two bars, and four members put to them.
+        var runs = new List<IReadOnlyList<int>>
+        {
+            new List<int> { 0, 1, 2, 3 },
+            new List<int> { 10, 11, 12 },
+        };
+        Array members = Edges(
+            (0, 1),    // bar 0
+            (2, 1),    // bar 0, given backwards
+            (10, 11),  // bar 1
+            (0, 2),    // BOTH ends on bar 0, but not consecutive: infill
+            (5, 6));   // nowhere near a bar: infill
+        var owner = (int[])runIndex.Invoke(
+            null, new object?[] { members, runs })!;
+        var expected = new[] { 0, 0, 1, -1, -1 };
+        if (!owner.SequenceEqual(expected))
+        {
+            throw new InvalidOperationException(
+                $"Members belong to [{string.Join(",", expected)}]; got "
+                + $"[{string.Join(",", owner)}]. Index 1 is the same member "
+                + "given end for end and must still be bar 0. Index 3 joins "
+                + "two notches of bar 0 by cutting the corner between them, "
+                + "which makes it INFILL: membership is consecutiveness along "
+                + "the run, not both ends lying on it.");
+        }
+    }
+
+    private static MethodInfo RequirePublicStatic(Type owner, string name) =>
+        owner.GetMethod(
+            name,
+            BindingFlags.Public | BindingFlags.Static)
+        ?? throw new InvalidOperationException(
+            $"{owner.Name}.{name} was not found.");
 
     private static MethodInfo RequireStatic(Type owner, string name) =>
         owner.GetMethod(

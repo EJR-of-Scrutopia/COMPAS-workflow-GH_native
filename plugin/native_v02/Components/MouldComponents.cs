@@ -6,11 +6,82 @@ using System.Drawing;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Data;
+using Grasshopper.Kernel.Types;
 using Rhino.Display;
 using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components
 {
+    /// <summary>
+    /// Building the tree outputs, in one place, so that every component that
+    /// hands back grouped geometry groups it the same way.
+    ///
+    /// The rule these components follow is that a BRANCH IS A THING: one
+    /// principal line, one anchor strip, one boundary loop, one column tree.
+    /// Not one item, and not the whole lot. A flat list of every notch on every
+    /// bar, sorted by node index, carries no trace of which bar a notch was on,
+    /// and rebuilding that downstream means re-deriving the bars from geometry
+    /// that the component had in front of it and threw away.
+    ///
+    /// EMPTY BRANCHES ARE KEPT, which is the part worth stating. When several
+    /// outputs branch by the same thing, branch {2} must mean bar 2 in all of
+    /// them, and it stops meaning that the moment one output quietly omits a
+    /// bar that happened to have nothing in it. Every branch is created before
+    /// it is filled, so an empty one survives as an empty branch rather than
+    /// shifting everything after it up by one.
+    /// </summary>
+    public static class OutputTree
+    {
+        public static GH_Structure<GH_Point> Points(
+            IEnumerable<IEnumerable<Point3d>> branches) =>
+            Build(branches, value => new GH_Point(value));
+
+        public static GH_Structure<GH_Line> Lines(
+            IEnumerable<IEnumerable<Line>> branches) =>
+            Build(branches, value => new GH_Line(value));
+
+        public static GH_Structure<GH_Curve> Curves(
+            IEnumerable<IEnumerable<Curve>> branches) =>
+            Build(branches, value => new GH_Curve(value));
+
+        public static GH_Structure<GH_Vector> Vectors(
+            IEnumerable<IEnumerable<Vector3d>> branches) =>
+            Build(branches, value => new GH_Vector(value));
+
+        public static GH_Structure<GH_Number> Numbers(
+            IEnumerable<IEnumerable<double>> branches) =>
+            Build(branches, value => new GH_Number(value));
+
+        public static GH_Structure<GH_Integer> Integers(
+            IEnumerable<IEnumerable<int>> branches) =>
+            Build(branches, value => new GH_Integer(value));
+
+        public static GH_Structure<GH_String> Strings(
+            IEnumerable<IEnumerable<string>> branches) =>
+            Build(branches, value => new GH_String(value));
+
+        private static GH_Structure<TGoo> Build<TValue, TGoo>(
+            IEnumerable<IEnumerable<TValue>> branches,
+            Func<TValue, TGoo> wrap)
+            where TGoo : IGH_Goo
+        {
+            var tree = new GH_Structure<TGoo>();
+            int index = 0;
+            foreach (IEnumerable<TValue> branch in branches)
+            {
+                var path = new GH_Path(index++);
+                // Before filling it, so a branch with nothing in it is still a
+                // branch. See the class note: this is what keeps branch {2} the
+                // same bar in every output that branches by bar.
+                tree.EnsurePath(path);
+                foreach (TValue value in branch)
+                    tree.Append(wrap(value), path);
+            }
+            return tree;
+        }
+    }
+
     /// <summary>
     /// Mould Animate: replay the reconfigurable mould building itself, from one
     /// timeline slider.
@@ -212,30 +283,46 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddLineParameter(
                 "Cables",
                 "C",
-                "Every net member at this frame, infill and bar alike.",
-                GH_ParamAccess.list);
+                "Every net member at this frame, infill and bar alike, as a "
+                    + "TREE: one branch per principal line carrying that bar's "
+                    + "own members in order along it, and a LAST branch holding "
+                    + "the infill, everything not on a bar. Branch {i} is bar "
+                    + "{i}, the same bar as branch {i} of Principal Lines and "
+                    + "Principal Nodes.",
+                GH_ParamAccess.tree);
             parameters.AddCurveParameter(
                 "Principal Lines",
                 "PL",
-                "The notched bars at this frame, bending as they rise.",
-                GH_ParamAccess.list);
+                "The notched bars at this frame, bending as they rise, as a "
+                    + "TREE with one branch per bar. One curve per branch.",
+                GH_ParamAccess.tree);
             parameters.AddPointParameter(
                 "Principal Nodes",
                 "PN",
                 "Every notch: one crossing cable, and a pair of stepper motors "
-                    + "pulling it, one each side.",
-                GH_ParamAccess.list);
+                    + "pulling it, one each side. A TREE with one branch per "
+                    + "bar, the notches IN ORDER ALONG THAT BAR, so branch {i} "
+                    + "runs the length of Principal Lines branch {i}. A node "
+                    + "where two bars cross appears in both branches, because "
+                    + "it is a notch on both.",
+                GH_ParamAccess.tree);
             parameters.AddPointParameter(
                 "Anchor Nodes",
                 "AN",
                 "The Result's supports: the side anchors that stay on the "
-                    + "ground and take the perimeter cables' prestress.",
-                GH_ParamAccess.list);
+                    + "ground and take the perimeter cables' prestress. A TREE "
+                    + "with one branch per CONNECTED STRIP, walked end to end, "
+                    + "so opposite sides of the vault come back as separate "
+                    + "branches instead of one merged list.",
+                GH_ParamAccess.tree);
             parameters.AddPointParameter(
                 "Perimeter Nodes",
                 "PRN",
-                "Nodes on the naked boundary of the net.",
-                GH_ParamAccess.list);
+                "Nodes on the naked boundary of the net, as a TREE with one "
+                    + "branch per boundary LOOP, walked round. A net with a "
+                    + "hole in it has a branch for the outside and one for the "
+                    + "hole.",
+                GH_ParamAccess.tree);
             parameters.AddParameter(
                 new MouldStateParam(),
                 "State",
@@ -258,8 +345,12 @@ namespace Ananke.COMPAS.Native.Components
                 "The columns at THIS frame: foot part way along its slide, "
                     + "head on the notch wherever the net has got to. Empty "
                     + "unless columns are wired in. Their lengths are the "
-                    + "extension the struts have to deliver.",
-                GH_ParamAccess.list);
+                    + "extension the struts have to deliver. A TREE with one "
+                    + "branch per COLUMN TREE, that is per foot on the ground, "
+                    + "each branch holding that column's trunk and all its "
+                    + "branches together. Column Finder's own outputs are left "
+                    + "flat, so this is grouped here rather than there.",
+                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -490,12 +581,20 @@ namespace Ananke.COMPAS.Native.Components
                 int[] perimeterIds = MouldGeometry.PerimeterNodes(
                     mesh, meshToNode, neighbours, n);
 
-                var barCurves = new List<Curve>();
+                // One BRANCH per bar, holding that bar's curve. Deliberately a
+                // branch rather than a curve, and deliberately added even when
+                // the polyline will not build: branch {i} has to stay bar {i}
+                // to match Principal Nodes and Cables, and a bar silently
+                // missing from the middle of the list would shift every bar
+                // after it and quietly mislabel the lot.
+                var barCurves = new List<List<Curve>>();
                 foreach (List<int> run in bars)
                 {
+                    var branch = new List<Curve>();
                     var polyline = new Polyline(run.Select(i => live[i]));
                     if (polyline.IsValid && polyline.Count > 1)
-                        barCurves.Add(polyline.ToNurbsCurve());
+                        branch.Add(polyline.ToNurbsCurve());
+                    barCurves.Add(branch);
                 }
 
                 double barRise = principalIds.Count > 0
@@ -578,6 +677,11 @@ namespace Ananke.COMPAS.Native.Components
                 // in equilibrium the whole way up instead of only at the end.
                 double extend = Math.Min(Math.Max(extendPct, 0.0), 95.0) / 100.0;
                 var liveColumns = new List<Line>();
+                // The same members again, grouped by the foot they stand on,
+                // which is what the Columns output hands back. Kept flat as
+                // well because the preview, the clipping box and the report all
+                // want every member at once and none of them care whose it is.
+                var columnBranches = new List<List<Line>>();
                 double shortest = double.MaxValue;
                 double longest = 0.0;
                 double slid = 0.0;
@@ -697,6 +801,37 @@ namespace Ananke.COMPAS.Native.Components
                             break;
                     }
 
+                    // Which foot each node stands on, found by climbing from
+                    // every foot through the branches above it. A column tree
+                    // is the set of members that share a foot, so this is the
+                    // grouping the Columns output branches by, and it is read
+                    // off the built tree rather than assumed from the order the
+                    // lines arrived in.
+                    var standsOn = new int[count];
+                    for (int v = 0; v < count; v++)
+                        standsOn[v] = -1;
+                    var feet = tree.Feet.Distinct().OrderBy(f => f).ToArray();
+                    for (int b = 0; b < feet.Length; b++)
+                    {
+                        var climb = new Stack<int>();
+                        climb.Push(feet[b]);
+                        while (climb.Count > 0)
+                        {
+                            int at2 = climb.Pop();
+                            if (at2 < 0 || at2 >= count || standsOn[at2] >= 0)
+                                continue;
+                            standsOn[at2] = b;
+                            foreach (int up in tree.Above[at2])
+                                climb.Push(up);
+                        }
+                    }
+                    for (int b = 0; b < feet.Length; b++)
+                        columnBranches.Add(new List<Line>());
+                    // Anything the climb never reached (a fragment with no foot
+                    // under it) still has to go somewhere, so it gets a branch
+                    // of its own at the end rather than vanishing.
+                    var orphans = new List<Line>();
+
                     foreach ((int lower, int upper) in tree.Members)
                     {
                         if (!known[lower] || !known[upper])
@@ -708,6 +843,12 @@ namespace Ananke.COMPAS.Native.Components
                         }
                         var member = new Line(at[lower], at[upper]);
                         liveColumns.Add(member);
+                        int owner = standsOn[lower] >= 0
+                            ? standsOn[lower] : standsOn[upper];
+                        if (owner >= 0)
+                            columnBranches[owner].Add(member);
+                        else
+                            orphans.Add(member);
                         double length = member.Length;
                         shortest = Math.Min(shortest, length);
                         longest = Math.Max(longest, length);
@@ -718,6 +859,9 @@ namespace Ananke.COMPAS.Native.Components
                             .DistanceTo(tree.Nodes[upper]);
                         overRun = Math.Max(overRun, length - built);
                     }
+
+                    if (orphans.Count > 0)
+                        columnBranches.Add(orphans);
                 }
 
                 if (liveColumns.Count > 0)
@@ -774,19 +918,41 @@ namespace Ananke.COMPAS.Native.Components
                 _clippingBox = new BoundingBox(
                     live.Concat(liveColumns.Select(c => c.From)));
 
+                // Every member sorted into the bar it belongs to, with whatever
+                // is left over as the infill branch at the end.
+                int[] memberBar = MouldGeometry.MemberRunIndex(
+                    edges.Select(e => (e.Item1, e.Item2)).ToArray(), bars);
+                var cableBranches = new List<List<Line>>();
+                for (int b = 0; b < bars.Count; b++)
+                    cableBranches.Add(new List<Line>());
+                var infill = new List<Line>();
+                for (int e = 0; e < cables.Count; e++)
+                {
+                    if (memberBar[e] >= 0)
+                        cableBranches[memberBar[e]].Add(cables[e]);
+                    else
+                        infill.Add(cables[e]);
+                }
+                cableBranches.Add(infill);
+
                 data.SetData(0, framed);
-                data.SetDataList(1, cables);
-                data.SetDataList(2, barCurves);
-                data.SetDataList(3, principalIds.OrderBy(i => i).Select(i => live[i]));
-                data.SetDataList(4, anchorIds.OrderBy(i => i).Select(i => live[i]));
-                data.SetDataList(5, perimeterIds.Select(i => live[i]));
+                data.SetDataTree(1, OutputTree.Lines(cableBranches));
+                data.SetDataTree(2, OutputTree.Curves(barCurves));
+                data.SetDataTree(3, OutputTree.Points(
+                    bars.Select(run => run.Select(i => live[i]))));
+                data.SetDataTree(4, OutputTree.Points(
+                    MouldGeometry.ConnectedGroups(anchorIds, neighbours)
+                        .Select(strip => strip.Select(i => live[i]))));
+                data.SetDataTree(5, OutputTree.Points(
+                    MouldGeometry.ConnectedGroups(perimeterIds, neighbours)
+                        .Select(loop => loop.Select(i => live[i]))));
                 data.SetData(6, new MouldStateGoo(MouldGeometry.BuildState(
                     phase, ground, live, edges, edgeSource, equilibrium,
                     principalIds, anchorIds, perimeterIds,
                     Array.Empty<Point3d>(), Array.Empty<Point3d>(),
                     Array.Empty<double>())));
                 data.SetData(7, string.Join(Environment.NewLine, report));
-                data.SetDataList(8, liveColumns);
+                data.SetDataTree(8, OutputTree.Lines(columnBranches));
             }
             catch (Exception ex)
             {
@@ -840,6 +1006,151 @@ namespace Ananke.COMPAS.Native.Components
                 neighbours[v].Add(u);
             }
             return neighbours;
+        }
+
+        /// <summary>
+        /// Split a set of nodes into CONNECTED GROUPS, each in walking order.
+        ///
+        /// This is what turns a flat output into a tree that means something.
+        /// The anchors of a vault are not one list of points, they are two
+        /// strips down opposite sides, and the perimeter is not one list
+        /// either, it is a loop, or several where the net has a hole. Handing
+        /// all of them back merged and sorted by node index throws that away,
+        /// and the index order is not even geometric: node 7 can sit at the far
+        /// end of the far side from node 6. Whoever wants the strips back has
+        /// to rediscover them downstream from the geometry, which is the work
+        /// this method exists to stop repeating.
+        ///
+        /// Grouping is by MESH ADJACENCY rather than by proximity, so two
+        /// strips that pass close to each other do not merge, and a strip that
+        /// straggles does not split.
+        ///
+        /// Each group is then ORDERED by walking it. An open strip is walked
+        /// from one of its ends, so the points come out in the order you would
+        /// travel them; a closed loop has no end, so it is walked from its
+        /// lowest node and comes back round. Both beat index order, which is
+        /// what the caller had before and had to sort out by hand.
+        ///
+        /// The groups themselves are returned in the order of their lowest node
+        /// index. That is arbitrary but STABLE, which is the property that
+        /// matters: branch {0} must be the same strip on every frame of an
+        /// animation, or the tree is no better than the flat list.
+        /// </summary>
+        public static List<List<int>> ConnectedGroups(
+            IEnumerable<int> ids,
+            List<int>[] neighbours)
+        {
+            var pool = new HashSet<int>(
+                ids.Where(i => i >= 0 && i < neighbours.Length));
+            var groups = new List<List<int>>();
+            var seen = new HashSet<int>();
+
+            foreach (int start in pool.OrderBy(i => i))
+            {
+                if (seen.Contains(start))
+                    continue;
+
+                // Collect the whole connected component first, so the walk
+                // below knows what it is walking and can find a real end.
+                var member = new HashSet<int>();
+                var stack = new Stack<int>();
+                stack.Push(start);
+                member.Add(start);
+                while (stack.Count > 0)
+                {
+                    int at = stack.Pop();
+                    foreach (int next in neighbours[at])
+                    {
+                        if (pool.Contains(next) && member.Add(next))
+                            stack.Push(next);
+                    }
+                }
+                foreach (int i in member)
+                    seen.Add(i);
+
+                // An END is a node with one neighbour inside the group. A
+                // closed loop has none, and then any node will do; taking the
+                // lowest keeps it deterministic.
+                int from = member
+                    .Where(i => neighbours[i].Count(member.Contains) <= 1)
+                    .DefaultIfEmpty(member.Min())
+                    .Min();
+
+                var order = new List<int>();
+                var walked = new HashSet<int>();
+                int cursor = from;
+                while (walked.Add(cursor))
+                {
+                    order.Add(cursor);
+                    int next = -1;
+                    foreach (int candidate in neighbours[cursor])
+                    {
+                        if (!member.Contains(candidate) ||
+                            walked.Contains(candidate))
+                        {
+                            continue;
+                        }
+                        if (next < 0 || candidate < next)
+                            next = candidate;
+                    }
+                    if (next < 0)
+                        break;
+                    cursor = next;
+                }
+
+                // A forked group cannot be walked in one pass. Whatever the
+                // walk could not reach is appended rather than dropped, because
+                // losing a node silently would be worse than an imperfect
+                // order.
+                foreach (int i in member.OrderBy(i => i))
+                {
+                    if (!walked.Contains(i))
+                        order.Add(i);
+                }
+                groups.Add(order);
+            }
+
+            return groups;
+        }
+
+        /// <summary>
+        /// Which principal line each member belongs to, or -1 for infill.
+        ///
+        /// A member is on a bar when its two ends are CONSECUTIVE along that
+        /// bar's run. Consecutive matters: a cable can join two notches of the
+        /// same bar without being part of it, by cutting a corner across the
+        /// net, and that cable belongs with the infill it acts as.
+        ///
+        /// Callers give the members as node-index pairs rather than as lines,
+        /// so this stays arithmetic on arrays and the smoke harness can measure
+        /// it without Rhino's native core.
+        /// </summary>
+        public static int[] MemberRunIndex(
+            IReadOnlyList<(int U, int V)> members,
+            IReadOnlyList<IReadOnlyList<int>> runs)
+        {
+            var owner = new Dictionary<long, int>();
+            for (int r = 0; r < runs.Count; r++)
+            {
+                IReadOnlyList<int> run = runs[r];
+                for (int k = 0; k + 1 < run.Count; k++)
+                {
+                    long key = EdgeKey(run[k], run[k + 1]);
+                    // First bar wins. Two bars sharing a member means they
+                    // cross, and the member is drawn once, under the earlier
+                    // one, rather than duplicated into both branches.
+                    if (!owner.ContainsKey(key))
+                        owner[key] = r;
+                }
+            }
+
+            var index = new int[members.Count];
+            for (int i = 0; i < members.Count; i++)
+            {
+                index[i] = owner.TryGetValue(
+                    EdgeKey(members[i].U, members[i].V), out int r) ? r : -1;
+            }
+            return index;
         }
 
         /// <summary>
