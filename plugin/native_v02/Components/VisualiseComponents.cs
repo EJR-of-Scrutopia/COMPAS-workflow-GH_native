@@ -297,21 +297,24 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddCurveParameter(
                 "Face Polylines",
                 "FP",
-                "One closed polyline per Thrust Mesh face, in face order: " +
-                "the ready-made Cells input for the Export component's " +
-                "Tessellation format (each face an authored cutting " +
-                "cell). Empty for FD.",
-                GH_ParamAccess.list);
+                "One closed polyline per Thrust Mesh face, as a TREE " +
+                "branched by COURSE (path = course, 0-up from the " +
+                "bottom): the ready-made Cells input for the Export " +
+                "component's Tessellation format (each face an authored " +
+                "cutting cell). The same branching Import Pieces uses, so " +
+                "a course means the same thing across the plugin. Empty " +
+                "for FD.",
+                GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Face Courses",
                 "FC",
-                "The course (build row) per face, aligned one to one " +
-                "with Face Polylines -- neither list is ever sorted, so " +
-                "the pairing survives. Courses band the face centroids " +
-                "by height (Course Height per band), bottom row 0: the " +
-                "ready-made Courses input for the Export component's " +
-                "Tessellation format. Empty for FD.",
-                GH_ParamAccess.list);
+                "The course (build row) per face, branched and ordered " +
+                "exactly as Face Polylines, so the pairing survives and " +
+                "the branch path is the course as well. Courses band the " +
+                "face centroids by height (Course Height per band), " +
+                "bottom row 0: the ready-made Courses input for the " +
+                "Export component's Tessellation format. Empty for FD.",
+                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
