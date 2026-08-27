@@ -475,3 +475,83 @@ def test_natural_height_with_surface_load_freezes_selfweight():
     # area, not the area of the risen surface.
     assert metrics["effective_total_pz"] < -100.0
     assert metrics["effective_total_pz"] > -500.0
+
+
+def grid_with_hole(size=6):
+    """A ``size`` x ``size`` quad grid with its centre face removed.
+
+    The removed face leaves a four-vertex interior boundary loop carrying no
+    supports: the smallest honest stand-in for an oculus rim.
+    """
+    vertices, faces, _, _, _ = grid(size)
+    hole_x = hole_y = size // 2 - 1
+    hole_face = (
+        hole_y * size + hole_x,
+        hole_y * size + hole_x + 1,
+        (hole_y + 1) * size + hole_x + 1,
+        (hole_y + 1) * size + hole_x,
+    )
+    faces = [face for face in faces if tuple(face) != hole_face]
+    corners = (0, size - 1, size * (size - 1), size * size - 1)
+    return vertices, faces, corners, list(hole_face)
+
+
+def test_an_unanchored_hole_rim_drifts_when_it_is_not_plan_fixed():
+    """The failure this guards against: the sag apron recruits the rim."""
+    vertices, faces, corners, rim = grid_with_hole()
+
+    preparation = prepare_tna_pattern(
+        vertices=vertices,
+        faces=faces,
+        vertex_keys=range(len(vertices)),
+        support_mode="keys",
+        support_keys=corners,
+        boundary_sag=0.25,
+    )
+
+    moved = [
+        key
+        for key in rim
+        if preparation.pattern.vertex_coordinates(key)[:2]
+        != pytest.approx(vertices[key][:2], abs=1e-9)
+    ]
+    assert moved, (
+        "the rim stayed put without being plan-fixed, so this fixture no "
+        "longer exercises the apron and the test below proves nothing"
+    )
+
+
+def test_plan_fixed_rim_holds_its_shape_without_becoming_a_support():
+    """An oculus rim needs the plan pin and specifically not the reaction.
+
+    ``held_always`` is the union of the supports and the fixed-plan keys, so
+    naming the rim here keeps the apron off it at any sag. Leaving it out of
+    the support set is what lets FormDiagram.update_boundaries take its
+    zero-support branch for the hole and the vertical solve lift the rim,
+    rather than pinning it to the springing plane.
+    """
+    vertices, faces, corners, rim = grid_with_hole()
+
+    preparation = prepare_tna_pattern(
+        vertices=vertices,
+        faces=faces,
+        vertex_keys=range(len(vertices)),
+        support_mode="keys",
+        support_keys=corners,
+        fixed_keys=rim,
+        boundary_sag=0.25,
+    )
+
+    for key in rim:
+        assert preparation.pattern.vertex_coordinates(key)[:2] == pytest.approx(
+            vertices[key][:2], abs=1e-9
+        ), "a plan-fixed rim vertex moved during the boundary relaxation"
+        assert not preparation.pattern.vertex_attribute(key, "is_support"), (
+            "a plan-fixed rim vertex became a structural support, which would "
+            "pin the oculus to the springing plane"
+        )
+        assert preparation.pattern.vertex_attribute(key, "is_fixed")
+
+    assert set(preparation.pattern.vertices_where(is_support=True)) == set(
+        corners
+    )

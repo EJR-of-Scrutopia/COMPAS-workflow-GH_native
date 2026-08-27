@@ -39,6 +39,7 @@ public sealed class PatternComponent : NativePreviewComponentBase
     };
 
     private readonly List<Line> _previewEdges = new();
+    private readonly List<Line> _previewPrincipal = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
     public PatternComponent()
@@ -91,6 +92,17 @@ public sealed class PatternComponent : NativePreviewComponentBase
             "Maximum distance used to weld coincident topology nodes.",
             GH_ParamAccess.item,
             1.0e-6);
+        parameters.AddCurveParameter(
+            "Principal Lines",
+            "P",
+            "Optional. The notched bars a reconfigurable mould holds rigid, " +
+            "drawn as curves over this pattern. They are matched HERE, in " +
+            "plan, to runs of pattern vertices and carried downstream as " +
+            "indices, because once the surface rises the curves no longer sit " +
+            "on it and cannot find their own nodes. Leave empty and use Rib " +
+            "Ribs on Supports to derive them from the anchors instead.",
+            GH_ParamAccess.list);
+        parameters[4].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -108,6 +120,7 @@ public sealed class PatternComponent : NativePreviewComponentBase
     {
         base.BeforeSolveInstance();
         _previewEdges.Clear();
+        _previewPrincipal.Clear();
         _clippingBox = BoundingBox.Empty;
     }
 
@@ -122,6 +135,9 @@ public sealed class PatternComponent : NativePreviewComponentBase
         data.GetData(1, ref modeInput);
         data.GetData(2, ref resolution);
         data.GetData(3, ref tolerance);
+        var principalCurves = new List<Curve>();
+        data.GetDataList(4, principalCurves);
+        principalCurves.RemoveAll(curve => curve is null);
 
         try
         {
@@ -171,18 +187,65 @@ public sealed class PatternComponent : NativePreviewComponentBase
                     registered.ConnectedComponents.ToString(
                         CultureInfo.InvariantCulture)
             };
+            // Resolve the principal lines HERE, where the curves an author
+            // drew and the geometry they were drawn on still agree, and carry
+            // them downstream as vertex indices. Curves cannot follow a
+            // surface that rises; indices can.
+            var patternPoints = registered.Vertices.Select(ToPoint).ToArray();
+            var patternEdges = registered.Edges
+                .Select(edge => new EdgeDto(edge.U, edge.V)).ToArray();
+            var patternVertices = patternPoints
+                .Select(pt => new Point3d(pt.X, pt.Y, pt.Z)).ToList();
+
+            // Only the explicit curves are resolved here. Deriving them
+            // needs the anchors, which Pattern does not have, so that lives on
+            // Supports instead.
+            List<List<int>> principalRuns = PrincipalRunFinder.FromCurves(
+                principalCurves,
+                patternVertices,
+                patternEdges,
+                out double principalOffset,
+                out double principalGauge);
+            if (principalCurves.Count > 0 &&
+                principalRuns.Count < principalCurves.Count)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{principalCurves.Count - principalRuns.Count} of " +
+                    $"{principalCurves.Count} principal lines caught fewer " +
+                    "than two pattern vertices and were dropped. They must " +
+                    "lie over the pattern in plan.");
+            }
+            // A bar can only stand on nodes. A line drawn down the middle of a
+            // bay has no run of nodes to sit on, so the nearest one is taken
+            // and it lands half a cell off. That is a real offset in the built
+            // thing, not a drawing artefact, so it is named rather than left
+            // to be noticed in the viewport.
+            if (principalRuns.Count > 0 &&
+                principalGauge > 0.0 &&
+                principalOffset > 0.25 * principalGauge)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Remark,
+                    $"A principal line sits {principalOffset:G3} off the " +
+                    "curve that asked for it, against a mesh spacing of " +
+                    $"{principalGauge:G3}. A bar can only stand on nodes, so " +
+                    "the nearest run of them was taken. Draw the line " +
+                    "through a run of pattern nodes to place it exactly.");
+            }
+
             TopologyDto topology = TopologyDto.Create(
                 registered.Kind,
-                registered.Vertices.Select(ToPoint),
-                registered.Edges.Select(
-                    edge => new EdgeDto(edge.U, edge.V)),
+                patternPoints,
+                patternEdges,
                 registered.Faces,
                 sourceVertexIds: Enumerable.Range(
                     0,
                     registered.Vertices.Count).Select(index => $"v{index}"),
                 sourceEdgeIds: registered.SourceEdgeIds,
                 lengthUnit: lengthUnit,
-                provenance: provenance);
+                provenance: provenance,
+                principalRuns: principalRuns);
             var pattern = new TnaPatternDto
             {
                 PatternMode = mode,
@@ -232,12 +295,22 @@ public sealed class PatternComponent : NativePreviewComponentBase
                 Color.FromArgb(55, 65, 75),
                 2);
         }
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
+        }
     }
 
     private void SetTopologyPreview(TopologyDto topology)
     {
         _previewEdges.Clear();
         _previewEdges.AddRange(TnaWorkflowPreview.TopologyLines(topology));
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.TopologyPrincipalLines(topology));
         _clippingBox = TnaWorkflowPreview.Box(_previewEdges);
     }
 
@@ -286,6 +359,7 @@ public sealed class PatternComponent : NativePreviewComponentBase
 public sealed class SupportsComponent : NativePreviewComponentBase
 {
     private readonly List<Line> _previewEdges = new();
+    private readonly List<Line> _previewPrincipal = new();
     private readonly List<Point3d> _previewSupports = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -329,7 +403,18 @@ public sealed class SupportsComponent : NativePreviewComponentBase
             "Optional maximum anchor-to-node snapping distance. Empty uses " +
             "the Pattern weld tolerance.",
             GH_ParamAccess.item);
+        parameters.AddIntegerParameter(
+            "Ribs",
+            "RB",
+            "How many principal lines to derive per anchor strip, when the " +
+            "Pattern carries none of its own. One takes the midpoint of each " +
+            "strip and runs straight off it across the form, which is how " +
+            "these lines are found in practice; more spread that many starts " +
+            "evenly along each strip. Zero derives none.",
+            GH_ParamAccess.item,
+            1);
         parameters[2].Optional = true;
+        parameters[3].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -347,6 +432,7 @@ public sealed class SupportsComponent : NativePreviewComponentBase
     {
         base.BeforeSolveInstance();
         _previewEdges.Clear();
+        _previewPrincipal.Clear();
         _previewSupports.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -364,6 +450,8 @@ public sealed class SupportsComponent : NativePreviewComponentBase
         }
         data.GetDataList(1, anchors);
         bool hasTolerance = data.GetData(2, ref snapTolerance);
+        int ribs = 1;
+        data.GetData(3, ref ribs);
 
         try
         {
@@ -396,16 +484,50 @@ public sealed class SupportsComponent : NativePreviewComponentBase
                     "solve will perform the topology-specific check.");
             }
 
+            // Derive the principal lines from the anchors, unless the
+            // Pattern already carries its own drawn ones. A line starts at the
+            // middle of an anchor strip and runs straight off it across the
+            // form: the anchors already say where the bars belong, so nothing
+            // has to be drawn and no mesh direction has to be chosen.
+            TnaPatternDto patternForAnchors = source;
+            if (topology.PrincipalRuns.Count == 0 && ribs > 0)
+            {
+                List<List<int>> derived = PrincipalRunFinder.DeriveFromAnchors(
+                    topology.Vertices
+                        .Select(v => new Point3d(v.X, v.Y, v.Z)).ToArray(),
+                    topology.Edges,
+                    nodeIds,
+                    ribs);
+                if (derived.Count > 0)
+                {
+                    patternForAnchors = source with
+                    {
+                        Topology = topology with
+                        {
+                            PrincipalRuns = derived
+                                .Select(r => (IReadOnlyList<int>)r.ToArray())
+                                .ToArray()
+                        }
+                    };
+                }
+            }
+
             var anchored = new AnchoredPatternDto
             {
-                Pattern = source,
+                Pattern = patternForAnchors,
                 AnchorNodeIds = nodeIds,
                 SnapTolerance = snapped.Tolerance
             };
             EnsureValid(anchored);
 
-            SetPreview(topology, nodeIds);
-            Message = $"{nodeIds.Length} explicit anchors";
+            // The annotated topology, not the one that arrived: this stage
+            // is where the principal lines are derived, so previewing the
+            // input would show anchors with no bars between them.
+            SetPreview(patternForAnchors.Topology ?? topology, nodeIds);
+            int runCount = patternForAnchors.Topology?.PrincipalRuns.Count ?? 0;
+            Message = runCount > 0
+                ? $"{nodeIds.Length} anchors, {runCount} principal lines"
+                : $"{nodeIds.Length} explicit anchors";
             data.SetData(0, new AnchoredPatternGoo(anchored));
         }
         catch (Exception error)
@@ -424,6 +546,13 @@ public sealed class SupportsComponent : NativePreviewComponentBase
                 Color.FromArgb(85, 90, 95),
                 1);
         }
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
+        }
         foreach (Point3d point in _previewSupports)
         {
             args.Display.DrawPoint(
@@ -440,6 +569,9 @@ public sealed class SupportsComponent : NativePreviewComponentBase
     {
         _previewEdges.Clear();
         _previewEdges.AddRange(TnaWorkflowPreview.TopologyLines(topology));
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.TopologyPrincipalLines(topology));
         _previewSupports.Clear();
         _previewSupports.AddRange(
             nodeIds.Select(id => TnaWorkflowPreview.Point(topology.Vertices[id])));
@@ -498,6 +630,7 @@ public sealed class SupportsComponent : NativePreviewComponentBase
 public sealed class LoadsComponent : NativePreviewComponentBase
 {
     private readonly List<Line> _previewArrows = new();
+    private readonly List<Line> _previewPrincipal = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
     public LoadsComponent()
@@ -655,11 +788,23 @@ public sealed class LoadsComponent : NativePreviewComponentBase
     {
         base.BeforeSolveInstance();
         _previewArrows.Clear();
+        _previewPrincipal.Clear();
         _clippingBox = BoundingBox.Empty;
     }
 
     protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
     {
+        // The bars are drawn here even though the net is not: an arrow that
+        // lands on a notch is carried straight into a column, and one that
+        // lands mid-bay is carried by the cables. Without the bars there is
+        // nothing on screen to tell those apart.
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
+        }
         foreach (Line arrow in _previewArrows)
             args.Display.DrawArrow(arrow, Color.FromArgb(238, 135, 35));
     }
@@ -676,6 +821,9 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         Point3Dto factored)
     {
         _previewArrows.Clear();
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.TopologyPrincipalLines(topology));
         var vector = new Vector3d(factored.X, factored.Y, factored.Z);
         double magnitude = vector.Length;
         if (magnitude <= 1.0e-12 || topology.Vertices.Count == 0)
@@ -698,7 +846,8 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             : Enumerable.Range(0, topology.Vertices.Count);
         foreach (int id in targets)
             _previewArrows.Add(new Line(points[id] - offset, points[id]));
-        _clippingBox = TnaWorkflowPreview.Box(_previewArrows);
+        _clippingBox = TnaWorkflowPreview.Box(
+            _previewArrows.Concat(_previewPrincipal));
     }
 
     private static void EnsureValid(ContractDto contract)

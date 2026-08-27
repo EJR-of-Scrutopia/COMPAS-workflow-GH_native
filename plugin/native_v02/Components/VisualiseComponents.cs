@@ -196,52 +196,64 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddLineParameter(
                 "Member Lines",
                 "M",
-                "Resolved spatial member axes aligned with every other " +
-                "member-aligned output.",
-                GH_ParamAccess.list);
+                "Resolved spatial member axes, as a TREE: one branch per " +
+                "principal line holding that bar's own members, and a LAST " +
+                "branch holding the infill, everything not on a bar. Every " +
+                "member-aligned output below is branched and ordered " +
+                "identically, so the alignment holds branch to branch as " +
+                "well as index to index. A bar with no members of its own " +
+                "keeps an empty branch, so branch {i} is always bar {i}.",
+                GH_ParamAccess.tree);
             parameters.AddLineParameter(
                 "Form Lines",
                 "FL",
-                "Planar form-diagram edges aligned with Member Lines. " +
-                "Empty for FD.",
-                GH_ParamAccess.list);
+                "Planar form-diagram edges, branched and ordered exactly " +
+                "as Member Lines. Empty for FD.",
+                GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "q",
                 "q",
-                "Signed force density aligned with Member Lines.",
-                GH_ParamAccess.list);
+                "Signed force density, branched and ordered exactly as " +
+                "Member Lines.",
+                GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "H",
                 "H",
-                "Signed horizontal-force demand aligned with Member " +
-                "Lines. Empty for FD.",
-                GH_ParamAccess.list);
+                "Signed horizontal-force demand, branched and ordered " +
+                "exactly as Member Lines. Empty for FD.",
+                GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "F",
                 "F",
-                "Signed axial-force demand aligned with Member Lines.",
-                GH_ParamAccess.list);
+                "Signed axial-force demand, branched and ordered exactly " +
+                "as Member Lines.",
+                GH_ParamAccess.tree);
             parameters.AddTextParameter(
                 "Force State",
                 "S",
-                "Compression, tension, or zero state aligned with Member " +
-                "Lines.",
-                GH_ParamAccess.list);
+                "Compression, tension, or zero state, branched and " +
+                "ordered exactly as Member Lines.",
+                GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Member IDs",
                 "MID",
-                "Stable member IDs aligned with Member Lines.",
-                GH_ParamAccess.list);
+                "Stable member IDs, branched and ordered exactly as " +
+                "Member Lines.",
+                GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Node IDs",
                 "NID",
-                "Resolved support node IDs aligned with Support Points.",
-                GH_ParamAccess.list);
+                "Resolved support node IDs, as a TREE with one branch per " +
+                "CONNECTED STRIP of supports, walked end to end. Branched " +
+                "and ordered exactly as Support Points, so opposite sides " +
+                "of the vault arrive as separate branches.",
+                GH_ParamAccess.tree);
             parameters.AddPointParameter(
                 "Support Points",
                 "SP",
-                "Resolved structural-support locations.",
-                GH_ParamAccess.list);
+                "Resolved structural-support locations, branched and " +
+                "ordered exactly as Node IDs.",
+                GH_ParamAccess.tree);
             parameters.AddPointParameter(
                 "Load Points",
                 "LP",
@@ -285,21 +297,24 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddCurveParameter(
                 "Face Polylines",
                 "FP",
-                "One closed polyline per Thrust Mesh face, in face order: " +
-                "the ready-made Cells input for the Export component's " +
-                "Tessellation format (each face an authored cutting " +
-                "cell). Empty for FD.",
-                GH_ParamAccess.list);
+                "One closed polyline per Thrust Mesh face, as a TREE " +
+                "branched by COURSE (path = course, 0-up from the " +
+                "bottom): the ready-made Cells input for the Export " +
+                "component's Tessellation format (each face an authored " +
+                "cutting cell). The same branching Import Pieces uses, so " +
+                "a course means the same thing across the plugin. Empty " +
+                "for FD.",
+                GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Face Courses",
                 "FC",
-                "The course (build row) per face, aligned one to one " +
-                "with Face Polylines -- neither list is ever sorted, so " +
-                "the pairing survives. Courses band the face centroids " +
-                "by height (Course Height per band), bottom row 0: the " +
-                "ready-made Courses input for the Export component's " +
-                "Tessellation format. Empty for FD.",
-                GH_ParamAccess.list);
+                "The course (build row) per face, branched and ordered " +
+                "exactly as Face Polylines, so the pairing survives and " +
+                "the branch path is the course as well. Courses band the " +
+                "face centroids by height (Course Height per band), " +
+                "bottom row 0: the ready-made Courses input for the " +
+                "Export component's Tessellation format. Empty for FD.",
+                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -354,6 +369,12 @@ namespace Ananke.COMPAS.Native.Components
                 Point3d[] supportPoints;
                 (Point3d Point, Vector3d Vector)[] loads;
                 (Point3d Point, Vector3d Vector)[] reactions;
+                // The two ends of each member as NODE INDICES, which is what
+                // says whether a member lies along a principal line. The lines
+                // themselves cannot answer that: a point is not an index, and
+                // matching by coordinate would make an exact question into a
+                // tolerance one.
+                (int U, int V)[] memberEnds;
 
                 if (isTna)
                 {
@@ -379,6 +400,10 @@ namespace Ananke.COMPAS.Native.Components
                     f = states.Select(state => state.AxialForce).ToArray();
                     forceStates = states.Select(state => state.ForceState).ToArray();
                     memberIds = states.Select(state => state.Id).ToArray();
+                    memberEnds = states
+                        .Select(state => EquilibriumEnds(
+                            equilibrium, state.EquilibriumEdgeId))
+                        .ToArray();
 
                     nodeIds = result.Mappings!.Supports
                         .Select(item => item.EquilibriumVertexId)
@@ -412,6 +437,9 @@ namespace Ananke.COMPAS.Native.Components
                         .Select(force => ForceState(force, equilibrium.SignConvention))
                         .ToArray();
                     memberIds = Enumerable.Range(0, equilibrium.Edges.Count).ToArray();
+                    memberEnds = Enumerable.Range(0, equilibrium.Edges.Count)
+                        .Select(id => EquilibriumEnds(equilibrium, id))
+                        .ToArray();
 
                     nodeIds = equilibrium.ResolvedSupportNodeIds.ToArray();
                     supportPoints = equilibrium.ResolvedSupportNodeIds
@@ -440,16 +468,83 @@ namespace Ananke.COMPAS.Native.Components
                         : result.Report + Environment.NewLine +
                           "FD result: no reciprocal diagram.";
 
+                // ---- grouping ----------------------------------------------
+                // The principal lines this Result carries, resolved upstream by
+                // Supports or Pattern and travelling in the contract, so this
+                // component reads the same bars Animate and Column Finder do
+                // rather than deriving its own and disagreeing with them.
+                List<List<int>> bars = MouldGeometry.PrincipalRuns(
+                    equilibrium, equilibrium.Vertices.Count);
+                int[] memberBar = MouldGeometry.MemberRunIndex(
+                    memberEnds, bars);
+
+                // One branch per bar, then infill LAST. Every member-aligned
+                // output is sliced by the same index array below, so the
+                // index-to-index alignment the old flat lists promised now
+                // holds branch to branch as well.
+                IEnumerable<IEnumerable<T>> ByBar<T>(IReadOnlyList<T> values)
+                {
+                    var branches = new List<List<T>>();
+                    for (int b = 0; b <= bars.Count; b++)
+                        branches.Add(new List<T>());
+                    for (int i = 0; i < values.Count; i++)
+                    {
+                        int bar = i < memberBar.Length ? memberBar[i] : -1;
+                        branches[bar >= 0 ? bar : bars.Count].Add(values[i]);
+                    }
+                    return branches;
+                }
+
+                // The supports, split into the strips they physically form.
+                (int, int)[] netEdges = MouldGeometry.ValidEdges(
+                    equilibrium, equilibrium.Vertices.Count, out _);
+                List<int>[] neighbours = MouldGeometry.BuildAdjacency(
+                    equilibrium.Vertices.Count, netEdges);
+                List<List<int>> strips = MouldGeometry.ConnectedGroups(
+                    nodeIds, neighbours);
+                var nodeIdAt = new Dictionary<int, int>();
+                for (int i = 0; i < nodeIds.Length; i++)
+                    nodeIdAt[nodeIds[i]] = i;
+
+                // Faces by the course they build in, which is what Face Courses
+                // was already reporting per face. The same shape Import Pieces
+                // uses, so a course means the same thing across the plugin.
+                IReadOnlyList<PolylineCurve> facePolylines =
+                    FacePolylines(thrustMesh);
+                IReadOnlyList<int> faceCourses =
+                    FaceCourses(thrustMesh, courseHeight);
+                var faceByCourse = new List<List<Curve>>();
+                var courseByCourse = new List<List<int>>();
+                int courseCount = faceCourses.Count == 0
+                    ? 0 : faceCourses.Max() + 1;
+                for (int c = 0; c < courseCount; c++)
+                {
+                    faceByCourse.Add(new List<Curve>());
+                    courseByCourse.Add(new List<int>());
+                }
+                for (int i = 0; i < facePolylines.Count; i++)
+                {
+                    int course = i < faceCourses.Count ? faceCourses[i] : 0;
+                    if (course < 0 || course >= courseCount)
+                        continue;
+                    faceByCourse[course].Add(facePolylines[i]);
+                    courseByCourse[course].Add(course);
+                }
+
                 data.SetData(0, thrustMesh);
-                data.SetDataList(1, memberLines);
-                data.SetDataList(2, formLines);
-                data.SetDataList(3, q);
-                data.SetDataList(4, h);
-                data.SetDataList(5, f);
-                data.SetDataList(6, forceStates);
-                data.SetDataList(7, memberIds);
-                data.SetDataList(8, nodeIds);
-                data.SetDataList(9, supportPoints);
+                data.SetDataTree(1, OutputTree.Lines(ByBar(memberLines)));
+                data.SetDataTree(2, OutputTree.Lines(ByBar(formLines)));
+                data.SetDataTree(3, OutputTree.Numbers(ByBar(q)));
+                data.SetDataTree(4, OutputTree.Numbers(ByBar(h)));
+                data.SetDataTree(5, OutputTree.Numbers(ByBar(f)));
+                data.SetDataTree(6, OutputTree.Strings(ByBar(forceStates)));
+                data.SetDataTree(7, OutputTree.Integers(ByBar(memberIds)));
+                data.SetDataTree(8, OutputTree.Integers(
+                    strips.Select(strip => strip.AsEnumerable())));
+                data.SetDataTree(9, OutputTree.Points(
+                    strips.Select(strip => strip
+                        .Where(nodeIdAt.ContainsKey)
+                        .Select(id => supportPoints[nodeIdAt[id]]))));
                 data.SetDataList(10, loads.Select(item => item.Point));
                 data.SetDataList(11, loads.Select(item => item.Vector));
                 data.SetDataList(12, reactions.Select(item => item.Point));
@@ -457,8 +552,8 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataList(14, residuals);
                 data.SetDataList(15, diagnostics);
                 data.SetData(16, report);
-                data.SetDataList(17, FacePolylines(thrustMesh));
-                data.SetDataList(18, FaceCourses(thrustMesh, courseHeight));
+                data.SetDataTree(17, OutputTree.Curves(faceByCourse));
+                data.SetDataTree(18, OutputTree.Integers(courseByCourse));
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · " +
                     $"{memberLines.Length} members";
@@ -646,6 +741,26 @@ namespace Ananke.COMPAS.Native.Components
             return new Line(
                 Point(equilibrium.Vertices[edge.U]),
                 Point(equilibrium.Vertices[edge.V]));
+        }
+
+        /// <summary>
+        /// The two node indices a member runs between, or (-1, -1) if the id
+        /// does not name a real edge.
+        ///
+        /// Out of range rather than throwing, because this is only used to
+        /// decide which BRANCH a member goes in. A member whose ends cannot be
+        /// read is still a member and still belongs in the output; it lands in
+        /// the infill branch, which is where anything not proved to be on a bar
+        /// belongs anyway.
+        /// </summary>
+        private static (int U, int V) EquilibriumEnds(
+            EquilibriumResultDto equilibrium,
+            int edgeId)
+        {
+            if (edgeId < 0 || edgeId >= equilibrium.Edges.Count)
+                return (-1, -1);
+            EdgeDto edge = equilibrium.Edges[edgeId];
+            return (edge.U, edge.V);
         }
 
         /// <summary>Copied from <c>TnaQueryGeometry.FormLine</c>.</summary>
@@ -1285,6 +1400,21 @@ namespace Ananke.COMPAS.Native.Components
                         "force",
                         preset,
                         effectiveWeight));
+
+                // The notched bars, over the thrust network they belong to.
+                // Tied to the thrust stream rather than given a filter of
+                // their own: on the force diagram there is no such thing as
+                // a principal line, so there is nothing to switch on there.
+                if (elements.Contains("thrust"))
+                {
+                    _preview.AddRange(
+                        TnaWorkflowPreview.ResultPrincipalLines(result)
+                            .Select(line => new DrawLine(
+                                line,
+                                TnaWorkflowPreview.PrincipalColour,
+                                TnaWorkflowPreview.PrincipalWeight,
+                                false)));
+                }
                 _preview.AddRange(ToArrowLines(loadLines, "load", preset));
                 _preview.AddRange(
                     ToArrowLines(reactionLines, "reaction", preset));

@@ -34,6 +34,7 @@ public sealed class TnaRelaxComponent :
     private readonly List<Line> _formPreview = new();
     private readonly List<Line> _forcePreview = new();
     private readonly List<Line> _boundaryPreview = new();
+    private readonly List<Line> _principalPreview = new();
     private readonly List<Point3d> _supportPreview = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -78,6 +79,19 @@ public sealed class TnaRelaxComponent :
             "Target unsupported-boundary rise/span in percent.",
             GH_ParamAccess.item,
             10.0);
+        parameters.AddPointParameter(
+            "Floating Anchors",
+            "FA",
+            "Anchors that hold their plan position but not their height. " +
+            "Nodes named here are held while the boundary relaxes, WITHOUT " +
+            "joining the support set. An oculus rim belongs here rather than " +
+            "on Supports: held in plan the ring keeps its shape at any sag, " +
+            "and left off the support set its height stays free for the " +
+            "vertical solve, so the opening floats at the crown instead of " +
+            "being pinned to the springing plane.",
+            GH_ParamAccess.list);
+        parameters[3].Optional = true;
+        parameters[3].DataMapping = GH_DataMapping.Flatten;
     }
 
     protected override void RegisterOutputParams(
@@ -98,6 +112,7 @@ public sealed class TnaRelaxComponent :
         _formPreview.Clear();
         _forcePreview.Clear();
         _boundaryPreview.Clear();
+        _principalPreview.Clear();
         _supportPreview.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -243,7 +258,7 @@ public sealed class TnaRelaxComponent :
                 "that can sag.");
         }
 
-        BuildPreparedPreview(result.Prepared);
+        BuildPreparedPreview(result.Prepared, problem);
         Message =
             $"{result.Prepared.BoundarySegments.Count} opening(s) - " +
             $"{result.Elapsed.TotalMilliseconds:F0} ms";
@@ -282,6 +297,13 @@ public sealed class TnaRelaxComponent :
                 Color.FromArgb(215, 125, 35),
                 2);
         }
+        foreach (Line bar in _principalPreview)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
+        }
         foreach (Point3d point in _supportPreview)
         {
             args.Display.DrawPoint(
@@ -317,6 +339,8 @@ public sealed class TnaRelaxComponent :
         }
         data.GetData(1, ref q);
         data.GetData(2, ref sagPercent);
+        var fixedPoints = new List<Point3d>();
+        data.GetDataList(3, fixedPoints);
 
         var errors = new List<string>(value.Validate());
         if (!double.IsFinite(q) || q <= 0.0)
@@ -341,6 +365,34 @@ public sealed class TnaRelaxComponent :
         // and Anchored.Pattern.Topology are all present.
         TnaPatternDto sourcePattern = value.Anchored!.Pattern!;
         TopologyDto topology = sourcePattern.Topology!;
+        // Plan-fixed nodes are held by prepare_tna_problem's ``held_always``
+        // set, which is the union of the supports and the fixed-plan keys.
+        // Being in that set only stops the boundary relaxation's apron from
+        // recruiting them; it never marks them ``is_support``, so
+        // FormDiagram.update_boundaries still takes its zero-support branch
+        // for an unanchored hole and the vertical solve is free to lift the
+        // rim. That distinction is the whole point of this input.
+        int[] fixedNodeIds = Array.Empty<int>();
+        if (fixedPoints.Count > 0)
+        {
+            try
+            {
+                SnappedTargets snappedFixed = TopologyTargets.Resolve(
+                    topology,
+                    fixedPoints,
+                    value.Anchored.SnapTolerance,
+                    "Floating anchor");
+                fixedNodeIds = snappedFixed.NodeIds.Distinct().ToArray();
+            }
+            catch (Exception error)
+            {
+                Message = "Invalid";
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Error,
+                    "Floating Anchors failed: " + error.Message);
+                return false;
+            }
+        }
         var supportSet = new SupportSetDto
         {
             TopologyHash = topology.TopologyHash,
@@ -365,7 +417,7 @@ public sealed class TnaRelaxComponent :
             BoundarySag = sagPercent / 100.0,
             SagIterations = 50,
             SagTolerance = 0.01,
-            FixedNodeIds = Array.Empty<int>(),
+            FixedNodeIds = fixedNodeIds,
             Metadata = new Dictionary<string, string>(
                 StringComparer.Ordinal)
             {
@@ -409,12 +461,32 @@ public sealed class TnaRelaxComponent :
         }
     }
 
-    private void BuildPreparedPreview(TnaPreparedDto prepared)
+    private void BuildPreparedPreview(
+        TnaPreparedDto prepared,
+        ProblemDto? problem)
     {
         _formPreview.Clear();
         _forcePreview.Clear();
         _boundaryPreview.Clear();
+        _principalPreview.Clear();
         _supportPreview.Clear();
+
+        // The runs come from the LOCAL problem, not from the prepared source
+        // the worker echoed back: they are a native annotation that never
+        // went over the wire, so the echo cannot be trusted to carry them.
+        // The relaxed pattern's vertices are validated one-to-one against the
+        // source topology, so the source's indices are the right ruler for
+        // these points.
+        TopologyDto? sourceTopology =
+            problem?.Anchored?.Pattern?.Topology;
+        if (sourceTopology is not null &&
+            sourceTopology.Vertices.Count == prepared.Pattern.Vertices.Count)
+        {
+            _principalPreview.AddRange(
+                TnaWorkflowPreview.PrincipalLines(
+                    prepared.Pattern.Vertices,
+                    sourceTopology.PrincipalRuns));
+        }
 
         _formPreview.AddRange(
             TnaWorkflowPreview.GraphLines(
@@ -452,7 +524,8 @@ public sealed class TnaRelaxComponent :
         _clippingBox = TnaWorkflowPreview.Box(
             _formPreview
                 .Concat(_forcePreview)
-                .Concat(_boundaryPreview),
+                .Concat(_boundaryPreview)
+                .Concat(_principalPreview),
             _supportPreview);
     }
 
@@ -493,6 +566,7 @@ public class TnaSolveComponent :
     // Lazily assigned: a Mesh constructor touches Rhino's native runtime,
     // which must not happen while Grasshopper merely enumerates components.
     private Mesh? _previewMesh;
+    private readonly List<Line> _previewPrincipal = new();
     private readonly List<Point3d> _previewSupports = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -618,6 +692,7 @@ public class TnaSolveComponent :
     {
         base.BeforeSolveInstance();
         _previewMesh = null;
+        _previewPrincipal.Clear();
         _previewSupports.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -641,6 +716,13 @@ public class TnaSolveComponent :
             args.Display.DrawMeshWires(
                 _previewMesh,
                 Color.FromArgb(95, 95, 100));
+        }
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
         }
         foreach (Point3d point in _previewSupports)
         {
@@ -741,6 +823,9 @@ public class TnaSolveComponent :
         List<Line> thrustLines = TnaResultGeometry.MemberLines(result.Result);
         List<Point3d> supports = TnaResultGeometry.SupportPoints(result.Result);
         _previewMesh = thrustMesh;
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.ResultPrincipalLines(result.Result));
         _previewSupports.Clear();
         _previewSupports.AddRange(supports);
         _clippingBox = thrustMesh.Faces.Count > 0
@@ -981,6 +1066,7 @@ public sealed class FdSolveComponent :
     NativeTaskComponentBase<FdSolveTaskResult>
 {
     private readonly List<Line> _previewLines = new();
+    private readonly List<Line> _previewPrincipal = new();
     private readonly List<Point3d> _previewSupports = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -1060,6 +1146,7 @@ public sealed class FdSolveComponent :
     {
         base.BeforeSolveInstance();
         _previewLines.Clear();
+        _previewPrincipal.Clear();
         _previewSupports.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -1071,6 +1158,13 @@ public sealed class FdSolveComponent :
         base.DrawViewportWires(args);
         foreach (Line line in _previewLines)
             args.Display.DrawLine(line, Color.FromArgb(95, 95, 100), 1);
+        foreach (Line bar in _previewPrincipal)
+        {
+            args.Display.DrawLine(
+                bar,
+                TnaWorkflowPreview.PrincipalColour,
+                TnaWorkflowPreview.PrincipalWeight);
+        }
         foreach (Point3d point in _previewSupports)
         {
             args.Display.DrawPoint(
@@ -1177,6 +1271,9 @@ public sealed class FdSolveComponent :
         List<Point3d> supports = TnaResultGeometry.SupportPoints(result.Result);
         _previewLines.Clear();
         _previewLines.AddRange(memberLines);
+        _previewPrincipal.Clear();
+        _previewPrincipal.AddRange(
+            TnaWorkflowPreview.ResultPrincipalLines(result.Result));
         _previewSupports.Clear();
         _previewSupports.AddRange(supports);
         _clippingBox = TnaWorkflowPreview.Box(memberLines, supports);
