@@ -88,10 +88,11 @@ internal static class Program
                         "Reaction Points",
                         "Reaction Vectors",
                         "Residuals",
-                        "Diagnostics",
-                        "Report",
+                        "Columns",
+                        "Heads",
                         "Face Polylines",
-                        "Face Courses"
+                        "Face Courses",
+                        "Feet"
                     })
             };
     private static readonly IReadOnlyDictionary<
@@ -622,6 +623,19 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"Columns block: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDeconstructColumnTrees(plugin);
+            Console.WriteLine(
+                "PASS  Deconstruct column trees: one branch per tree, every "
+                + "member lower end to upper end, heads and feet per tree, and "
+                + "an absent block gives empty trees rather than an error.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Deconstruct column trees: {DescribeException(exception)}");
         }
 
         try
@@ -1663,6 +1677,70 @@ internal static class Program
             .Cast<IEnumerable<int>>().Select(t => t.ToArray()).ToArray();
         if (byFoot.Length != 2 || byFoot[0].Length != 3 || byFoot[1].Length != 1)
             throw new InvalidOperationException("TreesByFoot on the read-back tree must give the same two groups.");
+    }
+
+    /// <summary>
+    /// Deconstruct's column trees: one branch per tree in the block's own
+    /// order, every member a line from lower end to upper end, heads and
+    /// feet as points per tree, and an absent block giving empty trees
+    /// rather than an error.
+    /// </summary>
+    private static void ValidateDeconstructColumnTrees(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo columnsBlock = RequirePublicStatic(geometry, "ColumnsBlock");
+        Type deconstruct = RequireComponentType(plugin, "DeconstructComponent");
+        MethodInfo columnTrees = RequireStatic(deconstruct, "ColumnTrees");
+
+        Type lineList = columnsBlock.GetParameters()[0].ParameterType;
+        Type line = lineList.GetGenericArguments()[0];
+        Type point3d = columnsBlock.GetParameters()[2].ParameterType.GetElementType()!;
+        object Pt(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        Type concreteList = typeof(List<>).MakeGenericType(line);
+        object members = Activator.CreateInstance(concreteList)!;
+        MethodInfo add = concreteList.GetMethod("Add")!;
+        // Given upper end FIRST on purpose: the block must still hand back
+        // lower to upper.
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(0, 0, 5), Pt(0, 0, 0)) });
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(0, 0, 5), Pt(1, 0, 8)) });
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(0, 0, 5), Pt(-1, 0, 8)) });
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(10, 0, 0), Pt(10, 0, 6)) });
+        Array net = Array.CreateInstance(point3d, 3);
+        net.SetValue(Pt(1, 0, 8), 0);
+        net.SetValue(Pt(-1, 0, 8), 1);
+        net.SetValue(Pt(10, 0, 6), 2);
+        object block = columnsBlock.Invoke(null, new object?[]
+        {
+            members, new[] { 300.0, 100.0, 100.0, 200.0 }, net, 1.0e-6, 2, 0, 0, 0.65, 0,
+        })!;
+
+        object trees = columnTrees.Invoke(null, new[] { block })!;
+        Type tuple = trees.GetType();
+        var lines = ((IEnumerable)tuple.GetField("Item1")!.GetValue(trees)!)
+            .Cast<IEnumerable>().Select(b => b.Cast<object>().ToArray()).ToArray();
+        var heads = ((IEnumerable)tuple.GetField("Item2")!.GetValue(trees)!)
+            .Cast<IEnumerable>().Select(b => b.Cast<object>().ToArray()).ToArray();
+        var feet = ((IEnumerable)tuple.GetField("Item3")!.GetValue(trees)!)
+            .Cast<IEnumerable>().Select(b => b.Cast<object>().ToArray()).ToArray();
+
+        if (lines.Length != 2 || lines[0].Length != 3 || lines[1].Length != 1)
+            throw new InvalidOperationException("Two trees of three and one members; got " + string.Join("/", lines.Select(b => b.Length)) + ".");
+        foreach (object member in lines.SelectMany(b => b))
+        {
+            object from = line.GetProperty("From")!.GetValue(member)!;
+            object to = line.GetProperty("To")!.GetValue(member)!;
+            double fromZ = (double)point3d.GetProperty("Z")!.GetValue(from)!;
+            double toZ = (double)point3d.GetProperty("Z")!.GetValue(to)!;
+            if (fromZ > toZ)
+                throw new InvalidOperationException("Every column line runs from its lower end to its upper end.");
+        }
+        if (heads[0].Length != 2 || feet[0].Length != 1 || heads[1].Length != 1 || feet[1].Length != 1)
+            throw new InvalidOperationException("Tree 0 has two heads and one foot; tree 1 has one of each.");
+
+        object empty = columnTrees.Invoke(null, new object?[] { null })!;
+        if (((ICollection)empty.GetType().GetField("Item1")!.GetValue(empty)!).Count != 0)
+            throw new InvalidOperationException("No block means empty trees, never an error.");
     }
 
     private static Type RequireContractType(Assembly plugin, string typeName)

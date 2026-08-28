@@ -289,17 +289,20 @@ namespace Ananke.COMPAS.Native.Components
                 "E",
                 "Equilibrium residual vectors, one per solved node.",
                 GH_ParamAccess.list);
-            parameters.AddTextParameter(
-                "Diagnostics",
-                "D",
-                "Structured solver diagnostics formatted one per line.",
-                GH_ParamAccess.list);
-            parameters.AddTextParameter(
-                "Report",
-                "Report",
-                "Readable backend solve report. FD results gain the line " +
-                "\"FD result: no reciprocal diagram.\"",
-                GH_ParamAccess.item);
+            parameters.AddLineParameter(
+                "Columns",
+                "CO",
+                "The built column members from the Result's Mould block, as a "
+                    + "TREE with one branch per column tree (one foot on the "
+                    + "ground), each line running from its lower end to its "
+                    + "upper end. Empty until Columns has run upstream.",
+                GH_ParamAccess.tree);
+            parameters.AddPointParameter(
+                "Heads",
+                "HD",
+                "The column heads, the notches each tree holds, branched "
+                    + "exactly as Columns.",
+                GH_ParamAccess.tree);
             parameters.AddCurveParameter(
                 "Face Polylines",
                 "FP",
@@ -320,6 +323,12 @@ namespace Ananke.COMPAS.Native.Components
                 "face centroids by height (Course Height per band), " +
                 "bottom row 0: the ready-made Courses input for the " +
                 "Export component's Tessellation format. Empty for FD.",
+                GH_ParamAccess.tree);
+            parameters.AddPointParameter(
+                "Feet",
+                "FT",
+                "The column feet on the ground, branched exactly as Columns; "
+                    + "a shared foot appears once in its tree.",
                 GH_ParamAccess.tree);
         }
 
@@ -469,17 +478,6 @@ namespace Ananke.COMPAS.Native.Components
                 Vector3d[] residuals = equilibrium.Residuals
                     .Select(item => Vector(item.Vector))
                     .ToArray();
-                string[] diagnostics = result.Diagnostics
-                    .Select(item =>
-                        $"[{item.Severity.ToUpperInvariant()}] {item.Code}: " +
-                        $"{item.Message}")
-                    .ToArray();
-                string report = isTna
-                    ? result.Report
-                    : string.IsNullOrEmpty(result.Report)
-                        ? "FD result: no reciprocal diagram."
-                        : result.Report + Environment.NewLine +
-                          "FD result: no reciprocal diagram.";
 
                 // ---- grouping ----------------------------------------------
                 // The principal lines this Result carries, resolved upstream by
@@ -630,10 +628,14 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataTree(12, OutputTree.Points(reactionPointBranches));
                 data.SetDataTree(13, OutputTree.Vectors(reactionVectorBranches));
                 data.SetDataList(14, residuals);
-                data.SetDataList(15, diagnostics);
-                data.SetData(16, report);
+                (List<List<Line>> columnTrees,
+                    List<List<Point3d>> headTrees,
+                    List<List<Point3d>> feetTrees) = ColumnTrees(result.Mould?.Columns);
+                data.SetDataTree(15, OutputTree.Lines(columnTrees));
+                data.SetDataTree(16, OutputTree.Points(headTrees));
                 data.SetDataTree(17, OutputTree.Curves(faceByCourse));
                 data.SetDataTree(18, OutputTree.Integers(courseByCourse));
+                data.SetDataTree(19, OutputTree.Points(feetTrees));
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · " +
                     $"{memberLines.Length} members";
@@ -841,6 +843,59 @@ namespace Ananke.COMPAS.Native.Components
                 return (-1, -1);
             EdgeDto edge = equilibrium.Edges[edgeId];
             return (edge.U, edge.V);
+        }
+
+        /// <summary>
+        /// The block's trees as Grasshopper will branch them: one branch per
+        /// tree in the block's own order, every member a line from LOWER end
+        /// to UPPER end, and the heads and feet of each tree as points, each
+        /// node once. No block, empty trees: a Result that has not been
+        /// through Columns is not an error here.
+        /// </summary>
+        internal static (List<List<Line>>, List<List<Point3d>>, List<List<Point3d>>)
+            ColumnTrees(MouldColumnsDto? block)
+        {
+            var lines = new List<List<Line>>();
+            var heads = new List<List<Point3d>>();
+            var feet = new List<List<Point3d>>();
+            if (block is null)
+                return (lines, heads, feet);
+
+            Point3d[] nodes = block.Nodes.Select(p => new Point3d(p.X, p.Y, p.Z)).ToArray();
+            var headSet = new HashSet<int>(block.Heads);
+            var footSet = new HashSet<int>(block.Feet);
+            foreach (IReadOnlyList<int> tree in block.Trees)
+            {
+                var treeLines = new List<Line>();
+                var treeHeads = new List<Point3d>();
+                var treeFeet = new List<Point3d>();
+                var seen = new HashSet<int>();
+                foreach (int m in tree)
+                {
+                    if (m < 0 || m >= block.Members.Count)
+                        continue;
+                    EdgeDto member = block.Members[m];
+                    if (member.U < 0 || member.U >= nodes.Length ||
+                        member.V < 0 || member.V >= nodes.Length)
+                    {
+                        continue;
+                    }
+                    treeLines.Add(new Line(nodes[member.U], nodes[member.V]));
+                    foreach (int end in new[] { member.U, member.V })
+                    {
+                        if (!seen.Add(end))
+                            continue;
+                        if (headSet.Contains(end))
+                            treeHeads.Add(nodes[end]);
+                        if (footSet.Contains(end))
+                            treeFeet.Add(nodes[end]);
+                    }
+                }
+                lines.Add(treeLines);
+                heads.Add(treeHeads);
+                feet.Add(treeFeet);
+            }
+            return (lines, heads, feet);
         }
 
         /// <summary>Copied from <c>TnaQueryGeometry.FormLine</c>.</summary>
