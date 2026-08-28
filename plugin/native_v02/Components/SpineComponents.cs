@@ -99,10 +99,13 @@ public sealed class PatternComponent : NativePreviewComponentBase
             "drawn as curves over this pattern. They are matched HERE, in " +
             "plan, to runs of pattern vertices and carried downstream as " +
             "indices, because once the surface rises the curves no longer sit " +
-            "on it and cannot find their own nodes. Leave empty and use Rib " +
-            "Ribs on Supports to derive them from the anchors instead.",
+            "on it and cannot find their own nodes. This is the ONLY way a " +
+            "principal line enters the chain: nothing derives one for you. " +
+            "Wired curves that match no run of nodes are an error and no " +
+            "Pattern is emitted.",
             GH_ParamAccess.list);
         parameters[4].Optional = true;
+        parameters[4].DataMapping = GH_DataMapping.Flatten;
     }
 
     protected override void RegisterOutputParams(
@@ -197,25 +200,33 @@ public sealed class PatternComponent : NativePreviewComponentBase
             var patternVertices = patternPoints
                 .Select(pt => new Point3d(pt.X, pt.Y, pt.Z)).ToList();
 
-            // Only the explicit curves are resolved here. Deriving them
-            // needs the anchors, which Pattern does not have, so that lives on
-            // Supports instead.
+            // The curves are the only way in. What Pattern says about them
+            // is one pure function of three counts, so the error path is
+            // measured in the harness rather than trusted: curves wired and
+            // none placed is an error and NO pattern leaves this component,
+            // because a pattern whose bars could not be placed is not the
+            // pattern that was asked for.
             List<List<int>> principalRuns = PrincipalRunFinder.FromCurves(
                 principalCurves,
                 patternVertices,
                 patternEdges,
                 out double principalOffset,
                 out double principalGauge,
-                out int _);
-            if (principalCurves.Count > 0 &&
-                principalRuns.Count < principalCurves.Count)
+                out int unmatchedCurves);
+            PrincipalOutcome outcome = PrincipalRunFinder.Outcome(
+                principalCurves.Count, unmatchedCurves, principalRuns.Count);
+            switch (outcome.Severity)
             {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    $"{principalCurves.Count - principalRuns.Count} of " +
-                    $"{principalCurves.Count} principal lines caught fewer " +
-                    "than two pattern vertices and were dropped. They must " +
-                    "lie over the pattern in plan.");
+                case "error":
+                    throw new InvalidOperationException(outcome.Message);
+                case "warning":
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Warning, outcome.Message);
+                    break;
+                case "remark":
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Remark, outcome.Message);
+                    break;
             }
             // A bar can only stand on nodes. A line drawn down the middle of a
             // bay has no run of nodes to sit on, so the nearest one is taken
@@ -275,9 +286,16 @@ public sealed class PatternComponent : NativePreviewComponentBase
             }
 
             SetTopologyPreview(topology);
+            int runCount = topology.PrincipalRuns.Count;
+            string runNote = runCount switch
+            {
+                0 => string.Empty,
+                1 => ", 1 principal line",
+                _ => $", {runCount} principal lines"
+            };
             Message =
                 $"{DisplayMode(mode)} - {topology.Vertices.Count}V/" +
-                $"{topology.Edges.Count}E";
+                $"{topology.Edges.Count}E{runNote}";
             data.SetData(0, new TnaPatternGoo(pattern));
         }
         catch (Exception error)

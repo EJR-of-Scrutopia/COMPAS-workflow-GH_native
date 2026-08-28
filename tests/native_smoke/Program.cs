@@ -24,7 +24,7 @@ internal static class Program
         new Dictionary<string, int[]>(StringComparer.Ordinal)
         {
             ["Ananke.COMPAS.Native.Components.PatternComponent"] =
-                new[] { 0 },
+                new[] { 0, 4 },
             ["Ananke.COMPAS.Native.Components.SupportsComponent"] =
                 new[] { 1 },
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
