@@ -2776,7 +2776,7 @@ internal static class Program
                 $"{cellListType.FullName} does not expose Add.");
         addMethod.Invoke(cellList, new[] { cell });
 
-        var json = method.Invoke(null, new[] { cellList }) as string
+        var json = method.Invoke(null, new object[] { cellList, 1.0 }) as string
             ?? throw new InvalidOperationException(
                 "BuildTessellationJson returned an unexpected type.");
         const string expected =
@@ -2789,6 +2789,30 @@ internal static class Program
             throw new InvalidOperationException(
                 "BuildTessellationJson output changed shape; expected " +
                 $"'{expected}', received '{json}'.");
+        }
+
+        // A millimetre document. The sidecar declares metres and the
+        // studio reads metres only, refusing any other declaration
+        // outright, so the corners have to BE metres by the time they
+        // are written. Before this factor existed the component wrote
+        // document coordinates under a metre label, which the studio
+        // accepts without complaint and reads a thousand times too
+        // large: the one shape of unit error that never raises.
+        var millimetres =
+            method.Invoke(null, new object[] { cellList, 0.001 }) as string
+            ?? throw new InvalidOperationException(
+                "BuildTessellationJson returned an unexpected type.");
+        const string expectedMillimetres =
+            "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
+            "\"domain\":\"plan\",\"pattern\":\"authored\",\"cells\":[" +
+            "{\"key\":\"c0p0\",\"course\":0," +
+            "\"outline\":[[0,0],[0.001,0],[0,0.001]]}]}";
+        if (!string.Equals(millimetres, expectedMillimetres, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "BuildTessellationJson did not convert document units to " +
+                $"metres; expected '{expectedMillimetres}', received " +
+                $"'{millimetres}'.");
         }
     }
 

@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Rhino;
 using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components;
@@ -193,12 +194,17 @@ public sealed class ExportComponent :
                 {
                     return;
                 }
+                // Resolved here, on the solve thread: RhinoDoc.ActiveDoc
+                // is not a background thread's to read, and the lambda
+                // below runs on one.
+                double unitFactor = ResolveUnitFactor();
                 TaskList.Add(Task.Run(
                     () => ComputeAsync(
                         CloneResult(result!),
                         format,
                         cells,
                         cellWarning,
+                        unitFactor,
                         CancelToken),
                     CancelToken));
                 return;
@@ -233,6 +239,7 @@ public sealed class ExportComponent :
                         postFormat,
                         postCells,
                         postCellWarning,
+                        ResolveUnitFactor(),
                         CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
@@ -585,6 +592,7 @@ public sealed class ExportComponent :
         string format,
         IReadOnlyList<TessellationCell>? cells,
         string? cellWarning,
+        double unitFactor,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -603,8 +611,23 @@ public sealed class ExportComponent :
             {
                 // Pure serialisation of cells already reduced to plain
                 // numbers on the solve thread; no worker, no geometry.
-                json = BuildTessellationJson(cells!);
+                json = BuildTessellationJson(cells!, unitFactor);
                 warning = cellWarning;
+                if (Math.Abs(unitFactor - 1.0) > 1e-12)
+                {
+                    // Disclosed the way ImportPiecesComponent discloses
+                    // its own factor: a silent scale is the thing that
+                    // makes a units mismatch hard to find later.
+                    string note =
+                        "Document units converted to metres by a factor " +
+                        "of " + unitFactor.ToString(
+                            "0.################",
+                            System.Globalization.CultureInfo.InvariantCulture) +
+                        ".";
+                    warning = string.IsNullOrEmpty(warning)
+                        ? note
+                        : warning + " " + note;
+                }
             }
             else
             {
@@ -740,8 +763,49 @@ public sealed class ExportComponent :
     /// the domain is the plan projection; both are the sidecar's fixed
     /// contract, not options.
     /// </summary>
+    /// <summary>
+    /// The plan corners in METRES, which is what the sidecar's fixed
+    /// "units": "m" declares and what the studio's
+    /// tessellation.from_document refuses to read anything else as (its
+    /// own message: "This schema version reads metres only, so a
+    /// conversion is the author's to make"). The corners arrive in
+    /// document units, so this is that conversion. A factor of exactly
+    /// 1.0 returns the same numbers, so a metre document is unaffected
+    /// byte for byte.
+    /// </summary>
+    private static List<double[]> ScaleOutline(
+        IReadOnlyList<double[]> outline,
+        double unitFactor)
+    {
+        var scaled = new List<double[]>(outline.Count);
+        foreach (double[] point in outline)
+        {
+            scaled.Add(unitFactor == 1.0
+                ? point
+                : new[] { point[0] * unitFactor, point[1] * unitFactor });
+        }
+        return scaled;
+    }
+
+    /// <summary>
+    /// Document units to metres, the inverse of
+    /// ImportPiecesComponent.ResolveUnitFactor, so the pair round trips.
+    /// RhinoDoc.ActiveDoc may be null in headless contexts (the native
+    /// smoke harness never launches Rhino), so the guard defaults to
+    /// 1.0; a factor other than 1.0 is always disclosed as a warning.
+    /// Must be called on the solve thread.
+    /// </summary>
+    private static double ResolveUnitFactor()
+    {
+        RhinoDoc? activeDoc = RhinoDoc.ActiveDoc;
+        if (activeDoc is null)
+            return 1.0;
+        return RhinoMath.UnitScale(activeDoc.ModelUnitSystem, UnitSystem.Meters);
+    }
+
     private static string BuildTessellationJson(
-        IReadOnlyList<TessellationCell> cells)
+        IReadOnlyList<TessellationCell> cells,
+        double unitFactor)
     {
         var perCourse = new Dictionary<int, int>();
         var cellPayloads = new List<Dictionary<string, object?>>(cells.Count);
@@ -753,7 +817,7 @@ public sealed class ExportComponent :
             {
                 ["key"] = $"c{cell.Course}p{sequence}",
                 ["course"] = cell.Course,
-                ["outline"] = cell.Outline
+                ["outline"] = ScaleOutline(cell.Outline, unitFactor)
             });
         }
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
