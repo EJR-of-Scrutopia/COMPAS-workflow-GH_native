@@ -599,10 +599,21 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             // Judge it. Trunks are the members leaving a foot.
+            //
+            // Alignment is judged PER FOOT, not per trunk. A shared foot
+            // gathers trunks that each lean toward it, and under a plumb pull
+            // every one of them is off its own tree's force by its lean; what
+            // the foot actually carries is their SUM, and two mirrored trunks
+            // sum to a vertical push. That is the A-frame a central foot is
+            // for, and judging each trunk alone refused it on every ordinary
+            // arch. The foot's resultant against the load its trees hand it
+            // is the thrust the foundation sees, and that is what is bounded.
             double worstLean = 0.0;
             double worstAlign = 0.0;
             double worstBranchOff = 0.0;
             var footSet = new HashSet<int>(result.Feet);
+            var footPush = new Dictionary<int, Vector3d>();
+            var footWanted = new Dictionary<int, Vector3d>();
             for (int m = 0; m < result.Members.Count; m++)
             {
                 (int lower, int upper) = result.Members[m];
@@ -613,7 +624,13 @@ namespace Ananke.COMPAS.Native.Components
                 if (footSet.Contains(lower))
                 {
                     worstLean = Math.Max(worstLean, MouldGeometry.LeanFromVertical(a, b));
-                    worstAlign = Math.Max(worstAlign, AngleBetween(direction, aim[t]));
+                    double length = direction.Length;
+                    Vector3d push = length > 1.0e-12
+                        ? direction * (result.Axial[m] / length)
+                        : Vector3d.Zero;
+                    Vector3d wanted = aim[t] * trees[t].Load.Sum();
+                    footPush[lower] = footPush.TryGetValue(lower, out Vector3d p) ? p + push : push;
+                    footWanted[lower] = footWanted.TryGetValue(lower, out Vector3d w) ? w + wanted : wanted;
                 }
                 else
                 {
@@ -627,6 +644,11 @@ namespace Ananke.COMPAS.Native.Components
                         : aim[t];
                     worstBranchOff = Math.Max(worstBranchOff, AngleBetween(direction, pull));
                 }
+            }
+            foreach ((int footNode, Vector3d push) in footPush)
+            {
+                if (footWanted.TryGetValue(footNode, out Vector3d wanted))
+                    worstAlign = Math.Max(worstAlign, AngleBetween(push, wanted));
             }
             result.WorstLean = worstLean;
             result.WorstAlignment = worstAlign;

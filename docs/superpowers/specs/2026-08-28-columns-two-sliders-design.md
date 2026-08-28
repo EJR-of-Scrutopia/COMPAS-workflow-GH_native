@@ -128,9 +128,14 @@ diagnostic names the level, the rule and the measured value:
 
 - lean: a trunk (foot to fork, or a single-notch member) leans past
   `MaxLeanDegrees` (60) from vertical, measured foot to upper end;
-- alignment: a trunk's direction is more than `AlignmentDegrees` (30)
-  off its tree's resultant force direction (`AimFrom(-resultant)`).
-  Branches are exempt; their off-thrust angle is reported;
+- alignment: judged PER FOOT. The vector sum of the axial forces of the
+  trunks leaving a foot is more than `AlignmentDegrees` (30) off the
+  vector sum of the pushes its trees ask for (each tree's `AimFrom`
+  direction times its total load). Two mirrored trunks under plumb loads
+  sum to a vertical push and pass; judging each trunk alone refused a
+  central foot on every ordinary arch, since every trunk to a shared
+  foot leans by construction. Branches are exempt; their off-thrust
+  angle is reported;
 - member collision: two members that share no end come closer than
   `Clearance = 0.05 x MedianPlanEdge` (segment-to-segment distance);
 - net collision: a member's interior (samples at 1/8 .. 7/8 of its

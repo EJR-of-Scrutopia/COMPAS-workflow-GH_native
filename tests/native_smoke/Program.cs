@@ -2304,14 +2304,15 @@ internal static class Program
         double Y(object p) => (double)point3d.GetProperty("Y")!.GetValue(p)!;
         double Z(object p) => (double)point3d.GetProperty("Z")!.GetValue(p)!;
 
-        // ---- Fork on the segment, collinear. Rise fifteen over eight: a
-        // trunk on a shared foot is judged against the ALIGNMENT cap (30
-        // degrees off its own plumb aim, tighter than the 60-degree lean
-        // cap) when this arch is reused below at Ground 1, and rise five
-        // left the outer trunks at 54 degrees, past alignment though not
-        // past lean.
+        // ---- Fork on the segment, collinear. Rise five over eight: when
+        // this arch is reused below at Ground 1 its outer trunks lean 54
+        // degrees, inside the 60-degree cap, and alignment is judged at the
+        // FOOT, where mirrored trunks sum to a vertical push. Judging each
+        // trunk alone against its plumb aim refused this arch, and every
+        // ordinary arch with it; the rise needed to pass that way was
+        // fifteen, which is not an arch anyone builds.
         {
-            var arch = Arch(9, 8.0, 15.0, 1.0);
+            var arch = Arch(9, 8.0, 5.0, 1.0);
             object placed = Run(arch, Array.Empty<int[]>(), 1.0, 2, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
@@ -2376,10 +2377,10 @@ internal static class Program
         // ---- The centred foot, odd and even counts.
         foreach (int count in new[] { 9, 8 })
         {
-            var arch = Arch(count, 8.0, 15.0, 1.0);
+            var arch = Arch(count, 8.0, 5.0, 1.0);
             object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 1);
             if (Get<int>(placed, "GroundPlaced") != 1)
-                throw new InvalidOperationException($"A rise-fifteen arch eight wide holds one central foot; {count} notches fell back.");
+                throw new InvalidOperationException($"A rise-five arch eight wide holds one central foot: its outer trunks lean 54 degrees and the mirrored pairs sum to a vertical push at the foot; {count} notches fell back.");
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
@@ -2394,7 +2395,7 @@ internal static class Program
         // Anchors at 0, 3, 5 and 8 on nine notches leave three spans: 1..2,
         // the single notch 4 between two anchors, and 6..7.
         {
-            var arch = Arch(9, 8.0, 15.0, 1.0);
+            var arch = Arch(9, 8.0, 5.0, 1.0);
             var held = (arch.Nodes, arch.Bars, new[] { 0, 3, 5, 8 }, arch.Across, arch.Edges);
             object placed = Run(held, Array.Empty<int[]>(), 1.0, 1, 0);
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
