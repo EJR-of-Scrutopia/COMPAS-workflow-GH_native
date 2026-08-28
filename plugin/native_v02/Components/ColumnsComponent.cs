@@ -350,6 +350,18 @@ namespace Ananke.COMPAS.Native.Components
                     branching,
                     ground);
                 ColumnPlacement.Level built = placement.Built;
+                if (placement.Trees.Count == 0)
+                {
+                    // Every node on every principal line is an anchor, so
+                    // there is no notch to hold. The block is written empty
+                    // rather than skipped, so downstream still sees Columns
+                    // ran, but it must not pass in silence.
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Warning,
+                        "No free notch on any principal line: every node on the "
+                            + "bars is an anchor, so no column was built. Draw "
+                            + "the lines across the form, not along the sides.");
+                }
 
                 var members = new List<Line>(built.Members.Count);
                 foreach ((int lower, int upper) in built.Members)
@@ -446,8 +458,11 @@ namespace Ananke.COMPAS.Native.Components
                 overlapping > 0
                     ? ResultDiagnostics.Entry(S, "columns.overlap", "warning",
                         $"two principal lines share {overlapping} notches, so ONE "
-                            + "bar is being traced twice and given two full sets of "
-                            + "columns.",
+                            + "bar is traced twice. The second trace finds its "
+                            + "notches already held and builds nothing of its own, "
+                            + "so the columns are right, but its spans are counted "
+                            + "and its bar is reported: check the curves drawn into "
+                            + "Pattern.",
                         overlapping, unit: "notches")
                     : ResultDiagnostics.Entry(S, "columns.overlap", "ok",
                         "each principal line is distinct", 0.0, unit: "notches"),
@@ -509,8 +524,8 @@ namespace Ananke.COMPAS.Native.Components
                 $"Ground asked {asked}, placed {placement.GroundPlaced}"
                     + (refused.Count > 0 ? "; " + string.Join("; ", refused) : "")
                     + (placement.GroundPlaced == 0
-                        ? ". Every tree stands on its own foot on the line of its force."
-                        : $". Each span's trees gather onto {placement.GroundPlaced} feet about its midpoint."),
+                        ? $". Every tree stands on its own foot on the line of its force; {built.Feet.Count} feet."
+                        : $". Each span's trees gather onto up to {placement.GroundPlaced} feet about its midpoint, an empty band getting none; {built.Feet.Count} feet built in all."),
                 placement.GroundPlaced, unit: "feet per span",
                 context: ResultDiagnostics.Context(
                     ("asked", groundAsked.ToString(CultureInfo.InvariantCulture)),

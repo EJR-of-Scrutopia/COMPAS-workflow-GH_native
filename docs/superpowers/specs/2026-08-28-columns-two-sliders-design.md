@@ -112,7 +112,13 @@ the notches above it; axial force = carried vertical / cos(lean).
 
 For a tree with more than one notch the fork lies ON THE SEGMENT from
 its foot to its main notch, at height `ground + ForkFraction x (mainZ -
-ground)`, `ForkFraction = 0.65`, a constant. Members: foot to fork
+ground)`, `ForkFraction = 0.65`, a constant. When that height would sit
+at or above the tree's LOWEST notch (an anchor-end tree at Branching 3
+on an arch, whose outer notch is well below its innermost) the fork is
+lowered, on the same segment, to `ForkFraction` of that lowest notch's
+height, because a fork above one of its own heads makes the branch run
+down and the block would read that head as a foot in mid-air. Ordinary
+trees are untouched. Members: foot to fork
 (trunk), fork to main notch (main branch, collinear with the trunk by
 construction), fork to every other notch of the tree (branches). A
 single-notch tree is one member foot to notch. Every member is emitted
@@ -140,7 +146,10 @@ diagnostic names the level, the rule and the measured value:
   `Clearance = 0.05 x MedianPlanEdge` (segment-to-segment distance);
 - net collision: a member's interior (samples at 1/8 .. 7/8 of its
   length) rises above the net, tested as sample Z greater than the Z of
-  the nearest net vertex in plan plus the clearance.
+  the nearest NON-ANCHOR net vertex in plan plus the clearance. Anchors
+  sit on the ground, and a standalone foot placed past an anchor (which
+  3.5 allows) would otherwise read as through the net on every ordinary
+  arch, refusing the level 3.7 says is never refused.
 
 Ground 0 is never refused for lean or alignment (AimFrom guarantees
 both); a collision at Ground 0 is placed anyway and reported as a

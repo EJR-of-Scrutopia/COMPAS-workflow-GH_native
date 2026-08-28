@@ -2549,7 +2549,9 @@ internal static class Program
                 throw new InvalidOperationException($"A crossing does not cut a span: two bars give two spans, got {spans.Length}.");
             object built = Get<object>(placed, "Built");
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
-            if (Get<int>(placed, "GroundPlaced") == 1 && feet.Length != 1)
+            if (Get<int>(placed, "GroundPlaced") != 1)
+                throw new InvalidOperationException($"Ground 1 on this cross is feasible (rise three over a half-width of four leans the outer trunks 53 degrees, and the mirrored pairs sum vertical at the foot) and must be placed; placed {Get<int>(placed, "GroundPlaced")}.");
+            if (feet.Length != 1)
                 throw new InvalidOperationException($"Ground 1 on a cross merges the two midpoint feet into one; {feet.Length} built.");
         }
 
