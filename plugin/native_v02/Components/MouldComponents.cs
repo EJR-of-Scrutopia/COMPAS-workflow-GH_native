@@ -423,10 +423,10 @@ namespace Ananke.COMPAS.Native.Components
 
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
 
-                // The runs travel in the contract, resolved once by Supports
-                // from the anchors or by Pattern from drawn curves. Nothing is
-                // snapped here, which is why there is no curve input: indices
-                // survive a surface that rises and curves do not.
+                // The principal lines this Result carries, resolved upstream
+                // by Pattern from the curves drawn into it. Nothing is snapped
+                // here, which is why there is no curve input: indices survive
+                // a surface that rises and curves do not.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, target.Length);
                 var principalIds = new HashSet<int>(bars.SelectMany(b => b));
@@ -435,8 +435,8 @@ namespace Ananke.COMPAS.Native.Components
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
                         "The Result carries no principal lines, so nothing is "
-                            + "held and there is nothing to lift. Set Ribs on "
-                            + "Supports, or draw Principal Lines on Pattern.");
+                            + "held and there is nothing to lift. Draw Principal "
+                            + "Lines into Pattern upstream.");
                 }
 
                 var pinned = new bool[n];
@@ -1284,9 +1284,9 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// The principal-line runs for a solved Result.
         ///
-        /// They are resolved once upstream, by Supports from the anchors or by
-        /// Pattern from drawn curves, and the contract carries them down as
-        /// vertex indices. So the matching happens once for the whole
+        /// They are resolved once upstream, by Pattern from the curves drawn
+        /// into it, and the contract carries them down as vertex indices. So
+        /// the matching happens once for the whole
         /// definition rather than in every component on every frame, and it
         /// cannot go wrong on a raised surface, because by here there is no
         /// curve left to match.

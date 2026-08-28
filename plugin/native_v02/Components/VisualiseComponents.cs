@@ -481,9 +481,10 @@ namespace Ananke.COMPAS.Native.Components
 
                 // ---- grouping ----------------------------------------------
                 // The principal lines this Result carries, resolved upstream by
-                // Supports or Pattern and travelling in the contract, so this
-                // component reads the same bars Animate and Column Finder do
-                // rather than deriving its own and disagreeing with them.
+                // Pattern from the curves drawn into it, travelling in the
+                // contract, so this component reads the same bars Animate and
+                // Column Finder do rather than deriving its own and
+                // disagreeing with them.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, equilibrium.Vertices.Count);
                 int[] memberBar = MouldGeometry.MemberRunIndex(

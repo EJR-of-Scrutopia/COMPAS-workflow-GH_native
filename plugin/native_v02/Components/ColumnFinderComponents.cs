@@ -308,7 +308,7 @@ namespace Ananke.COMPAS.Native.Components
                 double ground = MouldGeometry.GroundLevel(nodes, anchors);
 
                 // The runs travel in the contract, resolved once upstream by
-                // Supports from the anchors or by Pattern from drawn curves.
+                // Pattern from the curves drawn into it.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, n);
                 int overlapping = 0;
@@ -334,8 +334,8 @@ namespace Ananke.COMPAS.Native.Components
                                 + "Each is being given its own full set of "
                                 + "columns, which crowds them onto the one line "
                                 + "at two different spacings and reads as "
-                                + "lopsided. Check Ribs on Supports, or the "
-                                + "curves on Pattern.");
+                                + "lopsided. Check the curves drawn into "
+                                + "Pattern.");
                         a = bars.Count;
                         break;
                     }
@@ -367,9 +367,8 @@ namespace Ananke.COMPAS.Native.Components
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "The Result carries no principal lines. Set Ribs on "
-                            + "Supports to derive them from the anchors, or "
-                            + "draw Principal Lines on Pattern.");
+                        "The Result carries no principal lines. Draw Principal "
+                            + "Lines into Pattern upstream; nothing derives them.");
                     data.SetData(0, new ResultGoo(ResultDiagnostics.Replace(
                         result, "Columns", new[]
                         {
@@ -1196,7 +1195,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "not asked for because it cancels out of that comparison."));
             d.Add(ResultDiagnostics.Entry(S, "columns.principal_source", "info",
                 "principal lines came from the contract, resolved upstream by "
-                    + "Pattern or Supports; nothing was re-matched here.",
+                    + "Pattern from the curves drawn into it; nothing was "
+                    + "re-matched here.",
                 bars.Count, unit: "bars"));
 
             if (symmetricBars == bars.Count)
