@@ -38,7 +38,7 @@ Pattern > Supports > Loads > Relax > Solve
             |              |           |           |             |
         Deconstruct     Monitor     Diagnose     Skin         Export
         (geometry)      (numbers)   (english)    (cells)      (files)
-```text
+```
 
 Two rules make the rest possible.
 
@@ -74,7 +74,7 @@ ResultDto
                               never validated, envelope-only, and the global
                               ContractSchema.Current stays "0.2" untouched
   Mould?              MouldDto
-```text
+```
 
 MouldDto, MouldColumnsDto and MouldFrameDto are PLAIN SEALED RECORDS in
 the TnaPrepareConfigDto style: no Kind, no SchemaVersion, no Goo, no
@@ -120,7 +120,7 @@ MouldFrameDto
                                              Equilibrium.Vertices
   ColumnNodes?    Point3Dto[]                live positions of Mould.Columns.Nodes, same
                                              count; absent when Columns is absent
-```text
+```
 
 Validation, run from ResultDto.ValidatePayload when Mould is present:
 Ground finite; Columns, when present: every index in range, the Z order
