@@ -2040,6 +2040,188 @@ namespace Ananke.COMPAS.Native.Components
             return best;
         }
 
+        /// <summary>
+        /// The built columns as the block the Result carries.
+        ///
+        /// Welds exactly as BuildColumnTree does, but KEEPS THE FORCE ALIGNED:
+        /// a zero-length line is skipped together with its force rather than
+        /// leaving the forces one ahead of the members from that point on.
+        /// Heads name the net vertex under them by nearest point in plan,
+        /// which is exact here because every head IS a net vertex.
+        /// </summary>
+        public static MouldColumnsDto ColumnsBlock(
+            IReadOnlyList<Line> members,
+            IReadOnlyList<double> force,
+            Point3d[] netNodes,
+            double weldTolerance,
+            int branching,
+            int groundAsked,
+            int groundPlaced,
+            double forkFraction,
+            int forksRaised)
+        {
+            var nodes = new List<Point3d>();
+            var pairs = new List<(int Lower, int Upper)>();
+            var forces = new List<double>();
+            double squared = weldTolerance * weldTolerance;
+
+            int Weld(Point3d point)
+            {
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    if (nodes[i].DistanceToSquared(point) <= squared)
+                        return i;
+                }
+                nodes.Add(point);
+                return nodes.Count - 1;
+            }
+
+            for (int i = 0; i < members.Count; i++)
+            {
+                Line member = members[i];
+                if (member.Length <= 1.0e-9)
+                    continue;
+                Point3d lower = member.From.Z <= member.To.Z ? member.From : member.To;
+                Point3d upper = member.From.Z <= member.To.Z ? member.To : member.From;
+                int a = Weld(lower);
+                int b = Weld(upper);
+                if (a == b)
+                    continue;
+                pairs.Add((a, b));
+                forces.Add(i < force.Count ? force[i] : 0.0);
+            }
+
+            ColumnTree tree = TreeFromPairs(nodes, pairs);
+            var isLower = new bool[nodes.Count];
+            var isUpper = new bool[nodes.Count];
+            foreach ((int lower, int upper) in pairs)
+            {
+                isLower[lower] = true;
+                isUpper[upper] = true;
+            }
+            var forks = new List<int>();
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (isLower[i] && isUpper[i])
+                    forks.Add(i);
+            }
+
+            return new MouldColumnsDto
+            {
+                Nodes = nodes.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                Members = pairs.Select(p => new EdgeDto(p.Lower, p.Upper)).ToArray(),
+                MemberForce = forces.ToArray(),
+                Trees = TreesByFoot(tree)
+                    .Select(t => (IReadOnlyList<int>)t.ToArray())
+                    .ToArray(),
+                Heads = tree.Notches.ToArray(),
+                Forks = forks.ToArray(),
+                Feet = tree.Feet.ToArray(),
+                HeadNode = tree.Notches
+                    .Select(h => Math.Max(NearestNodeInPlan(nodes[h], netNodes), 0))
+                    .ToArray(),
+                Branching = Math.Max(branching, 1),
+                GroundAsked = Math.Max(groundAsked, 0),
+                GroundPlaced = Math.Max(groundPlaced, 0),
+                ForkFraction = Math.Min(Math.Max(forkFraction, 0.0), 1.0),
+                ForksRaised = Math.Max(forksRaised, 0),
+            };
+        }
+
+        /// <summary>
+        /// The block read back as the tree Animate walks. No welding: the
+        /// block already carries indices.
+        /// </summary>
+        public static ColumnTree TreeFromBlock(MouldColumnsDto block)
+        {
+            var nodes = block.Nodes.Select(p => new Point3d(p.X, p.Y, p.Z)).ToList();
+            var pairs = new List<(int Lower, int Upper)>();
+            foreach (EdgeDto member in block.Members)
+            {
+                if (member.U < 0 || member.U >= nodes.Count ||
+                    member.V < 0 || member.V >= nodes.Count || member.U == member.V)
+                {
+                    continue;
+                }
+                pairs.Add((member.U, member.V));
+            }
+            return TreeFromPairs(nodes, pairs);
+        }
+
+        /// <summary>
+        /// Which members stand on each foot: climb from every foot through
+        /// the nodes above it; a member belongs to the foot its lower end
+        /// stands on. Feet in ascending node order so branch {i} is the same
+        /// tree on every frame. Anything no foot reaches goes in one last
+        /// group rather than vanishing.
+        /// </summary>
+        public static List<List<int>> TreesByFoot(ColumnTree tree)
+        {
+            int count = tree.Nodes.Count;
+            var standsOn = new int[count];
+            for (int i = 0; i < count; i++)
+                standsOn[i] = -1;
+            int[] feet = tree.Feet.Distinct().OrderBy(f => f).ToArray();
+            for (int b = 0; b < feet.Length; b++)
+            {
+                var climb = new Stack<int>();
+                climb.Push(feet[b]);
+                while (climb.Count > 0)
+                {
+                    int at = climb.Pop();
+                    if (at < 0 || at >= count || standsOn[at] >= 0)
+                        continue;
+                    standsOn[at] = b;
+                    foreach (int up in tree.Above[at])
+                        climb.Push(up);
+                }
+            }
+
+            var groups = feet.Select(_ => new List<int>()).ToList();
+            var orphans = new List<int>();
+            for (int m = 0; m < tree.Members.Count; m++)
+            {
+                (int lower, int upper) = tree.Members[m];
+                int owner = standsOn[lower] >= 0 ? standsOn[lower] : standsOn[upper];
+                if (owner >= 0)
+                    groups[owner].Add(m);
+                else
+                    orphans.Add(m);
+            }
+            if (orphans.Count > 0)
+                groups.Add(orphans);
+            return groups;
+        }
+
+        private static ColumnTree TreeFromPairs(
+            List<Point3d> nodes,
+            List<(int Lower, int Upper)> pairs)
+        {
+            var tree = new ColumnTree();
+            tree.Nodes.AddRange(nodes);
+            tree.Members.AddRange(pairs);
+            var above = new List<int>[nodes.Count];
+            for (int i = 0; i < nodes.Count; i++)
+                above[i] = new List<int>();
+            var isLower = new bool[nodes.Count];
+            var isUpper = new bool[nodes.Count];
+            foreach ((int lower, int upper) in pairs)
+            {
+                above[lower].Add(upper);
+                isLower[lower] = true;
+                isUpper[upper] = true;
+            }
+            tree.Above = above;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (isUpper[i] && !isLower[i])
+                    tree.Notches.Add(i);
+                else if (isLower[i] && !isUpper[i])
+                    tree.Feet.Add(i);
+            }
+            return tree;
+        }
+
         public static ColumnTree BuildColumnTree(
             IReadOnlyList<Line> columns,
             double weldTolerance)
@@ -2073,26 +2255,7 @@ namespace Ananke.COMPAS.Native.Components
                     tree.Members.Add((a, b));
             }
 
-            var above = new List<int>[tree.Nodes.Count];
-            for (int i = 0; i < tree.Nodes.Count; i++)
-                above[i] = new List<int>();
-            var isLower = new bool[tree.Nodes.Count];
-            var isUpper = new bool[tree.Nodes.Count];
-            foreach ((int lower, int upper) in tree.Members)
-            {
-                above[lower].Add(upper);
-                isLower[lower] = true;
-                isUpper[upper] = true;
-            }
-            tree.Above = above;
-            for (int i = 0; i < tree.Nodes.Count; i++)
-            {
-                if (isUpper[i] && !isLower[i])
-                    tree.Notches.Add(i);
-                else if (isLower[i] && !isUpper[i])
-                    tree.Feet.Add(i);
-            }
-            return tree;
+            return TreeFromPairs(tree.Nodes.ToList(), tree.Members.ToList());
         }
 
         /// <summary>

@@ -612,6 +612,20 @@ internal static class Program
 
         try
         {
+            ValidateColumnsBlock(plugin);
+            Console.WriteLine(
+                "PASS  Columns block: bare lines become a block whose force "
+                + "stays aligned through welding, whose heads name the net "
+                + "vertex under them, and whose trees are the members on "
+                + "each foot; read back it is the tree Animate walks.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Columns block: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateOutputGrouping(plugin);
             Console.WriteLine(
                 "PASS  Output grouping: the anchors of a vault come back as "
@@ -1563,6 +1577,87 @@ internal static class Program
         object nan = Native("columns.foot_drift", double.NaN);
         if (diagnosticType.GetProperty("Value")!.GetValue(nan) is not null)
             throw new InvalidOperationException("A non-finite Value must be dropped to null, not written and refused later.");
+    }
+
+    /// <summary>
+    /// The block builder: bare lines in, a block out whose members keep
+    /// their force aligned even though welding drops zero-length lines,
+    /// whose heads name the net vertex under them, and whose trees are the
+    /// members that stand on each foot. Read back into a ColumnTree it is
+    /// the same tree Animate walks today.
+    /// </summary>
+    private static void ValidateColumnsBlock(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo columnsBlock = RequirePublicStatic(geometry, "ColumnsBlock");
+        MethodInfo treeFromBlock = RequirePublicStatic(geometry, "TreeFromBlock");
+        MethodInfo treesByFoot = RequirePublicStatic(geometry, "TreesByFoot");
+
+        Type lineList = columnsBlock.GetParameters()[0].ParameterType;
+        Type line = lineList.GetGenericArguments()[0];
+        Type point3d = columnsBlock.GetParameters()[2].ParameterType.GetElementType()!;
+
+        object Pt(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        Type concreteList = typeof(List<>).MakeGenericType(line);
+        object members = Activator.CreateInstance(concreteList)!;
+        MethodInfo add = concreteList.GetMethod("Add")!;
+        void Member(object from, object to) =>
+            add.Invoke(members, new[] { Activator.CreateInstance(line, from, to) });
+
+        // Tree A: trunk to a fork, two branches. Tree B: one post.
+        Member(Pt(0, 0, 0), Pt(0, 0, 5));
+        Member(Pt(0, 0, 5), Pt(1, 0, 8));
+        Member(Pt(0, 0, 5), Pt(-1, 0, 8));
+        Member(Pt(10, 0, 0), Pt(10, 0, 6));
+        double[] force = { 300.0, 100.0, 100.0, 200.0 };
+
+        Array net = Array.CreateInstance(point3d, 4);
+        net.SetValue(Pt(1, 0, 8), 0);
+        net.SetValue(Pt(-1, 0, 8), 1);
+        net.SetValue(Pt(10, 0, 6), 2);
+        net.SetValue(Pt(5, 0, 0), 3);
+
+        object block = columnsBlock.Invoke(null, new object?[]
+        {
+            members, force, net, 1.0e-6, 2, 0, 0, 0.65, 0,
+        })!;
+        Type blockType = block.GetType();
+        int[] Ints(string name) =>
+            ((IEnumerable)blockType.GetProperty(name)!.GetValue(block)!).Cast<int>().ToArray();
+        double[] Doubles(string name) =>
+            ((IEnumerable)blockType.GetProperty(name)!.GetValue(block)!).Cast<double>().ToArray();
+        int Count(string name) =>
+            ((ICollection)blockType.GetProperty(name)!.GetValue(block)!).Count;
+
+        if (Count("Nodes") != 6 || Count("Members") != 4)
+            throw new InvalidOperationException($"Six nodes and four members; got {Count("Nodes")} and {Count("Members")}.");
+        if (!Doubles("MemberForce").SequenceEqual(force))
+            throw new InvalidOperationException("MemberForce must stay aligned with the members in the order they were given.");
+        if (!Ints("Heads").SequenceEqual(new[] { 2, 3, 5 }))
+            throw new InvalidOperationException($"Heads are the nodes that are only ever an upper end: expected 2,3,5, got {string.Join(",", Ints("Heads"))}.");
+        if (!Ints("Forks").SequenceEqual(new[] { 1 }))
+            throw new InvalidOperationException("The one node that is both a lower and an upper end is the fork.");
+        if (!Ints("Feet").SequenceEqual(new[] { 0, 4 }))
+            throw new InvalidOperationException("Feet are the nodes that are only ever a lower end.");
+        if (!Ints("HeadNode").SequenceEqual(new[] { 0, 1, 2 }))
+            throw new InvalidOperationException($"Each head names the net vertex under it: expected 0,1,2, got {string.Join(",", Ints("HeadNode"))}.");
+        var trees = ((IEnumerable)blockType.GetProperty("Trees")!.GetValue(block)!)
+            .Cast<IEnumerable<int>>().Select(t => t.ToArray()).ToArray();
+        if (trees.Length != 2 || !trees[0].SequenceEqual(new[] { 0, 1, 2 }) || !trees[1].SequenceEqual(new[] { 3 }))
+            throw new InvalidOperationException("Two feet give two trees: members 0,1,2 stand on the first foot and member 3 on the second.");
+
+        object tree = treeFromBlock.Invoke(null, new[] { block })!;
+        Type treeType = tree.GetType();
+        int nodes = ((ICollection)treeType.GetProperty("Nodes")!.GetValue(tree)!).Count;
+        int notches = ((ICollection)treeType.GetProperty("Notches")!.GetValue(tree)!).Count;
+        int feet = ((ICollection)treeType.GetProperty("Feet")!.GetValue(tree)!).Count;
+        if (nodes != 6 || notches != 3 || feet != 2)
+            throw new InvalidOperationException($"Read back, the tree has {nodes} nodes, {notches} notches, {feet} feet; expected 6, 3, 2.");
+        var byFoot = ((IEnumerable)treesByFoot.Invoke(null, new[] { tree })!)
+            .Cast<IEnumerable<int>>().Select(t => t.ToArray()).ToArray();
+        if (byFoot.Length != 2 || byFoot[0].Length != 3 || byFoot[1].Length != 1)
+            throw new InvalidOperationException("TreesByFoot on the read-back tree must give the same two groups.");
     }
 
     private static Type RequireContractType(Assembly plugin, string typeName)
