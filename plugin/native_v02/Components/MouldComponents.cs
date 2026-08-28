@@ -1049,11 +1049,12 @@ namespace Ananke.COMPAS.Native.Components
         /// over that graph can only return singletons. It looks like a graft
         /// and it is not one; it is a correct walk over the wrong graph.
         ///
-        /// The sides are connected in the PLAN AS DRAWN, which is exactly the
-        /// graph Supports itself walks when it derives one rib per anchor
-        /// strip. So the pattern's own edges are added to the solved ones and
-        /// grouping happens over the union: two nodes are together if they are
-        /// joined in either the plan or the solved network.
+        /// The sides are connected in the PLAN AS DRAWN, which is the plan
+        /// topology Pattern is the one source of; Supports derives no rib and
+        /// walks no graph of its own. So the pattern's own edges are added to
+        /// the solved ones and grouping happens over the union: two nodes are
+        /// together if they are joined in either the plan or the solved
+        /// network.
         ///
         /// The pattern is trusted only when it has the SAME NUMBER OF VERTICES
         /// as the solved network. Anything else is a different index space, and
