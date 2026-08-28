@@ -337,10 +337,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 13)
+        if (parameterTypes.Length != 12)
         {
             failures.Add(
-                $"Expected 13 public persistent contract parameters, found " +
+                $"Expected 12 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
