@@ -1605,12 +1605,17 @@ internal static class Program
         void Member(object from, object to) =>
             add.Invoke(members, new[] { Activator.CreateInstance(line, from, to) });
 
-        // Tree A: trunk to a fork, two branches. Tree B: one post.
+        // Tree A: trunk to a fork, two branches. Tree B: one post. The
+        // zero-length line between the trunk and the first branch welds
+        // both ends to the same node and is dropped, along with its
+        // sentinel force, so a naive pass-through would misalign every
+        // force after it.
         Member(Pt(0, 0, 0), Pt(0, 0, 5));
         Member(Pt(0, 0, 5), Pt(1, 0, 8));
+        Member(Pt(0, 0, 5), Pt(0, 0, 5));
         Member(Pt(0, 0, 5), Pt(-1, 0, 8));
         Member(Pt(10, 0, 0), Pt(10, 0, 6));
-        double[] force = { 300.0, 100.0, 100.0, 200.0 };
+        double[] force = { 300.0, 100.0, 999.0, 100.0, 200.0 };
 
         Array net = Array.CreateInstance(point3d, 4);
         net.SetValue(Pt(1, 0, 8), 0);
@@ -1632,8 +1637,8 @@ internal static class Program
 
         if (Count("Nodes") != 6 || Count("Members") != 4)
             throw new InvalidOperationException($"Six nodes and four members; got {Count("Nodes")} and {Count("Members")}.");
-        if (!Doubles("MemberForce").SequenceEqual(force))
-            throw new InvalidOperationException("MemberForce must stay aligned with the members in the order they were given.");
+        if (!Doubles("MemberForce").SequenceEqual(new[] { 300.0, 100.0, 100.0, 200.0 }))
+            throw new InvalidOperationException("A dropped member must take its force with it and leave the rest aligned.");
         if (!Ints("Heads").SequenceEqual(new[] { 2, 3, 5 }))
             throw new InvalidOperationException($"Heads are the nodes that are only ever an upper end: expected 2,3,5, got {string.Join(",", Ints("Heads"))}.");
         if (!Ints("Forks").SequenceEqual(new[] { 1 }))
