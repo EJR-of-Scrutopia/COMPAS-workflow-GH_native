@@ -2135,7 +2135,7 @@ namespace Ananke.COMPAS.Native.Components
                 Forks = forks.ToArray(),
                 Feet = tree.Feet.ToArray(),
                 HeadNode = tree.Notches
-                    .Select(h => Math.Max(NearestNodeInPlan(nodes[h], netNodes), 0))
+                    .Select(h => NearestNodeInPlan(nodes[h], netNodes))
                     .ToArray(),
                 Branching = Math.Max(branching, 1),
                 GroundAsked = Math.Max(groundAsked, 0),

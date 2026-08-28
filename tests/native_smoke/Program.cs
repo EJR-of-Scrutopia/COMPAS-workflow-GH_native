@@ -571,7 +571,7 @@ internal static class Program
             Console.WriteLine(
                 "PASS  EI separation: the arms come out IDENTICAL over six "
                 + "orders of magnitude of stiffness, which is why EI is asked "
-                + "for on Stress Analysis and nowhere else; and the deflection "
+                + "for on Monitor and nowhere else; and the deflection "
                 + "scales exactly as one over EI, which is what lets that one "
                 + "number turn the placement's shape into millimetres. Lean "
                 + "from vertical is measured against hand-computed angles.");
@@ -1517,6 +1517,17 @@ internal static class Program
         int members = ((ICollection)columnsType.GetProperty("Members")!.GetValue(columnsBack)!).Count;
         if (members != 2)
             throw new InvalidOperationException($"Two members went in and {members} came back.");
+        int trees = ((ICollection)columnsType.GetProperty("Trees")!.GetValue(columnsBack)!).Count;
+        int[] headNode = ((IEnumerable)columnsType.GetProperty("HeadNode")!.GetValue(columnsBack)!).Cast<int>().ToArray();
+        object frameBack = mouldType.GetProperty("Frame")!.GetValue(mouldBack)
+            ?? throw new InvalidOperationException("Mould.Frame was lost in the round trip.");
+        double time = (double)frameType.GetProperty("Time")!.GetValue(frameBack)!;
+        int columnNodes = ((ICollection)frameType.GetProperty("ColumnNodes")!.GetValue(frameBack)!).Count;
+        if (trees != 2 || !headNode.SequenceEqual(new[] { 1, 2 }) || Math.Abs(time - 50.0) > 1e-12 || columnNodes != 4)
+        {
+            throw new InvalidOperationException(
+                $"The round trip must keep every field: trees {trees}, headNode [{string.Join(",", headNode)}], time {time}, columnNodes {columnNodes}.");
+        }
 
         // A Result without the block serialises exactly as it always did.
         string bare = (string)serialize.Invoke(

@@ -220,28 +220,30 @@ way round.
 Columns: columns.bars (count, notches), columns.bar_shape (one per bar:
 notches, anchored at both ends or ANCHORED AT ONE END ONLY, warning in
 the second case), columns.overlap (warning: two lines share N notches),
-columns.arms (per bar count), columns.symmetry (info mirrored, or warning
+columns.bars carries the per-bar arm counts in Context as per_bar,
+columns.symmetry (info mirrored, or warning
 lopsided with the cost), columns.centre_added, columns.foot_drift (Value
 in model units), columns.plumb_fallback (count), columns.lean (Value max,
 Tolerance 60, Unit degrees), columns.trunk_lean_exceeded (warning, Value
 the worst, Tolerance 60), columns.forks_raised (Value count, Context
 highest fraction), columns.force_max (Value N), columns.ground_fallback
 (warning; Context asked and placed; written by sub-project 3, reserved
-here).
+here), columns.no_principal_runs (error; the Result is emitted with no
+Mould block so Diagnose can say why).
 
 Animate: animate.phase, animate.counts (nodes, cables, bars, notches,
 anchors, perimeter), animate.start (info: pattern, flat, or final with
 the reason), animate.travel (Value the deepest reel in mm), animate.plan_draw
 (Value mm), animate.anchor_strips (info: N strips of a/b), animate.anchors_isolated
 (warning), animate.nodes_want_push (warning, Value count above the bare
-surface, Context total), animate.unreachable (warning, Context the node
-ids), animate.columns (Value member count, Context shortest, longest,
+surface, Context total), animate.columns (Value member count, Context shortest, longest,
 slid), animate.column_overrun (Value the overshoot), animate.below_ground
 (Value count).
 
-Monitor: monitor.slack_cables (warning, Value count), monitor.tension_max,
-monitor.compression_max, monitor.thrust_into_ground (Value N, Context
-per foot), monitor.anchor_horizontal (Value N), monitor.bar_sag (Value mm
+Monitor: monitor.slack_cables (warning, Value count), monitor.cable_tension
+(Value max, Context min), monitor.column_force (Value max, Context total),
+monitor.thrust_into_ground (Value the worst foot in N, Context feet count
+and sum), monitor.anchor_horizontal (Value N), monitor.bar_sag (Value mm
 worst, Context EI; or info monitor.bar_sag_shape_only when EI is zero).
 
 ## 5. Diagnose (binding)
@@ -269,9 +271,10 @@ warning, computed from RES alone:
 - diagnose.anchors_all_isolated: the anchor grouping over the plan
   unioned with the solved net returns one strip per anchor. The Result
   has lost its source Pattern.
-- diagnose.stale_frame: Mould.Frame present and Mould.Columns present
-  and Frame.ColumnNodes count differs from Columns.Nodes count. A
-  Columns ran downstream of an Animate, or the block was hand-edited.
+- diagnose.invalid_result: one error entry per validation failure, and
+  the cross-checks are skipped. This is where a frame whose column
+  nodes do not match the block lands, since the contract refuses that
+  count mismatch before any check runs.
 - diagnose.push_needed: animate.nodes_want_push exceeds half the nodes.
   Restates the machine question in words: a reel only pulls.
 - diagnose.forks_raised: columns.forks_raised above zero. Says which

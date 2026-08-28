@@ -379,6 +379,13 @@ namespace Ananke.COMPAS.Native.Components
                         "The Result carries no principal lines. Set Ribs on "
                             + "Supports to derive them from the anchors, or "
                             + "draw Principal Lines on Pattern.");
+                    data.SetData(0, new ResultGoo(ResultDiagnostics.Replace(
+                        result, "Columns", new[]
+                        {
+                            ResultDiagnostics.Entry("Columns", "columns.no_principal_runs", "error",
+                                "no principal runs on this Result, so there is nothing to "
+                                    + "stand under. Draw Principal Lines into Pattern upstream."),
+                        })));
                     return;
                 }
 
@@ -1182,7 +1189,8 @@ namespace Ananke.COMPAS.Native.Components
                 context: ResultDiagnostics.Context(
                     ("arms", armsPerBar.Sum().ToString(CultureInfo.InvariantCulture)),
                     ("feet", feet.Count.ToString(CultureInfo.InvariantCulture)),
-                    ("members", members.Count.ToString(CultureInfo.InvariantCulture)))));
+                    ("members", members.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("per_bar", string.Join("+", armsPerBar.Select(a => a.ToString(CultureInfo.InvariantCulture)))))));
             d.Add(ResultDiagnostics.Entry(S, "columns.arm_load_total", "info",
                 $"the arms carry {headLoad.Sum():0} N between them, ground read "
                     + $"as {ground:0.###}, the level the anchors sit at",
