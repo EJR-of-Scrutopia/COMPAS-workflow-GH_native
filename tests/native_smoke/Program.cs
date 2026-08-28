@@ -614,6 +614,29 @@ internal static class Program
 
         try
         {
+            ValidateColumnPlacement(plugin);
+            Console.WriteLine(
+                "PASS  ColumnPlacement: nine notches at Branching 2 group into a "
+                + "centre single and four mirrored pairs with mirrored mains, "
+                + "eight at Branching 3 into two triples and a single at each "
+                + "anchor end; the fork lies on the foot-to-main segment at "
+                + "65% height with trunk and main branch collinear; a shallow "
+                + "arch asked for one central foot REFUSES it on lean and "
+                + "records asked 1, placed 0; a symmetric arch puts its one "
+                + "foot on the span centre within a hundredth of the span; "
+                + "mid-bar anchors give half-spans and no head; two bars "
+                + "ending on an anchor-free rim get one ring tree at their "
+                + "tangents' plan intersection; a crossing node is held once; "
+                + "the segment distance and the net test refuse what they "
+                + "should; Auto picks the shorter load path.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ColumnPlacement: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSharedFoot(plugin);
             Console.WriteLine(
                 "PASS  ColumnFinder.SharedFoot: an odd set of columns whose "
@@ -2255,6 +2278,325 @@ internal static class Program
             expectedX: -Math.Sin(Math.PI / 3.0),
             expectedZ: Math.Cos(Math.PI / 3.0),
             label: "capped shallow pull");
+    }
+
+    /// <summary>
+    /// <c>ColumnPlacement</c>, the engine that replaced the beam search:
+    /// every rule of spec section 3, driven on hand-built nets. A net here is
+    /// an arch of notches in the XZ plane, anchored at both ends, with a
+    /// vertical pull on every notch; that is enough to measure grouping,
+    /// feet, fork, rejection and Auto, and it is the case Param's three
+    /// screenshots were of.
+    /// </summary>
+    private static void ValidateColumnPlacement(Assembly plugin)
+    {
+        Type engine = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.ColumnPlacement", throwOnError: true)!;
+        MethodInfo group = RequirePublicStatic(engine, "Group");
+        MethodInfo place = RequirePublicStatic(engine, "Place");
+        MethodInfo segment = RequirePublicStatic(engine, "SegmentDistance");
+        Type point3d = place.GetParameters()[0].ParameterType.GetElementType()!;
+        Type vector3d = place.GetParameters()[3].ParameterType.GetElementType()!.GetElementType()!;
+        double forkFraction = (double)engine.GetField("ForkFraction")!.GetValue(null)!;
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        double maxLean = (double)geometry.GetField("MaxLeanDegrees")!.GetValue(null)!;
+
+        // ---- Grouping.
+        (int[][] Groups, int[] Mains) Grouped(int count, int branching)
+        {
+            object result = group.Invoke(null, new object?[] { count, branching })!;
+            Type type = result.GetType();
+            return (
+                (int[][])type.GetField("Item1")!.GetValue(result)!,
+                (int[])type.GetField("Item2")!.GetValue(result)!);
+        }
+        string Show(int[][] groups) => string.Join(" ", groups.Select(g => "[" + string.Join(",", g) + "]"));
+
+        (int[][] nine, int[] nineMains) = Grouped(9, 2);
+        string nineText = Show(nine);
+        if (nineText != "[0,1] [2,3] [4] [5,6] [7,8]")
+            throw new InvalidOperationException($"Nine notches at Branching 2 must be a centre single and four mirrored pairs; got {nineText}.");
+        if (!nineMains.SequenceEqual(new[] { 1, 3, 4, 5, 7 }))
+            throw new InvalidOperationException($"Mains must be the innermost notch of each group, mirrored; got [{string.Join(",", nineMains)}].");
+        (int[][] eight, _) = Grouped(8, 3);
+        string eightText = Show(eight);
+        if (eightText != "[0] [1,2,3] [4,5,6] [7]")
+            throw new InvalidOperationException($"Eight notches at Branching 3 must be two triples with a single at each anchor end; got {eightText}.");
+        (int[][] five, _) = Grouped(5, 1);
+        if (five.Length != 5 || five.Any(g => g.Length != 1))
+            throw new InvalidOperationException($"Five notches at Branching 1 are five singles; got {Show(five)}.");
+        (int[][] none, _) = Grouped(0, 2);
+        if (none.Length != 0)
+            throw new InvalidOperationException("No notches group into nothing.");
+
+        // ---- A hand-built arch.
+        // count notches from x = 0 to x = width, z = rise * 4 * s * (1 - s),
+        // anchored at both ends, every notch pulled straight down by `load`.
+        object P(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        object V(double x, double y, double z) => Activator.CreateInstance(vector3d, x, y, z)!;
+
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Arch(int count, double width, double rise, double load)
+        {
+            Array nodes = Array.CreateInstance(point3d, count);
+            Array acrossBar = Array.CreateInstance(vector3d, count);
+            var edges = new List<(int, int)>();
+            for (int i = 0; i < count; i++)
+            {
+                double s = (double)i / (count - 1);
+                nodes.SetValue(P(width * s, 0.0, rise * 4.0 * s * (1.0 - s)), i);
+                acrossBar.SetValue(V(0.0, 0.0, -load), i);
+                if (i > 0)
+                    edges.Add((i - 1, i));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
+        }
+
+        object Run((Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int[][] loops, double median, int branching, int ground)
+        {
+            return place.Invoke(null, new object?[]
+            {
+                net.Nodes, net.Bars, net.Anchors, net.Across, loops, net.Edges, 0.0, median, branching, ground,
+            })!;
+        }
+        T Get<T>(object o, string name)
+        {
+            Type type = o.GetType();
+            object value = type.GetField(name)?.GetValue(o) ?? type.GetProperty(name)?.GetValue(o)
+                ?? throw new InvalidOperationException($"{type.Name} has no {name}.");
+            return (T)value;
+        }
+        double X(object p) => (double)point3d.GetProperty("X")!.GetValue(p)!;
+        double Y(object p) => (double)point3d.GetProperty("Y")!.GetValue(p)!;
+        double Z(object p) => (double)point3d.GetProperty("Z")!.GetValue(p)!;
+
+        // ---- Fork on the segment, collinear. Rise fifteen over eight: a
+        // trunk on a shared foot is judged against the ALIGNMENT cap (30
+        // degrees off its own plumb aim, tighter than the 60-degree lean
+        // cap) when this arch is reused below at Ground 1, and rise five
+        // left the outer trunks at 54 degrees, past alignment though not
+        // past lean.
+        {
+            var arch = Arch(9, 8.0, 15.0, 1.0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 2, 0);
+            object built = Get<object>(placed, "Built");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>()
+                .Select(m => ((int)m.GetType().GetField("Item1")!.GetValue(m)!, (int)m.GetType().GetField("Item2")!.GetValue(m)!))
+                .ToArray();
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToHashSet();
+            if (members.Any(m => Z(nodes[m.Item1]) > Z(nodes[m.Item2]) + 1.0e-9))
+                throw new InvalidOperationException("Every member must leave the engine lower end first.");
+            int forks = 0;
+            foreach ((int lower, int upper) in members)
+            {
+                if (!feet.Contains(lower))
+                    continue;
+                // A trunk. Its upper end is a fork when something leaves it.
+                var above = members.Where(m => m.Item1 == upper).ToArray();
+                if (above.Length == 0)
+                    continue;
+                forks++;
+                object foot = nodes[lower];
+                object fork = nodes[upper];
+                // The main branch is the one collinear with the trunk.
+                double bestAngle = double.MaxValue;
+                object? main = null;
+                foreach ((int _, int notch) in above)
+                {
+                    double angle = AngleDeg(
+                        X(fork) - X(foot), Y(fork) - Y(foot), Z(fork) - Z(foot),
+                        X(nodes[notch]) - X(fork), Y(nodes[notch]) - Y(fork), Z(nodes[notch]) - Z(fork));
+                    if (angle < bestAngle)
+                    {
+                        bestAngle = angle;
+                        main = nodes[notch];
+                    }
+                }
+                if (bestAngle > 0.5)
+                    throw new InvalidOperationException($"Trunk and main branch must be collinear within 0.5 degrees; a fork kinks by {bestAngle:0.###}.");
+                double expectedZ = Z(foot) + ((Z(main!) - Z(foot)) * forkFraction);
+                if (Math.Abs(Z(fork) - expectedZ) > 1.0e-9)
+                    throw new InvalidOperationException($"The fork must sit at {forkFraction:0.##} of the main notch height; it sits at z {Z(fork):0.###} against {expectedZ:0.###}.");
+            }
+            if (forks < 2)
+                throw new InvalidOperationException($"Nine notches at Branching 2 must build forked trees; {forks} forks found.");
+        }
+
+        // ---- The wide arch refuses one central foot.
+        {
+            var wide = Arch(13, 12.0, 2.0, 1.0);
+            object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 1);
+            int asked = Get<int>(placed, "GroundAsked");
+            int got = Get<int>(placed, "GroundPlaced");
+            if (asked != 1 || got != 0)
+                throw new InvalidOperationException($"A shallow arch twelve wide asked for one foot must fall back to standalone; asked {asked}, placed {got}.");
+            var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
+            object first = tried[0];
+            if (Get<int>(first, "Ground") != 1 || Get<bool>(first, "Feasible") || Get<string>(first, "Rule") != "lean")
+                throw new InvalidOperationException("Level 1 must be recorded as refused on lean.");
+            if (Get<double>(first, "Value") <= maxLean)
+                throw new InvalidOperationException("The refusing lean must exceed the cap.");
+        }
+
+        // ---- The centred foot, odd and even counts.
+        foreach (int count in new[] { 9, 8 })
+        {
+            var arch = Arch(count, 8.0, 15.0, 1.0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 1);
+            if (Get<int>(placed, "GroundPlaced") != 1)
+                throw new InvalidOperationException($"A rise-fifteen arch eight wide holds one central foot; {count} notches fell back.");
+            object built = Get<object>(placed, "Built");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 1)
+                throw new InvalidOperationException($"Ground 1 on one bar is one foot; {feet.Length} built with {count} notches.");
+            double off = Math.Abs(X(nodes[feet[0]]) - 4.0);
+            if (off > 0.08)
+                throw new InvalidOperationException($"The one foot must stand on the span's plan centre within a hundredth of the span; it is {off:0.####} off with {count} notches. This is Param's off-centre foot, refused.");
+        }
+
+        // ---- A held ring: mid-bar anchors cut the bar and are never heads.
+        // Anchors at 0, 3, 5 and 8 on nine notches leave three spans: 1..2,
+        // the single notch 4 between two anchors, and 6..7.
+        {
+            var arch = Arch(9, 8.0, 15.0, 1.0);
+            var held = (arch.Nodes, arch.Bars, new[] { 0, 3, 5, 8 }, arch.Across, arch.Edges);
+            object placed = Run(held, Array.Empty<int[]>(), 1.0, 1, 0);
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (spans.Length != 3)
+                throw new InvalidOperationException($"Anchors at 0, 3, 5 and 8 cut a nine-notch bar into three spans; got {spans.Length}.");
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var headNodes = trees.SelectMany(t => ((int[])Get<object>(t, "Nodes"))).ToArray();
+            if (headNodes.Any(h => h == 0 || h == 3 || h == 5 || h == 8))
+                throw new InvalidOperationException("An anchor is never a head.");
+            if (headNodes.Length != 5)
+                throw new InvalidOperationException($"Five free notches must all be held; {headNodes.Length} heads built.");
+        }
+
+        // ---- A free rim: two bars ending on an anchor-free loop.
+        {
+            // Bar 0 along +x from an anchor at x=-4 to a rim notch at x=-1;
+            // bar 1 along +y from an anchor at y=-4 to a rim notch at y=-1.
+            // The hole's rim is the loop {2, 5, 6}; node 6 is a spare rim node.
+            Array nodes = Array.CreateInstance(point3d, 7);
+            nodes.SetValue(P(-4.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(-2.5, 0.0, 2.0), 1);
+            nodes.SetValue(P(-1.0, 0.0, 3.0), 2);
+            nodes.SetValue(P(0.0, -4.0, 0.0), 3);
+            nodes.SetValue(P(0.0, -2.5, 2.0), 4);
+            nodes.SetValue(P(0.0, -1.0, 3.0), 5);
+            nodes.SetValue(P(1.0, 1.0, 3.0), 6);
+            Array acrossA = Array.CreateInstance(vector3d, 3);
+            Array acrossB = Array.CreateInstance(vector3d, 3);
+            for (int i = 0; i < 3; i++)
+            {
+                acrossA.SetValue(V(0.0, 0.0, -1.0), i);
+                acrossB.SetValue(V(0.0, 0.0, -1.0), i);
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            across.SetValue(acrossA, 0);
+            across.SetValue(acrossB, 1);
+            var net = (nodes, new[] { new[] { 0, 1, 2 }, new[] { 3, 4, 5 } }, new[] { 0, 3 }, across, new[] { (0, 1), (1, 2), (3, 4), (4, 5), (2, 6), (5, 6), (2, 5) });
+            object placed = Run(net, new[] { new[] { 2, 5, 6 } }, 1.5, 1, 0);
+            object? ring = Get<object?>(placed, "RingTree");
+            if (ring is null)
+                throw new InvalidOperationException("Two bars ending on an anchor-free rim must get a ring tree.");
+            object foot = Get<object>(ring, "FixedFoot");
+            if (Math.Abs(X(foot)) > 0.04 || Math.Abs(Y(foot)) > 0.04)
+                throw new InvalidOperationException($"The ring foot is the plan intersection of the end tangents, the origin here within a hundredth of the span; it is at ({X(foot):0.###}, {Y(foot):0.###}).");
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var allHeads = trees.SelectMany(t => (int[])Get<object>(t, "Nodes")).ToArray();
+            if (allHeads.Count(h => h == 2) != 1 || allHeads.Count(h => h == 5) != 1)
+                throw new InvalidOperationException("Each rim notch is held exactly once, by the ring tree.");
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (spans.Any(s => Get<string>(s, "LastKind") != "rim" && Get<string>(s, "FirstKind") != "rim"))
+                throw new InvalidOperationException("Every span on these bars ends at the rim notch.");
+        }
+
+        // ---- A crossing: the shared node is held once, by the lower bar.
+        {
+            Array nodes = Array.CreateInstance(point3d, 9);
+            // Bar 0 along x through the crossing at index 2; bar 1 along y
+            // through the same node.
+            nodes.SetValue(P(-4.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(-2.0, 0.0, 2.0), 1);
+            nodes.SetValue(P(0.0, 0.0, 3.0), 2);
+            nodes.SetValue(P(2.0, 0.0, 2.0), 3);
+            nodes.SetValue(P(4.0, 0.0, 0.0), 4);
+            nodes.SetValue(P(0.0, -4.0, 0.0), 5);
+            nodes.SetValue(P(0.0, -2.0, 2.0), 6);
+            nodes.SetValue(P(0.0, 2.0, 2.0), 7);
+            nodes.SetValue(P(0.0, 4.0, 0.0), 8);
+            Array acrossA = Array.CreateInstance(vector3d, 5);
+            Array acrossB = Array.CreateInstance(vector3d, 5);
+            for (int i = 0; i < 5; i++)
+            {
+                acrossA.SetValue(V(0.0, 0.0, -1.0), i);
+                acrossB.SetValue(V(0.0, 0.0, -1.0), i);
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            across.SetValue(acrossA, 0);
+            across.SetValue(acrossB, 1);
+            var net = (nodes, new[] { new[] { 0, 1, 2, 3, 4 }, new[] { 5, 6, 2, 7, 8 } }, new[] { 0, 4, 5, 8 }, across,
+                new[] { (0, 1), (1, 2), (2, 3), (3, 4), (5, 6), (6, 2), (2, 7), (7, 8) });
+            object placed = Run(net, Array.Empty<int[]>(), 2.0, 1, 1);
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var heads = trees.SelectMany(t => (int[])Get<object>(t, "Nodes")).ToArray();
+            if (heads.Count(h => h == 2) != 1)
+                throw new InvalidOperationException($"The crossing node is held exactly once; it is held {heads.Count(h => h == 2)} times.");
+            object owner = trees.First(t => ((int[])Get<object>(t, "Nodes")).Contains(2));
+            if (Get<int>(owner, "Bar") != 0)
+                throw new InvalidOperationException("The crossing belongs to the lower-indexed bar.");
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (spans.Length != 2)
+                throw new InvalidOperationException($"A crossing does not cut a span: two bars give two spans, got {spans.Length}.");
+            object built = Get<object>(placed, "Built");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (Get<int>(placed, "GroundPlaced") == 1 && feet.Length != 1)
+                throw new InvalidOperationException($"Ground 1 on a cross merges the two midpoint feet into one; {feet.Length} built.");
+        }
+
+        // ---- The segment distance.
+        {
+            double D(double[] a, double[] b, double[] c, double[] d) =>
+                (double)segment.Invoke(null, new[] { P(a[0], a[1], a[2]), P(b[0], b[1], b[2]), P(c[0], c[1], c[2]), P(d[0], d[1], d[2]) })!;
+            if (Math.Abs(D(new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.0, 0.5, 0.0 }, new[] { 1.0, 0.5, 0.0 }) - 0.5) > 1.0e-9)
+                throw new InvalidOperationException("Parallel unit segments half a unit apart are half a unit apart.");
+            if (Math.Abs(D(new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 0.5, -1.0, 0.2 }, new[] { 0.5, 1.0, 0.2 }) - 0.2) > 1.0e-9)
+                throw new InvalidOperationException("A segment crossing over another at height 0.2 is 0.2 away.");
+            if (Math.Abs(D(new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }, new[] { 3.0, 0.0, 0.0 }, new[] { 4.0, 0.0, 0.0 }) - 2.0) > 1.0e-9)
+                throw new InvalidOperationException("Collinear segments two apart are two apart.");
+        }
+
+        // ---- Auto picks the shorter load path where both are feasible.
+        {
+            // A steep, narrow arch: one central foot is feasible and shorter
+            // than five standalone posts leaning out to their own feet.
+            var arch = Arch(5, 3.0, 3.0, 1.0);
+            object placed = Run(arch, Array.Empty<int[]>(), 0.75, 1, -1);
+            if (Get<int>(placed, "GroundAsked") != -1)
+                throw new InvalidOperationException("Auto records GroundAsked as -1.");
+            var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
+            var feasible = tried.Where(t => Get<bool>(t, "Feasible")).ToArray();
+            if (feasible.Length < 2)
+                throw new InvalidOperationException($"This arch must offer at least two feasible levels for Auto to choose between; {feasible.Length} were.");
+            object bestTried = feasible.OrderBy(t => Get<double>(t, "LoadPath")).First();
+            if (Get<int>(placed, "GroundPlaced") != Get<int>(bestTried, "Ground"))
+                throw new InvalidOperationException("Auto must place the feasible level with the least load path.");
+        }
+    }
+
+    private static double AngleDeg(double ax, double ay, double az, double bx, double by, double bz)
+    {
+        double la = Math.Sqrt((ax * ax) + (ay * ay) + (az * az));
+        double lb = Math.Sqrt((bx * bx) + (by * by) + (bz * bz));
+        if (la <= 1.0e-12 || lb <= 1.0e-12)
+            return 0.0;
+        double c = ((ax * bx) + (ay * by) + (az * bz)) / (la * lb);
+        return Math.Acos(Math.Min(Math.Max(c, -1.0), 1.0)) * 180.0 / Math.PI;
     }
 
     private static object Step(string name, Func<object?> call)
