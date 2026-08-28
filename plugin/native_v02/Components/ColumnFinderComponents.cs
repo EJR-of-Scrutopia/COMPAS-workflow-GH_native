@@ -1202,6 +1202,10 @@ namespace Ananke.COMPAS.Native.Components
                     + "supports about a fifth of its length in from each end, and "
                     + "every arrangement of notches was tried. Bar stiffness is "
                     + "not asked for because it cancels out of that comparison."));
+            d.Add(ResultDiagnostics.Entry(S, "columns.principal_source", "info",
+                "principal lines came from the contract, resolved upstream by "
+                    + "Pattern or Supports; nothing was re-matched here.",
+                bars.Count, unit: "bars"));
 
             if (symmetricBars == bars.Count)
             {
@@ -1274,17 +1278,16 @@ namespace Ananke.COMPAS.Native.Components
                 context: ResultDiagnostics.Context(
                     ("branches", branches.ToString(CultureInfo.InvariantCulture)),
                     ("fork_percent", Inv(forkPct, "0")))));
-            if (branches > 0)
-            {
-                d.Add(ResultDiagnostics.Entry(S, "columns.branches", "info",
-                    $"Branches {branches}: each column reaches {branches} further "
+            d.Add(ResultDiagnostics.Entry(S, "columns.branches", "info",
+                branches <= 0
+                    ? "Branches 0: each column carries only its own notch."
+                    : $"Branches {branches}: each column reaches {branches} further "
                         + "notch(es) along its own principal line, never past a "
                         + $"neighbour, and forks at {forkPct:0}% of its height. "
                         + "The fork height is an ARCHITECTURAL choice: near "
                         + "vertical the statics are degenerate and would run the "
                         + "fork to the foot and give a fan.",
-                    branches, unit: "branches"));
-            }
+                branches, unit: "branches"));
 
             if (headLoad.Count > 0)
             {
