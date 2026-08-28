@@ -111,8 +111,9 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddLineParameter(
                 "Columns",
                 "CO",
-                "The columns, if the state came from Column Finder. Column "
-                    + "Force and Thrust align with this.",
+                "The columns from the Result's Mould block, at the frame it carries "
+                    + "if it has one and at the built state otherwise. Column Force, "
+                    + "Thrust and Lean align with this.",
                 GH_ParamAccess.list);
             parameters.AddNumberParameter(
                 "Column Force",
@@ -127,8 +128,9 @@ namespace Ananke.COMPAS.Native.Components
                     + "member reads zero. Aligned with Columns, so a tree "
                     + "branch reports its own horizontal too; only the members "
                     + "STANDING ON THE GROUND put theirs into the foundation, "
-                    + "and the Report sums those alone. A branch's horizontal "
-                    + "is balanced at its junction by its siblings.",
+                    + "and the monitor.thrust_into_ground diagnostic sums those "
+                    + "alone. A branch's horizontal is balanced at its junction "
+                    + "by its siblings.",
                 GH_ParamAccess.list);
             parameters.AddPointParameter(
                 "Anchors",
@@ -210,7 +212,6 @@ namespace Ananke.COMPAS.Native.Components
                 var principal = new HashSet<int>(runs.SelectMany(r => r));
                 var anchors = new HashSet<int>(
                     equilibrium.ResolvedSupportNodeIds.Where(i => i >= 0 && i < n));
-                double ground = mould?.Ground ?? MouldGeometry.GroundLevel(v, anchors);
 
                 var cables = new List<Line>();
                 var cableForce = new List<double>();
