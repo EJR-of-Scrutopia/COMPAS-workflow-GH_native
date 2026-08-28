@@ -64,6 +64,7 @@ public sealed record MouldColumnsDto
 
     public int Branching { get; init; } = 1;
 
+    /// <summary>The Ground level asked for; -1 is Auto.</summary>
     public int GroundAsked { get; init; }
 
     /// <summary>Equal to GroundAsked unless a fallback was recorded.</summary>
@@ -127,8 +128,8 @@ public sealed record MouldColumnsDto
 
         if (Branching < 1)
             errors.Add($"{label}.branching must be at least 1.");
-        if (GroundAsked < 0)
-            errors.Add($"{label}.groundAsked cannot be negative.");
+        if (GroundAsked < -1)
+            errors.Add($"{label}.groundAsked cannot be below -1 (Auto).");
         if (GroundPlaced < 0)
             errors.Add($"{label}.groundPlaced cannot be negative.");
         if (!ContractRules.IsFinite(ForkFraction) || ForkFraction < 0.0 || ForkFraction > 1.0)

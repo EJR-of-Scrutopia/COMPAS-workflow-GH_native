@@ -180,16 +180,6 @@ namespace Ananke.COMPAS.Native.Components
                         + "in that order.",
                     wants, total / 2.0, "nodes"));
             }
-            DiagnosticDto? raised = result.Diagnostics.FirstOrDefault(x => x.Code == "columns.forks_raised");
-            if (raised?.Value is double forks && forks > 0)
-            {
-                d.Add(ResultDiagnostics.Entry(S, "diagnose.forks_raised", "info",
-                    $"{forks:0} fork(s) were lifted above the Fork setting to keep "
-                        + "their trunks within the lean limit. If that shape is "
-                        + "unwanted, raise Type so each foot carries fewer columns, "
-                        + "or move the feet apart.",
-                    forks, unit: "forks"));
-            }
             return d;
         }
 

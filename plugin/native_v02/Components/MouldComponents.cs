@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -1655,6 +1655,22 @@ namespace Ananke.COMPAS.Native.Components
         /// </summary>
         public const double MaxLeanDegrees = 60.0;
 
+        /// <summary>
+        /// How far a member stands off vertical, in degrees.
+        ///
+        /// Measured from the two ends rather than from a force, because this
+        /// is the question the sliding joint asks: not "is the column on its
+        /// line of thrust" but "can the mechanism reach this angle".
+        /// </summary>
+        public static double LeanFromVertical(Point3d foot, Point3d top)
+        {
+            double rise = top.Z - foot.Z;
+            double reach = Math.Sqrt(PlanDistanceSquared(foot, top));
+            if (rise <= 1.0e-9)
+                return reach <= 1.0e-9 ? 0.0 : 90.0;
+            return Math.Atan2(reach, rise) * 180.0 / Math.PI;
+        }
+
         public static long EdgeKey(int a, int b) =>
             a < b
                 ? ((long)a << 32) | (uint)b
@@ -1785,119 +1801,6 @@ namespace Ananke.COMPAS.Native.Components
                 mainNotch.X - (along * mainAim.X),
                 mainNotch.Y - (along * mainAim.Y),
                 mainNotch.Z - (along * mainAim.Z));
-        }
-
-        /// <summary>
-        /// Where a column forks, solved from the forces rather than set.
-        ///
-        /// Each notch the column reaches wants its branch to run along its own
-        /// line of thrust, which puts the fork somewhere on the ray dropping
-        /// from that notch along that line. With more than one notch those rays
-        /// do not meet in general, so the fork goes where they come CLOSEST:
-        /// the point minimising the force-weighted squared distance to every
-        /// ray at once. That is a three-by-three solve, and it is what makes
-        /// the fork height a consequence of the load rather than a number
-        /// somebody picked.
-        ///
-        /// A branch that pulls its notch DOWN has no thrust line to stand on,
-        /// so it contributes as a plumb one, which is the same fallback the
-        /// arms use.
-        /// </summary>
-        public static Point3d ForkPoint(
-            List<Point3d> reach,
-            List<Vector3d> pushes,
-            double ground)
-        {
-            // Sum of w * (I - d d^T) for each ray, and the matching right side.
-            var a = new double[3, 3];
-            var rhs = new double[3];
-            for (int i = 0; i < reach.Count; i++)
-            {
-                Vector3d push = pushes[i];
-                double weight = push.Length;
-                if (weight <= 1.0e-12)
-                    continue;
-                Vector3d d = AimFrom(-push);
-                double[] u = { d.X, d.Y, d.Z };
-                double[] p = { reach[i].X, reach[i].Y, reach[i].Z };
-                for (int r = 0; r < 3; r++)
-                {
-                    for (int s = 0; s < 3; s++)
-                    {
-                        double m = (r == s ? 1.0 : 0.0) - (u[r] * u[s]);
-                        a[r, s] += weight * m;
-                        rhs[r] += weight * m * p[s];
-                    }
-                }
-            }
-
-            if (!Solve3(a, rhs, out double x, out double y, out double z))
-            {
-                // Degenerate, which means every branch is parallel: the rays
-                // never converge, so drop straight below the load centre.
-                double sw = 0.0;
-                double sx = 0.0;
-                double sy = 0.0;
-                double lowest = double.MaxValue;
-                for (int i = 0; i < reach.Count; i++)
-                {
-                    double w = Math.Max(pushes[i].Length, 1.0e-9);
-                    sx += reach[i].X * w;
-                    sy += reach[i].Y * w;
-                    sw += w;
-                    lowest = Math.Min(lowest, reach[i].Z);
-                }
-                return new Point3d(sx / sw, sy / sw, lowest);
-            }
-
-            // A fork stands UNDER the notches it carries and ABOVE the floor.
-            double ceiling = reach.Min(p => p.Z);
-            return new Point3d(
-                x, y, Math.Min(Math.Max(z, ground), ceiling));
-        }
-
-        /// <summary>Gaussian elimination on three unknowns.</summary>
-        public static bool Solve3(
-            double[,] a, double[] b, out double x, out double y, out double z)
-        {
-            x = 0.0;
-            y = 0.0;
-            z = 0.0;
-            var m = new double[3, 4];
-            for (int r = 0; r < 3; r++)
-            {
-                for (int c = 0; c < 3; c++)
-                    m[r, c] = a[r, c];
-                m[r, 3] = b[r];
-            }
-            for (int col = 0; col < 3; col++)
-            {
-                int pivot = col;
-                for (int r = col + 1; r < 3; r++)
-                {
-                    if (Math.Abs(m[r, col]) > Math.Abs(m[pivot, col]))
-                        pivot = r;
-                }
-                if (Math.Abs(m[pivot, col]) < 1.0e-9)
-                    return false;
-                if (pivot != col)
-                {
-                    for (int c = 0; c < 4; c++)
-                        (m[col, c], m[pivot, c]) = (m[pivot, c], m[col, c]);
-                }
-                for (int r = 0; r < 3; r++)
-                {
-                    if (r == col)
-                        continue;
-                    double factor = m[r, col] / m[col, col];
-                    for (int c = col; c < 4; c++)
-                        m[r, c] -= factor * m[col, c];
-                }
-            }
-            x = m[0, 3] / m[0, 0];
-            y = m[1, 3] / m[1, 1];
-            z = m[2, 3] / m[2, 2];
-            return true;
         }
 
         /// <summary>
@@ -2045,7 +1948,7 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// The built columns as the block the Result carries.
         ///
-        /// Welds exactly as BuildColumnTree does, but KEEPS THE FORCE ALIGNED:
+        /// Welds the members into shared nodes, and KEEPS THE FORCE ALIGNED:
         /// a zero-length line is skipped together with its force rather than
         /// leaving the forces one ahead of the members from that point on.
         /// Heads name the net vertex under them by nearest point in plan,
@@ -2123,7 +2026,12 @@ namespace Ananke.COMPAS.Native.Components
                     .Select(h => NearestNodeInPlan(nodes[h], netNodes))
                     .ToArray(),
                 Branching = Math.Max(branching, 1),
-                GroundAsked = Math.Max(groundAsked, 0),
+                // -1 is Auto, which spec 3.8 requires the block to carry and
+                // the contract now allows. Clamping it to 0 made a block
+                // built by Auto indistinguishable from one the author asked
+                // Ground 0 for, so the relaxed contract could never be
+                // exercised by the production path.
+                GroundAsked = Math.Max(groundAsked, -1),
                 GroundPlaced = Math.Max(groundPlaced, 0),
                 ForkFraction = Math.Min(Math.Max(forkFraction, 0.0), 1.0),
                 ForksRaised = Math.Max(forksRaised, 0),
@@ -2222,42 +2130,6 @@ namespace Ananke.COMPAS.Native.Components
                     tree.Feet.Add(i);
             }
             return tree;
-        }
-
-        public static ColumnTree BuildColumnTree(
-            IReadOnlyList<Line> columns,
-            double weldTolerance)
-        {
-            var tree = new ColumnTree();
-            double squared = weldTolerance * weldTolerance;
-
-            int Weld(Point3d point)
-            {
-                for (int i = 0; i < tree.Nodes.Count; i++)
-                {
-                    if (tree.Nodes[i].DistanceToSquared(point) <= squared)
-                        return i;
-                }
-                tree.Nodes.Add(point);
-                return tree.Nodes.Count - 1;
-            }
-
-            foreach (Line member in columns)
-            {
-                if (member.Length <= 1.0e-9)
-                    continue;
-                // Lower end first, which is the invariant Column Finder keeps.
-                Point3d lower = member.From.Z <= member.To.Z
-                    ? member.From : member.To;
-                Point3d upper = member.From.Z <= member.To.Z
-                    ? member.To : member.From;
-                int a = Weld(lower);
-                int b = Weld(upper);
-                if (a != b)
-                    tree.Members.Add((a, b));
-            }
-
-            return TreeFromPairs(tree.Nodes.ToList(), tree.Members.ToList());
         }
 
         /// <summary>
