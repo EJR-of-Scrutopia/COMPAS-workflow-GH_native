@@ -118,7 +118,7 @@ internal static class Program
                     "Supports",
                     "Supports",
                     "01 Model",
-                    new[] { "PAT", "A", "Tol", "RB" },
+                    new[] { "PAT", "A", "Tol" },
                     new[] { "SUP" }),
                 ["Ananke.COMPAS.Native.Components.LoadsComponent"] = (
                     "Loads",

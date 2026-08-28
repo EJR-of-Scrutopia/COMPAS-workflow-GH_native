@@ -378,7 +378,6 @@ public sealed class PatternComponent : NativePreviewComponentBase
 public sealed class SupportsComponent : NativePreviewComponentBase
 {
     private readonly List<Line> _previewEdges = new();
-    private readonly List<Line> _previewPrincipal = new();
     private readonly List<Point3d> _previewSupports = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
@@ -422,18 +421,7 @@ public sealed class SupportsComponent : NativePreviewComponentBase
             "Optional maximum anchor-to-node snapping distance. Empty uses " +
             "the Pattern weld tolerance.",
             GH_ParamAccess.item);
-        parameters.AddIntegerParameter(
-            "Ribs",
-            "RB",
-            "How many principal lines to derive per anchor strip, when the " +
-            "Pattern carries none of its own. One takes the midpoint of each " +
-            "strip and runs straight off it across the form, which is how " +
-            "these lines are found in practice; more spread that many starts " +
-            "evenly along each strip. Zero derives none.",
-            GH_ParamAccess.item,
-            1);
         parameters[2].Optional = true;
-        parameters[3].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -451,7 +439,6 @@ public sealed class SupportsComponent : NativePreviewComponentBase
     {
         base.BeforeSolveInstance();
         _previewEdges.Clear();
-        _previewPrincipal.Clear();
         _previewSupports.Clear();
         _clippingBox = BoundingBox.Empty;
     }
@@ -469,8 +456,6 @@ public sealed class SupportsComponent : NativePreviewComponentBase
         }
         data.GetDataList(1, anchors);
         bool hasTolerance = data.GetData(2, ref snapTolerance);
-        int ribs = 1;
-        data.GetData(3, ref ribs);
 
         try
         {
@@ -531,13 +516,6 @@ public sealed class SupportsComponent : NativePreviewComponentBase
                 Color.FromArgb(85, 90, 95),
                 1);
         }
-        foreach (Line bar in _previewPrincipal)
-        {
-            args.Display.DrawLine(
-                bar,
-                TnaWorkflowPreview.PrincipalColour,
-                TnaWorkflowPreview.PrincipalWeight);
-        }
         foreach (Point3d point in _previewSupports)
         {
             args.Display.DrawPoint(
@@ -554,9 +532,6 @@ public sealed class SupportsComponent : NativePreviewComponentBase
     {
         _previewEdges.Clear();
         _previewEdges.AddRange(TnaWorkflowPreview.TopologyLines(topology));
-        _previewPrincipal.Clear();
-        _previewPrincipal.AddRange(
-            TnaWorkflowPreview.TopologyPrincipalLines(topology));
         _previewSupports.Clear();
         _previewSupports.AddRange(
             nodeIds.Select(id => TnaWorkflowPreview.Point(topology.Vertices[id])));
@@ -615,7 +590,6 @@ public sealed class SupportsComponent : NativePreviewComponentBase
 public sealed class LoadsComponent : NativePreviewComponentBase
 {
     private readonly List<Line> _previewArrows = new();
-    private readonly List<Line> _previewPrincipal = new();
     private BoundingBox _clippingBox = BoundingBox.Empty;
 
     public LoadsComponent()
@@ -773,23 +747,11 @@ public sealed class LoadsComponent : NativePreviewComponentBase
     {
         base.BeforeSolveInstance();
         _previewArrows.Clear();
-        _previewPrincipal.Clear();
         _clippingBox = BoundingBox.Empty;
     }
 
     protected override void DrawVisibleViewportWires(IGH_PreviewArgs args)
     {
-        // The bars are drawn here even though the net is not: an arrow that
-        // lands on a notch is carried straight into a column, and one that
-        // lands mid-bay is carried by the cables. Without the bars there is
-        // nothing on screen to tell those apart.
-        foreach (Line bar in _previewPrincipal)
-        {
-            args.Display.DrawLine(
-                bar,
-                TnaWorkflowPreview.PrincipalColour,
-                TnaWorkflowPreview.PrincipalWeight);
-        }
         foreach (Line arrow in _previewArrows)
             args.Display.DrawArrow(arrow, Color.FromArgb(238, 135, 35));
     }
@@ -806,9 +768,6 @@ public sealed class LoadsComponent : NativePreviewComponentBase
         Point3Dto factored)
     {
         _previewArrows.Clear();
-        _previewPrincipal.Clear();
-        _previewPrincipal.AddRange(
-            TnaWorkflowPreview.TopologyPrincipalLines(topology));
         var vector = new Vector3d(factored.X, factored.Y, factored.Z);
         double magnitude = vector.Length;
         if (magnitude <= 1.0e-12 || topology.Vertices.Count == 0)
@@ -831,8 +790,7 @@ public sealed class LoadsComponent : NativePreviewComponentBase
             : Enumerable.Range(0, topology.Vertices.Count);
         foreach (int id in targets)
             _previewArrows.Add(new Line(points[id] - offset, points[id]));
-        _clippingBox = TnaWorkflowPreview.Box(
-            _previewArrows.Concat(_previewPrincipal));
+        _clippingBox = TnaWorkflowPreview.Box(_previewArrows);
     }
 
     private static void EnsureValid(ContractDto contract)
