@@ -88,10 +88,11 @@ internal static class Program
                         "Reaction Points",
                         "Reaction Vectors",
                         "Residuals",
-                        "Diagnostics",
-                        "Report",
+                        "Columns",
+                        "Heads",
                         "Face Polylines",
-                        "Face Courses"
+                        "Face Courses",
+                        "Feet"
                     })
             };
     private static readonly IReadOnlyDictionary<
@@ -337,10 +338,10 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (parameterTypes.Length != 13)
+        if (parameterTypes.Length != 12)
         {
             failures.Add(
-                $"Expected 13 public persistent contract parameters, found " +
+                $"Expected 12 public persistent contract parameters, found " +
                 $"{parameterTypes.Length}.");
         }
         Console.WriteLine($"Parameters discovered: {parameterTypes.Length}");
@@ -570,7 +571,7 @@ internal static class Program
             Console.WriteLine(
                 "PASS  EI separation: the arms come out IDENTICAL over six "
                 + "orders of magnitude of stiffness, which is why EI is asked "
-                + "for on Stress Analysis and nowhere else; and the deflection "
+                + "for on Monitor and nowhere else; and the deflection "
                 + "scales exactly as one over EI, which is what lets that one "
                 + "number turn the placement's shape into millimetres. Lean "
                 + "from vertical is measured against hand-computed angles.");
@@ -578,6 +579,80 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"EI separation: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMouldContract(plugin);
+            Console.WriteLine(
+                "PASS  Mould contract: one block on the Result carries the "
+                + "built columns and one live frame; counts that must agree "
+                + "are refused when they do not, the block survives the JSON "
+                + "round trip every Goo boundary makes, and a Result without "
+                + "it serialises with no mould key at all.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Mould contract: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDiagnosticsAppend(plugin);
+            Console.WriteLine(
+                "PASS  Diagnostics append: native entries land after the "
+                + "worker's and leave them untouched, a source replaces its "
+                + "own earlier entries instead of piling up, every entry "
+                + "validates, and a non-finite value is dropped rather than "
+                + "written.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Diagnostics append: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateColumnsBlock(plugin);
+            Console.WriteLine(
+                "PASS  Columns block: bare lines become a block whose force "
+                + "stays aligned through welding, whose heads name the net "
+                + "vertex under them, and whose trees are the members on "
+                + "each foot; read back it is the tree Animate walks.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Columns block: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDeconstructColumnTrees(plugin);
+            Console.WriteLine(
+                "PASS  Deconstruct column trees: one branch per tree, every "
+                + "member lower end to upper end, heads and feet per tree, and "
+                + "an absent block gives empty trees rather than an error.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Deconstruct column trees: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDiagnoseRules(plugin);
+            Console.WriteLine(
+                "PASS  Diagnose rules: the cross-checks no single component "
+                + "can make (no principal runs under Columns, a frame with no "
+                + "columns, every anchor isolated, more than half the net "
+                + "wanting to be pushed) fire on Results built to trigger "
+                + "them and stay silent on a clean one; Render prints the "
+                + "worker report last and names the components that have not "
+                + "run.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Diagnose rules: {DescribeException(exception)}");
         }
 
         try
@@ -1317,6 +1392,544 @@ internal static class Program
         return result as IReadOnlyList<string>
             ?? throw new InvalidOperationException(
                 "Validate() returned an unexpected type.");
+    }
+
+    /// <summary>
+    /// The Mould block: one nullable block on the Result that carries the
+    /// built columns and one live frame. Validation is measured on the
+    /// counts that must agree, and the round trip is measured because every
+    /// Goo boundary deep-clones through JSON, so a block that does not
+    /// survive serialisation does not exist.
+    /// </summary>
+    private static void ValidateMouldContract(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        Array Edges(params (int U, int V)[] pairs)
+        {
+            Array array = Array.CreateInstance(edge, pairs.Length);
+            for (int i = 0; i < pairs.Length; i++)
+                array.SetValue(Activator.CreateInstance(edge, pairs[i].U, pairs[i].V), i);
+            return array;
+        }
+        object Equilibrium()
+        {
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "Vertices",
+                Points(P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(3, 0, 0)));
+            return eq;
+        }
+        object Columns(double[] force, int[] headNode)
+        {
+            object c = CreateInstance(columnsType);
+            SetContractProperty(c, columnsType, "Nodes",
+                Points(P(0, 0, 0), P(0, 0, 5), P(3, 0, 0), P(3, 0, 6)));
+            SetContractProperty(c, columnsType, "Members", Edges((0, 1), (2, 3)));
+            SetContractProperty(c, columnsType, "MemberForce", force);
+            SetContractProperty(c, columnsType, "Trees",
+                new int[][] { new[] { 0 }, new[] { 1 } });
+            SetContractProperty(c, columnsType, "Heads", new[] { 1, 3 });
+            SetContractProperty(c, columnsType, "Feet", new[] { 0, 2 });
+            SetContractProperty(c, columnsType, "HeadNode", headNode);
+            SetContractProperty(c, columnsType, "Branching", 1);
+            SetContractProperty(c, columnsType, "ForkFraction", 0.65);
+            return c;
+        }
+        object Frame(int vertexCount, Array? columnNodes)
+        {
+            object f = CreateInstance(frameType);
+            SetContractProperty(f, frameType, "Time", 50.0);
+            SetContractProperty(f, frameType, "Phase", "raise");
+            SetContractProperty(f, frameType, "Lift", 0.5);
+            SetContractProperty(f, frameType, "Sag", 0.5);
+            SetContractProperty(f, frameType, "Vertices",
+                Points(Enumerable.Range(0, vertexCount)
+                    .Select(i => P(i, 0, 1)).ToArray()));
+            SetContractProperty(f, frameType, "ColumnNodes", columnNodes);
+            return f;
+        }
+        object Mould(object? columns, object? frame)
+        {
+            object m = CreateInstance(mouldType);
+            SetContractProperty(m, mouldType, "Ground", 0.0);
+            SetContractProperty(m, mouldType, "Columns", columns);
+            SetContractProperty(m, mouldType, "Frame", frame);
+            return m;
+        }
+        object Result(object mould)
+        {
+            object r = CreateResultDto(resultType, "fd", Equilibrium(), null, null);
+            SetContractProperty(r, resultType, "Mould", mould);
+            return r;
+        }
+
+        // Good: two posts, one frame with live column nodes for all four.
+        object good = Result(Mould(
+            Columns(new[] { 100.0, 200.0 }, new[] { 1, 2 }),
+            Frame(4, Points(P(0, 0, 0), P(0, 0, 4), P(3, 0, 0), P(3, 0, 5)))));
+        RequireNoValidationErrors(good, "Result with a full Mould block");
+
+        RequireValidationErrors(
+            Result(Mould(Columns(new[] { 100.0 }, new[] { 1, 2 }), null)),
+            "MemberForce one short of Members");
+        RequireValidationErrors(
+            Result(Mould(Columns(new[] { 100.0, 200.0 }, new[] { 1, 99 }), null)),
+            "HeadNode outside the net");
+        RequireValidationErrors(
+            Result(Mould(null, Frame(3, null))),
+            "Frame with the wrong vertex count");
+        RequireValidationErrors(
+            Result(Mould(null, Frame(4, Points(P(0, 0, 0))))),
+            "ColumnNodes present with Columns absent");
+
+        // Round trip through the same serialiser every Goo boundary uses.
+        Type json = RequireContractType(plugin, "ContractJson");
+        MethodInfo serialize = json.GetMethod("Serialize")!.MakeGenericMethod(resultType);
+        MethodInfo deserialize = json.GetMethod("Deserialize")!.MakeGenericMethod(resultType);
+        string text = (string)serialize.Invoke(null, new[] { good })!;
+        if (!text.Contains("\"mould\"", StringComparison.Ordinal) ||
+            !text.Contains("\"headNode\"", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A Result with a Mould block must serialise its mould and headNode keys.");
+        }
+        object back = deserialize.Invoke(null, new object[] { text })!;
+        RequireNoValidationErrors(back, "Round-tripped Result with Mould");
+        object mouldBack = resultType.GetProperty("Mould")!.GetValue(back)
+            ?? throw new InvalidOperationException("Mould was lost in the round trip.");
+        object columnsBack = mouldType.GetProperty("Columns")!.GetValue(mouldBack)
+            ?? throw new InvalidOperationException("Mould.Columns was lost in the round trip.");
+        int members = ((ICollection)columnsType.GetProperty("Members")!.GetValue(columnsBack)!).Count;
+        if (members != 2)
+            throw new InvalidOperationException($"Two members went in and {members} came back.");
+        int trees = ((ICollection)columnsType.GetProperty("Trees")!.GetValue(columnsBack)!).Count;
+        int[] headNode = ((IEnumerable)columnsType.GetProperty("HeadNode")!.GetValue(columnsBack)!).Cast<int>().ToArray();
+        object frameBack = mouldType.GetProperty("Frame")!.GetValue(mouldBack)
+            ?? throw new InvalidOperationException("Mould.Frame was lost in the round trip.");
+        double time = (double)frameType.GetProperty("Time")!.GetValue(frameBack)!;
+        int columnNodes = ((ICollection)frameType.GetProperty("ColumnNodes")!.GetValue(frameBack)!).Count;
+        if (trees != 2 || !headNode.SequenceEqual(new[] { 1, 2 }) || Math.Abs(time - 50.0) > 1e-12 || columnNodes != 4)
+        {
+            throw new InvalidOperationException(
+                $"The round trip must keep every field: trees {trees}, headNode [{string.Join(",", headNode)}], time {time}, columnNodes {columnNodes}.");
+        }
+
+        // A Result without the block serialises exactly as it always did.
+        string bare = (string)serialize.Invoke(
+            null, new[] { CreateResultDto(resultType, "fd", Equilibrium(), null, null) })!;
+        if (bare.Contains("\"mould\"", StringComparison.Ordinal))
+            throw new InvalidOperationException("A Result with no Mould block must not write a mould key.");
+        RequireNoValidationErrors(
+            deserialize.Invoke(null, new object[] { bare })!,
+            "Old-shape Result JSON with no mould key");
+    }
+
+    /// <summary>
+    /// Native components append diagnostics INTO the Result instead of
+    /// printing a report. The worker's entries stay first and untouched, a
+    /// source's own earlier entries are replaced rather than piled up, and
+    /// every native entry passes DiagnosticDto.Validate, because the worker
+    /// codecs throw on an invalid one and Diagnose must be able to trust the
+    /// list.
+    /// </summary>
+    private static void ValidateDiagnosticsAppend(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type diagnosticType = RequireContractType(plugin, "DiagnosticDto");
+        Type helper = RequireComponentType(plugin, "ResultDiagnostics");
+        MethodInfo entry = RequirePublicStatic(helper, "Entry");
+        MethodInfo replace = RequirePublicStatic(helper, "Replace");
+        MethodInfo sourceOf = RequirePublicStatic(helper, "SourceOf");
+
+        object Worker(string code)
+        {
+            object d = CreateInstance(diagnosticType);
+            SetContractProperty(d, diagnosticType, "Code", code);
+            SetContractProperty(d, diagnosticType, "Severity", "info");
+            SetContractProperty(d, diagnosticType, "Message", "from the worker");
+            SetContractProperty(d, diagnosticType, "Provenance",
+                new Dictionary<string, string> { ["source"] = "COMPAS TNA worker" });
+            return d;
+        }
+        object Native(string code, double? value)
+        {
+            return entry.Invoke(null, new object?[]
+            {
+                "Columns", code, "info", "measured by Columns", value, 60.0, "degrees", null,
+            })!;
+        }
+        Array Typed(params object[] items)
+        {
+            Array array = Array.CreateInstance(diagnosticType, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        IReadOnlyList<object> DiagnosticsOf(object result) =>
+            ((IEnumerable)resultType.GetProperty("Diagnostics")!.GetValue(result)!)
+                .Cast<object>().ToList();
+
+        object workerA = Worker("worker.a");
+        object workerB = Worker("worker.b");
+        object result = CreateResultDto(
+            resultType, "fd", CreateInstance(equilibriumType), null, null);
+        SetContractProperty(result, resultType, "Diagnostics", Typed(workerA, workerB));
+
+        object appended = replace.Invoke(null, new object?[]
+        {
+            result, "Columns",
+            Typed(Native("columns.lean", 12.0), Native("columns.bars", 2.0), Native("columns.force_max", 900.0)),
+        })!;
+        IReadOnlyList<object> all = DiagnosticsOf(appended);
+        if (all.Count != 5)
+            throw new InvalidOperationException($"Two worker plus three native entries is five; got {all.Count}.");
+        if (!ReferenceEquals(all[0], workerA) || !ReferenceEquals(all[1], workerB))
+            throw new InvalidOperationException("The worker's entries must stay first and untouched.");
+        for (int i = 2; i < 5; i++)
+        {
+            RequireNoValidationErrors(all[i], $"native diagnostic {i}");
+            string source = (string)sourceOf.Invoke(null, new[] { all[i] })!;
+            if (source != "Columns")
+                throw new InvalidOperationException($"Native entry {i} has source '{source}', expected 'Columns'.");
+        }
+
+        object replaced = replace.Invoke(null, new object?[]
+        {
+            appended, "Columns", Typed(Native("columns.lean", 15.0)),
+        })!;
+        if (DiagnosticsOf(replaced).Count != 3)
+            throw new InvalidOperationException("Replacing a source's entries must drop its earlier ones, leaving two worker plus one.");
+
+        object nan = Native("columns.foot_drift", double.NaN);
+        if (diagnosticType.GetProperty("Value")!.GetValue(nan) is not null)
+            throw new InvalidOperationException("A non-finite Value must be dropped to null, not written and refused later.");
+    }
+
+    /// <summary>
+    /// The block builder: bare lines in, a block out whose members keep
+    /// their force aligned even though welding drops zero-length lines,
+    /// whose heads name the net vertex under them, and whose trees are the
+    /// members that stand on each foot. Read back into a ColumnTree it is
+    /// the same tree Animate walks today.
+    /// </summary>
+    private static void ValidateColumnsBlock(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo columnsBlock = RequirePublicStatic(geometry, "ColumnsBlock");
+        MethodInfo treeFromBlock = RequirePublicStatic(geometry, "TreeFromBlock");
+        MethodInfo treesByFoot = RequirePublicStatic(geometry, "TreesByFoot");
+
+        Type lineList = columnsBlock.GetParameters()[0].ParameterType;
+        Type line = lineList.GetGenericArguments()[0];
+        Type point3d = columnsBlock.GetParameters()[2].ParameterType.GetElementType()!;
+
+        object Pt(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        Type concreteList = typeof(List<>).MakeGenericType(line);
+        object members = Activator.CreateInstance(concreteList)!;
+        MethodInfo add = concreteList.GetMethod("Add")!;
+        void Member(object from, object to) =>
+            add.Invoke(members, new[] { Activator.CreateInstance(line, from, to) });
+
+        // Tree A: trunk to a fork, two branches. Tree B: one post. The
+        // zero-length line between the trunk and the first branch welds
+        // both ends to the same node and is dropped, along with its
+        // sentinel force, so a naive pass-through would misalign every
+        // force after it.
+        Member(Pt(0, 0, 0), Pt(0, 0, 5));
+        Member(Pt(0, 0, 5), Pt(1, 0, 8));
+        Member(Pt(0, 0, 5), Pt(0, 0, 5));
+        Member(Pt(0, 0, 5), Pt(-1, 0, 8));
+        Member(Pt(10, 0, 0), Pt(10, 0, 6));
+        double[] force = { 300.0, 100.0, 999.0, 100.0, 200.0 };
+
+        Array net = Array.CreateInstance(point3d, 4);
+        net.SetValue(Pt(1, 0, 8), 0);
+        net.SetValue(Pt(-1, 0, 8), 1);
+        net.SetValue(Pt(10, 0, 6), 2);
+        net.SetValue(Pt(5, 0, 0), 3);
+
+        object block = columnsBlock.Invoke(null, new object?[]
+        {
+            members, force, net, 1.0e-6, 2, 0, 0, 0.65, 0,
+        })!;
+        Type blockType = block.GetType();
+        int[] Ints(string name) =>
+            ((IEnumerable)blockType.GetProperty(name)!.GetValue(block)!).Cast<int>().ToArray();
+        double[] Doubles(string name) =>
+            ((IEnumerable)blockType.GetProperty(name)!.GetValue(block)!).Cast<double>().ToArray();
+        int Count(string name) =>
+            ((ICollection)blockType.GetProperty(name)!.GetValue(block)!).Count;
+
+        if (Count("Nodes") != 6 || Count("Members") != 4)
+            throw new InvalidOperationException($"Six nodes and four members; got {Count("Nodes")} and {Count("Members")}.");
+        if (!Doubles("MemberForce").SequenceEqual(new[] { 300.0, 100.0, 100.0, 200.0 }))
+            throw new InvalidOperationException("A dropped member must take its force with it and leave the rest aligned.");
+        if (!Ints("Heads").SequenceEqual(new[] { 2, 3, 5 }))
+            throw new InvalidOperationException($"Heads are the nodes that are only ever an upper end: expected 2,3,5, got {string.Join(",", Ints("Heads"))}.");
+        if (!Ints("Forks").SequenceEqual(new[] { 1 }))
+            throw new InvalidOperationException("The one node that is both a lower and an upper end is the fork.");
+        if (!Ints("Feet").SequenceEqual(new[] { 0, 4 }))
+            throw new InvalidOperationException("Feet are the nodes that are only ever a lower end.");
+        if (!Ints("HeadNode").SequenceEqual(new[] { 0, 1, 2 }))
+            throw new InvalidOperationException($"Each head names the net vertex under it: expected 0,1,2, got {string.Join(",", Ints("HeadNode"))}.");
+        var trees = ((IEnumerable)blockType.GetProperty("Trees")!.GetValue(block)!)
+            .Cast<IEnumerable<int>>().Select(t => t.ToArray()).ToArray();
+        if (trees.Length != 2 || !trees[0].SequenceEqual(new[] { 0, 1, 2 }) || !trees[1].SequenceEqual(new[] { 3 }))
+            throw new InvalidOperationException("Two feet give two trees: members 0,1,2 stand on the first foot and member 3 on the second.");
+
+        object tree = treeFromBlock.Invoke(null, new[] { block })!;
+        Type treeType = tree.GetType();
+        int nodes = ((ICollection)treeType.GetProperty("Nodes")!.GetValue(tree)!).Count;
+        int notches = ((ICollection)treeType.GetProperty("Notches")!.GetValue(tree)!).Count;
+        int feet = ((ICollection)treeType.GetProperty("Feet")!.GetValue(tree)!).Count;
+        if (nodes != 6 || notches != 3 || feet != 2)
+            throw new InvalidOperationException($"Read back, the tree has {nodes} nodes, {notches} notches, {feet} feet; expected 6, 3, 2.");
+        var byFoot = ((IEnumerable)treesByFoot.Invoke(null, new[] { tree })!)
+            .Cast<IEnumerable<int>>().Select(t => t.ToArray()).ToArray();
+        if (byFoot.Length != 2 || byFoot[0].Length != 3 || byFoot[1].Length != 1)
+            throw new InvalidOperationException("TreesByFoot on the read-back tree must give the same two groups.");
+    }
+
+    /// <summary>
+    /// Deconstruct's column trees: one branch per tree in the block's own
+    /// order, every member a line from lower end to upper end, heads and
+    /// feet as points per tree, and an absent block giving empty trees
+    /// rather than an error.
+    /// </summary>
+    private static void ValidateDeconstructColumnTrees(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo columnsBlock = RequirePublicStatic(geometry, "ColumnsBlock");
+        Type deconstruct = RequireComponentType(plugin, "DeconstructComponent");
+        MethodInfo columnTrees = RequireStatic(deconstruct, "ColumnTrees");
+
+        Type lineList = columnsBlock.GetParameters()[0].ParameterType;
+        Type line = lineList.GetGenericArguments()[0];
+        Type point3d = columnsBlock.GetParameters()[2].ParameterType.GetElementType()!;
+        object Pt(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        Type concreteList = typeof(List<>).MakeGenericType(line);
+        object members = Activator.CreateInstance(concreteList)!;
+        MethodInfo add = concreteList.GetMethod("Add")!;
+        // Given upper end FIRST on purpose: the block must still hand back
+        // lower to upper.
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(0, 0, 5), Pt(0, 0, 0)) });
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(0, 0, 5), Pt(1, 0, 8)) });
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(0, 0, 5), Pt(-1, 0, 8)) });
+        add.Invoke(members, new[] { Activator.CreateInstance(line, Pt(10, 0, 0), Pt(10, 0, 6)) });
+        Array net = Array.CreateInstance(point3d, 3);
+        net.SetValue(Pt(1, 0, 8), 0);
+        net.SetValue(Pt(-1, 0, 8), 1);
+        net.SetValue(Pt(10, 0, 6), 2);
+        object block = columnsBlock.Invoke(null, new object?[]
+        {
+            members, new[] { 300.0, 100.0, 100.0, 200.0 }, net, 1.0e-6, 2, 0, 0, 0.65, 0,
+        })!;
+
+        object trees = columnTrees.Invoke(null, new[] { block })!;
+        Type tuple = trees.GetType();
+        var lines = ((IEnumerable)tuple.GetField("Item1")!.GetValue(trees)!)
+            .Cast<IEnumerable>().Select(b => b.Cast<object>().ToArray()).ToArray();
+        var heads = ((IEnumerable)tuple.GetField("Item2")!.GetValue(trees)!)
+            .Cast<IEnumerable>().Select(b => b.Cast<object>().ToArray()).ToArray();
+        var feet = ((IEnumerable)tuple.GetField("Item3")!.GetValue(trees)!)
+            .Cast<IEnumerable>().Select(b => b.Cast<object>().ToArray()).ToArray();
+
+        if (lines.Length != 2 || lines[0].Length != 3 || lines[1].Length != 1)
+            throw new InvalidOperationException("Two trees of three and one members; got " + string.Join("/", lines.Select(b => b.Length)) + ".");
+        foreach (object member in lines.SelectMany(b => b))
+        {
+            object from = line.GetProperty("From")!.GetValue(member)!;
+            object to = line.GetProperty("To")!.GetValue(member)!;
+            double fromZ = (double)point3d.GetProperty("Z")!.GetValue(from)!;
+            double toZ = (double)point3d.GetProperty("Z")!.GetValue(to)!;
+            if (fromZ > toZ)
+                throw new InvalidOperationException("Every column line runs from its lower end to its upper end.");
+        }
+        if (heads[0].Length != 2 || feet[0].Length != 1 || heads[1].Length != 1 || feet[1].Length != 1)
+            throw new InvalidOperationException("Tree 0 has two heads and one foot; tree 1 has one of each.");
+
+        object empty = columnTrees.Invoke(null, new object?[] { null })!;
+        if (((ICollection)empty.GetType().GetField("Item1")!.GetValue(empty)!).Count != 0)
+            throw new InvalidOperationException("No block means empty trees, never an error.");
+    }
+
+    /// <summary>
+    /// Diagnose's cross-checks, the things no single component can see:
+    /// Columns ran on a Result with no principal runs; Animate ran with no
+    /// Columns upstream; every anchor is isolated; more than half the net
+    /// wants pushing up. A clean Result raises nothing.
+    /// </summary>
+    private static void ValidateDiagnoseRules(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type diagnosticType = RequireContractType(plugin, "DiagnosticDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+        Type diagnose = RequireComponentType(plugin, "DiagnoseComponent");
+        MethodInfo crossChecks = RequireStatic(diagnose, "CrossChecks");
+        MethodInfo render = RequireStatic(diagnose, "Render");
+        MethodInfo collect = RequireStatic(diagnose, "Collect");
+
+        object P(double x, double y, double z) => Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        object Equilibrium(int[] supports)
+        {
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "Vertices",
+                Points(P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(3, 0, 0)));
+            SetContractProperty(eq, equilibriumType, "ResolvedSupportNodeIds", supports);
+            return eq;
+        }
+        object Result(int[] supports, object? mould)
+        {
+            object r = CreateResultDto(resultType, "fd", Equilibrium(supports), null, null);
+            SetContractProperty(r, resultType, "Mould", mould);
+            return r;
+        }
+        object Mould(object? columns, object? frame)
+        {
+            object m = CreateInstance(mouldType);
+            SetContractProperty(m, mouldType, "Columns", columns);
+            SetContractProperty(m, mouldType, "Frame", frame);
+            return m;
+        }
+        object Frame(int vertexCount)
+        {
+            object f = CreateInstance(frameType);
+            SetContractProperty(f, frameType, "Vertices",
+                Points(Enumerable.Range(0, vertexCount).Select(i => P(i, 0, 1)).ToArray()));
+            return f;
+        }
+        string[] Codes(object result) =>
+            ((IEnumerable)crossChecks.Invoke(null, new[] { result })!)
+                .Cast<object>()
+                .Select(d => (string)diagnosticType.GetProperty("Code")!.GetValue(d)!)
+                .ToArray();
+        void Expect(object result, string code)
+        {
+            string[] codes = Codes(result);
+            if (!codes.Contains(code))
+                throw new InvalidOperationException($"Expected {code}; got [{string.Join(", ", codes)}].");
+        }
+
+        // Columns block on a Result with no principal runs.
+        object noRuns = Result(Array.Empty<int>(), Mould(ColumnsBlockForRules(plugin), null));
+        Expect(noRuns, "diagnose.no_principal_runs");
+
+        // A frame with no columns upstream.
+        Expect(Result(Array.Empty<int>(), Mould(null, Frame(4))), "diagnose.frame_without_columns");
+
+        // Two anchors and no edges at all: each is its own strip.
+        Expect(Result(new[] { 0, 1 }, null), "diagnose.anchors_all_isolated");
+
+        // 380 of 441 nodes want pushing up, said by Animate.
+        object pushy = Result(Array.Empty<int>(), null);
+        object push = CreateInstance(diagnosticType);
+        SetContractProperty(push, diagnosticType, "Code", "animate.nodes_want_push");
+        SetContractProperty(push, diagnosticType, "Severity", "warning");
+        SetContractProperty(push, diagnosticType, "Message", "380 nodes sit above the bare surface");
+        SetContractProperty(push, diagnosticType, "Value", 380.0);
+        SetContractProperty(push, diagnosticType, "Context", new Dictionary<string, string> { ["total"] = "441" });
+        SetContractProperty(push, diagnosticType, "Provenance", new Dictionary<string, string> { ["source"] = "Animate" });
+        Array one = Array.CreateInstance(diagnosticType, 1);
+        one.SetValue(push, 0);
+        SetContractProperty(pushy, resultType, "Diagnostics", one);
+        Expect(pushy, "diagnose.push_needed");
+
+        // Clean: nothing to say.
+        string[] clean = Codes(Result(Array.Empty<int>(), null));
+        if (clean.Length != 0)
+            throw new InvalidOperationException($"A clean Result raises nothing; got [{string.Join(", ", clean)}].");
+
+        // Forks raised upstream: Diagnose says which lever to pull.
+        object forky = Result(Array.Empty<int>(), null);
+        object raised = CreateInstance(diagnosticType);
+        SetContractProperty(raised, diagnosticType, "Code", "columns.forks_raised");
+        SetContractProperty(raised, diagnosticType, "Severity", "info");
+        SetContractProperty(raised, diagnosticType, "Message", "2 forks were raised");
+        SetContractProperty(raised, diagnosticType, "Value", 2.0);
+        SetContractProperty(raised, diagnosticType, "Provenance", new Dictionary<string, string> { ["source"] = "Columns" });
+        Array oneRaised = Array.CreateInstance(diagnosticType, 1);
+        oneRaised.SetValue(raised, 0);
+        SetContractProperty(forky, resultType, "Diagnostics", oneRaised);
+        Expect(forky, "diagnose.forks_raised");
+
+        // An invalid Result: a frame of three vertices on a net of four, and
+        // no columns, which would ALSO trip frame_without_columns if the
+        // cross-checks ran. They must not: one error entry per validation
+        // failure, and nothing else from Diagnose.
+        object broken = Result(Array.Empty<int>(), Mould(null, Frame(3)));
+        string[] collected = ((IEnumerable)collect.Invoke(null, new[] { broken })!)
+            .Cast<object>()
+            .Select(d => (string)diagnosticType.GetProperty("Code")!.GetValue(d)!)
+            .ToArray();
+        if (!collected.Contains("diagnose.invalid_result"))
+            throw new InvalidOperationException($"An invalid Result must yield diagnose.invalid_result; got [{string.Join(", ", collected)}].");
+        if (collected.Any(c => c.StartsWith("diagnose.", StringComparison.Ordinal) && c != "diagnose.invalid_result"))
+            throw new InvalidOperationException($"Cross-checks must be skipped on an invalid Result; got [{string.Join(", ", collected)}].");
+
+        // Render says the words and prints the worker report last.
+        object rendered = Result(Array.Empty<int>(), null);
+        SetContractProperty(rendered, resultType, "Report", "solver said so");
+        Array none = Array.CreateInstance(diagnosticType, 0);
+        string text = (string)render.Invoke(null, new object[] { rendered, none })!;
+        if (!text.Contains("solver said so", StringComparison.Ordinal))
+            throw new InvalidOperationException("Render must print the worker's Report.");
+        if (!text.Contains("Columns", StringComparison.Ordinal))
+            throw new InvalidOperationException("Render must say which mould components have not run.");
+
+        // An FD Result with no report prints the standing FD line.
+        string fdText = (string)render.Invoke(null, new object[] { Result(Array.Empty<int>(), null), none })!;
+        if (!fdText.Contains("FD result: no reciprocal diagram.", StringComparison.Ordinal))
+            throw new InvalidOperationException("Render must print the FD line when an FD Result carries no report.");
+    }
+
+    private static object ColumnsBlockForRules(Assembly plugin)
+    {
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+        object c = CreateInstance(columnsType);
+        Array nodes = Array.CreateInstance(point, 2);
+        nodes.SetValue(Activator.CreateInstance(point, 0.0, 0.0, 0.0), 0);
+        nodes.SetValue(Activator.CreateInstance(point, 0.0, 0.0, 5.0), 1);
+        Array members = Array.CreateInstance(edge, 1);
+        members.SetValue(Activator.CreateInstance(edge, 0, 1), 0);
+        SetContractProperty(c, columnsType, "Nodes", nodes);
+        SetContractProperty(c, columnsType, "Members", members);
+        SetContractProperty(c, columnsType, "MemberForce", new[] { 100.0 });
+        SetContractProperty(c, columnsType, "Trees", new int[][] { new[] { 0 } });
+        SetContractProperty(c, columnsType, "Heads", new[] { 1 });
+        SetContractProperty(c, columnsType, "Feet", new[] { 0 });
+        SetContractProperty(c, columnsType, "HeadNode", new[] { 0 });
+        return c;
     }
 
     private static Type RequireContractType(Assembly plugin, string typeName)

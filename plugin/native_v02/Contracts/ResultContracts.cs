@@ -26,6 +26,13 @@ public sealed record ResultDto : ContractDto
 
     public string ResultSchema { get; init; } = "0.2";
 
+    /// <summary>
+    /// The envelope version stamped once a Result can carry a Mould block.
+    /// Envelope-only: the global ContractSchema.Current stays where it is,
+    /// because bumping that would invalidate every persisted contract kind.
+    /// </summary>
+    public const string SchemaWithMould = "0.3";
+
     public EquilibriumResultDto? Equilibrium { get; init; }
 
     public TnaControlDto? Control { get; init; }
@@ -54,6 +61,14 @@ public sealed record ResultDto : ContractDto
     /// and Export can recover every upstream input from the result alone.
     /// </summary>
     public ProblemDto? Problem { get; init; }
+
+    /// <summary>
+    /// Everything the mould adds: the built columns from Columns and one
+    /// live frame from Animate. Null until Columns or Animate has run.
+    /// Omitted from the JSON when null, so a Result without it serialises
+    /// exactly as it did before the block existed.
+    /// </summary>
+    public MouldDto? Mould { get; init; }
 
     /// <summary>
     /// The worker's original result payload JSON, exactly as received
@@ -87,6 +102,8 @@ public sealed record ResultDto : ContractDto
             if (ForceGraph is null)
                 errors.Add("forceGraph is missing.");
         }
+
+        Mould?.Validate(Equilibrium?.Vertices.Count ?? 0, "mould", errors);
     }
 }
 

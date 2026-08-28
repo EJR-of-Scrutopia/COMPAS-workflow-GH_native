@@ -35,7 +35,6 @@ public static class ContractKinds
     public const string Problem = "Problem";
     public const string Relaxed = "Relaxed";
     public const string Style = "Style";
-    public const string MouldState = "MouldState";
 }
 
 /// <summary>

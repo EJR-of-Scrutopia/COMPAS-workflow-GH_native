@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
@@ -254,20 +255,9 @@ namespace Ananke.COMPAS.Native.Components
                     + "lies out along its rail instead.",
                 GH_ParamAccess.item,
                 40.0);
-            parameters.AddLineParameter(
-                "Columns",
-                "C",
-                "Optional. The columns from Column Finder, branches and all. "
-                    + "Given them, the animation raises them WITH the net "
-                    + "instead of leaving them at their finished positions: "
-                    + "feet slide along their rails, rams drive out, and forks "
-                    + "are re-solved on every frame so a branching column stays "
-                    + "in equilibrium the whole way up.",
-                GH_ParamAccess.list);
             parameters[1].Optional = true;
             parameters[2].Optional = true;
             parameters[3].Optional = true;
-            parameters[4].Optional = true;
         }
 
         protected override void RegisterOutputParams(
@@ -324,32 +314,25 @@ namespace Ananke.COMPAS.Native.Components
                     + "hole.",
                 GH_ParamAccess.tree);
             parameters.AddParameter(
-                new MouldStateParam(),
-                "State",
-                "S",
-                "This frame bundled for Stress Analysis: geometry, member "
-                    + "forces, which members are bars and which are cables, and "
-                    + "which nodes are notches, anchors and perimeter. Carries "
-                    + "no columns; use Column Finder's State for those.",
-                GH_ParamAccess.item);
-            parameters.AddTextParameter(
-                "Report",
-                "Out",
-                "Which phase of the build this frame is in, the stepper count "
-                    + "and how far the bars have risen, and a warning naming "
-                    + "any node the net cannot reach.",
+                new ResultParam(),
+                "Result",
+                "RES",
+                "The Result this component was given, with this frame written "
+                    + "into its Mould block: time, phase, the live net and the "
+                    + "live column nodes. The built columns travel through "
+                    + "untouched. Wire it to Monitor for the numbers at this "
+                    + "frame and to Diagnose for the words.",
                 GH_ParamAccess.item);
             parameters.AddLineParameter(
                 "Columns",
                 "C",
-                "The columns at THIS frame: foot part way along its slide, "
-                    + "head on the notch wherever the net has got to. Empty "
-                    + "unless columns are wired in. Their lengths are the "
-                    + "extension the struts have to deliver. A TREE with one "
-                    + "branch per COLUMN TREE, that is per foot on the ground, "
+                "The columns at THIS frame: foot part way along its slide, head "
+                    + "on the notch wherever the net has got to. Empty unless the "
+                    + "Result carries columns from Columns upstream. Their lengths "
+                    + "are the extension the struts have to deliver. A TREE with "
+                    + "one branch per COLUMN TREE, that is per foot on the ground, "
                     + "each branch holding that column's trunk and all its "
-                    + "branches together. Column Finder's own outputs are left "
-                    + "flat, so this is grouped here rather than there.",
+                    + "branches together.",
                 GH_ParamAccess.tree);
         }
 
@@ -368,8 +351,8 @@ namespace Ananke.COMPAS.Native.Components
             data.GetData(2, ref preSag);
             double extendPct = 40.0;
             data.GetData(3, ref extendPct);
-            var columnLines = new List<Line>();
-            data.GetDataList(4, columnLines);
+            MouldColumnsDto? columnsBlock = result.Mould?.Columns;
+            bool hasColumns = columnsBlock is not null && columnsBlock.Members.Count > 0;
 
             try
             {
@@ -544,7 +527,7 @@ namespace Ananke.COMPAS.Native.Components
                         z);
                 }
 
-                if (columnLines.Count > 0)
+                if (hasColumns)
                 {
                     var edgeForce = new double[edges.Length];
                     for (int e = 0; e < edges.Length; e++)
@@ -603,58 +586,73 @@ namespace Ananke.COMPAS.Native.Components
                     : 0.0;
                 int wantsPush = relief.Count(r => r > 1e-9);
 
-                var report = new List<string>
+                const string S = "Animate";
+                var entries = new List<DiagnosticDto>
                 {
-                    phase,
-                    string.Empty,
-                    $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
-                        + $"{principalIds.Count} notches",
-                    $"anchors {anchorIds.Count}, perimeter nodes "
-                        + $"{perimeterIds.Length}",
-                    $"ground read as {ground:0.###}, the level the anchors sit "
-                        + "at, which is what the columns stand on",
-                    "principal lines read from the contract, resolved "
-                        + "upstream by Supports or Pattern",
-                    startIsFinal
-                        ? "the pattern this Result carries IS its own solved "
-                            + "shape, so there was nothing to rise from; the "
-                            + $"net starts flat at {ground:0.###} instead"
-                        : fromPattern
-                            ? "starting from the ORIGINAL PATTERN, the plan as "
-                                + "drawn, read off the Result's own Problem, so "
-                                + "frame zero is what Pattern holds"
-                            : "this Result carries no source pattern, so the "
-                                + $"net starts flat at {ground:0.###}, the base "
-                                + "of the solved geometry",
-                    $"net travels from {start.Min(p => p.Z):0.###}/"
-                        + $"{start.Max(p => p.Z):0.###} at frame zero to "
-                        + $"{ground:0.###}/{target.Max(p => p.Z):0.###} at the "
-                        + $"end, reeling {relief.Max(Math.Abs) * 1000.0:0.#} mm "
-                        + "at the deepest node",
-                    $"net draws in {planTravel * 1000.0:0.#} mm in plan as it "
-                        + "reels, which is the whole of phase 1 and is only "
-                        + "visible if the pattern plan and the solved plan "
-                        + "differ",
-                    $"steppers required {principalIds.Count * 2} "
-                        + "(two per notch, one pulling each side)",
-                    $"bars risen {barRise * 1000.0:0.#} mm at this frame",
+                    ResultDiagnostics.Entry(S, "animate.phase", "info", phase,
+                        Math.Min(Math.Max(timePct, 0.0), 100.0), unit: "percent"),
+                    ResultDiagnostics.Entry(S, "animate.counts", "info",
+                        $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
+                            + $"{principalIds.Count} notches; anchors {anchorIds.Count}, "
+                            + $"perimeter nodes {perimeterIds.Length}; "
+                            + $"{principalIds.Count * 2} steppers, two per notch",
+                        n, unit: "nodes",
+                        context: ResultDiagnostics.Context(
+                            ("cables", edges.Length.ToString(CultureInfo.InvariantCulture)),
+                            ("bars", bars.Count.ToString(CultureInfo.InvariantCulture)),
+                            ("notches", principalIds.Count.ToString(CultureInfo.InvariantCulture)),
+                            ("anchors", anchorIds.Count.ToString(CultureInfo.InvariantCulture)),
+                            ("perimeter", perimeterIds.Length.ToString(CultureInfo.InvariantCulture)),
+                            ("steppers", (principalIds.Count * 2).ToString(CultureInfo.InvariantCulture)))),
+                    ResultDiagnostics.Entry(S, "animate.ground", "info",
+                        $"ground read as {ground:0.###}, the level the anchors sit at, "
+                            + "which is what the columns stand on",
+                        ground, unit: "model units"),
+                    ResultDiagnostics.Entry(S, "animate.start", "info",
+                        startIsFinal
+                            ? "the pattern this Result carries IS its own solved shape, "
+                                + "so there was nothing to rise from; the net starts "
+                                + "flat at ground instead"
+                            : fromPattern
+                                ? "starting from the ORIGINAL PATTERN, the plan as "
+                                    + "drawn, read off the Result's own Problem, so "
+                                    + "frame zero is what Pattern holds"
+                                : "this Result carries no source pattern, so the net "
+                                    + "starts flat at ground, the base of the solved "
+                                    + "geometry",
+                        context: ResultDiagnostics.Context(
+                            ("source", startIsFinal ? "final" : fromPattern ? "pattern" : "flat"))),
+                    ResultDiagnostics.Entry(S, "animate.travel", "info",
+                        $"net travels from {start.Min(p => p.Z):0.###}/"
+                            + $"{start.Max(p => p.Z):0.###} at frame zero to "
+                            + $"{ground:0.###}/{target.Max(p => p.Z):0.###} at the end, "
+                            + $"reeling {relief.Max(Math.Abs) * 1000.0:0.#} mm at the "
+                            + "deepest node",
+                        relief.Max(Math.Abs) * 1000.0, unit: "mm"),
+                    ResultDiagnostics.Entry(S, "animate.plan_draw", "info",
+                        $"net draws in {planTravel * 1000.0:0.#} mm in plan as it "
+                            + "reels, which is the whole of phase 1",
+                        planTravel * 1000.0, unit: "mm"),
+                    ResultDiagnostics.Entry(S, "animate.bar_rise", "info",
+                        $"bars risen {barRise * 1000.0:0.#} mm at this frame",
+                        barRise * 1000.0, unit: "mm"),
                 };
                 if (mesh is null)
                 {
-                    report.Add(
-                        "this Result carries no faces, so there is no shaded "
-                            + "surface and the perimeter is read from the net's "
-                            + "topology instead. That is expected for FD.");
+                    entries.Add(ResultDiagnostics.Entry(S, "animate.no_faces", "info",
+                        "this Result carries no faces, so there is no shaded surface "
+                            + "and the perimeter is read from the net's topology "
+                            + "instead. That is expected for FD."));
                 }
                 if (wantsPush > 0)
                 {
-                    report.Add(string.Empty);
-                    report.Add(
-                        $"WARNING: {wantsPush} nodes sit ABOVE the bare surface, "
-                            + "so they are asking to be pushed up. A reel only "
-                            + "pulls down. That is curvature a net cannot make "
-                            + "between the bars, and it needs a mechanism this "
-                            + "machine does not have.");
+                    entries.Add(ResultDiagnostics.Entry(S, "animate.nodes_want_push", "warning",
+                        $"{wantsPush} nodes sit ABOVE the bare surface, so they are "
+                            + "asking to be pushed up. A reel only pulls down. That is "
+                            + "curvature a net cannot make between the bars, and it "
+                            + "needs a mechanism this machine does not have.",
+                        wantsPush, unit: "nodes",
+                        context: ResultDiagnostics.Context(("total", n.ToString(CultureInfo.InvariantCulture)))));
                 }
 
                 // The columns, raised with the net, branches and all.
@@ -688,12 +686,11 @@ namespace Ananke.COMPAS.Native.Components
                 double overRun = 0.0;
                 int belowGround = 0;
 
-                if (columnLines.Count > 0)
+                Point3d[]? liveColumnNodes = null;
+                if (hasColumns)
                 {
-                    double weld = 1.0e-6 * Math.Max(
-                        new BoundingBox(target).Diagonal.Length, 1.0);
                     MouldGeometry.ColumnTree tree =
-                        MouldGeometry.BuildColumnTree(columnLines, weld);
+                        MouldGeometry.TreeFromBlock(columnsBlock!);
 
                     int count = tree.Nodes.Count;
                     var at = new Point3d[count];
@@ -801,6 +798,8 @@ namespace Ananke.COMPAS.Native.Components
                             break;
                     }
 
+                    liveColumnNodes = at;
+
                     // Which foot each node stands on, found by climbing from
                     // every foot through the branches above it. A column tree
                     // is the set of members that share a foot, so this is the
@@ -866,31 +865,35 @@ namespace Ananke.COMPAS.Native.Components
 
                 if (liveColumns.Count > 0)
                 {
-                    report.Add(string.Empty);
-                    report.Add(
+                    entries.Add(ResultDiagnostics.Entry(S, "animate.columns", "info",
                         $"{liveColumns.Count} column members at this frame, "
-                            + $"{shortest:0.###} to {longest:0.###} long, with "
-                            + $"rams worth {extendPct:0}% of built length. "
-                            + "Feet lie out on their rails while retracted, "
-                            + "slide in as the notches rise, then stop and let "
-                            + "the rams finish. Furthest a foot still has to "
-                            + $"slide: {slid:0.###}.");
+                            + $"{shortest:0.###} to {longest:0.###} long, with rams "
+                            + $"worth {extendPct:0}% of built length. Feet lie out on "
+                            + "their rails while retracted, slide in as the notches "
+                            + "rise, then stop and let the rams finish. Furthest a "
+                            + $"foot still has to slide: {slid:0.###}.",
+                        liveColumns.Count, unit: "members",
+                        context: ResultDiagnostics.Context(
+                            ("shortest", shortest.ToString("0.###", CultureInfo.InvariantCulture)),
+                            ("longest", longest.ToString("0.###", CultureInfo.InvariantCulture)),
+                            ("slide_remaining", slid.ToString("0.###", CultureInfo.InvariantCulture)))));
                     if (overRun > 1.0e-9)
                     {
-                        report.Add(
+                        entries.Add(ResultDiagnostics.Entry(S, "animate.column_overrun", "info",
                             $"longest member overshoots its built length by "
-                                + $"{overRun:0.###} at this frame. A fork moves "
-                                + "with its own branches, so a branch can be "
-                                + "asked for more than it finishes at; that is "
-                                + "the reach its own ram needs.");
+                                + $"{overRun:0.###} at this frame. A fork moves with "
+                                + "its own branches, so that is the reach its own ram "
+                                + "needs.",
+                            overRun, unit: "model units"));
                     }
                 }
                 if (belowGround > 0)
                 {
-                    report.Add(
-                        $"{belowGround} column members are not drawn: their "
-                            + "upper end has not cleared the floor yet, so "
-                            + "there is nothing for them to stand under.");
+                    entries.Add(ResultDiagnostics.Entry(S, "animate.below_ground", "info",
+                        $"{belowGround} column members are not drawn: their upper "
+                            + "end has not cleared the floor yet, so there is nothing "
+                            + "for them to stand under.",
+                        belowGround, unit: "members"));
                 }
 
                 Mesh? framed = mesh is null
@@ -946,23 +949,24 @@ namespace Ananke.COMPAS.Native.Components
                 List<List<int>> perimeterLoops =
                     MouldGeometry.ConnectedGroups(perimeterIds, neighbours: grouping);
 
-                report.Add(string.Empty);
-                report.Add(
+                entries.Add(ResultDiagnostics.Entry(S, "animate.anchor_strips", "info",
                     $"anchors grouped into {anchorStrips.Count} "
                         + (anchorStrips.Count == 1 ? "strip" : "strips")
-                        + $" of {string.Join("/", anchorStrips.Select(s => s.Count))}"
-                        + $", perimeter into {perimeterLoops.Count} "
-                        + (perimeterLoops.Count == 1 ? "loop" : "loops"));
-                if (anchorIds.Count > 1 &&
-                    anchorStrips.Count == anchorIds.Count)
+                        + $" of {string.Join("/", anchorStrips.Select(s => s.Count))}, "
+                        + $"perimeter into {perimeterLoops.Count} "
+                        + (perimeterLoops.Count == 1 ? "loop" : "loops"),
+                    anchorStrips.Count, unit: "strips",
+                    context: ResultDiagnostics.Context(
+                        ("loops", perimeterLoops.Count.ToString(CultureInfo.InvariantCulture)))));
+                if (anchorIds.Count > 1 && anchorStrips.Count == anchorIds.Count)
                 {
-                    report.Add(
-                        "WARNING: every anchor came back in a branch of its "
-                            + "own, which means no two anchors are joined in "
-                            + "either the plan or the solved net. Check that "
-                            + "the Result still carries its source Pattern; "
-                            + "without it there is no graph in which a side is "
-                            + "continuous.");
+                    entries.Add(ResultDiagnostics.Entry(S, "animate.anchors_isolated", "warning",
+                        "every anchor came back in a branch of its own, which means "
+                            + "no two anchors are joined in either the plan or the "
+                            + "solved net. Check that the Result still carries its "
+                            + "source Pattern; without it there is no graph in which "
+                            + "a side is continuous.",
+                        anchorStrips.Count, unit: "strips"));
                 }
 
                 data.SetData(0, framed);
@@ -974,13 +978,26 @@ namespace Ananke.COMPAS.Native.Components
                     anchorStrips.Select(strip => strip.Select(i => live[i]))));
                 data.SetDataTree(5, OutputTree.Points(
                     perimeterLoops.Select(loop => loop.Select(i => live[i]))));
-                data.SetData(6, new MouldStateGoo(MouldGeometry.BuildState(
-                    phase, ground, live, edges, edgeSource, equilibrium,
-                    principalIds, anchorIds, perimeterIds,
-                    Array.Empty<Point3d>(), Array.Empty<Point3d>(),
-                    Array.Empty<double>(), bars)));
-                data.SetData(7, string.Join(Environment.NewLine, report));
-                data.SetDataTree(8, OutputTree.Lines(columnBranches));
+                var frame = new MouldFrameDto
+                {
+                    Time = Math.Min(Math.Max(timePct, 0.0), 100.0),
+                    Phase = phase,
+                    Lift = Math.Min(Math.Max(lift, 0.0), 1.0),
+                    Sag = Math.Min(Math.Max(sag, 0.0), 1.0),
+                    Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                    ColumnNodes = liveColumnNodes?
+                        .Select(p => new Point3Dto(p.X, p.Y, p.Z))
+                        .ToArray(),
+                };
+                MouldDto mould = (result.Mould ?? new MouldDto()) with
+                {
+                    Ground = ground,
+                    Frame = frame,
+                };
+                ResultDto output = ResultDiagnostics.Replace(
+                    result with { Mould = mould }, "Animate", entries);
+                data.SetData(6, new ResultGoo(output));
+                data.SetDataTree(7, OutputTree.Lines(columnBranches));
             }
             catch (Exception ex)
             {
@@ -2040,6 +2057,188 @@ namespace Ananke.COMPAS.Native.Components
             return best;
         }
 
+        /// <summary>
+        /// The built columns as the block the Result carries.
+        ///
+        /// Welds exactly as BuildColumnTree does, but KEEPS THE FORCE ALIGNED:
+        /// a zero-length line is skipped together with its force rather than
+        /// leaving the forces one ahead of the members from that point on.
+        /// Heads name the net vertex under them by nearest point in plan,
+        /// which is exact here because every head IS a net vertex.
+        /// </summary>
+        public static MouldColumnsDto ColumnsBlock(
+            IReadOnlyList<Line> members,
+            IReadOnlyList<double> force,
+            Point3d[] netNodes,
+            double weldTolerance,
+            int branching,
+            int groundAsked,
+            int groundPlaced,
+            double forkFraction,
+            int forksRaised)
+        {
+            var nodes = new List<Point3d>();
+            var pairs = new List<(int Lower, int Upper)>();
+            var forces = new List<double>();
+            double squared = weldTolerance * weldTolerance;
+
+            int Weld(Point3d point)
+            {
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    if (nodes[i].DistanceToSquared(point) <= squared)
+                        return i;
+                }
+                nodes.Add(point);
+                return nodes.Count - 1;
+            }
+
+            for (int i = 0; i < members.Count; i++)
+            {
+                Line member = members[i];
+                if (member.Length <= 1.0e-9)
+                    continue;
+                Point3d lower = member.From.Z <= member.To.Z ? member.From : member.To;
+                Point3d upper = member.From.Z <= member.To.Z ? member.To : member.From;
+                int a = Weld(lower);
+                int b = Weld(upper);
+                if (a == b)
+                    continue;
+                pairs.Add((a, b));
+                forces.Add(i < force.Count ? force[i] : 0.0);
+            }
+
+            ColumnTree tree = TreeFromPairs(nodes, pairs);
+            var isLower = new bool[nodes.Count];
+            var isUpper = new bool[nodes.Count];
+            foreach ((int lower, int upper) in pairs)
+            {
+                isLower[lower] = true;
+                isUpper[upper] = true;
+            }
+            var forks = new List<int>();
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (isLower[i] && isUpper[i])
+                    forks.Add(i);
+            }
+
+            return new MouldColumnsDto
+            {
+                Nodes = nodes.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                Members = pairs.Select(p => new EdgeDto(p.Lower, p.Upper)).ToArray(),
+                MemberForce = forces.ToArray(),
+                Trees = TreesByFoot(tree)
+                    .Select(t => (IReadOnlyList<int>)t.ToArray())
+                    .ToArray(),
+                Heads = tree.Notches.ToArray(),
+                Forks = forks.ToArray(),
+                Feet = tree.Feet.ToArray(),
+                HeadNode = tree.Notches
+                    .Select(h => NearestNodeInPlan(nodes[h], netNodes))
+                    .ToArray(),
+                Branching = Math.Max(branching, 1),
+                GroundAsked = Math.Max(groundAsked, 0),
+                GroundPlaced = Math.Max(groundPlaced, 0),
+                ForkFraction = Math.Min(Math.Max(forkFraction, 0.0), 1.0),
+                ForksRaised = Math.Max(forksRaised, 0),
+            };
+        }
+
+        /// <summary>
+        /// The block read back as the tree Animate walks. No welding: the
+        /// block already carries indices.
+        /// </summary>
+        public static ColumnTree TreeFromBlock(MouldColumnsDto block)
+        {
+            var nodes = block.Nodes.Select(p => new Point3d(p.X, p.Y, p.Z)).ToList();
+            var pairs = new List<(int Lower, int Upper)>();
+            foreach (EdgeDto member in block.Members)
+            {
+                if (member.U < 0 || member.U >= nodes.Count ||
+                    member.V < 0 || member.V >= nodes.Count || member.U == member.V)
+                {
+                    continue;
+                }
+                pairs.Add((member.U, member.V));
+            }
+            return TreeFromPairs(nodes, pairs);
+        }
+
+        /// <summary>
+        /// Which members stand on each foot: climb from every foot through
+        /// the nodes above it; a member belongs to the foot its lower end
+        /// stands on. Feet in ascending node order so branch {i} is the same
+        /// tree on every frame. Anything no foot reaches goes in one last
+        /// group rather than vanishing.
+        /// </summary>
+        public static List<List<int>> TreesByFoot(ColumnTree tree)
+        {
+            int count = tree.Nodes.Count;
+            var standsOn = new int[count];
+            for (int i = 0; i < count; i++)
+                standsOn[i] = -1;
+            int[] feet = tree.Feet.Distinct().OrderBy(f => f).ToArray();
+            for (int b = 0; b < feet.Length; b++)
+            {
+                var climb = new Stack<int>();
+                climb.Push(feet[b]);
+                while (climb.Count > 0)
+                {
+                    int at = climb.Pop();
+                    if (at < 0 || at >= count || standsOn[at] >= 0)
+                        continue;
+                    standsOn[at] = b;
+                    foreach (int up in tree.Above[at])
+                        climb.Push(up);
+                }
+            }
+
+            var groups = feet.Select(_ => new List<int>()).ToList();
+            var orphans = new List<int>();
+            for (int m = 0; m < tree.Members.Count; m++)
+            {
+                (int lower, int upper) = tree.Members[m];
+                int owner = standsOn[lower] >= 0 ? standsOn[lower] : standsOn[upper];
+                if (owner >= 0)
+                    groups[owner].Add(m);
+                else
+                    orphans.Add(m);
+            }
+            if (orphans.Count > 0)
+                groups.Add(orphans);
+            return groups;
+        }
+
+        private static ColumnTree TreeFromPairs(
+            List<Point3d> nodes,
+            List<(int Lower, int Upper)> pairs)
+        {
+            var tree = new ColumnTree();
+            tree.Nodes.AddRange(nodes);
+            tree.Members.AddRange(pairs);
+            var above = new List<int>[nodes.Count];
+            for (int i = 0; i < nodes.Count; i++)
+                above[i] = new List<int>();
+            var isLower = new bool[nodes.Count];
+            var isUpper = new bool[nodes.Count];
+            foreach ((int lower, int upper) in pairs)
+            {
+                above[lower].Add(upper);
+                isLower[lower] = true;
+                isUpper[upper] = true;
+            }
+            tree.Above = above;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (isUpper[i] && !isLower[i])
+                    tree.Notches.Add(i);
+                else if (isLower[i] && !isUpper[i])
+                    tree.Feet.Add(i);
+            }
+            return tree;
+        }
+
         public static ColumnTree BuildColumnTree(
             IReadOnlyList<Line> columns,
             double weldTolerance)
@@ -2073,26 +2272,7 @@ namespace Ananke.COMPAS.Native.Components
                     tree.Members.Add((a, b));
             }
 
-            var above = new List<int>[tree.Nodes.Count];
-            for (int i = 0; i < tree.Nodes.Count; i++)
-                above[i] = new List<int>();
-            var isLower = new bool[tree.Nodes.Count];
-            var isUpper = new bool[tree.Nodes.Count];
-            foreach ((int lower, int upper) in tree.Members)
-            {
-                above[lower].Add(upper);
-                isLower[lower] = true;
-                isUpper[upper] = true;
-            }
-            tree.Above = above;
-            for (int i = 0; i < tree.Nodes.Count; i++)
-            {
-                if (isUpper[i] && !isLower[i])
-                    tree.Notches.Add(i);
-                else if (isLower[i] && !isUpper[i])
-                    tree.Feet.Add(i);
-            }
-            return tree;
+            return TreeFromPairs(tree.Nodes.ToList(), tree.Members.ToList());
         }
 
         /// <summary>
@@ -2264,79 +2444,6 @@ namespace Ananke.COMPAS.Native.Components
             {
                 return null;
             }
-        }
-
-        /// <summary>
-        /// Bundle a frame into a MouldState. Member forces come from the
-        /// Result, so they are the forces of the FINAL state whatever frame the
-        /// geometry belongs to; Stress Analysis says as much rather than
-        /// letting the pairing pass unremarked.
-        /// </summary>
-        public static MouldStateDto BuildState(
-            string stage,
-            double ground,
-            Point3d[] live,
-            (int, int)[] edges,
-            int[] edgeSource,
-            EquilibriumResultDto equilibrium,
-            IEnumerable<int> principalIds,
-            IEnumerable<int> anchorIds,
-            IEnumerable<int> perimeterIds,
-            IReadOnlyList<Point3d> columnFoot,
-            IReadOnlyList<Point3d> columnHead,
-            IReadOnlyList<double> columnForce,
-            IReadOnlyList<IReadOnlyList<int>>? principalRuns = null)
-        {
-            var principal = new HashSet<int>(principalIds);
-            var kinds = new string[edges.Length];
-            for (int e = 0; e < edges.Length; e++)
-            {
-                // A member joining two notches of the same bar IS the bar;
-                // everything else is an infill cable the steppers reel.
-                kinds[e] = principal.Contains(edges[e].Item1) &&
-                    principal.Contains(edges[e].Item2)
-                    ? "bar"
-                    : "infill";
-            }
-
-            var forces = new double[edges.Length];
-            var densities = new double[edges.Length];
-            for (int e = 0; e < edges.Length; e++)
-            {
-                // Index by where the edge came from, not by where it ended up.
-                int src = e < edgeSource.Length ? edgeSource[e] : e;
-                forces[e] = src < equilibrium.MemberForces.Count
-                    ? equilibrium.MemberForces[src]
-                    : 0.0;
-                densities[e] = src < equilibrium.ForceDensities.Count
-                    ? equilibrium.ForceDensities[src]
-                    : 0.0;
-            }
-
-            return new MouldStateDto
-            {
-                Stage = stage,
-                Ground = ground,
-                Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
-                Edges = edges.Select(e => new EdgeDto(e.Item1, e.Item2)).ToArray(),
-                PrincipalRuns = principalRuns is null
-                    ? Array.Empty<IReadOnlyList<int>>()
-                    : principalRuns
-                        .Select(run => (IReadOnlyList<int>)run.ToArray())
-                        .ToArray(),
-                MemberForce = forces,
-                ForceDensity = densities,
-                EdgeKind = kinds,
-                PrincipalNodes = principal.OrderBy(i => i).ToArray(),
-                AnchorNodes = anchorIds.OrderBy(i => i).ToArray(),
-                PerimeterNodes = perimeterIds.ToArray(),
-                Reactions = equilibrium.Reactions.ToArray(),
-                ColumnFoot = columnFoot
-                    .Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
-                ColumnHead = columnHead
-                    .Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
-                ColumnForce = columnForce.ToArray(),
-            };
         }
 
         public static Mesh DeformMesh(Mesh source, int[] meshToNode, Point3d[] live)
