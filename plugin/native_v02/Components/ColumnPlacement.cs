@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -195,9 +195,12 @@ namespace Ananke.COMPAS.Native.Components
         /// transverse pull the net hands that notch (MouldGeometry.BarLoads
         /// then BarTransverse). <paramref name="perimeterLoops"/> are the
         /// boundary loops as net vertex lists; an empty array means no rim
-        /// can be detected and no ring tree is placed. <paramref name="netEdges"/>
-        /// are the net's members, for the collision tests.
+        /// can be detected and no ring tree is placed.
         /// <paramref name="groundAsked"/> is 0 to MaxGround, or -1 for Auto.
+        ///
+        /// The net's edges are not taken: spec 3.7's net test is against the
+        /// net's VERTICES, and the edge-proximity rule that used to want them
+        /// was never in the spec.
         /// </summary>
         public static Placement Place(
             Point3d[] nodes,
@@ -205,7 +208,6 @@ namespace Ananke.COMPAS.Native.Components
             int[] anchors,
             Vector3d[][] across,
             int[][] perimeterLoops,
-            (int, int)[] netEdges,
             double ground,
             double medianPlanEdge,
             int branching,
@@ -264,7 +266,7 @@ namespace Ananke.COMPAS.Native.Components
                 int start = Math.Min(groundAsked, MaxGround);
                 for (int level = start; level >= 0; level--)
                 {
-                    Level built = BuildLevel(nodes, placement, bars, anchorSet, netEdges, ground, level, clearance, medianPlanEdge);
+                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
                     placement.Tried.Add(built);
                     if (built.Feasible || level == 0)
                     {
@@ -279,7 +281,7 @@ namespace Ananke.COMPAS.Native.Components
                 Level? best = null;
                 for (int level = MaxGround; level >= 0; level--)
                 {
-                    Level built = BuildLevel(nodes, placement, bars, anchorSet, netEdges, ground, level, clearance, medianPlanEdge);
+                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
                     placement.Tried.Add(built);
                     if (built.Feasible && (best is null || built.LoadPath < best.LoadPath))
                         best = built;
@@ -468,11 +470,9 @@ namespace Ananke.COMPAS.Native.Components
             Placement placement,
             int[][] bars,
             HashSet<int> anchors,
-            (int, int)[] netEdges,
             double ground,
             int level,
-            double clearance,
-            double medianPlanEdge)
+            double clearance)
         {
             var result = new Level { Ground = level };
             List<Tree> trees = placement.Trees;
@@ -584,10 +584,40 @@ namespace Ananke.COMPAS.Native.Components
                     AddMember(result, footNode, mainNode, total, t);
                     continue;
                 }
+                // The fork lies on the segment from the foot to the main
+                // notch, at ForkFraction of the main notch's height (spec
+                // 3.6). The main notch is the tree's INNERMOST, which on an
+                // arch is also its HIGHEST, so at Branching 3 an anchor-end
+                // tree can hold a notch BELOW that height and the branch to
+                // it would run down from the fork. A fork above one of its
+                // own heads is not a tree: the block sorts every member by Z
+                // (MouldGeometry.ColumnsBlock), so such a notch is only ever
+                // a lower end and TreeFromPairs reads it as a FOOT, which
+                // puts a foot in mid-air in Deconstruct, drops the head out
+                // of Monitor's held set and makes Animate drive a held head
+                // down to ground level on the rail. Where the spec's height
+                // would sit at or above the tree's lowest notch the fork is
+                // therefore lowered to ForkFraction of THAT notch's height,
+                // on the same segment. Every ordinary tree, main notch
+                // lowest or the branches above the fork already, is
+                // untouched.
+                double fraction = ForkFraction;
+                double rise = main.Z - footPoint.Z;
+                if (rise > 1.0e-9)
+                {
+                    double lowest = main.Z;
+                    for (int k = 1; k < tree.Nodes.Length; k++)
+                        lowest = Math.Min(lowest, nodes[tree.Nodes[k]].Z);
+                    if (lowest > footPoint.Z &&
+                        footPoint.Z + (ForkFraction * rise) >= lowest)
+                    {
+                        fraction = ForkFraction * (lowest - footPoint.Z) / rise;
+                    }
+                }
                 var fork = new Point3d(
-                    footPoint.X + ((main.X - footPoint.X) * ForkFraction),
-                    footPoint.Y + ((main.Y - footPoint.Y) * ForkFraction),
-                    footPoint.Z + ((main.Z - footPoint.Z) * ForkFraction));
+                    footPoint.X + ((main.X - footPoint.X) * fraction),
+                    footPoint.Y + ((main.Y - footPoint.Y) * fraction),
+                    footPoint.Z + ((main.Z - footPoint.Z) * fraction));
                 int forkNode = AddNode(result.Nodes, fork);
                 AddMember(result, footNode, forkNode, total, t);
                 AddMember(result, forkNode, mainNode, tree.Load[0], t);
@@ -654,7 +684,7 @@ namespace Ananke.COMPAS.Native.Components
             result.WorstAlignment = worstAlign;
             result.WorstBranchOff = worstBranchOff;
             result.PlumbTrees = plumb.Count(p => p);
-            result.Collisions = CountCollisions(result, nodes, anchors, netEdges, clearance, medianPlanEdge);
+            result.Collisions = CountCollisions(result, nodes, anchors, clearance);
             result.LoadPath = 0.0;
             for (int m = 0; m < result.Members.Count; m++)
             {
@@ -696,6 +726,15 @@ namespace Ananke.COMPAS.Native.Components
 
         private static void AddMember(Level level, int lower, int upper, double carried, int tree)
         {
+            // Spec 3.6: every member leaves the engine LOWER END FIRST.
+            // Animate and the block's tree both depend on it, and a caller
+            // handing a fork and a notch cannot always know which of the two
+            // is lower, so the order is settled here rather than trusted.
+            if (level.Nodes[lower].Z > level.Nodes[upper].Z)
+            {
+                (lower, upper) = (upper, lower);
+            }
+
             Point3d a = level.Nodes[lower];
             Point3d b = level.Nodes[upper];
             Vector3d v = b - a;
@@ -773,20 +812,34 @@ namespace Ananke.COMPAS.Native.Components
 
         /// <summary>
         /// Two members that share no end and come closer than the clearance
-        /// collide. A member whose interior comes closer than the clearance
-        /// to a net cable it does not end on, or rises above the nearest
-        /// interior net vertex in plan by more than the clearance, collides
-        /// with the net. Anchors are left out of the height test because
-        /// they sit on the ground and a foot beside one is not through the
-        /// net.
+        /// collide. A member collides with the NET when its interior, sampled
+        /// at 1/8 .. 7/8 of its length, rises above it: a sample whose Z is
+        /// more than the clearance above the Z of the net vertex nearest it
+        /// IN PLAN. That is spec 3.7's net test entire.
+        ///
+        /// It used to be more and less than that at once. It also refused a
+        /// sample within the clearance of any net EDGE the member did not end
+        /// on, a rule the spec does not state, which could refuse a Ground
+        /// level the spec accepts; and it narrowed the height test to
+        /// vertices within half a median plan edge, which let a member rise
+        /// above the net anywhere away from a vertex, and skipped the
+        /// member's own notch, which took the one vertex a near-plumb column
+        /// is actually under out of its own test. Both narrowings are gone.
+        ///
+        /// ANCHORS are still left out, and that is a deliberate, measured
+        /// deviation from the spec's "nearest net vertex": an anchor sits ON
+        /// the ground, and spec 3.5 puts every Ground 0 foot out along the
+        /// AimFrom ray, which on a one-sided bay lands beside or beyond an
+        /// anchor. Counting anchors would make the nearest vertex to that
+        /// trunk's lower samples an anchor at ground level and refuse the
+        /// standalone level spec 3.7 says is never refused. A foot beside an
+        /// anchor is not through the net.
         /// </summary>
         public static int CountCollisions(
             Level level,
             Point3d[] netNodes,
             HashSet<int> anchors,
-            (int, int)[] netEdges,
-            double clearance,
-            double medianPlanEdge)
+            double clearance)
         {
             int collisions = 0;
             int count = level.Members.Count;
@@ -807,14 +860,11 @@ namespace Ananke.COMPAS.Native.Components
 
             int[] interior = Enumerable.Range(0, netNodes.Length)
                 .Where(i => !anchors.Contains(i)).ToArray();
-            double nearBy = 0.5 * medianPlanEdge;
-            double nearBySquared = nearBy * nearBy;
             for (int m = 0; m < count; m++)
             {
                 (int lower, int upper) = level.Members[m];
                 Point3d a = level.Nodes[lower];
                 Point3d b = level.Nodes[upper];
-                int ownNotch = NearestNetNode(b, netNodes);
                 bool hit = false;
                 for (int s = 1; s <= 7 && !hit; s++)
                 {
@@ -823,24 +873,10 @@ namespace Ananke.COMPAS.Native.Components
                         a.X + ((b.X - a.X) * t),
                         a.Y + ((b.Y - a.Y) * t),
                         a.Z + ((b.Z - a.Z) * t));
-                    foreach ((int u, int v) in netEdges)
-                    {
-                        if (u == ownNotch || v == ownNotch)
-                            continue;
-                        if (PointSegmentDistance(p, netNodes[u], netNodes[v]) < clearance)
-                        {
-                            hit = true;
-                            break;
-                        }
-                    }
-                    if (hit)
-                        break;
                     int nearest = -1;
                     double best = double.MaxValue;
                     foreach (int i in interior)
                     {
-                        if (i == ownNotch)
-                            continue;
                         double d2 = MouldGeometry.PlanDistanceSquared(p, netNodes[i]);
                         if (d2 < best)
                         {
@@ -848,8 +884,7 @@ namespace Ananke.COMPAS.Native.Components
                             nearest = i;
                         }
                     }
-                    if (nearest >= 0 && best <= nearBySquared &&
-                        p.Z > netNodes[nearest].Z + clearance)
+                    if (nearest >= 0 && p.Z > netNodes[nearest].Z + clearance)
                     {
                         hit = true;
                     }
@@ -858,22 +893,6 @@ namespace Ananke.COMPAS.Native.Components
                     collisions++;
             }
             return collisions;
-        }
-
-        private static int NearestNetNode(Point3d point, Point3d[] netNodes)
-        {
-            int best = -1;
-            double bestDistance = double.MaxValue;
-            for (int i = 0; i < netNodes.Length; i++)
-            {
-                double d = point.DistanceToSquared(netNodes[i]);
-                if (d < bestDistance)
-                {
-                    bestDistance = d;
-                    best = i;
-                }
-            }
-            return bestDistance <= 1.0e-12 ? best : -1;
         }
 
         /// <summary>Closest distance between two segments.</summary>
@@ -924,16 +943,6 @@ namespace Ananke.COMPAS.Native.Components
             Point3d c1 = p1 + (d1 * s);
             Point3d c2 = p2 + (d2 * t);
             return c1.DistanceTo(c2);
-        }
-
-        private static double PointSegmentDistance(Point3d p, Point3d a, Point3d b)
-        {
-            Vector3d ab = b - a;
-            double len2 = Dot(ab, ab);
-            if (len2 <= 1.0e-18)
-                return p.DistanceTo(a);
-            double t = Clamp(Dot(p - a, ab) / len2);
-            return p.DistanceTo(a + (ab * t));
         }
 
         private static double Clamp(double v) => Math.Min(Math.Max(v, 0.0), 1.0);

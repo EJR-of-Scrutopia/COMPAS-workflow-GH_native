@@ -345,7 +345,6 @@ namespace Ananke.COMPAS.Native.Components
                     anchors.ToArray(),
                     across,
                     loops.Select(l => l.ToArray()).ToArray(),
-                    edges,
                     groundLevel,
                     median,
                     branching,

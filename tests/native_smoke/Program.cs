@@ -572,8 +572,13 @@ internal static class Program
                 + "mid-bar anchors give half-spans and no head; two bars "
                 + "ending on an anchor-free rim get one ring tree at their "
                 + "tangents' plan intersection; a crossing node is held once; "
-                + "the segment distance and the net test refuse what they "
-                + "should; Auto picks the shorter load path.");
+                + "at Branching 3 a branch below the fork still leaves lower "
+                + "end first and no held head becomes a foot in mid-air; "
+                + "CountCollisions refuses two members at half the clearance, "
+                + "passes them at twice, and refuses a member that rises "
+                + "above the nearest net vertex; Auto places Ground 1 where "
+                + "1 and 0 are both feasible and 1 is the shorter load "
+                + "path.");
         }
         catch (Exception exception)
         {
@@ -1736,6 +1741,28 @@ internal static class Program
             .Cast<IEnumerable<int>>().Select(t => t.ToArray()).ToArray();
         if (byFoot.Length != 2 || byFoot[0].Length != 3 || byFoot[1].Length != 1)
             throw new InvalidOperationException("TreesByFoot on the read-back tree must give the same two groups.");
+
+        // Auto is GroundAsked -1 and the block must carry it. The contract
+        // was relaxed to accept -1 and the harness fixture accepts it, but
+        // both exercised a hand-built DTO; the block builder clamped the -1
+        // the component passes to 0, so no Result the production path can
+        // build ever carried it and Auto was indistinguishable from Ground 0
+        // downstream.
+        object auto = columnsBlock.Invoke(null, new object?[]
+        {
+            members, force, net, 1.0e-6, 2, -1, 3, 0.65, 0,
+        })!;
+        Type autoType = auto.GetType();
+        if ((int)autoType.GetProperty("GroundAsked")!.GetValue(auto)! != -1)
+            throw new InvalidOperationException("A block built by Auto must carry GroundAsked -1, not a 0 that reads as Ground 0 asked.");
+        if ((int)autoType.GetProperty("GroundPlaced")!.GetValue(auto)! != 3)
+            throw new InvalidOperationException("GroundPlaced is what was built and is never negative.");
+        object below = columnsBlock.Invoke(null, new object?[]
+        {
+            members, force, net, 1.0e-6, 2, -7, 0, 0.65, 0,
+        })!;
+        if ((int)below.GetType().GetProperty("GroundAsked")!.GetValue(below)! != -1)
+            throw new InvalidOperationException("Anything below -1 clamps to -1, the floor the contract allows.");
     }
 
     /// <summary>
@@ -2290,7 +2317,7 @@ internal static class Program
         {
             return place.Invoke(null, new object?[]
             {
-                net.Nodes, net.Bars, net.Anchors, net.Across, loops, net.Edges, 0.0, median, branching, ground,
+                net.Nodes, net.Bars, net.Anchors, net.Across, loops, 0.0, median, branching, ground,
             })!;
         }
         T Get<T>(object o, string name)
@@ -2356,6 +2383,40 @@ internal static class Program
             }
             if (forks < 2)
                 throw new InvalidOperationException($"Nine notches at Branching 2 must build forked trees; {forks} forks found.");
+        }
+
+        // ---- The same arch at Branching 3, where a tree holds a notch BELOW
+        // 65% of its main notch's height. Group(7,3) gives {1,2,3} with main
+        // 3 at z 4.6875, so the spec's fork height is z 3.047 while bar
+        // position 1 sits at z 2.1875, under it. Two things must hold and
+        // neither did: every member leaves the engine lower end first, and a
+        // node that is only ever a lower end is a FOOT, so it stands on the
+        // ground. The branch used to be emitted (fork, notch) with the notch
+        // below, which made columns.lean read 90 degrees on the canvas, and
+        // once the block sorted it by Z that held head became a foot in
+        // mid-air for Deconstruct, Monitor and Animate alike.
+        {
+            var arch = Arch(9, 8.0, 5.0, 1.0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 3, 0);
+            object built = Get<object>(placed, "Built");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>()
+                .Select(m => ((int)m.GetType().GetField("Item1")!.GetValue(m)!, (int)m.GetType().GetField("Item2")!.GetValue(m)!))
+                .ToArray();
+            if (members.Any(m => Z(nodes[m.Item1]) > Z(nodes[m.Item2]) + 1.0e-9))
+                throw new InvalidOperationException("At Branching 3 a branch running down from the fork must still leave the engine lower end first.");
+            var isLower = new bool[nodes.Length];
+            var isUpper = new bool[nodes.Length];
+            foreach ((int lower, int upper) in members)
+            {
+                isLower[lower] = true;
+                isUpper[upper] = true;
+            }
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                if (isLower[i] && !isUpper[i] && Z(nodes[i]) > 1.0e-9)
+                    throw new InvalidOperationException($"A node that is only ever a lower end is read as a FOOT by the block; this one stands at z {Z(nodes[i]):0.###}, a column head turned into a foot in mid-air. The fork must sit below every notch it serves.");
+            }
         }
 
         // ---- The wide arch refuses one central foot.
@@ -2492,7 +2553,7 @@ internal static class Program
                 throw new InvalidOperationException($"Ground 1 on a cross merges the two midpoint feet into one; {feet.Length} built.");
         }
 
-        // ---- The segment distance.
+        // ---- The segment distance, the primitive under the member rule.
         {
             double D(double[] a, double[] b, double[] c, double[] d) =>
                 (double)segment.Invoke(null, new[] { P(a[0], a[1], a[2]), P(b[0], b[1], b[2]), P(c[0], c[1], c[2]), P(d[0], d[1], d[2]) })!;
@@ -2504,21 +2565,130 @@ internal static class Program
                 throw new InvalidOperationException("Collinear segments two apart are two apart.");
         }
 
+        // ---- The collision RULE, spec 6, on CountCollisions itself. The
+        // segment distance above is only its primitive; nothing used to drive
+        // the rule, so neither the member test nor the net test had ever been
+        // measured and a level could be refused on "collision" untested.
+        {
+            Type levelType = engine.GetNestedType("Level", BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("ColumnPlacement has no Level.");
+            MethodInfo countCollisions = RequirePublicStatic(engine, "CountCollisions");
+
+            object BuildLevel(double[][] points, (int, int)[] pairs)
+            {
+                object level = Activator.CreateInstance(levelType, nonPublic: true)!;
+                object nodeList = levelType.GetField("Nodes")!.GetValue(level)!;
+                MethodInfo addNode = nodeList.GetType().GetMethod("Add")!;
+                foreach (double[] point in points)
+                    addNode.Invoke(nodeList, new[] { P(point[0], point[1], point[2]) });
+                object memberList = levelType.GetField("Members")!.GetValue(level)!;
+                Type pair = memberList.GetType().GetGenericArguments()[0];
+                MethodInfo addMember = memberList.GetType().GetMethod("Add")!;
+                foreach ((int lower, int upper) in pairs)
+                    addMember.Invoke(memberList, new[] { Activator.CreateInstance(pair, lower, upper) });
+                return level;
+            }
+
+            int Collisions(object level, double[][] netVertices, double clearance)
+            {
+                Array netNodes = Array.CreateInstance(point3d, netVertices.Length);
+                for (int i = 0; i < netVertices.Length; i++)
+                    netNodes.SetValue(P(netVertices[i][0], netVertices[i][1], netVertices[i][2]), i);
+                return (int)countCollisions.Invoke(null, new object?[]
+                {
+                    level, netNodes, new HashSet<int>(), clearance,
+                })!;
+            }
+
+            const double clearance = 0.1;
+            var empty = Array.Empty<double[]>();
+            object half = BuildLevel(
+                new[]
+                {
+                    new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+                    new[] { 0.0, 0.05, 0.0 }, new[] { 1.0, 0.05, 0.0 },
+                },
+                new[] { (0, 1), (2, 3) });
+            if (Collisions(half, empty, clearance) != 1)
+                throw new InvalidOperationException("Two parallel members that share no end, at half the clearance, collide.");
+            object twice = BuildLevel(
+                new[]
+                {
+                    new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+                    new[] { 0.0, 0.2, 0.0 }, new[] { 1.0, 0.2, 0.0 },
+                },
+                new[] { (0, 1), (2, 3) });
+            if (Collisions(twice, empty, clearance) != 0)
+                throw new InvalidOperationException("The same two members at twice the clearance do not collide.");
+
+            // The net test: a member whose interior rises above the net
+            // vertex nearest it in plan is through the net. The same member
+            // under a net that passes above it is not.
+            object flat = BuildLevel(
+                new[] { new[] { 0.0, 0.0, 1.0 }, new[] { 2.0, 0.0, 1.0 } },
+                new[] { (0, 1) });
+            if (Collisions(flat, new[] { new[] { 1.0, 0.0, 0.0 } }, clearance) != 1)
+                throw new InvalidOperationException("A member whose midpoint rises above the nearest net vertex collides with the net.");
+            if (Collisions(flat, new[] { new[] { 1.0, 0.0, 5.0 } }, clearance) != 0)
+                throw new InvalidOperationException("A member under the net does not collide with it.");
+        }
+
         // ---- Auto picks the shorter load path where both are feasible.
         {
-            // A steep, narrow arch: one central foot is feasible and shorter
-            // than five standalone posts leaning out to their own feet.
-            var arch = Arch(5, 3.0, 3.0, 1.0);
-            object placed = Run(arch, Array.Empty<int[]>(), 0.75, 1, -1);
+            // Spec 6's case, which the old fixture did not build: Ground 1
+            // and Ground 0 BOTH feasible and Ground 1 the shorter load path,
+            // so Auto places 1.
+            //
+            // A steep narrow arch of three free notches whose transverse
+            // pulls lean OUTWARD. Ground 0 stands each tree on its own
+            // AimFrom foot, which throws the outer feet past the anchors and
+            // lengthens their members; Ground 1 puts one foot on the span
+            // centre, and the three trunks arriving there sum to a vertical
+            // push against a vertical wanted, so alignment passes. Levels 2,
+            // 3 and 4 hand every tree its own plumb foot again, where a
+            // single tilted aim is 35 degrees off its own plumb trunk, past
+            // the 30-degree cap, so they are refused and cannot take the
+            // tie-to-the-higher-level rule off 1.
+            const double tilt = 0.7;
+            Array archNodes = Array.CreateInstance(point3d, 5);
+            Array archAcross = Array.CreateInstance(vector3d, 5);
+            var archEdges = new List<(int, int)>();
+            for (int i = 0; i < 5; i++)
+            {
+                double s = i / 4.0;
+                archNodes.SetValue(P(3.0 * s, 0.0, 3.0 * 4.0 * s * (1.0 - s)), i);
+                double lean = i < 2 ? -tilt : (i > 2 ? tilt : 0.0);
+                archAcross.SetValue(V(lean, 0.0, -1.0), i);
+                if (i > 0)
+                    archEdges.Add((i - 1, i));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(archAcross, 0);
+            var outward = (archNodes, new[] { new[] { 0, 1, 2, 3, 4 } }, new[] { 0, 4 }, across, archEdges.ToArray());
+
+            object placed = Run(outward, Array.Empty<int[]>(), 0.75, 1, -1);
             if (Get<int>(placed, "GroundAsked") != -1)
                 throw new InvalidOperationException("Auto records GroundAsked as -1.");
             var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
-            var feasible = tried.Where(t => Get<bool>(t, "Feasible")).ToArray();
-            if (feasible.Length < 2)
-                throw new InvalidOperationException($"This arch must offer at least two feasible levels for Auto to choose between; {feasible.Length} were.");
-            object bestTried = feasible.OrderBy(t => Get<double>(t, "LoadPath")).First();
-            if (Get<int>(placed, "GroundPlaced") != Get<int>(bestTried, "Ground"))
-                throw new InvalidOperationException("Auto must place the feasible level with the least load path.");
+            object AtLevel(int level) =>
+                tried.FirstOrDefault(t => Get<int>(t, "Ground") == level)
+                ?? throw new InvalidOperationException($"Auto must evaluate every level; {level} is missing.");
+            object one = AtLevel(1);
+            object zero = AtLevel(0);
+            if (!Get<bool>(one, "Feasible"))
+                throw new InvalidOperationException($"Spec 6 wants Ground 1 feasible here; it was refused on {Get<string>(one, "Rule")} at {Get<double>(one, "Value"):0.###}.");
+            if (!Get<bool>(zero, "Feasible"))
+                throw new InvalidOperationException($"Spec 6 wants Ground 0 feasible here; it was refused on {Get<string>(zero, "Rule")} at {Get<double>(zero, "Value"):0.###}.");
+            if (Get<double>(one, "LoadPath") >= Get<double>(zero, "LoadPath"))
+                throw new InvalidOperationException($"Ground 1 must carry the SHORTER load path here; it scores {Get<double>(one, "LoadPath"):0.###} against Ground 0 at {Get<double>(zero, "LoadPath"):0.###}.");
+            if (Get<int>(placed, "GroundPlaced") != 1)
+                throw new InvalidOperationException($"Auto must place Ground 1, the feasible level with the least load path; it placed {Get<int>(placed, "GroundPlaced")}.");
+            foreach (int level in new[] { 2, 3, 4 })
+            {
+                object refused = AtLevel(level);
+                if (Get<bool>(refused, "Feasible") || Get<string>(refused, "Rule") != "alignment")
+                    throw new InvalidOperationException($"Level {level} gives every tree its own plumb foot under a tilted aim and must be refused on alignment; it came back {(Get<bool>(refused, "Feasible") ? "feasible" : Get<string>(refused, "Rule"))}.");
+            }
         }
     }
 

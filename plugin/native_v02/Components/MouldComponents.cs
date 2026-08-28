@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -2026,7 +2026,12 @@ namespace Ananke.COMPAS.Native.Components
                     .Select(h => NearestNodeInPlan(nodes[h], netNodes))
                     .ToArray(),
                 Branching = Math.Max(branching, 1),
-                GroundAsked = Math.Max(groundAsked, 0),
+                // -1 is Auto, which spec 3.8 requires the block to carry and
+                // the contract now allows. Clamping it to 0 made a block
+                // built by Auto indistinguishable from one the author asked
+                // Ground 0 for, so the relaxed contract could never be
+                // exercised by the production path.
+                GroundAsked = Math.Max(groundAsked, -1),
                 GroundPlaced = Math.Max(groundPlaced, 0),
                 ForkFraction = Math.Min(Math.Max(forkFraction, 0.0), 1.0),
                 ForksRaised = Math.Max(forksRaised, 0),
