@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
@@ -75,7 +76,7 @@ namespace Ananke.COMPAS.Native.Components
 
         public ColumnFinderComponent()
             : base(
-                "Column Finder",
+                "Columns",
                 "Columns",
                 "Solve where the column arms stand under the notched bars, and "
                     + "grow them to the ground as posts or branching trees. "
@@ -240,63 +241,18 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
-            parameters.AddLineParameter(
-                "Columns",
-                "C",
-                "The final column members as built lines, each running from its "
-                    + "foot on the ground up to the notch it holds. The line "
-                    + "IS the column, so its direction is the lean the arm has "
-                    + "to stand at. With Trees at 0 there is one straight post "
-                    + "per arm; above 0 these are the branches of each tree. "
-                    + "Force and Angle align with this list.",
-                GH_ParamAccess.list);
-            parameters.AddPointParameter(
-                "Heads",
-                "H",
-                "The top of each column: the notch on the bar that this arm "
-                    + "carries. These are the points the mechanism has to reach, "
-                    + "and they are chosen by solving the bar, not by spacing.",
-                GH_ParamAccess.list);
-            parameters.AddPointParameter(
-                "Feet",
-                "F",
-                "The bottom of each column, on the ground. With Trees at 0 a "
-                    + "foot sits directly under its head; above 0 the feet are "
-                    + "the load-weighted centres of each tree, so there are "
-                    + "fewer of them than there are arms and each one takes a "
-                    + "whole tree's load.",
-                GH_ParamAccess.list);
-            parameters.AddNumberParameter(
-                "Force",
-                "FO",
-                "Axial force along each column, N: what that member actually "
-                    + "carries, for sizing and for testing later. A leaning "
-                    + "column carries MORE than the weight above it, by one "
-                    + "over its vertical cosine, and the surplus is the "
-                    + "horizontal thrust its foot has to resist. No capacity is "
-                    + "assumed anywhere; this is the demand, not a verdict.",
-                GH_ParamAccess.list);
-            parameters.AddNumberParameter(
-                "Angle",
-                "A",
-                "Lean of each column from vertical, degrees. This is the angle "
-                    + "the arm stands at, and the number that decides whether "
-                    + "the sliding joint can reach it. Past about sixty degrees "
-                    + "a column is doing more pushing sideways than holding up.",
-                GH_ParamAccess.list);
             parameters.AddParameter(
-                new MouldStateParam(),
-                "State",
-                "S",
-                "The finished mould bundled for Stress Analysis: the net with "
-                    + "its member forces and node roles, plus the columns and "
-                    + "what each one carries.",
-                GH_ParamAccess.item);
-            parameters.AddTextParameter(
-                "Report",
-                "Out",
-                "How many arms went on each bar and where, what they carry, and "
-                    + "how the load divides between the feet.",
+                new ResultParam(),
+                "Result",
+                "RES",
+                "The Result this component was given, with the built columns "
+                    + "written into its Mould block: every tree node, every "
+                    + "member with the force it carries, which nodes are heads, "
+                    + "forks and feet, and which net vertex each head stands "
+                    + "on. Read the geometry back with Deconstruct (Columns, "
+                    + "Heads, Feet), the numbers with Monitor, and the words "
+                    + "with Diagnose. Wire it into Animate to raise the "
+                    + "columns with the net.",
                 GH_ParamAccess.item);
         }
 
@@ -774,18 +730,8 @@ namespace Ananke.COMPAS.Native.Components
                         Math.Acos(Math.Min(Math.Max(cos, -1.0), 1.0))));
                 }
 
-                data.SetDataList(0, members);
-                data.SetDataList(1, heads);
-                data.SetDataList(2, feet);
-                data.SetDataList(3, force);
-                data.SetDataList(4, angle);
-
                 Mesh? thrust = MouldGeometry.ThrustMeshFromResult(
                     result, out int[] meshToNode);
-                var perimeter = MouldGeometry.PerimeterNodes(
-                    thrust, meshToNode, MouldGeometry.BuildAdjacency(n, edges), n);
-                var footPts = members.Select(m => m.From).ToList();
-                var headPts = members.Select(m => m.To).ToList();
 
                 _previewMesh = thrust;
                 _previewCables.Clear();
@@ -806,16 +752,39 @@ namespace Ananke.COMPAS.Native.Components
                 _clippingBox = TnaWorkflowPreview.Box(
                     _previewCables.Concat(_previewColumns),
                     _previewSupports);
-                data.SetData(5, new MouldStateGoo(MouldGeometry.BuildState(
-                    "final", ground, nodes, edges, edgeSource, equilibrium,
-                    bars.SelectMany(b => b), anchors, perimeter,
-                    footPts, headPts, force, bars)));
-                data.SetData(6, Report(
+
+                // The built columns leave this component ONLY inside the
+                // Result. Deconstruct reads the geometry back, Monitor the
+                // numbers, Diagnose the words; nothing is carried twice.
+                Point3d[] netNodes = nodes.ToArray();
+                double weld = 1.0e-6 * Math.Max(
+                    new BoundingBox(netNodes).Diagonal.Length, 1.0);
+                MouldColumnsDto block = MouldGeometry.ColumnsBlock(
+                    members,
+                    force,
+                    netNodes,
+                    weld,
+                    branching: branches + 1,
+                    groundAsked: columnType,
+                    groundPlaced: columnType,
+                    forkFraction: forkHeight,
+                    forksRaised: forksRaised);
+                ResultDto output = result with
+                {
+                    Mould = new MouldDto
+                    {
+                        Ground = ground,
+                        Columns = block,
+                        Frame = null,
+                    },
+                };
+                output = ResultDiagnostics.Replace(output, "Columns", Diagnostics(
                     bars, armsPerBar, headLoad, members, force, angle, feet,
                     columnType, branches, forkPct, ground, alongToAnchors,
                     acrossToColumns, plumbArms, symmetricBars, symmetryCost,
                     lopsided, centreAdded, footDrift, overlapping, barShape,
                     forksRaised, raisedTo));
+                data.SetData(0, new ResultGoo(output));
             }
             catch (Exception ex)
             {
@@ -1151,7 +1120,10 @@ namespace Ananke.COMPAS.Native.Components
             return Math.Acos(cosine) * 180.0 / Math.PI;
         }
 
-        private static string Report(
+        private static string Inv(double value, string format) =>
+            value.ToString(format, CultureInfo.InvariantCulture);
+
+        private static List<DiagnosticDto> Diagnostics(
             List<List<int>> bars,
             List<int> armsPerBar,
             List<double> headLoad,
@@ -1176,153 +1148,190 @@ namespace Ananke.COMPAS.Native.Components
             int forksRaised,
             double raisedTo)
         {
-            var lines = new List<string>
+            const string S = "Columns";
+            double cap = MouldGeometry.MaxLeanDegrees;
+            var d = new List<DiagnosticDto>
             {
                 overlapping > 0
-                    ? $"WARNING: two principal lines share {overlapping} "
-                        + "notches, so ONE bar is being traced twice and given "
-                        + "two full sets of columns. Nothing below will look "
-                        + "symmetric until that is fixed."
-                    : "each principal line is distinct",
-                string.Join(
-                    Environment.NewLine,
-                    barShape.Select((shape, i) => $"  bar {i}: {shape}")),
+                    ? ResultDiagnostics.Entry(S, "columns.overlap", "warning",
+                        $"two principal lines share {overlapping} notches, so ONE "
+                            + "bar is being traced twice and given two full sets of "
+                            + "columns. Nothing will look symmetric until that is "
+                            + "fixed.",
+                        overlapping, unit: "notches")
+                    : ResultDiagnostics.Entry(S, "columns.overlap", "ok",
+                        "each principal line is distinct", 0.0, unit: "notches"),
+            };
+
+            for (int i = 0; i < barShape.Count; i++)
+            {
+                bool halfLine =
+                    barShape[i].Contains("ONE END", StringComparison.Ordinal) ||
+                    barShape[i].Contains("NOT ANCHORED", StringComparison.Ordinal);
+                d.Add(ResultDiagnostics.Entry(S, "columns.bar_shape",
+                    halfLine ? "warning" : "info",
+                    $"bar {i}: {barShape[i]}",
+                    context: ResultDiagnostics.Context(("bar", i.ToString(CultureInfo.InvariantCulture)))));
+            }
+
+            d.Add(ResultDiagnostics.Entry(S, "columns.bars", "info",
                 $"{bars.Count} bars, {armsPerBar.Sum()} arms "
                     + $"({string.Join(" + ", armsPerBar)} per bar), "
                     + $"{feet.Count} feet, {members.Count} members",
+                bars.Count, unit: "bars",
+                context: ResultDiagnostics.Context(
+                    ("arms", armsPerBar.Sum().ToString(CultureInfo.InvariantCulture)),
+                    ("feet", feet.Count.ToString(CultureInfo.InvariantCulture)),
+                    ("members", members.Count.ToString(CultureInfo.InvariantCulture)))));
+            d.Add(ResultDiagnostics.Entry(S, "columns.arm_load_total", "info",
                 $"the arms carry {headLoad.Sum():0} N between them, ground read "
                     + $"as {ground:0.###}, the level the anchors sit at",
-                "principal lines came from the contract, resolved upstream",
-                string.Empty,
+                headLoad.Sum(), unit: "N",
+                context: ResultDiagnostics.Context(("ground", Inv(ground, "0.###")))));
+            d.Add(ResultDiagnostics.Entry(S, "columns.load_split", "info",
+                $"of the net's pull on the bars, {alongToAnchors:0} N runs ALONG "
+                    + "them to the anchors, which are this machine's buttresses "
+                    + "because both ends of every bar are tied to the ground. "
+                    + $"The {acrossToColumns:0} N ACROSS them is the columns' to "
+                    + "take, and it sets their lean: each post stands along the "
+                    + "line of the force it carries.",
+                acrossToColumns, unit: "N",
+                context: ResultDiagnostics.Context(("along_to_anchors", Inv(alongToAnchors, "0")))));
+            d.Add(ResultDiagnostics.Entry(S, "columns.placement", "info",
                 "arm positions are SOLVED, not spaced: a loaded bar wants its "
-                    + "supports about a fifth of its length in from each end, "
-                    + "and every arrangement of notches was tried. Bar "
-                    + "stiffness is not asked for because it cancels out of "
-                    + "that comparison.",
-                string.Empty,
-                $"of the net's pull on the bars, {alongToAnchors:0} N runs "
-                    + "ALONG them and goes to the anchors, which are this "
-                    + "machine's buttresses because both ends of every bar are "
-                    + $"tied to the ground. The {acrossToColumns:0} N ACROSS "
-                    + "them is the columns' to take, and it is what sets their "
-                    + "lean: each post stands along the line of the force it "
-                    + "carries, so it works in pure compression and its foot "
-                    + "takes no sideways push it was not given.",
-            };
+                    + "supports about a fifth of its length in from each end, and "
+                    + "every arrangement of notches was tried. Bar stiffness is "
+                    + "not asked for because it cancels out of that comparison."));
 
-            lines.Add(string.Empty);
-            lines.Add(symmetricBars == bars.Count
-                ? $"all {bars.Count} bars read as SYMMETRIC, so their arms are "
-                    + "mirrored. On a discrete bar an asymmetric pair can droop "
-                    + $"less, and here that was worth {symmetryCost * 100:0.#}%; "
-                    + "it is refused, because that gain is the grid straddling "
-                    + "the optimum, not a structural insight, and an arch is "
-                    + "not built lopsided for it."
-                : symmetricBars == 0
-                    ? $"no bar reads as symmetric: the worst is {lopsided * 100:0.#}% "
+            if (symmetricBars == bars.Count)
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "info",
+                    $"all {bars.Count} bars read as SYMMETRIC, so their arms are "
+                        + "mirrored. An asymmetric pair would have drooped "
+                        + $"{symmetryCost * 100:0.#}% less and is refused, because "
+                        + "that gain is the grid straddling the optimum, not a "
+                        + "structural insight.",
+                    symmetryCost * 100.0, unit: "percent"));
+            }
+            else if (symmetricBars == 0)
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "warning",
+                    $"no bar reads as symmetric: the worst is {lopsided * 100:0.#}% "
                         + "off being a mirror of itself in SHAPE, against a 2% "
-                        + "tolerance. The arms are placed freely, so they will "
-                        + "not match side to side."
-                    : $"{symmetricBars} of {bars.Count} bars read as symmetric "
-                        + "and got mirrored arms; the rest are up to "
-                        + $"{lopsided * 100:0.#}% off being mirrors of "
-                        + "themselves and were placed freely.");
+                        + "tolerance, so the arms are placed freely and will not "
+                        + "match side to side.",
+                    lopsided * 100.0, 2.0, "percent"));
+            }
+            else
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "warning",
+                    $"{symmetricBars} of {bars.Count} bars read as symmetric and "
+                        + "got mirrored arms; the rest are up to "
+                        + $"{lopsided * 100:0.#}% off being mirrors of themselves "
+                        + "and were placed freely.",
+                    lopsided * 100.0, 2.0, "percent"));
+            }
 
             if (centreAdded > 0)
             {
-                lines.Add(
-                    $"{centreAdded} bars were given a CENTRE COLUMN on top of "
-                        + "the count asked for, because the arms were already "
-                        + "crowding the middle, which is the bar asking to be "
-                        + "held there. A centre column has no mirror partner, "
-                        + "so it stands outside the pairing rather than taking "
-                        + "one of it and pushing everything to one side.");
+                d.Add(ResultDiagnostics.Entry(S, "columns.centre_added", "info",
+                    $"{centreAdded} bars were given a CENTRE COLUMN on top of the "
+                        + "count asked for, because the arms were already crowding "
+                        + "the middle. A centre column has no mirror partner, so it "
+                        + "stands outside the pairing rather than pushing "
+                        + "everything to one side.",
+                    centreAdded, unit: "bars"));
             }
             if (footDrift > 0.0)
             {
-                lines.Add(
-                    $"a shared foot stands up to {footDrift:0.###} from the "
-                        + "point where the trunks meeting it would balance. It "
-                        + "sits at their GEOMETRIC centre instead, because the "
-                        + "balance point is sensitive enough that ordinary "
-                        + "solver noise moved it visibly off centre. That "
-                        + "distance is the price, and it is horizontal thrust "
-                        + "for the foundation.");
+                d.Add(ResultDiagnostics.Entry(S, "columns.foot_drift", "info",
+                    $"a shared foot stands up to {footDrift:0.###} from the point "
+                        + "where the trunks meeting it would balance. It sits at "
+                        + "their geometric centre instead, because the balance "
+                        + "point moves visibly on solver noise; the difference is "
+                        + "horizontal thrust for the foundation.",
+                    footDrift, unit: "model units"));
             }
-
             if (plumbArms > 0)
             {
-                lines.Add(string.Empty);
-                lines.Add(
+                d.Add(ResultDiagnostics.Entry(S, "columns.plumb_fallback",
+                    plumbArms >= members.Count ? "warning" : "info",
                     $"{plumbArms} arms stand PLUMB because the net pulls their "
-                        + "notch down onto the column rather than off it, so "
-                        + "there is no thrust line for them to follow. If that "
-                        + "is ALL of them, the aiming is not working.");
+                        + "notch down onto the column rather than off it, so there "
+                        + "is no thrust line to follow. If that is ALL of them, the "
+                        + "aiming is not working.",
+                    plumbArms, unit: "arms"));
             }
 
-            lines.Add(columnType <= 0
-                ? "Type 0: every column stands on its own foot, on the line of "
-                    + "the force it carries."
-                : $"Type {columnType}: the columns gather onto {columnType} "
-                    + "ground point(s), each settled where the trunks meeting "
-                    + "it balance.");
-            lines.Add(branches <= 0
-                ? "Branches 0: each column carries only its own notch."
-                : $"Branches {branches}: each column reaches {branches} further "
-                    + "notch(es) along its own principal line, never past a "
-                    + $"neighbour, and forks at {forkPct:0}% of its height.");
+            d.Add(ResultDiagnostics.Entry(S, "columns.settings", "info",
+                columnType <= 0
+                    ? "Type 0: every column stands on its own foot, on the line "
+                        + "of the force it carries."
+                    : $"Type {columnType}: the columns gather onto {columnType} "
+                        + "ground point(s), each settled where the trunks meeting "
+                        + "it balance.",
+                columnType, unit: "type",
+                context: ResultDiagnostics.Context(
+                    ("branches", branches.ToString(CultureInfo.InvariantCulture)),
+                    ("fork_percent", Inv(forkPct, "0")))));
             if (branches > 0)
             {
-                lines.Add(
-                    "the fork height is an ARCHITECTURAL choice, not a "
-                        + "structural one, and it is an input for an honest "
-                        + "reason: with the columns near vertical the statics "
-                        + "are degenerate. A branch leaning less costs less "
-                        + "bending AND less material, so both criteria run the "
-                        + "fork all the way down to the foot and give a fan. "
-                        + "Forking higher makes a tree and costs a little; how "
-                        + "much is a decision, not a solve.");
+                d.Add(ResultDiagnostics.Entry(S, "columns.branches", "info",
+                    $"Branches {branches}: each column reaches {branches} further "
+                        + "notch(es) along its own principal line, never past a "
+                        + $"neighbour, and forks at {forkPct:0}% of its height. "
+                        + "The fork height is an ARCHITECTURAL choice: near "
+                        + "vertical the statics are degenerate and would run the "
+                        + "fork to the foot and give a fan.",
+                    branches, unit: "branches"));
             }
 
             if (headLoad.Count > 0)
-                lines.Add($"arm load {headLoad.Min():0} to {headLoad.Max():0} N");
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.arm_load", "info",
+                    $"arm load {headLoad.Min():0} to {headLoad.Max():0} N",
+                    headLoad.Max(), unit: "N",
+                    context: ResultDiagnostics.Context(("min", Inv(headLoad.Min(), "0")))));
+            }
             if (force.Count > 0)
-                lines.Add($"axial force up to {force.Max():0} N");
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.force_max", "info",
+                    $"axial force up to {force.Max():0} N", force.Max(), unit: "N"));
+            }
             if (angle.Count > 0)
             {
-                lines.Add($"lean {angle.Min():0.#} to {angle.Max():0.#} degrees "
-                    + "from vertical");
-                if (angle.Max() > MouldGeometry.MaxLeanDegrees + 1.0e-6)
+                d.Add(ResultDiagnostics.Entry(S, "columns.lean", "info",
+                    $"lean {angle.Min():0.#} to {angle.Max():0.#} degrees from vertical",
+                    angle.Max(), cap, "degrees",
+                    ResultDiagnostics.Context(("min", Inv(angle.Min(), "0.#")))));
+                if (angle.Max() > cap + 1.0e-6)
                 {
-                    lines.Add(
-                        "WARNING: a column leans past "
-                            + $"{MouldGeometry.MaxLeanDegrees:0} degrees, so it "
-                            + "is pushing sideways more than it is holding up. "
-                            + "A trunk on a shared foot is brought inside the "
-                            + "limit by raising its fork; one still over it "
-                            + "has no fork to raise, so give that column "
-                            + "branches, or raise Type so each foot carries "
-                            + "fewer columns.");
+                    d.Add(ResultDiagnostics.Entry(S, "columns.trunk_lean_exceeded", "warning",
+                        $"a column leans past {cap:0} degrees, so it is pushing "
+                            + "sideways more than it is holding up. A trunk on a "
+                            + "shared foot is brought inside the limit by raising "
+                            + "its fork; one still over it has no fork to raise, so "
+                            + "give that column branches, or raise Type so each "
+                            + "foot carries fewer columns.",
+                        angle.Max(), cap, "degrees"));
                 }
             }
             if (forksRaised > 0)
             {
-                lines.Add(
-                    $"{forksRaised} "
-                        + (forksRaised == 1 ? "fork was" : "forks were")
-                        + " raised above the Fork setting, to "
-                        + $"{raisedTo * 100.0:0}% at the highest, so their "
-                        + "trunks stand within "
-                        + $"{MouldGeometry.MaxLeanDegrees:0} degrees. A trunk "
-                        + "to a shared foot has both ends fixed, so its lean "
-                        + "is not a choice; lifting the fork shortens the "
-                        + "reach below it and is the only lever there is.");
+                d.Add(ResultDiagnostics.Entry(S, "columns.forks_raised", "info",
+                    $"{forksRaised} fork(s) were raised above the Fork setting, to "
+                        + $"{raisedTo * 100.0:0}% at the highest, so their trunks "
+                        + $"stand within {cap:0} degrees. A trunk to a shared foot "
+                        + "has both ends fixed, so its lean is not a choice; "
+                        + "lifting the fork shortens the reach below it and is the "
+                        + "only lever there is.",
+                    forksRaised, unit: "forks",
+                    context: ResultDiagnostics.Context(("highest_fraction", Inv(raisedTo, "0.###")))));
             }
-            lines.Add(string.Empty);
-            lines.Add(
+            d.Add(ResultDiagnostics.Entry(S, "columns.demand_only", "info",
                 "no capacity is assumed anywhere here: Force is the demand, to "
-                    + "size and test against, not a pass or a fail.");
-            return string.Join(Environment.NewLine, lines);
+                    + "size and test against, not a pass or a fail."));
+            return d;
         }
     }
 
