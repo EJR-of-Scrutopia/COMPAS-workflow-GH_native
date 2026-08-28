@@ -1778,6 +1778,7 @@ internal static class Program
         Type diagnose = RequireComponentType(plugin, "DiagnoseComponent");
         MethodInfo crossChecks = RequireStatic(diagnose, "CrossChecks");
         MethodInfo render = RequireStatic(diagnose, "Render");
+        MethodInfo collect = RequireStatic(diagnose, "Collect");
 
         object P(double x, double y, double z) => Activator.CreateInstance(point, x, y, z)!;
         Array Points(params object[] items)
@@ -1808,11 +1809,11 @@ internal static class Program
             SetContractProperty(m, mouldType, "Frame", frame);
             return m;
         }
-        object Frame()
+        object Frame(int vertexCount)
         {
             object f = CreateInstance(frameType);
             SetContractProperty(f, frameType, "Vertices",
-                Points(P(0, 0, 1), P(1, 0, 1), P(2, 0, 1), P(3, 0, 1)));
+                Points(Enumerable.Range(0, vertexCount).Select(i => P(i, 0, 1)).ToArray()));
             return f;
         }
         string[] Codes(object result) =>
@@ -1832,7 +1833,7 @@ internal static class Program
         Expect(noRuns, "diagnose.no_principal_runs");
 
         // A frame with no columns upstream.
-        Expect(Result(Array.Empty<int>(), Mould(null, Frame())), "diagnose.frame_without_columns");
+        Expect(Result(Array.Empty<int>(), Mould(null, Frame(4))), "diagnose.frame_without_columns");
 
         // Two anchors and no edges at all: each is its own strip.
         Expect(Result(new[] { 0, 1 }, null), "diagnose.anchors_all_isolated");
@@ -1856,6 +1857,33 @@ internal static class Program
         if (clean.Length != 0)
             throw new InvalidOperationException($"A clean Result raises nothing; got [{string.Join(", ", clean)}].");
 
+        // Forks raised upstream: Diagnose says which lever to pull.
+        object forky = Result(Array.Empty<int>(), null);
+        object raised = CreateInstance(diagnosticType);
+        SetContractProperty(raised, diagnosticType, "Code", "columns.forks_raised");
+        SetContractProperty(raised, diagnosticType, "Severity", "info");
+        SetContractProperty(raised, diagnosticType, "Message", "2 forks were raised");
+        SetContractProperty(raised, diagnosticType, "Value", 2.0);
+        SetContractProperty(raised, diagnosticType, "Provenance", new Dictionary<string, string> { ["source"] = "Columns" });
+        Array oneRaised = Array.CreateInstance(diagnosticType, 1);
+        oneRaised.SetValue(raised, 0);
+        SetContractProperty(forky, resultType, "Diagnostics", oneRaised);
+        Expect(forky, "diagnose.forks_raised");
+
+        // An invalid Result: a frame of three vertices on a net of four, and
+        // no columns, which would ALSO trip frame_without_columns if the
+        // cross-checks ran. They must not: one error entry per validation
+        // failure, and nothing else from Diagnose.
+        object broken = Result(Array.Empty<int>(), Mould(null, Frame(3)));
+        string[] collected = ((IEnumerable)collect.Invoke(null, new[] { broken })!)
+            .Cast<object>()
+            .Select(d => (string)diagnosticType.GetProperty("Code")!.GetValue(d)!)
+            .ToArray();
+        if (!collected.Contains("diagnose.invalid_result"))
+            throw new InvalidOperationException($"An invalid Result must yield diagnose.invalid_result; got [{string.Join(", ", collected)}].");
+        if (collected.Any(c => c.StartsWith("diagnose.", StringComparison.Ordinal) && c != "diagnose.invalid_result"))
+            throw new InvalidOperationException($"Cross-checks must be skipped on an invalid Result; got [{string.Join(", ", collected)}].");
+
         // Render says the words and prints the worker report last.
         object rendered = Result(Array.Empty<int>(), null);
         SetContractProperty(rendered, resultType, "Report", "solver said so");
@@ -1865,6 +1893,11 @@ internal static class Program
             throw new InvalidOperationException("Render must print the worker's Report.");
         if (!text.Contains("Columns", StringComparison.Ordinal))
             throw new InvalidOperationException("Render must say which mould components have not run.");
+
+        // An FD Result with no report prints the standing FD line.
+        string fdText = (string)render.Invoke(null, new object[] { Result(Array.Empty<int>(), null), none })!;
+        if (!fdText.Contains("FD result: no reciprocal diagram.", StringComparison.Ordinal))
+            throw new InvalidOperationException("Render must print the FD line when an FD Result carries no report.");
     }
 
     private static object ColumnsBlockForRules(Assembly plugin)

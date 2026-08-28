@@ -83,6 +83,28 @@ namespace Ananke.COMPAS.Native.Components
             if (!data.GetData(0, ref goo) || goo?.Value is not ResultDto result)
                 return;
 
+            List<DiagnosticDto> all = Collect(result);
+
+            IReadOnlyList<(string Source, List<DiagnosticDto> Entries)> groups = Group(all);
+            data.SetData(0, Render(result, all));
+            data.SetDataTree(1, OutputTree.Strings(groups.Select(g => g.Entries.Select(_ => g.Source))));
+            data.SetDataTree(2, OutputTree.Strings(groups.Select(g => g.Entries.Select(e => e.Code))));
+            data.SetDataTree(3, OutputTree.Strings(groups.Select(g => g.Entries.Select(e => e.Severity))));
+            data.SetDataTree(4, OutputTree.Strings(groups.Select(g => g.Entries.Select(e => e.Message))));
+            data.SetDataTree(5, OutputTree.Numbers(groups.Select(g => g.Entries.Select(e => e.Value ?? double.NaN))));
+            Message = all.Any(e => e.Severity == "error") ? "errors"
+                : all.Any(e => e.Severity == "warning") ? $"{all.Count(e => e.Severity == "warning")} warnings"
+                : "clean";
+        }
+
+        /// <summary>
+        /// Everything Diagnose has to say about a Result: the entries it
+        /// already carries, plus the cross-checks when it validates, or one
+        /// error entry per validation failure when it does not. Static so
+        /// the harness can drive the invalid path without Grasshopper.
+        /// </summary>
+        internal static List<DiagnosticDto> Collect(ResultDto result)
+        {
             var all = new List<DiagnosticDto>(result.Diagnostics);
             IReadOnlyList<string> errors = result.Validate();
             if (errors.Count > 0)
@@ -97,17 +119,7 @@ namespace Ananke.COMPAS.Native.Components
             {
                 all.AddRange(CrossChecks(result));
             }
-
-            IReadOnlyList<(string Source, List<DiagnosticDto> Entries)> groups = Group(all);
-            data.SetData(0, Render(result, all));
-            data.SetDataTree(1, OutputTree.Strings(groups.Select(g => g.Entries.Select(_ => g.Source))));
-            data.SetDataTree(2, OutputTree.Strings(groups.Select(g => g.Entries.Select(e => e.Code))));
-            data.SetDataTree(3, OutputTree.Strings(groups.Select(g => g.Entries.Select(e => e.Severity))));
-            data.SetDataTree(4, OutputTree.Strings(groups.Select(g => g.Entries.Select(e => e.Message))));
-            data.SetDataTree(5, OutputTree.Numbers(groups.Select(g => g.Entries.Select(e => e.Value ?? double.NaN))));
-            Message = all.Any(e => e.Severity == "error") ? "errors"
-                : all.Any(e => e.Severity == "warning") ? $"{all.Count(e => e.Severity == "warning")} warnings"
-                : "clean";
+            return all;
         }
 
         /// <summary>
