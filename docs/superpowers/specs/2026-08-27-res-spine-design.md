@@ -157,7 +157,7 @@ with a cleaner split; nothing is embedded.
 | Columns (was Column Finder; display name changes, GUID does not) | Result; Columns Per Line, Type, Fork, Branches unchanged in this sub-project | Result, and the viewport preview |
 | Animate | Result, Time, Pre-Sag, Extension | Mesh, Cables, Principal Lines, Principal Nodes, Anchor Nodes, Perimeter Nodes, Columns (live, one branch per tree), Result |
 | Deconstruct | Result, Course Height | as today, plus Columns, Heads, Feet as trees with one branch per tree in Mould.Columns.Trees order; Diagnostics and Report ports removed |
-| Monitor (was Stress Analysis; display name changes, GUID does not) | Result, EI | Stress Analysis's outputs today, plus Lean (degrees from vertical per column, aligned with its Columns output) so nothing Column Finder's Angle port gave is lost; Report port removed |
+| Monitor (was Stress Analysis; display name changes, GUID does not) | Result, EI | Stress Analysis's outputs today, plus Result (the Result passed through with Monitor's own diagnostics added, in the slot Report held, so its entries can reach Diagnose) and Lean (degrees from vertical per column, aligned with its Columns output) so nothing Column Finder's Angle port gave is lost; Report port removed |
 | Diagnose (new) | Result | Text (item); Source, Code, Severity, Message, Value as trees branched by source |
 | Export | unchanged | unchanged; contract mode now carries the Mould block for free |
 
