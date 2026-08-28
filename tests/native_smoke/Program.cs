@@ -582,6 +582,21 @@ internal static class Program
 
         try
         {
+            ValidateMouldContract(plugin);
+            Console.WriteLine(
+                "PASS  Mould contract: one block on the Result carries the "
+                + "built columns and one live frame; counts that must agree "
+                + "are refused when they do not, the block survives the JSON "
+                + "round trip every Goo boundary makes, and a Result without "
+                + "it serialises with no mould key at all.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Mould contract: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateOutputGrouping(plugin);
             Console.WriteLine(
                 "PASS  Output grouping: the anchors of a vault come back as "
@@ -1317,6 +1332,140 @@ internal static class Program
         return result as IReadOnlyList<string>
             ?? throw new InvalidOperationException(
                 "Validate() returned an unexpected type.");
+    }
+
+    /// <summary>
+    /// The Mould block: one nullable block on the Result that carries the
+    /// built columns and one live frame. Validation is measured on the
+    /// counts that must agree, and the round trip is measured because every
+    /// Goo boundary deep-clones through JSON, so a block that does not
+    /// survive serialisation does not exist.
+    /// </summary>
+    private static void ValidateMouldContract(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        Array Edges(params (int U, int V)[] pairs)
+        {
+            Array array = Array.CreateInstance(edge, pairs.Length);
+            for (int i = 0; i < pairs.Length; i++)
+                array.SetValue(Activator.CreateInstance(edge, pairs[i].U, pairs[i].V), i);
+            return array;
+        }
+        object Equilibrium()
+        {
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "Vertices",
+                Points(P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(3, 0, 0)));
+            return eq;
+        }
+        object Columns(double[] force, int[] headNode)
+        {
+            object c = CreateInstance(columnsType);
+            SetContractProperty(c, columnsType, "Nodes",
+                Points(P(0, 0, 0), P(0, 0, 5), P(3, 0, 0), P(3, 0, 6)));
+            SetContractProperty(c, columnsType, "Members", Edges((0, 1), (2, 3)));
+            SetContractProperty(c, columnsType, "MemberForce", force);
+            SetContractProperty(c, columnsType, "Trees",
+                new int[][] { new[] { 0 }, new[] { 1 } });
+            SetContractProperty(c, columnsType, "Heads", new[] { 1, 3 });
+            SetContractProperty(c, columnsType, "Feet", new[] { 0, 2 });
+            SetContractProperty(c, columnsType, "HeadNode", headNode);
+            SetContractProperty(c, columnsType, "Branching", 1);
+            SetContractProperty(c, columnsType, "ForkFraction", 0.65);
+            return c;
+        }
+        object Frame(int vertexCount, Array? columnNodes)
+        {
+            object f = CreateInstance(frameType);
+            SetContractProperty(f, frameType, "Time", 50.0);
+            SetContractProperty(f, frameType, "Phase", "raise");
+            SetContractProperty(f, frameType, "Lift", 0.5);
+            SetContractProperty(f, frameType, "Sag", 0.5);
+            SetContractProperty(f, frameType, "Vertices",
+                Points(Enumerable.Range(0, vertexCount)
+                    .Select(i => P(i, 0, 1)).ToArray()));
+            SetContractProperty(f, frameType, "ColumnNodes", columnNodes);
+            return f;
+        }
+        object Mould(object? columns, object? frame)
+        {
+            object m = CreateInstance(mouldType);
+            SetContractProperty(m, mouldType, "Ground", 0.0);
+            SetContractProperty(m, mouldType, "Columns", columns);
+            SetContractProperty(m, mouldType, "Frame", frame);
+            return m;
+        }
+        object Result(object mould)
+        {
+            object r = CreateResultDto(resultType, "fd", Equilibrium(), null, null);
+            SetContractProperty(r, resultType, "Mould", mould);
+            return r;
+        }
+
+        // Good: two posts, one frame with live column nodes for all four.
+        object good = Result(Mould(
+            Columns(new[] { 100.0, 200.0 }, new[] { 1, 2 }),
+            Frame(4, Points(P(0, 0, 0), P(0, 0, 4), P(3, 0, 0), P(3, 0, 5)))));
+        RequireNoValidationErrors(good, "Result with a full Mould block");
+
+        RequireValidationErrors(
+            Result(Mould(Columns(new[] { 100.0 }, new[] { 1, 2 }), null)),
+            "MemberForce one short of Members");
+        RequireValidationErrors(
+            Result(Mould(Columns(new[] { 100.0, 200.0 }, new[] { 1, 99 }), null)),
+            "HeadNode outside the net");
+        RequireValidationErrors(
+            Result(Mould(null, Frame(3, null))),
+            "Frame with the wrong vertex count");
+        RequireValidationErrors(
+            Result(Mould(null, Frame(4, Points(P(0, 0, 0))))),
+            "ColumnNodes present with Columns absent");
+
+        // Round trip through the same serialiser every Goo boundary uses.
+        Type json = RequireContractType(plugin, "ContractJson");
+        MethodInfo serialize = json.GetMethod("Serialize")!.MakeGenericMethod(resultType);
+        MethodInfo deserialize = json.GetMethod("Deserialize")!.MakeGenericMethod(resultType);
+        string text = (string)serialize.Invoke(null, new[] { good })!;
+        if (!text.Contains("\"mould\"", StringComparison.Ordinal) ||
+            !text.Contains("\"headNode\"", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A Result with a Mould block must serialise its mould and headNode keys.");
+        }
+        object back = deserialize.Invoke(null, new object[] { text })!;
+        RequireNoValidationErrors(back, "Round-tripped Result with Mould");
+        object mouldBack = resultType.GetProperty("Mould")!.GetValue(back)
+            ?? throw new InvalidOperationException("Mould was lost in the round trip.");
+        object columnsBack = mouldType.GetProperty("Columns")!.GetValue(mouldBack)
+            ?? throw new InvalidOperationException("Mould.Columns was lost in the round trip.");
+        int members = ((ICollection)columnsType.GetProperty("Members")!.GetValue(columnsBack)!).Count;
+        if (members != 2)
+            throw new InvalidOperationException($"Two members went in and {members} came back.");
+
+        // A Result without the block serialises exactly as it always did.
+        string bare = (string)serialize.Invoke(
+            null, new[] { CreateResultDto(resultType, "fd", Equilibrium(), null, null) })!;
+        if (bare.Contains("\"mould\"", StringComparison.Ordinal))
+            throw new InvalidOperationException("A Result with no Mould block must not write a mould key.");
+        RequireNoValidationErrors(
+            deserialize.Invoke(null, new object[] { bare })!,
+            "Old-shape Result JSON with no mould key");
     }
 
     private static Type RequireContractType(Assembly plugin, string typeName)

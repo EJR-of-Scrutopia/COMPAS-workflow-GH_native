@@ -990,7 +990,11 @@ public class TnaSolveComponent :
                 analysisProblem,
                 control,
                 0);
-            solved = solved with { Problem = relaxed.Problem };
+            solved = solved with
+            {
+                Problem = relaxed.Problem,
+                ResultSchema = ResultDto.SchemaWithMould,
+            };
             stopwatch.Stop();
             return new TnaSolveTaskResult(
                 solved,
@@ -1411,7 +1415,11 @@ public sealed class FdSolveComponent :
                 equilibriumProblem,
                 settings,
                 0);
-            solved = solved with { Problem = problem };
+            solved = solved with
+            {
+                Problem = problem,
+                ResultSchema = ResultDto.SchemaWithMould,
+            };
             stopwatch.Stop();
             return new FdSolveTaskResult(solved, null, stopwatch.Elapsed);
         }
