@@ -1655,6 +1655,22 @@ namespace Ananke.COMPAS.Native.Components
         /// </summary>
         public const double MaxLeanDegrees = 60.0;
 
+        /// <summary>
+        /// How far a member stands off vertical, in degrees.
+        ///
+        /// Measured from the two ends rather than from a force, because this
+        /// is the question the sliding joint asks: not "is the column on its
+        /// line of thrust" but "can the mechanism reach this angle".
+        /// </summary>
+        public static double LeanFromVertical(Point3d foot, Point3d top)
+        {
+            double rise = top.Z - foot.Z;
+            double reach = Math.Sqrt(PlanDistanceSquared(foot, top));
+            if (rise <= 1.0e-9)
+                return reach <= 1.0e-9 ? 0.0 : 90.0;
+            return Math.Atan2(reach, rise) * 180.0 / Math.PI;
+        }
+
         public static long EdgeKey(int a, int b) =>
             a < b
                 ? ((long)a << 32) | (uint)b
