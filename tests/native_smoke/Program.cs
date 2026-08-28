@@ -640,6 +640,23 @@ internal static class Program
 
         try
         {
+            ValidateDiagnoseRules(plugin);
+            Console.WriteLine(
+                "PASS  Diagnose rules: the cross-checks no single component "
+                + "can make (no principal runs under Columns, a frame with no "
+                + "columns, every anchor isolated, more than half the net "
+                + "wanting to be pushed) fire on Results built to trigger "
+                + "them and stay silent on a clean one; Render prints the "
+                + "worker report last and names the components that have not "
+                + "run.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Diagnose rules: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateOutputGrouping(plugin);
             Console.WriteLine(
                 "PASS  Output grouping: the anchors of a vault come back as "
@@ -1741,6 +1758,134 @@ internal static class Program
         object empty = columnTrees.Invoke(null, new object?[] { null })!;
         if (((ICollection)empty.GetType().GetField("Item1")!.GetValue(empty)!).Count != 0)
             throw new InvalidOperationException("No block means empty trees, never an error.");
+    }
+
+    /// <summary>
+    /// Diagnose's cross-checks, the things no single component can see:
+    /// Columns ran on a Result with no principal runs; Animate ran with no
+    /// Columns upstream; every anchor is isolated; more than half the net
+    /// wants pushing up. A clean Result raises nothing.
+    /// </summary>
+    private static void ValidateDiagnoseRules(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type diagnosticType = RequireContractType(plugin, "DiagnosticDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+        Type diagnose = RequireComponentType(plugin, "DiagnoseComponent");
+        MethodInfo crossChecks = RequireStatic(diagnose, "CrossChecks");
+        MethodInfo render = RequireStatic(diagnose, "Render");
+
+        object P(double x, double y, double z) => Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        object Equilibrium(int[] supports)
+        {
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "Vertices",
+                Points(P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(3, 0, 0)));
+            SetContractProperty(eq, equilibriumType, "ResolvedSupportNodeIds", supports);
+            return eq;
+        }
+        object Result(int[] supports, object? mould)
+        {
+            object r = CreateResultDto(resultType, "fd", Equilibrium(supports), null, null);
+            SetContractProperty(r, resultType, "Mould", mould);
+            return r;
+        }
+        object Mould(object? columns, object? frame)
+        {
+            object m = CreateInstance(mouldType);
+            SetContractProperty(m, mouldType, "Columns", columns);
+            SetContractProperty(m, mouldType, "Frame", frame);
+            return m;
+        }
+        object Frame()
+        {
+            object f = CreateInstance(frameType);
+            SetContractProperty(f, frameType, "Vertices",
+                Points(P(0, 0, 1), P(1, 0, 1), P(2, 0, 1), P(3, 0, 1)));
+            return f;
+        }
+        string[] Codes(object result) =>
+            ((IEnumerable)crossChecks.Invoke(null, new[] { result })!)
+                .Cast<object>()
+                .Select(d => (string)diagnosticType.GetProperty("Code")!.GetValue(d)!)
+                .ToArray();
+        void Expect(object result, string code)
+        {
+            string[] codes = Codes(result);
+            if (!codes.Contains(code))
+                throw new InvalidOperationException($"Expected {code}; got [{string.Join(", ", codes)}].");
+        }
+
+        // Columns block on a Result with no principal runs.
+        object noRuns = Result(Array.Empty<int>(), Mould(ColumnsBlockForRules(plugin), null));
+        Expect(noRuns, "diagnose.no_principal_runs");
+
+        // A frame with no columns upstream.
+        Expect(Result(Array.Empty<int>(), Mould(null, Frame())), "diagnose.frame_without_columns");
+
+        // Two anchors and no edges at all: each is its own strip.
+        Expect(Result(new[] { 0, 1 }, null), "diagnose.anchors_all_isolated");
+
+        // 380 of 441 nodes want pushing up, said by Animate.
+        object pushy = Result(Array.Empty<int>(), null);
+        object push = CreateInstance(diagnosticType);
+        SetContractProperty(push, diagnosticType, "Code", "animate.nodes_want_push");
+        SetContractProperty(push, diagnosticType, "Severity", "warning");
+        SetContractProperty(push, diagnosticType, "Message", "380 nodes sit above the bare surface");
+        SetContractProperty(push, diagnosticType, "Value", 380.0);
+        SetContractProperty(push, diagnosticType, "Context", new Dictionary<string, string> { ["total"] = "441" });
+        SetContractProperty(push, diagnosticType, "Provenance", new Dictionary<string, string> { ["source"] = "Animate" });
+        Array one = Array.CreateInstance(diagnosticType, 1);
+        one.SetValue(push, 0);
+        SetContractProperty(pushy, resultType, "Diagnostics", one);
+        Expect(pushy, "diagnose.push_needed");
+
+        // Clean: nothing to say.
+        string[] clean = Codes(Result(Array.Empty<int>(), null));
+        if (clean.Length != 0)
+            throw new InvalidOperationException($"A clean Result raises nothing; got [{string.Join(", ", clean)}].");
+
+        // Render says the words and prints the worker report last.
+        object rendered = Result(Array.Empty<int>(), null);
+        SetContractProperty(rendered, resultType, "Report", "solver said so");
+        Array none = Array.CreateInstance(diagnosticType, 0);
+        string text = (string)render.Invoke(null, new object[] { rendered, none })!;
+        if (!text.Contains("solver said so", StringComparison.Ordinal))
+            throw new InvalidOperationException("Render must print the worker's Report.");
+        if (!text.Contains("Columns", StringComparison.Ordinal))
+            throw new InvalidOperationException("Render must say which mould components have not run.");
+    }
+
+    private static object ColumnsBlockForRules(Assembly plugin)
+    {
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+        object c = CreateInstance(columnsType);
+        Array nodes = Array.CreateInstance(point, 2);
+        nodes.SetValue(Activator.CreateInstance(point, 0.0, 0.0, 0.0), 0);
+        nodes.SetValue(Activator.CreateInstance(point, 0.0, 0.0, 5.0), 1);
+        Array members = Array.CreateInstance(edge, 1);
+        members.SetValue(Activator.CreateInstance(edge, 0, 1), 0);
+        SetContractProperty(c, columnsType, "Nodes", nodes);
+        SetContractProperty(c, columnsType, "Members", members);
+        SetContractProperty(c, columnsType, "MemberForce", new[] { 100.0 });
+        SetContractProperty(c, columnsType, "Trees", new int[][] { new[] { 0 } });
+        SetContractProperty(c, columnsType, "Heads", new[] { 1 });
+        SetContractProperty(c, columnsType, "Feet", new[] { 0 });
+        SetContractProperty(c, columnsType, "HeadNode", new[] { 0 });
+        return c;
     }
 
     private static Type RequireContractType(Assembly plugin, string typeName)
