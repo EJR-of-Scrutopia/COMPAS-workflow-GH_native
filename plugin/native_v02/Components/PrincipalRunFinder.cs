@@ -9,20 +9,24 @@ using Rhino.Geometry;
 namespace Ananke.COMPAS.Native.Components
 {
     /// <summary>
+    /// What Pattern has to say about the principal lines it was handed, as a
+    /// severity and a message. Produced by
+    /// <see cref="PrincipalRunFinder.Outcome"/> from three counts so the
+    /// words can be checked without a canvas.
+    /// </summary>
+    internal sealed record PrincipalOutcome(string Severity, string Message);
+
+    /// <summary>
     /// Resolving the principal lines, the notched bars a reconfigurable mould
     /// holds rigid, into runs of vertex indices on the pattern.
     ///
-    /// Two ways in, and both land on the same answer shape.
-    ///
-    /// From CURVES. An author draws the bars and each is matched to the run of
-    /// pattern vertices lying along it. Matching is done in plan, so a bar
-    /// drawn flat still finds its nodes.
-    ///
-    /// DERIVED FROM THE ANCHORS, with no curves at all, which is how these
-    /// lines are found in practice: a principal line starts at the middle of an
-    /// anchor strip and runs straight off it, across the form, to the far side.
-    /// That needs no quad structure, no drawn curve and no choice of direction,
-    /// because the anchors already say where the bars belong.
+    /// ONE way in. An author draws the bars as curves over the pattern and
+    /// each is matched to the run of pattern vertices lying along it.
+    /// Matching is done in plan, so a bar drawn flat still finds its nodes.
+    /// A principal line is a decision, and nothing here makes it for the
+    /// author: the derivation from the anchors that used to stand in when no
+    /// curves were drawn is gone, because a definition that forgot its curves
+    /// quietly got bars it never asked for.
     ///
     /// Resolved here, on the pattern, because this is the one place where the
     /// curves and the geometry still agree. Downstream the surface rises and
@@ -31,75 +35,14 @@ namespace Ananke.COMPAS.Native.Components
     internal static class PrincipalRunFinder
     {
         /// <summary>
-        /// Runs derived from the ANCHORS, which is how these lines are found in
-        /// practice: a principal line starts at the middle of an anchor strip
-        /// and runs straight off it, across the form, to the far side.
-        ///
-        /// The anchors fall into strips, one per side that is tied down. Each
-        /// strip is walked to put its nodes in order, a start is taken at its
-        /// midpoint, and the line is traced across the mesh by leaving each
-        /// vertex through whichever edge continues straightest from the one it
-        /// arrived by. That needs no quad structure and no drawn curve.
-        ///
-        /// <paramref name="ribsPerStrip"/> above one spreads that many starts
-        /// evenly along each strip instead of taking only its midpoint.
-        /// </summary>
-        public static List<List<int>> DeriveFromAnchors(
-            IReadOnlyList<Point3d> vertices,
-            IReadOnlyList<EdgeDto> edges,
-            IReadOnlyList<int> anchorIds,
-            int ribsPerStrip)
-        {
-            var runs = new List<List<int>>();
-            if (ribsPerStrip <= 0 || vertices.Count == 0 || anchorIds.Count == 0)
-                return runs;
-
-            List<int>[] neighbours = Adjacency(vertices.Count, edges);
-            var anchors = new HashSet<int>(
-                anchorIds.Where(i => i >= 0 && i < vertices.Count));
-            if (anchors.Count == 0)
-                return runs;
-
-            // A line traced from one anchor strip reaches the other, so the
-            // strip opposite traces THE SAME LINE BACKWARDS. That duplicate has
-            // to go, and matching its two ENDS is not enough to catch it: the
-            // two traces rarely finish on exactly the same node, so the keys
-            // differed and both were kept. What came back was two bars lying on
-            // top of each other, each given its own full set of columns, each
-            // mirrored about its own slightly different midpoint. Twelve
-            // columns crowded onto one line at two offset spacings, which reads
-            // as one lopsided bar and is the asymmetry that would not go away.
-            //
-            // Two runs sharing most of their nodes are one bar. Compare what
-            // they are made of, not where they stop.
-            foreach (List<int> strip in Strips(anchors, neighbours))
-            {
-                foreach (int start in StartsAlong(strip, ribsPerStrip))
-                {
-                    List<int> run = WalkAcross(
-                        start, vertices, neighbours, anchors);
-                    if (run.Count >= 2)
-                        runs.Add(run);
-                }
-            }
-            return Deduplicate(runs);
-        }
-
-        /// <summary>
         /// One bar, however many times it was traced.
         ///
-        /// The same physical line arrives twice more easily than it looks. From
-        /// the ANCHORS, a line traced from one strip reaches the other, so the
-        /// strip opposite traces it backwards. From DRAWN CURVES, two curves
-        /// laid near the same run of nodes both snap to it. Either way the
-        /// duplicate is invisible in the viewport, because the second bar draws
-        /// exactly on top of the first, and it is ruinous downstream: each bar
-        /// is given its OWN full set of columns, each mirrored about its own
-        /// slightly different midpoint, so the columns land on one line at two
-        /// offset spacings and read as hopelessly lopsided.
-        ///
-        /// This lived on the anchor path alone at first, which fixed nothing
-        /// for anyone drawing their lines as curves. It belongs to both.
+        /// Two curves laid near the same run of nodes both snap to it. The
+        /// duplicate is invisible in the viewport, because the second bar
+        /// draws exactly on top of the first, and it is ruinous downstream:
+        /// each bar is given its OWN full set of columns, each mirrored about
+        /// its own slightly different midpoint, so the columns land on one
+        /// line at two offset spacings and read as hopelessly lopsided.
         ///
         /// Matched on WHAT THEY ARE MADE OF, not on where they stop. Endpoints
         /// were tried and could not catch it: two traces of one line rarely
@@ -131,208 +74,6 @@ namespace Ananke.COMPAS.Native.Components
             return kept;
         }
 
-        private static List<int>[] Adjacency(
-            int count,
-            IReadOnlyList<EdgeDto> edges)
-        {
-            var neighbours = new List<int>[count];
-            for (int i = 0; i < count; i++)
-                neighbours[i] = new List<int>();
-            foreach (EdgeDto e in edges)
-            {
-                if (e.U < 0 || e.U >= count || e.V < 0 || e.V >= count)
-                    continue;
-                if (e.U == e.V)
-                    continue;
-                neighbours[e.U].Add(e.V);
-                neighbours[e.V].Add(e.U);
-            }
-            return neighbours;
-        }
-
-        /// <summary>
-        /// The anchor nodes fall into strips: connected runs of anchors, one
-        /// per side that is tied down. Each comes back ordered end to end.
-        /// </summary>
-        private static List<List<int>> Strips(
-            HashSet<int> anchors,
-            List<int>[] neighbours)
-        {
-            var strips = new List<List<int>>();
-            var unvisited = new HashSet<int>(anchors);
-            while (unvisited.Count > 0)
-            {
-                int seed = unvisited.First();
-                var group = new List<int>();
-                var queue = new Queue<int>();
-                queue.Enqueue(seed);
-                unvisited.Remove(seed);
-                while (queue.Count > 0)
-                {
-                    int at = queue.Dequeue();
-                    group.Add(at);
-                    foreach (int next in neighbours[at])
-                    {
-                        if (unvisited.Remove(next))
-                            queue.Enqueue(next);
-                    }
-                }
-                strips.Add(Order(group, neighbours, anchors));
-            }
-            return strips;
-        }
-
-        /// <summary>Put a strip's nodes in order by walking it end to end.</summary>
-        private static List<int> Order(
-            List<int> group,
-            List<int>[] neighbours,
-            HashSet<int> anchors)
-        {
-            if (group.Count <= 2)
-                return group;
-            var member = new HashSet<int>(group);
-
-            // An end of the strip has only one neighbour inside it.
-            int start = group[0];
-            foreach (int candidate in group)
-            {
-                int inside = neighbours[candidate].Count(n => member.Contains(n));
-                if (inside <= 1)
-                {
-                    start = candidate;
-                    break;
-                }
-            }
-
-            var ordered = new List<int> { start };
-            var used = new HashSet<int> { start };
-            int at2 = start;
-            while (true)
-            {
-                int next = -1;
-                foreach (int n in neighbours[at2])
-                {
-                    if (member.Contains(n) && !used.Contains(n))
-                    {
-                        next = n;
-                        break;
-                    }
-                }
-                if (next < 0)
-                    break;
-                ordered.Add(next);
-                used.Add(next);
-                at2 = next;
-            }
-            // Anything the walk could not reach still belongs to the strip.
-            foreach (int leftover in group)
-            {
-                if (used.Add(leftover))
-                    ordered.Add(leftover);
-            }
-            return ordered;
-        }
-
-        /// <summary>
-        /// Where along a strip the lines start. One rib takes the midpoint,
-        /// which is the usual case; more are spread evenly along it.
-        /// </summary>
-        private static IEnumerable<int> StartsAlong(List<int> strip, int ribs)
-        {
-            if (strip.Count == 0)
-                yield break;
-            if (ribs <= 1)
-            {
-                yield return strip[strip.Count / 2];
-                yield break;
-            }
-            var seen = new HashSet<int>();
-            for (int r = 0; r < ribs; r++)
-            {
-                double t = (r + 0.5) / ribs;
-                int index = (int)Math.Round(t * (strip.Count - 1));
-                index = Math.Min(Math.Max(index, 0), strip.Count - 1);
-                if (seen.Add(index))
-                    yield return strip[index];
-            }
-        }
-
-        /// <summary>
-        /// Trace a line across the form from an anchor, leaving each vertex
-        /// through whichever edge continues straightest from the one it arrived
-        /// by. The first step goes as square to the strip as the mesh allows,
-        /// which is the tangent off the anchor line.
-        /// </summary>
-        private static List<int> WalkAcross(
-            int start,
-            IReadOnlyList<Point3d> vertices,
-            List<int>[] neighbours,
-            HashSet<int> anchors)
-        {
-            var run = new List<int> { start };
-            var used = new HashSet<int> { start };
-
-            // Step off the strip: prefer a neighbour that is not itself an
-            // anchor, so the line leaves the tie rather than running along it.
-            int at = -1;
-            foreach (int candidate in neighbours[start])
-            {
-                if (anchors.Contains(candidate))
-                    continue;
-                if (at < 0 || Plan(vertices[start], vertices[candidate]) >
-                    Plan(vertices[start], vertices[at]))
-                {
-                    at = candidate;
-                }
-            }
-            if (at < 0)
-                return run;
-
-            run.Add(at);
-            used.Add(at);
-            int from = start;
-            while (true)
-            {
-                Vector3d heading = vertices[at] - vertices[from];
-                if (heading.Length <= 1e-12)
-                    break;
-                heading.Unitize();
-
-                int best = -1;
-                double bestScore = -2.0;
-                foreach (int candidate in neighbours[at])
-                {
-                    if (used.Contains(candidate))
-                        continue;
-                    Vector3d step = vertices[candidate] - vertices[at];
-                    if (step.Length <= 1e-12)
-                        continue;
-                    step.Unitize();
-                    double score = (heading.X * step.X)
-                        + (heading.Y * step.Y)
-                        + (heading.Z * step.Z);
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        best = candidate;
-                    }
-                }
-                // A turn of more than a right angle is not a continuation; the
-                // line has reached an edge and should stop rather than double
-                // back along the boundary.
-                if (best < 0 || bestScore <= 0.0)
-                    break;
-                run.Add(best);
-                used.Add(best);
-                from = at;
-                at = best;
-            }
-            return run;
-        }
-
-        private static double Plan(Point3d a, Point3d b) =>
-            ((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y));
-
         /// <summary>
         /// Runs matched from drawn curves. Matching is in plan, so a bar drawn
         /// on the flat pattern still finds its nodes on a surface that rises.
@@ -342,16 +83,21 @@ namespace Ananke.COMPAS.Native.Components
         /// no run of nodes goes: the offset is how far the furthest matched bar
         /// sits from the curve that asked for it, the gauge the mesh's own
         /// median edge length to measure that against.
+        /// <paramref name="unmatched"/> is how many curves caught fewer than
+        /// two nodes and were dropped, so the caller can tell a DROPPED curve
+        /// from two curves MERGED onto one run by <see cref="Deduplicate"/>.
         /// </summary>
         public static List<List<int>> FromCurves(
             IReadOnlyList<Curve> curves,
             IReadOnlyList<Point3d> vertices,
             IReadOnlyList<EdgeDto> edges,
             out double worstOffset,
-            out double gauge)
+            out double gauge,
+            out int unmatched)
         {
             worstOffset = 0.0;
             gauge = 0.0;
+            unmatched = 0;
             var runs = new List<List<int>>();
             if (curves.Count == 0 || vertices.Count == 0)
                 return runs;
@@ -364,7 +110,10 @@ namespace Ananke.COMPAS.Native.Components
                 .Select(e => (e.U, e.V))
                 .ToArray();
             if (pairs.Length == 0)
+            {
+                unmatched = curves.Count(c => c is not null);
                 return runs;
+            }
 
             gauge = MouldGeometry.MedianEdgeLength(nodes, pairs);
             foreach (Curve curve in curves)
@@ -374,11 +123,63 @@ namespace Ananke.COMPAS.Native.Components
                 List<int> run = MouldGeometry.SnapCurveToNodes(
                     curve, nodes, pairs, out double offset);
                 if (run.Count < 2)
+                {
+                    unmatched++;
                     continue;
+                }
                 runs.Add(run);
                 worstOffset = Math.Max(worstOffset, offset);
             }
             return Deduplicate(runs);
+        }
+
+        /// <summary>
+        /// What Pattern says about the curves it was handed, from three
+        /// counts: how many curves were supplied, how many caught fewer than
+        /// two nodes, and how many runs survived deduplication.
+        ///
+        /// No curves is silence, because the FD path never draws any. Curves
+        /// with no run at all is an ERROR, and Pattern emits nothing on it: a
+        /// pattern whose bars were asked for and could not be placed is not
+        /// the pattern that was asked for, and a grey chain is louder than a
+        /// red badge on one component. A dropped curve is a warning. Two
+        /// curves that snapped to one run is a remark, because the author
+        /// should know the safety net fired, and before this it was reported
+        /// as a drop, which it is not.
+        /// </summary>
+        public static PrincipalOutcome Outcome(int supplied, int unmatched, int kept)
+        {
+            if (supplied <= 0)
+                return new PrincipalOutcome("none", string.Empty);
+            if (kept <= 0)
+            {
+                return new PrincipalOutcome(
+                    "error",
+                    $"{supplied} principal line(s) were wired into Pattern and "
+                    + "none of them lie over a run of pattern nodes in plan. A "
+                    + "bar can only stand on nodes: draw each line through at "
+                    + "least two connected pattern nodes. No Pattern is emitted "
+                    + "until one does.");
+            }
+            if (unmatched > 0)
+            {
+                return new PrincipalOutcome(
+                    "warning",
+                    $"{unmatched} of {supplied} principal lines caught fewer "
+                    + "than two pattern vertices and were dropped. They must "
+                    + "lie over the pattern in plan.");
+            }
+            int merged = supplied - kept;
+            if (merged > 0)
+            {
+                return new PrincipalOutcome(
+                    "remark",
+                    $"{supplied} principal lines snapped to {kept} distinct "
+                    + $"run(s) of nodes; {merged} duplicate(s) merged into the "
+                    + "bar they share. Two curves on one run of nodes are one "
+                    + "bar.");
+            }
+            return new PrincipalOutcome("none", string.Empty);
         }
     }
 }

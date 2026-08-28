@@ -105,7 +105,6 @@ namespace Ananke.COMPAS.Native.Components
 
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
-        private readonly List<Line> _previewPrincipal = new();
         private readonly List<Line> _previewColumns = new();
         private readonly List<Point3d> _previewSupports = new();
         private BoundingBox _clippingBox = BoundingBox.Empty;
@@ -119,7 +118,6 @@ namespace Ananke.COMPAS.Native.Components
             base.BeforeSolveInstance();
             _previewMesh = null;
             _previewCables.Clear();
-            _previewPrincipal.Clear();
             _previewColumns.Clear();
             _previewSupports.Clear();
             _clippingBox = BoundingBox.Empty;
@@ -130,7 +128,7 @@ namespace Ananke.COMPAS.Native.Components
         /// same shaded material, same wire colour, same support points, so the
         /// three read as one object seen at three moments rather than as three
         /// different drawings. On top of that goes the one thing only this
-        /// component knows, the columns, and the bars they hold.
+        /// component knows, the columns. The bars are Pattern's to draw.
         ///
         /// The geometry outputs stay hidden, as on Animate, so nothing draws
         /// twice; their data is untouched and still feeds downstream.
@@ -160,13 +158,6 @@ namespace Ananke.COMPAS.Native.Components
                 // itself carries the drawing.
                 foreach (Line cable in _previewCables)
                     args.Display.DrawLine(cable, Color.FromArgb(95, 95, 100));
-            }
-            foreach (Line bar in _previewPrincipal)
-            {
-                args.Display.DrawLine(
-                    bar,
-                    TnaWorkflowPreview.PrincipalColour,
-                    TnaWorkflowPreview.PrincipalWeight);
             }
             foreach (Line column in _previewColumns)
                 args.Display.DrawLine(column, ColumnColour, 3);
@@ -317,7 +308,7 @@ namespace Ananke.COMPAS.Native.Components
                 double ground = MouldGeometry.GroundLevel(nodes, anchors);
 
                 // The runs travel in the contract, resolved once upstream by
-                // Supports from the anchors or by Pattern from drawn curves.
+                // Pattern from the curves drawn into it.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, n);
                 int overlapping = 0;
@@ -343,8 +334,8 @@ namespace Ananke.COMPAS.Native.Components
                                 + "Each is being given its own full set of "
                                 + "columns, which crowds them onto the one line "
                                 + "at two different spacings and reads as "
-                                + "lopsided. Check Ribs on Supports, or the "
-                                + "curves on Pattern.");
+                                + "lopsided. Check the curves drawn into "
+                                + "Pattern.");
                         a = bars.Count;
                         break;
                     }
@@ -376,9 +367,8 @@ namespace Ananke.COMPAS.Native.Components
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "The Result carries no principal lines. Set Ribs on "
-                            + "Supports to derive them from the anchors, or "
-                            + "draw Principal Lines on Pattern.");
+                        "The Result carries no principal lines. Draw Principal "
+                            + "Lines into Pattern upstream; nothing derives them.");
                     data.SetData(0, new ResultGoo(ResultDiagnostics.Replace(
                         result, "Columns", new[]
                         {
@@ -744,13 +734,6 @@ namespace Ananke.COMPAS.Native.Components
                 _previewCables.Clear();
                 _previewCables.AddRange(edges.Select(
                     e => new Line(nodes[e.Item1], nodes[e.Item2])));
-                _previewPrincipal.Clear();
-                foreach (List<int> bar in bars)
-                {
-                    for (int k = 0; k + 1 < bar.Count; k++)
-                        _previewPrincipal.Add(
-                            new Line(nodes[bar[k]], nodes[bar[k + 1]]));
-                }
                 _previewColumns.Clear();
                 _previewColumns.AddRange(members);
                 _previewSupports.Clear();
@@ -1212,7 +1195,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "not asked for because it cancels out of that comparison."));
             d.Add(ResultDiagnostics.Entry(S, "columns.principal_source", "info",
                 "principal lines came from the contract, resolved upstream by "
-                    + "Pattern or Supports; nothing was re-matched here.",
+                    + "Pattern from the curves drawn into it; nothing was "
+                    + "re-matched here.",
                 bars.Count, unit: "bars"));
 
             if (symmetricBars == bars.Count)

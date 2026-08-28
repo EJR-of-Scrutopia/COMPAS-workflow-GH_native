@@ -139,7 +139,6 @@ namespace Ananke.COMPAS.Native.Components
         private double[]? _bareSurface;
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
-        private readonly List<Line> _previewPrincipal = new();
         private readonly List<Line> _previewColumns = new();
         private readonly List<Point3d> _previewSupports = new();
         private BoundingBox _clippingBox = BoundingBox.Empty;
@@ -156,7 +155,6 @@ namespace Ananke.COMPAS.Native.Components
             base.BeforeSolveInstance();
             _previewMesh = null;
             _previewCables.Clear();
-            _previewPrincipal.Clear();
             _previewColumns.Clear();
             _previewSupports.Clear();
             _clippingBox = BoundingBox.Empty;
@@ -194,13 +192,6 @@ namespace Ananke.COMPAS.Native.Components
                 // itself carries the drawing.
                 foreach (Line cable in _previewCables)
                     args.Display.DrawLine(cable, Color.FromArgb(95, 95, 100));
-            }
-            foreach (Line bar in _previewPrincipal)
-            {
-                args.Display.DrawLine(
-                    bar,
-                    TnaWorkflowPreview.PrincipalColour,
-                    TnaWorkflowPreview.PrincipalWeight);
             }
             // The same blue Column Finder draws its columns in, so a raising
             // column reads as the same member at a different moment.
@@ -432,10 +423,10 @@ namespace Ananke.COMPAS.Native.Components
 
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
 
-                // The runs travel in the contract, resolved once by Supports
-                // from the anchors or by Pattern from drawn curves. Nothing is
-                // snapped here, which is why there is no curve input: indices
-                // survive a surface that rises and curves do not.
+                // The principal lines this Result carries, resolved upstream
+                // by Pattern from the curves drawn into it. Nothing is snapped
+                // here, which is why there is no curve input: indices survive
+                // a surface that rises and curves do not.
                 List<List<int>> bars = MouldGeometry.PrincipalRuns(
                     equilibrium, target.Length);
                 var principalIds = new HashSet<int>(bars.SelectMany(b => b));
@@ -444,8 +435,8 @@ namespace Ananke.COMPAS.Native.Components
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
                         "The Result carries no principal lines, so nothing is "
-                            + "held and there is nothing to lift. Set Ribs on "
-                            + "Supports, or draw Principal Lines on Pattern.");
+                            + "held and there is nothing to lift. Draw Principal "
+                            + "Lines into Pattern upstream.");
                 }
 
                 var pinned = new bool[n];
@@ -906,13 +897,6 @@ namespace Ananke.COMPAS.Native.Components
                 _previewMesh = framed;
                 _previewCables.Clear();
                 _previewCables.AddRange(cables);
-                _previewPrincipal.Clear();
-                foreach (List<int> run in bars)
-                {
-                    for (int k = 0; k + 1 < run.Count; k++)
-                        _previewPrincipal.Add(
-                            new Line(live[run[k]], live[run[k + 1]]));
-                }
                 _previewColumns.Clear();
                 _previewColumns.AddRange(liveColumns);
                 _previewSupports.Clear();
@@ -1065,11 +1049,12 @@ namespace Ananke.COMPAS.Native.Components
         /// over that graph can only return singletons. It looks like a graft
         /// and it is not one; it is a correct walk over the wrong graph.
         ///
-        /// The sides are connected in the PLAN AS DRAWN, which is exactly the
-        /// graph Supports itself walks when it derives one rib per anchor
-        /// strip. So the pattern's own edges are added to the solved ones and
-        /// grouping happens over the union: two nodes are together if they are
-        /// joined in either the plan or the solved network.
+        /// The sides are connected in the PLAN AS DRAWN, which is the plan
+        /// topology Pattern is the one source of; Supports derives no rib and
+        /// walks no graph of its own. So the pattern's own edges are added to
+        /// the solved ones and grouping happens over the union: two nodes are
+        /// together if they are joined in either the plan or the solved
+        /// network.
         ///
         /// The pattern is trusted only when it has the SAME NUMBER OF VERTICES
         /// as the solved network. Anything else is a different index space, and
@@ -1300,9 +1285,9 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// The principal-line runs for a solved Result.
         ///
-        /// They are resolved once upstream, by Supports from the anchors or by
-        /// Pattern from drawn curves, and the contract carries them down as
-        /// vertex indices. So the matching happens once for the whole
+        /// They are resolved once upstream, by Pattern from the curves drawn
+        /// into it, and the contract carries them down as vertex indices. So
+        /// the matching happens once for the whole
         /// definition rather than in every component on every frame, and it
         /// cannot go wrong on a raised surface, because by here there is no
         /// curve left to match.

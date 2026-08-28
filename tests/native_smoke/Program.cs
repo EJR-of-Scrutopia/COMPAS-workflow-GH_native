@@ -24,7 +24,7 @@ internal static class Program
         new Dictionary<string, int[]>(StringComparer.Ordinal)
         {
             ["Ananke.COMPAS.Native.Components.PatternComponent"] =
-                new[] { 0 },
+                new[] { 0, 4 },
             ["Ananke.COMPAS.Native.Components.SupportsComponent"] =
                 new[] { 1 },
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
@@ -118,7 +118,7 @@ internal static class Program
                     "Supports",
                     "Supports",
                     "01 Model",
-                    new[] { "PAT", "A", "Tol", "RB" },
+                    new[] { "PAT", "A", "Tol" },
                     new[] { "SUP" }),
                 ["Ananke.COMPAS.Native.Components.LoadsComponent"] = (
                     "Loads",
@@ -546,6 +546,69 @@ internal static class Program
         {
             failures.Add(
                 $"PrincipalRunFinder deduplication: "
+                + $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDerivationRemoved(plugin);
+            Console.WriteLine(
+                "PASS  PrincipalRunFinder: the anchor derivation is GONE. A "
+                + "principal line is a decision Param draws into Pattern; "
+                + "nothing in the plugin derives one from the anchors any more.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"PrincipalRunFinder derivation removed: "
+                + $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidatePrincipalOutcome(plugin);
+            Console.WriteLine(
+                "PASS  PrincipalRunFinder.Outcome: no curves is silence, a "
+                + "dropped curve is a warning naming the count, two curves on "
+                + "one run is a remark that says merged, and curves with NO "
+                + "run at all is an error that says no Pattern is emitted.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"PrincipalRunFinder.Outcome: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidatePrincipalPreviewOwner(plugin, componentTypes);
+            Console.WriteLine(
+                "PASS  Preview ownership: Pattern is the ONLY component holding "
+                + "a principal-line preview, and the Result-side helper that "
+                + "fed the others is gone. Nine components painted the same "
+                + "red bars, and with a solver's preview underneath each bar "
+                + "drew twice; one owner, one drawing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Principal preview owner: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateRegisteredMappingWins(plugin);
+            Console.WriteLine(
+                "PASS  ParameterIdentity.Restore: a mapping the plugin REGISTERED "
+                + "wins over the archive, so Pattern's P re-flattens in every "
+                + "definition saved before it flattened; a port registered with "
+                + "no mapping keeps the graft the author set by hand, which the "
+                + "first fix would have wiped on every reopen.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ParameterIdentity registered mapping: "
                 + $"{DescribeException(exception)}");
         }
 
@@ -3196,6 +3259,267 @@ internal static class Program
             throw new InvalidOperationException(
                 "Two lines that merely CROSS share one node and are still two "
                 + $"bars; {crossing} came back.");
+        }
+    }
+
+    /// <summary>
+    /// The anchor derivation is deleted, and stays deleted. A principal line
+    /// is a decision the author draws into Pattern. When Supports derived
+    /// lines whenever Pattern carried none, a definition that forgot its
+    /// curves quietly got bars it never asked for, which is a second author
+    /// of one fact. This pins the deletion so it cannot creep back under
+    /// another refactor.
+    /// </summary>
+    private static void ValidateDerivationRemoved(Assembly plugin)
+    {
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PrincipalRunFinder",
+            throwOnError: true)!;
+        const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static | BindingFlags.Instance;
+        if (finder.GetMethods(Any).Any(m => m.Name == "DeriveFromAnchors"))
+        {
+            throw new InvalidOperationException(
+                "PrincipalRunFinder.DeriveFromAnchors still exists. Principal "
+                + "lines are input only; nothing derives them from anchors.");
+        }
+        if (finder.GetMethod("FromCurves", Any) is null)
+        {
+            throw new InvalidOperationException(
+                "PrincipalRunFinder.FromCurves is missing; it is the one way in.");
+        }
+        if (finder.GetMethod("Deduplicate", Any) is null)
+        {
+            throw new InvalidOperationException(
+                "PrincipalRunFinder.Deduplicate is missing; it is the safety net "
+                + "for two curves snapping to one run.");
+        }
+    }
+
+    /// <summary>
+    /// <c>PrincipalRunFinder.Outcome</c>: what Pattern says about the curves
+    /// it was handed, as one pure function of three counts, so the error path
+    /// is measured rather than trusted. The error case matters most: curves
+    /// wired and none placed used to fall through silently to no runs, and the
+    /// first sign was Columns with nothing to stand under.
+    /// </summary>
+    private static void ValidatePrincipalOutcome(Assembly plugin)
+    {
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PrincipalRunFinder",
+            throwOnError: true)!;
+        MethodInfo outcome = finder.GetMethod(
+            "Outcome", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "PrincipalRunFinder.Outcome(int, int, int) is missing.");
+
+        (string Severity, string Message) Run(int supplied, int unmatched, int kept)
+        {
+            object result = outcome.Invoke(
+                null, new object?[] { supplied, unmatched, kept })!;
+            Type type = result.GetType();
+            string severity = (string)type.GetProperty("Severity")!
+                .GetValue(result)!;
+            string message = (string)type.GetProperty("Message")!
+                .GetValue(result)!;
+            return (severity, message);
+        }
+
+        void Expect(
+            (int, int, int) counts, string severity, string contains)
+        {
+            (int supplied, int unmatched, int kept) = counts;
+            (string got, string message) = Run(supplied, unmatched, kept);
+            if (got != severity)
+            {
+                throw new InvalidOperationException(
+                    $"Outcome({supplied}, {unmatched}, {kept}) should be "
+                    + $"'{severity}'; it was '{got}' with message '{message}'.");
+            }
+            if (contains.Length > 0 &&
+                !message.Contains(contains, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Outcome({supplied}, {unmatched}, {kept}) message should "
+                    + $"contain '{contains}'; it was '{message}'.");
+            }
+            if (contains.Length == 0 && message.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Outcome({supplied}, {unmatched}, {kept}) should carry no "
+                    + $"message; it was '{message}'.");
+            }
+        }
+
+        Expect((0, 0, 0), "none", "");
+        Expect((2, 0, 2), "none", "");
+        Expect((3, 1, 2), "warning", "1 of 3");
+        Expect((3, 0, 2), "remark", "merged");
+        Expect((2, 2, 0), "error", "No Pattern");
+        Expect((2, 0, 0), "error", "No Pattern");
+    }
+
+    /// <summary>
+    /// <c>ParameterIdentity.Restore</c> after a document read: a mapping the
+    /// plugin REGISTERED wins over the archive, a mapping it did not register
+    /// belongs to the author.
+    ///
+    /// Pattern's Principal Lines port shipped without its Flatten and gained
+    /// it later. Grasshopper resets every mapping from the archive on load,
+    /// so without this rule every definition saved before the flatten
+    /// reopened with P unflattened and one Pattern per branch of curves. The
+    /// first fix re-asserted EVERY port's registered mapping, which would
+    /// have wiped any graft or flatten the author set by hand, on every port
+    /// of every component, on every reopen. Both halves are measured here by
+    /// playing the archive's part: leave the ports as a load would, call
+    /// Restore, read them back.
+    /// </summary>
+    private static void ValidateRegisteredMappingWins(Assembly plugin)
+    {
+        const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static;
+        Type identity = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.ParameterIdentity",
+            throwOnError: true)!;
+        MethodInfo capture = identity.GetMethod("Capture", Any)
+            ?? throw new InvalidOperationException(
+                "ParameterIdentity.Capture is missing.");
+        MethodInfo restore = identity.GetMethod("Restore", Any)
+            ?? throw new InvalidOperationException(
+                "ParameterIdentity.Restore is missing.");
+
+        Type patternType = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PatternComponent",
+            throwOnError: true)!;
+        object pattern = Activator.CreateInstance(patternType)
+            ?? throw new InvalidOperationException(
+                "PatternComponent could not be constructed.");
+        try
+        {
+            object parameters = patternType.GetProperty("Params")!
+                .GetValue(pattern)!;
+            object inputs = parameters.GetType().GetProperty("Input")!
+                .GetValue(parameters)!;
+            var list = (IList)inputs;
+            object principal = list[4]!;
+            object mode = list[1]!;
+            PropertyInfo principalMapping =
+                principal.GetType().GetProperty("DataMapping")!;
+            PropertyInfo modeMapping =
+                mode.GetType().GetProperty("DataMapping")!;
+            Type mappingType = principalMapping.PropertyType;
+            object none = Enum.Parse(mappingType, "None");
+            object flatten = Enum.Parse(mappingType, "Flatten");
+            object graft = Enum.Parse(mappingType, "Graft");
+
+            if (!Equals(principalMapping.GetValue(principal), flatten))
+            {
+                throw new InvalidOperationException(
+                    "Pattern's Principal Lines port must register Flatten; "
+                    + $"it registers {principalMapping.GetValue(principal)}.");
+            }
+            if (!Equals(modeMapping.GetValue(mode), none))
+            {
+                throw new InvalidOperationException(
+                    "Pattern's Mode port must register no mapping for this "
+                    + "check to mean anything; it registers "
+                    + $"{modeMapping.GetValue(mode)}.");
+            }
+
+            // Capture runs before the archive is read, on the registered
+            // identity, exactly as the Read override does.
+            object snapshots = capture.Invoke(null, new[] { inputs })!;
+
+            // The archive's part: an old definition saved P before it
+            // flattened, and the author grafted Mode by hand.
+            principalMapping.SetValue(principal, none);
+            modeMapping.SetValue(mode, graft);
+
+            restore.Invoke(null, new object?[] { inputs, snapshots });
+
+            if (!Equals(principalMapping.GetValue(principal), flatten))
+            {
+                throw new InvalidOperationException(
+                    "The registered Flatten on Principal Lines did not win over "
+                    + "the archived None; definitions saved before the flatten "
+                    + "reopen unflattened.");
+            }
+            if (!Equals(modeMapping.GetValue(mode), graft))
+            {
+                throw new InvalidOperationException(
+                    "The author's graft on an unmapped port was wiped by "
+                    + "Restore; a registered None must not be re-asserted.");
+            }
+        }
+        finally
+        {
+            if (pattern is IDisposable disposable)
+                disposable.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Pattern is the only component that previews principal runs. Every
+    /// other component used to hold a <c>List&lt;Line&gt;</c> of red bars and
+    /// paint it over its own preview, so two components on one canvas showed
+    /// each bar twice: the "dual lining" that read as a doubled principal
+    /// line. The rule is mechanical: an instance field of type List of Line
+    /// whose name contains "Principal" exists on PatternComponent and on no
+    /// other component, and the helper that read runs off a Result for the
+    /// others, <c>TnaWorkflowPreview.ResultPrincipalLines</c>, is gone.
+    /// </summary>
+    private static void ValidatePrincipalPreviewOwner(
+        Assembly plugin,
+        Type[] componentTypes)
+    {
+        const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static | BindingFlags.Instance;
+        Type preview = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TnaWorkflowPreview",
+            throwOnError: true)!;
+        if (preview.GetMethods(Any).Any(m => m.Name == "ResultPrincipalLines"))
+        {
+            throw new InvalidOperationException(
+                "TnaWorkflowPreview.ResultPrincipalLines still exists. Pattern is "
+                + "the only component that previews principal runs, and it reads "
+                + "a topology, not a Result.");
+        }
+
+        const BindingFlags Fields = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        var owners = new List<string>();
+        foreach (Type componentType in componentTypes)
+        {
+            for (Type? at = componentType; at is not null; at = at.BaseType)
+            {
+                foreach (FieldInfo field in at.GetFields(Fields))
+                {
+                    if (!field.Name.Contains(
+                            "Principal", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    Type type = field.FieldType;
+                    bool listOfLine = type.IsGenericType
+                        && type.GetGenericTypeDefinition() == typeof(List<>)
+                        && type.GetGenericArguments()[0].Name == "Line";
+                    if (listOfLine)
+                        owners.Add(componentType.FullName ?? componentType.Name);
+                }
+            }
+        }
+
+        const string Pattern = "Ananke.COMPAS.Native.Components.PatternComponent";
+        if (!owners.Contains(Pattern))
+        {
+            throw new InvalidOperationException(
+                "PatternComponent holds no principal-line preview field; it is "
+                + "the one component that must.");
+        }
+        string[] others = owners.Where(o => o != Pattern).Distinct().ToArray();
+        if (others.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "Only Pattern previews principal runs; these still hold a "
+                + $"principal preview field: {string.Join(", ", others)}.");
         }
     }
 
