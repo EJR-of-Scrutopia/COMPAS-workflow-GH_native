@@ -149,8 +149,9 @@ force x length`, and the minimum is placed; ties go to the higher level.
 
 ### 3.8 The block
 
-`MouldColumnsDto` as today, with: `HeadNode[i]` = the net vertex index
-of head i directly (every head IS a notch, so no plan matching);
+`MouldColumnsDto` as today, with: `HeadNode[i]` resolved by
+`ColumnsBlock`'s plan match, which is exact here because every head IS
+a net vertex;
 `Branching` = the slider; `GroundAsked` as above (-1 allowed, the one
 contract validation change); `GroundPlaced` >= 0; `ForkFraction =
 0.65`; `ForksRaised = 0`. `Trees`, `Heads`, `Forks`, `Feet` from
@@ -223,7 +224,7 @@ of `ValidateDiagnoseRules`. Kept: `ValidateColumnAim`,
 New, every one driving `ColumnPlacement` by reflection on hand-built
 arrays:
 
-- Grouping: 7 free notches at Branching 2 give a centre single and three
+- Grouping: 9 free notches at Branching 2 give a centre single and four
   mirrored pairs with mirrored mains; 8 at Branching 3 give two triples
   and a single at each end; 5 at Branching 1 give five singles.
 - Fork: on a hand-built tree the fork lies on the foot-to-main segment
