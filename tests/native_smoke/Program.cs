@@ -597,6 +597,21 @@ internal static class Program
 
         try
         {
+            ValidateDiagnosticsAppend(plugin);
+            Console.WriteLine(
+                "PASS  Diagnostics append: native entries land after the "
+                + "worker's and leave them untouched, a source replaces its "
+                + "own earlier entries instead of piling up, every entry "
+                + "validates, and a non-finite value is dropped rather than "
+                + "written.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Diagnostics append: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateOutputGrouping(plugin);
             Console.WriteLine(
                 "PASS  Output grouping: the anchors of a vault come back as "
@@ -1466,6 +1481,88 @@ internal static class Program
         RequireNoValidationErrors(
             deserialize.Invoke(null, new object[] { bare })!,
             "Old-shape Result JSON with no mould key");
+    }
+
+    /// <summary>
+    /// Native components append diagnostics INTO the Result instead of
+    /// printing a report. The worker's entries stay first and untouched, a
+    /// source's own earlier entries are replaced rather than piled up, and
+    /// every native entry passes DiagnosticDto.Validate, because the worker
+    /// codecs throw on an invalid one and Diagnose must be able to trust the
+    /// list.
+    /// </summary>
+    private static void ValidateDiagnosticsAppend(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type diagnosticType = RequireContractType(plugin, "DiagnosticDto");
+        Type helper = RequireComponentType(plugin, "ResultDiagnostics");
+        MethodInfo entry = RequirePublicStatic(helper, "Entry");
+        MethodInfo replace = RequirePublicStatic(helper, "Replace");
+        MethodInfo sourceOf = RequirePublicStatic(helper, "SourceOf");
+
+        object Worker(string code)
+        {
+            object d = CreateInstance(diagnosticType);
+            SetContractProperty(d, diagnosticType, "Code", code);
+            SetContractProperty(d, diagnosticType, "Severity", "info");
+            SetContractProperty(d, diagnosticType, "Message", "from the worker");
+            SetContractProperty(d, diagnosticType, "Provenance",
+                new Dictionary<string, string> { ["source"] = "COMPAS TNA worker" });
+            return d;
+        }
+        object Native(string code, double? value)
+        {
+            return entry.Invoke(null, new object?[]
+            {
+                "Columns", code, "info", "measured by Columns", value, 60.0, "degrees", null,
+            })!;
+        }
+        Array Typed(params object[] items)
+        {
+            Array array = Array.CreateInstance(diagnosticType, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        IReadOnlyList<object> DiagnosticsOf(object result) =>
+            ((IEnumerable)resultType.GetProperty("Diagnostics")!.GetValue(result)!)
+                .Cast<object>().ToList();
+
+        object workerA = Worker("worker.a");
+        object workerB = Worker("worker.b");
+        object result = CreateResultDto(
+            resultType, "fd", CreateInstance(equilibriumType), null, null);
+        SetContractProperty(result, resultType, "Diagnostics", Typed(workerA, workerB));
+
+        object appended = replace.Invoke(null, new object?[]
+        {
+            result, "Columns",
+            Typed(Native("columns.lean", 12.0), Native("columns.bars", 2.0), Native("columns.force_max", 900.0)),
+        })!;
+        IReadOnlyList<object> all = DiagnosticsOf(appended);
+        if (all.Count != 5)
+            throw new InvalidOperationException($"Two worker plus three native entries is five; got {all.Count}.");
+        if (!ReferenceEquals(all[0], workerA) || !ReferenceEquals(all[1], workerB))
+            throw new InvalidOperationException("The worker's entries must stay first and untouched.");
+        for (int i = 2; i < 5; i++)
+        {
+            RequireNoValidationErrors(all[i], $"native diagnostic {i}");
+            string source = (string)sourceOf.Invoke(null, new[] { all[i] })!;
+            if (source != "Columns")
+                throw new InvalidOperationException($"Native entry {i} has source '{source}', expected 'Columns'.");
+        }
+
+        object replaced = replace.Invoke(null, new object?[]
+        {
+            appended, "Columns", Typed(Native("columns.lean", 15.0)),
+        })!;
+        if (DiagnosticsOf(replaced).Count != 3)
+            throw new InvalidOperationException("Replacing a source's entries must drop its earlier ones, leaving two worker plus one.");
+
+        object nan = Native("columns.foot_drift", double.NaN);
+        if (diagnosticType.GetProperty("Value")!.GetValue(nan) is not null)
+            throw new InvalidOperationException("A non-finite Value must be dropped to null, not written and refused later.");
     }
 
     private static Type RequireContractType(Assembly plugin, string typeName)
