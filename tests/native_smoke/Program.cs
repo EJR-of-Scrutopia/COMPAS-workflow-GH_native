@@ -597,6 +597,23 @@ internal static class Program
 
         try
         {
+            ValidateRegisteredMappingWins(plugin);
+            Console.WriteLine(
+                "PASS  ParameterIdentity.Restore: a mapping the plugin REGISTERED "
+                + "wins over the archive, so Pattern's P re-flattens in every "
+                + "definition saved before it flattened; a port registered with "
+                + "no mapping keeps the graft the author set by hand, which the "
+                + "first fix would have wiped on every reopen.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ParameterIdentity registered mapping: "
+                + $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSharedFoot(plugin);
             Console.WriteLine(
                 "PASS  ColumnFinder.SharedFoot: an odd set of columns whose "
@@ -3340,6 +3357,105 @@ internal static class Program
         Expect((3, 0, 2), "remark", "merged");
         Expect((2, 2, 0), "error", "No Pattern");
         Expect((2, 0, 0), "error", "No Pattern");
+    }
+
+    /// <summary>
+    /// <c>ParameterIdentity.Restore</c> after a document read: a mapping the
+    /// plugin REGISTERED wins over the archive, a mapping it did not register
+    /// belongs to the author.
+    ///
+    /// Pattern's Principal Lines port shipped without its Flatten and gained
+    /// it later. Grasshopper resets every mapping from the archive on load,
+    /// so without this rule every definition saved before the flatten
+    /// reopened with P unflattened and one Pattern per branch of curves. The
+    /// first fix re-asserted EVERY port's registered mapping, which would
+    /// have wiped any graft or flatten the author set by hand, on every port
+    /// of every component, on every reopen. Both halves are measured here by
+    /// playing the archive's part: leave the ports as a load would, call
+    /// Restore, read them back.
+    /// </summary>
+    private static void ValidateRegisteredMappingWins(Assembly plugin)
+    {
+        const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static;
+        Type identity = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.ParameterIdentity",
+            throwOnError: true)!;
+        MethodInfo capture = identity.GetMethod("Capture", Any)
+            ?? throw new InvalidOperationException(
+                "ParameterIdentity.Capture is missing.");
+        MethodInfo restore = identity.GetMethod("Restore", Any)
+            ?? throw new InvalidOperationException(
+                "ParameterIdentity.Restore is missing.");
+
+        Type patternType = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PatternComponent",
+            throwOnError: true)!;
+        object pattern = Activator.CreateInstance(patternType)
+            ?? throw new InvalidOperationException(
+                "PatternComponent could not be constructed.");
+        try
+        {
+            object parameters = patternType.GetProperty("Params")!
+                .GetValue(pattern)!;
+            object inputs = parameters.GetType().GetProperty("Input")!
+                .GetValue(parameters)!;
+            var list = (IList)inputs;
+            object principal = list[4]!;
+            object mode = list[1]!;
+            PropertyInfo principalMapping =
+                principal.GetType().GetProperty("DataMapping")!;
+            PropertyInfo modeMapping =
+                mode.GetType().GetProperty("DataMapping")!;
+            Type mappingType = principalMapping.PropertyType;
+            object none = Enum.Parse(mappingType, "None");
+            object flatten = Enum.Parse(mappingType, "Flatten");
+            object graft = Enum.Parse(mappingType, "Graft");
+
+            if (!Equals(principalMapping.GetValue(principal), flatten))
+            {
+                throw new InvalidOperationException(
+                    "Pattern's Principal Lines port must register Flatten; "
+                    + $"it registers {principalMapping.GetValue(principal)}.");
+            }
+            if (!Equals(modeMapping.GetValue(mode), none))
+            {
+                throw new InvalidOperationException(
+                    "Pattern's Mode port must register no mapping for this "
+                    + "check to mean anything; it registers "
+                    + $"{modeMapping.GetValue(mode)}.");
+            }
+
+            // Capture runs before the archive is read, on the registered
+            // identity, exactly as the Read override does.
+            object snapshots = capture.Invoke(null, new[] { inputs })!;
+
+            // The archive's part: an old definition saved P before it
+            // flattened, and the author grafted Mode by hand.
+            principalMapping.SetValue(principal, none);
+            modeMapping.SetValue(mode, graft);
+
+            restore.Invoke(null, new object?[] { inputs, snapshots });
+
+            if (!Equals(principalMapping.GetValue(principal), flatten))
+            {
+                throw new InvalidOperationException(
+                    "The registered Flatten on Principal Lines did not win over "
+                    + "the archived None; definitions saved before the flatten "
+                    + "reopen unflattened.");
+            }
+            if (!Equals(modeMapping.GetValue(mode), graft))
+            {
+                throw new InvalidOperationException(
+                    "The author's graft on an unmapped port was wiped by "
+                    + "Restore; a registered None must not be re-asserted.");
+            }
+        }
+        finally
+        {
+            if (pattern is IDisposable disposable)
+                disposable.Dispose();
+        }
     }
 
     /// <summary>

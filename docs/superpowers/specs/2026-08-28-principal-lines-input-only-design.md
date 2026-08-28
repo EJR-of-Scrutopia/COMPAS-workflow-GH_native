@@ -62,10 +62,13 @@ That is the "dual lining" Param saw. One owner, one drawing.
    `TnaWorkflowPreview.ResultPrincipalLines` goes with them.
    `TnaWorkflowPreview.PrincipalLines` and `TopologyPrincipalLines` stay
    for Pattern. Animate and Columns still hand the bars out as their
-   Principal Lines tree output, so the bars remain visible on the moving
-   frame through Grasshopper's own output preview; what goes is the second
-   red copy painted on top. `MouldGeometry.PrincipalRuns`, which reads the
-   runs off a Result for the mould components, is untouched.
+   Principal Lines tree output, and their own previews draw every edge of
+   the net, bars included, as grey wires on the moving frame; what goes is
+   the second red copy painted on top. (Their geometry outputs are hidden
+   by design, so the bars are not seen through Grasshopper's output
+   preview; the net wires are what shows them.) `MouldGeometry.PrincipalRuns`,
+   which reads the runs off a Result for the mould components, is
+   untouched.
 7. Every message that told the author to "set Ribs on Supports" now says
    only to draw Principal Lines on Pattern: Columns' no-runs warning,
    Animate's no-runs warning, and the `columns.principal_source`

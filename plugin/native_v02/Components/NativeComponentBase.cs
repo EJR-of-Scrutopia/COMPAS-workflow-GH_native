@@ -200,9 +200,15 @@ internal static class SuggestedValueListPlacement
 /// whichever current port shares the index: a required "V" appears where
 /// an optional "I" now lives, and the component errors on inputs that are
 /// meant to be blank. The registered identity, captured before the read,
-/// wins. This also means a registered DataMapping (for example a Flatten
-/// added on a later plugin version) overrides whatever graft/flatten
-/// choice the author made on that port in an older saved definition.
+/// wins.
+///
+/// Data mapping is the one property with two owners. A mapping the plugin
+/// REGISTERED (Flatten on a list port) is part of that port's identity and
+/// wins over the archive, so a flatten added in a later plugin version
+/// reaches definitions saved before it. A port registered with NO mapping
+/// is the author's to graft or flatten on the canvas, and the archive
+/// keeps their choice; re-asserting None there would silently undo it on
+/// every reopen.
 /// </summary>
 internal static class ParameterIdentity
 {
@@ -251,7 +257,8 @@ internal static class ParameterIdentity
             {
                 preview.Hidden = hidden;
             }
-            parameter.DataMapping = snapshot.DataMapping;
+            if (snapshot.DataMapping != GH_DataMapping.None)
+                parameter.DataMapping = snapshot.DataMapping;
         }
     }
 }
