@@ -6,6 +6,7 @@ passed to visualisation, model and export stages.
 """
 
 from collections import deque
+import math
 from typing import NamedTuple
 
 import numpy as np
@@ -87,16 +88,41 @@ def _register_lines(lines, tolerance):
     vertices = []
     edges = []
     endpoints = []
-    tolerance2 = float(tolerance) ** 2
+    cell_size = float(tolerance)
+    tolerance2 = cell_size ** 2
+    buckets = {}
+    neighbour_offsets = tuple(
+        (dx, dy, dz)
+        for dx in (-1, 0, 1)
+        for dy in (-1, 0, 1)
+        for dz in (-1, 0, 1)
+    )
 
     def vertex_index(point):
         xyz = np.asarray(point, dtype=float)
-        for index, existing in enumerate(vertices):
+        cell = (
+            math.floor(float(xyz[0]) / cell_size),
+            math.floor(float(xyz[1]) / cell_size),
+            math.floor(float(xyz[2]) / cell_size),
+        )
+        candidates = []
+        for dx, dy, dz in neighbour_offsets:
+            candidates.extend(
+                buckets.get((cell[0] + dx, cell[1] + dy, cell[2] + dz), ())
+            )
+        found = None
+        for index in candidates:
+            existing = vertices[index]
             delta = existing - xyz
             if float(np.dot(delta, delta)) <= tolerance2:
-                return index
+                if found is None or index < found:
+                    found = index
+        if found is not None:
+            return found
         vertices.append(xyz)
-        return len(vertices) - 1
+        index = len(vertices) - 1
+        buckets.setdefault(cell, []).append(index)
+        return index
 
     for index, line in enumerate(lines or []):
         if line is None or len(line) != 2:
