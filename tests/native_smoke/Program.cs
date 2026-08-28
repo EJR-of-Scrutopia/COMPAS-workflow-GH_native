@@ -478,61 +478,6 @@ internal static class Program
 
         try
         {
-            ValidateBeamPlacement(plugin);
-            Console.WriteLine(
-                "PASS  BeamSolver.ArmsForBar: sweeping symmetric arrangements "
-                + "puts the least droop exactly at the station nearest the "
-                + "textbook 0.2232L; the arms the solver picks are SYMMETRIC "
-                + "on a symmetric bar even though an asymmetric pair droops "
-                + "less, land within one station of that inset, beat evenly "
-                + "spaced arms, and their reactions sum to the whole load. "
-                + "Symmetry survives a load a tenth off mirrored, "
-                + "which every solved net's is and which defeated the first "
-                + "attempt at this. An odd count puts one arm ON the "
-                + "centreline and mirrors the rest, so the centre stands "
-                + "outside the pairing instead of eating one of it.");
-        }
-        catch (Exception exception)
-        {
-            failures.Add(
-                $"BeamSolver.ArmsForBar: {DescribeException(exception)}");
-        }
-
-        try
-        {
-            ValidateForkPoint(plugin);
-            Console.WriteLine(
-                "PASS  ColumnFinder.ForkPoint: two branches whose thrust lines "
-                + "cross fork exactly where they cross, so the fork HEIGHT is "
-                + "a consequence of the load; two plumb branches, whose lines "
-                + "never meet, fall back to the load-weighted centre at the "
-                + "lower notch instead of solving a singular system.");
-        }
-        catch (Exception exception)
-        {
-            failures.Add(
-                $"ColumnFinder.ForkPoint: {DescribeException(exception)}");
-        }
-
-        try
-        {
-            ValidateColumnTree(plugin);
-            Console.WriteLine(
-                "PASS  MouldGeometry.BuildColumnTree: a forked column arriving "
-                + "as bare lines is rebuilt into its own tree. Two notches, one "
-                + "fork, one foot, and the FORK IS NOT A FOOT, which is the "
-                + "regression that left branches animated as if each stood on "
-                + "the ground; a shared foot under two forks is read as one "
-                + "foot carrying both.");
-        }
-        catch (Exception exception)
-        {
-            failures.Add(
-                $"MouldGeometry.BuildColumnTree: {DescribeException(exception)}");
-        }
-
-        try
-        {
             ValidateRunDeduplication(plugin);
             Console.WriteLine(
                 "PASS  PrincipalRunFinder.Deduplicate: one line traced from "
@@ -637,30 +582,12 @@ internal static class Program
 
         try
         {
-            ValidateSharedFoot(plugin);
-            Console.WriteLine(
-                "PASS  ColumnFinder.SharedFoot: an odd set of columns whose "
-                + "middle one is off centre still puts its shared foot dead "
-                + "centre, which the average did not: Param's Type 1 offset at "
-                + "five columns and above, reproduced and refused. Four "
-                + "mirrored columns, which always looked right, still do.");
-        }
-        catch (Exception exception)
-        {
-            failures.Add(
-                $"ColumnFinder.SharedFoot: {DescribeException(exception)}");
-        }
-
-        try
-        {
             ValidateStiffnessSeparation(plugin);
             Console.WriteLine(
-                "PASS  EI separation: the arms come out IDENTICAL over six "
-                + "orders of magnitude of stiffness, which is why EI is asked "
-                + "for on Monitor and nowhere else; and the deflection "
-                + "scales exactly as one over EI, which is what lets that one "
-                + "number turn the placement's shape into millimetres. Lean "
-                + "from vertical is measured against hand-computed angles.");
+                "PASS  EI separation: bar sag scales exactly as one over EI, "
+                + "which is what lets Monitor's one number turn a bending "
+                + "shape into millimetres; lean from vertical is measured "
+                + "against hand-computed angles.");
         }
         catch (Exception exception)
         {
@@ -1623,6 +1550,24 @@ internal static class Program
         RequireNoValidationErrors(
             deserialize.Invoke(null, new object[] { bare })!,
             "Old-shape Result JSON with no mould key");
+
+        // Ground -1 is Auto, which is a level asked for and so has to travel
+        // in the block. Anything below it is not a level at all.
+        object autoColumns = Columns(new[] { 100.0, 200.0 }, new[] { 1, 2 });
+        SetContractProperty(autoColumns, columnsType, "GroundAsked", -1);
+        RequireNoValidationErrors(
+            Result(Mould(autoColumns, null)), "Mould block asking for Ground -1 (Auto)");
+
+        object belowColumns = Columns(new[] { 100.0, 200.0 }, new[] { 1, 2 });
+        SetContractProperty(belowColumns, columnsType, "GroundAsked", -2);
+        IReadOnlyList<string> groundErrors =
+            InvokeValidate(Result(Mould(belowColumns, null)));
+        if (!groundErrors.Any(e => e.Contains("groundAsked", StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "GroundAsked -2 is below Auto and must be refused by name; got "
+                + $"[{string.Join("; ", groundErrors)}].");
+        }
     }
 
     /// <summary>
@@ -1953,19 +1898,6 @@ internal static class Program
         string[] clean = Codes(Result(Array.Empty<int>(), null));
         if (clean.Length != 0)
             throw new InvalidOperationException($"A clean Result raises nothing; got [{string.Join(", ", clean)}].");
-
-        // Forks raised upstream: Diagnose says which lever to pull.
-        object forky = Result(Array.Empty<int>(), null);
-        object raised = CreateInstance(diagnosticType);
-        SetContractProperty(raised, diagnosticType, "Code", "columns.forks_raised");
-        SetContractProperty(raised, diagnosticType, "Severity", "info");
-        SetContractProperty(raised, diagnosticType, "Message", "2 forks were raised");
-        SetContractProperty(raised, diagnosticType, "Value", 2.0);
-        SetContractProperty(raised, diagnosticType, "Provenance", new Dictionary<string, string> { ["source"] = "Columns" });
-        Array oneRaised = Array.CreateInstance(diagnosticType, 1);
-        oneRaised.SetValue(raised, 0);
-        SetContractProperty(forky, resultType, "Diagnostics", oneRaised);
-        Expect(forky, "diagnose.forks_raised");
 
         // An invalid Result: a frame of three vertices on a net of four, and
         // no columns, which would ALSO trip frame_without_columns if the
@@ -2830,37 +2762,29 @@ internal static class Program
     }
 
     /// <summary>
-    /// The two halves of the EI decision, measured.
+    /// What EI is still for, and the lean rule, both measured.
     ///
-    /// EI is asked for on Stress Analysis and nowhere else, and that rests on
-    /// a claim that has to be true rather than merely believed: THE ARMS DO
-    /// NOT DEPEND ON IT. Placement compares one arrangement against another,
-    /// stiffness is a common factor in that comparison, so it cancels. If it
-    /// did not, the placement would be silently tuned by a number the author
-    /// picked for a section, and a tolerance would be sitting next to a
-    /// decision that cannot honour one. Six orders of magnitude is enough to
-    /// catch any real dependence.
+    /// Nothing chooses where a column stands by stiffness any more: every
+    /// notch is held, so there is no arrangement for EI to pick between and
+    /// no way for it to tune a placement while claiming not to. EI is asked
+    /// for on Monitor and nowhere else, and it has one job left, which has
+    /// to be exact: DEFLECTION SCALES AS ONE OVER EI. The beam knows the
+    /// SHAPE of the sag between the notches a column holds, and that exact
+    /// reciprocal is what turns the shape into millimetres, which is the
+    /// unit a build tolerance is written in.
     ///
-    /// The other half is why EI is worth asking for at all: deflection scales
-    /// exactly as one over EI. The placement knows the SHAPE of the bending;
-    /// that exact reciprocal is what turns the shape into millimetres, which
-    /// is the unit a build tolerance is written in.
-    ///
-    /// Also checks LeanFromVertical, the rule the trunks are held to. A trunk
-    /// to a shared foot has both ends fixed, so it is brought inside the limit
-    /// by raising its fork rather than by capping an aim, and the measurement
-    /// that decides when to do so has to be right.
+    /// The other half is LeanFromVertical, the rule the trunks are held to.
+    /// A Ground level that would lean a trunk past sixty degrees is refused
+    /// and the next lower one tried, so the measurement that decides it is
+    /// checked against angles computed by hand.
     /// </summary>
     private static void ValidateStiffnessSeparation(Assembly plugin)
     {
         Type solver = plugin.GetType(
             "Ananke.COMPAS.Native.Components.BeamSolver", throwOnError: true)!;
-        MethodInfo arms = RequirePublicStatic(solver, "ArmsForBar");
         MethodInfo response = RequirePublicStatic(solver, "Response");
-        Type point3d = arms.GetParameters()[1].ParameterType.GetElementType()!;
 
         const int stations = 31;
-        Array nodes = Array.CreateInstance(point3d, stations);
         var arc = new double[stations];
         var load = new double[stations];
         for (int i = 0; i < stations; i++)
@@ -2870,35 +2794,6 @@ internal static class Program
             // Deliberately NOT uniform. A flat load is the one case where a
             // dependence on stiffness could hide behind symmetry.
             load[i] = 1.0 + (0.4 * Math.Sin(6.0 * x));
-            nodes.SetValue(
-                Activator.CreateInstance(point3d, x, 0.0, 0.0), i);
-        }
-        var bar = Enumerable.Range(0, stations).ToList();
-
-        int[] ArmsAt(double EI)
-        {
-            object result = arms.Invoke(
-                null,
-                new object?[] { bar, nodes, load, new HashSet<int>(), 3, EI })!;
-            return ((IEnumerable)result.GetType()
-                    .GetField("Item1")!.GetValue(result)!)
-                .Cast<int>()
-                .OrderBy(v => v)
-                .ToArray();
-        }
-
-        int[] soft = ArmsAt(1.0e-3);
-        int[] mid = ArmsAt(1.0);
-        int[] stiff = ArmsAt(1.0e3);
-        if (!soft.SequenceEqual(mid) || !mid.SequenceEqual(stiff))
-        {
-            throw new InvalidOperationException(
-                "The arms must not depend on stiffness: got "
-                + $"[{string.Join(",", soft)}] at EI 1e-3, "
-                + $"[{string.Join(",", mid)}] at 1, and "
-                + $"[{string.Join(",", stiff)}] at 1e3. If these ever differ, "
-                + "EI cannot stay downstream, because it would be tuning the "
-                + "placement while claiming not to.");
         }
 
         // Deflection is exactly reciprocal in EI.
@@ -2928,8 +2823,10 @@ internal static class Program
         }
 
         // The lean rule the trunks are held to.
-        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
-        MethodInfo lean = RequireStatic(finder, "LeanFromVertical");
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo lean = RequirePublicStatic(geometry, "LeanFromVertical");
+        Type point3d = lean.GetParameters()[0].ParameterType;
         double Lean(double dx, double rise)
         {
             object foot = Activator.CreateInstance(point3d, 0.0, 0.0, 0.0)!;
@@ -2946,7 +2843,7 @@ internal static class Program
             throw new InvalidOperationException(
                 "Root three across, one up, is exactly 60 degrees, which is "
                 + "the limit itself and so the value that decides whether a "
-                + "fork gets raised.");
+                + "Ground level is refused.");
         }
     }
 
@@ -3047,473 +2944,6 @@ internal static class Program
                 + $"{expectedX:G6}, 0, {expectedZ:G6}); it aims "
                 + $"({aimX:G6}, {aimY:G6}, {aimZ:G6}). A wrong sign on X means "
                 + "the column leans WITH the pull instead of against it.");
-        }
-    }
-
-    /// <summary>
-    /// <c>BeamSolver.ArmsForBar</c>: where the column arms stand under a bar.
-    ///
-    /// The whole placement argument rests on one classical result, and until
-    /// now nothing had checked it. A uniformly loaded beam on two symmetric
-    /// supports wants them about a fifth of its length in from each end,
-    /// because that balances the cantilever moment over each support against
-    /// the moment at midspan. The two figures usually quoted are
-    ///
-    ///   0.2071L  minimises the maximum BENDING MOMENT
-    ///   0.2232L  minimises the maximum DEFLECTION
-    ///
-    /// and it matters which, because they are three percent apart and the
-    /// solver has to be measured against the one it actually optimises. This
-    /// one scores arrangements by peak deflection, so 0.2232L is its target.
-    ///
-    /// A forty-one station bar, unit span, uniform load, no anchors, two arms.
-    /// Three assertions, none of which an evenly spaced fallback would pass:
-    ///
-    ///   the arms land SYMMETRICALLY, within one station of 0.2232L. Evenly
-    ///   spaced would put them at 0.25L, which is outside that by design: the
-    ///   window is one station spacing wide, so the test can tell a solved
-    ///   answer from a spaced one rather than merely from a wild one.
-    ///
-    ///   the solved arrangement BEATS evenly spaced on peak deflection, run
-    ///   through the solver's own Response so the comparison is like for like.
-    ///
-    ///   the reactions SUM TO THE WHOLE LOAD, which is the invariant that
-    ///   catches a sign or scale error anywhere in the beam assembly.
-    /// </summary>
-    private static void ValidateBeamPlacement(Assembly plugin)
-    {
-        Type solver = plugin.GetType(
-            "Ananke.COMPAS.Native.Components.BeamSolver", throwOnError: true)
-            ?? throw new InvalidOperationException("BeamSolver not found.");
-        MethodInfo arms = solver.GetMethod(
-            "ArmsForBar", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException("ArmsForBar not found.");
-        MethodInfo response = solver.GetMethod(
-            "Response", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException("Response not found.");
-
-        Type point3d = arms.GetParameters()[1].ParameterType.GetElementType()
-            ?? throw new InvalidOperationException(
-                "ArmsForBar' node parameter is not an array.");
-
-        const int stations = 41;
-        const int last = stations - 1;
-        Array nodes = Array.CreateInstance(point3d, stations);
-        var arc = new double[stations];
-        var load = new double[stations];
-        for (int index = 0; index < stations; index++)
-        {
-            double x = (double)index / last;
-            arc[index] = x;
-            load[index] = 1.0;
-            nodes.SetValue(
-                Activator.CreateInstance(point3d, x, 0.0, 0.0), index);
-        }
-
-        var bar = Enumerable.Range(0, stations).ToList();
-        object result = arms.Invoke(
-            null,
-            new object?[] { bar, nodes, load, new HashSet<int>(), 2, 1.0 })
-            ?? throw new InvalidOperationException("ArmsForBar returned null.");
-        Type tuple = result.GetType();
-        var chosen = ((IEnumerable)tuple.GetField("Item1")!.GetValue(result)!)
-            .Cast<int>()
-            .OrderBy(value => value)
-            .ToArray();
-        var reactions = (double[])tuple.GetField("Item3")!.GetValue(result)!;
-
-        // Two asked for, and THREE is a legitimate answer. A bar already
-        // crowding the middle is given a centre column on top of the count,
-        // because a centre column has no mirror partner: counted like any
-        // other it leaves an odd number to split between the halves, one side
-        // takes the extra, and the whole arrangement reads off centre.
-        if (chosen.Length != 2 && chosen.Length != 3)
-        {
-            throw new InvalidOperationException(
-                $"Two arms were asked for; {chosen.Length} came back. Three is "
-                + "allowed, as a centre column added outside the count.");
-        }
-        if (chosen.Length == 3 && chosen[1] != last / 2)
-        {
-            throw new InvalidOperationException(
-                "The arm added beyond the count is the CENTRE one, so it "
-                + $"belongs on station {last / 2}; it is at {chosen[1]}.");
-        }
-        int[] flanks = chosen.Length == 3
-            ? new[] { chosen[0], chosen[2] }
-            : chosen;
-        // The classical number itself, measured where the grid cannot cheat:
-        // among SYMMETRIC arrangements the best inset must be the station
-        // nearest 0.2232, and the sweep either side of it must be worse.
-        int textbook = (int)Math.Round(0.2232 * last);
-        double bestSymmetric = double.MaxValue;
-        int bestSymmetricAt = -1;
-        for (int k = 4; k <= last / 2; k++)
-        {
-            double peak = PeakDeflection(
-                response, arc, load, new[] { k, last - k });
-            if (peak < bestSymmetric)
-            {
-                bestSymmetric = peak;
-                bestSymmetricAt = k;
-            }
-        }
-        if (bestSymmetricAt != textbook)
-        {
-            throw new InvalidOperationException(
-                $"Among symmetric arrangements the least droop must be at "
-                + $"station {textbook} (inset {(double)textbook / last:G4}, the "
-                + "station nearest the textbook 0.2232); the sweep put it at "
-                + $"{bestSymmetricAt} (inset "
-                + $"{(double)bestSymmetricAt / last:G4}).");
-        }
-
-        // A SYMMETRIC BAR MUST GET SYMMETRIC ARMS.
-        //
-        // This assertion was dropped once and put back for a better reason.
-        // The unrestricted search really does prefer asymmetric arms here, and
-        // it is right by its own measure: with stations 0.025 apart neither
-        // 0.200 nor 0.225 is the optimum inset, so one arm at each straddles it
-        // and droops less than either matched pair. Measured: (8,31) peaks at
-        // 0.0149 against 0.0221 for the symmetric (9,31).
-        //
-        // But that gain is a discretisation artefact, not a structural
-        // insight. The continuous optimum on a symmetric problem IS symmetric,
-        // and an arch with its columns in different places on the two halves
-        // is not worth a third of the droop. The solver now refuses the grid's
-        // trick on a bar it judges symmetric, so this measures the refusal.
-        if (flanks[0] + flanks[1] != last)
-        {
-            throw new InvalidOperationException(
-                "A symmetric bar must get symmetric arms; the flanking pair "
-                + $"landed at {flanks[0]} and {flanks[1]}, which are not "
-                + $"mirrored about {last / 2.0:G4}. The unrestricted search "
-                + "prefers (8,31) here, so this is the guard against it.");
-        }
-
-        double spacing = 1.0 / last;
-        foreach (int arm in flanks)
-        {
-            double inset = Math.Min(arm, last - arm) / (double)last;
-            if (Math.Abs(inset - 0.2232) > spacing)
-            {
-                throw new InvalidOperationException(
-                    $"A uniformly loaded bar wants its arms 0.2232 of the way "
-                    + $"in from each end; station {arm} is {inset:G4} in. "
-                    + "Evenly spaced arms would read 0.25, so that is the "
-                    + "likeliest way to fail this.");
-            }
-        }
-
-        // AND WITH THE LOAD NOT QUITE MIRRORED, which is the case that
-        // actually matters. The first attempt at enforcing symmetry tested the
-        // load as well as the shape, and no solved net has a load profile that
-        // mirrors to one percent: iteration residuals alone are bigger than
-        // that, so every real bar failed the test and quietly went back to free
-        // placement. Nothing changed on screen and the arch stayed lopsided.
-        //
-        // Symmetry is a property of the FORM. A tenth of a percent of noise in
-        // the load is not a reason to build an arch with its columns in
-        // different places on the two halves.
-        var noisy = (double[])load.Clone();
-        for (int index = 0; index < noisy.Length; index++)
-            noisy[index] = 1.0 + (0.10 * index / last);
-        object noisyResult = arms.Invoke(
-            null,
-            new object?[] { bar, nodes, noisy, new HashSet<int>(), 2, 1.0 })!;
-        var noisyChosen = ((IEnumerable)noisyResult.GetType()
-            .GetField("Item1")!.GetValue(noisyResult)!)
-            .Cast<int>()
-            .OrderBy(value => value)
-            .ToArray();
-        if (noisyChosen.Length != 2 || noisyChosen[0] + noisyChosen[1] != last)
-        {
-            throw new InvalidOperationException(
-                "A bar whose SHAPE is symmetric must still get symmetric arms "
-                + "when its load is a tenth off mirrored, which every "
-                + "solved net's is; they landed at "
-                + $"{string.Join(", ", noisyChosen)}.");
-        }
-
-        // AN ODD NUMBER PUTS ONE ON THE CENTRELINE AND PAIRS THE REST.
-        //
-        // This is the case Param diagnosed. A column on the centreline has no
-        // mirror partner, so when it was counted like any other it left an odd
-        // number to divide between the two halves: one side took the extra and
-        // everything else shifted to accommodate it. The centre now stands
-        // OUTSIDE the pair count, so three means a centre and one pair, and
-        // five means a centre and two pairs.
-        foreach (int wanted in new[] { 3, 5 })
-        {
-            object oddResult = arms.Invoke(
-                null,
-                new object?[] { bar, nodes, load, new HashSet<int>(), wanted, 1.0 })!;
-            var oddChosen = ((IEnumerable)oddResult.GetType()
-                .GetField("Item1")!.GetValue(oddResult)!)
-                .Cast<int>()
-                .OrderBy(value => value)
-                .ToArray();
-            if (oddChosen.Length != wanted && oddChosen.Length != wanted + 1)
-            {
-                throw new InvalidOperationException(
-                    $"{wanted} arms were asked for; {oddChosen.Length} came "
-                    + "back. One more is allowed, as a centre column outside "
-                    + "the count.");
-            }
-            int middle = oddChosen[oddChosen.Length / 2];
-            if (middle != last / 2)
-            {
-                throw new InvalidOperationException(
-                    $"With {wanted} arms the middle one belongs on the "
-                    + $"centreline, station {last / 2}; it is at {middle}. "
-                    + "A centre column has no partner, so it must stand "
-                    + "outside the pairing rather than eat one of it.");
-            }
-            for (int i = 0; i < oddChosen.Length / 2; i++)
-            {
-                int mirror = oddChosen[oddChosen.Length - 1 - i];
-                if (oddChosen[i] + mirror != last)
-                {
-                    throw new InvalidOperationException(
-                        $"With {wanted} arms, stations {oddChosen[i]} and "
-                        + $"{mirror} must be a mirrored pair about "
-                        + $"{last / 2.0:G4}; they are not.");
-                }
-            }
-        }
-
-        double solvedPeak = PeakDeflection(response, arc, load, chosen);
-        double spacedPeak = PeakDeflection(
-            response, arc, load, new[] { last / 4, 3 * last / 4 });
-        if (!(solvedPeak < spacedPeak))
-        {
-            throw new InvalidOperationException(
-                $"The solved arms must droop less than evenly spaced ones: "
-                + $"solved peak {solvedPeak:G6}, spaced peak {spacedPeak:G6}. "
-                + "If they are equal the solver is falling back to spacing.");
-        }
-
-        double carried = reactions.Sum();
-        double applied = load.Sum();
-        if (Math.Abs(carried - applied) > 1.0e-9 * applied)
-        {
-            throw new InvalidOperationException(
-                $"The reactions must carry the whole load: {applied:G6} "
-                + $"applied, {carried:G6} reacted.");
-        }
-    }
-
-    private static double PeakDeflection(
-        MethodInfo response,
-        double[] arc,
-        double[] load,
-        int[] supports)
-    {
-        object result = response.Invoke(
-            null, new object?[] { arc, load, supports, 1.0 })
-            ?? throw new InvalidOperationException("Response returned null.");
-        var deflection =
-            (double[]?)result.GetType().GetField("Item1")!.GetValue(result)
-            ?? throw new InvalidOperationException(
-                "Response gave no deflections for a valid support set.");
-        return deflection.Select(Math.Abs).Max();
-    }
-
-    /// <summary>
-    /// <c>ColumnFinderComponent.ForkPoint</c>: where a branching column forks,
-    /// which is now solved from the load rather than set by a Depth number.
-    ///
-    /// Each notch a column reaches wants its branch to run along its own line
-    /// of thrust, which puts the fork somewhere on the ray dropping from that
-    /// notch along that line. Two such rays that CROSS have an exact answer,
-    /// and the solve must find it: two notches at (-1, 0, 2) and (1, 0, 2)
-    /// leaning inward at forty-five degrees cross at (0, 0, 1), a metre below
-    /// them. That single number is the whole claim that fork height follows
-    /// from force.
-    ///
-    /// Two PLUMB branches never cross, and the three-by-three system for them
-    /// is singular. That is not an error, it is the case where branching buys
-    /// nothing, so it must fall back rather than solve: to the load-weighted
-    /// centre in plan at the lower of the notches. Checked with an uneven
-    /// three-to-one load so the weighting is measured and not just the
-    /// midpoint.
-    /// </summary>
-    private static void ValidateForkPoint(Assembly plugin)
-    {
-        Type finder = plugin.GetType(
-            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
-        MethodInfo fork = finder.GetMethod(
-            "ForkPoint", BindingFlags.Public | BindingFlags.Static)!;
-        Type listOfPoints = fork.GetParameters()[0].ParameterType;
-        Type point3d = listOfPoints.GetGenericArguments()[0];
-        Type listOfVectors = fork.GetParameters()[1].ParameterType;
-        Type vector3d = listOfVectors.GetGenericArguments()[0];
-
-        (double X, double Y, double Z) Crossing(
-            (double, double, double)[] notches,
-            (double, double, double)[] pushes)
-        {
-            object reach = Activator.CreateInstance(listOfPoints)!;
-            MethodInfo addPoint = listOfPoints.GetMethod("Add")!;
-            foreach ((double x, double y, double z) in notches)
-            {
-                addPoint.Invoke(
-                    reach, new[] { Activator.CreateInstance(point3d, x, y, z) });
-            }
-            object force = Activator.CreateInstance(listOfVectors)!;
-            MethodInfo addVector = listOfVectors.GetMethod("Add")!;
-            foreach ((double x, double y, double z) in pushes)
-            {
-                addVector.Invoke(
-                    force, new[] { Activator.CreateInstance(vector3d, x, y, z) });
-            }
-            object at = fork.Invoke(null, new object?[] { reach, force, 0.0 })!;
-            return (
-                (double)point3d.GetProperty("X")!.GetValue(at)!,
-                (double)point3d.GetProperty("Y")!.GetValue(at)!,
-                (double)point3d.GetProperty("Z")!.GetValue(at)!);
-        }
-
-        // The aim points UP the column, so a branch reaching down and to the
-        // right from the left notch aims up and to the left.
-        double half = Math.Sqrt(0.5);
-        (double x, double y, double z) crossed = Crossing(
-            new[] { (-1.0, 0.0, 2.0), (1.0, 0.0, 2.0) },
-            new[] { (-half, 0.0, half), (half, 0.0, half) });
-        if (Math.Abs(crossed.x) > 1.0e-9 ||
-            Math.Abs(crossed.y) > 1.0e-9 ||
-            Math.Abs(crossed.z - 1.0) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Two branches leaning in at forty-five degrees from (-1,0,2) "
-                + "and (1,0,2) cross at (0,0,1); the fork went to ("
-                + $"{crossed.x:G6}, {crossed.y:G6}, {crossed.z:G6}). The fork "
-                + "height has to be the crossing, not a chosen depth.");
-        }
-
-        (double x, double y, double z) parallel = Crossing(
-            new[] { (-1.0, 0.0, 2.0), (1.0, 0.0, 2.0) },
-            new[] { (0.0, 0.0, 3.0), (0.0, 0.0, 1.0) });
-        if (Math.Abs(parallel.x + 0.5) > 1.0e-9 ||
-            Math.Abs(parallel.y) > 1.0e-9 ||
-            Math.Abs(parallel.z - 2.0) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Two PLUMB branches never cross, so a three-to-one load must "
-                + "fall back to the weighted centre (-0.5, 0, 2); it went to ("
-                + $"{parallel.x:G6}, {parallel.y:G6}, {parallel.z:G6}).");
-        }
-    }
-
-    /// <summary>
-    /// <c>MouldGeometry.BuildColumnTree</c>: recovering a branching column from
-    /// the bare lines the wire carries.
-    ///
-    /// The wire between Column Finder and Animate carries geometry, not
-    /// topology. Animating the segments one at a time treated every branch as
-    /// though it stood on the ground, which left forks hanging in mid air the
-    /// moment Branches went above zero.
-    ///
-    /// Two facts make the tree recoverable without a new contract: every member
-    /// runs LOWER end to UPPER end, which Column Finder keeps deliberately, and
-    /// a fork is one point shared exactly. So a node that is only ever an upper
-    /// end is a notch, only ever a lower end is a foot, and both is a fork.
-    ///
-    /// FORKED, the shape Branches makes:      SHARED, the shape Type makes:
-    ///
-    ///    notch      notch                      notch notch  notch notch
-    ///        \     /                              \   /        \   /
-    ///         \   /                                fork          fork
-    ///          fork                                   \          /
-    ///            |                                     \        /
-    ///           foot                                      foot
-    ///
-    /// The assertion that matters is the negative one: the fork must NOT come
-    /// back as a foot. Everything else follows from it.
-    /// </summary>
-    private static void ValidateColumnTree(Assembly plugin)
-    {
-        Type geometry = plugin.GetType(
-            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
-        MethodInfo build = geometry.GetMethod(
-            "BuildColumnTree", BindingFlags.Public | BindingFlags.Static)!;
-        Type lineArray = build.GetParameters()[0].ParameterType;
-        Type line = lineArray.GetGenericArguments()[0];
-        Type point3d = line.GetProperty("From")!.PropertyType;
-
-        object Point(double x, double y, double z) =>
-            Activator.CreateInstance(point3d, x, y, z)!;
-
-        object Segment(object from, object to) =>
-            Activator.CreateInstance(line, from, to)!;
-
-        (int Notches, int Feet, List<int> AboveFoot) Read(object[] members)
-        {
-            Type listOfLines = typeof(List<>).MakeGenericType(line);
-            object list = Activator.CreateInstance(listOfLines)!;
-            MethodInfo add = listOfLines.GetMethod("Add")!;
-            foreach (object member in members)
-                add.Invoke(list, new[] { member });
-
-            object tree = build.Invoke(null, new object?[] { list, 1.0e-6 })!;
-            Type shape = tree.GetType();
-            var notches = ((IEnumerable)shape.GetProperty("Notches")!
-                .GetValue(tree)!).Cast<int>().ToList();
-            var feet = ((IEnumerable)shape.GetProperty("Feet")!
-                .GetValue(tree)!).Cast<int>().ToList();
-            var above = (Array)shape.GetProperty("Above")!.GetValue(tree)!;
-            var aboveFoot = feet.Count == 1
-                ? ((IEnumerable)above.GetValue(feet[0])!).Cast<int>().ToList()
-                : new List<int>();
-            return (notches.Count, feet.Count, aboveFoot);
-        }
-
-        object forkAt = Point(0.0, 0.0, 1.0);
-        object footAt = Point(0.0, 0.0, 0.0);
-        (int notches, int feet, List<int> aboveFoot) forked = Read(new[]
-        {
-            Segment(forkAt, Point(-1.0, 0.0, 2.0)),
-            Segment(forkAt, Point(1.0, 0.0, 2.0)),
-            Segment(footAt, forkAt),
-        });
-        if (forked.notches != 2 || forked.feet != 1)
-        {
-            throw new InvalidOperationException(
-                "A forked column is two notches over one fork over one foot; "
-                + $"it read as {forked.notches} notches and {forked.feet} "
-                + "feet. A fork counted as a foot is the bug that left "
-                + "branches standing on nothing.");
-        }
-        if (forked.aboveFoot.Count != 1)
-        {
-            throw new InvalidOperationException(
-                "The foot of a forked column carries exactly one member, its "
-                + $"trunk; it carries {forked.aboveFoot.Count}.");
-        }
-
-        object leftFork = Point(-2.0, 0.0, 1.0);
-        object rightFork = Point(2.0, 0.0, 1.0);
-        (int notches, int feet, List<int> aboveFoot) shared = Read(new[]
-        {
-            Segment(leftFork, Point(-3.0, 0.0, 2.0)),
-            Segment(leftFork, Point(-1.0, 0.0, 2.0)),
-            Segment(rightFork, Point(1.0, 0.0, 2.0)),
-            Segment(rightFork, Point(3.0, 0.0, 2.0)),
-            Segment(footAt, leftFork),
-            Segment(footAt, rightFork),
-        });
-        if (shared.notches != 4 || shared.feet != 1)
-        {
-            throw new InvalidOperationException(
-                "Two forks sharing one ground point is four notches, two forks "
-                + $"and ONE foot; it read as {shared.notches} notches and "
-                + $"{shared.feet} feet.");
-        }
-        if (shared.aboveFoot.Count != 2)
-        {
-            throw new InvalidOperationException(
-                "A shared foot carries both trunks; it carries "
-                + $"{shared.aboveFoot.Count}.");
         }
     }
 
@@ -3862,97 +3292,6 @@ internal static class Program
             throw new InvalidOperationException(
                 "Only Pattern previews principal runs; these still hold a "
                 + $"principal preview field: {string.Join(", ", others)}.");
-        }
-    }
-
-    /// <summary>
-    /// <c>ColumnFinderComponent.SharedFoot</c>: where the one ground point of a
-    /// Type 1 column set stands.
-    ///
-    /// Param narrowed this to the case: Type 1 with FIVE COLUMNS OR MORE puts
-    /// its foot to one side, four or fewer is fine. That narrowing is the whole
-    /// diagnosis, because it separates the two possibilities cleanly.
-    ///
-    /// The foot was the AVERAGE of the columns it carries. An average is pulled
-    /// by where they crowd. With an EVEN count they are mirrored pairs and the
-    /// average lands dead centre by luck of the symmetry, which is why four and
-    /// under always looked right. The moment there is a CENTRE COLUMN the count
-    /// is odd, and a centre column stands on whichever notch is NEAREST the
-    /// middle, which on a bar with no node exactly at its midpoint is half a
-    /// bay off. That one unpaired column drags the average off by its own
-    /// offset over the count, in the same direction, every time.
-    ///
-    /// Five columns at -4, -2, +0.6, +2, +4 is exactly that: four in mirrored
-    /// pairs and a middle one 0.6 off. The average is 0.12 and the answer is 0.
-    ///
-    /// The midpoint of the outermost pair has no such weakness. Mirrored
-    /// columns give mirrored extremes, so it is centred however many there are
-    /// and wherever the middle one sits.
-    /// </summary>
-    private static void ValidateSharedFoot(Assembly plugin)
-    {
-        Type finder = RequireComponentType(plugin, "ColumnFinderComponent");
-        MethodInfo shared = RequireStatic(finder, "SharedFoot");
-        Type pointList = shared.GetParameters()[0].ParameterType;
-        Type point3d = pointList.GetGenericArguments()[0];
-
-        (double X, double Y) Foot(params double[] columns)
-        {
-            object tops = Activator.CreateInstance(pointList)!;
-            MethodInfo add = pointList.GetMethod("Add")!;
-            foreach (double x in columns)
-            {
-                add.Invoke(tops, new[]
-                {
-                    Activator.CreateInstance(point3d, x, 0.0, 5.0),
-                });
-            }
-            int[] members = Enumerable.Range(0, columns.Length).ToArray();
-            object at = shared.Invoke(
-                null, new object?[] { tops, members, 0.0 })!;
-            return (
-                (double)point3d.GetProperty("X")!.GetValue(at)!,
-                (double)point3d.GetProperty("Y")!.GetValue(at)!);
-        }
-
-        // FIVE, with the middle one off centre. This is the reported case.
-        (double x, double y) five = Foot(-4.0, -2.0, 0.6, 2.0, 4.0);
-        if (Math.Abs(five.x) > 1.0e-9 || Math.Abs(five.y) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Five columns in mirrored pairs about a middle one that is 0.6 "
-                + "off still belong on a foot at 0; it went to "
-                + $"({five.x:G6}, {five.y:G6}). Their AVERAGE is 0.12, so that "
-                + "number means the average is back.");
-        }
-
-        // SEVEN, the same fault one step further out.
-        (double x, double y) seven = Foot(-6.0, -4.0, -2.0, 0.6, 2.0, 4.0, 6.0);
-        if (Math.Abs(seven.x) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Seven columns about an off-centre middle belong on a foot at "
-                + $"0; it went to {seven.x:G6}.");
-        }
-
-        // FOUR, which always looked right and must stay right.
-        (double x, double y) four = Foot(-4.0, -2.0, 2.0, 4.0);
-        if (Math.Abs(four.x) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Four mirrored columns belong on a foot at 0; it went to "
-                + $"{four.x:G6}.");
-        }
-
-        // And it must still follow the columns when they are genuinely to one
-        // side, rather than always answering zero.
-        (double x, double y) offset = Foot(10.0, 12.0, 14.0);
-        if (Math.Abs(offset.x - 12.0) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Columns at 10, 12 and 14 belong on a foot at 12; it went to "
-                + $"{offset.x:G6}. The foot follows its columns; it is not "
-                + "pinned to the origin.");
         }
     }
 
