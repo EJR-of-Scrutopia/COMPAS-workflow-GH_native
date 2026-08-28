@@ -205,7 +205,8 @@ public sealed class PatternComponent : NativePreviewComponentBase
                 patternVertices,
                 patternEdges,
                 out double principalOffset,
-                out double principalGauge);
+                out double principalGauge,
+                out int _);
             if (principalCurves.Count > 0 &&
                 principalRuns.Count < principalCurves.Count)
             {
@@ -484,50 +485,16 @@ public sealed class SupportsComponent : NativePreviewComponentBase
                     "solve will perform the topology-specific check.");
             }
 
-            // Derive the principal lines from the anchors, unless the
-            // Pattern already carries its own drawn ones. A line starts at the
-            // middle of an anchor strip and runs straight off it across the
-            // form: the anchors already say where the bars belong, so nothing
-            // has to be drawn and no mesh direction has to be chosen.
-            TnaPatternDto patternForAnchors = source;
-            if (topology.PrincipalRuns.Count == 0 && ribs > 0)
-            {
-                List<List<int>> derived = PrincipalRunFinder.DeriveFromAnchors(
-                    topology.Vertices
-                        .Select(v => new Point3d(v.X, v.Y, v.Z)).ToArray(),
-                    topology.Edges,
-                    nodeIds,
-                    ribs);
-                if (derived.Count > 0)
-                {
-                    patternForAnchors = source with
-                    {
-                        Topology = topology with
-                        {
-                            PrincipalRuns = derived
-                                .Select(r => (IReadOnlyList<int>)r.ToArray())
-                                .ToArray()
-                        }
-                    };
-                }
-            }
-
             var anchored = new AnchoredPatternDto
             {
-                Pattern = patternForAnchors,
+                Pattern = source,
                 AnchorNodeIds = nodeIds,
                 SnapTolerance = snapped.Tolerance
             };
             EnsureValid(anchored);
 
-            // The annotated topology, not the one that arrived: this stage
-            // is where the principal lines are derived, so previewing the
-            // input would show anchors with no bars between them.
-            SetPreview(patternForAnchors.Topology ?? topology, nodeIds);
-            int runCount = patternForAnchors.Topology?.PrincipalRuns.Count ?? 0;
-            Message = runCount > 0
-                ? $"{nodeIds.Length} anchors, {runCount} principal lines"
-                : $"{nodeIds.Length} explicit anchors";
+            SetPreview(topology, nodeIds);
+            Message = $"{nodeIds.Length} explicit anchors";
             data.SetData(0, new AnchoredPatternGoo(anchored));
         }
         catch (Exception error)

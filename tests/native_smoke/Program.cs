@@ -551,6 +551,36 @@ internal static class Program
 
         try
         {
+            ValidateDerivationRemoved(plugin);
+            Console.WriteLine(
+                "PASS  PrincipalRunFinder: the anchor derivation is GONE. A "
+                + "principal line is a decision Param draws into Pattern; "
+                + "nothing in the plugin derives one from the anchors any more.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"PrincipalRunFinder derivation removed: "
+                + $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidatePrincipalOutcome(plugin);
+            Console.WriteLine(
+                "PASS  PrincipalRunFinder.Outcome: no curves is silence, a "
+                + "dropped curve is a warning naming the count, two curves on "
+                + "one run is a remark that says merged, and curves with NO "
+                + "run at all is an error that says no Pattern is emitted.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"PrincipalRunFinder.Outcome: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSharedFoot(plugin);
             Console.WriteLine(
                 "PASS  ColumnFinder.SharedFoot: an odd set of columns whose "
@@ -3197,6 +3227,103 @@ internal static class Program
                 "Two lines that merely CROSS share one node and are still two "
                 + $"bars; {crossing} came back.");
         }
+    }
+
+    /// <summary>
+    /// The anchor derivation is deleted, and stays deleted. A principal line
+    /// is a decision the author draws into Pattern. When Supports derived
+    /// lines whenever Pattern carried none, a definition that forgot its
+    /// curves quietly got bars it never asked for, which is a second author
+    /// of one fact. This pins the deletion so it cannot creep back under
+    /// another refactor.
+    /// </summary>
+    private static void ValidateDerivationRemoved(Assembly plugin)
+    {
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PrincipalRunFinder",
+            throwOnError: true)!;
+        const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static | BindingFlags.Instance;
+        if (finder.GetMethods(Any).Any(m => m.Name == "DeriveFromAnchors"))
+        {
+            throw new InvalidOperationException(
+                "PrincipalRunFinder.DeriveFromAnchors still exists. Principal "
+                + "lines are input only; nothing derives them from anchors.");
+        }
+        if (finder.GetMethod("FromCurves", Any) is null)
+        {
+            throw new InvalidOperationException(
+                "PrincipalRunFinder.FromCurves is missing; it is the one way in.");
+        }
+        if (finder.GetMethod("Deduplicate", Any) is null)
+        {
+            throw new InvalidOperationException(
+                "PrincipalRunFinder.Deduplicate is missing; it is the safety net "
+                + "for two curves snapping to one run.");
+        }
+    }
+
+    /// <summary>
+    /// <c>PrincipalRunFinder.Outcome</c>: what Pattern says about the curves
+    /// it was handed, as one pure function of three counts, so the error path
+    /// is measured rather than trusted. The error case matters most: curves
+    /// wired and none placed used to fall through silently to no runs, and the
+    /// first sign was Columns with nothing to stand under.
+    /// </summary>
+    private static void ValidatePrincipalOutcome(Assembly plugin)
+    {
+        Type finder = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.PrincipalRunFinder",
+            throwOnError: true)!;
+        MethodInfo outcome = finder.GetMethod(
+            "Outcome", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "PrincipalRunFinder.Outcome(int, int, int) is missing.");
+
+        (string Severity, string Message) Run(int supplied, int unmatched, int kept)
+        {
+            object result = outcome.Invoke(
+                null, new object?[] { supplied, unmatched, kept })!;
+            Type type = result.GetType();
+            string severity = (string)type.GetProperty("Severity")!
+                .GetValue(result)!;
+            string message = (string)type.GetProperty("Message")!
+                .GetValue(result)!;
+            return (severity, message);
+        }
+
+        void Expect(
+            (int, int, int) counts, string severity, string contains)
+        {
+            (int supplied, int unmatched, int kept) = counts;
+            (string got, string message) = Run(supplied, unmatched, kept);
+            if (got != severity)
+            {
+                throw new InvalidOperationException(
+                    $"Outcome({supplied}, {unmatched}, {kept}) should be "
+                    + $"'{severity}'; it was '{got}' with message '{message}'.");
+            }
+            if (contains.Length > 0 &&
+                !message.Contains(contains, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Outcome({supplied}, {unmatched}, {kept}) message should "
+                    + $"contain '{contains}'; it was '{message}'.");
+            }
+            if (contains.Length == 0 && message.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Outcome({supplied}, {unmatched}, {kept}) should carry no "
+                    + $"message; it was '{message}'.");
+            }
+        }
+
+        Expect((0, 0, 0), "none", "");
+        Expect((2, 0, 2), "none", "");
+        Expect((3, 1, 2), "warning", "1 of 3");
+        Expect((3, 0, 2), "remark", "merged");
+        Expect((2, 2, 0), "error", "No Pattern");
+        Expect((2, 0, 0), "error", "No Pattern");
     }
 
     /// <summary>
