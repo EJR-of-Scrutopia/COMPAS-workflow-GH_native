@@ -249,11 +249,11 @@ internal static class TnaWorkflowPreview
     /// net, not a highlight laid over it, and drawing it heavier would say
     /// otherwise.
     ///
-    /// Every stage draws them from the same source, the vertex runs the
-    /// contract carries, resolved once upstream by Supports from the anchors
-    /// or by Pattern from drawn curves. So a bar cannot appear at one stage
-    /// and be missing at the next, and a definition that carries no runs
-    /// draws nothing at all rather than guessing.
+    /// PATTERN ALONE draws them, from the vertex runs it resolved from the
+    /// curves drawn into it. Every other stage used to paint the same runs
+    /// over its own preview, and with a solver's preview underneath each bar
+    /// showed twice. One owner, one drawing. A pattern that carries no runs
+    /// draws nothing rather than guessing.
     /// </summary>
     public static readonly Color PrincipalColour = Color.FromArgb(205, 45, 45);
 
@@ -290,21 +290,4 @@ internal static class TnaWorkflowPreview
         topology is null
             ? Array.Empty<Line>()
             : PrincipalLines(topology.Vertices, topology.PrincipalRuns);
-
-    /// <summary>
-    /// The runs a solved Result carries, drawn on the solved geometry. Read
-    /// from the ANALYSIS topology hanging off the equilibrium, because that
-    /// is the one whose indices match the equilibrium vertices; the spine
-    /// Problem on the Result is in source index space and is the wrong ruler
-    /// for these points.
-    /// </summary>
-    public static IEnumerable<Line> ResultPrincipalLines(ResultDto? result)
-    {
-        EquilibriumResultDto? equilibrium = result?.Equilibrium;
-        return equilibrium is null
-            ? Array.Empty<Line>()
-            : PrincipalLines(
-                equilibrium.Vertices,
-                equilibrium.Problem?.Topology?.PrincipalRuns);
-    }
 }

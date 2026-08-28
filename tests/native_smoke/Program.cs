@@ -581,6 +581,22 @@ internal static class Program
 
         try
         {
+            ValidatePrincipalPreviewOwner(plugin, componentTypes);
+            Console.WriteLine(
+                "PASS  Preview ownership: Pattern is the ONLY component holding "
+                + "a principal-line preview, and the Result-side helper that "
+                + "fed the others is gone. Nine components painted the same "
+                + "red bars, and with a solver's preview underneath each bar "
+                + "drew twice; one owner, one drawing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Principal preview owner: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSharedFoot(plugin);
             Console.WriteLine(
                 "PASS  ColumnFinder.SharedFoot: an odd set of columns whose "
@@ -3324,6 +3340,71 @@ internal static class Program
         Expect((3, 0, 2), "remark", "merged");
         Expect((2, 2, 0), "error", "No Pattern");
         Expect((2, 0, 0), "error", "No Pattern");
+    }
+
+    /// <summary>
+    /// Pattern is the only component that previews principal runs. Every
+    /// other component used to hold a <c>List&lt;Line&gt;</c> of red bars and
+    /// paint it over its own preview, so two components on one canvas showed
+    /// each bar twice: the "dual lining" that read as a doubled principal
+    /// line. The rule is mechanical: an instance field of type List of Line
+    /// whose name contains "Principal" exists on PatternComponent and on no
+    /// other component, and the helper that read runs off a Result for the
+    /// others, <c>TnaWorkflowPreview.ResultPrincipalLines</c>, is gone.
+    /// </summary>
+    private static void ValidatePrincipalPreviewOwner(
+        Assembly plugin,
+        Type[] componentTypes)
+    {
+        const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static | BindingFlags.Instance;
+        Type preview = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.TnaWorkflowPreview",
+            throwOnError: true)!;
+        if (preview.GetMethods(Any).Any(m => m.Name == "ResultPrincipalLines"))
+        {
+            throw new InvalidOperationException(
+                "TnaWorkflowPreview.ResultPrincipalLines still exists. Pattern is "
+                + "the only component that previews principal runs, and it reads "
+                + "a topology, not a Result.");
+        }
+
+        const BindingFlags Fields = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        var owners = new List<string>();
+        foreach (Type componentType in componentTypes)
+        {
+            for (Type? at = componentType; at is not null; at = at.BaseType)
+            {
+                foreach (FieldInfo field in at.GetFields(Fields))
+                {
+                    if (!field.Name.Contains(
+                            "Principal", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    Type type = field.FieldType;
+                    bool listOfLine = type.IsGenericType
+                        && type.GetGenericTypeDefinition() == typeof(List<>)
+                        && type.GetGenericArguments()[0].Name == "Line";
+                    if (listOfLine)
+                        owners.Add(componentType.FullName ?? componentType.Name);
+                }
+            }
+        }
+
+        const string Pattern = "Ananke.COMPAS.Native.Components.PatternComponent";
+        if (!owners.Contains(Pattern))
+        {
+            throw new InvalidOperationException(
+                "PatternComponent holds no principal-line preview field; it is "
+                + "the one component that must.");
+        }
+        string[] others = owners.Where(o => o != Pattern).Distinct().ToArray();
+        if (others.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "Only Pattern previews principal runs; these still hold a "
+                + $"principal preview field: {string.Join(", ", others)}.");
+        }
     }
 
     /// <summary>

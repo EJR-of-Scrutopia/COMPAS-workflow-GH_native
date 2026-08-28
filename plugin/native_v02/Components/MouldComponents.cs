@@ -139,7 +139,6 @@ namespace Ananke.COMPAS.Native.Components
         private double[]? _bareSurface;
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
-        private readonly List<Line> _previewPrincipal = new();
         private readonly List<Line> _previewColumns = new();
         private readonly List<Point3d> _previewSupports = new();
         private BoundingBox _clippingBox = BoundingBox.Empty;
@@ -156,7 +155,6 @@ namespace Ananke.COMPAS.Native.Components
             base.BeforeSolveInstance();
             _previewMesh = null;
             _previewCables.Clear();
-            _previewPrincipal.Clear();
             _previewColumns.Clear();
             _previewSupports.Clear();
             _clippingBox = BoundingBox.Empty;
@@ -194,13 +192,6 @@ namespace Ananke.COMPAS.Native.Components
                 // itself carries the drawing.
                 foreach (Line cable in _previewCables)
                     args.Display.DrawLine(cable, Color.FromArgb(95, 95, 100));
-            }
-            foreach (Line bar in _previewPrincipal)
-            {
-                args.Display.DrawLine(
-                    bar,
-                    TnaWorkflowPreview.PrincipalColour,
-                    TnaWorkflowPreview.PrincipalWeight);
             }
             // The same blue Column Finder draws its columns in, so a raising
             // column reads as the same member at a different moment.
@@ -906,13 +897,6 @@ namespace Ananke.COMPAS.Native.Components
                 _previewMesh = framed;
                 _previewCables.Clear();
                 _previewCables.AddRange(cables);
-                _previewPrincipal.Clear();
-                foreach (List<int> run in bars)
-                {
-                    for (int k = 0; k + 1 < run.Count; k++)
-                        _previewPrincipal.Add(
-                            new Line(live[run[k]], live[run[k + 1]]));
-                }
                 _previewColumns.Clear();
                 _previewColumns.AddRange(liveColumns);
                 _previewSupports.Clear();

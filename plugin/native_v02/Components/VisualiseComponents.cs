@@ -1536,20 +1536,6 @@ namespace Ananke.COMPAS.Native.Components
                         preset,
                         effectiveWeight));
 
-                // The notched bars, over the thrust network they belong to.
-                // Tied to the thrust stream rather than given a filter of
-                // their own: on the force diagram there is no such thing as
-                // a principal line, so there is nothing to switch on there.
-                if (elements.Contains("thrust"))
-                {
-                    _preview.AddRange(
-                        TnaWorkflowPreview.ResultPrincipalLines(result)
-                            .Select(line => new DrawLine(
-                                line,
-                                TnaWorkflowPreview.PrincipalColour,
-                                TnaWorkflowPreview.PrincipalWeight,
-                                false)));
-                }
                 _preview.AddRange(ToArrowLines(loadLines, "load", preset));
                 _preview.AddRange(
                     ToArrowLines(reactionLines, "reaction", preset));
