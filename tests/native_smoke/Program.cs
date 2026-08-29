@@ -830,6 +830,47 @@ internal static class Program
             failures.Add($"ParameterIdentity.Mismatch: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateExportPlan(plugin);
+            Console.WriteLine(
+                "PASS  ExportPlan: contract and compas always, tessellation "
+                + "with cells, columns with a block, in that order.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ExportPlan: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateColumnsMesh(plugin);
+            Console.WriteLine(
+                "PASS  ColumnsMesh: one member is a closed prism of six "
+                + "quads and eight cap triangles at the radius asked, a "
+                + "zero-length member is nothing, two members index "
+                + "cleanly.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ColumnsMesh: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateLiveUploader(plugin);
+            Console.WriteLine(
+                "PASS  LiveUploader: the retry schedule is 2, 4, 8 seconds "
+                + "then deferred, the routes are the studio's, a 2xx is "
+                + "stored, a 409 retries until the schedule runs out, "
+                + "anything else is refused, and an identical set keys the "
+                + "same.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"LiveUploader: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -4511,6 +4552,93 @@ internal static class Program
                 $"metres; expected '{expectedMillimetres}', received " +
                 $"'{millimetres}'.");
         }
+    }
+
+    private static void ValidateExportPlan(Assembly plugin)
+    {
+        Type plan = plugin.GetType("Ananke.COMPAS.Native.Components.ExportPlan", throwOnError: true)!;
+        MethodInfo kinds = RequirePublicStatic(plan, "Kinds");
+        string Show(bool cells, bool columns) =>
+            string.Join(",", (string[])kinds.Invoke(null, new object?[] { cells, columns })!);
+        if (Show(false, false) != "contract,compas") throw new InvalidOperationException($"No cells, no columns: contract,compas; got {Show(false, false)}.");
+        if (Show(true, false) != "contract,compas,tessellation") throw new InvalidOperationException($"Cells add tessellation; got {Show(true, false)}.");
+        if (Show(false, true) != "contract,compas,columns") throw new InvalidOperationException($"Columns add columns; got {Show(false, true)}.");
+        if (Show(true, true) != "contract,compas,tessellation,columns") throw new InvalidOperationException($"All four in order; got {Show(true, true)}.");
+    }
+
+    private static void ValidateColumnsMesh(Assembly plugin)
+    {
+        Type mesh = plugin.GetType("Ananke.COMPAS.Native.Components.ColumnsMesh", throwOnError: true)!;
+        MethodInfo build = RequirePublicStatic(mesh, "Build");
+        Type memberList = build.GetParameters()[0].ParameterType;   // IReadOnlyList<(Point3d, Point3d, double)>
+        Type tuple = memberList.GetGenericArguments()[0];
+        Type point3d = tuple.GetGenericArguments()[0];
+        object P(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        object Member(double x0, double y0, double z0, double x1, double y1, double z1, double f) =>
+            Activator.CreateInstance(tuple, P(x0, y0, z0), P(x1, y1, z1), f)!;
+        object ListOf(params object[] members)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(tuple))!;
+            foreach (object m in members) list.Add(m);
+            return list;
+        }
+        (double[][] V, int[][] F) Run(object members, double radius)
+        {
+            object result = build.Invoke(null, new object?[] { members, radius, 6 })!;
+            Type t = result.GetType();
+            return ((double[][])t.GetField("Item1")!.GetValue(result)!, (int[][])t.GetField("Item2")!.GetValue(result)!);
+        }
+
+        (double[][] v, int[][] f) = Run(ListOf(Member(0, 0, 0, 0, 0, 2, 5.0)), 0.1);
+        if (v.Length != 12) throw new InvalidOperationException($"A six-sided prism has 12 vertices; got {v.Length}.");
+        if (f.Count(x => x.Length == 4) != 6 || f.Count(x => x.Length == 3) != 8)
+            throw new InvalidOperationException($"Six side quads and eight cap triangles; got {f.Count(x => x.Length == 4)} quads and {f.Count(x => x.Length == 3)} triangles.");
+        foreach (double[] p in v)
+        {
+            double r = Math.Sqrt((p[0] * p[0]) + (p[1] * p[1]));
+            if (Math.Abs(r - 0.1) > 1.0e-9) throw new InvalidOperationException($"Every vertex sits at the radius; one is at {r:0.######}.");
+            if (Math.Abs(p[2]) > 1.0e-9 && Math.Abs(p[2] - 2.0) > 1.0e-9) throw new InvalidOperationException($"Cap vertices sit at the member's ends; one is at z {p[2]:0.######}.");
+        }
+        foreach (int[] face in f)
+            foreach (int i in face)
+                if (i < 0 || i >= v.Length) throw new InvalidOperationException("A face indexes outside the vertices.");
+        (double[][] none, int[][] noneF) = Run(ListOf(Member(1, 1, 1, 1, 1, 1, 1.0)), 0.1);
+        if (none.Length != 0 || noneF.Length != 0) throw new InvalidOperationException("A zero-length member draws nothing.");
+        (double[][] two, int[][] twoF) = Run(ListOf(Member(0, 0, 0, 0, 0, 2, 1.0), Member(1, 0, 0, 3, 0, 0, 1.0)), 0.1);
+        if (two.Length != 24) throw new InvalidOperationException($"Two members give 24 vertices; got {two.Length}.");
+        if (twoF.SelectMany(x => x).Any(i => i < 0 || i >= 24)) throw new InvalidOperationException("Two members' faces index within 24 vertices.");
+    }
+
+    private static void ValidateLiveUploader(Assembly plugin)
+    {
+        Type uploader = plugin.GetType("Ananke.COMPAS.Native.Components.LiveUploader", throwOnError: true)!;
+        MethodInfo delay = RequirePublicStatic(uploader, "RetryDelay");
+        MethodInfo route = RequirePublicStatic(uploader, "RouteFor");
+        MethodInfo outcome = RequirePublicStatic(uploader, "Outcome");
+        MethodInfo key = RequirePublicStatic(uploader, "SetKey");
+        int? Delay(int attempt) => (int?)delay.Invoke(null, new object?[] { attempt });
+        if (Delay(0) != 2000 || Delay(1) != 4000 || Delay(2) != 8000 || Delay(3) is not null)
+            throw new InvalidOperationException("The retry schedule is 2000, 4000, 8000 then null.");
+        string Route(string kind, string name, string studio) => (string)route.Invoke(null, new object?[] { kind, name, studio })!;
+        if (Route("contract", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/exports/arch/contract")
+            throw new InvalidOperationException($"Contract route wrong: {Route("contract", "arch", "http://127.0.0.1:8600")}.");
+        if (Route("tessellation", "arch", "http://127.0.0.1:8600/") != "http://127.0.0.1:8600/api/uploads/exports/arch/tessellation")
+            throw new InvalidOperationException("A trailing slash on Studio is tolerated.");
+        if (Route("columns", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/columns/arch-columns.json")
+            throw new InvalidOperationException($"Columns route wrong: {Route("columns", "arch", "http://127.0.0.1:8600")}.");
+        string Verdict(int status, int attempt) => (string)outcome.Invoke(null, new object?[] { status, attempt })!;
+        if (Verdict(200, 0) != "stored" || Verdict(204, 5) != "stored") throw new InvalidOperationException("2xx is stored.");
+        if (Verdict(409, 0) != "retry" || Verdict(409, 2) != "retry") throw new InvalidOperationException("409 retries while the schedule has entries.");
+        if (Verdict(409, 3) != "deferred") throw new InvalidOperationException("409 after the schedule is deferred.");
+        if (Verdict(400, 0) != "refused" || Verdict(500, 0) != "refused") throw new InvalidOperationException("Anything else is refused.");
+        var a = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"b\":2}") };
+        var b = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"b\":2}") };
+        var c = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"b\":3}") };
+        string ka = (string)key.Invoke(null, new object?[] { a })!;
+        string kb = (string)key.Invoke(null, new object?[] { b })!;
+        string kc = (string)key.Invoke(null, new object?[] { c })!;
+        if (ka != kb) throw new InvalidOperationException("Equal sets key the same.");
+        if (ka == kc) throw new InvalidOperationException("A set differing in one byte keys differently.");
     }
 
     /// <summary>
