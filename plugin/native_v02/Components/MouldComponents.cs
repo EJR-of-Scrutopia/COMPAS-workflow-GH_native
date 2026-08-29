@@ -112,6 +112,20 @@ namespace Ananke.COMPAS.Native.Components
     /// so at height zero everything stays down on the pattern while the first
     /// reeling happens, which is the order the machine actually builds in.
     ///
+    /// The timeline runs in FOUR phases: reel (0 to 30) draws the net in on
+    /// the ground, raise (30 to 60) rotates the columns up and lifts the
+    /// bars, finish (60 to 90) reels the rest against the bars, and hold
+    /// (90 to 100) keeps the shape while load arrives.
+    ///
+    /// The columns are rigid and their FEET ARE FIXED. Every tree stands on
+    /// the foot Columns built for it, from frame zero, and turns about that
+    /// foot as ONE BODY: its heads ride the live net and its fork keeps its
+    /// built fraction along the live foot-to-main segment. At time zero a
+    /// trunk lies flat along its rail from its foot to its notch's drawn
+    /// position; as the notch rises the trunk rotates up, and its length at
+    /// this frame is what the ram delivers. Nothing slides and nothing is
+    /// re-aimed.
+    ///
     /// This component animates. It runs no equilibrium check and it places no
     /// columns; Column Finder owns that.
     /// </summary>
@@ -220,10 +234,11 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Time",
                 "T",
-                "0 to 100, the whole build in one slider. Phase one reels the "
-                    + "net part way down while it is flat, phase two lifts it "
-                    + "on the columns, phase three reels the rest and tensions "
-                    + "both axes against the bars.",
+                "0 to 100, the whole build in one slider. Four phases: reel "
+                    + "(0 to 30) draws the net in on the ground, raise (30 to "
+                    + "60) rotates the columns up and lifts the bars, finish "
+                    + "(60 to 90) reels the rest against the bars, hold (90 to "
+                    + "100) keeps the shape while load arrives.",
                 GH_ParamAccess.item,
                 100.0);
             parameters.AddNumberParameter(
@@ -239,11 +254,10 @@ namespace Ananke.COMPAS.Native.Components
                 "Extension",
                 "E",
                 "How much of a column's built length its ram can drive out, in "
-                    + "percent. A column is not telescopic over its whole "
-                    + "length: it has a fixed body and a ram. 40 means it is 60 "
-                    + "percent of full when retracted and reaches 100 when "
-                    + "driven out, so early in the build it cannot be short and "
-                    + "lies out along its rail instead.",
+                    + "percent. The feet are fixed, so this is a CHECK, not a "
+                    + "driver: a trunk whose length at this frame falls below "
+                    + "built x (100 - Extension)% or above built is reported by "
+                    + "animate.ram_range.",
                 GH_ParamAccess.item,
                 40.0);
             parameters[1].Optional = true;
@@ -317,13 +331,21 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddLineParameter(
                 "Columns",
                 "C",
-                "The columns at THIS frame: foot part way along its slide, head "
-                    + "on the notch wherever the net has got to. Empty unless the "
-                    + "Result carries columns from Columns upstream. Their lengths "
-                    + "are the extension the struts have to deliver. A TREE with "
-                    + "one branch per COLUMN TREE, that is per foot on the ground, "
-                    + "each branch holding that column's trunk and all its "
-                    + "branches together.",
+                "The columns at THIS frame, from frame zero: every tree on its "
+                    + "built foot, lying flat along its rail at time zero and "
+                    + "turning up about the foot as the net rises, its length the "
+                    + "ram's travel. A TREE with one branch per COLUMN TREE, that "
+                    + "is per foot, each branch holding that tree's trunk and "
+                    + "branches together. Empty unless the Result carries columns "
+                    + "from Columns upstream.",
+                GH_ParamAccess.tree);
+            parameters.AddCurveParameter(
+                "Perimeter Lines",
+                "PRL",
+                "The boundary of the net at this frame as CLOSED polylines, a "
+                    + "TREE with one branch per boundary loop, the same loop as "
+                    + "branch {i} of Perimeter Nodes. A net with a hole has one "
+                    + "curve for the outside and one for the hole.",
                 GH_ParamAccess.tree);
         }
 
@@ -467,31 +489,19 @@ namespace Ananke.COMPAS.Native.Components
                 // only thing left to drive.
                 double time = Math.Min(Math.Max(timePct, 0.0), 100.0) / 100.0;
                 double pre = Math.Min(Math.Max(preSag, 0.0), 100.0) / 100.0;
-                double sag;
-                double lift;
-                string phase;
-                if (time < 1.0 / 3.0)
+                (double sag, double lift, string phaseWord) =
+                    MouldGeometry.Phases(time, pre);
+                string phase = phaseWord;
+                string phaseDetail = phaseWord switch
                 {
-                    sag = pre * (time * 3.0);
-                    lift = 0.0;
-                    phase = $"1 of 3, reeling flat on the ground: {sag * 100:0}% "
-                        + $"of the final sag, heading for {pre * 100:0}%";
-                }
-                else if (time < 2.0 / 3.0)
-                {
-                    sag = pre;
-                    lift = (time - (1.0 / 3.0)) * 3.0;
-                    phase = $"2 of 3, columns lifting: {lift * 100:0}% of the "
-                        + $"height, holding {pre * 100:0}% sag";
-                }
-                else
-                {
-                    double u = (time - (2.0 / 3.0)) * 3.0;
-                    sag = pre + ((1.0 - pre) * u);
-                    lift = 1.0;
-                    phase = "3 of 3, tensioning both axes against the columns: "
-                        + $"{sag * 100:0}% sag";
-                }
+                    "reel" => $"reel: reeling flat on the ground, {sag * 100:0}% "
+                        + $"of the final sag, heading for {pre * 100:0}%",
+                    "raise" => $"raise: columns rotating up about their feet, "
+                        + $"{lift * 100:0}% of the height, holding {pre * 100:0}% sag",
+                    "finish" => "finish: tensioning both axes against the columns, "
+                        + $"{sag * 100:0}% sag",
+                    _ => "hold: the mould holds its shape while load arrives",
+                };
 
                 // Re-aim on this frame's own geometry, so a column follows
                 // the line of thrust the whole way up instead of only arriving
@@ -580,7 +590,7 @@ namespace Ananke.COMPAS.Native.Components
                 const string S = "Animate";
                 var entries = new List<DiagnosticDto>
                 {
-                    ResultDiagnostics.Entry(S, "animate.phase", "info", phase,
+                    ResultDiagnostics.Entry(S, "animate.phase", "info", phaseDetail,
                         Math.Min(Math.Max(timePct, 0.0), 100.0), unit: "percent"),
                     ResultDiagnostics.Entry(S, "animate.counts", "info",
                         $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
@@ -646,245 +656,113 @@ namespace Ananke.COMPAS.Native.Components
                         context: ResultDiagnostics.Context(("total", n.ToString(CultureInfo.InvariantCulture)))));
                 }
 
-                // The columns, raised with the net, branches and all.
-                //
-                // A column is NOT telescopic over its whole length. It has a
-                // fixed body and a ram, so it can never be shorter than its
-                // retracted length, and driving it to nothing early on buried
-                // it under the floor. What the machine does is SLIDE and then
-                // EXTEND, and both fall out of one equation rather than a
-                // schedule: a foot sits at whatever horizontal distance keeps
-                // its member at the retracted length, until that distance falls
-                // inside the finished one and the ram takes over.
-                //
-                // A FORKED column is solved, not interpolated. Its notches are
-                // wherever the net has got to; its fork goes where the branches
-                // come closest to standing on their own lines of thrust, which
-                // is the same force-weighted solve Column Finder placed it by,
-                // run on THIS FRAME's geometry and this frame's forces. So the
-                // fork rises with its own branches and the whole assembly stays
-                // in equilibrium the whole way up instead of only at the end.
+                // The columns, from frame zero. Every tree stands on the foot
+                // Columns built for it and turns about it as ONE BODY: its
+                // heads ride the live net, its fork keeps its built fraction
+                // along the live foot-to-main segment. At time zero a trunk
+                // lies flat along the rail from its foot to its notch's drawn
+                // position; as the notch rises the trunk rotates up, and its
+                // length is what the ram delivers. Nothing slides and nothing
+                // is re-aimed: the trunk points where its foot and its notch
+                // put it, and how far that is from the force path is reported.
                 double extend = Math.Min(Math.Max(extendPct, 0.0), 95.0) / 100.0;
                 var liveColumns = new List<Line>();
-                // The same members again, grouped by the foot they stand on,
-                // which is what the Columns output hands back. Kept flat as
-                // well because the preview, the clipping box and the report all
-                // want every member at once and none of them care whose it is.
                 var columnBranches = new List<List<Line>>();
                 double shortest = double.MaxValue;
                 double longest = 0.0;
-                double slid = 0.0;
-                double overRun = 0.0;
-                int belowGround = 0;
+                int ramViolations = 0;
+                double worstRatio = 1.0;
+                double worstAlign = 0.0;
 
                 Point3d[]? liveColumnNodes = null;
                 if (hasColumns)
                 {
                     MouldGeometry.ColumnTree tree =
                         MouldGeometry.TreeFromBlock(columnsBlock!);
-
-                    int count = tree.Nodes.Count;
-                    var at = new Point3d[count];
-                    var flow = new Vector3d[count];
-                    var known = new bool[count];
-
-                    // The notches are wherever the net has got to.
-                    foreach (int notch in tree.Notches)
-                    {
-                        int node = MouldGeometry.NearestNodeInPlan(
-                            tree.Nodes[notch], target);
-                        if (node < 0)
-                            continue;
-                        at[notch] = live[node];
-                        flow[notch] = liveAim.TryGetValue(node, out Vector3d a)
-                            ? a * Math.Max(liveLoad.TryGetValue(
-                                node, out double w) ? w : 0.0, 1.0e-9)
-                            : Vector3d.ZAxis;
-                        known[notch] = true;
-                    }
-
-                    // Then downward: a node can be placed once everything above
-                    // it is placed, which for this shape needs no ordering pass
-                    // beyond repeating until nothing new resolves.
-                    for (int pass = 0; pass < count + 2; pass++)
-                    {
-                        bool moved = false;
-                        for (int v = 0; v < count; v++)
-                        {
-                            if (known[v] || tree.Above[v].Count == 0)
-                                continue;
-                            if (tree.Above[v].Any(u => !known[u]))
-                                continue;
-
-                            var reach = new List<Point3d>();
-                            var pushes = new List<Vector3d>();
-                            var total = Vector3d.Zero;
-                            foreach (int u in tree.Above[v])
-                            {
-                                reach.Add(at[u]);
-                                pushes.Add(flow[u]);
-                                total += flow[u];
-                            }
-                            flow[v] = total;
-
-                            bool onGround = tree.Feet.Contains(v);
-                            if (!onGround)
-                            {
-                                // The fork rides the MAIN column's line at the
-                                // height it was built at. Both are read off the
-                                // built geometry rather than guessed: the main
-                                // branch is the one most nearly in line with
-                                // the trunk below, which is the invariant
-                                // ForkOnLine creates, and the height is the
-                                // fraction it sits at. Re-solving the fork by
-                                // force here instead would put it somewhere
-                                // Column Finder never placed it, and the column
-                                // would change shape as it rose.
-                                int main = MouldGeometry.MainBranch(tree, v);
-                                double builtRise =
-                                    tree.Nodes[main].Z - ground;
-                                double fraction = builtRise > 1.0e-9
-                                    ? (tree.Nodes[v].Z - ground) / builtRise
-                                    : 1.0;
-                                at[v] = reach.Count > 1 &&
-                                    liveAim.Count > 0
-                                    ? MouldGeometry.ForkOnLine(
-                                        at[main],
-                                        MouldGeometry.AimFrom(-flow[main]),
-                                        Math.Min(Math.Max(fraction, 0.0), 1.0),
-                                        ground)
-                                    : reach[0];
-                            }
-                            else
-                            {
-                                // A foot: slide along its rail, then let the ram
-                                // finish. Several trunks on one foot are served
-                                // by their force-weighted centre, because that
-                                // is the point the foot actually carries.
-                                double sw = 0.0;
-                                double sx = 0.0;
-                                double sy = 0.0;
-                                double sz = 0.0;
-                                double full = 0.0;
-                                foreach (int u in tree.Above[v])
-                                {
-                                    double w = Math.Max(flow[u].Length, 1.0e-9);
-                                    sx += at[u].X * w;
-                                    sy += at[u].Y * w;
-                                    sz += at[u].Z * w;
-                                    sw += w;
-                                    full = Math.Max(
-                                        full,
-                                        tree.Nodes[v].DistanceTo(tree.Nodes[u]));
-                                }
-                                var head = new Point3d(sx / sw, sy / sw, sz / sw);
-                                at[v] = MouldGeometry.FootOnRail(
-                                    head, tree.Nodes[v], flow[v], full, extend,
-                                    ground, ref slid);
-                            }
-                            known[v] = true;
-                            moved = true;
-                        }
-                        if (!moved)
-                            break;
-                    }
-
+                    Point3d[] at = MouldGeometry.LiveColumnNodes(columnsBlock!, live);
                     liveColumnNodes = at;
+                    var footSet = new HashSet<int>(tree.Feet);
+                    var headVertex = new Dictionary<int, int>();
+                    for (int h = 0; h < columnsBlock!.Heads.Count && h < columnsBlock.HeadNode.Count; h++)
+                        headVertex[columnsBlock.Heads[h]] = columnsBlock.HeadNode[h];
 
-                    // Which foot each node stands on, found by climbing from
-                    // every foot through the branches above it. A column tree
-                    // is the set of members that share a foot, so this is the
-                    // grouping the Columns output branches by, and it is read
-                    // off the built tree rather than assumed from the order the
-                    // lines arrived in.
-                    var standsOn = new int[count];
-                    for (int v = 0; v < count; v++)
-                        standsOn[v] = -1;
-                    var feet = tree.Feet.Distinct().OrderBy(f => f).ToArray();
-                    for (int b = 0; b < feet.Length; b++)
+                    foreach (List<int> group in MouldGeometry.TreesByFoot(tree))
                     {
-                        var climb = new Stack<int>();
-                        climb.Push(feet[b]);
-                        while (climb.Count > 0)
+                        var branch = new List<Line>();
+                        foreach (int m in group)
                         {
-                            int at2 = climb.Pop();
-                            if (at2 < 0 || at2 >= count || standsOn[at2] >= 0)
+                            (int lower, int upper) = tree.Members[m];
+                            if (at[lower].DistanceTo(at[upper]) <= 1.0e-9)
                                 continue;
-                            standsOn[at2] = b;
-                            foreach (int up in tree.Above[at2])
-                                climb.Push(up);
+                            var member = new Line(at[lower], at[upper]);
+                            liveColumns.Add(member);
+                            branch.Add(member);
+                            double length = member.Length;
+                            shortest = Math.Min(shortest, length);
+                            longest = Math.Max(longest, length);
+
+                            if (!footSet.Contains(lower))
+                                continue;
+                            // A trunk. The ram: this frame's length against
+                            // the built one, inside the range the ram allows.
+                            double builtLength = tree.Nodes[lower].DistanceTo(tree.Nodes[upper]);
+                            if (builtLength > 1.0e-9)
+                            {
+                                double ratio = length / builtLength;
+                                if (ratio < (1.0 - extend) - 1.0e-9 || ratio > 1.0 + 1.0e-9)
+                                {
+                                    ramViolations++;
+                                    if (Math.Abs(ratio - 1.0) > Math.Abs(worstRatio - 1.0))
+                                        worstRatio = ratio;
+                                }
+                            }
+                            // Alignment: the trunk against the live thrust at
+                            // its main notch.
+                            int head = tree.Above[upper].Count == 0
+                                ? upper
+                                : MouldGeometry.MainBranch(tree, upper);
+                            if (headVertex.TryGetValue(head, out int vertex) &&
+                                liveAim.TryGetValue(vertex, out Vector3d aim))
+                            {
+                                Vector3d direction = at[upper] - at[lower];
+                                worstAlign = Math.Max(
+                                    worstAlign, ColumnPlacement.AngleBetween(direction, aim));
+                            }
                         }
+                        columnBranches.Add(branch);
                     }
-                    for (int b = 0; b < feet.Length; b++)
-                        columnBranches.Add(new List<Line>());
-                    // Anything the climb never reached (a fragment with no foot
-                    // under it) still has to go somewhere, so it gets a branch
-                    // of its own at the end rather than vanishing.
-                    var orphans = new List<Line>();
-
-                    foreach ((int lower, int upper) in tree.Members)
-                    {
-                        if (!known[lower] || !known[upper])
-                            continue;
-                        if (at[upper].Z - ground <= 1.0e-9)
-                        {
-                            belowGround++;
-                            continue;
-                        }
-                        var member = new Line(at[lower], at[upper]);
-                        liveColumns.Add(member);
-                        int owner = standsOn[lower] >= 0
-                            ? standsOn[lower] : standsOn[upper];
-                        if (owner >= 0)
-                            columnBranches[owner].Add(member);
-                        else
-                            orphans.Add(member);
-                        double length = member.Length;
-                        shortest = Math.Min(shortest, length);
-                        longest = Math.Max(longest, length);
-
-                        // What the ram on this member has to deliver, against
-                        // what it was built with.
-                        double built = tree.Nodes[lower]
-                            .DistanceTo(tree.Nodes[upper]);
-                        overRun = Math.Max(overRun, length - built);
-                    }
-
-                    if (orphans.Count > 0)
-                        columnBranches.Add(orphans);
                 }
 
                 if (liveColumns.Count > 0)
                 {
                     entries.Add(ResultDiagnostics.Entry(S, "animate.columns", "info",
                         $"{liveColumns.Count} column members at this frame, "
-                            + $"{shortest:0.###} to {longest:0.###} long, with rams "
-                            + $"worth {extendPct:0}% of built length. Feet lie out on "
-                            + "their rails while retracted, slide in as the notches "
-                            + "rise, then stop and let the rams finish. Furthest a "
-                            + $"foot still has to slide: {slid:0.###}.",
+                            + $"{shortest:0.###} to {longest:0.###} long. Every tree "
+                            + "stands on its built foot from frame zero and turns "
+                            + "about it as one body; its length is the ram.",
                         liveColumns.Count, unit: "members",
                         context: ResultDiagnostics.Context(
                             ("shortest", shortest.ToString("0.###", CultureInfo.InvariantCulture)),
-                            ("longest", longest.ToString("0.###", CultureInfo.InvariantCulture)),
-                            ("slide_remaining", slid.ToString("0.###", CultureInfo.InvariantCulture)))));
-                    if (overRun > 1.0e-9)
+                            ("longest", longest.ToString("0.###", CultureInfo.InvariantCulture)))));
+                    entries.Add(ResultDiagnostics.Entry(S, "animate.column_alignment", "info",
+                        $"trunks stand up to {worstAlign:0.#} degrees off the live "
+                            + "thrust at their notch at this frame. Nothing is "
+                            + "re-aimed: a trunk points where its foot and its notch "
+                            + "put it.",
+                        worstAlign, unit: "degrees"));
+                    if (ramViolations > 0)
                     {
-                        entries.Add(ResultDiagnostics.Entry(S, "animate.column_overrun", "info",
-                            $"longest member overshoots its built length by "
-                                + $"{overRun:0.###} at this frame. A fork moves with "
-                                + "its own branches, so that is the reach its own ram "
-                                + "needs.",
-                            overRun, unit: "model units"));
+                        entries.Add(ResultDiagnostics.Entry(S, "animate.ram_range", "warning",
+                            $"{ramViolations} trunk(s) need a length outside their ram's "
+                                + $"range at this frame, the worst at {worstRatio * 100:0}% of "
+                                + $"built length against a range of {(1.0 - extend) * 100:0}% "
+                                + "to 100%. Raise Extension, or accept that the machine "
+                                + "cannot follow this frame exactly.",
+                            worstRatio, unit: "ratio",
+                            context: ResultDiagnostics.Context(
+                                ("violations", ramViolations.ToString(CultureInfo.InvariantCulture)),
+                                ("extension", extendPct.ToString("0", CultureInfo.InvariantCulture)))));
                     }
-                }
-                if (belowGround > 0)
-                {
-                    entries.Add(ResultDiagnostics.Entry(S, "animate.below_ground", "info",
-                        $"{belowGround} column members are not drawn: their upper "
-                            + "end has not cleared the floor yet, so there is nothing "
-                            + "for them to stand under.",
-                        belowGround, unit: "members"));
                 }
 
                 Mesh? framed = mesh is null
@@ -932,6 +810,24 @@ namespace Ananke.COMPAS.Native.Components
                     MouldGeometry.ConnectedGroups(anchorIds, neighbours: grouping);
                 List<List<int>> perimeterLoops =
                     MouldGeometry.ConnectedGroups(perimeterIds, neighbours: grouping);
+
+                // One closed curve per loop, branch {i} the same loop as
+                // Perimeter Nodes branch {i}. A loop too short to close still
+                // keeps its branch so the numbering holds.
+                var perimeterCurves = new List<List<Curve>>();
+                foreach (List<int> loop in perimeterLoops)
+                {
+                    var branch = new List<Curve>();
+                    if (loop.Count >= 3)
+                    {
+                        var points = loop.Select(i => live[i]).ToList();
+                        points.Add(points[0]);
+                        var polyline = new Polyline(points);
+                        if (polyline.IsValid)
+                            branch.Add(polyline.ToNurbsCurve());
+                    }
+                    perimeterCurves.Add(branch);
+                }
 
                 entries.Add(ResultDiagnostics.Entry(S, "animate.anchor_strips", "info",
                     $"anchors grouped into {anchorStrips.Count} "
@@ -982,6 +878,7 @@ namespace Ananke.COMPAS.Native.Components
                     result with { Mould = mould }, "Animate", entries);
                 data.SetData(6, new ResultGoo(output));
                 data.SetDataTree(7, OutputTree.Lines(columnBranches));
+                data.SetDataTree(8, OutputTree.Curves(perimeterCurves));
             }
             catch (Exception ex)
             {
@@ -1764,109 +1661,6 @@ namespace Ananke.COMPAS.Native.Components
                 : Vector3d.ZAxis;
         }
 
-        /// <summary>
-        /// Where a branching column forks, on the MAIN column's own line.
-        ///
-        /// Constraining it to that line is what makes the column read as one
-        /// member from foot to notch with limbs leaving it, which is the Frei
-        /// Otto shape, instead of three members meeting at a point and going
-        /// their own ways.
-        ///
-        /// The HEIGHT along that line is given, not solved, and that is an
-        /// honest admission rather than a shortcut. Solving it from force was
-        /// tried and is degenerate here: with the columns near vertical, every
-        /// branch aim is nearly parallel to the trunk's, the least-squares
-        /// system goes singular, and the fork slides all the way to the
-        /// ground. That is not a bug in the solve. A branch that leans less
-        /// costs less bending AND less material, so BOTH criteria genuinely
-        /// prefer the fan, and the fan is what they gave: every branch a
-        /// full-height spoke from one point, crossing its neighbours.
-        ///
-        /// Frei Otto's trees branch high because his loads spread over a wide
-        /// canopy and the branches meet at real angles to each other. Notches a
-        /// metre apart and nearly overhead do not. So the fork height here is
-        /// an architectural decision, and it belongs to whoever is designing.
-        /// </summary>
-        public static Point3d ForkOnLine(
-            Point3d mainNotch,
-            Vector3d mainAim,
-            double heightFraction,
-            double ground)
-        {
-            double toGround = mainAim.Z > 1.0e-9
-                ? (mainNotch.Z - ground) / mainAim.Z
-                : 0.0;
-            double along = (1.0 - heightFraction) * toGround;
-            return new Point3d(
-                mainNotch.X - (along * mainAim.X),
-                mainNotch.Y - (along * mainAim.Y),
-                mainNotch.Z - (along * mainAim.Z));
-        }
-
-        /// <summary>
-        /// Where a foot stands this frame.
-        ///
-        /// The strut cannot be shorter than its retracted length, so while the
-        /// head is low the foot lies far out along its rail and the member is
-        /// almost lying down. As the head rises the distance that keeps the
-        /// strut retracted shrinks, which draws the foot IN: the slide. Once it
-        /// has come in as far as the finished foot it stops there and the ram
-        /// drives out to make up the rest: the extension. Neither phase is
-        /// scheduled; the crossover is just which of the two distances is
-        /// smaller.
-        ///
-        /// The rail runs along the LIVE thrust azimuth, so the foot tracks the
-        /// line of force the whole way rather than only arriving on it. The
-        /// lean cannot track it while the strut is retracted, because then the
-        /// lean is whatever the length dictates.
-        /// </summary>
-        public static Point3d FootOnRail(
-            Point3d head,
-            Point3d finished,
-            Vector3d carrying,
-            double full,
-            double extend,
-            double ground,
-            ref double slid)
-        {
-            double rise = head.Z - ground;
-            var under = new Point3d(head.X, head.Y, ground);
-            double retracted = full * (1.0 - extend);
-
-            double railX = -carrying.X;
-            double railY = -carrying.Y;
-            double railLength = Math.Sqrt((railX * railX) + (railY * railY));
-            if (railLength <= 1.0e-9)
-            {
-                railX = finished.X - under.X;
-                railY = finished.Y - under.Y;
-                railLength = Math.Sqrt((railX * railX) + (railY * railY));
-            }
-            if (railLength <= 1.0e-9)
-            {
-                railX = 1.0;
-                railY = 0.0;
-                railLength = 1.0;
-            }
-            railX /= railLength;
-            railY /= railLength;
-
-            double finishedOut = Math.Sqrt(
-                PlanDistanceSquared(under, finished));
-            double retractedOut = retracted > rise
-                ? Math.Sqrt((retracted * retracted) - (rise * rise))
-                : 0.0;
-
-            if (retractedOut > finishedOut)
-            {
-                slid = Math.Max(slid, retractedOut - finishedOut);
-                return new Point3d(
-                    under.X + (railX * retractedOut),
-                    under.Y + (railY * retractedOut),
-                    ground);
-            }
-            return new Point3d(finished.X, finished.Y, ground);
-        }
 
         /// <summary>
         /// Rebuild a branching column out of the bare lines Column Finder
@@ -1902,8 +1696,8 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// Which of a fork's branches is the MAIN column: the one most nearly
         /// in line with the trunk below it. That collinearity is not an
-        /// accident, it is the invariant <see cref="ForkOnLine"/> creates by
-        /// putting the fork on the main column's own line, so reading it back
+        /// accident, it is the invariant Columns creates by putting the fork
+        /// on the segment from the foot to the main notch, so reading it back
         /// recovers which branch that was without carrying a label across the
         /// wire.
         /// </summary>
@@ -1982,7 +1776,10 @@ namespace Ananke.COMPAS.Native.Components
         /// what the ram delivers.
         ///
         /// A node nothing resolves (a head with no HeadNode, a fragment with
-        /// no foot) keeps its built position rather than vanishing.
+        /// no foot) keeps its built position rather than vanishing. A fork
+        /// whose lower node is itself a fork cannot be resolved by this loop
+        /// and keeps its built position; the plugin never builds that shape,
+        /// since Columns places exactly one fork per tree.
         /// </summary>
         public static Point3d[] LiveColumnNodes(
             MouldColumnsDto block, Point3d[] live)
