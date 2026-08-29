@@ -723,7 +723,7 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>Copied from <c>TnaQueryGeometry.ThrustMesh</c>.</summary>
-        private static Mesh ThrustMesh(ResultDto result)
+        internal static Mesh ThrustMesh(ResultDto result)
         {
             EquilibriumResultDto equilibrium = result.Equilibrium!;
             TnaDiagramGraphDto formGraph = result.FormGraph!;

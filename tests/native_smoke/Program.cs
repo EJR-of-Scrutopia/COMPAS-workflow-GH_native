@@ -94,6 +94,9 @@ internal static class Program
                         "Face Courses",
                         "Feet"
                     }),
+                ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
+                    new[] { "Result", "Course Height" },
+                    new[] { "Face Polylines", "Face Courses" }),
                 // Animate's ports are pinned because every one of them is an
                 // index a downstream branch is read by. Perimeter Lines was
                 // APPENDED at 8 on purpose: outputs 0 to 7 keep their slots,
