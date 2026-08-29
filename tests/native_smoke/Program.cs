@@ -87,6 +87,23 @@ internal static class Program
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[] { "Result", "Course Height" },
                     new[] { "Face Polylines", "Face Courses" }),
+                // Monitor's ports are pinned for the same reason Deconstruct's
+                // are: every number tree here is READ AGAINST a Deconstruct
+                // geometry tree by slot, so a renamed or reordered output is a
+                // silently rewired canvas rather than a compile error.
+                ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = (
+                    new[] { "Result", "EI", "EA", "Tolerance", "Cable Capacity", "Column Capacity" },
+                    new[]
+                    {
+                        "Member Force", "Force Density", "Horizontal Force", "Slack",
+                        "Spool Length", "Unstrained Length",
+                        "Anchor Along", "Anchor Across",
+                        "Tip Reaction", "Column Force", "Thrust", "Lean",
+                        "Deviation", "Deviation Stats", "Reachable", "Unreachable",
+                        "Bar Sag", "Residuals",
+                        "Cable Utilisation", "Column Utilisation",
+                        "Result"
+                    }),
                 // Animate's ports are pinned because every one of them is an
                 // index a downstream branch is read by. Perimeter Lines was
                 // APPENDED at 8 on purpose: outputs 0 to 7 keep their slots,
@@ -754,6 +771,37 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"MouldGeometry.LiveColumnNodes: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMonitorMath(plugin);
+            Console.WriteLine(
+                "PASS  MonitorMath: an anchor's reaction splits along its "
+                + "tensioner axis and across it, the axis is the mean of the "
+                + "cables leaving it, the deviation statistics are the RMS, the "
+                + "worst and the 95th percentile of a hand-built field, and the "
+                + "unstrained length divides by one plus force over EA.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MonitorMath: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateResultTablesOrder(plugin);
+            Console.WriteLine(
+                "PASS  ResultTables order: the one table Deconstruct's geometry "
+                + "and Monitor's numbers are both branched from hands back the "
+                + "members in edge order with their ends, forces and ids, no "
+                + "force density or horizontal force where an FD Result carries "
+                + "none, the support ids as the Result lists them, and each "
+                + "reaction at the node it acts on.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ResultTables order: {DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -2489,6 +2537,184 @@ internal static class Program
                 $"A principal line {label} must report an offset of "
                 + $"{expectedOffset:G3} from the curve that asked for it; it "
                 + $"reported {offset:G6}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>MonitorMath</c>: the four pure rules Monitor's new outputs rest on,
+    /// measured on hand-built inputs so a wrong sign or a wrong percentile
+    /// rank cannot pass.
+    /// </summary>
+    private static void ValidateMonitorMath(Assembly plugin)
+    {
+        Type math = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MonitorMath", throwOnError: true)!;
+        MethodInfo split = RequirePublicStatic(math, "AnchorSplit");
+        MethodInfo axis = RequirePublicStatic(math, "TensionerAxis");
+        MethodInfo stats = RequirePublicStatic(math, "DeviationStats");
+        MethodInfo unstrained = RequirePublicStatic(math, "UnstrainedLength");
+        Type vector3d = split.GetParameters()[0].ParameterType;
+        Type point3d = axis.GetParameters()[1].ParameterType.GetElementType()!;
+
+        object V(double x, double y, double z) => Activator.CreateInstance(vector3d, x, y, z)!;
+        object P(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        double Get(object o, string name) => (double)o.GetType().GetProperty(name)!.GetValue(o)!;
+
+        object parts = split.Invoke(null, new[] { V(3.0, 4.0, 0.0), V(1.0, 0.0, 0.0) })!;
+        double along = (double)parts.GetType().GetField("Item1")!.GetValue(parts)!;
+        double across = (double)parts.GetType().GetField("Item2")!.GetValue(parts)!;
+        if (Math.Abs(along - 3.0) > 1.0e-9 || Math.Abs(across - 4.0) > 1.0e-9)
+            throw new InvalidOperationException($"Reaction (3,4,0) on axis x splits into along 3, across 4; got {along}, {across}.");
+
+        // Anchor 0 at the origin with cables to (1,0,0) and (0,1,0).
+        Array nodes = Array.CreateInstance(point3d, 3);
+        nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+        nodes.SetValue(P(1.0, 0.0, 0.0), 1);
+        nodes.SetValue(P(0.0, 1.0, 0.0), 2);
+        var neighbours = new List<int>[] { new() { 1, 2 }, new() { 0 }, new() { 0 } };
+        object a = axis.Invoke(null, new object?[] { 0, nodes, neighbours })!;
+        double r = 1.0 / Math.Sqrt(2.0);
+        if (Math.Abs(Get(a, "X") - r) > 1.0e-9 || Math.Abs(Get(a, "Y") - r) > 1.0e-9 || Math.Abs(Get(a, "Z")) > 1.0e-9)
+            throw new InvalidOperationException($"The tensioner axis is the unit mean of the cables leaving the anchor; got ({Get(a, "X"):0.###}, {Get(a, "Y"):0.###}, {Get(a, "Z"):0.###}).");
+        object none = axis.Invoke(null, new object?[] { 1, nodes, new List<int>[] { new(), new(), new() } })!;
+        if (Math.Abs(Get(none, "Z") - 1.0) > 1.0e-9)
+            throw new InvalidOperationException("An anchor with no cable has a vertical axis.");
+
+        object s = stats.Invoke(null, new object?[] { new List<double> { 1.0, -2.0, 3.0, -4.0, 5.0 } })!;
+        double rms = (double)s.GetType().GetField("Item1")!.GetValue(s)!;
+        double max = (double)s.GetType().GetField("Item2")!.GetValue(s)!;
+        double p95 = (double)s.GetType().GetField("Item3")!.GetValue(s)!;
+        if (Math.Abs(rms - Math.Sqrt(11.0)) > 1.0e-9 || Math.Abs(max - 5.0) > 1.0e-9 || Math.Abs(p95 - 5.0) > 1.0e-9)
+            throw new InvalidOperationException($"Stats of (1,-2,3,-4,5) are RMS sqrt(11), max 5, p95 5; got {rms:0.####}, {max}, {p95}.");
+        object empty = stats.Invoke(null, new object?[] { new List<double>() })!;
+        if ((double)empty.GetType().GetField("Item1")!.GetValue(empty)! != 0.0)
+            throw new InvalidOperationException("Stats of nothing are zero.");
+        // Twenty values 1..20: the nearest-rank 95th percentile is the 19th, 19.
+        object twenty = stats.Invoke(null, new object?[] { Enumerable.Range(1, 20).Select(i => (double)i).ToList() })!;
+        double p95twenty = (double)twenty.GetType().GetField("Item3")!.GetValue(twenty)!;
+        if (Math.Abs(p95twenty - 19.0) > 1.0e-9)
+            throw new InvalidOperationException($"The nearest-rank 95th percentile of 1..20 is 19; got {p95twenty}.");
+
+        double u = (double)unstrained.Invoke(null, new object?[] { 2.0, 100.0, 1000.0 })!;
+        if (Math.Abs(u - (2.0 / 1.1)) > 1.0e-9)
+            throw new InvalidOperationException($"Unstrained length of 2 under 100 N with EA 1000 is 2/1.1; got {u:0.######}.");
+        double raw = (double)unstrained.Invoke(null, new object?[] { 2.0, 100.0, 0.0 })!;
+        if (Math.Abs(raw - 2.0) > 1.0e-9)
+            throw new InvalidOperationException("Without EA the strained length is returned.");
+    }
+
+    /// <summary>
+    /// <c>ResultTables</c> is the ONE order Deconstruct's geometry trees and
+    /// Monitor's number trees are both built from, and nothing measured it:
+    /// the two components agreed because they call the same method, not
+    /// because anything said what that method hands back. A minimal FD Result
+    /// of three vertices, two edges, one support and one reaction pins the
+    /// rows.
+    /// </summary>
+    private static void ValidateResultTablesOrder(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type nodalType = RequireContractType(plugin, "NodalVectorDto");
+        Type tables = RequireComponentType(plugin, "ResultTables");
+        MethodInfo members = RequirePublicStatic(tables, "Members");
+        MethodInfo supportNodes = RequirePublicStatic(tables, "SupportNodes");
+        MethodInfo reactions = RequirePublicStatic(tables, "Reactions");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 11.0, -22.0 });
+        SetContractProperty(equilibrium, equilibriumType, "ResolvedSupportNodeIds",
+            new[] { 2 });
+        SetContractProperty(equilibrium, equilibriumType, "Reactions",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 7))!));
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+
+        Array rows = (Array)members.Invoke(null, new[] { result })!;
+        if (rows.Length != 2)
+        {
+            throw new InvalidOperationException(
+                $"Two edges must give two member rows; got {rows.Length}.");
+        }
+        Type rowType = rows.GetType().GetElementType()!;
+        int Whole(int at, string name) =>
+            (int)rowType.GetProperty(name)!.GetValue(rows.GetValue(at))!;
+        double Real(int at, string name) =>
+            (double)rowType.GetProperty(name)!.GetValue(rows.GetValue(at))!;
+
+        if (Whole(0, "U") != 0 || Whole(0, "V") != 1 ||
+            Whole(1, "U") != 1 || Whole(1, "V") != 2)
+        {
+            throw new InvalidOperationException(
+                "The rows keep the edges in order with their own ends; got "
+                + $"({Whole(0, "U")},{Whole(0, "V")}) then "
+                + $"({Whole(1, "U")},{Whole(1, "V")}).");
+        }
+        if (Math.Abs(Real(0, "Force") - 11.0) > 1.0e-9 ||
+            Math.Abs(Real(1, "Force") + 22.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Each row carries its own edge's signed force; got "
+                + $"{Real(0, "Force")} and {Real(1, "Force")}.");
+        }
+        if (Whole(0, "Id") != 0 || Whole(1, "Id") != 1 ||
+            Whole(0, "EquilibriumEdgeId") != 0 || Whole(1, "EquilibriumEdgeId") != 1)
+        {
+            throw new InvalidOperationException(
+                "An FD row's id and equilibrium edge id are its edge index.");
+        }
+        // NaN, not zero: this Result carries no force densities and an FD
+        // Result carries no horizontal force at all, and zero is a reading a
+        // monitor would draw and believe.
+        if (!double.IsNaN(Real(0, "Q")) || !double.IsNaN(Real(0, "H")))
+        {
+            throw new InvalidOperationException(
+                "A missing force density or horizontal force must arrive as "
+                + $"NaN; got {Real(0, "Q")} and {Real(0, "H")}.");
+        }
+
+        int[] supports = ((IEnumerable)supportNodes.Invoke(null, new[] { result })!)
+            .Cast<int>()
+            .ToArray();
+        if (!supports.SequenceEqual(new[] { 2 }))
+        {
+            throw new InvalidOperationException(
+                $"The support ids are the Result's own; got [{string.Join(",", supports)}].");
+        }
+
+        Array acting = (Array)reactions.Invoke(null, new[] { result })!;
+        if (acting.Length != 1)
+        {
+            throw new InvalidOperationException(
+                $"One reaction went in and {acting.Length} came back.");
+        }
+        object pair = acting.GetValue(0)!;
+        int node = (int)pair.GetType().GetField("Item1")!.GetValue(pair)!;
+        object vector = pair.GetType().GetField("Item2")!.GetValue(pair)!;
+        double z = (double)vector.GetType().GetProperty("Z")!.GetValue(vector)!;
+        if (node != 2 || Math.Abs(z - 7.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                $"The reaction comes back at node 2 with Z 7; got node {node}, Z {z}.");
         }
     }
 
