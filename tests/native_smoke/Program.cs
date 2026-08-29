@@ -689,6 +689,36 @@ internal static class Program
             failures.Add($"Output grouping: {DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidatePhases(plugin);
+            Console.WriteLine(
+                "PASS  MouldGeometry.Phases: reel 0 to 30 brings the sag to Pre-Sag "
+                + "with the net still on the ground, raise 30 to 60 lifts it, "
+                + "finish 60 to 90 reels the rest, hold 90 to 100 moves nothing; "
+                + "sag and lift are continuous across every boundary.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MouldGeometry.Phases: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateLiveColumnNodes(plugin);
+            Console.WriteLine(
+                "PASS  MouldGeometry.LiveColumnNodes: with the net at its solved "
+                + "shape every column node is where it was built; with the net "
+                + "flat on the ground every node lies on the ground and the fork "
+                + "sits at its built fraction along the rail; halfway up the fork "
+                + "keeps its fraction and trunk, fork and main head stay "
+                + "collinear. Heads are found by HeadNode, not by plan matching.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MouldGeometry.LiveColumnNodes: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1763,6 +1793,150 @@ internal static class Program
         })!;
         if ((int)below.GetType().GetProperty("GroundAsked")!.GetValue(below)! != -1)
             throw new InvalidOperationException("Anything below -1 clamps to -1, the floor the contract allows.");
+    }
+
+    /// <summary>
+    /// <c>MouldGeometry.Phases</c>: the four phases the spine spec bound from
+    /// the seven-questions state machine, with the split Param chose (30, 30,
+    /// 30, 10). Measured at every boundary because a discontinuity in sag or
+    /// lift is a visible jump on the timeline slider.
+    /// </summary>
+    private static void ValidatePhases(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo phases = RequirePublicStatic(geometry, "Phases");
+
+        (double Sag, double Lift, string Phase) At(double time, double pre)
+        {
+            object result = phases.Invoke(null, new object?[] { time, pre })!;
+            Type type = result.GetType();
+            return (
+                (double)type.GetField("Item1")!.GetValue(result)!,
+                (double)type.GetField("Item2")!.GetValue(result)!,
+                (string)type.GetField("Item3")!.GetValue(result)!);
+        }
+
+        void Expect(double time, string phase, double sag, double lift)
+        {
+            (double s, double l, string p) = At(time, 0.4);
+            if (p != phase)
+                throw new InvalidOperationException($"Time {time} is '{phase}', got '{p}'.");
+            if (Math.Abs(s - sag) > 1.0e-9 || Math.Abs(l - lift) > 1.0e-9)
+                throw new InvalidOperationException($"Time {time} ({phase}) should give sag {sag}, lift {lift}; got sag {s:0.####}, lift {l:0.####}.");
+        }
+
+        Expect(0.0, "reel", 0.0, 0.0);
+        Expect(0.15, "reel", 0.2, 0.0);
+        Expect(0.3, "raise", 0.4, 0.0);
+        Expect(0.45, "raise", 0.4, 0.5);
+        Expect(0.6, "finish", 0.4, 1.0);
+        Expect(0.75, "finish", 0.7, 1.0);
+        Expect(0.9, "hold", 1.0, 1.0);
+        Expect(1.0, "hold", 1.0, 1.0);
+
+        // Continuity: just below each boundary matches the boundary.
+        foreach (double boundary in new[] { 0.3, 0.6, 0.9 })
+        {
+            (double sBelow, double lBelow, _) = At(boundary - 1.0e-9, 0.4);
+            (double sAt, double lAt, _) = At(boundary, 0.4);
+            if (Math.Abs(sBelow - sAt) > 1.0e-6 || Math.Abs(lBelow - lAt) > 1.0e-6)
+                throw new InvalidOperationException($"Sag or lift jumps at time {boundary}: {sBelow:0.######}/{lBelow:0.######} below, {sAt:0.######}/{lAt:0.######} at.");
+        }
+        // Out-of-range inputs clamp rather than throw.
+        (double sOver, double lOver, string pOver) = At(1.5, 2.0);
+        if (pOver != "hold" || Math.Abs(sOver - 1.0) > 1.0e-9 || Math.Abs(lOver - 1.0) > 1.0e-9)
+            throw new InvalidOperationException("Time past 1 and Pre-Sag past 1 clamp to hold at full sag and lift.");
+    }
+
+    /// <summary>
+    /// <c>MouldGeometry.LiveColumnNodes</c>: the rigid rotation. A tree's foot
+    /// is where the block put it, its heads are on the live net by HeadNode,
+    /// and its fork keeps the fraction it was built at along the live
+    /// foot-to-main segment, so the whole tree turns about its foot as one
+    /// body. Two trees share one foot here, and one of them forks.
+    /// </summary>
+    private static void ValidateLiveColumnNodes(Assembly plugin)
+    {
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo liveNodes = RequirePublicStatic(geometry, "LiveColumnNodes");
+        Type point3d = liveNodes.GetParameters()[1].ParameterType.GetElementType()!;
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+
+        // Foot F at the origin; fork K at 0.65 of the way to main head M; a
+        // branch head B off the fork; a second tree from the same foot to
+        // head H. Net vertices 0, 1, 2 stand under M, B, H.
+        double[][] built =
+        {
+            new[] { 0.0, 0.0, 0.0 },        // 0 F
+            new[] { 0.65, 0.0, 1.3 },       // 1 K
+            new[] { 1.0, 0.0, 2.0 },        // 2 M
+            new[] { 2.0, 0.0, 1.5 },        // 3 B
+            new[] { -1.0, 0.0, 2.0 },       // 4 H
+        };
+        Array nodes = Array.CreateInstance(point, built.Length);
+        for (int i = 0; i < built.Length; i++)
+            nodes.SetValue(Activator.CreateInstance(point, built[i][0], built[i][1], built[i][2]), i);
+        Array members = Array.CreateInstance(edge, 4);
+        members.SetValue(Activator.CreateInstance(edge, 0, 1), 0);
+        members.SetValue(Activator.CreateInstance(edge, 1, 2), 1);
+        members.SetValue(Activator.CreateInstance(edge, 1, 3), 2);
+        members.SetValue(Activator.CreateInstance(edge, 0, 4), 3);
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes", nodes);
+        SetContractProperty(block, columnsType, "Members", members);
+        SetContractProperty(block, columnsType, "MemberForce", new[] { 3.0, 1.0, 1.0, 1.0 });
+        SetContractProperty(block, columnsType, "Trees", new int[][] { new[] { 0, 1, 2, 3 } });
+        SetContractProperty(block, columnsType, "Heads", new[] { 2, 3, 4 });
+        SetContractProperty(block, columnsType, "Forks", new[] { 1 });
+        SetContractProperty(block, columnsType, "Feet", new[] { 0 });
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 0, 1, 2 });
+
+        object P(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        double X(object p) => (double)point3d.GetProperty("X")!.GetValue(p)!;
+        double Y(object p) => (double)point3d.GetProperty("Y")!.GetValue(p)!;
+        double Z(object p) => (double)point3d.GetProperty("Z")!.GetValue(p)!;
+        object[] Run(params object[] live)
+        {
+            Array array = Array.CreateInstance(point3d, live.Length);
+            for (int i = 0; i < live.Length; i++)
+                array.SetValue(live[i], i);
+            return ((Array)liveNodes.Invoke(null, new object?[] { block, array })!).Cast<object>().ToArray();
+        }
+        void Near(object got, double x, double y, double z, string what)
+        {
+            if (Math.Abs(X(got) - x) > 1.0e-9 || Math.Abs(Y(got) - y) > 1.0e-9 || Math.Abs(Z(got) - z) > 1.0e-9)
+                throw new InvalidOperationException($"{what} should be ({x}, {y}, {z}); got ({X(got):0.####}, {Y(got):0.####}, {Z(got):0.####}).");
+        }
+
+        // The solved net: every node where it was built.
+        object[] final = Run(P(1.0, 0.0, 2.0), P(2.0, 0.0, 1.5), P(-1.0, 0.0, 2.0));
+        if (final.Length != 5)
+            throw new InvalidOperationException($"One position per block node; got {final.Length}.");
+        for (int i = 0; i < built.Length; i++)
+            Near(final[i], built[i][0], built[i][1], built[i][2], $"node {i} at the solved net");
+
+        // Time zero: the net on the ground under its own plan. Every node on
+        // the ground, the foot unmoved, the fork at its fraction along the
+        // rail from the foot to the main head.
+        object[] flat = Run(P(1.0, 0.0, 0.0), P(2.0, 0.0, 0.0), P(-1.0, 0.0, 0.0));
+        Near(flat[0], 0.0, 0.0, 0.0, "the foot at time zero");
+        Near(flat[2], 1.0, 0.0, 0.0, "the main head at time zero");
+        Near(flat[3], 2.0, 0.0, 0.0, "the branch head at time zero");
+        Near(flat[4], -1.0, 0.0, 0.0, "the second tree's head at time zero");
+        Near(flat[1], 0.65, 0.0, 0.0, "the fork at time zero, on the rail at its built fraction");
+
+        // Halfway: the fork keeps its fraction and stays on the line.
+        object[] mid = Run(P(1.0, 0.0, 1.0), P(2.0, 0.0, 0.75), P(-1.0, 0.0, 1.0));
+        Near(mid[1], 0.65, 0.0, 0.65, "the fork halfway up");
+        double angle = AngleDeg(
+            X(mid[1]) - X(mid[0]), Y(mid[1]) - Y(mid[0]), Z(mid[1]) - Z(mid[0]),
+            X(mid[2]) - X(mid[1]), Y(mid[2]) - Y(mid[1]), Z(mid[2]) - Z(mid[1]));
+        if (angle > 0.5)
+            throw new InvalidOperationException($"Trunk, fork and main head must stay collinear; they kink by {angle:0.###} degrees halfway up.");
     }
 
     /// <summary>

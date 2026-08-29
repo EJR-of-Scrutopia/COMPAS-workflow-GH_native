@@ -1946,6 +1946,111 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// The four phases of the build on one Time slider, from the
+        /// seven-questions state machine as the spine spec bound it: reel the
+        /// net part way in while it is flat (0 to 30), raise it on the columns
+        /// (30 to 60), reel the rest and tension both axes (60 to 90), then
+        /// hold while load arrives (90 to 100). Sag and lift are continuous
+        /// across every boundary so the slider never jumps.
+        /// </summary>
+        public static (double Sag, double Lift, string Phase) Phases(
+            double time, double preSag)
+        {
+            time = Math.Min(Math.Max(time, 0.0), 1.0);
+            double pre = Math.Min(Math.Max(preSag, 0.0), 1.0);
+            if (time < 0.3)
+                return (pre * (time / 0.3), 0.0, "reel");
+            if (time < 0.6)
+                return (pre, (time - 0.3) / 0.3, "raise");
+            if (time < 0.9)
+                return (pre + ((1.0 - pre) * ((time - 0.6) / 0.3)), 1.0, "finish");
+            return (1.0, 1.0, "hold");
+        }
+
+        /// <summary>
+        /// Every column node's position for one frame of the net.
+        ///
+        /// The tree turns about its foot as ONE BODY. The foot is fixed where
+        /// the block put it, from frame zero. Each head is on the live net at
+        /// the vertex HeadNode names for it, never found by matching plan
+        /// coordinates. Each fork sits on the segment from its foot to its
+        /// main head's live position at the fraction it was built at, the
+        /// main head being the branch collinear with the trunk, which is the
+        /// invariant Columns creates by putting the fork on that segment. So
+        /// at time zero a trunk lies flat along the rail from its foot to its
+        /// notch's drawn position, and rises with the notch, its length being
+        /// what the ram delivers.
+        ///
+        /// A node nothing resolves (a head with no HeadNode, a fragment with
+        /// no foot) keeps its built position rather than vanishing.
+        /// </summary>
+        public static Point3d[] LiveColumnNodes(
+            MouldColumnsDto block, Point3d[] live)
+        {
+            ColumnTree tree = TreeFromBlock(block);
+            int count = tree.Nodes.Count;
+            var at = new Point3d[count];
+            var known = new bool[count];
+
+            foreach (int foot in tree.Feet)
+            {
+                at[foot] = tree.Nodes[foot];
+                known[foot] = true;
+            }
+            for (int h = 0; h < block.Heads.Count && h < block.HeadNode.Count; h++)
+            {
+                int node = block.Heads[h];
+                int vertex = block.HeadNode[h];
+                if (node < 0 || node >= count || vertex < 0 || vertex >= live.Length)
+                    continue;
+                at[node] = live[vertex];
+                known[node] = true;
+            }
+
+            // Forks, once their foot below and main head above are placed.
+            for (int pass = 0; pass < count + 2; pass++)
+            {
+                bool moved = false;
+                for (int v = 0; v < count; v++)
+                {
+                    if (known[v] || tree.Above[v].Count == 0)
+                        continue;
+                    int lower = -1;
+                    foreach ((int lo, int up) in tree.Members)
+                    {
+                        if (up == v)
+                        {
+                            lower = lo;
+                            break;
+                        }
+                    }
+                    if (lower < 0 || !known[lower])
+                        continue;
+                    int main = MainBranch(tree, v);
+                    if (!known[main])
+                        continue;
+                    double span = tree.Nodes[lower].DistanceTo(tree.Nodes[main]);
+                    double fraction = span > 1.0e-12
+                        ? tree.Nodes[lower].DistanceTo(tree.Nodes[v]) / span
+                        : 1.0;
+                    fraction = Math.Min(Math.Max(fraction, 0.0), 1.0);
+                    at[v] = at[lower] + ((at[main] - at[lower]) * fraction);
+                    known[v] = true;
+                    moved = true;
+                }
+                if (!moved)
+                    break;
+            }
+
+            for (int v = 0; v < count; v++)
+            {
+                if (!known[v])
+                    at[v] = tree.Nodes[v];
+            }
+            return at;
+        }
+
+        /// <summary>
         /// The built columns as the block the Result carries.
         ///
         /// Welds the members into shared nodes, and KEEPS THE FORCE ALIGNED:
