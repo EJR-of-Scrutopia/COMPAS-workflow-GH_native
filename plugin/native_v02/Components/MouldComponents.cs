@@ -333,12 +333,15 @@ namespace Ananke.COMPAS.Native.Components
                 "Columns",
                 "C",
                 "The columns at THIS frame, from frame zero: every tree on its "
-                    + "built foot, lying flat along its rail at time zero and "
-                    + "turning up about the foot as the net rises, its length the "
-                    + "ram's travel. A TREE with one branch per COLUMN TREE, that "
-                    + "is per foot, each branch holding that tree's trunk and "
-                    + "branches together. Empty unless the Result carries columns "
-                    + "from Columns upstream.",
+                    + "built foot. The TRUNK lies flat along its rail at time "
+                    + "zero and turns up about the foot as the net rises, "
+                    + "keeping its fork at the fraction it was built at, its "
+                    + "length the ram's travel. The ARMS follow their own "
+                    + "notches, so an arm's length changes with the net and "
+                    + "animate.arm_stretch reports how far. A TREE with one "
+                    + "branch per COLUMN TREE, that is per foot, each branch "
+                    + "holding that tree's trunk and arms together. Empty "
+                    + "unless the Result carries columns from Columns upstream.",
                 GH_ParamAccess.tree);
             parameters.AddCurveParameter(
                 "Perimeter Lines",
@@ -365,6 +368,40 @@ namespace Ananke.COMPAS.Native.Components
             data.GetData(2, ref preSag);
             double extendPct = 40.0;
             data.GetData(3, ref extendPct);
+
+            // A NaN survives Math.Min and Math.Max untouched, so the clamps
+            // below are no guard at all. An Expression that divides by zero
+            // upstream would put NaN straight into Frame.Time, and this
+            // component validates the Result it is GIVEN and never the one it
+            // emits, so the NaN would first surface downstream, in Monitor's
+            // re-validation or as a serialiser failure in Export.
+            var notFinite = new List<string>();
+            if (!double.IsFinite(timePct))
+            {
+                timePct = 100.0;
+                notFinite.Add("Time");
+            }
+            if (!double.IsFinite(preSag))
+            {
+                preSag = 40.0;
+                notFinite.Add("Pre-Sag");
+            }
+            if (!double.IsFinite(extendPct))
+            {
+                extendPct = 40.0;
+                notFinite.Add("Extension");
+            }
+            if (notFinite.Count > 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    string.Join(" and ", notFinite)
+                        + (notFinite.Count == 1 ? " is" : " are")
+                        + " not a finite number, so the default was used "
+                        + "instead. A NaN passes through a clamp unchanged and "
+                        + "would travel on inside the Result.");
+            }
+
             MouldColumnsDto? columnsBlock = result.Mould?.Columns;
             bool hasColumns = columnsBlock is not null && columnsBlock.Members.Count > 0;
 
@@ -562,8 +599,37 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
 
-                int[] perimeterIds = MouldGeometry.PerimeterNodes(
-                    mesh, meshToNode, neighbours, n);
+                // The boundary. With a thrust mesh the naked edges give it
+                // exactly. Without one, which is every FD Result, the PATTERN
+                // topology still names it if it carries faces: an edge used by
+                // exactly one face is a boundary edge. Only when there are no
+                // faces either is the degree heuristic left, and that is an
+                // ESTIMATE rather than a boundary, so it is labelled as one
+                // and Perimeter Lines draws nothing from it.
+                int[] perimeterIds;
+                bool perimeterEstimated = false;
+                if (mesh is null)
+                {
+                    TopologyDto? patternTopology =
+                        result.Problem?.Anchored?.Pattern?.Topology;
+                    IReadOnlyList<IReadOnlyList<int>> faces =
+                        patternTopology is not null &&
+                        patternTopology.Vertices.Count == n
+                            ? patternTopology.Faces
+                            : Array.Empty<IReadOnlyList<int>>();
+                    perimeterIds = MouldGeometry.PerimeterFromFaces(faces, n);
+                    if (perimeterIds.Length == 0)
+                    {
+                        perimeterIds = MouldGeometry.PerimeterNodes(
+                            mesh, meshToNode, neighbours, n);
+                        perimeterEstimated = true;
+                    }
+                }
+                else
+                {
+                    perimeterIds = MouldGeometry.PerimeterNodes(
+                        mesh, meshToNode, neighbours, n);
+                }
 
                 // One BRANCH per bar, holding that bar's curve. Deliberately a
                 // branch rather than a curve, and deliberately added even when
@@ -631,8 +697,8 @@ namespace Ananke.COMPAS.Native.Components
                             + "deepest node",
                         relief.Max(Math.Abs) * 1000.0, unit: "mm"),
                     ResultDiagnostics.Entry(S, "animate.plan_draw", "info",
-                        $"net draws in {planTravel * 1000.0:0.#} mm in plan as it "
-                            + "reels, which is the whole of phase 1",
+                        $"net draws in {planTravel * 1000.0:0.#} mm in plan as the "
+                            + "sag grows, through reel and finish",
                         planTravel * 1000.0, unit: "mm"),
                     ResultDiagnostics.Entry(S, "animate.bar_rise", "info",
                         $"bars risen {barRise * 1000.0:0.#} mm at this frame",
@@ -644,6 +710,19 @@ namespace Ananke.COMPAS.Native.Components
                         "this Result carries no faces, so there is no shaded surface "
                             + "and the perimeter is read from the net's topology "
                             + "instead. That is expected for FD."));
+                }
+                if (perimeterEstimated)
+                {
+                    entries.Add(ResultDiagnostics.Entry(
+                        S, "animate.perimeter_estimated", "info",
+                        "this Result carries no faces of its own and no pattern "
+                            + "topology with faces, so the perimeter above is an "
+                            + "ESTIMATE from node degree rather than a boundary: "
+                            + "the nodes joined to fewer neighbours than the middle "
+                            + "of the net. That set need not be a loop, or even be "
+                            + "on the rim, so Perimeter Lines is left EMPTY rather "
+                            + "than draw a curve through it and call it the boundary.",
+                        perimeterIds.Length, unit: "nodes"));
                 }
                 if (wantsPush > 0)
                 {
@@ -657,23 +736,43 @@ namespace Ananke.COMPAS.Native.Components
                 }
 
                 // The columns, from frame zero. Every tree stands on the foot
-                // Columns built for it and turns about it as ONE BODY: its
-                // heads ride the live net, its fork keeps its built fraction
-                // along the live foot-to-main segment. At time zero a trunk
-                // lies flat along the rail from its foot to its notch's drawn
-                // position; as the notch rises the trunk rotates up, and its
-                // length is what the ram delivers. Nothing slides and nothing
-                // is re-aimed: the trunk points where its foot and its notch
-                // put it, and how far that is from the force path is reported.
+                // Columns built for it. Its TRUNK turns about that foot as a
+                // rigid body: the fork keeps its built fraction along the live
+                // foot-to-main segment, so at time zero the trunk lies flat
+                // along the rail from its foot to its notch's drawn position
+                // and rises with the notch, its length being what the ram
+                // delivers. Its ARMS run from that fork to their own notches,
+                // which ride the net independently, so an arm's length changes
+                // frame to frame and animate.arm_stretch says how far. Nothing
+                // slides and nothing is re-aimed: the trunk points where its
+                // foot and its notch put it, and how far that is from the
+                // force path is reported.
+                if (extendPct > 95.0)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Remark,
+                        $"Extension {extendPct:0.#} is held at 95: a ram that "
+                            + "drove out more than 95% of a column's built "
+                            + "length would leave nothing retracted. The check "
+                            + "below uses 95.");
+                }
                 double extend = Math.Min(Math.Max(extendPct, 0.0), 95.0) / 100.0;
                 var liveColumns = new List<Line>();
                 var columnBranches = new List<List<Line>>();
                 double shortest = double.MaxValue;
                 double longest = 0.0;
+                int totalMembers = 0;
+                int collapsedMembers = 0;
                 int ramViolations = 0;
                 double worstRatio = 1.0;
+                int worstBranch = -1;
+                int worstFoot = -1;
                 double worstAlign = 0.0;
                 int alignedTrunks = 0;
+                int armsMeasured = 0;
+                double worstArm = 1.0;
+                int worstArmBranch = -1;
+                int worstArmMember = -1;
 
                 Point3d[]? liveColumnNodes = null;
                 if (hasColumns)
@@ -687,65 +786,136 @@ namespace Ananke.COMPAS.Native.Components
                     for (int h = 0; h < columnsBlock!.Heads.Count && h < columnsBlock.HeadNode.Count; h++)
                         headVertex[columnsBlock.Heads[h]] = columnsBlock.HeadNode[h];
 
-                    foreach (List<int> group in MouldGeometry.TreesByFoot(tree))
+                    // Branch by the grouping the BLOCK already carries when it
+                    // accounts for every member exactly once, so Columns branch
+                    // {i} here is Trees[{i}] there and the two components agree
+                    // without either rederiving the other's answer. TreesByFoot
+                    // is the fallback for a block whose Trees do not cover the
+                    // members it carries.
+                    var listed = new HashSet<int>(
+                        columnsBlock.Trees.SelectMany(t => t));
+                    bool blockCovers =
+                        columnsBlock.Trees.Count > 0 &&
+                        columnsBlock.Members.Count == tree.Members.Count &&
+                        columnsBlock.Trees.Sum(t => t.Count) == tree.Members.Count &&
+                        listed.Count == tree.Members.Count &&
+                        listed.All(m => m >= 0 && m < tree.Members.Count);
+                    List<List<int>> groups = blockCovers
+                        ? columnsBlock.Trees.Select(t => t.ToList()).ToList()
+                        : MouldGeometry.TreesByFoot(tree);
+
+                    for (int b = 0; b < groups.Count; b++)
                     {
                         var branch = new List<Line>();
-                        foreach (int m in group)
+                        List<int> group = groups[b];
+                        for (int k = 0; k < group.Count; k++)
                         {
-                            (int lower, int upper) = tree.Members[m];
-                            if (at[lower].DistanceTo(at[upper]) <= 1.0e-9)
+                            int m = group[k];
+                            if (m < 0 || m >= tree.Members.Count)
                                 continue;
+                            (int lower, int upper) = tree.Members[m];
+                            double length = at[lower].DistanceTo(at[upper]);
+                            double builtLength =
+                                tree.Nodes[lower].DistanceTo(tree.Nodes[upper]);
+                            totalMembers++;
+
+                            // MEASURE FIRST, DRAW AFTER. A member whose two
+                            // ends have met is the most extreme reach there is,
+                            // and testing for it before measuring made the one
+                            // case that most needs reporting the one case that
+                            // reported nothing at all.
+                            if (footSet.Contains(lower))
+                            {
+                                // A trunk. The ram: this frame's length against
+                                // the built one, inside the range the ram
+                                // allows. A collapsed trunk is ratio 0, which
+                                // is a violation.
+                                if (builtLength > 1.0e-9)
+                                {
+                                    double ratio = length / builtLength;
+                                    if (ratio < (1.0 - extend) - 1.0e-9 ||
+                                        ratio > 1.0 + 1.0e-9)
+                                    {
+                                        ramViolations++;
+                                        if (Math.Abs(ratio - 1.0) > Math.Abs(worstRatio - 1.0))
+                                        {
+                                            worstRatio = ratio;
+                                            worstBranch = b;
+                                            worstFoot = lower;
+                                        }
+                                    }
+                                }
+                                // Alignment: the trunk against the live thrust
+                                // at its main notch.
+                                int head = tree.Above[upper].Count == 0
+                                    ? upper
+                                    : MouldGeometry.MainBranch(tree, upper);
+                                if (headVertex.TryGetValue(head, out int vertex) &&
+                                    liveAim.TryGetValue(vertex, out Vector3d aim))
+                                {
+                                    Vector3d direction = at[upper] - at[lower];
+                                    worstAlign = Math.Max(
+                                        worstAlign, ColumnPlacement.AngleBetween(direction, aim));
+                                    alignedTrunks++;
+                                }
+                            }
+                            else if (builtLength > 1.0e-9)
+                            {
+                                // An ARM: a fixed limb from a fork to a notch,
+                                // with no ram in it. Both its ends move, so its
+                                // length is a measurement of whether the frame
+                                // is asking a rigid member to change length.
+                                double ratio = length / builtLength;
+                                armsMeasured++;
+                                if (Math.Abs(ratio - 1.0) > Math.Abs(worstArm - 1.0))
+                                {
+                                    worstArm = ratio;
+                                    worstArmBranch = b;
+                                    worstArmMember = k;
+                                }
+                            }
+
+                            if (length <= 1.0e-9)
+                            {
+                                collapsedMembers++;
+                                continue;
+                            }
                             var member = new Line(at[lower], at[upper]);
                             liveColumns.Add(member);
                             branch.Add(member);
-                            double length = member.Length;
                             shortest = Math.Min(shortest, length);
                             longest = Math.Max(longest, length);
-
-                            if (!footSet.Contains(lower))
-                                continue;
-                            // A trunk. The ram: this frame's length against
-                            // the built one, inside the range the ram allows.
-                            double builtLength = tree.Nodes[lower].DistanceTo(tree.Nodes[upper]);
-                            if (builtLength > 1.0e-9)
-                            {
-                                double ratio = length / builtLength;
-                                if (ratio < (1.0 - extend) - 1.0e-9 || ratio > 1.0 + 1.0e-9)
-                                {
-                                    ramViolations++;
-                                    if (Math.Abs(ratio - 1.0) > Math.Abs(worstRatio - 1.0))
-                                        worstRatio = ratio;
-                                }
-                            }
-                            // Alignment: the trunk against the live thrust at
-                            // its main notch.
-                            int head = tree.Above[upper].Count == 0
-                                ? upper
-                                : MouldGeometry.MainBranch(tree, upper);
-                            if (headVertex.TryGetValue(head, out int vertex) &&
-                                liveAim.TryGetValue(vertex, out Vector3d aim))
-                            {
-                                Vector3d direction = at[upper] - at[lower];
-                                worstAlign = Math.Max(
-                                    worstAlign, ColumnPlacement.AngleBetween(direction, aim));
-                                alignedTrunks++;
-                            }
                         }
                         columnBranches.Add(branch);
                     }
                 }
 
-                if (liveColumns.Count > 0)
+                // Emitted whenever the Result carries columns, not only when
+                // something was drawn. A frame in which every member has
+                // collapsed is exactly the frame a reader most needs told
+                // about, and gating on the drawn count made that the one frame
+                // Animate said nothing about at all.
+                if (hasColumns)
                 {
+                    double drawnShortest = liveColumns.Count > 0 ? shortest : 0.0;
                     entries.Add(ResultDiagnostics.Entry(S, "animate.columns", "info",
-                        $"{liveColumns.Count} column members at this frame, "
-                            + $"{shortest:0.###} to {longest:0.###} long. Every tree "
-                            + "stands on its built foot from frame zero and turns "
-                            + "about it as one body; its length is the ram.",
+                        $"{liveColumns.Count} of {totalMembers} column member(s) drawn "
+                            + $"at this frame, {drawnShortest:0.###} to {longest:0.###} "
+                            + "long"
+                            + (collapsedMembers > 0
+                                ? $"; {collapsedMembers} member(s) have collapsed to "
+                                    + "nothing at this frame and are not drawn, which "
+                                    + "is why a branch can come back short or empty"
+                                : string.Empty)
+                            + ". Every tree stands on its built foot from frame zero; "
+                            + "its trunk turns about that foot and its length is the "
+                            + "ram, while its arms follow their own notches.",
                         liveColumns.Count, unit: "members",
                         context: ResultDiagnostics.Context(
-                            ("shortest", shortest.ToString("0.###", CultureInfo.InvariantCulture)),
-                            ("longest", longest.ToString("0.###", CultureInfo.InvariantCulture)))));
+                            ("shortest", drawnShortest.ToString("0.###", CultureInfo.InvariantCulture)),
+                            ("longest", longest.ToString("0.###", CultureInfo.InvariantCulture)),
+                            ("members", totalMembers.ToString(CultureInfo.InvariantCulture)),
+                            ("collapsed", collapsedMembers.ToString(CultureInfo.InvariantCulture)))));
                     entries.Add(ResultDiagnostics.Entry(S, "animate.column_alignment", "info",
                         alignedTrunks == 0
                             ? "no trunk could be measured against a live aim at this "
@@ -760,18 +930,46 @@ namespace Ananke.COMPAS.Native.Components
                         worstAlign, unit: "degrees",
                         context: ResultDiagnostics.Context(
                             ("measured", alignedTrunks.ToString(CultureInfo.InvariantCulture)))));
+                    if (armsMeasured > 0)
+                    {
+                        entries.Add(ResultDiagnostics.Entry(S, "animate.arm_stretch", "info",
+                            $"{armsMeasured} arm(s) measured, the worst at "
+                                + $"{worstArm * 100:0}% of its built length, member "
+                                + $"{worstArmMember} of Columns branch {worstArmBranch}. "
+                                + "An arm has no ram: it is a fixed limb from a fork to "
+                                + "its notch, and both its ends move on the net, so a "
+                                + "figure away from 100% is the frame asking a rigid "
+                                + "member to change length.",
+                            worstArm, unit: "ratio",
+                            context: ResultDiagnostics.Context(
+                                ("arms", armsMeasured.ToString(CultureInfo.InvariantCulture)),
+                                ("branch", worstArmBranch.ToString(CultureInfo.InvariantCulture)),
+                                ("member", worstArmMember.ToString(CultureInfo.InvariantCulture)))));
+                    }
                     if (ramViolations > 0)
                     {
-                        entries.Add(ResultDiagnostics.Entry(S, "animate.ram_range", "warning",
+                        // A warning only once the columns are up. Below lift 1
+                        // the trunks are mid-rotation and their live length is
+                        // MEANT to be short of built, so warning on every early
+                        // frame taught the reader to skip the line.
+                        entries.Add(ResultDiagnostics.Entry(
+                            S, "animate.ram_range",
+                            lift >= 1.0 ? "warning" : "info",
                             $"{ramViolations} trunk(s) need a length outside their ram's "
-                                + $"range at this frame, the worst at {worstRatio * 100:0}% of "
-                                + $"built length against a range of {(1.0 - extend) * 100:0}% "
-                                + "to 100%. Raise Extension, or accept that the machine "
-                                + "cannot follow this frame exactly.",
+                                + $"range at this frame, which is {phase}. The worst is "
+                                + $"at {worstRatio * 100:0}% of built length against a "
+                                + $"range of {(1.0 - extend) * 100:0}% to 100%: Columns "
+                                + $"branch {worstBranch}, standing on foot node "
+                                + $"{worstFoot}. The trunk cannot be this short while "
+                                + "retracted; the machine cannot follow this frame "
+                                + "exactly.",
                             worstRatio, unit: "ratio",
                             context: ResultDiagnostics.Context(
                                 ("violations", ramViolations.ToString(CultureInfo.InvariantCulture)),
-                                ("extension", (extend * 100.0).ToString("0", CultureInfo.InvariantCulture)))));
+                                ("extension", (extend * 100.0).ToString("0", CultureInfo.InvariantCulture)),
+                                ("phase", phase),
+                                ("branch", worstBranch.ToString(CultureInfo.InvariantCulture)),
+                                ("foot", worstFoot.ToString(CultureInfo.InvariantCulture)))));
                     }
                 }
 
@@ -821,19 +1019,29 @@ namespace Ananke.COMPAS.Native.Components
                 List<List<int>> perimeterLoops =
                     MouldGeometry.ConnectedGroups(perimeterIds, neighbours: grouping);
 
-                // One closed curve per loop, branch {i} the same loop as
-                // Perimeter Nodes branch {i}. A loop too short to close still
+                // One curve per loop, branch {i} the same loop as Perimeter
+                // Nodes branch {i}. A group that cannot make a curve still
                 // keeps its branch so the numbering holds.
+                //
+                // CLOSED ONLY WHEN IT CLOSES. The last node walked has to be
+                // adjacent to the first in the very graph the walk used, or
+                // the closing segment is a chord across the net rather than a
+                // member of it, drawn as a valid closed curve and labelled the
+                // boundary. A group the walk could not close comes back OPEN,
+                // which is visibly not a loop.
                 var perimeterCurves = new List<List<Curve>>();
                 foreach (List<int> loop in perimeterLoops)
                 {
                     var branch = new List<Curve>();
-                    if (loop.Count >= 3)
+                    if (!perimeterEstimated && loop.Count >= 2)
                     {
+                        bool closes = loop.Count >= 3 &&
+                            grouping[loop[loop.Count - 1]].Contains(loop[0]);
                         var points = loop.Select(i => live[i]).ToList();
-                        points.Add(points[0]);
+                        if (closes)
+                            points.Add(points[0]);
                         var polyline = new Polyline(points);
-                        if (polyline.IsValid)
+                        if (polyline.IsValid && polyline.Count > 1)
                             branch.Add(polyline.ToNurbsCurve());
                     }
                     perimeterCurves.Add(branch);
@@ -931,13 +1139,28 @@ namespace Ananke.COMPAS.Native.Components
             return kept.ToArray();
         }
 
+        /// <summary>
+        /// Adjacency as a SET of neighbours, one list per node.
+        ///
+        /// The edge set is deduped on the way in, by EdgeKey. The same pair
+        /// can arrive twice, most obviously from GroupingAdjacency, which
+        /// unions the plan's edges onto the solved ones and so lists every
+        /// edge present in both graphs twice. A doubled neighbour is not
+        /// harmless: ConnectedGroups finds the END of an open strip by
+        /// counting its neighbours inside the group, so a doubled entry makes
+        /// an end count two, no end is recognised, and the strip is walked
+        /// from its lowest index instead of end to end.
+        /// </summary>
         public static List<int>[] BuildAdjacency(int count, (int, int)[] edges)
         {
             var neighbours = new List<int>[count];
             for (int i = 0; i < count; i++)
                 neighbours[i] = new List<int>();
+            var seen = new HashSet<long>();
             foreach ((int u, int v) in edges)
             {
+                if (!seen.Add(EdgeKey(u, v)))
+                    continue;
                 neighbours[u].Add(v);
                 neighbours[v].Add(u);
             }
@@ -967,6 +1190,10 @@ namespace Ananke.COMPAS.Native.Components
         /// as the solved network. Anything else is a different index space, and
         /// quietly mixing two index spaces would group nodes that have nothing
         /// to do with one another.
+        ///
+        /// An edge present in BOTH graphs is handed on twice, which is why
+        /// BuildAdjacency dedupes: a doubled neighbour hides the end of an
+        /// open strip from the walk that has to start there.
         /// </summary>
         public static List<int>[] GroupingAdjacency(
             ResultDto result,
@@ -1774,16 +2001,24 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// Every column node's position for one frame of the net.
         ///
-        /// The tree turns about its foot as ONE BODY. The foot is fixed where
-        /// the block put it, from frame zero. Each head is on the live net at
-        /// the vertex HeadNode names for it, never found by matching plan
-        /// coordinates. Each fork sits on the segment from its foot to its
-        /// main head's live position at the fraction it was built at, the
+        /// The TRUNK turns about its foot as a rigid body. The foot is fixed
+        /// where the block put it, from frame zero. Each head is on the live
+        /// net at the vertex HeadNode names for it, never found by matching
+        /// plan coordinates. Each fork sits on the segment from its foot to
+        /// its main head's live position at the fraction it was built at, the
         /// main head being the branch collinear with the trunk, which is the
         /// invariant Columns creates by putting the fork on that segment. So
         /// at time zero a trunk lies flat along the rail from its foot to its
         /// notch's drawn position, and rises with the notch, its length being
         /// what the ram delivers.
+        ///
+        /// The ARMS are not rigid in this model. Each runs from that fork to
+        /// its own head, and the two ends move independently, so an arm's
+        /// length changes frame to frame. That is a real limitation of the
+        /// mechanism rather than a property of it, which is why Animate
+        /// measures every arm and reports the worst as animate.arm_stretch:
+        /// an arm reading far from its built length is the frame telling you
+        /// the machine cannot make this shape.
         ///
         /// A node nothing resolves (a head with no HeadNode, a fragment with
         /// no foot) keeps its built position rather than vanishing. Two forks
@@ -2086,6 +2321,63 @@ namespace Ananke.COMPAS.Native.Components
                 .OrderBy(length => length)
                 .ToArray();
             return lengths.Length == 0 ? 1.0 : lengths[lengths.Length / 2];
+        }
+
+        /// <summary>
+        /// The boundary read from FACES, which is where a boundary actually
+        /// lives when there is no mesh to ask.
+        ///
+        /// An edge used by exactly ONE face is a boundary edge and both its
+        /// ends are boundary nodes; an edge shared by two faces is interior.
+        /// That is the same rule Rhino's naked-edge status applies, written
+        /// out over a face list, so an FD Result, which carries no thrust
+        /// mesh, still gets a real boundary from its pattern topology instead
+        /// of the degree ESTIMATE below, which is not a cycle and on a coarse
+        /// quad net returns the four corners and nothing else.
+        ///
+        /// Pure and index-only: no geometry is read, so the same answer holds
+        /// on every frame of an animation. Nodes come back in ascending index
+        /// order. An empty array means there were no usable faces, which is
+        /// the caller's cue to fall back and to say that it did.
+        /// </summary>
+        public static int[] PerimeterFromFaces(
+            IReadOnlyList<IReadOnlyList<int>> faces,
+            int nodeCount)
+        {
+            if (faces is null || faces.Count == 0 || nodeCount <= 0)
+                return Array.Empty<int>();
+
+            var uses = new Dictionary<long, int>();
+            var ends = new Dictionary<long, (int A, int B)>();
+            foreach (IReadOnlyList<int> face in faces)
+            {
+                if (face is null || face.Count < 3)
+                    continue;
+                for (int k = 0; k < face.Count; k++)
+                {
+                    int a = face[k];
+                    int b = face[(k + 1) % face.Count];
+                    if (a < 0 || a >= nodeCount ||
+                        b < 0 || b >= nodeCount || a == b)
+                    {
+                        continue;
+                    }
+                    long key = EdgeKey(a, b);
+                    uses[key] = uses.TryGetValue(key, out int used) ? used + 1 : 1;
+                    ends[key] = (a, b);
+                }
+            }
+
+            var boundary = new HashSet<int>();
+            foreach (KeyValuePair<long, int> use in uses)
+            {
+                if (use.Value != 1)
+                    continue;
+                (int a, int b) = ends[use.Key];
+                boundary.Add(a);
+                boundary.Add(b);
+            }
+            return boundary.OrderBy(i => i).ToArray();
         }
 
         public static int[] PerimeterNodes(

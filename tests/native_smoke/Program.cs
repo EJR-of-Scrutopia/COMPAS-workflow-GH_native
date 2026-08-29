@@ -93,6 +93,25 @@ internal static class Program
                         "Face Polylines",
                         "Face Courses",
                         "Feet"
+                    }),
+                // Animate's ports are pinned because every one of them is an
+                // index a downstream branch is read by. Perimeter Lines was
+                // APPENDED at 8 on purpose: outputs 0 to 7 keep their slots,
+                // so a Grasshopper file saved before it existed still finds
+                // its wires. Moving any of them silently rewires the canvas.
+                ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = (
+                    new[] { "Result", "Time", "Pre-Sag", "Extension" },
+                    new[]
+                    {
+                        "Mesh",
+                        "Cables",
+                        "Principal Lines",
+                        "Principal Nodes",
+                        "Anchor Nodes",
+                        "Perimeter Nodes",
+                        "Result",
+                        "Columns",
+                        "Perimeter Lines"
                     })
             };
     private static readonly IReadOnlyDictionary<
@@ -680,9 +699,11 @@ internal static class Program
                 "PASS  Output grouping: the anchors of a vault come back as "
                 + "SEPARATE STRIPS rather than one merged list, each walked "
                 + "end to end instead of sorted by node index, and a closed "
-                + "loop comes back walked round. A member cutting a corner "
-                + "between two notches of one bar is infill, not part of that "
-                + "bar. This is what the new tree outputs branch by.");
+                + "loop comes back walked round. An edge supplied twice, which "
+                + "is what the union of the plan and the solved net hands over, "
+                + "still leaves the strip walked end to end. A member cutting a "
+                + "corner between two notches of one bar is infill, not part of "
+                + "that bar. This is what the new tree outputs branch by.");
         }
         catch (Exception exception)
         {
@@ -691,12 +712,32 @@ internal static class Program
 
         try
         {
+            ValidatePerimeterFromFaces(plugin);
+            Console.WriteLine(
+                "PASS  MouldGeometry.PerimeterFromFaces: an edge used by exactly "
+                + "one face is a boundary edge, so a 2x2 grid of quads hands "
+                + "back its eight rim nodes and never the centre. This is what "
+                + "an FD Result's boundary comes from, since it carries no "
+                + "thrust mesh to read naked edges off; with no faces at all it "
+                + "returns nothing, which is the caller's cue to say the "
+                + "perimeter is an estimate.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"MouldGeometry.PerimeterFromFaces: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePhases(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.Phases: reel 0 to 30 brings the sag to Pre-Sag "
                 + "with the net still on the ground, raise 30 to 60 lifts it, "
-                + "finish 60 to 90 reels the rest, hold 90 to 100 moves nothing; "
-                + "sag and lift are continuous across every boundary.");
+                + "finish 60 to 90 reels the rest, hold 90 to 100 moves nothing, "
+                + "at Pre-Sag 0, 0.4 and 1; sag and lift are continuous across "
+                + "every boundary to 1e-9 and never decrease anywhere along the "
+                + "timeline.");
         }
         catch (Exception exception)
         {
@@ -709,10 +750,13 @@ internal static class Program
             Console.WriteLine(
                 "PASS  MouldGeometry.LiveColumnNodes: with the net at its solved "
                 + "shape every column node is where it was built; with the net "
-                + "flat on the ground every node lies on the ground and the fork "
-                + "sits at its built fraction along the rail; halfway up the fork "
-                + "keeps its fraction and trunk, fork and main head stay "
-                + "collinear. Heads are found by HeadNode, not by plan matching.");
+                + "flat on the ground and drawn in every node lies on the ground "
+                + "and the fork sits at its built fraction along the rail; "
+                + "halfway up the fork keeps its fraction and trunk, fork and "
+                + "main head stay collinear. The fraction is measured, not "
+                + "assumed, the main branch is the collinear one and not the "
+                + "first listed, and heads are found by HeadNode, which is "
+                + "permuted here so plan matching would land them elsewhere.");
         }
         catch (Exception exception)
         {
@@ -1801,6 +1845,64 @@ internal static class Program
     /// 30, 10). Measured at every boundary because a discontinuity in sag or
     /// lift is a visible jump on the timeline slider.
     /// </summary>
+    /// <summary>
+    /// <c>MouldGeometry.PerimeterFromFaces</c>: the boundary from topology
+    /// rather than from a guess.
+    ///
+    /// An FD Result carries no faces of its own, so Animate has no thrust mesh
+    /// to read naked edges off and used to fall back to node degree: keep
+    /// every node joined to fewer neighbours than the middle of the net. That
+    /// is not a boundary and on a coarse quad net it is not even close. A 5x5
+    /// net has four corners at degree 2, twelve edge nodes at degree 3 and
+    /// nine interior at degree 4, so the median is 3 and the "perimeter" comes
+    /// back as the four CORNERS, each isolated from the others.
+    ///
+    /// The face rule has no such failure: an edge used by exactly one face is
+    /// on the boundary, an edge shared by two is not. The fixture is the
+    /// smallest grid that has an interior vertex to get wrong, four quads on
+    /// nine nodes, and the centre node is the assertion that matters.
+    /// </summary>
+    private static void ValidatePerimeterFromFaces(Assembly plugin)
+    {
+        Type mouldGeometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry",
+            throwOnError: true)!;
+        MethodInfo fromFaces = RequirePublicStatic(
+            mouldGeometry, "PerimeterFromFaces");
+
+        //   6 7 8
+        //   3 4 5
+        //   0 1 2
+        var faces = new List<IReadOnlyList<int>>
+        {
+            new[] { 0, 1, 4, 3 },
+            new[] { 1, 2, 5, 4 },
+            new[] { 3, 4, 7, 6 },
+            new[] { 4, 5, 8, 7 },
+        };
+        var rim = (int[])fromFaces.Invoke(null, new object?[] { faces, 9 })!;
+        var expectedRim = new[] { 0, 1, 2, 3, 5, 6, 7, 8 };
+        if (!rim.SequenceEqual(expectedRim))
+        {
+            throw new InvalidOperationException(
+                "The rim of a 2x2 grid of quads is its eight outer nodes: "
+                + $"expected [{string.Join(",", expectedRim)}] and got "
+                + $"[{string.Join(",", rim)}]. Node 4 is the centre, shared by "
+                + "all four faces, so every edge touching it is used twice and "
+                + "it cannot be on the boundary.");
+        }
+
+        var none = (int[])fromFaces.Invoke(
+            null, new object?[] { new List<IReadOnlyList<int>>(), 9 })!;
+        if (none.Length != 0)
+        {
+            throw new InvalidOperationException(
+                "With no faces there is no boundary to read, and the empty "
+                + "array is what tells the caller to fall back to the degree "
+                + $"estimate and say so; got {none.Length} node(s).");
+        }
+    }
+
     private static void ValidatePhases(Assembly plugin)
     {
         Type geometry = plugin.GetType(
@@ -1817,31 +1919,69 @@ internal static class Program
                 (string)type.GetField("Item3")!.GetValue(result)!);
         }
 
-        void Expect(double time, string phase, double sag, double lift)
+        void Expect(double time, double pre, string phase, double sag, double lift)
         {
-            (double s, double l, string p) = At(time, 0.4);
+            (double s, double l, string p) = At(time, pre);
             if (p != phase)
-                throw new InvalidOperationException($"Time {time} is '{phase}', got '{p}'.");
+                throw new InvalidOperationException($"Time {time} at Pre-Sag {pre} is '{phase}', got '{p}'.");
             if (Math.Abs(s - sag) > 1.0e-9 || Math.Abs(l - lift) > 1.0e-9)
-                throw new InvalidOperationException($"Time {time} ({phase}) should give sag {sag}, lift {lift}; got sag {s:0.####}, lift {l:0.####}.");
+                throw new InvalidOperationException($"Time {time} ({phase}) at Pre-Sag {pre} should give sag {sag}, lift {lift}; got sag {s:0.####}, lift {l:0.####}.");
         }
 
-        Expect(0.0, "reel", 0.0, 0.0);
-        Expect(0.15, "reel", 0.2, 0.0);
-        Expect(0.3, "raise", 0.4, 0.0);
-        Expect(0.45, "raise", 0.4, 0.5);
-        Expect(0.6, "finish", 0.4, 1.0);
-        Expect(0.75, "finish", 0.7, 1.0);
-        Expect(0.9, "hold", 1.0, 1.0);
-        Expect(1.0, "hold", 1.0, 1.0);
-
-        // Continuity: just below each boundary matches the boundary.
-        foreach (double boundary in new[] { 0.3, 0.6, 0.9 })
+        // Every phase boundary at THREE pre-sags, the two ends included, with
+        // the expected sag computed from the table rather than written out:
+        // reel runs 0 to pre, raise holds pre, finish runs pre to 1. Checking
+        // 0.4 alone left a Phases that ignored its second argument passing at
+        // the boundaries, since 0.4 appears in the answer either way.
+        foreach (double pre in new[] { 0.0, 0.4, 1.0 })
         {
-            (double sBelow, double lBelow, _) = At(boundary - 1.0e-9, 0.4);
-            (double sAt, double lAt, _) = At(boundary, 0.4);
-            if (Math.Abs(sBelow - sAt) > 1.0e-6 || Math.Abs(lBelow - lAt) > 1.0e-6)
-                throw new InvalidOperationException($"Sag or lift jumps at time {boundary}: {sBelow:0.######}/{lBelow:0.######} below, {sAt:0.######}/{lAt:0.######} at.");
+            Expect(0.0, pre, "reel", 0.0, 0.0);
+            Expect(0.15, pre, "reel", pre * 0.5, 0.0);
+            Expect(0.3, pre, "raise", pre, 0.0);
+            Expect(0.45, pre, "raise", pre, 0.5);
+            Expect(0.6, pre, "finish", pre, 1.0);
+            Expect(0.75, pre, "finish", pre + ((1.0 - pre) * 0.5), 1.0);
+            Expect(0.9, pre, "hold", 1.0, 1.0);
+            Expect(1.0, pre, "hold", 1.0, 1.0);
+        }
+
+        // Continuity: just below each boundary matches the boundary, to 1e-9,
+        // which is what the spec binds. The step back has to be SMALLER than
+        // the tolerance divided by the slope, or the probe fails an exact
+        // function: at 1e-9 the sag inside reel has already moved 1.33e-9, so
+        // the old probe could only ever be asserted at 1e-6. At 1e-12 the gap
+        // is 1.33e-12 and the spec's own tolerance holds.
+        foreach (double pre in new[] { 0.0, 0.4, 1.0 })
+        {
+            foreach (double boundary in new[] { 0.3, 0.6, 0.9 })
+            {
+                (double sBelow, double lBelow, _) = At(boundary - 1.0e-12, pre);
+                (double sAt, double lAt, _) = At(boundary, pre);
+                if (Math.Abs(sBelow - sAt) > 1.0e-9 || Math.Abs(lBelow - lAt) > 1.0e-9)
+                    throw new InvalidOperationException($"Sag or lift jumps at time {boundary} with Pre-Sag {pre}: {sBelow:0.############}/{lBelow:0.############} below, {sAt:0.############}/{lAt:0.############} at.");
+            }
+        }
+
+        // MONOTONE across the whole timeline. Continuity at three boundaries
+        // says nothing about what happens between them, and a build that ran
+        // backwards mid-phase would reel a cable out again: neither the sag
+        // nor the lift may ever decrease as Time advances.
+        foreach (double pre in new[] { 0.0, 0.4, 1.0 })
+        {
+            double lastSag = -1.0;
+            double lastLift = -1.0;
+            for (int step = 0; step <= 100; step++)
+            {
+                double t = step / 100.0;
+                (double s, double l, _) = At(t, pre);
+                if (s < lastSag - 1.0e-12 || l < lastLift - 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        $"Sag and lift must never decrease: at Pre-Sag {pre}, time {t:0.##} gave sag {s:0.######} and lift {l:0.######} after {lastSag:0.######} and {lastLift:0.######}.");
+                }
+                lastSag = s;
+                lastLift = l;
+            }
         }
         // Out-of-range inputs clamp rather than throw.
         (double sOver, double lOver, string pOver) = At(1.5, 2.0);
@@ -1853,8 +1993,24 @@ internal static class Program
     /// <c>MouldGeometry.LiveColumnNodes</c>: the rigid rotation. A tree's foot
     /// is where the block put it, its heads are on the live net by HeadNode,
     /// and its fork keeps the fraction it was built at along the live
-    /// foot-to-main segment, so the whole tree turns about its foot as one
-    /// body. Two trees share one foot here, and one of them forks.
+    /// foot-to-main segment, so the trunk turns about its foot as one body.
+    /// Two trees share one foot here, and one of them forks.
+    ///
+    /// The fixture is built so that each of the three rules FAILS SEPARATELY
+    /// if it is ever reverted:
+    ///
+    ///   THE FRACTION is 0.4, not the 0.65 an earlier fixture used, so a
+    ///   hard-coded constant cannot pass by matching the test's own number.
+    ///
+    ///   THE MAIN BRANCH is listed SECOND in Members, so <c>Above[fork]</c>
+    ///   reads {B, M} and a MainBranch that took the first entry above the
+    ///   fork would put the fork on the arm's segment instead of the trunk's.
+    ///
+    ///   THE HEADS are found by HeadNode, which is permuted to {2, 1, 0}, and
+    ///   the net at time zero is DRAWN IN in plan the way a reeling net is. So
+    ///   the main head's built plan position is nearest to a different live
+    ///   vertex from the one HeadNode names, and a revert to plan matching
+    ///   puts that head, and the fork under it, somewhere else.
     /// </summary>
     private static void ValidateLiveColumnNodes(Assembly plugin)
     {
@@ -1866,13 +2022,14 @@ internal static class Program
         Type point = RequireContractType(plugin, "Point3Dto");
         Type edge = RequireContractType(plugin, "EdgeDto");
 
-        // Foot F at the origin; fork K at 0.65 of the way to main head M; a
+        // Foot F at the origin; fork K at 0.4 of the way to main head M; a
         // branch head B off the fork; a second tree from the same foot to
-        // head H. Net vertices 0, 1, 2 stand under M, B, H.
+        // head H. HeadNode is permuted: M stands on net vertex 2, B on 1,
+        // H on 0.
         double[][] built =
         {
             new[] { 0.0, 0.0, 0.0 },        // 0 F
-            new[] { 0.65, 0.0, 1.3 },       // 1 K
+            new[] { 0.4, 0.0, 0.8 },        // 1 K, exactly 0.4 of F to M
             new[] { 1.0, 0.0, 2.0 },        // 2 M
             new[] { 2.0, 0.0, 1.5 },        // 3 B
             new[] { -1.0, 0.0, 2.0 },       // 4 H
@@ -1882,8 +2039,10 @@ internal static class Program
             nodes.SetValue(Activator.CreateInstance(point, built[i][0], built[i][1], built[i][2]), i);
         Array members = Array.CreateInstance(edge, 4);
         members.SetValue(Activator.CreateInstance(edge, 0, 1), 0);
-        members.SetValue(Activator.CreateInstance(edge, 1, 2), 1);
-        members.SetValue(Activator.CreateInstance(edge, 1, 3), 2);
+        // The ARM before the trunk's continuation on purpose, so Above[1]
+        // reads {3, 2} and picking the first entry gives the wrong branch.
+        members.SetValue(Activator.CreateInstance(edge, 1, 3), 1);
+        members.SetValue(Activator.CreateInstance(edge, 1, 2), 2);
         members.SetValue(Activator.CreateInstance(edge, 0, 4), 3);
         object block = CreateInstance(columnsType);
         SetContractProperty(block, columnsType, "Nodes", nodes);
@@ -1893,7 +2052,7 @@ internal static class Program
         SetContractProperty(block, columnsType, "Heads", new[] { 2, 3, 4 });
         SetContractProperty(block, columnsType, "Forks", new[] { 1 });
         SetContractProperty(block, columnsType, "Feet", new[] { 0 });
-        SetContractProperty(block, columnsType, "HeadNode", new[] { 0, 1, 2 });
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 2, 1, 0 });
 
         object P(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
         double X(object p) => (double)point3d.GetProperty("X")!.GetValue(p)!;
@@ -1912,26 +2071,30 @@ internal static class Program
                 throw new InvalidOperationException($"{what} should be ({x}, {y}, {z}); got ({X(got):0.####}, {Y(got):0.####}, {Z(got):0.####}).");
         }
 
-        // The solved net: every node where it was built.
-        object[] final = Run(P(1.0, 0.0, 2.0), P(2.0, 0.0, 1.5), P(-1.0, 0.0, 2.0));
+        // The solved net: every node where it was built. Live vertex 2 is
+        // under M, 1 under B, 0 under H, as HeadNode says.
+        object[] final = Run(P(-1.0, 0.0, 2.0), P(2.0, 0.0, 1.5), P(1.0, 0.0, 2.0));
         if (final.Length != 5)
             throw new InvalidOperationException($"One position per block node; got {final.Length}.");
         for (int i = 0; i < built.Length; i++)
             Near(final[i], built[i][0], built[i][1], built[i][2], $"node {i} at the solved net");
 
-        // Time zero: the net on the ground under its own plan. Every node on
-        // the ground, the foot unmoved, the fork at its fraction along the
-        // rail from the foot to the main head.
-        object[] flat = Run(P(1.0, 0.0, 0.0), P(2.0, 0.0, 0.0), P(-1.0, 0.0, 0.0));
+        // Time zero: the net flat on the ground and DRAWN IN in plan, which is
+        // where the plan as drawn differs from the solved plan and so the one
+        // frame that can tell HeadNode from plan matching. Head M is named
+        // vertex 2 at plan x 0.5, while the vertex nearest M's own built plan
+        // position (x 1.0) is vertex 1: matching in plan would put M, and the
+        // fork under it, half a metre out.
+        object[] flat = Run(P(-0.5, 0.0, 0.0), P(1.0, 0.0, 0.0), P(0.5, 0.0, 0.0));
         Near(flat[0], 0.0, 0.0, 0.0, "the foot at time zero");
-        Near(flat[2], 1.0, 0.0, 0.0, "the main head at time zero");
-        Near(flat[3], 2.0, 0.0, 0.0, "the branch head at time zero");
-        Near(flat[4], -1.0, 0.0, 0.0, "the second tree's head at time zero");
-        Near(flat[1], 0.65, 0.0, 0.0, "the fork at time zero, on the rail at its built fraction");
+        Near(flat[2], 0.5, 0.0, 0.0, "the main head at time zero, on the vertex HeadNode names");
+        Near(flat[3], 1.0, 0.0, 0.0, "the branch head at time zero");
+        Near(flat[4], -0.5, 0.0, 0.0, "the second tree's head at time zero");
+        Near(flat[1], 0.2, 0.0, 0.0, "the fork at time zero, on the rail at its built fraction");
 
         // Halfway: the fork keeps its fraction and stays on the line.
-        object[] mid = Run(P(1.0, 0.0, 1.0), P(2.0, 0.0, 0.75), P(-1.0, 0.0, 1.0));
-        Near(mid[1], 0.65, 0.0, 0.65, "the fork halfway up");
+        object[] mid = Run(P(-0.75, 0.0, 1.0), P(1.5, 0.0, 0.75), P(0.75, 0.0, 1.0));
+        Near(mid[1], 0.3, 0.0, 0.4, "the fork halfway up");
         double angle = AngleDeg(
             X(mid[1]) - X(mid[0]), Y(mid[1]) - Y(mid[0]), Z(mid[1]) - Z(mid[0]),
             X(mid[2]) - X(mid[1]), Y(mid[2]) - Y(mid[1]), Z(mid[2]) - Z(mid[1]));
@@ -2379,8 +2542,10 @@ internal static class Program
         MethodInfo loads = finder.GetMethod("BarLoads", BindingFlags.Public | BindingFlags.Static)!;
         MethodInfo transverse = finder.GetMethod("BarTransverse", BindingFlags.Public | BindingFlags.Static)!;
         // The aim rule itself now lives in MouldGeometry, shared: Column
-        // Finder places by it and Animate re-aims by it on every frame, so
-        // testing it once tests both.
+        // Finder PLACES by it, and Animate only MEASURES its trunks against
+        // it, so testing it once tests both. Animate re-aims nothing: a trunk
+        // points where its foot and its notch put it, and the aim is read to
+        // report how far that is from the force path at this frame.
         MethodInfo armAim = finder.GetMethod(
             "AimFrom", BindingFlags.Public | BindingFlags.Static)!;
 
@@ -3004,6 +3169,33 @@ internal static class Program
                 + $"{string.Join(",", tangled[0])}. Getting 0,1,2,3,4 means it "
                 + "was sorted by node index, which is not a geometric order "
                 + "and is the thing the flat list already did.");
+        }
+
+        // THE SAME EDGE TWICE, which is the ordinary case rather than a freak
+        // one: GroupingAdjacency unions the plan's edges onto the solved ones,
+        // so every edge present in both graphs arrives twice. Counting list
+        // entries rather than distinct neighbours made BOTH ends of an open
+        // strip count two, so no end was recognised and the walk fell back to
+        // the lowest index. The chain here is 2-0-3-1-4, whose lowest index
+        // sits in the MIDDLE, so a walk that starts there dead-ends after one
+        // step and the rest is appended by index.
+        int[][] doubled = Groups(
+            5,
+            new[] { 0, 1, 2, 3, 4 },
+            (2, 0), (0, 3), (3, 1), (1, 4),
+            (2, 0), (0, 3), (3, 1), (1, 4));
+        if (doubled.Length != 1 ||
+            !doubled[0].SequenceEqual(new[] { 2, 0, 3, 1, 4 }))
+        {
+            throw new InvalidOperationException(
+                "A strip whose edges are supplied twice must still walk end to "
+                + "end: expected one group of 2,0,3,1,4 and got "
+                + $"{doubled.Length} group(s), the first ["
+                + string.Join(
+                    ",",
+                    doubled.Length > 0 ? doubled[0] : Array.Empty<int>())
+                + "]. Getting 0,2,... means the duplicate entries hid the ends "
+                + "of the strip from the walk.");
         }
 
         // A CLOSED LOOP has no end to start from, and must still come back
