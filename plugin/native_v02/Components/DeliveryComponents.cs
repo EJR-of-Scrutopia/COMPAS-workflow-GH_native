@@ -78,6 +78,17 @@ public sealed class ExportComponent :
     // removal is undone, so it has to be replaceable.
     private LiveUploader? _uploader;
 
+    // Live is HELD when the file this component came out of was saved
+    // against different ports. Grasshopper reattaches archived wires by
+    // index, so an old Export's Courses wire now lands on Live and its
+    // first course index reads True: the study would be pushed to a
+    // studio before the author had read the warning saying the wires
+    // moved. Held until Live is seen False and then True again, which is
+    // a deliberate act. Read on the first solve, not in the constructor,
+    // because the archive is read after the object is built.
+    private bool _liveHoldRead;
+    private bool _liveHeld;
+
     public ExportComponent()
         : base(
             "Export",
@@ -104,8 +115,8 @@ public sealed class ExportComponent :
     /// </summary>
     public override void AddedToDocument(GH_Document document)
     {
-        EnsureUploader();
         base.AddedToDocument(document);
+        EnsureUploader();
     }
 
     /// <summary>
@@ -129,10 +140,28 @@ public sealed class ExportComponent :
         if (_uploader is null || _uploader.IsDisposed)
         {
             _uploader = new LiveUploader(
-                () => RhinoApp.InvokeOnUiThread(
-                    new Action(() => ExpireSolution(true))));
+                () => RhinoApp.InvokeOnUiThread(new Action(OnUploadOutcome)));
         }
         return _uploader;
+    }
+
+    /// <summary>
+    /// An outcome has landed and the component has to show it. On the UI
+    /// thread by the time this runs, and still not free to expire on the
+    /// spot: an outcome can arrive while a solution is running, and the
+    /// component may have left its document between the send starting and
+    /// the outcome coming back. Scheduling asks the document for the
+    /// re-solve on its own terms; a component with no document does
+    /// nothing at all.
+    /// </summary>
+    private void OnUploadOutcome()
+    {
+        if (_uploader is null || _uploader.IsDisposed)
+            return;
+        GH_Document? document = OnPingDocument();
+        if (document is null)
+            return;
+        document.ScheduleSolution(5, _ => ExpireSolution(false));
     }
 
     protected override void RegisterInputParams(
@@ -148,7 +177,13 @@ public sealed class ExportComponent :
             "Path",
             "P",
             "A folder, or a file whose folder is used, for the Write " +
-            "trigger; missing folders are created.",
+            "trigger; missing folders are created. The path must be " +
+            "ROOTED: a bare name or a relative path is refused with a " +
+            "warning and nothing is written, since it would land wherever " +
+            "Rhino's working directory happens to be. A path with no " +
+            "extension is a folder whether or not it exists yet, and a " +
+            "path with an extension gives its own folder. A drive root is " +
+            "refused: a study is not scattered across the top of a disk.",
             GH_ParamAccess.item,
             string.Empty);
         parameters[1].Optional = true;
@@ -161,12 +196,17 @@ public sealed class ExportComponent :
             "live.",
             GH_ParamAccess.item,
             false);
+        parameters[2].Optional = true;
         parameters.AddTextParameter(
             "Name",
             "N",
             "The study name. Files are <Name>-<kind>.json under Path and " +
             "the studio's export name is <Name>; blank uses " +
-            "ananke-export.",
+            "ananke-export. ONE path segment: a Name carrying a slash, a " +
+            "backslash, a colon or a dot-dot is refused with a warning, " +
+            "and nothing is written or sent. Two Exports sharing a Name " +
+            "and a Studio write over each other's files and each other's " +
+            "study.",
             GH_ParamAccess.item,
             string.Empty);
         parameters[3].Optional = true;
@@ -176,10 +216,11 @@ public sealed class ExportComponent :
             "One closed planar outline per cutting cell (a brick), " +
             "authored against the solved form the Result still carries. " +
             "Wire Skin's Face Polylines straight in; the tree is " +
-            "flattened here. Projected to plan (z dropped) into the " +
-            "sidecar's outline points; non-polyline curves are " +
-            "approximated at a 5 mm chord. Wiring them is what adds the " +
-            "tessellation kind to the export.",
+            "flattened here, on every open, so a graft set on this port " +
+            "by hand is wiped when the file is reopened. Projected to " +
+            "plan (z dropped) into the sidecar's outline points; " +
+            "non-polyline curves are approximated at a 5 mm chord. Wiring " +
+            "them is what adds the tessellation kind to the export.",
             GH_ParamAccess.list);
         parameters[4].Optional = true;
         parameters[4].DataMapping = GH_DataMapping.Flatten;
@@ -187,9 +228,11 @@ public sealed class ExportComponent :
             "Courses",
             "CO",
             "The course (row) index per cell, same length as Cells, from " +
-            "Skin's Face Courses; the tree is flattened here. The studio " +
-            "stages the build animation course by course. Empty puts " +
-            "every cell in course 0, one single stage.",
+            "Skin's Face Courses; the tree is flattened here, on every " +
+            "open, so a graft set on this port by hand is wiped when the " +
+            "file is reopened. The studio stages the build animation " +
+            "course by course. Empty puts every cell in course 0, one " +
+            "single stage.",
             GH_ParamAccess.list);
         parameters[5].Optional = true;
         parameters[5].DataMapping = GH_DataMapping.Flatten;
@@ -197,10 +240,18 @@ public sealed class ExportComponent :
             "Live",
             "L",
             "Push the set to the studio on every solve, debounced half a " +
-            "second, retrying a 409 while the studio has a run in " +
-            "flight. Failures are warnings; the files and outputs stand.",
+            "second so a slider scrub sends only the final state, " +
+            "retrying a 409 (the studio has a run in flight for this " +
+            "study) after 2, 4 and 8 seconds and then deferring. A set " +
+            "identical to the last one sent is NOT sent again: change the " +
+            "Result, or toggle Live off and on. Failures are warnings; " +
+            "the files and outputs stand. After a file whose ports moved " +
+            "is opened, Live is held until it is set off and then on " +
+            "again, so a wire that landed here by accident cannot push a " +
+            "study on the first solve.",
             GH_ParamAccess.item,
             false);
+        parameters[6].Optional = true;
         parameters.AddTextParameter(
             "Studio",
             "S",
@@ -212,7 +263,8 @@ public sealed class ExportComponent :
             "Column Radius",
             "R",
             "Radius of the prism each column member is drawn as in the " +
-            "columns mesh, in document units.",
+            "columns mesh, in document units (0.05 suits metres; scale it " +
+            "for millimetres).",
             GH_ParamAccess.item,
             DefaultColumnRadius);
         parameters[8].Optional = true;
@@ -257,8 +309,14 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Uploaded",
             "U",
-            "The most recent upload outcome, one line per kind; Live is " +
-            "off says so while Live is False.",
+            "Where the live push stands, one line per kind: nothing sent " +
+            "yet before the first send; sending while a set is waiting " +
+            "out the debounce or on the wire; then stored, refused, " +
+            "deferred or failed, per kind. Unchanged says the set matched " +
+            "the last one sent and was not sent again; cancelled says " +
+            "Live went off while a send was running; held says the file's " +
+            "ports moved when it was opened and Live is waiting to be set " +
+            "off and on; Live is off says so while Live is False.",
             GH_ParamAccess.item);
     }
 
@@ -364,8 +422,23 @@ public sealed class ExportComponent :
             string name = inputs!.Name.Trim();
             if (name.Length == 0)
                 name = DefaultName;
+            // Checked after the blank-to-default, so the default is never
+            // the thing refused. A Name that is not one segment stops the
+            // two side effects and nothing else: the JSON outputs are the
+            // Result's own and stand whatever the Name says.
+            bool nameIsOneSegment = ExportPlan.NameIsOneSegment(name);
+            if (!nameIsOneSegment)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Name '" + name + "' must be one path segment: no " +
+                    "slash, backslash, colon or dot-dot. Nothing was " +
+                    "written and nothing was sent.");
+            }
 
-            if (inputs.Write && !string.IsNullOrWhiteSpace(inputs.Path))
+            bool wroteThisSolve = false;
+            if (inputs.Write && nameIsOneSegment &&
+                !string.IsNullOrWhiteSpace(inputs.Path))
             {
                 if (!TryResolveWriteFolder(
                         inputs.Path,
@@ -383,6 +456,7 @@ public sealed class ExportComponent :
                     // reached disk is exactly what the author needs to see
                     // when one of them could not.
                     var written = new List<string>(taskResult.Payloads.Count);
+                    string? failedTarget = null;
                     try
                     {
                         Directory.CreateDirectory(folder);
@@ -390,19 +464,27 @@ public sealed class ExportComponent :
                         {
                             string target = Path.Combine(
                                 folder, $"{name}-{kind}.json");
+                            failedTarget = target;
                             File.WriteAllText(target, json);
                             written.Add(target);
+                            failedTarget = null;
                         }
                     }
                     catch (Exception writeException)
                     {
                         AddRuntimeMessage(
                             GH_RuntimeMessageLevel.Error,
-                            "Export: failed to write file: " +
+                            "Export: failed to write " +
+                            (failedTarget ?? folder) + ": " +
                             writeException.Message);
                     }
-                    if (written.Count > 0)
-                        _lastWritten = written;
+                    // What THIS solve put on disk, even when that is
+                    // nothing: a set failing on its first kind used to
+                    // leave the previous solve's list standing under an
+                    // Error saying the write had failed, which reads as
+                    // files that are there and are not.
+                    _lastWritten = written;
+                    wroteThisSolve = written.Count > 0;
                 }
             }
 
@@ -429,18 +511,46 @@ public sealed class ExportComponent :
                 }
             }
 
+            // The hold is read once, on the first solve after the archive
+            // was read, and cleared by a solve that sees Live False.
+            if (!_liveHoldRead)
+            {
+                _liveHoldRead = true;
+                _liveHeld = PortsMovedOnLoad;
+            }
+
             // Enqueued here and never in InPreSolve: a send is a side
             // effect on the studio, the pre phase runs once per branch and
             // can be cancelled, and the uploader is not the solve thread's
             // to drive twice.
             string uploaded = "Live is off";
-            if (inputs.Live)
+            if (!inputs.Live)
+            {
+                // Live off means nothing is sent, including a set already
+                // waiting out its debounce and a send already sleeping
+                // between 409 retries, which without this went on for
+                // another quarter of a minute after the toggle. Setting
+                // Live off is also the deliberate act that clears the
+                // hold, so turning it back on sends.
+                _liveHeld = false;
+                _uploader?.Cancel();
+            }
+            else if (_liveHeld)
+            {
+                uploaded =
+                    "held: ports changed on load; set Live off then on to " +
+                    "resume";
+            }
+            else
             {
                 LiveUploader uploader = EnsureUploader();
-                uploader.Enqueue(new LiveUploader.Pending(
-                    inputs.Studio,
-                    name,
-                    taskResult.Payloads));
+                if (nameIsOneSegment)
+                {
+                    uploader.Enqueue(new LiveUploader.Pending(
+                        inputs.Studio,
+                        name,
+                        taskResult.Payloads));
+                }
                 // Read ONCE, under one lock acquisition: the text and the
                 // verdict taken separately let a send land between them,
                 // and the component would print one set's failure with
@@ -474,7 +584,8 @@ public sealed class ExportComponent :
                     : string.Join(Environment.NewLine, _lastWritten));
             data.SetData(5, uploaded);
             Message =
-                $"{taskResult.Payloads.Count} kinds · {FirstLine(uploaded)}";
+                $"{taskResult.Payloads.Count} kinds · {FirstLine(uploaded)}" +
+                (wroteThisSolve ? " written" : string.Empty);
         }
         catch (Exception error)
         {
@@ -580,9 +691,11 @@ public sealed class ExportComponent :
     /// background task never has to report a runtime message itself. Cells
     /// are validated whenever they are wired, since wiring them is what
     /// asks for the tessellation kind; a Column Radius that is not a
-    /// positive finite number and a blank Studio under Live both fall back
-    /// and say so. The write and the upload themselves happen in the post
-    /// phase; this only gathers and validates.
+    /// positive finite number falls back to 0.05, a blank Studio under
+    /// Live falls back to the default URL, and Write with a blank Path
+    /// writes nothing, all three with a Warning saying so and none of
+    /// them costing the solve. The write and the upload themselves happen
+    /// in the post phase; this only gathers and validates.
     /// </summary>
     private bool TryReadInputs(
         IGH_DataAccess data,
@@ -602,6 +715,11 @@ public sealed class ExportComponent :
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
+            // Said in the chin as well as by the empty port: without it
+            // the component sits red under the previous solve's "4 kinds"
+            // as though that set were still standing.
+            if (report)
+                Message = "No Result";
             return false;
         }
         data.GetData(1, ref pathInput);
@@ -618,7 +736,15 @@ public sealed class ExportComponent :
         var errors = new List<string>(resultValue.Validate());
         var notes = new List<string>();
         if (writeInput && string.IsNullOrWhiteSpace(pathInput))
-            errors.Add("Write requires a Path to write to.");
+        {
+            // A missing disk target is not a reason to lose the solve.
+            // As an Error this returned before a single output was set,
+            // so the four JSON kinds, Written, Uploaded and the live push
+            // were all thrown away because nowhere had been named to put
+            // a copy. Its sibling refusal, a Path that is not rooted, was
+            // only ever a Warning.
+            notes.Add("Write is on but Path is blank; nothing written.");
+        }
         if (cellInput.Count > 0)
         {
             if (courseInput.Count != 0 &&
