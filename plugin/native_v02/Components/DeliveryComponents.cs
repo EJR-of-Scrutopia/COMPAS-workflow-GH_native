@@ -441,18 +441,25 @@ public sealed class ExportComponent :
                     inputs.Studio,
                     name,
                     taskResult.Payloads));
-                uploaded = uploader.LastOutcome;
+                // Read ONCE, under one lock acquisition: the text and the
+                // verdict taken separately let a send land between them,
+                // and the component would print one set's failure with
+                // the other set's flag.
+                LiveUploader.Snapshot state = uploader.Current;
+                uploaded = Display(state);
                 // The upload is best effort: the files and the JSON
                 // outputs stand whatever the studio said, so a refusal, a
                 // deferral or a transport failure is a Warning here and
                 // never an Error. Whether it was one is the uploader's own
                 // record of the verdicts it classified, not this
-                // component's reading of its prose.
-                if (uploader.LastOutcomeFailed)
+                // component's reading of its prose. Only an outcome that
+                // has landed is worth a Warning; a set still going carries
+                // the previous verdict and nothing to say about this one.
+                if (state.Failed && state.Phase == LiveUploader.Phase.Done)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        "Export live: " + uploaded);
+                        "Export live: " + state.Text);
                 }
             }
 
@@ -475,6 +482,21 @@ public sealed class ExportComponent :
             ReportException("Export failed", error);
         }
     }
+
+    /// <summary>
+    /// What Uploaded says for one reading of the uploader. A set waiting
+    /// out the debounce or on the wire says "sending" rather than showing
+    /// the PREVIOUS set's outcome: against an unreachable studio a set
+    /// takes half a minute a kind, and a "stored" left standing for two
+    /// minutes claims a send that never happened.
+    /// </summary>
+    private static string Display(LiveUploader.Snapshot state) =>
+        state.Phase switch
+        {
+            LiveUploader.Phase.Pending or LiveUploader.Phase.Sending =>
+                "sending",
+            _ => state.Text,
+        };
 
     /// <summary>
     /// The Message is one line of a component's chin; the outcome carries
