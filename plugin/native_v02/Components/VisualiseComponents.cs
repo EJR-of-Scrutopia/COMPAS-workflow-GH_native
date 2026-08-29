@@ -180,16 +180,29 @@ namespace Ananke.COMPAS.Native.Components
             return rows;
         }
 
-        /// <summary>Support node ids in the order Deconstruct's Node IDs use before
-        /// stripping: TNA Mappings.Supports, FD ResolvedSupportNodeIds.</summary>
+        /// <summary>
+        /// Support node ids in the order Deconstruct's Node IDs use before
+        /// stripping: TNA Mappings.Supports, FD ResolvedSupportNodeIds.
+        ///
+        /// An id this net does not have is dropped HERE, once, so both
+        /// readers drop the same one. TnaMappingsDto carries no validation
+        /// of its own and ResultDto.Validate never reaches it, so a Result
+        /// deserialised straight from JSON can name a vertex that is not
+        /// there; the FD list is already range-checked by the contract and
+        /// the same filter costs it nothing. Dropping it here rather than
+        /// at each reader is what stops one component indexing off the end
+        /// of the vertex list while the other quietly walks on.
+        /// </summary>
         public static int[] SupportNodes(ResultDto result)
         {
             EquilibriumResultDto equilibrium = result.Equilibrium!;
-            return IsTna(result)
-                ? result.Mappings!.Supports
-                    .Select(item => item.EquilibriumVertexId)
-                    .ToArray()
-                : equilibrium.ResolvedSupportNodeIds.ToArray();
+            int count = equilibrium.Vertices.Count;
+            return (IsTna(result)
+                    ? result.Mappings!.Supports
+                        .Select(item => item.EquilibriumVertexId)
+                    : equilibrium.ResolvedSupportNodeIds.AsEnumerable())
+                .Where(id => id >= 0 && id < count)
+                .ToArray();
         }
 
         /// <summary>Reactions by node: TNA Mappings.Reactions with zero-length
@@ -212,6 +225,34 @@ namespace Ananke.COMPAS.Native.Components
                     item.NodeId,
                     new Vector3d(item.Vector.X, item.Vector.Y, item.Vector.Z)))
                 .ToArray();
+        }
+
+        /// <summary>
+        /// The residual at every node IN VERTEX ORDER, and the fourth
+        /// per-Result table beside the members, the supports and the
+        /// reactions.
+        ///
+        /// The Result's own list is sparse: the codec writes no entry for a
+        /// support and none for an exact zero. A node carrying none holds
+        /// its slot here as a zero rather than shifting its neighbours up,
+        /// which is what reading that sparse list positionally would do:
+        /// node 7's residual would land at item 4 and every node after it
+        /// would read someone else's. Out-of-range node ids are ignored for
+        /// the same reason the reactions ignore them.
+        /// </summary>
+        public static Vector3d[] Residuals(ResultDto result)
+        {
+            EquilibriumResultDto equilibrium = result.Equilibrium!;
+            var placed = new Vector3d[equilibrium.Vertices.Count];
+            foreach (NodalVectorDto item in equilibrium.Residuals)
+            {
+                if (item.NodeId >= 0 && item.NodeId < placed.Length)
+                {
+                    placed[item.NodeId] = new Vector3d(
+                        item.Vector.X, item.Vector.Y, item.Vector.Z);
+                }
+            }
+            return placed;
         }
 
         /// <summary>
@@ -430,6 +471,15 @@ namespace Ananke.COMPAS.Native.Components
                     .Select(row => (row.U, row.V))
                     .ToArray();
                 int[] nodeIds = ResultTables.SupportNodes(result);
+                // The support POINTS come off that same list rather than
+                // being read a second time from the Result, so a support id
+                // this net does not have is dropped in ONE place and both
+                // this component and Monitor drop the same one. Reading
+                // Mappings.Supports again here is what let a bad id throw on
+                // this side while Monitor walked past it.
+                Point3d[] supportPoints = nodeIds
+                    .Select(id => Point(equilibrium.Vertices[id]))
+                    .ToArray();
                 // Reactions carry the NODE they act at, not just a point.
                 // Grouping them by strip is a question about which support
                 // they belong to, and that is an index question; matching them
@@ -459,7 +509,6 @@ namespace Ananke.COMPAS.Native.Components
                 Mesh thrustMesh;
                 Line[] memberLines;
                 Line[] formLines;
-                Point3d[] supportPoints;
                 (Point3d Point, Vector3d Vector)[] loads;
 
                 if (isTna)
@@ -488,10 +537,6 @@ namespace Ananke.COMPAS.Native.Components
                             stateById[row.Id], formEdges, formPoints))
                         .ToArray();
 
-                    supportPoints = result.Mappings!.Supports
-                        .Select(item => Point(
-                            equilibrium.Vertices[item.EquilibriumVertexId]))
-                        .ToArray();
                     loads = result.Mappings!.Loads
                         .Select(item => (
                             Point(equilibrium.Vertices[item.EquilibriumVertexId]),
@@ -505,9 +550,6 @@ namespace Ananke.COMPAS.Native.Components
                     memberLines = MemberLines(equilibrium);
                     formLines = Array.Empty<Line>();
 
-                    supportPoints = equilibrium.ResolvedSupportNodeIds
-                        .Select(nodeId => Point(equilibrium.Vertices[nodeId]))
-                        .ToArray();
                     loads = equilibrium.Loads
                         .Select(item => (Point(item.Point), Vector(item.Vector)))
                         .ToArray();
@@ -751,12 +793,22 @@ namespace Ananke.COMPAS.Native.Components
         /// uses. That is what makes a Member Line and the row Monitor numbers
         /// describe the same member: they are not two readings of the edge
         /// that happen to agree, they are one reading drawn twice.
+        ///
+        /// A member whose ends cannot be read keeps its SLOT as a default
+        /// line rather than throwing, which is the contract
+        /// <see cref="ResultTables.Ends"/> states and the one Monitor
+        /// already honours. Indexing the vertex list with the (-1, -1) it
+        /// promises would take the whole component down and leave Monitor
+        /// emitting a full set of trees against no geometry at all, on
+        /// exactly the Result that contract was written for.
         /// </summary>
         private static Line ThrustLine(
             EquilibriumResultDto equilibrium,
             int equilibriumEdgeId)
         {
             (int u, int v) = ResultTables.Ends(equilibrium, equilibriumEdgeId);
+            if (u < 0 || v < 0)
+                return default;
             return new Line(
                 Point(equilibrium.Vertices[u]),
                 Point(equilibrium.Vertices[v]));

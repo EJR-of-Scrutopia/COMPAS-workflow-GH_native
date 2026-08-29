@@ -67,15 +67,21 @@ namespace Ananke.COMPAS.Native.Components
                 "One closed polyline per Thrust Mesh face, as a TREE branched "
                     + "by COURSE (path = course, 0-up from the bottom): the "
                     + "ready-made Cells input for Export's Tessellation format. "
-                    + "Empty for FD.",
+                    + "FLATTEN these before Export's Cells and Courses (they "
+                    + "are list inputs) until Export flattens them itself, or "
+                    + "Grasshopper runs Export once per course and the last "
+                    + "one written wins. Empty for FD.",
                 GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Face Courses",
                 "FC",
                 "The course per face, branched and ordered exactly as Face "
                     + "Polylines, so the pairing survives: the ready-made "
-                    + "Courses input for Export's Tessellation format. Empty "
-                    + "for FD.",
+                    + "Courses input for Export's Tessellation format. FLATTEN "
+                    + "these before Export's Cells and Courses (they are list "
+                    + "inputs) until Export flattens them itself; the course "
+                    + "index is repeated per item, so flattening keeps the "
+                    + "pairing. Empty for FD.",
                 GH_ParamAccess.tree);
         }
 
@@ -107,18 +113,23 @@ namespace Ananke.COMPAS.Native.Components
                 if (errors.Count > 0)
                     throw new InvalidOperationException(string.Join(" ", errors));
 
-                bool isTna =
-                    string.Equals(result.Solver, "tna", StringComparison.OrdinalIgnoreCase) &&
-                    result.FormGraph is not null &&
-                    result.ForceGraph is not null &&
-                    result.Mappings is not null;
+                // The one TNA test every reader of a Result shares. Writing
+                // the four clauses again here would be a second place to
+                // drift from it.
+                bool isTna = ResultTables.IsTna(result);
                 Mesh mesh = isTna ? DeconstructComponent.ThrustMesh(result) : new Mesh();
                 if (mesh.Faces.Count == 0)
                 {
+                    // The parenthesis is only true of the FD path. A TNA
+                    // Result whose form graph carries no faces reaches this
+                    // branch too, and telling its author it is an FD Result
+                    // would send them looking for the wrong fault.
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Remark,
-                        "No faces on this Result (FD carries none), so there are "
-                            + "no cells.");
+                        isTna
+                            ? "No faces on this Result, so there are no cells."
+                            : "No faces on this Result (FD carries none), so "
+                                + "there are no cells.");
                 }
 
                 IReadOnlyList<PolylineCurve> facePolylines = FacePolylines(mesh);
