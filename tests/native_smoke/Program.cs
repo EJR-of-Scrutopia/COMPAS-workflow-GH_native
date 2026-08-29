@@ -832,7 +832,9 @@ internal static class Program
                 "PASS  ParameterIdentity.Mismatch: a definition saved against a "
                 + "component's older ports is told they moved, naming both what "
                 + "was archived and what is registered, and one saved against "
-                + "the current ports is told nothing.");
+                + "the current ports is told nothing; Export's own move, seven "
+                + "inputs and two outputs against nine and six, is the case "
+                + "measured beside Deconstruct's.");
         }
         catch (Exception exception)
         {
@@ -844,7 +846,10 @@ internal static class Program
             ValidateExportPlan(plugin);
             Console.WriteLine(
                 "PASS  ExportPlan: contract and compas always, tessellation "
-                + "with cells, columns with a block, in that order.");
+                + "with cells, columns with a block, in that order; and a "
+                + "study Name is ONE path segment, so a separator, a colon "
+                + "or a dot-dot is refused before it can write the set "
+                + "outside the folder the author chose.");
         }
         catch (Exception exception)
         {
@@ -857,8 +862,11 @@ internal static class Program
             Console.WriteLine(
                 "PASS  ColumnsMesh: one member is a closed prism of six "
                 + "quads and eight cap triangles at the radius asked, a "
-                + "zero-length member is nothing, two members index "
-                + "cleanly.");
+                + "zero-length member is nothing and is absent from the "
+                + "members list too, two members index cleanly, a DIAGONAL "
+                + "member's caps are perpendicular to the member and not to "
+                + "world Z, and the radius the document declares is the one "
+                + "the mesh was built at.");
         }
         catch (Exception exception)
         {
@@ -876,7 +884,9 @@ internal static class Program
                 + "Name, the Studio and every kind EXCEPT the compas "
                 + "document's own bytes, whose fresh uuid per serialisation "
                 + "would stop the key ever repeating; the compas kind's "
-                + "presence still counts.");
+                + "presence still counts. The study name is escaped into "
+                + "both routes, and a deferred kind names the run the "
+                + "studio is busy with when the 409 body carries one.");
         }
         catch (Exception exception)
         {
@@ -3109,6 +3119,29 @@ internal static class Program
                 + "every reopened definition carries a warning that means nothing; "
                 + $"got '{unchanged}'.");
         }
+
+        // Export's own move, and the reason it holds Live: a definition
+        // saved before this branch carries seven inputs and two outputs
+        // against the nine and six registered now, so every wire in it
+        // lands on a different port, three of them silently, and one of
+        // those three is the Live toggle.
+        object? exportMoved = mismatch.Invoke(null, new object?[] { 7, 2, 9, 6 });
+        if (exportMoved is not string exportText ||
+            !exportText.Contains("7 inputs and 2 outputs", StringComparison.Ordinal) ||
+            !exportText.Contains("9 and 6", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A saved Export, 7 inputs and 2 outputs against the 9 and 6 it "
+                + "registers now, must be warned and both counts named; got "
+                + $"'{exportMoved}'.");
+        }
+        object? exportUnchanged = mismatch.Invoke(null, new object?[] { 9, 6, 9, 6 });
+        if (exportUnchanged is not null)
+        {
+            throw new InvalidOperationException(
+                "An Export saved against the current nine and six is told "
+                + $"nothing; got '{exportUnchanged}'.");
+        }
     }
 
     /// <summary>
@@ -4595,6 +4628,27 @@ internal static class Program
         if (Show(true, false) != "contract,compas,tessellation") throw new InvalidOperationException($"Cells add tessellation; got {Show(true, false)}.");
         if (Show(false, true) != "contract,compas,columns") throw new InvalidOperationException($"Columns add columns; got {Show(false, true)}.");
         if (Show(true, true) != "contract,compas,tessellation,columns") throw new InvalidOperationException($"All four in order; got {Show(true, true)}.");
+
+        // The study name rule. A Name is one path segment because it is
+        // both a file name stem inside the folder the author chose and
+        // one segment of the studio's route: a separator or a dot-dot in
+        // it writes the set somewhere the author never named, quietly and
+        // successfully, and reaches a route nobody asked for.
+        MethodInfo segment = RequirePublicStatic(plan, "NameIsOneSegment");
+        bool OneSegment(string name) => (bool)segment.Invoke(null, new object?[] { name })!;
+        if (!OneSegment("study-1"))
+            throw new InvalidOperationException("An ordinary study name is one segment.");
+        foreach (string refused in new[] { "..", ".", @"a\b", "a/b", "a:b", "a?b", "", "   " })
+        {
+            if (OneSegment(refused))
+            {
+                throw new InvalidOperationException(
+                    $"'{refused}' is not one path segment and must be refused: "
+                    + "a Name carrying a separator, a colon, a dot-dot or a "
+                    + "character no file name may hold escapes the folder the "
+                    + "author chose.");
+            }
+        }
     }
 
     private static void ValidateColumnsMesh(Assembly plugin)
@@ -4638,6 +4692,57 @@ internal static class Program
         (double[][] two, int[][] twoF) = Run(ListOf(Member(0, 0, 0, 0, 0, 2, 1.0), Member(1, 0, 0, 3, 0, 0, 1.0)), 0.1);
         if (two.Length != 24) throw new InvalidOperationException($"Two members give 24 vertices; got {two.Length}.");
         if (twoF.SelectMany(x => x).Any(i => i < 0 || i >= 24)) throw new InvalidOperationException("Two members' faces index within 24 vertices.");
+
+        // A DIAGONAL member. Every case above lies on an axis, so all of
+        // them would pass against a prism whose cap circle was drawn in
+        // world XY and only stretched along the member: the circle has to
+        // be perpendicular to the MEMBER, and this is where that shows.
+        (double[][] diagonal, int[][] _) = Run(ListOf(Member(0, 0, 0, 1, 1, 1, 1.0)), 0.1);
+        if (diagonal.Length != 12)
+            throw new InvalidOperationException($"A diagonal member is a prism too; got {diagonal.Length} vertices.");
+        double unit = 1.0 / Math.Sqrt(3.0);
+        for (int i = 0; i < diagonal.Length; i++)
+        {
+            double end = i < 6 ? 0.0 : 1.0;
+            double ox = diagonal[i][0] - end;
+            double oy = diagonal[i][1] - end;
+            double oz = diagonal[i][2] - end;
+            double along = (ox * unit) + (oy * unit) + (oz * unit);
+            double across = Math.Sqrt((ox * ox) + (oy * oy) + (oz * oz));
+            if (Math.Abs(along) > 1.0e-9)
+                throw new InvalidOperationException(
+                    $"Cap vertex {i} is {along:0.#########} off its cap plane: the "
+                    + "circle must be perpendicular to the member, not to world Z.");
+            if (Math.Abs(across - 0.1) > 1.0e-9)
+                throw new InvalidOperationException(
+                    $"Cap vertex {i} sits at {across:0.#########} from the axis point, not at the radius asked.");
+        }
+
+        // The document beside the mesh. The radius it declares is the one
+        // the mesh was built at, floored once for both, and a member too
+        // short to be drawn is absent from the members list as well as
+        // from the prisms, so the nth of one is the nth of the other.
+        MethodInfo json = RequirePublicStatic(mesh, "Json");
+        string Document(object members, double radius) =>
+            (string)json.Invoke(null, new object?[] { members, radius, "kN", 1.0 })!;
+        JsonNode skipped = JsonNode.Parse(
+            Document(ListOf(Member(1, 1, 1, 1, 1, 1, 1.0)), 0.1))!;
+        if (skipped["vertices"]!.AsArray().Count != 0 ||
+            skipped["members"]!.AsArray().Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A member too short to draw is skipped in BOTH lists; the "
+                + "document listed one of them.");
+        }
+        JsonNode clamped = JsonNode.Parse(
+            Document(ListOf(Member(0, 0, 0, 0, 0, 2, 1.0)), 0.0))!;
+        if (Math.Abs(clamped["radius"]!.GetValue<double>() - 1.0e-9) > 1.0e-18)
+        {
+            throw new InvalidOperationException(
+                "The radius in the document is the one the mesh was built at: "
+                + "a zero radius is floored once, for both, not floored inside "
+                + $"the mesh and declared raw beside it (got {clamped["radius"]!.GetValue<double>()}).");
+        }
     }
 
     private static void ValidateLiveUploader(Assembly plugin)
@@ -4657,11 +4762,41 @@ internal static class Program
             throw new InvalidOperationException("A trailing slash on Studio is tolerated.");
         if (Route("columns", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/columns/arch-columns.json")
             throw new InvalidOperationException($"Columns route wrong: {Route("columns", "arch", "http://127.0.0.1:8600")}.");
+        // The study name is free text off the canvas and lands in a URL
+        // path segment. Interpolated raw, a space breaks the URI and a #
+        // cuts the rest of the route off as a fragment, so the PUT goes
+        // somewhere nobody asked for and the author sees only a 404.
+        if (Route("contract", "my study#1", "http://127.0.0.1:8600") !=
+            "http://127.0.0.1:8600/api/uploads/exports/my%20study%231/contract")
+        {
+            throw new InvalidOperationException(
+                "A Name with a space and a # must be escaped into the route; got "
+                + Route("contract", "my study#1", "http://127.0.0.1:8600") + ".");
+        }
+        if (Route("columns", "my study#1", "http://127.0.0.1:8600") !=
+            "http://127.0.0.1:8600/api/uploads/columns/my%20study%231-columns.json")
+        {
+            throw new InvalidOperationException(
+                "The columns route escapes the Name too; got "
+                + Route("columns", "my study#1", "http://127.0.0.1:8600") + ".");
+        }
         string Verdict(int status, int attempt) => (string)outcome.Invoke(null, new object?[] { status, attempt })!;
         if (Verdict(200, 0) != "stored" || Verdict(204, 5) != "stored") throw new InvalidOperationException("2xx is stored.");
         if (Verdict(409, 0) != "retry" || Verdict(409, 2) != "retry") throw new InvalidOperationException("409 retries while the schedule has entries.");
         if (Verdict(409, 3) != "deferred") throw new InvalidOperationException("409 after the schedule is deferred.");
         if (Verdict(400, 0) != "refused" || Verdict(500, 0) != "refused") throw new InvalidOperationException("Anything else is refused.");
+        // What a deferred kind says it is waiting behind. The studio's
+        // 409 body names the run it is busy with, and that run id is what
+        // the author looks for in the studio; pasting the document raw
+        // makes them read JSON off a component chin.
+        MethodInfo deferred = RequirePublicStatic(uploader, "DeferredDetail");
+        string Detail(string body) => (string)deferred.Invoke(null, new object?[] { body })!;
+        if (Detail("{\"run\": \"r-42\"}") != "(run r-42)")
+            throw new InvalidOperationException($"A 409 body naming a run reads as the run; got {Detail("{\"run\": \"r-42\"}")}.");
+        if (Detail("study is busy") != "study is busy")
+            throw new InvalidOperationException("A body that is not that JSON falls back to the body itself.");
+        if (Detail("{\"detail\": \"busy\"}") != "{\"detail\": \"busy\"}")
+            throw new InvalidOperationException("JSON carrying no run falls back to the body itself.");
         // The set key. It decides whether a re-solve sends again, and the
         // component expires itself on every outcome, so a key that cannot
         // repeat is an unbounded loop of worker calls and PUTs rather than
