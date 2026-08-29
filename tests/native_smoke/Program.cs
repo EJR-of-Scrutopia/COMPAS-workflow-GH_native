@@ -67,19 +67,12 @@ internal static class Program
                 (string[] Inputs, string[] Outputs)>(StringComparer.Ordinal)
             {
                 ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = (
-                    // Course Height joined 2026-08-18 (the Face Courses
-                    // banding knob); Face Polylines / Face Courses are the
-                    // authored-tessellation feeds added the same day.
-                    new[] { "Result", "Course Height" },
+                    new[] { "Result" },
                     new[]
                     {
                         "Thrust Mesh",
                         "Member Lines",
                         "Form Lines",
-                        "q",
-                        "H",
-                        "F",
-                        "Force State",
                         "Member IDs",
                         "Node IDs",
                         "Support Points",
@@ -87,11 +80,8 @@ internal static class Program
                         "Load Vectors",
                         "Reaction Points",
                         "Reaction Vectors",
-                        "Residuals",
                         "Columns",
                         "Heads",
-                        "Face Polylines",
-                        "Face Courses",
                         "Feet"
                     }),
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
