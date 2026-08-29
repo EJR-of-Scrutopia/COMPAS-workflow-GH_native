@@ -346,10 +346,12 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddCurveParameter(
                 "Perimeter Lines",
                 "PRL",
-                "The boundary of the net at this frame as CLOSED polylines, a "
-                    + "TREE with one branch per boundary loop, the same loop as "
-                    + "branch {i} of Perimeter Nodes. A net with a hole has one "
-                    + "curve for the outside and one for the hole.",
+                "The boundary of the net at this frame as polylines, a TREE "
+                    + "with one branch per boundary group, the same group as "
+                    + "branch {i} of Perimeter Nodes: closed when the group is a "
+                    + "loop, open when it is a strip. A net with a hole has one "
+                    + "curve for the outside and one for the hole. Empty, with "
+                    + "a diagnostic, when the boundary could only be estimated.",
                 GH_ParamAccess.tree);
         }
 
@@ -850,7 +852,12 @@ namespace Ananke.COMPAS.Native.Components
                                 int head = tree.Above[upper].Count == 0
                                     ? upper
                                     : MouldGeometry.MainBranch(tree, upper);
-                                if (headVertex.TryGetValue(head, out int vertex) &&
+                                // A collapsed trunk has no direction to
+                                // measure; counting it as aligned at zero
+                                // degrees would report perfect alignment where
+                                // nothing was measurable.
+                                if (length > 1.0e-9 &&
+                                    headVertex.TryGetValue(head, out int vertex) &&
                                     liveAim.TryGetValue(vertex, out Vector3d aim))
                                 {
                                     Vector3d direction = at[upper] - at[lower];
@@ -867,7 +874,11 @@ namespace Ananke.COMPAS.Native.Components
                                 // is asking a rigid member to change length.
                                 double ratio = length / builtLength;
                                 armsMeasured++;
-                                if (Math.Abs(ratio - 1.0) > Math.Abs(worstArm - 1.0))
+                                // The first arm measured is the worst so far,
+                                // so an arm that reads exactly 100% is still
+                                // named rather than leaving the entry at -1.
+                                if (worstArmMember < 0 ||
+                                    Math.Abs(ratio - 1.0) > Math.Abs(worstArm - 1.0))
                                 {
                                     worstArm = ratio;
                                     worstArmBranch = b;
