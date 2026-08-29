@@ -778,10 +778,14 @@ internal static class Program
             ValidateMonitorMath(plugin);
             Console.WriteLine(
                 "PASS  MonitorMath: an anchor's reaction splits along its "
-                + "tensioner axis and across it, the axis is the mean of the "
+                + "tensioner axis and across it, signed and against an axis "
+                + "that does not arrive unit, the axis is the mean of the "
                 + "cables leaving it, the deviation statistics are the RMS, the "
-                + "worst and the 95th percentile of a hand-built field, and the "
-                + "unstrained length divides by one plus force over EA.");
+                + "worst and the 95th percentile of the ABSOLUTE values of a "
+                + "hand-built field and zero on an empty one, and the "
+                + "unstrained length divides by one plus force over EA except "
+                + "where that denominator collapses or the EA is not a "
+                + "stiffness.");
         }
         catch (Exception exception)
         {
@@ -796,12 +800,31 @@ internal static class Program
                 + "and Monitor's numbers are both branched from hands back the "
                 + "members in edge order with their ends, forces and ids, no "
                 + "force density or horizontal force where an FD Result carries "
-                + "none, the support ids as the Result lists them, and each "
-                + "reaction at the node it acts on.");
+                + "none, the support ids as the Result lists them, each "
+                + "reaction at the node it acts on, and every node's residual "
+                + "on its own node with a zero where the Result carries none. "
+                + "On a TNA Result whose state ids and equilibrium edge ids "
+                + "disagree the rows come back in ID order with the ends of the "
+                + "edge each state names, a support this net does not have is "
+                + "dropped, and a zero reaction is not a reaction.");
         }
         catch (Exception exception)
         {
             failures.Add($"ResultTables order: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateParameterMismatch(plugin);
+            Console.WriteLine(
+                "PASS  ParameterIdentity.Mismatch: a definition saved against a "
+                + "component's older ports is told they moved, naming both what "
+                + "was archived and what is registered, and one saved against "
+                + "the current ports is told nothing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ParameterIdentity.Mismatch: {DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -2565,6 +2588,33 @@ internal static class Program
         double across = (double)parts.GetType().GetField("Item2")!.GetValue(parts)!;
         if (Math.Abs(along - 3.0) > 1.0e-9 || Math.Abs(across - 4.0) > 1.0e-9)
             throw new InvalidOperationException($"Reaction (3,4,0) on axis x splits into along 3, across 4; got {along}, {across}.");
+        // The axis does NOT arrive unit. (2,0,0) is the same direction as
+        // (1,0,0) and must give the same split; an implementation that
+        // dropped the normalisation would double the along part here and
+        // pass every other case in this check.
+        object longAxis = split.Invoke(null, new[] { V(3.0, 4.0, 0.0), V(2.0, 0.0, 0.0) })!;
+        double alongLong = (double)longAxis.GetType().GetField("Item1")!.GetValue(longAxis)!;
+        double acrossLong = (double)longAxis.GetType().GetField("Item2")!.GetValue(longAxis)!;
+        if (Math.Abs(alongLong - 3.0) > 1.0e-9 || Math.Abs(acrossLong - 4.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The axis is a DIRECTION, so (2,0,0) splits (3,4,0) exactly as "
+                + $"(1,0,0) does, into 3 and 4; got {alongLong}, {acrossLong}. A "
+                + "different answer means the axis was used unnormalised.");
+        }
+        // The SIGN of the along part is the port's whole content: a tensioner
+        // pulling and a tensioner being pushed are the two cases, and a
+        // magnitude cannot tell them apart.
+        object pushed = split.Invoke(null, new[] { V(-3.0, 4.0, 0.0), V(1.0, 0.0, 0.0) })!;
+        double alongPushed = (double)pushed.GetType().GetField("Item1")!.GetValue(pushed)!;
+        double acrossPushed = (double)pushed.GetType().GetField("Item2")!.GetValue(pushed)!;
+        if (Math.Abs(alongPushed + 3.0) > 1.0e-9 || Math.Abs(acrossPushed - 4.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Reaction (-3,4,0) on axis x pulls the OTHER way along it, so "
+                + $"along is -3 and across is 4; got {alongPushed}, {acrossPushed}. "
+                + "A positive along means the magnitude was taken and the sign lost.");
+        }
 
         // Anchor 0 at the origin with cables to (1,0,0) and (0,1,0).
         Array nodes = Array.CreateInstance(point3d, 3);
@@ -2586,9 +2636,30 @@ internal static class Program
         double p95 = (double)s.GetType().GetField("Item3")!.GetValue(s)!;
         if (Math.Abs(rms - Math.Sqrt(11.0)) > 1.0e-9 || Math.Abs(max - 5.0) > 1.0e-9 || Math.Abs(p95 - 5.0) > 1.0e-9)
             throw new InvalidOperationException($"Stats of (1,-2,3,-4,5) are RMS sqrt(11), max 5, p95 5; got {rms:0.####}, {max}, {p95}.");
+        // A field whose worst reading is NEGATIVE. The frame sitting below
+        // the state it is heading for is exactly that field, and an
+        // implementation taking values.Max() returns 2 here.
+        object below = stats.Invoke(null, new object?[] { new List<double> { -9.0, 1.0, 2.0 } })!;
+        double belowMax = (double)below.GetType().GetField("Item2")!.GetValue(below)!;
+        double belowP95 = (double)below.GetType().GetField("Item3")!.GetValue(below)!;
+        if (Math.Abs(belowMax - 9.0) > 1.0e-9 || Math.Abs(belowP95 - 9.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The worst and the 95th percentile of (-9,1,2) are both 9, the "
+                + $"worst ABSOLUTE deviation; got {belowMax} and {belowP95}. A 2 "
+                + "means the signed maximum was taken, which reads a frame sagging "
+                + "9 mm low as the flattest thing on the model.");
+        }
         object empty = stats.Invoke(null, new object?[] { new List<double>() })!;
-        if ((double)empty.GetType().GetField("Item1")!.GetValue(empty)! != 0.0)
-            throw new InvalidOperationException("Stats of nothing are zero.");
+        double emptyRms = (double)empty.GetType().GetField("Item1")!.GetValue(empty)!;
+        double emptyMax = (double)empty.GetType().GetField("Item2")!.GetValue(empty)!;
+        double emptyP95 = (double)empty.GetType().GetField("Item3")!.GetValue(empty)!;
+        if (emptyRms != 0.0 || emptyMax != 0.0 || emptyP95 != 0.0)
+        {
+            throw new InvalidOperationException(
+                "Stats of nothing are zero in ALL THREE places; got "
+                + $"{emptyRms}, {emptyMax}, {emptyP95}.");
+        }
         // Twenty values 1..20: the nearest-rank 95th percentile is the 19th, 19.
         object twenty = stats.Invoke(null, new object?[] { Enumerable.Range(1, 20).Select(i => (double)i).ToList() })!;
         double p95twenty = (double)twenty.GetType().GetField("Item3")!.GetValue(twenty)!;
@@ -2601,6 +2672,27 @@ internal static class Program
         double raw = (double)unstrained.Invoke(null, new object?[] { 2.0, 100.0, 0.0 })!;
         if (Math.Abs(raw - 2.0) > 1.0e-9)
             throw new InvalidOperationException("Without EA the strained length is returned.");
+        // One plus force over EA goes NEGATIVE here, and dividing by it would
+        // hand back a length of -2: a bar to cut to a negative number.
+        double collapsed = (double)unstrained.Invoke(
+            null, new object?[] { 2.0, -2000.0, 1000.0 })!;
+        if (Math.Abs(collapsed - 2.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A member whose EA cannot carry its own compression has no "
+                + "unstrained length worth reporting, so the STRAINED 2 comes "
+                + $"back; got {collapsed:0.######}.");
+        }
+        // A negative EA is not a stiffness at all, and 1 + 100/-5 = -19 would
+        // otherwise divide 2 into a small negative length.
+        double negativeEA = (double)unstrained.Invoke(
+            null, new object?[] { 2.0, 100.0, -5.0 })!;
+        if (Math.Abs(negativeEA - 2.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A negative EA is no stiffness, so the strained 2 comes back; "
+                + $"got {negativeEA:0.######}.");
+        }
     }
 
     /// <summary>
@@ -2647,6 +2739,12 @@ internal static class Program
         SetContractProperty(equilibrium, equilibriumType, "Reactions",
             Of(nodalType,
                 Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 7))!));
+        // ONE residual, and on the LAST node on purpose: a positional reader
+        // lands on item 0 and the correct reader on item 2, and that gap is
+        // the whole fault being measured.
+        SetContractProperty(equilibrium, equilibriumType, "Residuals",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 13))!));
         object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
 
         Array rows = (Array)members.Invoke(null, new[] { result })!;
@@ -2715,6 +2813,201 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 $"The reaction comes back at node 2 with Z 7; got node {node}, Z {z}.");
+        }
+
+        // The residual table: one slot per VERTEX, not one per sparse entry.
+        MethodInfo residualTable = RequirePublicStatic(tables, "Residuals");
+        Array placed = (Array)residualTable.Invoke(null, new[] { result })!;
+        if (placed.Length != 3)
+        {
+            throw new InvalidOperationException(
+                "The residuals come back ONE PER VERTEX, three here, however few "
+                + $"the Result's sparse list carries; got {placed.Length}. A length "
+                + "equal to the sparse list is the positional read this exists to "
+                + "stop.");
+        }
+        double Rz(int at) => (double)placed.GetValue(at)!.GetType()
+            .GetProperty("Z")!.GetValue(placed.GetValue(at))!;
+        if (Math.Abs(Rz(2) - 13.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                $"Node 2's residual must land at item 2; got {Rz(2)} there. Reading "
+                + "13 at item 0 means the sparse list was read positionally, which "
+                + "puts every node's residual on some other node.");
+        }
+        if (Math.Abs(Rz(0)) > 1.0e-9 || Math.Abs(Rz(1)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A node the Result carries no residual for holds its slot as a ZERO "
+                + $"rather than shifting its neighbours up; got {Rz(0)} and {Rz(1)}.");
+        }
+
+        // ---- the TNA path, which is where the table makes decisions -------
+        // The FD path above is a straight walk of the edge list. Everything
+        // that could actually misalign the two components lives here: the
+        // sort by Id, the ends read through the edge each state NAMES, the
+        // out-of-range support drop and the zero-reaction drop.
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type supportType = RequireContractType(plugin, "TnaSupportMappingDto");
+        Type edgeStateType = RequireContractType(plugin, "TnaEdgeStateDto");
+
+        object tnaEquilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(tnaEquilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(tnaEquilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 2, 0)!));
+
+        object State(int id, int edge, double axial)
+        {
+            object state = CreateInstance(edgeStateType);
+            SetContractProperty(state, edgeStateType, "Id", id);
+            SetContractProperty(state, edgeStateType, "EquilibriumEdgeId", edge);
+            SetContractProperty(state, edgeStateType, "AxialForce", axial);
+            return state;
+        }
+        object At(int vertex, object reaction)
+        {
+            object item = CreateInstance(supportType);
+            SetContractProperty(item, supportType, "EquilibriumVertexId", vertex);
+            SetContractProperty(item, supportType, "Reaction", reaction);
+            return item;
+        }
+
+        object mappings = CreateInstance(mappingsType);
+        // Support 7 is not a vertex of this net. TnaMappingsDto validates
+        // nothing and ResultDto.Validate never reaches it, so it has to be
+        // dropped in the table or one reader indexes off the end of the
+        // vertex list while the other walks past it.
+        SetContractProperty(mappings, mappingsType, "Supports",
+            Of(supportType, At(0, P(0, 0, 0)), At(7, P(0, 0, 0)), At(2, P(0, 0, 0))));
+        SetContractProperty(mappings, mappingsType, "Reactions",
+            Of(supportType, At(0, P(0, 0, 0)), At(2, P(0, 0, 5))));
+
+        object tna = CreateResultDto(
+            resultType,
+            "tna",
+            tnaEquilibrium,
+            CreateInstance(graphType),
+            CreateInstance(graphType));
+        SetContractProperty(tna, resultType, "Mappings", mappings);
+        // Id order and EquilibriumEdgeId order DISAGREE, and the list order is
+        // neither: sorting by the wrong key, or not sorting at all, gives
+        // three different answers here and only one of them is right.
+        SetContractProperty(tna, resultType, "EdgeStates",
+            Of(edgeStateType, State(2, 1, 30.0), State(0, 2, 10.0), State(1, 0, 20.0)));
+
+        Array tnaRows = (Array)members.Invoke(null, new[] { tna })!;
+        if (tnaRows.Length != 3)
+        {
+            throw new InvalidOperationException(
+                $"Three edge states must give three member rows; got {tnaRows.Length}.");
+        }
+        int TnaWhole(int at, string name) =>
+            (int)rowType.GetProperty(name)!.GetValue(tnaRows.GetValue(at))!;
+        double TnaReal(int at, string name) =>
+            (double)rowType.GetProperty(name)!.GetValue(tnaRows.GetValue(at))!;
+        if (TnaWhole(0, "Id") != 0 || TnaWhole(1, "Id") != 1 || TnaWhole(2, "Id") != 2)
+        {
+            throw new InvalidOperationException(
+                "The rows come back in EDGE STATE ID order, whatever order the "
+                + $"Result lists them in; got ids {TnaWhole(0, "Id")}, "
+                + $"{TnaWhole(1, "Id")}, {TnaWhole(2, "Id")}. This is the one "
+                + "ordering that decides whether Deconstruct's Member Lines and "
+                + "Monitor's forces describe the same member.");
+        }
+        if (TnaWhole(0, "U") != 2 || TnaWhole(0, "V") != 0 ||
+            TnaWhole(1, "U") != 0 || TnaWhole(1, "V") != 1 ||
+            TnaWhole(2, "U") != 1 || TnaWhole(2, "V") != 2)
+        {
+            throw new InvalidOperationException(
+                "Each row's ends are those of the equilibrium edge its state "
+                + "NAMES, not of the edge at its own index; state 0 names edge 2, "
+                + $"so it runs 2 to 0. Got ({TnaWhole(0, "U")},{TnaWhole(0, "V")}), "
+                + $"({TnaWhole(1, "U")},{TnaWhole(1, "V")}), "
+                + $"({TnaWhole(2, "U")},{TnaWhole(2, "V")}).");
+        }
+        if (Math.Abs(TnaReal(0, "Force") - 10.0) > 1.0e-9 ||
+            Math.Abs(TnaReal(1, "Force") - 20.0) > 1.0e-9 ||
+            Math.Abs(TnaReal(2, "Force") - 30.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Each row keeps its own state's axial force through the sort; got "
+                + $"{TnaReal(0, "Force")}, {TnaReal(1, "Force")}, "
+                + $"{TnaReal(2, "Force")}.");
+        }
+
+        int[] tnaSupports = ((IEnumerable)supportNodes.Invoke(null, new[] { tna })!)
+            .Cast<int>()
+            .ToArray();
+        if (!tnaSupports.SequenceEqual(new[] { 0, 2 }))
+        {
+            throw new InvalidOperationException(
+                "A support naming a vertex this net does not have is dropped in "
+                + "the TABLE, so both readers drop the same one; expected [0,2], "
+                + $"got [{string.Join(",", tnaSupports)}].");
+        }
+
+        Array tnaReactions = (Array)reactions.Invoke(null, new[] { tna })!;
+        if (tnaReactions.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "A zero reaction is not a reaction: two went in and only the "
+                + $"non-zero one comes back; got {tnaReactions.Length}. Keeping the "
+                + "zero would give Deconstruct and Monitor different stray branches.");
+        }
+        object tnaPair = tnaReactions.GetValue(0)!;
+        int tnaNode = (int)tnaPair.GetType().GetField("Item1")!.GetValue(tnaPair)!;
+        object tnaVector = tnaPair.GetType().GetField("Item2")!.GetValue(tnaPair)!;
+        double tnaZ = (double)tnaVector.GetType().GetProperty("Z")!.GetValue(tnaVector)!;
+        if (tnaNode != 2 || Math.Abs(tnaZ - 5.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                $"The surviving reaction is node 2's, Z 5; got node {tnaNode}, Z {tnaZ}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>ParameterIdentity.Mismatch</c>: the one thing that tells a reopened
+    /// definition that the component it is wired to has changed shape.
+    ///
+    /// Grasshopper matches archived parameter chunks to live parameters by
+    /// INDEX, so a reshaped component does not come back with broken wires:
+    /// they reattach to whatever now stands at that index, silently wherever
+    /// the two ports share a type. The counts this branch actually produced
+    /// on Deconstruct are the case measured here.
+    /// </summary>
+    private static void ValidateParameterMismatch(Assembly plugin)
+    {
+        Type identity = RequireComponentType(plugin, "ParameterIdentity");
+        MethodInfo mismatch = RequireStatic(identity, "Mismatch");
+
+        object? moved = mismatch.Invoke(null, new object?[] { 2, 20, 1, 13 });
+        if (moved is not string text)
+        {
+            throw new InvalidOperationException(
+                "A definition saved against 2 inputs and 20 outputs, opened "
+                + "against 1 and 13, must be warned that its wires moved; nothing "
+                + "came back.");
+        }
+        if (!text.Contains("20", StringComparison.Ordinal) ||
+            !text.Contains("13", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The warning must name what was archived and what is registered, "
+                + $"so the author knows which surface moved; got '{text}'.");
+        }
+
+        object? unchanged = mismatch.Invoke(null, new object?[] { 4, 9, 4, 9 });
+        if (unchanged is not null)
+        {
+            throw new InvalidOperationException(
+                "A file saved against the CURRENT surface must stay silent, or "
+                + "every reopened definition carries a warning that means nothing; "
+                + $"got '{unchanged}'.");
         }
     }
 
