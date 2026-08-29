@@ -15,10 +15,26 @@ using Rhino.Geometry;
 namespace Ananke.COMPAS.Native.Components;
 
 public sealed record ExportComponentTaskResult(
-    string? Json,
+    IReadOnlyList<(string Kind, string Json)>? Payloads,
     string? Warning,
     Exception? Error,
     TimeSpan Elapsed);
+
+/// <summary>
+/// One Export solve's nine inputs, gathered and validated on the solve
+/// thread. Both phases read the same nine, and nine out parameters had
+/// stopped being a signature anybody could read.
+/// </summary>
+public sealed record ExportInputs(
+    ResultDto Result,
+    string Path,
+    bool Write,
+    string Name,
+    IReadOnlyList<TessellationCell>? Cells,
+    string? CellWarning,
+    bool Live,
+    string Studio,
+    double Radius);
 
 /// <summary>
 /// One authored cutting cell, already reduced to the plan outline the
@@ -31,54 +47,64 @@ public sealed record TessellationCell(
     IReadOnlyList<double[]> Outline);
 
 /// <summary>
-/// The one delivery boundary for a solved Result: Contract mode serialises
-/// the ResultDto itself (the shared wire options every codec already
-/// reuses), and COMPAS mode dispatches the worker's <c>export.compas</c>
-/// command exactly as <c>FdSolveComponent</c> dispatches a solve, then
-/// bundles the returned strings into one JSON object. An optional Path
-/// writes that JSON to disk.
+/// The one delivery boundary for a solved Result, and the Result decides
+/// what comes out of it: every Result is a portable contract and a native
+/// COMPAS document (the worker's <c>export.compas</c>), a Result with
+/// Cells wired is also the studio's bench.tessellation/1 cutting sidecar,
+/// and a Result whose Mould block carries columns is also a columns mesh.
+/// Write puts the whole set on disk as
+/// <c>&lt;Name&gt;-&lt;kind&gt;.json</c>; Live pushes the same set to the
+/// studio, debounced, off the UI thread.
 /// </summary>
 public sealed class ExportComponent :
     NativeTaskComponentBase<ExportComponentTaskResult>
 {
+    private const string DefaultStudio = "http://127.0.0.1:8600";
+    private const string DefaultName = "ananke-export";
+    private const double DefaultColumnRadius = 0.05;
+
     // A Button feeding Write is only True for the press solve; the release
     // immediately triggers a second solve with Write false. Latching the
-    // last successful write keeps the evidence of the one-shot write on the
+    // last written set keeps the evidence of the one-shot write on the
     // component instead of wiping it milliseconds after it happened.
-    private string? _lastWrittenPath;
-    private DateTime _lastWrittenAt;
+    private IReadOnlyList<string>? _lastWritten;
 
-    private static readonly ComponentValueListSpec[] ValueLists =
-    {
-        new(
-            1,
-            "Format",
-            new (string Label, string Value)[]
-            {
-                ("Contract", "contract"),
-                ("COMPAS", "compas"),
-                ("Tessellation", "tessellation")
-            },
-            "contract")
-    };
+    // One uploader per component, so two Exports on a canvas debounce and
+    // retry independently. Its callback arrives on a thread-pool thread,
+    // so the expire it asks for is marshalled to the UI thread here:
+    // nothing off that thread is allowed to touch a Grasshopper object.
+    private readonly LiveUploader _uploader;
 
     public ExportComponent()
         : base(
             "Export",
             "Export",
-            "Serialise a solved Result as portable Contract JSON or " +
-            "native COMPAS json_dumps geometry via the worker, and " +
-            "optionally write it to disk.",
+            "Write everything a solved Result can be, contract and " +
+            "COMPAS always, a tessellation sidecar when cells are wired, " +
+            "a columns mesh when the Result carries columns, and push " +
+            "the set live to the studio.",
             ComponentCategories.Delivery,
             "export")
     {
+        _uploader = new LiveUploader(
+            () => RhinoApp.InvokeOnUiThread(
+                new Action(() => ExpireSolution(true))));
     }
 
     public override Guid ComponentGuid =>
         new("f2a6c8e4-1b5d-49a3-b7e0-3c9f5d8a2617");
 
-    private protected override IReadOnlyList<ComponentValueListSpec>
-        SuggestedValueLists => ValueLists;
+    /// <summary>
+    /// The uploader owns a debounce timer and may have a send in flight; a
+    /// component deleted from the canvas must leave neither running, and
+    /// must not be expired by an outcome arriving for something that is no
+    /// longer there.
+    /// </summary>
+    public override void RemovedFromDocument(GH_Document document)
+    {
+        _uploader.Dispose();
+        base.RemovedFromDocument(document);
+    }
 
     protected override void RegisterInputParams(
         GH_InputParamManager parameters)
@@ -90,82 +116,118 @@ public sealed class ExportComponent :
             "Solved FD or TNA result to export.",
             GH_ParamAccess.item);
         parameters.AddTextParameter(
-            "Format",
-            "F",
-            "Contract (portable native JSON), COMPAS (native " +
-            "json_dumps geometry produced by the worker's export.compas " +
-            "command), or Tessellation (the studio's " +
-            "bench.tessellation/1 authored cutting sidecar, built from " +
-            "the Cells input).",
-            GH_ParamAccess.item,
-            "contract");
-        parameters.AddTextParameter(
             "Path",
             "P",
-            "Optional target for the Write trigger: a file path, or a " +
-            "folder to receive ananke-export-<format>.json. Missing " +
-            "parent folders are created.",
+            "A folder, or a file whose folder is used, for the Write " +
+            "trigger; missing folders are created.",
             GH_ParamAccess.item,
             string.Empty);
-        parameters[2].Optional = true;
+        parameters[1].Optional = true;
         parameters.AddBooleanParameter(
             "Write",
             "W",
-            "Push the export to disk: while True, the JSON is written to " +
-            "Path on every solve. Wire a button for one-shot writes. The " +
-            "JSON output itself is always live.",
+            "Push the export to disk: while True, every kind this Result " +
+            "carries is written under Path on every solve. Wire a button " +
+            "for one-shot writes. The JSON outputs themselves are always " +
+            "live.",
             GH_ParamAccess.item,
             false);
         parameters.AddTextParameter(
             "Name",
             "N",
-            "Optional file name for the write. Keep it to bake over the " +
-            "same file; change it to bake a new one. Applied inside a " +
-            "folder Path, or replacing the file name of a file Path. " +
-            "Without an extension, -contract.json, -compas.json or " +
-            "-tessellation.json is appended so the exports of one " +
-            "geometry sit side by side (and the studio finds the " +
-            "sidecar by exactly that <Name>-tessellation.json pairing); " +
-            "an explicit extension is used verbatim. Blank uses " +
-            "ananke-export-<format>.json.",
+            "The study name. Files are <Name>-<kind>.json under Path and " +
+            "the studio's export name is <Name>; blank uses " +
+            "ananke-export.",
             GH_ParamAccess.item,
             string.Empty);
-        parameters[4].Optional = true;
+        parameters[3].Optional = true;
         parameters.AddCurveParameter(
             "Cells",
             "C",
-            "Tessellation format only: one closed planar outline per " +
-            "cutting cell (a brick), authored against the solved form " +
-            "Result still carries. Projected to plan (z dropped) into " +
-            "the sidecar's outline points; non-polyline curves are " +
-            "approximated at a 5 mm chord. Ignored by the other formats.",
+            "One closed planar outline per cutting cell (a brick), " +
+            "authored against the solved form the Result still carries. " +
+            "Wire Skin's Face Polylines straight in; the tree is " +
+            "flattened here. Projected to plan (z dropped) into the " +
+            "sidecar's outline points; non-polyline curves are " +
+            "approximated at a 5 mm chord. Wiring them is what adds the " +
+            "tessellation kind to the export.",
             GH_ParamAccess.list);
-        parameters[5].Optional = true;
+        parameters[4].Optional = true;
+        parameters[4].DataMapping = GH_DataMapping.Flatten;
         parameters.AddIntegerParameter(
             "Courses",
             "CO",
-            "Tessellation format only: the course (row) index per cell, " +
-            "same length as Cells. The studio stages the build animation " +
-            "course by course. Empty puts every cell in course 0, one " +
-            "single stage.",
+            "The course (row) index per cell, same length as Cells, from " +
+            "Skin's Face Courses; the tree is flattened here. The studio " +
+            "stages the build animation course by course. Empty puts " +
+            "every cell in course 0, one single stage.",
             GH_ParamAccess.list);
-        parameters[6].Optional = true;
+        parameters[5].Optional = true;
+        parameters[5].DataMapping = GH_DataMapping.Flatten;
+        parameters.AddBooleanParameter(
+            "Live",
+            "L",
+            "Push the set to the studio on every solve, debounced half a " +
+            "second, retrying a 409 while the studio has a run in " +
+            "flight. Failures are warnings; the files and outputs stand.",
+            GH_ParamAccess.item,
+            false);
+        parameters.AddTextParameter(
+            "Studio",
+            "S",
+            "The studio's base URL.",
+            GH_ParamAccess.item,
+            DefaultStudio);
+        parameters[7].Optional = true;
+        parameters.AddNumberParameter(
+            "Column Radius",
+            "R",
+            "Radius of the prism each column member is drawn as in the " +
+            "columns mesh, in document units.",
+            GH_ParamAccess.item,
+            DefaultColumnRadius);
+        parameters[8].Optional = true;
     }
 
     protected override void RegisterOutputParams(
         GH_OutputParamManager parameters)
     {
         parameters.AddTextParameter(
-            "JSON",
-            "J",
-            "Exported JSON text.",
+            "Contract JSON",
+            "CJ",
+            "The portable native contract, always produced.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "COMPAS JSON",
+            "MJ",
+            "The native COMPAS json_dumps geometry the worker's " +
+            "export.compas command produces, always produced.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Tessellation JSON",
+            "TJ",
+            "The studio's bench.tessellation/1 authored cutting sidecar; " +
+            "empty unless Cells are wired.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Columns JSON",
+            "KJ",
+            "The columns mesh, one prism per column member, with the " +
+            "members themselves beside it; empty unless the Result " +
+            "carries columns.",
             GH_ParamAccess.item);
         parameters.AddTextParameter(
             "Written",
             "W",
-            "Most recent file path this component wrote this session, so " +
-            "a one-shot Button write stays visible after release; empty " +
-            "until a write happens.",
+            "The most recent files this component wrote this session, " +
+            "one per line, so a one-shot Button write stays visible " +
+            "after release; empty until a write happens.",
+            GH_ParamAccess.item);
+        parameters.AddTextParameter(
+            "Uploaded",
+            "U",
+            "The most recent upload outcome, one line per kind; Live is " +
+            "off says so while Live is False.",
             GH_ParamAccess.item);
     }
 
@@ -181,50 +243,31 @@ public sealed class ExportComponent :
         {
             if (InPreSolve)
             {
-                if (!TryReadInputs(
-                        data,
-                        out ResultDto? result,
-                        out string format,
-                        out _,
-                        out _,
-                        out _,
-                        out IReadOnlyList<TessellationCell>? cells,
-                        out string? cellWarning,
-                        report: false))
-                {
+                if (!TryReadInputs(data, out ExportInputs? pre, report: false))
                     return;
-                }
                 // Resolved here, on the solve thread: RhinoDoc.ActiveDoc
                 // is not a background thread's to read, and the lambda
                 // below runs on one.
                 double unitFactor = ResolveUnitFactor();
                 TaskList.Add(Task.Run(
                     () => ComputeAsync(
-                        CloneResult(result!),
-                        format,
-                        cells,
-                        cellWarning,
+                        CloneResult(pre!.Result),
+                        pre.Cells,
+                        pre.CellWarning,
                         unitFactor,
+                        pre.Radius,
                         CancelToken),
                     CancelToken));
                 return;
             }
 
-            // The post phase re-reads Write and Path itself: the disk
-            // write is a side effect and belongs on this thread, where a
-            // Button's release re-solve cannot cancel it mid-flight.
-            if (!TryReadInputs(
-                    data,
-                    out ResultDto? postResult,
-                    out string postFormat,
-                    out string path,
-                    out bool write,
-                    out string name,
-                    out IReadOnlyList<TessellationCell>? postCells,
-                    out string? postCellWarning))
-            {
+            // The post phase re-reads the inputs itself: the disk write
+            // and the upload are side effects and belong on this thread,
+            // where a Button's release re-solve cannot cancel them
+            // mid-flight, and where the uploader is only ever enqueued
+            // once per solve rather than once per pre-solve branch.
+            if (!TryReadInputs(data, out ExportInputs? inputs))
                 return;
-            }
             ExportComponentTaskResult taskResult;
             bool haveTaskResult = GetSolveResults(data, out taskResult!);
             if (!haveTaskResult ||
@@ -235,11 +278,11 @@ public sealed class ExportComponent :
                 // so a late cancellation cannot strand the canvas on
                 // "Cancelled".
                 taskResult = ComputeAsync(
-                        CloneResult(postResult!),
-                        postFormat,
-                        postCells,
-                        postCellWarning,
+                        CloneResult(inputs!.Result),
+                        inputs.Cells,
+                        inputs.CellWarning,
                         ResolveUnitFactor(),
+                        inputs.Radius,
                         CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
@@ -257,7 +300,7 @@ public sealed class ExportComponent :
                     "Export: " + taskResult.Error.GetBaseException().Message);
                 return;
             }
-            if (taskResult.Json is null)
+            if (taskResult.Payloads is null || taskResult.Payloads.Count == 0)
             {
                 Message = "Failed";
                 AddRuntimeMessage(
@@ -272,15 +315,27 @@ public sealed class ExportComponent :
                     "Export: " + taskResult.Warning);
             }
 
-            if (write && !string.IsNullOrWhiteSpace(path))
+            string name = inputs!.Name.Trim();
+            if (name.Length == 0)
+                name = DefaultName;
+
+            if (inputs.Write && !string.IsNullOrWhiteSpace(inputs.Path))
             {
+                // Declared outside the try so a set that fails halfway
+                // still latches the files that did land: which kinds
+                // reached disk is exactly what the author needs to see
+                // when one of them could not.
+                var written = new List<string>(taskResult.Payloads.Count);
                 try
                 {
-                    string resolved =
-                        ResolveWritePath(path, postFormat, name);
-                    File.WriteAllText(resolved, taskResult.Json);
-                    _lastWrittenPath = resolved;
-                    _lastWrittenAt = DateTime.Now;
+                    string folder = ResolveWriteFolder(inputs.Path);
+                    foreach ((string kind, string json) in taskResult.Payloads)
+                    {
+                        string target = Path.Combine(
+                            folder, $"{name}-{kind}.json");
+                        File.WriteAllText(target, json);
+                        written.Add(target);
+                    }
                 }
                 catch (Exception writeException)
                 {
@@ -289,15 +344,66 @@ public sealed class ExportComponent :
                         "Export: failed to write file: " +
                         writeException.Message);
                 }
+                if (written.Count > 0)
+                    _lastWritten = written;
             }
 
-            data.SetData(0, taskResult.Json);
-            data.SetData(1, _lastWrittenPath ?? string.Empty);
-            Message = _lastWrittenPath is null
-                ? $"{taskResult.Json.Length} chars · not written"
-                : $"{taskResult.Json.Length} chars · wrote " +
-                  $"{Path.GetFileName(_lastWrittenPath)} " +
-                  $"{_lastWrittenAt:HH:mm:ss}";
+            string contractJson = string.Empty;
+            string compasJson = string.Empty;
+            string tessellationJson = string.Empty;
+            string columnsJson = string.Empty;
+            foreach ((string kind, string json) in taskResult.Payloads)
+            {
+                switch (kind)
+                {
+                    case "contract":
+                        contractJson = json;
+                        break;
+                    case "compas":
+                        compasJson = json;
+                        break;
+                    case "tessellation":
+                        tessellationJson = json;
+                        break;
+                    case "columns":
+                        columnsJson = json;
+                        break;
+                }
+            }
+
+            // Enqueued here and never in InPreSolve: a send is a side
+            // effect on the studio, the pre phase runs once per branch and
+            // can be cancelled, and the uploader is not the solve thread's
+            // to drive twice.
+            if (inputs.Live)
+            {
+                _uploader.Enqueue(new LiveUploader.Pending(
+                    inputs.Studio,
+                    name,
+                    taskResult.Payloads));
+            }
+            string uploaded = inputs.Live
+                ? _uploader.LastOutcome
+                : "Live is off";
+            if (inputs.Live && NamesAnUploadFailure(uploaded))
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Export live: " + uploaded);
+            }
+
+            data.SetData(0, contractJson);
+            data.SetData(1, compasJson);
+            data.SetData(2, tessellationJson);
+            data.SetData(3, columnsJson);
+            data.SetData(
+                4,
+                _lastWritten is null
+                    ? string.Empty
+                    : string.Join(Environment.NewLine, _lastWritten));
+            data.SetData(5, uploaded);
+            Message =
+                $"{taskResult.Payloads.Count} kinds · {FirstLine(uploaded)}";
         }
         catch (Exception error)
         {
@@ -307,31 +413,39 @@ public sealed class ExportComponent :
     }
 
     /// <summary>
-    /// A Path may name a file or a folder: canvas path pickers commonly
-    /// hand over a directory when the target file does not exist yet. A
-    /// directory (existing, or spelled with a trailing separator) receives
-    /// the Name input inside it, or a deterministic per-format file name
-    /// when Name is blank, so the Contract and COMPAS exports of one
-    /// definition never overwrite each other; a file path is used as
-    /// given unless Name overrides its file name. Parent directories are
-    /// created when missing, and .json is appended to a Name given
-    /// without an extension.
+    /// The upload is best effort: the files and the JSON outputs stand
+    /// whatever the studio said, so a refusal, a deferral or a transport
+    /// failure is a Warning here and never an Error. The three words are
+    /// the ones LiveUploader writes into its outcome lines.
     /// </summary>
-    private static string ResolveWritePath(
-        string path,
-        string format,
-        string name)
+    private static bool NamesAnUploadFailure(string outcome) =>
+        outcome.Contains("refused", StringComparison.Ordinal) ||
+        outcome.Contains("deferred", StringComparison.Ordinal) ||
+        outcome.Contains("failed", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The Message is one line of a component's chin; the outcome carries
+    /// one line per kind, so only the first of them fits.
+    /// </summary>
+    private static string FirstLine(string text)
+    {
+        int end = text.IndexOf('\n');
+        return end < 0 ? text : text[..end].TrimEnd('\r');
+    }
+
+    /// <summary>
+    /// A Path may name a file or a folder: canvas path pickers commonly
+    /// hand over a directory when the target file does not exist yet, and
+    /// a definition saved before this rework may still carry a file path.
+    /// Either way only the folder is used now, because one solve writes a
+    /// whole set of files and the names inside it are the study's, not the
+    /// Path's: a directory (existing, or spelled with a trailing
+    /// separator) is that folder, and a file path's own directory is. The
+    /// folder is created when missing.
+    /// </summary>
+    private static string ResolveWriteFolder(string path)
     {
         string trimmed = path.Trim();
-        string fileName = name.Trim();
-        if (fileName.Length > 0 &&
-            string.IsNullOrEmpty(Path.GetExtension(fileName)))
-        {
-            // One geometry is routinely exported in both formats with the
-            // same Name; the format suffix keeps them side by side. A Name
-            // spelled with an explicit extension is used verbatim.
-            fileName += $"-{format}.json";
-        }
         bool looksLikeDirectory =
             trimmed.EndsWith(
                 Path.DirectorySeparatorChar.ToString(),
@@ -340,81 +454,62 @@ public sealed class ExportComponent :
                 Path.AltDirectorySeparatorChar.ToString(),
                 StringComparison.Ordinal) ||
             Directory.Exists(trimmed);
-        if (looksLikeDirectory)
-        {
-            Directory.CreateDirectory(trimmed);
-            return Path.Combine(
-                trimmed,
-                fileName.Length > 0
-                    ? fileName
-                    : $"ananke-export-{format}.json");
-        }
-        string? parent = Path.GetDirectoryName(trimmed);
-        if (!string.IsNullOrEmpty(parent))
-            Directory.CreateDirectory(parent);
-        if (fileName.Length > 0)
-            return Path.Combine(parent ?? string.Empty, fileName);
-        return trimmed;
+        string folder = looksLikeDirectory
+            ? trimmed
+            : Path.GetDirectoryName(trimmed) ?? string.Empty;
+        if (folder.Length > 0)
+            Directory.CreateDirectory(folder);
+        return folder;
     }
 
     /// <summary>
-    /// Read RES and this component's own Format/Path/Write, normalising
-    /// Format and validating the Result up front so the background task
-    /// never has to report a runtime message itself. The write itself
-    /// happens in the post phase; this only gathers and validates.
+    /// Read the nine inputs and validate the Result up front so the
+    /// background task never has to report a runtime message itself. Cells
+    /// are validated whenever they are wired, since wiring them is what
+    /// asks for the tessellation kind; a Column Radius that is not a
+    /// positive finite number and a blank Studio under Live both fall back
+    /// and say so. The write and the upload themselves happen in the post
+    /// phase; this only gathers and validates.
     /// </summary>
     private bool TryReadInputs(
         IGH_DataAccess data,
-        out ResultDto? result,
-        out string format,
-        out string path,
-        out bool write,
-        out string name,
-        out IReadOnlyList<TessellationCell>? cells,
-        out string? cellWarning,
+        out ExportInputs? inputs,
         bool report = true)
     {
-        result = null;
-        format = "contract";
-        path = string.Empty;
-        write = false;
-        name = string.Empty;
-        cells = null;
-        cellWarning = null;
+        inputs = null;
         ResultGoo? resultGoo = null;
-        string formatInput = "contract";
         string pathInput = string.Empty;
         bool writeInput = false;
         string nameInput = string.Empty;
         var cellInput = new List<Curve>();
         var courseInput = new List<int>();
+        bool liveInput = false;
+        string studioInput = DefaultStudio;
+        double radiusInput = DefaultColumnRadius;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
             return false;
         }
-        data.GetData(1, ref formatInput);
-        data.GetData(2, ref pathInput);
-        data.GetData(3, ref writeInput);
-        data.GetData(4, ref nameInput);
-        data.GetDataList(5, cellInput);
-        data.GetDataList(6, courseInput);
+        data.GetData(1, ref pathInput);
+        data.GetData(2, ref writeInput);
+        data.GetData(3, ref nameInput);
+        data.GetDataList(4, cellInput);
+        data.GetDataList(5, courseInput);
+        data.GetData(6, ref liveInput);
+        data.GetData(7, ref studioInput);
+        data.GetData(8, ref radiusInput);
 
-        string normalisedFormat = NormaliseFormat(formatInput);
+        IReadOnlyList<TessellationCell>? cells = null;
+        string? cellWarning = null;
         var errors = new List<string>(resultValue.Validate());
-        if (normalisedFormat is not ("contract" or "compas" or "tessellation"))
-            errors.Add("Format must be Contract, COMPAS or Tessellation.");
+        var notes = new List<string>();
         if (writeInput && string.IsNullOrWhiteSpace(pathInput))
             errors.Add("Write requires a Path to write to.");
-        if (normalisedFormat == "tessellation")
+        if (cellInput.Count > 0)
         {
-            if (cellInput.Count == 0)
-            {
-                errors.Add(
-                    "Tessellation needs at least one Cell outline.");
-            }
-            else if (courseInput.Count != 0 &&
-                     courseInput.Count != cellInput.Count)
+            if (courseInput.Count != 0 &&
+                courseInput.Count != cellInput.Count)
             {
                 errors.Add(
                     $"Courses ({courseInput.Count}) must be empty or " +
@@ -424,7 +519,7 @@ public sealed class ExportComponent :
             {
                 // A negative course survives all the way to the studio's
                 // "c-1p0"-style key, which tessellation.from_document
-                // pins course >= 0 and refuses -- late, remote, and
+                // pins course >= 0 and refuses, late, remote, and
                 // confusing. Catch it here instead, naming every
                 // offending index and value, and write nothing.
                 errors.Add(
@@ -437,6 +532,30 @@ public sealed class ExportComponent :
                     cellInput, courseInput, errors, out cellWarning);
             }
         }
+
+        double radius = radiusInput;
+        if (!double.IsFinite(radius) || radius <= 0.0)
+        {
+            radius = DefaultColumnRadius;
+            notes.Add(
+                "Column Radius must be a positive finite number; " +
+                DefaultColumnRadius.ToString(
+                    "0.################",
+                    System.Globalization.CultureInfo.InvariantCulture) +
+                " used.");
+        }
+        string studio = (studioInput ?? string.Empty).Trim();
+        if (studio.Length == 0)
+        {
+            studio = DefaultStudio;
+            if (liveInput)
+            {
+                notes.Add(
+                    "Live needs a Studio URL; " + DefaultStudio +
+                    " used.");
+            }
+        }
+
         if (errors.Count > 0)
         {
             // The pre phase reads quietly; the post phase repeats the read
@@ -450,12 +569,22 @@ public sealed class ExportComponent :
             }
             return false;
         }
+        if (report)
+        {
+            foreach (string note in notes)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, note);
+        }
 
-        result = resultValue;
-        format = normalisedFormat;
-        path = pathInput ?? string.Empty;
-        write = writeInput;
-        name = nameInput ?? string.Empty;
+        inputs = new ExportInputs(
+            resultValue,
+            pathInput ?? string.Empty,
+            writeInput,
+            nameInput ?? string.Empty,
+            cells,
+            cellWarning,
+            liveInput,
+            studio,
+            radius);
         return true;
     }
 
@@ -587,57 +716,92 @@ public sealed class ExportComponent :
     private static ResultDto CloneResult(ResultDto result) =>
         ContractJson.DeepClone(result) with { RawWire = result.RawWire };
 
+    /// <summary>
+    /// Every kind the Result can be, in ExportPlan's order, built once.
+    /// The contract and the COMPAS document are always in the set; the
+    /// tessellation sidecar joins it when cells were wired and the columns
+    /// mesh when the Mould block carries at least one member. Each kind's
+    /// own warning joins the one warning the post phase reports.
+    /// </summary>
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
-        string format,
         IReadOnlyList<TessellationCell>? cells,
         string? cellWarning,
         double unitFactor,
+        double radius,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            string json;
-            string? warning = null;
-            if (format == "compas")
+            MouldColumnsDto? block = result.Mould?.Columns;
+            bool hasColumns = block is not null && block.Members.Count > 0;
+            bool hasCells = cells is not null && cells.Count > 0;
+            string[] kinds = ExportPlan.Kinds(hasCells, hasColumns);
+            var payloads = new List<(string Kind, string Json)>(kinds.Length);
+            var warnings = new List<string>();
+            foreach (string kind in kinds)
             {
-                (json, warning) = await BuildCompasJsonAsync(
-                        result,
-                        unitFactor,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-            else if (format == "tessellation")
-            {
-                // Pure serialisation of cells already reduced to plain
-                // numbers on the solve thread; no worker, no geometry.
-                json = BuildTessellationJson(cells!, unitFactor);
-                warning = cellWarning;
-                if (Math.Abs(unitFactor - 1.0) > 1e-12)
+                switch (kind)
                 {
-                    // Disclosed the way ImportPiecesComponent discloses
-                    // its own factor: a silent scale is the thing that
-                    // makes a units mismatch hard to find later.
-                    string note =
-                        "Document units converted to metres by a factor " +
-                        "of " + unitFactor.ToString(
-                            "0.################",
-                            System.Globalization.CultureInfo.InvariantCulture) +
-                        ".";
-                    warning = string.IsNullOrEmpty(warning)
-                        ? note
-                        : warning + " " + note;
+                    case "contract":
+                        payloads.Add((kind, ContractJson.Serialize(result)));
+                        break;
+                    case "compas":
+                    {
+                        (string json, string? warning) =
+                            await BuildCompasJsonAsync(
+                                    result,
+                                    unitFactor,
+                                    cancellationToken)
+                                .ConfigureAwait(false);
+                        payloads.Add((kind, json));
+                        if (!string.IsNullOrEmpty(warning))
+                            warnings.Add(warning!);
+                        break;
+                    }
+                    case "tessellation":
+                    {
+                        // Pure serialisation of cells already reduced to
+                        // plain numbers on the solve thread; no worker, no
+                        // geometry.
+                        payloads.Add(
+                            (kind, BuildTessellationJson(cells!, unitFactor)));
+                        if (!string.IsNullOrEmpty(cellWarning))
+                            warnings.Add(cellWarning!);
+                        if (Math.Abs(unitFactor - 1.0) > 1e-12)
+                        {
+                            // Disclosed the way ImportPiecesComponent
+                            // discloses its own factor: a silent scale is
+                            // the thing that makes a units mismatch hard
+                            // to find later.
+                            warnings.Add(
+                                "Document units converted to metres by a " +
+                                "factor of " + unitFactor.ToString(
+                                    "0.################",
+                                    System.Globalization.CultureInfo
+                                        .InvariantCulture) + ".");
+                        }
+                        break;
+                    }
+                    case "columns":
+                        payloads.Add((
+                            kind,
+                            ColumnsMesh.Json(
+                                ColumnMembers(block!),
+                                radius,
+                                ForceUnitOf(result),
+                                unitFactor)));
+                        break;
+                    default:
+                        throw new InvalidOperationException(
+                            $"Export does not know the kind '{kind}'.");
                 }
-            }
-            else
-            {
-                json = ContractJson.Serialize(result);
             }
             stopwatch.Stop();
             return new ExportComponentTaskResult(
-                json,
-                warning,
+                payloads,
+                warnings.Count == 0 ? null : string.Join(" ", warnings),
                 null,
                 stopwatch.Elapsed);
         }
@@ -650,6 +814,43 @@ public sealed class ExportComponent :
                 error,
                 stopwatch.Elapsed);
         }
+    }
+
+    /// <summary>
+    /// The block's members as the two node points and the force on each,
+    /// which is the only shape ColumnsMesh reads. Every member index is
+    /// already inside Nodes and MemberForce is already one value per
+    /// member: MouldColumnsDto.Validate refuses anything else, and
+    /// TryReadInputs runs that validation before this is ever reached.
+    /// </summary>
+    private static IReadOnlyList<(Point3d From, Point3d To, double Force)>
+        ColumnMembers(MouldColumnsDto block)
+    {
+        var members =
+            new List<(Point3d From, Point3d To, double Force)>(
+                block.Members.Count);
+        for (int i = 0; i < block.Members.Count; i++)
+        {
+            EdgeDto member = block.Members[i];
+            Point3Dto from = block.Nodes[member.U];
+            Point3Dto to = block.Nodes[member.V];
+            members.Add((
+                new Point3d(from.X, from.Y, from.Z),
+                new Point3d(to.X, to.Y, to.Z),
+                i < block.MemberForce.Count ? block.MemberForce[i] : 0.0));
+        }
+        return members;
+    }
+
+    /// <summary>
+    /// The unit the Result's own forces are in, which the columns mesh
+    /// carries so the studio never has to assume newtons. Blank falls back
+    /// to the contract's own default rather than to nothing.
+    /// </summary>
+    private static string ForceUnitOf(ResultDto result)
+    {
+        string unit = (result.Equilibrium?.ForceUnit ?? string.Empty).Trim();
+        return unit.Length == 0 ? "kN" : unit;
     }
 
     /// <summary>
@@ -756,18 +957,6 @@ public sealed class ExportComponent :
                 "string.");
         }
         return value.GetString() ?? string.Empty;
-    }
-
-    private static string NormaliseFormat(string? value)
-    {
-        string format = (value ?? string.Empty).Trim().ToLowerInvariant();
-        return format switch
-        {
-            "" => "contract",
-            "compas" or "compas.data" => "compas",
-            "tessellation" or "tess" or "sidecar" => "tessellation",
-            _ => format
-        };
     }
 
     /// <summary>

@@ -30,7 +30,9 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
                 new[] { 2 },
             ["Ananke.COMPAS.Native.Components.FdSolveComponent"] =
-                new[] { 1 }
+                new[] { 1 },
+            ["Ananke.COMPAS.Native.Components.ExportComponent"] =
+                new[] { 4, 5 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
@@ -122,7 +124,14 @@ internal static class Program
                         "Result",
                         "Columns",
                         "Perimeter Lines"
-                    })
+                    }),
+                // Export's ports are pinned because Format's removal moved
+                // every input after slot 0 up one and split the single JSON
+                // output into one per kind: the order below IS the canvas
+                // contract, and the four kind outputs are read by slot.
+                ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
+                    new[] { "Result", "Path", "Write", "Name", "Cells", "Courses", "Live", "Studio", "Column Radius" },
+                    new[] { "Contract JSON", "COMPAS JSON", "Tessellation JSON", "Columns JSON", "Written", "Uploaded" })
             };
     private static readonly IReadOnlyDictionary<
         string,
