@@ -30,7 +30,9 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
                 new[] { 2 },
             ["Ananke.COMPAS.Native.Components.FdSolveComponent"] =
-                new[] { 1 }
+                new[] { 1 },
+            ["Ananke.COMPAS.Native.Components.ExportComponent"] =
+                new[] { 4, 5 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
@@ -122,7 +124,14 @@ internal static class Program
                         "Result",
                         "Columns",
                         "Perimeter Lines"
-                    })
+                    }),
+                // Export's ports are pinned because Format's removal moved
+                // every input after slot 0 up one and split the single JSON
+                // output into one per kind: the order below IS the canvas
+                // contract, and the four kind outputs are read by slot.
+                ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
+                    new[] { "Result", "Path", "Write", "Name", "Cells", "Courses", "Live", "Studio", "Column Radius" },
+                    new[] { "Contract JSON", "COMPAS JSON", "Tessellation JSON", "Columns JSON", "Written", "Uploaded" })
             };
     private static readonly IReadOnlyDictionary<
         string,
@@ -823,11 +832,84 @@ internal static class Program
                 "PASS  ParameterIdentity.Mismatch: a definition saved against a "
                 + "component's older ports is told they moved, naming both what "
                 + "was archived and what is registered, and one saved against "
-                + "the current ports is told nothing.");
+                + "the current ports is told nothing; Export's own move, seven "
+                + "inputs and two outputs against nine and six, is the case "
+                + "measured beside Deconstruct's.");
         }
         catch (Exception exception)
         {
             failures.Add($"ParameterIdentity.Mismatch: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportPlan(plugin);
+            Console.WriteLine(
+                "PASS  ExportPlan: contract and compas always, tessellation "
+                + "with cells, columns with a block, in that order; and a "
+                + "study Name is ONE path segment, so a separator, a colon "
+                + "or a dot-dot is refused before it can write the set "
+                + "outside the folder the author chose.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ExportPlan: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateColumnsMesh(plugin);
+            Console.WriteLine(
+                "PASS  ColumnsMesh: one member is a closed prism of six "
+                + "quads and eight cap triangles at the radius asked, a "
+                + "zero-length member is nothing and is absent from the "
+                + "members list too, two members index cleanly, a DIAGONAL "
+                + "member's caps are perpendicular to the member and not to "
+                + "world Z, and the radius the document declares is the one "
+                + "the mesh was built at.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"ColumnsMesh: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateLiveUploader(plugin);
+            Console.WriteLine(
+                "PASS  LiveUploader: the retry schedule is 2, 4, 8 seconds "
+                + "then deferred, the routes are the studio's, a 2xx is "
+                + "stored, a 409 retries until the schedule runs out, "
+                + "anything else is refused, and the set key reads the "
+                + "Name, the Studio and every kind EXCEPT the compas "
+                + "document's own bytes, whose fresh uuid per serialisation "
+                + "would stop the key ever repeating; the compas kind's "
+                + "presence still counts. The study name is escaped into "
+                + "both routes, and a deferred kind names the run the "
+                + "studio is busy with when the 409 body carries one.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"LiveUploader: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportWriteFolder(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.TryResolveWriteFolder: an "
+                + "extensionless Path is the folder to write into even "
+                + "before it exists, a Path with an extension gives its "
+                + "own directory, and a Path that is not rooted, a bare "
+                + "name or a relative path with directories of its own, "
+                + "is refused rather than written to whatever the "
+                + "process's working directory happens to be.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.TryResolveWriteFolder: "
+                + $"{DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -3037,6 +3119,29 @@ internal static class Program
                 + "every reopened definition carries a warning that means nothing; "
                 + $"got '{unchanged}'.");
         }
+
+        // Export's own move, and the reason it holds Live: a definition
+        // saved before this branch carries seven inputs and two outputs
+        // against the nine and six registered now, so every wire in it
+        // lands on a different port, three of them silently, and one of
+        // those three is the Live toggle.
+        object? exportMoved = mismatch.Invoke(null, new object?[] { 7, 2, 9, 6 });
+        if (exportMoved is not string exportText ||
+            !exportText.Contains("7 inputs and 2 outputs", StringComparison.Ordinal) ||
+            !exportText.Contains("9 and 6", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A saved Export, 7 inputs and 2 outputs against the 9 and 6 it "
+                + "registers now, must be warned and both counts named; got "
+                + $"'{exportMoved}'.");
+        }
+        object? exportUnchanged = mismatch.Invoke(null, new object?[] { 9, 6, 9, 6 });
+        if (exportUnchanged is not null)
+        {
+            throw new InvalidOperationException(
+                "An Export saved against the current nine and six is told "
+                + $"nothing; got '{exportUnchanged}'.");
+        }
     }
 
     /// <summary>
@@ -4511,6 +4616,329 @@ internal static class Program
                 $"metres; expected '{expectedMillimetres}', received " +
                 $"'{millimetres}'.");
         }
+    }
+
+    private static void ValidateExportPlan(Assembly plugin)
+    {
+        Type plan = plugin.GetType("Ananke.COMPAS.Native.Components.ExportPlan", throwOnError: true)!;
+        MethodInfo kinds = RequirePublicStatic(plan, "Kinds");
+        string Show(bool cells, bool columns) =>
+            string.Join(",", (string[])kinds.Invoke(null, new object?[] { cells, columns })!);
+        if (Show(false, false) != "contract,compas") throw new InvalidOperationException($"No cells, no columns: contract,compas; got {Show(false, false)}.");
+        if (Show(true, false) != "contract,compas,tessellation") throw new InvalidOperationException($"Cells add tessellation; got {Show(true, false)}.");
+        if (Show(false, true) != "contract,compas,columns") throw new InvalidOperationException($"Columns add columns; got {Show(false, true)}.");
+        if (Show(true, true) != "contract,compas,tessellation,columns") throw new InvalidOperationException($"All four in order; got {Show(true, true)}.");
+
+        // The study name rule. A Name is one path segment because it is
+        // both a file name stem inside the folder the author chose and
+        // one segment of the studio's route: a separator or a dot-dot in
+        // it writes the set somewhere the author never named, quietly and
+        // successfully, and reaches a route nobody asked for.
+        MethodInfo segment = RequirePublicStatic(plan, "NameIsOneSegment");
+        bool OneSegment(string name) => (bool)segment.Invoke(null, new object?[] { name })!;
+        if (!OneSegment("study-1"))
+            throw new InvalidOperationException("An ordinary study name is one segment.");
+        foreach (string refused in new[] { "..", ".", @"a\b", "a/b", "a:b", "a?b", "", "   " })
+        {
+            if (OneSegment(refused))
+            {
+                throw new InvalidOperationException(
+                    $"'{refused}' is not one path segment and must be refused: "
+                    + "a Name carrying a separator, a colon, a dot-dot or a "
+                    + "character no file name may hold escapes the folder the "
+                    + "author chose.");
+            }
+        }
+    }
+
+    private static void ValidateColumnsMesh(Assembly plugin)
+    {
+        Type mesh = plugin.GetType("Ananke.COMPAS.Native.Components.ColumnsMesh", throwOnError: true)!;
+        MethodInfo build = RequirePublicStatic(mesh, "Build");
+        Type memberList = build.GetParameters()[0].ParameterType;   // IReadOnlyList<(Point3d, Point3d, double)>
+        Type tuple = memberList.GetGenericArguments()[0];
+        Type point3d = tuple.GetGenericArguments()[0];
+        object P(double x, double y, double z) => Activator.CreateInstance(point3d, x, y, z)!;
+        object Member(double x0, double y0, double z0, double x1, double y1, double z1, double f) =>
+            Activator.CreateInstance(tuple, P(x0, y0, z0), P(x1, y1, z1), f)!;
+        object ListOf(params object[] members)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(tuple))!;
+            foreach (object m in members) list.Add(m);
+            return list;
+        }
+        (double[][] V, int[][] F) Run(object members, double radius)
+        {
+            object result = build.Invoke(null, new object?[] { members, radius, 6 })!;
+            Type t = result.GetType();
+            return ((double[][])t.GetField("Item1")!.GetValue(result)!, (int[][])t.GetField("Item2")!.GetValue(result)!);
+        }
+
+        (double[][] v, int[][] f) = Run(ListOf(Member(0, 0, 0, 0, 0, 2, 5.0)), 0.1);
+        if (v.Length != 12) throw new InvalidOperationException($"A six-sided prism has 12 vertices; got {v.Length}.");
+        if (f.Count(x => x.Length == 4) != 6 || f.Count(x => x.Length == 3) != 8)
+            throw new InvalidOperationException($"Six side quads and eight cap triangles; got {f.Count(x => x.Length == 4)} quads and {f.Count(x => x.Length == 3)} triangles.");
+        foreach (double[] p in v)
+        {
+            double r = Math.Sqrt((p[0] * p[0]) + (p[1] * p[1]));
+            if (Math.Abs(r - 0.1) > 1.0e-9) throw new InvalidOperationException($"Every vertex sits at the radius; one is at {r:0.######}.");
+            if (Math.Abs(p[2]) > 1.0e-9 && Math.Abs(p[2] - 2.0) > 1.0e-9) throw new InvalidOperationException($"Cap vertices sit at the member's ends; one is at z {p[2]:0.######}.");
+        }
+        foreach (int[] face in f)
+            foreach (int i in face)
+                if (i < 0 || i >= v.Length) throw new InvalidOperationException("A face indexes outside the vertices.");
+        (double[][] none, int[][] noneF) = Run(ListOf(Member(1, 1, 1, 1, 1, 1, 1.0)), 0.1);
+        if (none.Length != 0 || noneF.Length != 0) throw new InvalidOperationException("A zero-length member draws nothing.");
+        (double[][] two, int[][] twoF) = Run(ListOf(Member(0, 0, 0, 0, 0, 2, 1.0), Member(1, 0, 0, 3, 0, 0, 1.0)), 0.1);
+        if (two.Length != 24) throw new InvalidOperationException($"Two members give 24 vertices; got {two.Length}.");
+        if (twoF.SelectMany(x => x).Any(i => i < 0 || i >= 24)) throw new InvalidOperationException("Two members' faces index within 24 vertices.");
+
+        // A DIAGONAL member. Every case above lies on an axis, so all of
+        // them would pass against a prism whose cap circle was drawn in
+        // world XY and only stretched along the member: the circle has to
+        // be perpendicular to the MEMBER, and this is where that shows.
+        (double[][] diagonal, int[][] _) = Run(ListOf(Member(0, 0, 0, 1, 1, 1, 1.0)), 0.1);
+        if (diagonal.Length != 12)
+            throw new InvalidOperationException($"A diagonal member is a prism too; got {diagonal.Length} vertices.");
+        double unit = 1.0 / Math.Sqrt(3.0);
+        for (int i = 0; i < diagonal.Length; i++)
+        {
+            double end = i < 6 ? 0.0 : 1.0;
+            double ox = diagonal[i][0] - end;
+            double oy = diagonal[i][1] - end;
+            double oz = diagonal[i][2] - end;
+            double along = (ox * unit) + (oy * unit) + (oz * unit);
+            double across = Math.Sqrt((ox * ox) + (oy * oy) + (oz * oz));
+            if (Math.Abs(along) > 1.0e-9)
+                throw new InvalidOperationException(
+                    $"Cap vertex {i} is {along:0.#########} off its cap plane: the "
+                    + "circle must be perpendicular to the member, not to world Z.");
+            if (Math.Abs(across - 0.1) > 1.0e-9)
+                throw new InvalidOperationException(
+                    $"Cap vertex {i} sits at {across:0.#########} from the axis point, not at the radius asked.");
+        }
+
+        // The document beside the mesh. The radius it declares is the one
+        // the mesh was built at, floored once for both, and a member too
+        // short to be drawn is absent from the members list as well as
+        // from the prisms, so the nth of one is the nth of the other.
+        MethodInfo json = RequirePublicStatic(mesh, "Json");
+        string Document(object members, double radius) =>
+            (string)json.Invoke(null, new object?[] { members, radius, "kN", 1.0 })!;
+        JsonNode skipped = JsonNode.Parse(
+            Document(ListOf(Member(1, 1, 1, 1, 1, 1, 1.0)), 0.1))!;
+        if (skipped["vertices"]!.AsArray().Count != 0 ||
+            skipped["members"]!.AsArray().Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A member too short to draw is skipped in BOTH lists; the "
+                + "document listed one of them.");
+        }
+        JsonNode clamped = JsonNode.Parse(
+            Document(ListOf(Member(0, 0, 0, 0, 0, 2, 1.0)), 0.0))!;
+        if (Math.Abs(clamped["radius"]!.GetValue<double>() - 1.0e-9) > 1.0e-18)
+        {
+            throw new InvalidOperationException(
+                "The radius in the document is the one the mesh was built at: "
+                + "a zero radius is floored once, for both, not floored inside "
+                + $"the mesh and declared raw beside it (got {clamped["radius"]!.GetValue<double>()}).");
+        }
+    }
+
+    private static void ValidateLiveUploader(Assembly plugin)
+    {
+        Type uploader = plugin.GetType("Ananke.COMPAS.Native.Components.LiveUploader", throwOnError: true)!;
+        MethodInfo delay = RequirePublicStatic(uploader, "RetryDelay");
+        MethodInfo route = RequirePublicStatic(uploader, "RouteFor");
+        MethodInfo outcome = RequirePublicStatic(uploader, "Outcome");
+        MethodInfo key = RequirePublicStatic(uploader, "SetKey");
+        int? Delay(int attempt) => (int?)delay.Invoke(null, new object?[] { attempt });
+        if (Delay(0) != 2000 || Delay(1) != 4000 || Delay(2) != 8000 || Delay(3) is not null)
+            throw new InvalidOperationException("The retry schedule is 2000, 4000, 8000 then null.");
+        string Route(string kind, string name, string studio) => (string)route.Invoke(null, new object?[] { kind, name, studio })!;
+        if (Route("contract", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/exports/arch/contract")
+            throw new InvalidOperationException($"Contract route wrong: {Route("contract", "arch", "http://127.0.0.1:8600")}.");
+        if (Route("tessellation", "arch", "http://127.0.0.1:8600/") != "http://127.0.0.1:8600/api/uploads/exports/arch/tessellation")
+            throw new InvalidOperationException("A trailing slash on Studio is tolerated.");
+        if (Route("columns", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/columns/arch-columns.json")
+            throw new InvalidOperationException($"Columns route wrong: {Route("columns", "arch", "http://127.0.0.1:8600")}.");
+        // The study name is free text off the canvas and lands in a URL
+        // path segment. Interpolated raw, a space breaks the URI and a #
+        // cuts the rest of the route off as a fragment, so the PUT goes
+        // somewhere nobody asked for and the author sees only a 404.
+        if (Route("contract", "my study#1", "http://127.0.0.1:8600") !=
+            "http://127.0.0.1:8600/api/uploads/exports/my%20study%231/contract")
+        {
+            throw new InvalidOperationException(
+                "A Name with a space and a # must be escaped into the route; got "
+                + Route("contract", "my study#1", "http://127.0.0.1:8600") + ".");
+        }
+        if (Route("columns", "my study#1", "http://127.0.0.1:8600") !=
+            "http://127.0.0.1:8600/api/uploads/columns/my%20study%231-columns.json")
+        {
+            throw new InvalidOperationException(
+                "The columns route escapes the Name too; got "
+                + Route("columns", "my study#1", "http://127.0.0.1:8600") + ".");
+        }
+        string Verdict(int status, int attempt) => (string)outcome.Invoke(null, new object?[] { status, attempt })!;
+        if (Verdict(200, 0) != "stored" || Verdict(204, 5) != "stored") throw new InvalidOperationException("2xx is stored.");
+        if (Verdict(409, 0) != "retry" || Verdict(409, 2) != "retry") throw new InvalidOperationException("409 retries while the schedule has entries.");
+        if (Verdict(409, 3) != "deferred") throw new InvalidOperationException("409 after the schedule is deferred.");
+        if (Verdict(400, 0) != "refused" || Verdict(500, 0) != "refused") throw new InvalidOperationException("Anything else is refused.");
+        // What a deferred kind says it is waiting behind. The studio's
+        // 409 body names the run it is busy with, and that run id is what
+        // the author looks for in the studio; pasting the document raw
+        // makes them read JSON off a component chin.
+        MethodInfo deferred = RequirePublicStatic(uploader, "DeferredDetail");
+        string Detail(string body) => (string)deferred.Invoke(null, new object?[] { body })!;
+        if (Detail("{\"run\": \"r-42\"}") != "(run r-42)")
+            throw new InvalidOperationException($"A 409 body naming a run reads as the run; got {Detail("{\"run\": \"r-42\"}")}.");
+        if (Detail("study is busy") != "study is busy")
+            throw new InvalidOperationException("A body that is not that JSON falls back to the body itself.");
+        if (Detail("{\"detail\": \"busy\"}") != "{\"detail\": \"busy\"}")
+            throw new InvalidOperationException("JSON carrying no run falls back to the body itself.");
+        // The set key. It decides whether a re-solve sends again, and the
+        // component expires itself on every outcome, so a key that cannot
+        // repeat is an unbounded loop of worker calls and PUTs rather than
+        // a cosmetic defect. What it must read: the Name, the Studio and
+        // every kind by name and by content. What it must NOT read: the
+        // compas document's own bytes, because the worker's json_dumps
+        // stamps a fresh uuid4 into every serialisation of the same Result
+        // (compas/data/data.py), so those bytes differ on every solve of
+        // an unchanged definition.
+        string Key(string name, string studio, List<(string, string)> set) =>
+            (string)key.Invoke(null, new object?[] { name, studio, set })!;
+        const string Studio = "http://127.0.0.1:8600";
+        var a = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"aaa\"}") };
+        var b = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"aaa\"}") };
+        if (Key("arch", Studio, a) != Key("arch", Studio, b))
+            throw new InvalidOperationException("Equal sets key the same.");
+        // The loop guard itself: same Result, second solve, a fresh guid
+        // inside the compas document and nothing else changed.
+        var freshGuid = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"bbb\"}") };
+        if (Key("arch", Studio, a) != Key("arch", Studio, freshGuid))
+        {
+            throw new InvalidOperationException(
+                "Two sets differing ONLY in the compas kind's JSON must key the SAME: "
+                + "the worker mints a fresh uuid per serialisation, so a key that read "
+                + "those bytes could never repeat and the expire-on-outcome loop would "
+                + "never terminate.");
+        }
+        // What the key does read, one part at a time.
+        var changedContract = new List<(string, string)> { ("contract", "{\"a\":2}"), ("compas", "{\"guid\":\"aaa\"}") };
+        if (Key("arch", Studio, a) == Key("arch", Studio, changedContract))
+            throw new InvalidOperationException("A set differing in the contract kind's JSON keys differently.");
+        var withoutCompas = new List<(string, string)> { ("contract", "{\"a\":1}") };
+        if (Key("arch", Studio, a) == Key("arch", Studio, withoutCompas))
+        {
+            throw new InvalidOperationException(
+                "A set carrying a compas kind and the same set without one must key "
+                + "differently: the compas kind's PRESENCE counts even though its bytes "
+                + "do not, so a set recovered after a worker failure is sent.");
+        }
+        if (Key("arch", Studio, a) == Key("arch-b", Studio, a))
+            throw new InvalidOperationException("The same set under a different Name keys differently.");
+        if (Key("arch", Studio, a) == Key("arch", "http://127.0.0.1:8601", a))
+            throw new InvalidOperationException("The same set going to a different Studio keys differently.");
+        var d = new List<(string, string)> { ("contract", "{\"a\":1}") };
+        var e = new List<(string, string)> { ("compas", "{\"a\":1}") };
+        if (Key("arch", Studio, d) == Key("arch", Studio, e))
+            throw new InvalidOperationException("A set differing only in Kind keys differently.");
+    }
+
+    /// <summary>
+    /// Export's Path resolution, which decides where a whole set of files
+    /// lands. Reflection only: the method is pure (it reads
+    /// <c>Directory.Exists</c> but creates nothing and writes nothing), so
+    /// this asserts against paths that do not exist on this machine.
+    /// </summary>
+    private static void ValidateExportWriteFolder(Assembly plugin)
+    {
+        Type export = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo resolve = export.GetMethod(
+            "TryResolveWriteFolder",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.TryResolveWriteFolder was not found.");
+        (bool Ok, string Folder, string Refusal) Resolve(string path)
+        {
+            object?[] args = { path, null, null };
+            bool ok = (bool)resolve.Invoke(null, args)!;
+            return (ok, (string)args[1]!, (string)args[2]!);
+        }
+
+        // A folder the author means to create: read as a file path, the
+        // whole set landed one level up, silently, beside it.
+        (bool ok, string folder, string refusal) = Resolve(@"C:\ananke-smoke-nowhere\my-study");
+        if (!ok || folder != @"C:\ananke-smoke-nowhere\my-study")
+            throw new InvalidOperationException(
+                $"An extensionless Path is the folder, whether or not it exists yet; got ok={ok}, folder '{folder}'.");
+        (ok, folder, refusal) = Resolve(@"C:\ananke-smoke-nowhere\my-study\");
+        if (!ok || folder.TrimEnd('\\') != @"C:\ananke-smoke-nowhere\my-study")
+            throw new InvalidOperationException(
+                $"A trailing separator is a folder; got ok={ok}, folder '{folder}'.");
+        (ok, folder, refusal) = Resolve(@"C:\ananke-smoke-nowhere\study.json");
+        if (!ok || folder != @"C:\ananke-smoke-nowhere")
+            throw new InvalidOperationException(
+                $"A Path with an extension uses its own directory; got ok={ok}, folder '{folder}'.");
+        (ok, folder, refusal) = Resolve("  C:\\ananke-smoke-nowhere\\my-study  ");
+        if (!ok || folder != @"C:\ananke-smoke-nowhere\my-study")
+            throw new InvalidOperationException("The Path is trimmed before it is read.");
+        // A bare name has no folder in it at all, so the set would land in
+        // the process working directory, which under Rhino is not
+        // somewhere an author can find.
+        (ok, folder, refusal) = Resolve("my-study");
+        if (ok || refusal.Length == 0 || !refusal.Contains("my-study", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"A bare relative name is refused, naming the path; got ok={ok}, refusal '{refusal}'.");
+        (ok, folder, refusal) = Resolve("study.json");
+        if (ok || refusal.Length == 0)
+            throw new InvalidOperationException(
+                $"A bare file name is refused; got ok={ok}, refusal '{refusal}'.");
+
+        // A relative Path with directories of its own is not a bare name,
+        // but it is still not rooted: today it resolves against the
+        // process working directory the same way a bare name would, which
+        // under Rhino is nobody's intent. Refused, naming the path, the
+        // same as a bare name.
+        (ok, folder, refusal) = Resolve(@"sub\study");
+        if (ok || refusal.Length == 0 ||
+            !refusal.Contains(@"sub\study", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"A non-rooted relative Path is refused, naming the path; got ok={ok}, refusal '{refusal}'.");
+        // A relative Path with an extension already fell out refused
+        // before this rule existed, but for an unrelated reason (the
+        // pre-rule depth check happened to reject it once its own
+        // directory name was peeled off). The refusal text below is
+        // specific to the rootedness rule, so this assertion still fails
+        // against the pre-rule code even though its ok/false verdict
+        // alone would not have.
+        (ok, folder, refusal) = Resolve(@"sub\study.json");
+        if (ok || refusal.Length == 0 ||
+            !refusal.Contains("rooted", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"A non-rooted relative Path with an extension is refused for being unrooted; got ok={ok}, refusal '{refusal}'.");
+
+        // The rooted equivalent of each relative Path above is accepted,
+        // with the same folder the existing rooted rules already give:
+        // an extensionless Path is the folder itself, a Path with an
+        // extension uses its own directory. Built from a temp folder path
+        // so the check needs nothing on disk; Directory.Exists on a path
+        // that does not exist is simply false, which these rules already
+        // tolerate.
+        string rootedCheckRoot = Path.Combine(
+            Path.GetTempPath(), "ananke-smoke-rooted-check");
+        string rootedNoExt = Path.Combine(rootedCheckRoot, "sub", "study");
+        (ok, folder, refusal) = Resolve(rootedNoExt);
+        if (!ok || folder != rootedNoExt)
+            throw new InvalidOperationException(
+                $"A rooted extensionless Path is still the folder itself; got ok={ok}, folder '{folder}'.");
+        string rootedWithExt = Path.Combine(
+            rootedCheckRoot, "sub", "study.json");
+        (ok, folder, refusal) = Resolve(rootedWithExt);
+        if (!ok || folder != Path.Combine(rootedCheckRoot, "sub"))
+            throw new InvalidOperationException(
+                $"A rooted Path with an extension still uses its own directory; got ok={ok}, folder '{folder}'.");
     }
 
     /// <summary>

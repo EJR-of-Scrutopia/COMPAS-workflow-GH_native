@@ -405,6 +405,17 @@ public abstract class NativeComponentBase : GH_Component
     }
 
     /// <summary>
+    /// Whether the archive this component was read from carried a
+    /// different number of ports than it registers today: the finding the
+    /// load-time Warning announces, offered to the component so it can act
+    /// on it and not only say it. A component whose solve has an effect
+    /// outside the canvas needs that, because the wires may now sit on the
+    /// wrong ports and a Warning cannot recall a side effect that has
+    /// already gone out.
+    /// </summary>
+    protected bool PortsMovedOnLoad => _portsMoved is not null;
+
+    /// <summary>
     /// Says again, on every solution, what the read found: a message added
     /// during Read does not survive the first solve, because expiring a
     /// component clears its runtime messages before SolveInstance runs, and
@@ -529,6 +540,17 @@ public abstract class NativeTaskComponentBase<TResult> :
         }
         return result;
     }
+
+    /// <summary>
+    /// Whether the archive this component was read from carried a
+    /// different number of ports than it registers today: the finding the
+    /// load-time Warning announces, offered to the component so it can act
+    /// on it and not only say it. A component whose solve has an effect
+    /// outside the canvas needs that, because the wires may now sit on the
+    /// wrong ports and a Warning cannot recall a side effect that has
+    /// already gone out.
+    /// </summary>
+    protected bool PortsMovedOnLoad => _portsMoved is not null;
 
     /// <summary>
     /// Says again, on every solution, what the read found: a message added

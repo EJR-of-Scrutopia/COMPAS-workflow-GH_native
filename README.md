@@ -61,13 +61,14 @@ The native v0.2 vertical slice contains thirteen components:
                                                  diagnostics (feeds Export's
                                                  Cells/Courses)
   Export       RES,
-               Format (contract | compas |
-               tessellation),
                Path (optional), Write,
                Name (optional),
-               Cells (optional, tessellation),
-               Courses (optional,
-               tessellation)                   -> JSON text, written file path
+               Cells (optional, flattened),
+               Courses (optional, flattened),
+               Live, Studio (optional),
+               Column Radius (optional)        -> Contract JSON, COMPAS JSON,
+                                                  Tessellation JSON, Columns
+                                                  JSON, Written, Uploaded
 
 90 System
   Backend Health                              -> ready, packages,
@@ -176,9 +177,10 @@ required for that half of the workflow.
 For the Armadillo Vault's own cutting pattern -- a mesh aligned with the
 thrust flow whose dual becomes the blocks, so every joint runs across the
 thrust -- wire `07 Delivery > Armadillo Dual` from RES ahead of Export:
-its C and CO outputs feed Export's Cells and Courses, and Export's
-Tessellation format writes the `<Name>-tessellation.json` sidecar Bench
-Studio imports as an authored cut. `Armadillo Dual` aligns to the
+its C and CO outputs feed Export's Cells and Courses, and wiring Cells
+is what adds the tessellation kind, so Export writes the
+`<Name>-tessellation.json` sidecar Bench Studio imports as an authored
+cut. `Armadillo Dual` aligns to the
 result's own member forces, falling back to the form/force diagram pair
 when forces are absent; it refuses rather than guessing a curvature when
 neither is present. S defaults to 0.6 m: the smallest target voussoir
