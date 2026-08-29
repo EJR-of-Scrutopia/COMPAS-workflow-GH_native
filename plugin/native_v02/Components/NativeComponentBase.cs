@@ -261,6 +261,88 @@ internal static class ParameterIdentity
                 parameter.DataMapping = snapshot.DataMapping;
         }
     }
+
+    /// <summary>
+    /// The warning a component owes a canvas whose saved ports are not the
+    /// ports it registers today, or null when the two agree.
+    ///
+    /// Grasshopper matches archived parameter chunks to live parameters BY
+    /// INDEX, and a wire is stored on the RECEIVING port as the source's
+    /// instance guid, so the archived guid of old slot i is handed to
+    /// whatever port now stands at slot i. A reshaped component therefore
+    /// does not come back with broken wires: they reattach, silently
+    /// wherever the two ports share a type or cast across, and
+    /// <see cref="Restore"/> then relabels the port with its registered
+    /// name, so the canvas looks self-consistent while it carries a
+    /// different quantity. An archived slot beyond the new range is the
+    /// only one that visibly breaks. Nothing else in a reopened file says
+    /// the surface moved, so this does.
+    ///
+    /// Both pairs agreeing is the ordinary case and stays silent, so a
+    /// file saved against the current surface is charged nothing.
+    /// </summary>
+    internal static string? Mismatch(
+        int archivedInputs,
+        int archivedOutputs,
+        int registeredInputs,
+        int registeredOutputs)
+    {
+        if (archivedInputs == registeredInputs &&
+            archivedOutputs == registeredOutputs)
+        {
+            return null;
+        }
+        return
+            "this component's ports changed since the file was saved: " +
+            $"{archivedInputs} inputs and {archivedOutputs} outputs " +
+            $"archived, {registeredInputs} and {registeredOutputs} " +
+            "registered; wires may now sit on the wrong port, check every " +
+            "one";
+    }
+
+    /// <summary>
+    /// The port counts one component's archive carries, or nulls where it
+    /// carries none.
+    ///
+    /// Grasshopper writes them as the "InputCount" and "OutputCount" items
+    /// of a "ParameterData" chunk sitting directly under the container
+    /// chunk a component's Read is handed. That shape was read off a real
+    /// definition rather than assumed: converting
+    /// plugin/definitions/ananke_equilibrium_v01.gh through
+    /// GH_Archive.Serialize_Xml gives Definition, DefinitionObjects,
+    /// Object, Container, ParameterData, holding InputCount, the InputId
+    /// guids, OutputCount and the OutputId guids.
+    ///
+    /// An archive without that chunk, or without those items, is one this
+    /// cannot speak about: nulls come back and the caller says nothing
+    /// rather than inventing a mismatch.
+    /// </summary>
+    internal static (int? Inputs, int? Outputs) ArchivedCounts(
+        GH_IReader? reader)
+    {
+        if (reader is null)
+            return (null, null);
+        try
+        {
+            if (!reader.ChunkExists("ParameterData"))
+                return (null, null);
+            GH_IReader? chunk = reader.FindChunk("ParameterData");
+            if (chunk is null)
+                return (null, null);
+            int inputs = 0;
+            int outputs = 0;
+            return (
+                chunk.TryGetInt32("InputCount", ref inputs) ? inputs : null,
+                chunk.TryGetInt32("OutputCount", ref outputs) ? outputs : null);
+        }
+        catch (Exception)
+        {
+            // A file that cannot be interrogated must still open. This is
+            // an advisory count, and no advisory is worth failing a
+            // document read for.
+            return (null, null);
+        }
+    }
 }
 
 public abstract class NativeComponentBase : GH_Component
@@ -268,6 +350,7 @@ public abstract class NativeComponentBase : GH_Component
     private readonly string _iconName;
     private bool _readFromArchive;
     private bool _suggestedListsAttempted;
+    private string? _portsMoved;
 
     protected NativeComponentBase(
         string name,
@@ -303,7 +386,42 @@ public abstract class NativeComponentBase : GH_Component
         bool result = base.Read(reader);
         ParameterIdentity.Restore(Params.Input, inputs);
         ParameterIdentity.Restore(Params.Output, outputs);
+        // The snapshots were taken before the read, so their lengths are
+        // the REGISTERED counts whatever the archive did to Params.
+        (int? archivedInputs, int? archivedOutputs) =
+            ParameterIdentity.ArchivedCounts(reader);
+        if (archivedInputs is int fromFileIn &&
+            archivedOutputs is int fromFileOut)
+        {
+            _portsMoved = ParameterIdentity.Mismatch(
+                fromFileIn, fromFileOut, inputs.Length, outputs.Length);
+            if (_portsMoved is not null)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning, _portsMoved);
+            }
+        }
         return result;
+    }
+
+    /// <summary>
+    /// Says again, on every solution, what the read found: a message added
+    /// during Read does not survive the first solve, because expiring a
+    /// component clears its runtime messages before SolveInstance runs, and
+    /// a warning nobody ever sees is not a warning. Guarded on the message
+    /// already standing so it cannot pile up if that ever stops being true.
+    /// </summary>
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        if (_portsMoved is null)
+            return;
+        if (RuntimeMessages(GH_RuntimeMessageLevel.Warning)
+            .Contains(_portsMoved))
+        {
+            return;
+        }
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, _portsMoved);
     }
 
     public override void AddedToDocument(GH_Document document)
@@ -357,6 +475,7 @@ public abstract class NativeTaskComponentBase<TResult> :
     private readonly string _iconName;
     private bool _readFromArchive;
     private bool _suggestedListsAttempted;
+    private string? _portsMoved;
 
     protected NativeTaskComponentBase(
         string name,
@@ -393,7 +512,42 @@ public abstract class NativeTaskComponentBase<TResult> :
         bool result = base.Read(reader);
         ParameterIdentity.Restore(Params.Input, inputs);
         ParameterIdentity.Restore(Params.Output, outputs);
+        // The snapshots were taken before the read, so their lengths are
+        // the REGISTERED counts whatever the archive did to Params.
+        (int? archivedInputs, int? archivedOutputs) =
+            ParameterIdentity.ArchivedCounts(reader);
+        if (archivedInputs is int fromFileIn &&
+            archivedOutputs is int fromFileOut)
+        {
+            _portsMoved = ParameterIdentity.Mismatch(
+                fromFileIn, fromFileOut, inputs.Length, outputs.Length);
+            if (_portsMoved is not null)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning, _portsMoved);
+            }
+        }
         return result;
+    }
+
+    /// <summary>
+    /// Says again, on every solution, what the read found: a message added
+    /// during Read does not survive the first solve, because expiring a
+    /// component clears its runtime messages before SolveInstance runs, and
+    /// a warning nobody ever sees is not a warning. Guarded on the message
+    /// already standing so it cannot pile up if that ever stops being true.
+    /// </summary>
+    protected override void BeforeSolveInstance()
+    {
+        base.BeforeSolveInstance();
+        if (_portsMoved is null)
+            return;
+        if (RuntimeMessages(GH_RuntimeMessageLevel.Warning)
+            .Contains(_portsMoved))
+        {
+            return;
+        }
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, _portsMoved);
     }
 
     public override void AddedToDocument(GH_Document document)

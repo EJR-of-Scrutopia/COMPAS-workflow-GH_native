@@ -40,6 +40,7 @@ the component category; the white letters identify the individual component.
 | TG | `tna_geometry` | TNA Geometry | `tna_geometry.png` |
 | TM | `tna_members` | TNA Members | `tna_members.png` |
 | TA | `tna_actions` | TNA Actions | `tna_actions.png` |
+| SK | `skin` | Skin | `skin.png` |
 
 ## Regeneration and validation
 
@@ -54,3 +55,12 @@ python plugin/icons/generate_icons.py --check
 The generation command checks that every component in `plugin/components.toml`
 has exactly one mapping and that its category agrees with the manifest. Both
 commands validate that every image is a 24 × 24, 8-bit RGBA PNG.
+
+`generate_icons.py` OWNS every file `icon-map.json` lists: a plain run
+rewrites each one from that map's label and category fill. The mould family
+(`stress_analysis`, `column_finder`, `mould_animate`, `diagnose`, `skin`) is
+drawn flat rather than as a rounded badge and does not come from this
+generator; `diagnose.png` and `skin.png` have scripts of their own beside it
+(`make_diagnose_icon.py`, `make_skin_icon.py`). Those keys are therefore
+deliberately absent from `icon-map.json`: listing one would hand its PNG to
+two generators, and the next plain run would overwrite it.

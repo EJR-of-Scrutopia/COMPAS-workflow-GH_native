@@ -58,6 +58,10 @@ namespace Ananke.COMPAS.Native.Components
             IEnumerable<IEnumerable<int>> branches) =>
             Build(branches, value => new GH_Integer(value));
 
+        public static GH_Structure<GH_Boolean> Booleans(
+            IEnumerable<IEnumerable<bool>> branches) =>
+            Build(branches, value => new GH_Boolean(value));
+
         public static GH_Structure<GH_String> Strings(
             IEnumerable<IEnumerable<string>> branches) =>
             Build(branches, value => new GH_String(value));
