@@ -24,8 +24,8 @@ Monitor, is applied to the letter here, and Skin takes the cells.
 | Slot | Name | Nick | Type | Default | Meaning |
 | --- | --- | --- | --- | --- | --- |
 | 0 | Result | RES | ResultParam item | required | From Columns (built) or Animate (this frame). |
-| 1 | EI | EI | number | 0 | Bar bending stiffness, N.m2; zero reports shape only. Unchanged. |
-| 2 | EA | EA | number, optional | none | Axial stiffness of a principal bar, N; wired, it gives unstrained spool lengths. |
+| 1 | EI | EI | number | 0 | Bar bending stiffness, N.m2; zero reports shape only. The Result's forces are converted to newtons (`MonitorMath.ToNewtons`) before they meet it. |
+| 2 | EA | EA | number, optional | none | Axial stiffness of a principal bar, N; wired, it gives unstrained spool lengths. The Result's forces are converted to newtons before they meet it. |
 | 3 | Tolerance | Tol | number | 5 | Deviation tolerance in millimetres for the reachability flag. |
 | 4 | Cable Capacity | CC | number, optional | none | Allowable tension per cable, N; wired, Cable Utilisation is filled. |
 | 5 | Column Capacity | CO | number, optional | none | Allowable compression per column member, N; wired, Column Utilisation is filled. |
@@ -94,7 +94,8 @@ In `MonitorComponents.cs`, static, arithmetic only:
 - `MonitorMath.AnchorSplit(Vector3d reaction, Vector3d axis) -> (double Along, double Across)`.
 - `MonitorMath.TensionerAxis(int anchor, Point3d[] v, List<int>[] neighbours) -> Vector3d` (unit mean direction of incident members; ZAxis when none).
 - `MonitorMath.DeviationStats(IReadOnlyList<double> mm) -> (double Rms, double Max, double P95)` (p95 by nearest-rank on absolute values; zeros on an empty list).
-- `MonitorMath.UnstrainedLength(double strained, double force, double EA) -> double` (`strained / (1 + force / EA)`, `strained` when EA is not positive or the denominator is not positive).
+- `MonitorMath.UnstrainedLength(double strained, double force, double EA) -> double` (`strained / (1 + force / EA)`, `strained` when EA is not positive or the denominator is not positive; the caller passes the force in newtons).
+- `MonitorMath.ToNewtons(string? unit) -> double?`: 1 for N, 1000 for kN, case-insensitive after trimming, null for anything else; every place a Result force meets a newton-denominated input (capacities, EA, EI) goes through it, and an unknown unit leaves the stiffness readings unscaled with a warning and empties the utilisations.
 - `ResultTables.Residuals(ResultDto) -> Vector3d[]`, one per vertex, zero where the Result carries none.
 - `ParameterIdentity.Mismatch(int archivedInputs, int archivedOutputs, int registeredInputs, int registeredOutputs) -> string?`, the warning every reshaped component raises on load (section 9).
 
