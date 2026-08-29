@@ -154,8 +154,9 @@ used before this redesign (which read 04/06/07/08 with a gap): `03 Graphic
 Statics` disappears because its display half folds into `Display` and a
 future AGS solver belongs in `02 Form Finding`, which is where COMPAS
 classifies `compas_ags` anyway; `05 Visualisation` becomes `03 Visualise`,
-now hosting `Display`, `Style`, and `Deconstruct`; the reserved families close
-up to `04 Masonry`, `05 Engineering`, and `06 Fabrication`, with `Delivery` at
+now hosting `Display`, `Style`, `Deconstruct`, `Animate`, `Columns`,
+`Monitor`, `Skin`, and `Diagnose`; the reserved families close up to
+`04 Masonry`, `05 Engineering`, and `06 Fabrication`, with `Delivery` at
 `07`. Subcategory is display grouping only and component identity is the
 GUID, so regrouping never invalidates a saved definition; the versioning
 policy's breaking-change rules govern ports and semantics, not tabs.
@@ -317,22 +318,28 @@ demands in the selected scale, not material capacity or utilisation. See
 
 `Deconstruct` replaced the four old query components (`TNA Geometry`,
 `TNA Members`, `TNA Actions`, `Result Breakdown`) with one component that
-reads either solver's unified `Result`:
+reads either solver's unified `Result`. It carries the GEOMETRY and nothing
+else:
 
 ```text
 TNA Solve.Result  or  FD Solve.Result
     --> Deconstruct --> Thrust Mesh / Member Lines / Form Lines /
-                         q / H / F / Force State / Member IDs / Node IDs /
-                         Support Points / Load Points / Load Vectors /
-                         Reaction Points / Reaction Vectors / Residuals /
-                         Diagnostics / Report
+                         Member IDs / Node IDs / Support Points /
+                         Load Points / Load Vectors / Reaction Points /
+                         Reaction Vectors / Columns / Heads / Feet
 ```
+
+Every number that used to leave this component (`q`, `H`, `F`, force state,
+residuals) is on **Monitor**, branched and ordered identically, so a line at
+branch b item i there and a number at branch b item i here are the same
+member; the cells of the surface are on **Skin**; and the words, including
+everything a Result cannot answer, are on **Diagnose**.
 
 There is no separate bridge component or generic intermediate type:
 `Deconstruct` accepts the same `Result` envelope both solvers return.
-Reciprocal-only streams (Thrust Mesh, Form Lines, `H`) come out empty for an
-FD result, and Deconstruct's Report states that explicitly rather than
-erroring.
+Reciprocal-only streams (Thrust Mesh, Form Lines) come out empty for an FD
+result, and the diagnostics **Diagnose** prints state that explicitly rather
+than erroring.
 
 ## Naming policy
 
