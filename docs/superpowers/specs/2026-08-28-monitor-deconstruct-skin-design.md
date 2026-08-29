@@ -40,23 +40,23 @@ Monitor output is item i of branch b of the partner.
 | 0 | Member Force | F | member | Deconstruct Member Lines (one branch per bar, infill last) | Signed axial force, N, in the Result's sign convention. |
 | 1 | Force Density | q | member | Member Lines | Force over live length. |
 | 2 | Horizontal Force | H | member | Member Lines | Horizontal component of the member force, from the Result's H when it carries one, else force times the member's plan length over its length. |
-| 3 | Slack | SL | member | Member Lines | True where the force opposes the Result's positive-tension convention (a cable in compression) or is zero. |
+| 3 | Slack | SL | member | Member Lines | Infill only: true where a cable's force opposes the Result's positive-tension convention or is zero. Bar-branch members are always false (a bar is never slack), so the tree stays aligned. The convention string is trimmed before comparison, as the validator trims it. |
 | 4 | Spool Length | SP | bar | Member Lines' bar branches (branch b is bar b, one item) | Strained length at the frame: the sum of the bar's member lengths. |
 | 5 | Unstrained Length | UL | bar | Spool Length | `sum(L / (1 + N / EA))` when EA is wired; empty otherwise. A member whose `1 + N / EA` is not positive contributes its strained length. |
-| 6 | Anchor Along | AA | anchor | Deconstruct Reaction Points (one branch per strip) | Reaction component along the tensioner axis, the unit mean direction of the anchor's incident members into the net; the pull the tensioner takes. |
+| 6 | Anchor Along | AA | anchor | Deconstruct Reaction Points (one branch per strip) | Reaction component along the tensioner axis, the unit mean direction of the anchor's incident members into the net (falling back to the pattern's edges through the grouping adjacency when the net carries none at that anchor, counted in the diagnostic); the pull the tensioner takes. |
 | 7 | Anchor Across | AX | anchor | Reaction Points | The perpendicular remainder's magnitude; what the anchorage carries and the tensioner cannot. |
 | 8 | Tip Reaction | TR | head | Deconstruct Heads (one branch per column tree) | The axial force of the member under the head as a vector along it, pointing up into the head. |
 | 9 | Column Force | CF | column member | Deconstruct Columns | Axial demand, N. Column numbers are read at the frame the Result carries, where Deconstruct draws the built state; the index alignment holds, the geometry may differ. |
 | 10 | Thrust | TH | column member | Columns | Horizontal component, N. |
 | 11 | Lean | LN | column member | Columns | Degrees from vertical. |
-| 12 | Deviation | DV | node | vertex order (flat, one branch) | Signed vertical distance from the frame to the solved state, mm; zero without a frame. |
+| 12 | Deviation | DV | node | vertex order (flat, one branch; no partner tree) | Signed vertical distance from the frame to the solved state, mm; zero without a frame. |
 | 13 | Deviation Stats | DS | three items | none | RMS, max absolute, 95th percentile absolute, mm. |
 | 14 | Reachable | RC | one item | none | True when every node's absolute deviation is within Tolerance. |
 | 15 | Unreachable | UN | node ids | none | The nodes outside Tolerance, ascending. |
 | 16 | Bar Sag | BS | notch | Animate Principal Nodes (one branch per bar, notches in order) | Bending away from straight at each notch, mm, with EI; unchanged mechanism. |
 | 17 | Residuals | E | node | vertex order | The Result's equilibrium residual vector per node, zero where the Result carries none (the FD codec omits supports and exact zeros), assigned by node id (moved from Deconstruct). |
-| 18 | Cable Utilisation | CU | member | Member Lines | absolute force / Cable Capacity when wired; empty otherwise. |
-| 19 | Column Utilisation | CLU | column member | Columns | absolute force / Column Capacity when wired; empty otherwise. |
+| 18 | Cable Utilisation | CU | member | Member Lines | absolute force / Cable Capacity when wired; empty otherwise. The capacity is in newtons whatever the Result's ForceUnit: a kN Result's forces are converted; any other unit gives empty trees and a warning. |
+| 19 | Column Utilisation | CLU | column member | Columns | absolute force / Column Capacity when wired; empty otherwise. Same unit rule as Cable Utilisation. |
 | 20 | Result | RES | item | none | Passthrough with Monitor's diagnostics. |
 
 Bars and cables are told apart as now: a member joining two notches is a
@@ -78,8 +78,13 @@ wired), `monitor.anchor_split` (info: worst across component, the
 anchorage's share), `monitor.deviation` (info: RMS, max, p95; or "no
 frame, deviation zero"), `monitor.reachability` (ok when every node is
 within Tolerance, warning naming the count otherwise),
-`monitor.utilisation` (info: worst cable and column utilisation when
-capacities are wired; "demand not verdict" otherwise; warning above 1).
+`monitor.utilisation` (info: worst INFILL cable and worst column
+utilisation when capacities are wired; "demand not verdict" otherwise;
+warning above 1 or on an unknown force unit), `monitor.column_frame_absent`
+(info: a frame without column nodes, numbers at the built state),
+`monitor.bar_unheld` (warning: runs held at fewer than two notches, whose
+zero sag is not a straight bar). `monitor.thrust_into_ground` says, on a
+part-built frame, that the finished force acts along this frame's lean.
 `monitor.demand_only` stays and says utilisation is the one verdict
 here, and only against a capacity the author supplied.
 
@@ -89,7 +94,9 @@ In `MonitorComponents.cs`, static, arithmetic only:
 - `MonitorMath.AnchorSplit(Vector3d reaction, Vector3d axis) -> (double Along, double Across)`.
 - `MonitorMath.TensionerAxis(int anchor, Point3d[] v, List<int>[] neighbours) -> Vector3d` (unit mean direction of incident members; ZAxis when none).
 - `MonitorMath.DeviationStats(IReadOnlyList<double> mm) -> (double Rms, double Max, double P95)` (p95 by nearest-rank on absolute values; zeros on an empty list).
-- `MonitorMath.UnstrainedLength(double strained, double force, double EA) -> double` (`strained / (1 + force / EA)`, `strained` when EA is not positive).
+- `MonitorMath.UnstrainedLength(double strained, double force, double EA) -> double` (`strained / (1 + force / EA)`, `strained` when EA is not positive or the denominator is not positive).
+- `ResultTables.Residuals(ResultDto) -> Vector3d[]`, one per vertex, zero where the Result carries none.
+- `ParameterIdentity.Mismatch(int archivedInputs, int archivedOutputs, int registeredInputs, int registeredOutputs) -> string?`, the warning every reshaped component raises on load (section 9).
 
 ## 3. Deconstruct (binding)
 
@@ -128,9 +135,16 @@ lines.
 - `plugin/icons/skin.png` (new, 24x24, the family style) and
   `plugin/icons/make_skin_icon.py`; `plugin/icons/icon-map.json` if the
   map lists icons.
+- `plugin/native_v02/Components/NativeComponentBase.cs`: the archived
+  parameter-count warning on load (section 9).
 - `tests/native_smoke/Program.cs`: section 7.
 - `docs/component-taxonomy.md`: Monitor, Deconstruct rows; Skin row
-  added.
+  added; the result-queries block and tab narrative brought up to date.
+- `plugin/icons/LEGEND.md`: the skin row. `icon-map.json` is the
+  manifest `generate_icons.py` regenerates from, not a registry: listing
+  `skin` there would hand the file to two generators, and its alphabet
+  has no K. The mould family's icons (stress_analysis, column_finder,
+  mould_animate, diagnose, skin) stay outside it by design.
 
 Export, Animate, Columns, Diagnose and the contracts are untouched.
 
@@ -145,6 +159,13 @@ Export, Animate, Columns, Diagnose and the contracts are untouched.
 - `VisualiseContracts` gains Monitor (six inputs, twenty-one outputs by
   name), Skin (two inputs, two outputs) and the trimmed Deconstruct list.
 - Component count becomes 19; parameter count stays 12.
+- `ValidateMonitorMath` also drives AnchorSplit with a non-unit axis and
+  a negative dot, DeviationStats with a negative maximum and an empty
+  field (all three zeros), and UnstrainedLength through its guards.
+- `ValidateResultTablesOrder` drives the FD and the TNA path (edge-state
+  Id order disagreeing with EquilibriumEdgeId order; a zero reaction
+  dropped) and `ResultTables.Residuals` by node.
+- `ValidateParameterMismatch` drives `ParameterIdentity.Mismatch`.
 - `ValidateExportCoursesValidation` and
   `ValidateExportTessellationJsonOptions` unchanged.
 
@@ -167,8 +188,22 @@ Export, Animate, Columns, Diagnose and the contracts are untouched.
 
 ## 9. What breaks on the canvas
 
-Every wire from Monitor and every Deconstruct wire after Form Lines
-needs reconnecting once. Export's Cells and Courses reconnect to Skin.
+Deconstruct lost one input and seven outputs, so every output after
+Form Lines renumbers; Monitor's thirteen flat outputs became twenty-one
+trees with Result at slot 20. Grasshopper reattaches saved wires BY
+INDEX, so a wire on an old slot lands on whatever is there now: on
+Deconstruct old slot 9 (Support Points) lands on Reaction Vectors, old
+11 (Load Vectors) on Heads and old 12 (Reaction Points) on Feet, all
+point or vector trees, so nothing errors and the drawing is wrong; on
+Monitor the old Result at 11 lands on Lean and the old number ports
+carry different quantities. That is worse than a broken wire, so both
+base classes now compare the archived input and output counts with the
+registered ones on load and raise a Warning naming them on the
+component ("wires may now sit on the wrong port, check every one"). A
+saved-file compatibility test is not built: the harness has no
+Grasshopper archive reader; the Mismatch function is measured instead.
+Export's Cells and Courses reconnect to Skin, flattened (Export flattens
+them itself in sub-project 6).
 
 ## 10. Out of scope
 
