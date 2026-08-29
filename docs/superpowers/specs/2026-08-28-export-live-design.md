@@ -149,9 +149,13 @@ one-shot Button behaviour (latch the last write) stays.
   unreachable set does not re-open the expire loop on every solve; a
   cancelled send does not latch it. The skipped set's outcome text is
   `unchanged since: <the outcome that still stands>; toggle Live or
-  change the Result to send again`, and the owner is told once, so the
-  canvas leaves `sending` and settles rather than expiring for as long
-  as Live is on.
+  change the Result to send again`. The skip is decided when the set is
+  ENQUEUED, on the solve thread, not after the debounce: the component
+  reads the uploader's state in the same solve that enqueues, so a
+  repeat parked as pending would read as `sending` for a send that is
+  never going to happen, and the solve an outcome asks for enqueues that
+  very repeat. Deciding it at the enqueue is what makes the cycle settle
+  in one solve.
 - Neither thread the uploader owns may throw where it stands. The whole
   body of the send runs under a catch, with the owner's callback inside
   its own, so the discarded task can neither fault nor lose an outcome;

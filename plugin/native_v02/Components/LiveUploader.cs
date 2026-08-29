@@ -250,12 +250,36 @@ internal sealed class LiveUploader : IDisposable
         return Convert.ToHexString(hash);
     }
 
+    /// <summary>
+    /// Take a set to send after the debounce, or recognise it as the one
+    /// already sent and say so on the spot.
+    ///
+    /// The skip is decided HERE and not after the debounce because the
+    /// owner reads the state in the same solve that enqueues: a set
+    /// parked as pending would show as "sending" for a send that is never
+    /// going to happen, and every outcome expires the component, so the
+    /// solve after a send would enqueue the same set, read "sending"
+    /// again, and go round for as long as Live was left on.
+    /// </summary>
     public void Enqueue(Pending set)
     {
+        // Hashed outside the lock: the caller's own thread pays for it,
+        // and a send finishing meanwhile only means the comparison below
+        // reads a fresher key.
+        string key = SetKey(set.Name, set.Studio, set.Payloads);
         lock (_gate)
         {
             if (_disposed)
                 return;
+            if (key == _lastSentKey)
+            {
+                _pending = null;
+                _timer?.Dispose();
+                _timer = null;
+                _lastOutcome = UnchangedText(_sentOutcome);
+                _phase = Phase.Done;
+                return;
+            }
             _pending = set;
             _phase = Phase.Pending;
             _timer?.Dispose();
@@ -306,10 +330,8 @@ internal sealed class LiveUploader : IDisposable
         {
             Pending? set;
             string key;
-            long sequence = 0;
-            CancellationToken token = default;
-            bool skipped = false;
-            bool announceSkip = false;
+            long sequence;
+            CancellationToken token;
             lock (_gate)
             {
                 if (_disposed || _sending)
@@ -321,32 +343,21 @@ internal sealed class LiveUploader : IDisposable
                 _pending = null;
                 if (key == _lastSentKey)
                 {
-                    skipped = true;
-                    string text = UnchangedText(_sentOutcome);
-                    // Told once. The owner is showing "sending" for this
-                    // set and has to be let off it, but announcing a skip
-                    // that says what the last one said would expire the
-                    // component for as long as Live stayed on.
-                    announceSkip =
-                        _phase != Phase.Done ||
-                        !string.Equals(_lastOutcome, text, StringComparison.Ordinal);
-                    _lastOutcome = text;
+                    // Enqueue has already turned away every set it could
+                    // see was a repeat. This one became a repeat between
+                    // the enqueue and now, which takes a send of the same
+                    // set landing in that window, and that send announced
+                    // its own outcome: the solve it asks for will read
+                    // this and settle, so nothing is announced here.
+                    _lastOutcome = UnchangedText(_sentOutcome);
                     _phase = Phase.Done;
+                    return;
                 }
-                else
-                {
-                    _sending = true;
-                    started = true;
-                    _phase = Phase.Sending;
-                    sequence = ++_latestStarted;
-                    token = _cancel.Token;
-                }
-            }
-            if (skipped)
-            {
-                if (announceSkip)
-                    Announce();
-                return;
+                _sending = true;
+                started = true;
+                _phase = Phase.Sending;
+                sequence = ++_latestStarted;
+                token = _cancel.Token;
             }
             _ = Task.Run(() => SendAsync(set, key, sequence, token));
         }
