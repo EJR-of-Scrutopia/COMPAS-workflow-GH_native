@@ -890,9 +890,10 @@ internal static class Program
                 "PASS  ExportComponent.TryResolveWriteFolder: an "
                 + "extensionless Path is the folder to write into even "
                 + "before it exists, a Path with an extension gives its "
-                + "own directory, and a bare name is refused rather than "
-                + "written to whatever the process's working directory "
-                + "happens to be.");
+                + "own directory, and a Path that is not rooted, a bare "
+                + "name or a relative path with directories of its own, "
+                + "is refused rather than written to whatever the "
+                + "process's working directory happens to be.");
         }
         catch (Exception exception)
         {
@@ -4759,6 +4760,50 @@ internal static class Program
         if (ok || refusal.Length == 0)
             throw new InvalidOperationException(
                 $"A bare file name is refused; got ok={ok}, refusal '{refusal}'.");
+
+        // A relative Path with directories of its own is not a bare name,
+        // but it is still not rooted: today it resolves against the
+        // process working directory the same way a bare name would, which
+        // under Rhino is nobody's intent. Refused, naming the path, the
+        // same as a bare name.
+        (ok, folder, refusal) = Resolve(@"sub\study");
+        if (ok || refusal.Length == 0 ||
+            !refusal.Contains(@"sub\study", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"A non-rooted relative Path is refused, naming the path; got ok={ok}, refusal '{refusal}'.");
+        // A relative Path with an extension already fell out refused
+        // before this rule existed, but for an unrelated reason (the
+        // pre-rule depth check happened to reject it once its own
+        // directory name was peeled off). The refusal text below is
+        // specific to the rootedness rule, so this assertion still fails
+        // against the pre-rule code even though its ok/false verdict
+        // alone would not have.
+        (ok, folder, refusal) = Resolve(@"sub\study.json");
+        if (ok || refusal.Length == 0 ||
+            !refusal.Contains("rooted", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"A non-rooted relative Path with an extension is refused for being unrooted; got ok={ok}, refusal '{refusal}'.");
+
+        // The rooted equivalent of each relative Path above is accepted,
+        // with the same folder the existing rooted rules already give:
+        // an extensionless Path is the folder itself, a Path with an
+        // extension uses its own directory. Built from a temp folder path
+        // so the check needs nothing on disk; Directory.Exists on a path
+        // that does not exist is simply false, which these rules already
+        // tolerate.
+        string rootedCheckRoot = Path.Combine(
+            Path.GetTempPath(), "ananke-smoke-rooted-check");
+        string rootedNoExt = Path.Combine(rootedCheckRoot, "sub", "study");
+        (ok, folder, refusal) = Resolve(rootedNoExt);
+        if (!ok || folder != rootedNoExt)
+            throw new InvalidOperationException(
+                $"A rooted extensionless Path is still the folder itself; got ok={ok}, folder '{folder}'.");
+        string rootedWithExt = Path.Combine(
+            rootedCheckRoot, "sub", "study.json");
+        (ok, folder, refusal) = Resolve(rootedWithExt);
+        if (!ok || folder != Path.Combine(rootedCheckRoot, "sub"))
+            throw new InvalidOperationException(
+                $"A rooted Path with an extension still uses its own directory; got ok={ok}, folder '{folder}'.");
     }
 
     /// <summary>

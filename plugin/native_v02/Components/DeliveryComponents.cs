@@ -501,12 +501,17 @@ public sealed class ExportComponent :
     /// and an existing directory are folders too. A Path with an extension
     /// is a file and its own directory is used.
     ///
-    /// Refused, rather than resolved, when the folder that comes out has
-    /// no directory part of its own: a bare name (my-study, or
-    /// export.json) is relative to the process working directory, which
-    /// under Rhino is somewhere the author will never find, and a drive
-    /// root is not a place to scatter a study. Nothing is written and the
-    /// caller says so.
+    /// Refused, rather than resolved, when the Path is not rooted
+    /// (System.IO.Path.IsPathRooted is false): a bare name (my-study, or
+    /// export.json) and a relative path with directories of its own
+    /// (sub\study) are both relative to the process working directory,
+    /// which under Rhino is somewhere the author will never find.
+    /// Nothing is written and the caller says so, naming the path.
+    ///
+    /// A rooted Path can still be refused, unchanged from before: when
+    /// the folder that comes out has no directory part of its own, a
+    /// drive root is not a place to scatter a study, and the caller
+    /// says so the same way.
     /// </summary>
     private static bool TryResolveWriteFolder(
         string path,
@@ -514,6 +519,15 @@ public sealed class ExportComponent :
         out string refusal)
     {
         string trimmed = path.Trim();
+        if (!Path.IsPathRooted(trimmed))
+        {
+            refusal =
+                "Path '" + trimmed + "' is not rooted, so nothing was " +
+                "written. Give a full folder path, for example " +
+                "C:\\exports\\my-study.";
+            folder = string.Empty;
+            return false;
+        }
         bool looksLikeDirectory =
             trimmed.EndsWith(
                 Path.DirectorySeparatorChar.ToString(),

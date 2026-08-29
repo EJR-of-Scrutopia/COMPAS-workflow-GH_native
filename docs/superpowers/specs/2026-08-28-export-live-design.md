@@ -25,7 +25,7 @@ Inputs, in order:
 | Slot | Name | Nick | Type | Default | Meaning |
 | --- | --- | --- | --- | --- | --- |
 | 0 | Result | RES | ResultParam item | required | Solved FD or TNA Result. |
-| 1 | Path | P | text, optional | "" | A folder, or a file whose folder is used; created when missing. A Path with no extension is a folder whether or not it exists yet; a Path with no folder in it at all (a bare `my-study` or `study.json`, which would land in the process working directory) is refused with a Warning and nothing is written. |
+| 1 | Path | P | text, optional | "" | A folder, or a file whose folder is used; created when missing. A Path with no extension is a folder whether or not it exists yet; a Path that is not rooted (a bare name or a relative path) is refused with a Warning and nothing is written. |
 | 2 | Write | W | boolean | false | While true, every solve writes the set to Path. |
 | 3 | Name | N | text, optional | "" | The study name: the files are `<Name>-<kind>.json` and the studio's export name is `<Name>`; blank uses `ananke-export`. |
 | 4 | Cells | C | curves, list, FLATTENED | none | Closed plan outlines per cutting cell, from Skin's Face Polylines. |
@@ -188,8 +188,8 @@ for that study with the run id in the body; everything else in section
 - `ValidateExportWriteFolder`: `TryResolveWriteFolder` reads an
   extensionless Path as the folder itself (whether or not it exists), a
   Path with an extension as its own directory, a trailing separator as a
-  folder, and refuses a bare name with no folder in it, naming the path
-  and creating nothing.
+  folder, and refuses a Path that is not rooted (a bare name or a
+  relative path) with a Warning and nothing is written.
 - Export's nine inputs and six outputs pinned in `VisualiseContracts`;
   Cells and Courses pinned flattened in `FlattenedInputs` (indices 4
   and 5).
