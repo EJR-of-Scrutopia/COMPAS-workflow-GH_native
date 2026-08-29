@@ -604,6 +604,7 @@ public sealed class ExportComponent :
             {
                 (json, warning) = await BuildCompasJsonAsync(
                         result,
+                        unitFactor,
                         cancellationToken)
                     .ConfigureAwait(false);
             }
@@ -668,6 +669,7 @@ public sealed class ExportComponent :
     /// </summary>
     private static async Task<(string Json, string? Warning)> BuildCompasJsonAsync(
         ResultDto result,
+        double unitFactor,
         CancellationToken cancellationToken)
     {
         object resultPayload;
@@ -697,17 +699,31 @@ public sealed class ExportComponent :
                 payload,
                 cancellationToken)
             .ConfigureAwait(false);
-        return (BuildCompasJson(response), warning);
+        return (BuildCompasJson(response, unitFactor), warning);
     }
 
-    private static string BuildCompasJson(JsonElement response)
+    /// <summary>
+    /// The compas-only export. lengthUnitToMetres states how many metres
+    /// one of these coordinates is, which nothing in this chain used to
+    /// say at all: the studio reads metres, its geometry.py asserts that
+    /// as a flat assumption, and the contract it derives from this file
+    /// carries no unit anywhere. A millimetre model therefore uploaded,
+    /// derived, cut and staged in silence, describing a vault a thousand
+    /// times too large. Declared rather than applied, because the
+    /// diagrams here are opaque COMPAS documents the worker produced and
+    /// rewriting their coordinates is not this component's to do; the
+    /// studio refuses anything but 1.0 and names the number. Added last
+    /// so the existing four keys keep their order.
+    /// </summary>
+    private static string BuildCompasJson(JsonElement response, double unitFactor)
     {
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["thrustMesh"] = OptionalString(response, "thrustMesh"),
             ["formDiagram"] = OptionalString(response, "formDiagram"),
             ["forceDiagram"] = OptionalString(response, "forceDiagram"),
-            ["compasVersion"] = RequiredString(response, "compasVersion")
+            ["compasVersion"] = RequiredString(response, "compasVersion"),
+            ["lengthUnitToMetres"] = unitFactor
         };
         return JsonSerializer.Serialize(payload, ContractJson.Options);
     }
