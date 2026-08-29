@@ -44,6 +44,8 @@ internal sealed class LiveUploader : IDisposable
     private string? _lastSentKey;
     private string _lastOutcome = "idle";
     private bool _disposed;
+    private bool _sending;
+    private long _latestStarted;
 
     public LiveUploader(Action onOutcome)
     {
@@ -111,23 +113,29 @@ internal sealed class LiveUploader : IDisposable
     private void Fire()
     {
         Pending? set;
+        string key;
+        long sequence;
         lock (_gate)
         {
-            set = _pending;
-            _pending = null;
-        }
-        if (set is null)
-            return;
-        string key = SetKey(set.Payloads);
-        lock (_gate)
-        {
-            if (key == _lastSentKey)
+            if (_disposed || _sending)
                 return;
+            set = _pending;
+            if (set is null)
+                return;
+            key = SetKey(set.Payloads);
+            if (key == _lastSentKey)
+            {
+                _pending = null;
+                return;
+            }
+            _pending = null;
+            _sending = true;
+            sequence = ++_latestStarted;
         }
-        _ = Task.Run(() => SendAsync(set, key));
+        _ = Task.Run(() => SendAsync(set, key, sequence));
     }
 
-    private async Task SendAsync(Pending set, string key)
+    private async Task SendAsync(Pending set, string key, long sequence)
     {
         var lines = new List<string>();
         foreach ((string kind, string json) in set.Payloads)
@@ -164,12 +172,30 @@ internal sealed class LiveUploader : IDisposable
             }
             lines.Add(line);
         }
+
+        // A slow send (retrying a 409) can still be running when a fresher
+        // set finishes debouncing and starts its own send; _latestStarted
+        // names the newest one, so a superseded send finishes its HTTP work
+        // above but is not allowed to overwrite what the newer send wrote or
+        // to announce an outcome nobody is waiting to see.
+        bool notify = false;
         lock (_gate)
         {
-            _lastSentKey = key;
-            _lastOutcome = string.Join(Environment.NewLine, lines);
+            _sending = false;
+            if (!_disposed && sequence == _latestStarted)
+            {
+                _lastSentKey = key;
+                _lastOutcome = string.Join(Environment.NewLine, lines);
+                notify = true;
+            }
+            if (!_disposed && _pending is not null)
+            {
+                _timer?.Dispose();
+                _timer = new Timer(_ => Fire(), null, DebounceMilliseconds, Timeout.Infinite);
+            }
         }
-        _onOutcome();
+        if (notify)
+            _onOutcome();
     }
 
     private static string Short(string body)

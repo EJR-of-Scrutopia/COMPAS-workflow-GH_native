@@ -4639,6 +4639,11 @@ internal static class Program
         string kc = (string)key.Invoke(null, new object?[] { c })!;
         if (ka != kb) throw new InvalidOperationException("Equal sets key the same.");
         if (ka == kc) throw new InvalidOperationException("A set differing in one byte keys differently.");
+        var d = new List<(string, string)> { ("contract", "{\"a\":1}") };
+        var e = new List<(string, string)> { ("compas", "{\"a\":1}") };
+        string kd = (string)key.Invoke(null, new object?[] { d })!;
+        string ke = (string)key.Invoke(null, new object?[] { e })!;
+        if (kd == ke) throw new InvalidOperationException("A set differing only in Kind keys differently.");
     }
 
     /// <summary>
