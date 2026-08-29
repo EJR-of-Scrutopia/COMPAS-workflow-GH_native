@@ -12,9 +12,9 @@ namespace Ananke.COMPAS.Native.Components
     /// <summary>
     /// Skin: the cells the surface is built from, one closed polyline per
     /// face of the thrust mesh, banded into courses by height. The
-    /// ready-made Cells and Courses inputs for Export's Tessellation format.
-    /// Moved here from Deconstruct, which is geometry only; the mechanism is
-    /// unchanged.
+    /// ready-made Cells and Courses inputs for Export, which flattens them
+    /// itself. Moved here from Deconstruct, which is geometry only; the
+    /// mechanism is unchanged.
     /// </summary>
     public sealed class SkinComponent : NativeComponentBase
     {
@@ -24,7 +24,7 @@ namespace Ananke.COMPAS.Native.Components
                 "Skin",
                 "One closed polyline per face of the thrust mesh, banded into "
                     + "courses by Course Height: the Cells and Courses for "
-                    + "Export's Tessellation format.",
+                    + "Export, which flattens them itself.",
                 ComponentCategories.Visualise,
                 "skin")
         {
@@ -66,21 +66,18 @@ namespace Ananke.COMPAS.Native.Components
                 "FP",
                 "One closed polyline per Thrust Mesh face, as a TREE branched "
                     + "by COURSE (path = course, 0-up from the bottom): the "
-                    + "ready-made Cells input for Export's Tessellation format. "
-                    + "FLATTEN these before Export's Cells and Courses (they "
-                    + "are list inputs) until Export flattens them itself, or "
-                    + "Grasshopper runs Export once per course and the last "
-                    + "one written wins. Empty for FD.",
+                    + "ready-made Cells input for Export. Wire it straight in; "
+                    + "Export's Cells port flattens the tree itself. Empty for "
+                    + "FD.",
                 GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Face Courses",
                 "FC",
                 "The course per face, branched and ordered exactly as Face "
                     + "Polylines, so the pairing survives: the ready-made "
-                    + "Courses input for Export's Tessellation format. FLATTEN "
-                    + "these before Export's Cells and Courses (they are list "
-                    + "inputs) until Export flattens them itself; the course "
-                    + "index is repeated per item, so flattening keeps the "
+                    + "Courses input for Export. Wire it straight in; Export's "
+                    + "Courses port flattens the tree itself, and the course "
+                    + "index is repeated per item, so the flatten keeps the "
                     + "pairing. Empty for FD.",
                 GH_ParamAccess.tree);
         }
@@ -183,9 +180,9 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// One closed polyline per mesh face, in face order: the Export
-        /// component's Tessellation format takes these as authored Cells
-        /// verbatim (it drops z and dedupes the closing repeat itself).
+        /// One closed polyline per mesh face, in face order: Export takes
+        /// these as authored Cells verbatim (it drops z and dedupes the
+        /// closing repeat itself).
         /// </summary>
         private static IReadOnlyList<PolylineCurve> FacePolylines(Mesh mesh)
         {
