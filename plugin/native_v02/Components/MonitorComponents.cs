@@ -6,8 +6,6 @@ using System.Globalization;
 using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
-using Grasshopper.Kernel.Data;
-using Grasshopper.Kernel.Types;
 using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components
@@ -74,10 +72,22 @@ namespace Ananke.COMPAS.Native.Components
             return (Math.Sqrt(sumSquares / values.Count), absolute[^1], absolute[rank - 1]);
         }
 
-        /// <summary>The unstrained length of a member: strained over one plus
-        /// force over EA; the strained length when EA is not positive.</summary>
-        public static double UnstrainedLength(double strained, double force, double EA) =>
-            EA > 0.0 ? strained / (1.0 + (force / EA)) : strained;
+        /// <summary>
+        /// The unstrained length of a member: strained over one plus force
+        /// over EA. The strained length comes back when EA is not positive,
+        /// and also when one plus force over EA collapses to nothing or goes
+        /// negative, which is a member whose EA cannot carry its own
+        /// compression: it has no unstrained length worth reporting, and
+        /// dividing by that denominator would hand back an infinity or a
+        /// length with its sign flipped.
+        /// </summary>
+        public static double UnstrainedLength(double strained, double force, double EA)
+        {
+            if (EA <= 0.0)
+                return strained;
+            double stretch = 1.0 + (force / EA);
+            return stretch > 1.0e-9 ? strained / stretch : strained;
+        }
     }
 
     /// <summary>
@@ -242,18 +252,21 @@ namespace Ananke.COMPAS.Native.Components
                 "Spool Length",
                 "SP",
                 "The STRAINED length of each principal bar at this frame: the "
-                    + "sum of that bar's member lengths. One branch holding one "
-                    + "item per principal line, in the order Member Force "
-                    + "branches by, so item [i] is bar {i}.",
+                    + "sum of that bar's member lengths. As a TREE with ONE "
+                    + "BRANCH PER PRINCIPAL LINE holding that bar's single "
+                    + "length, so branch {b} is bar {b}: the same branch that "
+                    + "bar's members sit in in Member Force and in "
+                    + "DECONSTRUCT's Member Lines.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Unstrained Length",
                 "UL",
                 "The same bars with the stretch taken out, sum(L / (1 + N / "
                     + "EA)): what to cut each one to before it is tensioned. "
-                    + "EMPTY unless EA is wired, because without an axial "
-                    + "stiffness the strained length is all there is. Aligned "
-                    + "with Spool Length.",
+                    + "One branch per principal line, aligned with Spool "
+                    + "Length branch for branch. EMPTY unless EA is wired, "
+                    + "because without an axial stiffness the strained length "
+                    + "is all there is.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Anchor Along",
@@ -284,14 +297,20 @@ namespace Ananke.COMPAS.Native.Components
                     + "from a solver's node reactions, because the columns are "
                     + "solved as a block upstream. As a TREE branched EXACTLY "
                     + "as DECONSTRUCT's Heads: one branch per column tree, "
-                    + "heads in the order that tree's members are walked.",
+                    + "heads in the order that tree's members are walked. "
+                    + "Measured at the frame the Result carries, where "
+                    + "DECONSTRUCT draws the BUILT state; the index alignment "
+                    + "holds, the geometry may differ.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Column Force",
                 "CF",
                 "Axial demand in each column member, N. As a TREE branched "
                     + "EXACTLY as DECONSTRUCT's Columns: one branch per column "
-                    + "tree, members in the block's own order.",
+                    + "tree, members in the block's own order. Measured at the "
+                    + "frame the Result carries, where DECONSTRUCT draws the "
+                    + "BUILT state; the index alignment holds, the geometry "
+                    + "may differ.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Thrust",
@@ -302,14 +321,19 @@ namespace Ananke.COMPAS.Native.Components
                     + "THE GROUND put theirs into the foundation, and the "
                     + "monitor.thrust_into_ground diagnostic sums those alone; "
                     + "a branch's horizontal is balanced at its junction by "
-                    + "its siblings. Branched exactly as Column Force.",
+                    + "its siblings. Branched exactly as Column Force, and "
+                    + "measured at the frame the Result carries, where "
+                    + "DECONSTRUCT draws the BUILT state; the index alignment "
+                    + "holds, the geometry may differ.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Lean",
                 "LN",
                 "Degrees from vertical per column member, branched exactly as "
                     + "Column Force. Past sixty a member pushes sideways more "
-                    + "than it holds up.",
+                    + "than it holds up. Measured at the frame the Result "
+                    + "carries, where DECONSTRUCT draws the BUILT state; the "
+                    + "index alignment holds, the geometry may differ.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Deviation",
@@ -336,7 +360,10 @@ namespace Ananke.COMPAS.Native.Components
                     + "within Tolerance AT THIS FRAME. That is the whole "
                     + "claim. Whether a constrained solver could drive the "
                     + "machine there is the M1 bridge's question, and it is "
-                    + "not answered here.",
+                    + "not answered here. Without a frame the deviation is "
+                    + "zero by definition, so this reads true and "
+                    + "monitor.reachability says the question was not "
+                    + "measured.",
                 GH_ParamAccess.tree);
             parameters.AddIntegerParameter(
                 "Unreachable",
@@ -361,25 +388,35 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddVectorParameter(
                 "Residuals",
                 "E",
-                "The Result's equilibrium residual vector at each node, one "
-                    + "branch in vertex order. It moved here from Deconstruct, "
-                    + "which is geometry only now. A large residual means the "
-                    + "solve did not settle, whatever the shape looks like.",
+                "The Result's equilibrium residual vector, ONE PER NODE IN "
+                    + "VERTEX ORDER, as one branch. The Result's own list is "
+                    + "sparse, carrying no entry for a support or an exact "
+                    + "zero, so a node with no residual of its own holds its "
+                    + "slot here as a zero rather than letting every node "
+                    + "after it read someone else's. It moved here from "
+                    + "Deconstruct, which is geometry only now. A large "
+                    + "residual means the solve did not settle, whatever the "
+                    + "shape looks like.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Cable Utilisation",
                 "CU",
-                "The magnitude of each member's force over Cable Capacity, "
-                    + "branched exactly as Member Force. EMPTY unless Cable "
+                "The ABSOLUTE FORCE OVER CAPACITY per member, the magnitude "
+                    + "of N over Cable Capacity, branched exactly as Member "
+                    + "Force. A utilisation is a magnitude ratio, so a cable "
+                    + "pushing rather than pulling reads its size here and "
+                    + "SLACK is what names the sign. EMPTY unless Cable "
                     + "Capacity is wired. Above one the member is over the "
                     + "capacity YOU supplied; nothing here supplies one.",
                 GH_ParamAccess.tree);
             parameters.AddNumberParameter(
                 "Column Utilisation",
                 "CLU",
-                "The magnitude of each column member's force over Column "
-                    + "Capacity, branched exactly as Column Force. EMPTY "
-                    + "unless Column Capacity is wired.",
+                "The ABSOLUTE FORCE OVER CAPACITY per column member, the "
+                    + "magnitude of N over Column Capacity, branched exactly "
+                    + "as Column Force. A utilisation is a magnitude ratio, so "
+                    + "the sign of the member force is not in it. EMPTY unless "
+                    + "Column Capacity is wired.",
                 GH_ParamAccess.tree);
             parameters.AddParameter(
                 new ResultParam(),
@@ -747,18 +784,33 @@ namespace Ananke.COMPAS.Native.Components
                 (_, List<List<double>> barSag) =
                     BarBending(runs, v, edges, edgeSource, equilibrium, held, stiffness);
 
-                var residuals = equilibrium.Residuals
-                    .Select(item => new Vector3d(
-                        item.Vector.X, item.Vector.Y, item.Vector.Z))
-                    .ToList();
+                // One per node IN VERTEX ORDER, which the Result's own list
+                // is not: the codec writes no entry for a support and none for
+                // an exact zero, so reading that list positionally would put
+                // node 7's residual at item 4 and every node after it would
+                // read someone else's. Placed by NodeId, exactly as the
+                // reactions are, with a node carrying none holding its slot as
+                // a zero rather than shifting its neighbours up.
+                var residuals = new List<Vector3d>(n);
+                for (int i = 0; i < n; i++)
+                    residuals.Add(Vector3d.Zero);
+                foreach (NodalVectorDto item in equilibrium.Residuals)
+                {
+                    if (item.NodeId >= 0 && item.NodeId < n)
+                    {
+                        residuals[item.NodeId] = new Vector3d(
+                            item.Vector.X, item.Vector.Y, item.Vector.Z);
+                    }
+                }
 
                 data.SetDataTree(0, OutputTree.Numbers(ByBar(memberForce)));
                 data.SetDataTree(1, OutputTree.Numbers(ByBar(forceDensity)));
                 data.SetDataTree(2, OutputTree.Numbers(ByBar(horizontal)));
-                data.SetDataTree(3, Booleans(ByBar(slack)));
-                data.SetDataTree(4, OutputTree.Numbers(new[] { spool }));
+                data.SetDataTree(3, OutputTree.Booleans(ByBar(slack)));
+                data.SetDataTree(4, OutputTree.Numbers(
+                    spool.Select(one => new[] { one })));
                 data.SetDataTree(5, OutputTree.Numbers(axialStiffness > 0.0
-                    ? new[] { unstrained }
+                    ? unstrained.Select(one => new[] { one })
                     : Enumerable.Empty<IEnumerable<double>>()));
                 data.SetDataTree(6, OutputTree.Numbers(alongBranches));
                 data.SetDataTree(7, OutputTree.Numbers(acrossBranches));
@@ -769,7 +821,7 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataTree(12, OutputTree.Numbers(new[] { deviation }));
                 data.SetDataTree(13, OutputTree.Numbers(
                     new[] { new List<double> { stats.Rms, stats.Max, stats.P95 } }));
-                data.SetDataTree(14, Booleans(
+                data.SetDataTree(14, OutputTree.Booleans(
                     new[] { new List<bool> { unreachable.Count == 0 } }));
                 data.SetDataTree(15, OutputTree.Integers(new[] { unreachable }));
                 data.SetDataTree(16, OutputTree.Numbers(barSag));
@@ -828,29 +880,6 @@ namespace Ananke.COMPAS.Native.Components
             {
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
-        }
-
-        /// <summary>
-        /// Boolean branches, built exactly as <see cref="OutputTree"/> builds
-        /// every other kind: each branch is created before it is filled, so an
-        /// empty one survives as an empty branch rather than shifting the
-        /// branches after it up by one. It lives here rather than in
-        /// OutputTree because Monitor is the only component with a boolean
-        /// tree.
-        /// </summary>
-        private static GH_Structure<GH_Boolean> Booleans(
-            IEnumerable<IEnumerable<bool>> branches)
-        {
-            var tree = new GH_Structure<GH_Boolean>();
-            int index = 0;
-            foreach (IEnumerable<bool> branch in branches)
-            {
-                var path = new GH_Path(index++);
-                tree.EnsurePath(path);
-                foreach (bool value in branch)
-                    tree.Append(new GH_Boolean(value), path);
-            }
-            return tree;
         }
 
         /// <summary>
@@ -1085,17 +1114,31 @@ namespace Ananke.COMPAS.Native.Components
                     context: ResultDiagnostics.Context(
                         ("rms", deviation.Rms.ToString("0.###", CultureInfo.InvariantCulture)),
                         ("p95", deviation.P95.ToString("0.###", CultureInfo.InvariantCulture)))));
-            d.Add(unreachable == 0
-                ? ResultDiagnostics.Entry(S, "monitor.reachability", "ok",
-                    $"every one of the {nodeCount} nodes is within {tolerance:0.##} mm "
-                        + "of the solved state at this frame.",
-                    0.0, tolerance: tolerance, unit: "nodes")
-                : ResultDiagnostics.Entry(S, "monitor.reachability", "warning",
-                    $"{unreachable} of {nodeCount} nodes sit further than "
-                        + $"{tolerance:0.##} mm from the solved state. That is "
-                        + "reachability AT THIS FRAME and nothing more; whether the "
-                        + "machine can be driven there is the M1 bridge's question.",
-                    unreachable, tolerance: tolerance, unit: "nodes"));
+            if (frame is null)
+            {
+                // Without a frame the net IS the solved state, so every node is
+                // trivially inside any tolerance. Reporting that as reachable
+                // would be a verdict on a question nobody asked.
+                d.Add(ResultDiagnostics.Entry(S, "monitor.reachability", "info",
+                    "no frame on this Result, so deviation is zero by definition and "
+                        + "reachability is not measured. Wire Animate upstream to put "
+                        + "the machine at a frame and ask the question properly.",
+                    unit: "nodes"));
+            }
+            else
+            {
+                d.Add(unreachable == 0
+                    ? ResultDiagnostics.Entry(S, "monitor.reachability", "ok",
+                        $"every one of the {nodeCount} nodes is within {tolerance:0.##} mm "
+                            + "of the solved state at this frame.",
+                        0.0, tolerance: tolerance, unit: "nodes")
+                    : ResultDiagnostics.Entry(S, "monitor.reachability", "warning",
+                        $"{unreachable} of {nodeCount} nodes sit further than "
+                            + $"{tolerance:0.##} mm from the solved state. That is "
+                            + "reachability AT THIS FRAME and nothing more; whether the "
+                            + "machine can be driven there is the M1 bridge's question.",
+                        unreachable, tolerance: tolerance, unit: "nodes"));
+            }
 
             double worstSag = barSag.SelectMany(b => b).Select(Math.Abs).DefaultIfEmpty(0.0).Max();
             if (barSag.Count == 0)
