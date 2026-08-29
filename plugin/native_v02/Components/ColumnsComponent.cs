@@ -422,10 +422,16 @@ namespace Ananke.COMPAS.Native.Components
                         Frame = null,
                     },
                 };
+                // The loads and forces below are the Result's own, in the
+                // Result's own unit, so they are labelled with it rather than
+                // with a newton this component never converted to. Monitor
+                // reads it the same way. No arithmetic here changes.
+                string declaredUnit = (equilibrium.ForceUnit ?? string.Empty).Trim();
+                string forceUnit = declaredUnit.Length > 0 ? declaredUnit : "kN";
                 output = ResultDiagnostics.Replace(output, "Columns", Diagnostics(
                     bars, placement, built, force, angle, branching, ground,
                     groundLevel, alongToAnchors, acrossToColumns, overlapping,
-                    barShape));
+                    barShape, forceUnit));
                 data.SetData(0, new ResultGoo(output));
             }
             catch (Exception ex)
@@ -449,7 +455,8 @@ namespace Ananke.COMPAS.Native.Components
             double alongToAnchors,
             double acrossToColumns,
             int overlapping,
-            List<string> barShape)
+            List<string> barShape,
+            string forceUnit)
         {
             const string S = "Columns";
             double cap = MouldGeometry.MaxLeanDegrees;
@@ -536,10 +543,10 @@ namespace Ananke.COMPAS.Native.Components
                 .Select(t => (t.Ground.ToString(CultureInfo.InvariantCulture), Inv(t.LoadPath, "0")))
                 .ToArray();
             d.Add(ResultDiagnostics.Entry(S, "columns.load_path", "info",
-                $"load path {built.LoadPath:0} N x model units, the sum over "
-                    + "members of force times length"
+                $"load path {built.LoadPath:0} {forceUnit} x model units, the sum "
+                    + "over members of force times length"
                     + (groundAsked < 0 ? $"; feasible levels scored: {string.Join(", ", scored.Select(s => $"{s.Item1}={s.Item2}"))}" : ""),
-                built.LoadPath, unit: "N x model units",
+                built.LoadPath, unit: forceUnit + " x model units",
                 context: ResultDiagnostics.Context(scored)));
 
             if (built.FeetMerged > 0)
@@ -564,16 +571,17 @@ namespace Ananke.COMPAS.Native.Components
                     built.Collisions, unit: "members"));
             }
             d.Add(ResultDiagnostics.Entry(S, "columns.head_load_total", "info",
-                $"the heads carry {placement.Trees.Sum(t => t.Load.Sum()):0} N between "
-                    + $"them, ground read as {groundLevel:0.###}, the level the anchors sit at",
-                placement.Trees.Sum(t => t.Load.Sum()), unit: "N",
+                $"the heads carry {placement.Trees.Sum(t => t.Load.Sum()):0} "
+                    + $"{forceUnit} between them, ground read as {groundLevel:0.###}, "
+                    + "the level the anchors sit at",
+                placement.Trees.Sum(t => t.Load.Sum()), unit: forceUnit,
                 context: ResultDiagnostics.Context(("ground", Inv(groundLevel, "0.###")))));
             d.Add(ResultDiagnostics.Entry(S, "columns.load_split", "info",
-                $"of the net's pull on the bars, {alongToAnchors:0} N runs ALONG "
-                    + "them to the anchors, which are this machine's buttresses. "
-                    + $"The {acrossToColumns:0} N ACROSS them is the columns' to "
-                    + "take, and it sets their lean.",
-                acrossToColumns, unit: "N",
+                $"of the net's pull on the bars, {alongToAnchors:0} {forceUnit} runs "
+                    + "ALONG them to the anchors, which are this machine's buttresses. "
+                    + $"The {acrossToColumns:0} {forceUnit} ACROSS them is the columns' "
+                    + "to take, and it sets their lean.",
+                acrossToColumns, unit: forceUnit,
                 context: ResultDiagnostics.Context(("along_to_anchors", Inv(alongToAnchors, "0")))));
             d.Add(ResultDiagnostics.Entry(S, "columns.principal_source", "info",
                 "principal lines came from the contract, resolved upstream by "
@@ -593,14 +601,15 @@ namespace Ananke.COMPAS.Native.Components
             if (loads.Count > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.head_load", "info",
-                    $"head load {loads.Min():0} to {loads.Max():0} N",
-                    loads.Max(), unit: "N",
+                    $"head load {loads.Min():0} to {loads.Max():0} {forceUnit}",
+                    loads.Max(), unit: forceUnit,
                     context: ResultDiagnostics.Context(("min", Inv(loads.Min(), "0")))));
             }
             if (force.Count > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.force_max", "info",
-                    $"axial force up to {force.Max():0} N", force.Max(), unit: "N"));
+                    $"axial force up to {force.Max():0} {forceUnit}",
+                    force.Max(), unit: forceUnit));
             }
             if (angle.Count > 0)
             {

@@ -88,6 +88,29 @@ namespace Ananke.COMPAS.Native.Components
             double stretch = 1.0 + (force / EA);
             return stretch > 1.0e-9 ? strained / stretch : strained;
         }
+
+        /// <summary>
+        /// What a force in the Result's own unit must be multiplied by to be
+        /// newtons: 1 for N, 1000 for kN, and NULL for a unit this does not
+        /// know.
+        ///
+        /// The ONE place the conversion is decided. Every stiffness the author
+        /// wires is in newtons (EA in N, EI in N.m2, the capacities in N) and
+        /// every force the Result carries is in the Result's unit, so each
+        /// place the two meet asks here rather than assuming. Null rather than
+        /// one on an unknown unit, because a caller silently scaling by one is
+        /// exactly the fault this exists to stop: it must decide whether to
+        /// refuse the reading or leave it unscaled and say so.
+        /// </summary>
+        public static double? ToNewtons(string unit)
+        {
+            string named = (unit ?? string.Empty).Trim();
+            if (string.Equals(named, "N", StringComparison.OrdinalIgnoreCase))
+                return 1.0;
+            if (string.Equals(named, "kN", StringComparison.OrdinalIgnoreCase))
+                return 1000.0;
+            return null;
+        }
     }
 
     /// <summary>
@@ -110,6 +133,13 @@ namespace Ananke.COMPAS.Native.Components
     /// heading for, and whether that deviation is inside the tolerance the
     /// author set.
     ///
+    /// Every force here is in THE RESULT'S OWN FORCE UNIT, which is kN
+    /// unless the Result says otherwise, and every diagnostic names it. The
+    /// stiffnesses and capacities the author wires are newtons, so the three
+    /// places the two meet, the utilisations against a capacity, the
+    /// unstrained length against EA and the bar load against EI, convert
+    /// through <see cref="MonitorMath.ToNewtons"/> and nowhere else.
+    ///
     /// Every force here is a DEMAND. The only verdicts are utilisation,
     /// against a capacity the author supplies, and reachability, against the
     /// tolerance the author sets. Nothing else assumes a limit.
@@ -125,7 +155,10 @@ namespace Ananke.COMPAS.Native.Components
                     + "readings: spool lengths, the anchors' pull along and "
                     + "across their tensioners, the tip reactions, the "
                     + "deviation to the solved shape and whether it is within "
-                    + "tolerance. Demands only, unless a capacity is wired.",
+                    + "tolerance. Forces are in the Result's own force unit, kN "
+                    + "unless it says otherwise, and are converted to newtons "
+                    + "where they meet a stiffness or a capacity you wire. "
+                    + "Demands only, unless a capacity is wired.",
                 ComponentCategories.Visualise,
                 "stress_analysis")
         {
@@ -156,7 +189,11 @@ namespace Ananke.COMPAS.Native.Components
                 "EI",
                 "Bending stiffness of one notched bar, N.m2: Young's modulus "
                     + "times the second moment of area of the section you mean "
-                    + "to build it from. This is the ONLY place a bending "
+                    + "to build it from. It is in NEWTON metres squared "
+                    + "whatever unit the Result's forces are in: the load on "
+                    + "the bar is converted to newtons before it meets this, "
+                    + "so Bar Sag is true millimetres. This is the ONLY place "
+                    + "a bending "
                     + "stiffness is asked for, and it is asked for here on "
                     + "purpose. Where the arms go does not depend on it, "
                     + "because stiffness cancels out of that comparison, so "
@@ -172,7 +209,10 @@ namespace Ananke.COMPAS.Native.Components
                 "EA",
                 "EA",
                 "Axial stiffness of one principal bar, N: Young's modulus "
-                    + "times the area of its section. Wired, Unstrained Length "
+                    + "times the area of its section, in NEWTONS whatever unit "
+                    + "the Result's forces are in, because the member force is "
+                    + "converted to newtons before it meets this. Wired, "
+                    + "Unstrained Length "
                     + "reports what to CUT each bar to before it is tensioned. "
                     + "Left alone that output is empty, because the unstrained "
                     + "length of a spool cannot be known without a stiffness, "
@@ -592,12 +632,14 @@ namespace Ananke.COMPAS.Native.Components
                 // contract's own default.
                 string declaredUnit = (equilibrium.ForceUnit ?? string.Empty).Trim();
                 string forceUnit = declaredUnit.Length > 0 ? declaredUnit : "kN";
-                bool newtons = string.Equals(
-                    forceUnit, "N", StringComparison.OrdinalIgnoreCase);
-                bool kilonewtons = string.Equals(
-                    forceUnit, "kN", StringComparison.OrdinalIgnoreCase);
-                bool forceUnitKnown = newtons || kilonewtons;
-                double toNewtons = kilonewtons ? 1000.0 : 1.0;
+                // Every place a Result's force meets a stiffness the author
+                // wired in newtons goes through this one factor: the two
+                // utilisations, the unstrained length against EA, and the bar
+                // load against EI. An unknown unit leaves the value unscaled
+                // and monitor.utilisation says which readings that touches.
+                double? scale = MonitorMath.ToNewtons(forceUnit);
+                bool forceUnitKnown = scale.HasValue;
+                double toNewtons = scale ?? 1.0;
                 bool cableRatio = cableCapacity > 0.0 && forceUnitKnown;
                 bool columnRatio = columnCapacity > 0.0 && forceUnitKnown;
 
@@ -678,8 +720,12 @@ namespace Ananke.COMPAS.Native.Components
                         if (!isMember)
                             spoolSegmentsWithoutMember++;
                         strained += segment;
+                        // EA is newtons and the force is the Result's, so the
+                        // force is converted here or the strain comes out a
+                        // thousand times too small on a kN Result and the bar
+                        // is cut to very nearly its tensioned length.
                         relaxed += MonitorMath.UnstrainedLength(
-                            segment, force, axialStiffness);
+                            segment, force * toNewtons, axialStiffness);
                     }
                     spool.Add(strained);
                     unstrained.Add(relaxed);
@@ -953,7 +999,9 @@ namespace Ananke.COMPAS.Native.Components
                 // it, because their branches are zeros and zeros read as the
                 // straightest bars on the model.
                 (_, List<List<double>> barSag, int unheldBars) =
-                    BarBending(runs, v, edges, edgeSource, equilibrium, held, stiffness);
+                    BarBending(
+                        runs, v, edges, edgeSource, equilibrium, held, stiffness,
+                        toNewtons);
 
                 // One per node in VERTEX ORDER, from the table every reader of
                 // this Result shares. It sits there rather than here because
@@ -1076,7 +1124,8 @@ namespace Ananke.COMPAS.Native.Components
             int[] edgeSource,
             EquilibriumResultDto equilibrium,
             HashSet<int> held,
-            double stiffness)
+            double stiffness,
+            double toNewtons)
         {
             var nodes = new List<List<Point3d>>();
             var sag = new List<List<double>>();
@@ -1121,7 +1170,13 @@ namespace Ananke.COMPAS.Native.Components
                 var arc = new double[run.Count];
                 for (int k = 1; k < run.Count; k++)
                     arc[k] = arc[k - 1] + v[run[k - 1]].DistanceTo(v[run[k]]);
-                double[] load = across.Select(a => Math.Abs(a.Z)).ToArray();
+                // EI is N.m2, and the load is built from the Result's own
+                // member forces, so it is converted here: without it a kN
+                // Result reports a thousandth of the sag it will actually
+                // build with, in a number the port calls millimetres.
+                double[] load = across
+                    .Select(a => Math.Abs(a.Z) * toNewtons)
+                    .ToArray();
                 int[] supports = Enumerable.Range(0, run.Count)
                     .Where(k => held.Contains(run[k]))
                     .ToArray();
@@ -1437,7 +1492,10 @@ namespace Ananke.COMPAS.Native.Components
                     $"this Result's forces are in '{forceUnit}', which is neither N nor "
                         + "kN, so no utilisation is reported: the capacities are "
                         + "newtons and there is nothing here to convert that unit with. "
-                        + "Every force stays a demand, not a verdict."));
+                        + "Every force stays a demand, not a verdict. The same block "
+                        + "leaves Unstrained Length and Bar Sag reading the force "
+                        + "UNCONVERTED against EA and EI, which are newtons, so neither "
+                        + "is to scale until this Result names a unit."));
             }
             else if (cableUtilisation.Count == 0 && columnUtilisation.Count == 0)
             {

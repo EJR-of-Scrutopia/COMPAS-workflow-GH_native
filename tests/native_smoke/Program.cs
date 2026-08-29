@@ -785,7 +785,10 @@ internal static class Program
                 + "hand-built field and zero on an empty one, and the "
                 + "unstrained length divides by one plus force over EA except "
                 + "where that denominator collapses or the EA is not a "
-                + "stiffness.");
+                + "stiffness. A Result's force reaches the newtons EA, EI and "
+                + "the capacities are wired in through one factor, 1 for N and "
+                + "1000 for kN and null for a unit it does not know, so 0.1 kN "
+                + "against EA 1000 cuts to the same 2/1.1 as 100 N.");
         }
         catch (Exception exception)
         {
@@ -2576,6 +2579,7 @@ internal static class Program
         MethodInfo axis = RequirePublicStatic(math, "TensionerAxis");
         MethodInfo stats = RequirePublicStatic(math, "DeviationStats");
         MethodInfo unstrained = RequirePublicStatic(math, "UnstrainedLength");
+        MethodInfo toNewtons = RequirePublicStatic(math, "ToNewtons");
         Type vector3d = split.GetParameters()[0].ParameterType;
         Type point3d = axis.GetParameters()[1].ParameterType.GetElementType()!;
 
@@ -2692,6 +2696,30 @@ internal static class Program
             throw new InvalidOperationException(
                 "A negative EA is no stiffness, so the strained 2 comes back; "
                 + $"got {negativeEA:0.######}.");
+        }
+
+        // The ONE conversion between a Result's force and the newtons every
+        // stiffness and capacity is wired in. Null, not one, on a unit it
+        // does not know: a silent factor of one is the fault it exists to
+        // stop.
+        double? Factor(string unit) => (double?)toNewtons.Invoke(null, new object?[] { unit });
+        if (Factor("N") != 1.0 || Factor(" n ") != 1.0)
+            throw new InvalidOperationException("A force already in N is multiplied by 1, trimmed and either case.");
+        if (Factor("kN") != 1000.0 || Factor(" KN ") != 1000.0)
+            throw new InvalidOperationException("A force in kN is multiplied by 1000, trimmed and either case.");
+        if (Factor("lbf") is not null || Factor("") is not null || Factor(null!) is not null)
+            throw new InvalidOperationException("A unit this does not know comes back NULL, so the caller has to decide rather than scaling by one behind its back.");
+
+        // The whole point, end to end: 0.1 kN against an EA of 1000 N is the
+        // same 2 / 1.1 that 100 N gives. Unconverted it would be 2 / 1.0001,
+        // and a bar would be cut to very nearly its tensioned length.
+        double kiloNewtonCut = (double)unstrained.Invoke(
+            null, new object?[] { 2.0, 0.1 * Factor("kN")!.Value, 1000.0 })!;
+        if (Math.Abs(kiloNewtonCut - (2.0 / 1.1)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A force of 0.1 kN converted through ToNewtons against EA 1000 N "
+                + $"gives the same 2/1.1 as 100 N does; got {kiloNewtonCut:0.######}.");
         }
     }
 
