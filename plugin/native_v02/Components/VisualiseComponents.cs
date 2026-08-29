@@ -240,9 +240,10 @@ namespace Ananke.COMPAS.Native.Components
     /// <summary>
     /// The GEOMETRY of a solved Result: lines, points, vectors and the ids
     /// that name them. Nothing else. The numbers each member and support
-    /// carries (q, H, F, force state, residuals) belong to Monitor, and the
-    /// cells of the skin to Skin, so a canvas that wants the shape does not
-    /// drag the whole analysis behind it.
+    /// carries (member force, force density, horizontal force, slack,
+    /// residuals) belong to Monitor, and the cells of the skin to Skin, so a
+    /// canvas that wants the shape does not drag the whole analysis behind
+    /// it.
     ///
     /// It reads the unified <see cref="ResultDto"/> and takes one of two
     /// extraction paths keyed on <see cref="ResultDto.Solver"/> plus the
@@ -311,9 +312,10 @@ namespace Ananke.COMPAS.Native.Components
                 "principal line holding that bar's own members, and a LAST " +
                 "branch holding the infill, everything not on a bar. Every " +
                 "member-aligned output below is branched and ordered " +
-                "identically, and so are MONITOR's number trees (q, H, F, " +
-                "force state) for the same Result, so the alignment holds " +
-                "branch to branch and item to item across both components. " +
+                "identically, and so are MONITOR's number trees (Member " +
+                "Force, Force Density, Horizontal Force, Slack) for the " +
+                "same Result, so the alignment holds branch to branch and " +
+                "item to item across both components. " +
                 "A bar with no members of its own keeps an empty branch, " +
                 "so branch {i} is always bar {i}.",
                 GH_ParamAccess.tree);
@@ -432,11 +434,22 @@ namespace Ananke.COMPAS.Native.Components
                 // Grouping them by strip is a question about which support
                 // they belong to, and that is an index question; matching them
                 // back by coordinate would turn an exact answer into a
-                // tolerance. The point is read from the node itself, so a
-                // reaction and the support it acts on are the same point by
-                // construction rather than by agreement.
+                // tolerance.
+                //
+                // The point is read from the node rather than carried
+                // alongside it because that is where it came from anyway: both
+                // codecs build every NodalVectorDto as
+                // (nodeId, vertices[nodeId], vector), so the vertex IS the
+                // point. Nothing downstream re-checks the id, though. A
+                // ResultDto deserialised straight from JSON can name a node
+                // this net does not have, and result.Validate() would not stop
+                // it, so a reaction whose node is out of range is dropped here
+                // rather than indexing off the end of the vertex list.
                 (int Node, Point3d Point, Vector3d Vector)[] reactions =
                     ResultTables.Reactions(result)
+                        .Where(item =>
+                            item.Node >= 0 &&
+                            item.Node < equilibrium.Vertices.Count)
                         .Select(item => (
                             item.Node,
                             Point(equilibrium.Vertices[item.Node]),
@@ -451,9 +464,13 @@ namespace Ananke.COMPAS.Native.Components
 
                 if (isTna)
                 {
-                    TnaEdgeStateDto[] states = result.EdgeStates
-                        .OrderBy(state => state.Id)
-                        .ToArray();
+                    // Both line arrays are driven by the TABLE's rows, not by
+                    // a second sort of the edge states. Two sorts that agree
+                    // today are still two places to disagree tomorrow, and the
+                    // point of the table is that there is one order.
+                    var stateById = new Dictionary<int, TnaEdgeStateDto>();
+                    foreach (TnaEdgeStateDto state in result.EdgeStates)
+                        stateById[state.Id] = state;
                     IReadOnlyDictionary<int, TnaGraphEdgeDto> formEdges =
                         result.FormGraph!.Edges.ToDictionary(edge => edge.Id);
                     IReadOnlyDictionary<int, Point3Dto> formPoints =
@@ -462,11 +479,13 @@ namespace Ananke.COMPAS.Native.Components
                             vertex => vertex.Point);
 
                     thrustMesh = ThrustMesh(result);
-                    memberLines = states
-                        .Select(state => ThrustLine(equilibrium, state))
+                    memberLines = members
+                        .Select(row => ThrustLine(
+                            equilibrium, row.EquilibriumEdgeId))
                         .ToArray();
-                    formLines = states
-                        .Select(state => FormLine(state, formEdges, formPoints))
+                    formLines = members
+                        .Select(row => FormLine(
+                            stateById[row.Id], formEdges, formPoints))
                         .ToArray();
 
                     supportPoints = result.Mappings!.Supports
@@ -726,18 +745,18 @@ namespace Ananke.COMPAS.Native.Components
 
         /// <summary>
         /// Copied from <c>TnaQueryGeometry.ThrustLine</c>, then rewritten to
-        /// read its two ends from <see cref="ResultTables.Ends"/>, the same
-        /// lookup the member table uses. That is what makes a Member Line and
-        /// the row Monitor numbers describe the same member: they are not two
-        /// readings of the edge that happen to agree, they are one reading
-        /// drawn twice.
+        /// take the equilibrium edge id straight off a
+        /// <see cref="ResultTables.MemberRow"/> and read its two ends from
+        /// <see cref="ResultTables.Ends"/>, the same lookup the table itself
+        /// uses. That is what makes a Member Line and the row Monitor numbers
+        /// describe the same member: they are not two readings of the edge
+        /// that happen to agree, they are one reading drawn twice.
         /// </summary>
         private static Line ThrustLine(
             EquilibriumResultDto equilibrium,
-            TnaEdgeStateDto state)
+            int equilibriumEdgeId)
         {
-            (int u, int v) = ResultTables.Ends(
-                equilibrium, state.EquilibriumEdgeId);
+            (int u, int v) = ResultTables.Ends(equilibrium, equilibriumEdgeId);
             return new Line(
                 Point(equilibrium.Vertices[u]),
                 Point(equilibrium.Vertices[v]));

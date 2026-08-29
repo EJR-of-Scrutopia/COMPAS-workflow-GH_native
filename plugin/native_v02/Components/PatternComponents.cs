@@ -247,7 +247,7 @@ public sealed class ArmadilloDualComponent :
 
     /// <summary>
     /// Each outline is CLOSED by appending its first point again, the same
-    /// convention <c>VisualiseComponents.FacePolylines</c> uses for its own
+    /// convention <c>SkinComponent.FacePolylines</c> uses for its own
     /// Cells-shaped output.
     /// </summary>
     private static PolylineCurve ClosedOutlineCurve(
