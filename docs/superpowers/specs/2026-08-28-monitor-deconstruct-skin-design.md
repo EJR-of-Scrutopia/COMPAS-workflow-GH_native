@@ -41,12 +41,12 @@ Monitor output is item i of branch b of the partner.
 | 1 | Force Density | q | member | Member Lines | Force over live length. |
 | 2 | Horizontal Force | H | member | Member Lines | Horizontal component of the member force, from the Result's H when it carries one, else force times the member's plan length over its length. |
 | 3 | Slack | SL | member | Member Lines | True where the force opposes the Result's positive-tension convention (a cable in compression) or is zero. |
-| 4 | Spool Length | SP | bar | one item per principal line | Strained length at the frame: the sum of the bar's member lengths. |
-| 5 | Unstrained Length | UL | bar | Spool Length | `sum(L / (1 + N / EA))` when EA is wired; empty otherwise. |
+| 4 | Spool Length | SP | bar | Member Lines' bar branches (branch b is bar b, one item) | Strained length at the frame: the sum of the bar's member lengths. |
+| 5 | Unstrained Length | UL | bar | Spool Length | `sum(L / (1 + N / EA))` when EA is wired; empty otherwise. A member whose `1 + N / EA` is not positive contributes its strained length. |
 | 6 | Anchor Along | AA | anchor | Deconstruct Reaction Points (one branch per strip) | Reaction component along the tensioner axis, the unit mean direction of the anchor's incident members into the net; the pull the tensioner takes. |
 | 7 | Anchor Across | AX | anchor | Reaction Points | The perpendicular remainder's magnitude; what the anchorage carries and the tensioner cannot. |
 | 8 | Tip Reaction | TR | head | Deconstruct Heads (one branch per column tree) | The axial force of the member under the head as a vector along it, pointing up into the head. |
-| 9 | Column Force | CF | column member | Deconstruct Columns | Axial demand, N. |
+| 9 | Column Force | CF | column member | Deconstruct Columns | Axial demand, N. Column numbers are read at the frame the Result carries, where Deconstruct draws the built state; the index alignment holds, the geometry may differ. |
 | 10 | Thrust | TH | column member | Columns | Horizontal component, N. |
 | 11 | Lean | LN | column member | Columns | Degrees from vertical. |
 | 12 | Deviation | DV | node | vertex order (flat, one branch) | Signed vertical distance from the frame to the solved state, mm; zero without a frame. |
@@ -54,9 +54,9 @@ Monitor output is item i of branch b of the partner.
 | 14 | Reachable | RC | one item | none | True when every node's absolute deviation is within Tolerance. |
 | 15 | Unreachable | UN | node ids | none | The nodes outside Tolerance, ascending. |
 | 16 | Bar Sag | BS | notch | Animate Principal Nodes (one branch per bar, notches in order) | Bending away from straight at each notch, mm, with EI; unchanged mechanism. |
-| 17 | Residuals | E | node | vertex order | The Result's equilibrium residual vector per node (moved from Deconstruct). |
-| 18 | Cable Utilisation | CU | member | Member Lines | force / Cable Capacity when wired; empty otherwise. |
-| 19 | Column Utilisation | CLU | column member | Columns | force / Column Capacity when wired; empty otherwise. |
+| 17 | Residuals | E | node | vertex order | The Result's equilibrium residual vector per node, zero where the Result carries none (the FD codec omits supports and exact zeros), assigned by node id (moved from Deconstruct). |
+| 18 | Cable Utilisation | CU | member | Member Lines | absolute force / Cable Capacity when wired; empty otherwise. |
+| 19 | Column Utilisation | CLU | column member | Columns | absolute force / Column Capacity when wired; empty otherwise. |
 | 20 | Result | RES | item | none | Passthrough with Monitor's diagnostics. |
 
 Bars and cables are told apart as now: a member joining two notches is a
