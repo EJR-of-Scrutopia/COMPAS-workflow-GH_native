@@ -57,10 +57,14 @@ frame formula is unchanged: plan interpolates by sag, depth is
 - Branches run from the fork to their live notches.
 - So at Time 0 every trunk lies flat on the ground from its foot to its
   notch's drawn position (the rail), and rotates up about the foot as
-  the notch rises, its length being the ram. The tree turns as one body
-  because the fork keeps its fraction.
-- Every member is drawn at every frame; a member is skipped only when
-  its two ends coincide within 1e-9.
+  the notch rises, its length being the ram. The TRUNK turns about the
+  foot and keeps its fork fraction; the arms follow their own notches,
+  so their length changes as the net rises, and that stretch is
+  reported (2.3), not hidden.
+- Every member is drawn at every frame; a member's line is skipped only
+  when its two ends coincide within 1e-9 (a flat start with a plumb
+  tree puts the foot under its notch), but it is still measured and
+  counted as collapsed in `animate.columns`.
 - `MouldGeometry.LiveColumnNodes(MouldColumnsDto block, Point3d[] live)
   -> Point3d[]` gives every block node's position for a frame, pure, in
   block node order, so `Frame.ColumnNodes` is that array.
@@ -69,11 +73,18 @@ frame formula is unchanged: plan interpolates by sag, depth is
 
 The port stays and becomes a check. For every trunk (a member leaving a
 foot) at this frame: its length `L` against its built length `B`. The
-`animate.columns` diagnostic reports count, shortest, longest; a new
-`animate.ram_range` warning fires when any `L < B x (1 - Extension)` (the
-ram would have to be shorter than retracted) or `L > B` (longer than
-built), naming the worst member and the ratio. `animate.column_overrun`
-is folded into it.
+`animate.columns` diagnostic reports count, shortest, longest and the
+number of collapsed members; `animate.ram_range` fires when any
+`L < B x (1 - Extension)` (the ram would have to be shorter than
+retracted) or `L > B` (longer than built), naming the worst member by
+its Columns branch index and foot node, the ratio and the phase; it is
+a warning once the columns are up (lift 1, finish and hold) and an info
+entry while they are still rotating (reel and raise), where a trunk
+shorter than retracted is the expected state of a foot that does not
+slide. Arms have no ram; their worst live-over-built ratio is reported
+as `animate.arm_stretch` (info) with the member named the same way.
+`animate.column_overrun` is folded into these. Extension above 95 is
+clamped with a remark.
 
 ### 2.4 Alignment
 
@@ -86,11 +97,19 @@ frame.
 
 ### 2.5 Perimeter Lines
 
-Output slot 8, appended after Columns: a tree of curves, one CLOSED
-polyline per boundary loop at the live frame, branch i the same loop as
-Perimeter Nodes branch i. A loop of fewer than three nodes gives an
-empty branch (the branch is kept so numbering holds). Closure is by
-repeating the first point.
+Output slot 8, appended after Columns: a tree of curves, one polyline
+per boundary group at the live frame, branch i the same group as
+Perimeter Nodes branch i. A group is CLOSED (first point repeated) only
+when its last node is adjacent to its first in the grouping graph;
+otherwise it is an open polyline through the walked nodes. A group of
+one node gives an empty branch (the branch is kept so numbering holds).
+
+The perimeter itself comes from the thrust mesh's naked edges when the
+mesh exists; without it (an FD Result) from the PATTERN topology's
+faces, an edge used by exactly one face, when that topology's vertex
+count matches the net; and only when neither is available from the
+degree heuristic, in which case `animate.perimeter_estimated` says so
+and Perimeter Lines is left empty.
 
 ## 3. Ports (binding)
 
@@ -106,9 +125,10 @@ Source "Animate". Kept: `animate.phase` (now the phase word plus its
 percentages), `animate.anchor_strips`, `animate.anchors_isolated`,
 `animate.nodes_want_push` and every other entry not named here.
 Changed: `animate.columns` (count, shortest, longest; no slide text).
-New: `animate.ram_range` (warning, per 2.3), `animate.column_alignment`
-(info, per 2.4). Removed: `animate.below_ground`,
-`animate.column_overrun`.
+New: `animate.ram_range` (per 2.3), `animate.arm_stretch` (info, per
+2.3), `animate.column_alignment` (info, per 2.4),
+`animate.perimeter_estimated` (info, per 2.5). Removed:
+`animate.below_ground`, `animate.column_overrun`.
 
 ## 5. Files (binding)
 
@@ -138,8 +158,17 @@ Monitor already reads `Frame.ColumnNodes` when present.
   the fork lies on the foot-to-main segment at the built fraction. With
   `live` halfway, the fork keeps its fraction and trunk, fork and main
   head are collinear within 0.5 degrees.
-- `ValidateVisualiseContract`'s Animate output list (if pinned) gains
-  Perimeter Lines at index 8. `ValidateOutputGrouping` unchanged.
+- `ValidatePhases` also runs at Pre-Sag 0 and 1, probes continuity at
+  1e-12 to a 1e-9 tolerance, and sweeps time for monotone sag and lift.
+- `ValidateLiveColumnNodes` builds its fork at 0.4, lists the branch
+  member before the main one, and permutes HeadNode, so a hard-coded
+  fraction, an `Above[0]` main pick or a plan-matched head each fail.
+- `ValidatePerimeterFromFaces`: a 2x2 quad grid on nine nodes returns
+  the eight rim nodes and not the centre.
+- `ValidateOutputGrouping` gains a duplicated-edge case: a strip whose
+  edges arrive twice still walks end to end.
+- Animate's four inputs and nine outputs are pinned in the harness's
+  contract table.
 - The persistent parameter count stays 12.
 
 ## 7. What breaks on the canvas
