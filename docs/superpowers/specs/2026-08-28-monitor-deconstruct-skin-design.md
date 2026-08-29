@@ -37,17 +37,17 @@ Monitor output is item i of branch b of the partner.
 
 | Slot | Name | Nick | Per | Aligned with | Meaning |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Member Force | F | member | Deconstruct Member Lines (one branch per bar, infill last) | Signed axial force, N, in the Result's sign convention. |
+| 0 | Member Force | F | member | Deconstruct Member Lines (one branch per bar, infill last) | Signed axial force in the Result's force unit (kN unless the Result says otherwise) and sign convention. Every force this component prints carries that unit; only the capacities are in newtons. |
 | 1 | Force Density | q | member | Member Lines | Force over live length. |
 | 2 | Horizontal Force | H | member | Member Lines | Horizontal component of the member force, from the Result's H when it carries one, else force times the member's plan length over its length. |
 | 3 | Slack | SL | member | Member Lines | Infill only: true where a cable's force opposes the Result's positive-tension convention or is zero. Bar-branch members are always false (a bar is never slack), so the tree stays aligned. The convention string is trimmed before comparison, as the validator trims it. |
-| 4 | Spool Length | SP | bar | Member Lines' bar branches (branch b is bar b, one item) | Strained length at the frame: the sum of the bar's member lengths. |
+| 4 | Spool Length | SP | bar | Member Lines' bar branches (branch b is bar b, one item) | Strained length at the frame: the sum of the run's consecutive segment lengths, whether or not a segment is a member (a TNA net carries no edge between two fixed nodes, so a segment between anchors has none; such segments are counted in the diagnostic). |
 | 5 | Unstrained Length | UL | bar | Spool Length | `sum(L / (1 + N / EA))` when EA is wired; empty otherwise. A member whose `1 + N / EA` is not positive contributes its strained length. |
 | 6 | Anchor Along | AA | anchor | Deconstruct Reaction Points (one branch per strip) | Reaction component along the tensioner axis, the unit mean direction of the anchor's incident members into the net (falling back to the pattern's edges through the grouping adjacency when the net carries none at that anchor, counted in the diagnostic); the pull the tensioner takes. |
 | 7 | Anchor Across | AX | anchor | Reaction Points | The perpendicular remainder's magnitude; what the anchorage carries and the tensioner cannot. |
 | 8 | Tip Reaction | TR | head | Deconstruct Heads (one branch per column tree) | The axial force of the member under the head as a vector along it, pointing up into the head. |
-| 9 | Column Force | CF | column member | Deconstruct Columns | Axial demand, N. Column numbers are read at the frame the Result carries, where Deconstruct draws the built state; the index alignment holds, the geometry may differ. |
-| 10 | Thrust | TH | column member | Columns | Horizontal component, N. |
+| 9 | Column Force | CF | column member | Deconstruct Columns | Axial demand in the Result's force unit. Column numbers are read at the frame the Result carries, where Deconstruct draws the built state; the index alignment holds, the geometry may differ. |
+| 10 | Thrust | TH | column member | Columns | Horizontal component, in the Result's force unit. |
 | 11 | Lean | LN | column member | Columns | Degrees from vertical. |
 | 12 | Deviation | DV | node | vertex order (flat, one branch; no partner tree) | Signed vertical distance from the frame to the solved state, mm; zero without a frame. |
 | 13 | Deviation Stats | DS | three items | none | RMS, max absolute, 95th percentile absolute, mm. |
