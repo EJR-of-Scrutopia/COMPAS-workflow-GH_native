@@ -31,10 +31,13 @@ nothing from this; it is for the page.
 The plugin's `bench.columns/1` document carries both a prism mesh
 (`vertices`, `faces`, which `upload_columns` accepts today) and the source
 of that mesh: `members` as `{"from": [x,y,z], "to": [x,y,z], "force": f}`,
-`forceUnit`, and `lengthUnitToMetres`. Read `members` and build the
+`forceUnit`, `lengthUnitToMetres`, and `radius`, which is the radius the
+prisms beside them were actually built at. Read `members` and build the
 columns in the studio's own material, so the radius is the studio's
-choice rather than the plugin's `Column Radius` input; keep accepting the
-mesh for older files.
+choice rather than the plugin's `Column Radius` input, with `radius` as
+the fallback when the studio has no choice of its own; keep accepting the
+mesh for older files. A member too short to draw is absent from both
+lists, so the nth prism is the nth member.
 
 ## 4. Retry-After on the 409
 
@@ -42,13 +45,16 @@ mesh for older files.
 queued or running. The plugin retries after 2, 4 and 8 seconds, then
 defers. Add a `Retry-After` header (seconds, from the run's expected
 remaining time or a fixed 5) so the plugin can honour the studio's own
-estimate; the plugin will prefer the header when present.
+estimate. Reading that header is a plugin-side follow-up and is not
+built: today the plugin keeps its own 2, 4, 8 schedule whatever the
+studio sends.
 
 ## 5. Upload validation tolerant of the Mould block
 
-Every contract the plugin exports now carries a `mould` block (ground,
-columns, frame) and a `forceUnit` (kN unless the document says
-otherwise). Confirm that `geometry.mesh_arrays`, `geometry.support_ids`
+Every contract from a mould definition now carries a `mould` block
+(ground, columns, frame), and every contract carries a `forceUnit` (kN
+unless the document says otherwise); an FD Result with no mould built
+carries no `mould` key at all. Confirm that `geometry.mesh_arrays`, `geometry.support_ids`
 and `geometry.member_forces_newtons` ignore the `mould` key on a
 contract upload, and that `member_forces_newtons` reads `forceUnit`
 rather than assuming newtons: the plugin's own labels were wrong by a

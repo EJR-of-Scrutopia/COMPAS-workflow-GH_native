@@ -25,21 +25,29 @@ Inputs, in order:
 | Slot | Name | Nick | Type | Default | Meaning |
 | --- | --- | --- | --- | --- | --- |
 | 0 | Result | RES | ResultParam item | required | Solved FD or TNA Result. |
-| 1 | Path | P | text, optional | "" | A folder, or a file whose folder is used; created when missing. A Path with no extension is a folder whether or not it exists yet; a Path that is not rooted (a bare name or a relative path) is refused with a Warning and nothing is written. |
-| 2 | Write | W | boolean | false | While true, every solve writes the set to Path. |
-| 3 | Name | N | text, optional | "" | The study name: the files are `<Name>-<kind>.json` and the studio's export name is `<Name>`; blank uses `ananke-export`. |
-| 4 | Cells | C | curves, list, FLATTENED | none | Closed plan outlines per cutting cell, from Skin's Face Polylines. |
-| 5 | Courses | CO | integers, list, FLATTENED | none | Course per cell, from Skin's Face Courses; empty puts every cell in course 0. |
-| 6 | Live | L | boolean | false | Push the set to the studio on every solve. |
-| 7 | Studio | S | text | http://127.0.0.1:8600 | The studio's base URL. |
-| 8 | Column Radius | R | number | 0.05 | Radius, in document units, of the prism each column member is drawn as in the columns mesh. |
+| 1 | Path | P | text, optional | "" | A folder, or a file whose folder is used; created when missing. A Path with no extension is a folder whether or not it exists yet; a Path that is not rooted (a bare name or a relative path) is refused with a Warning and nothing is written, and so is a rooted Path whose folder has no folder of its own (a drive root). |
+| 2 | Write | W | boolean, optional | false | While true, every solve writes the set to Path. Optional, so a port with no data reads false rather than refusing to collect. Write true with a blank Path is a Warning saying nothing was written, not an Error: the solve finishes and every output is set. |
+| 3 | Name | N | text, optional | "" | The study name: the files are `<Name>-<kind>.json` and the studio's export name is `<Name>`; blank uses `ananke-export`. ONE path segment, checked after the blank-to-default with `ExportPlan.NameIsOneSegment`: a Name carrying `/`, `\`, `:`, `..` or a character no file name may hold is a Warning naming it, nothing is written and nothing is enqueued, and the JSON outputs still stand. Two Exports sharing a Name and a Studio overwrite each other. |
+| 4 | Cells | C | curves, list, FLATTENED | none | Closed plan outlines per cutting cell, from Skin's Face Polylines. The registered flatten is re-asserted on every open, so a graft set on the port by hand is wiped when the file is reopened. |
+| 5 | Courses | CO | integers, list, FLATTENED | none | Course per cell, from Skin's Face Courses; empty puts every cell in course 0. Flattened on every open, as Cells. |
+| 6 | Live | L | boolean, optional | false | Push the set to the studio on every solve. Optional, as Write. Live false cancels the uploader (section 4). HELD after a load whose archived port counts did not match the registered ones: while held, Live true enqueues nothing and Uploaded reads `held: ports changed on load; set Live off then on to resume`. A solve that reads Live false clears the hold, so the next Live true is deliberate. |
+| 7 | Studio | S | text | http://127.0.0.1:8600 | The studio's base URL. Blank falls back to the default, with a Warning saying so when Live is on. |
+| 8 | Column Radius | R | number | 0.05 | Radius, in document units, of the prism each column member is drawn as in the columns mesh. A value that is not positive and finite falls back to 0.05 with a Warning. The default is metre-shaped and the port says so. |
 
 Format is removed. Outputs, in order: 0 Contract JSON `CJ`, 1 COMPAS
 JSON `MJ`, 2 Tessellation JSON `TJ` (empty when no cells), 3 Columns
 JSON `KJ` (empty when the Result carries no columns), 4 Written `W`
-(the most recent files written, one line each), 5 Uploaded `U` (the
-most recent upload outcome, one line per kind). GUID unchanged. The
+(the files THIS solve wrote, one line each, latched so a one-shot
+Button write survives its release solve), 5 Uploaded `U` (the most
+recent upload outcome, one line per kind). GUID unchanged. The
 component count stays 19; the persistent parameter count stays 12.
+
+One Export is one study. Slot 0 is item access, so a Result tree with
+more than one item makes every iteration after the first overwrite the
+files the last one wrote and supersede the set it enqueued: a Warning
+on the second iteration says "Export handles one Result per component;
+the last one wins.", said once so a wide tree does not repeat itself
+down the whole chin.
 
 ## 3. What Export produces (binding)
 
@@ -65,13 +73,20 @@ component count stays 19; the persistent parameter count stays 12.
   vertices at each end on a circle of `radius` perpendicular to the
   member, `sides` side quads, and each end cap as `sides - 2` triangles
   fanned from the cap's first vertex (triangles and quads only, since
-  the studio's mesh reader is not known to take n-gons); a member
-  shorter than 1e-9 is skipped. Serialised as `{"schema": "bench.columns/1",
-  "lengthUnitToMetres": f, "vertices": [[x,y,z]...], "faces": [[i,j,k,l]...],
+  the studio's mesh reader is not known to take n-gons). `sides` is
+  floored at 3 and `radius` at 1e-9, both silently: a prism needs three
+  sides to be a solid and a surface to be seen, and Export refuses a
+  non-positive Column Radius long before this. A member shorter than
+  1e-9 is skipped, from the `members` list as well as from the prisms,
+  so the nth prism and the nth member stay the same member. Serialised
+  as `{"schema": "bench.columns/1", "lengthUnitToMetres": f, "forceUnit":
+  u, "radius": r, "vertices": [[x,y,z]...], "faces": [[i,j,k,l]...],
   "members": [{"from": [..], "to": [..], "force": N}...]}`, which the
   studio's columns upload accepts today (`vertices` and `faces` keys) and
-  the lines-plus-radius kind of section 6 can read later. Forces carry
-  the Result's ForceUnit as `"forceUnit"`.
+  the lines-plus-radius kind of section 6 can read later. `radius` is the
+  clamped value the mesh was actually built at, so a studio drawing from
+  `members` knows what the mesh beside it used. Forces carry the
+  Result's ForceUnit as `"forceUnit"`.
 
 Write: with Write true and a Path, every kind in the plan is written to
 `<folder>/<Name>-<kind>.json`; `Written` lists them. The existing
@@ -95,19 +110,54 @@ one-shot Button behaviour (latch the last write) stays.
   and measured; the send waits and retries; after the third failure the
   kind is reported as deferred.
 - Outcome: `Uploaded` carries one line per kind (`contract: stored`,
-  `columns: 409 after 3 retries (run r-…)`, `compas: refused 400 …`),
-  the Message shows the last outcome, and any failure is a Warning
-  runtime message, never an Error: the files and outputs stand.
-- Live false: nothing is sent, the uploader is idle, and Uploaded says
-  so.
+  `columns: deferred, 409 after 3 retries (run r-…)`, `compas: refused
+  400 …`), the Message shows the last outcome, and any failure is a
+  Warning runtime message, never an Error: the files and outputs stand.
+  The run id is read out of the 409 body with System.Text.Json and any
+  body that is not that JSON falls back to the body itself, trimmed to
+  120 characters.
+- The uploader carries a phase beside the outcome, and the component
+  reads both under ONE lock acquisition (`LiveUploader.Current`, a
+  `Snapshot` of phase, text and failure verdict): reading the text and
+  the verdict separately let a send land between them and print one
+  set's failure with the other set's flag. The phases are NeverSent,
+  Pending, Sending and Done. `Uploaded` reads `nothing sent yet` before
+  the first send, `sending` while a set is waiting out the debounce or
+  on the wire, and the outcome lines when a send has landed; the Warning
+  is raised only for a failure that has landed.
+- Live false: nothing is sent, `Uploaded` says `Live is off`, and the
+  component calls `LiveUploader.Cancel()`, which drops a pending set,
+  cancels a send in flight through the uploader's cancellation token
+  (its outcome becomes `cancelled`, which is not a failure and raises no
+  Warning), and CLEARS the last-sent key so that turning Live back on
+  sends the same set again. Cancel does not dispose: a fresh token
+  source waits for the next enqueue. The token is passed to `PutAsync`
+  and to `Task.Delay`, and each payload is checked for disposed or
+  cancelled before it starts, so a deleted component stops PUTting
+  within one kind instead of running its retry schedule out.
 - The uploader never touches Grasshopper objects from its thread; it
-  posts its outcome into a field the next solve reads, and calls
-  `ExpireSolution` on the UI thread through `Rhino.RhinoApp.InvokeOnUiThread`
-  when an outcome arrives, so the component shows it. To keep that
-  expire from re-sending forever, the uploader hashes the Name, the
-  Studio and the set's payloads and skips a set identical to the last
-  one sent (the outcome text is kept); only a changed Result, Name or
-  Studio sends again.
+  posts its outcome into a field the next solve reads, and when an
+  outcome arrives it marshals onto the UI thread with
+  `Rhino.RhinoApp.InvokeOnUiThread` and asks the document for
+  `ScheduleSolution(5, d => ExpireSolution(false))`, which defers to a
+  solution already running and does nothing at all once the component
+  has left its document. To keep that expire from re-sending forever,
+  the uploader hashes the Name, the Studio and the set's payloads and
+  skips a set identical to the last one sent; only a changed Result,
+  Name or Studio, or Live toggled off and on, sends again. The key is
+  latched after EVERY completed send, failed or not, so a refused or
+  unreachable set does not re-open the expire loop on every solve; a
+  cancelled send does not latch it. The skipped set's outcome text is
+  `unchanged since: <the outcome that still stands>; toggle Live or
+  change the Result to send again`, and the owner is told once, so the
+  canvas leaves `sending` and settles rather than expiring for as long
+  as Live is on.
+- Neither thread the uploader owns may throw where it stands. The whole
+  body of the send runs under a catch, with the owner's callback inside
+  its own, so the discarded task can neither fault nor lose an outcome;
+  a caught exception becomes a `failed:` line for the kind in flight, or
+  for the set when it happened between kinds. The debounce timer's
+  callback is fenced the same way and returns at once when disposed.
   `LiveUploader.SetKey(string name, string studio, IReadOnlyList<(string
   Kind, string Json)> set)` is the pure hash, measured. The compas
   kind's JSON is the one thing the hash does not read: the worker's
@@ -166,17 +216,32 @@ for that study with the run id in the body; everything else in section
 
 - `ValidateExportPlan`: `Kinds(false, false)` is `contract, compas`;
   `(true, false)` adds `tessellation`; `(false, true)` adds `columns`;
-  `(true, true)` is all four in that order.
+  `(true, true)` is all four in that order. `NameIsOneSegment` is true
+  for `study-1` and false for `..`, `.`, `a\b`, `a/b`, `a:b`, `a?b`,
+  blank and whitespace, which fails a name check that only refuses a
+  blank.
 - `ValidateColumnsMesh`: one member of length 2 along Z at radius 0.1
   with 6 sides gives 12 vertices and 6 quads plus 8 triangles, every
   vertex within 1e-9 of radius 0.1 from the axis, end-cap vertices at
   Z 0 and 2; a zero-length member gives nothing; two members give 24
-  vertices and face indices all in range.
+  vertices and face indices all in range. A DIAGONAL member, (0,0,0) to
+  (1,1,1), has every cap vertex within 1e-9 of perpendicular to the
+  member and within 1e-9 of the radius, which fails an implementation
+  that draws the circle in world XY (every other case lies on an axis
+  and would pass it). `ColumnsMesh.Json` of a zero-length member lists
+  no members and no vertices, and `Json` at radius 0 declares the
+  clamped 1e-9 the mesh was built at.
 - `ValidateLiveUploader`: `RetryDelay(0..2)` is 2000, 4000, 8000 and
   `RetryDelay(3)` is null; `LiveUploader.RouteFor(kind, name, studio)`
   gives `{studio}/api/uploads/exports/{name}/contract` for the three
   export kinds and `{studio}/api/uploads/columns/{name}-columns.json`
-  for columns, with a trailing slash on Studio tolerated;
+  for columns, with a trailing slash on Studio tolerated and the name
+  escaped into both (a Name of `my study#1` reaches
+  `.../exports/my%20study%231/contract` and
+  `.../columns/my%20study%231-columns.json`);
+  `LiveUploader.DeferredDetail` reads `(run r-42)` out of
+  `{"run": "r-42"}` and falls back to the body itself for a body that is
+  not that JSON and for JSON carrying no run;
   `LiveUploader.Outcome(int status, int attempt)` classifies 200 to 299
   as stored, 409 as retry while `RetryDelay(attempt)` is not null and
   deferred after, anything else as refused. `SetKey` of two equal sets
@@ -193,6 +258,12 @@ for that study with the run id in the body; everything else in section
 - Export's nine inputs and six outputs pinned in `VisualiseContracts`;
   Cells and Courses pinned flattened in `FlattenedInputs` (indices 4
   and 5).
+- `ValidateParameterMismatch`: beside Deconstruct's counts,
+  `ParameterIdentity.Mismatch(7, 2, 9, 6)` warns and names both pairs,
+  and `(9, 6, 9, 6)` says nothing. That is the load a saved Export meets
+  and the state the Live hold is built on; the hold itself is not
+  measured here, since reading it needs a Grasshopper archive and this
+  harness never starts Rhino.
 - `ValidateExportCoursesValidation` and
   `ValidateExportTessellationJsonOptions` keep passing (the methods they
   reflect on keep their names and signatures).
@@ -200,11 +271,48 @@ for that study with the run id in the body; everything else in section
 
 ## 9. What breaks on the canvas
 
-Export's Format input is gone, so Path, Write, Name, Cells and Courses
-move up one slot and the load-time port warning fires on every saved
-Export; wires must be checked once. Old JSON output wires land on
-Contract JSON, the same content for a contract-format export. Three
-Export components per study collapse to one.
+Format is gone, so the ports after it move up one slot. Grasshopper
+stores a wire on the receiving port as the SOURCE port's instance guid
+and hands a component's archived ports back BY INDEX, so nothing comes
+back broken: every old wire reattaches to whatever now stands at its
+index, and `ParameterIdentity.Restore` then relabels that port with its
+registered name, so the canvas looks self-consistent while it carries a
+different quantity. Read the table as the author does, wire by wire.
+
+| Old slot | Old port | New port at that index | Cast | What the author gets |
+| --- | --- | --- | --- | --- |
+| in 1 | Format (text) | Path (text) | same type | SILENT reattach. The old Format value list, or a panel reading "contract", now feeds Path. `contract` is not rooted, so nothing is written and the Path warning names it, but only once Write reads true. |
+| in 2 | Path (text) | Write (boolean) | text to boolean | Fails for any real path: a red conversion error on the port. A string that reads true, false, 1, 0, y or n converts. |
+| in 3 | Write (boolean) | Name (text) | boolean to text | SILENT reattach. A Button or Toggle now names the study, so the files become `false-contract.json` and the studio's study name is `false`. |
+| in 4 | Name (text) | Cells (curve) | text to curve | Fails. Red conversion error. |
+| in 5 | Cells (curve) | Courses (integer) | curve to integer | Fails. Red conversion error. |
+| in 6 | Courses (integer) | Live (boolean) | integer to boolean | SILENT reattach. Item access takes the FIRST course; 0 reads false, anything else reads TRUE, which is why Live is held (below). |
+| out 0 | JSON (text) | Contract JSON (text) | same type | SILENT reattach. Correct content only if the file was saved on Format = contract; one saved on compas or tessellation now feeds its downstream the CONTRACT instead. |
+| out 1 | Written (text) | COMPAS JSON (text) | same type | SILENT reattach. A panel, a File Path or a script that consumed the written file path now receives the whole COMPAS document. Written has moved to slot 4 and the wire has to be moved with it. |
+
+The load-time warning fires on every saved Export, because
+`ParameterIdentity.ArchivedCounts` reads 7 inputs and 2 outputs from the
+archive against the 9 and 6 registered now, and `BeforeSolveInstance`
+re-asserts it on every solve so the first expire cannot wipe it:
+
+  this component's ports changed since the file was saved: 7 inputs and
+  2 outputs archived, 9 and 6 registered; wires may now sit on the wrong
+  port, check every one
+
+It names the counts, not which wire went where, which is what this table
+is for. Because the old Courses wire lands on Live and reads true for
+any first course index but 0, a warning alone would arrive in the same
+instant as an upload the author never asked for: Export therefore HOLDS
+Live on the first solve after such a load, enqueues nothing, and says
+`held: ports changed on load; set Live off then on to resume` on
+Uploaded until Live is seen false and then true again.
+
+Write and Live are the two ports whose slots an old archive hands
+persistent chunks of the wrong Goo type, so their registered false
+defaults are not expected to survive the read; both are Optional, so a
+port left with no value reads false rather than going red.
+
+Three Export components per study collapse to one.
 
 ## 10. Out of scope
 
