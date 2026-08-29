@@ -127,11 +127,21 @@ one-shot Button behaviour (latch the last write) stays.
   is raised only for a failure that has landed.
 - Live false: nothing is sent, `Uploaded` says `Live is off`, and the
   component calls `LiveUploader.Cancel()`, which drops a pending set,
-  cancels a send in flight through the uploader's cancellation token
-  (its outcome becomes `cancelled`, which is not a failure and raises no
-  Warning), and CLEARS the last-sent key so that turning Live back on
-  sends the same set again. Cancel does not dispose: a fresh token
-  source waits for the next enqueue. The token is passed to `PutAsync`
+  cancels a send in flight through the uploader's cancellation token,
+  and CLEARS the last-sent key so that turning Live back on sends the
+  same set again. The cancelled send records `<kind>: cancelled` in its
+  own outcome, which is not a failure and raises no Warning, and the
+  port never shows it: the only caller of `Cancel` is the Live-false
+  branch, and that branch says `Live is off` instead. Clearing the key
+  is protected against the send in flight by a cancel GENERATION,
+  bumped and compared under the same lock, and not by the token: the
+  token has to be cancelled after that lock is released, since
+  cancelling a `Task.Delay` can inline the send's own continuation onto
+  the caller's thread and under the lock that would deadlock, so a send
+  tail taking the lock in that window would read the token as not
+  cancelled and put the key back. Cancel does not dispose: it takes a
+  fresh source when there was something to cancel, and that source waits
+  for the next enqueue. The token is passed to `PutAsync`
   and to `Task.Delay`, and each payload is checked for disposed or
   cancelled before it starts, so a deleted component stops PUTting
   within one kind instead of running its retry schedule out.
@@ -155,7 +165,11 @@ one-shot Button behaviour (latch the last write) stays.
   repeat parked as pending would read as `sending` for a send that is
   never going to happen, and the solve an outcome asks for enqueues that
   very repeat. Deciding it at the enqueue is what makes the cycle settle
-  in one solve.
+  in one solve. The key is stamped on the pending set there and carried
+  with it, so the debounce never hashes the same bytes twice. A skip
+  found while a DIFFERENT set is on the wire writes the unchanged text
+  but leaves the phase alone: that other set really is sending, and its
+  own outcome moves the phase and asks for the solve that shows it.
 - Neither thread the uploader owns may throw where it stands. The whole
   body of the send runs under a catch, with the owner's callback inside
   its own, so the discarded task can neither fault nor lose an outcome;

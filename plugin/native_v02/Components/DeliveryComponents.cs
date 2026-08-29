@@ -80,8 +80,10 @@ public sealed class ExportComponent :
 
     // Live is HELD when the file this component came out of was saved
     // against different ports. Grasshopper reattaches archived wires by
-    // index, so an old Export's Courses wire now lands on Live and its
-    // first course index reads True: the study would be pushed to a
+    // index, so an old Export's Courses wire now lands on Live, and item
+    // access takes the FIRST course: 0 reads false, anything else reads
+    // TRUE, and courses can be authored or reordered so that first one
+    // is not always 0. Where it is not, the study would be pushed to a
     // studio before the author had read the warning saying the wires
     // moved. Held until Live is seen False and then True again, which is
     // a deliberate act. Read on the first solve, not in the constructor,
@@ -309,14 +311,14 @@ public sealed class ExportComponent :
         parameters.AddTextParameter(
             "Uploaded",
             "U",
-            "Where the live push stands, one line per kind: nothing sent " +
-            "yet before the first send; sending while a set is waiting " +
-            "out the debounce or on the wire; then stored, refused, " +
-            "deferred or failed, per kind. Unchanged says the set matched " +
-            "the last one sent and was not sent again; cancelled says " +
-            "Live went off while a send was running; held says the file's " +
-            "ports moved when it was opened and Live is waiting to be set " +
-            "off and on; Live is off says so while Live is False.",
+            "Where the live push stands, one line per kind: " +
+            LiveUploader.NothingSentYet + " before the first send; " +
+            "sending while a set is waiting out the debounce or on the " +
+            "wire; then stored, refused, deferred or failed, per kind. " +
+            "Unchanged says the set matched the last one sent and was " +
+            "not sent again; held says the file's ports moved when it " +
+            "was opened and Live is waiting to be set off and on; Live " +
+            "is off says so while Live is False.",
             GH_ParamAccess.item);
     }
 

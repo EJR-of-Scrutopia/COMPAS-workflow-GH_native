@@ -40,8 +40,9 @@ internal sealed class LiveUploader : IDisposable
     public const string CompasKind = "compas";
 
     /// <summary>
-    /// What the owner shows before anything has been sent. Named here so
-    /// the port description and the code cannot drift apart.
+    /// What the owner shows before anything has been sent. Named here
+    /// and interpolated into the Uploaded port's own description, so the
+    /// port and the outcome cannot drift apart.
     /// </summary>
     public const string NothingSentYet = "nothing sent yet";
 
@@ -53,7 +54,17 @@ internal sealed class LiveUploader : IDisposable
     public sealed record Pending(
         string Studio,
         string Name,
-        IReadOnlyList<(string Kind, string Json)> Payloads);
+        IReadOnlyList<(string Kind, string Json)> Payloads)
+    {
+        /// <summary>
+        /// The set's key, stamped by <see cref="Enqueue"/> and carried
+        /// with the set. The payloads are the same bytes by the time the
+        /// debounce comes round, so hashing them again would be the same
+        /// work twice on the timer's thread, inside the lock, and it was
+        /// the last thing in there that could throw.
+        /// </summary>
+        internal string Key { get; init; } = string.Empty;
+    }
 
     /// <summary>
     /// Where the uploader stands, so the owner can say "sending" while a
@@ -100,6 +111,14 @@ internal sealed class LiveUploader : IDisposable
     // Cancelled by Cancel and by Dispose, and replaced there so the
     // uploader stays usable: Live off then on again has to send.
     private CancellationTokenSource _cancel = new();
+    // Bumped inside Cancel's lock and compared inside the send tail's,
+    // which is the only way the two can be ordered against each other.
+    // The token cannot do this job: Cancel has to cancel it AFTER
+    // releasing the lock (cancelling Task.Delay can inline the send's
+    // continuation onto this thread, and under the lock that deadlocks),
+    // so a tail taking the gate in that window would read the token as
+    // not cancelled and put the key back that Cancel had just cleared.
+    private long _cancelGeneration;
 
     public LiveUploader(Action onOutcome)
     {
@@ -277,10 +296,16 @@ internal sealed class LiveUploader : IDisposable
                 _timer?.Dispose();
                 _timer = null;
                 _lastOutcome = UnchangedText(_sentOutcome);
-                _phase = Phase.Done;
+                // Not Done while a DIFFERENT set is on the wire: that one
+                // really is sending, and saying otherwise here would put
+                // this set's skip on the canvas over the top of it. The
+                // outcome that lands moves the phase itself, and the
+                // unchanged text is waiting for the solve after it.
+                if (!_sending)
+                    _phase = Phase.Done;
                 return;
             }
-            _pending = set;
+            _pending = set with { Key = key };
             _phase = Phase.Pending;
             _timer?.Dispose();
             _timer = new Timer(_ => Fire(), null, DebounceMilliseconds, Timeout.Infinite);
@@ -297,23 +322,36 @@ internal sealed class LiveUploader : IDisposable
     /// </summary>
     public void Cancel()
     {
-        CancellationTokenSource cancelling;
+        CancellationTokenSource? cancelling = null;
         lock (_gate)
         {
+            // Whether there is anything to cancel is decided before the
+            // pending set is dropped. With Live off the component calls
+            // this on every solve, and a source per solve is an
+            // allocation and a cancellation for nothing.
+            bool running = _pending is not null || _sending;
             _pending = null;
             _timer?.Dispose();
             _timer = null;
             _lastSentKey = null;
-            cancelling = _cancel;
-            _cancel = new CancellationTokenSource();
+            _cancelGeneration++;
+            if (running)
+            {
+                cancelling = _cancel;
+                _cancel = new CancellationTokenSource();
+            }
         }
+        if (cancelling is null)
+            return;
         try
         {
             // Outside the lock: cancelling runs the callbacks HttpClient
-            // and Task.Delay registered, and none of that is work to do
-            // while a solve thread is waiting to read an outcome. The
-            // source itself is not disposed, because a send in flight is
-            // still holding its token.
+            // and Task.Delay registered, and cancelling a Delay can run
+            // the send's own continuation on this thread, which under the
+            // lock would be a deadlock. The key is protected from a tail
+            // arriving in this window by the generation, not by the
+            // token. The source itself is not disposed, because a send in
+            // flight is still holding it.
             cancelling.Cancel();
         }
         catch (Exception)
@@ -331,6 +369,7 @@ internal sealed class LiveUploader : IDisposable
             Pending? set;
             string key;
             long sequence;
+            long generation;
             CancellationToken token;
             lock (_gate)
             {
@@ -339,7 +378,9 @@ internal sealed class LiveUploader : IDisposable
                 set = _pending;
                 if (set is null)
                     return;
-                key = SetKey(set.Name, set.Studio, set.Payloads);
+                // Stamped by Enqueue on the set itself. Nothing in this
+                // lock computes anything now, so nothing in it can throw.
+                key = set.Key;
                 _pending = null;
                 if (key == _lastSentKey)
                 {
@@ -357,18 +398,20 @@ internal sealed class LiveUploader : IDisposable
                 started = true;
                 _phase = Phase.Sending;
                 sequence = ++_latestStarted;
+                generation = _cancelGeneration;
                 token = _cancel.Token;
             }
-            _ = Task.Run(() => SendAsync(set, key, sequence, token));
+            _ = Task.Run(() => SendAsync(set, key, sequence, generation, token));
         }
         catch (Exception)
         {
             // A timer callback runs on a thread-pool thread, where an
             // escaping exception is not a failed send but a killed
-            // process. The plausible thrower is the hash of a large set
-            // running out of memory. That set is dropped; what must not
-            // be dropped with it is the uploader's ability to send the
-            // next one, so the single-flight flag goes back.
+            // process. Nothing inside the lock computes anything any
+            // more, so what is left is the scheduling itself; the set is
+            // dropped, and what must not be dropped with it is the
+            // uploader's ability to send the next one, so the
+            // single-flight flag goes back.
             if (!started)
                 return;
             try
@@ -386,6 +429,7 @@ internal sealed class LiveUploader : IDisposable
         Pending set,
         string key,
         long sequence,
+        long generation,
         CancellationToken token)
     {
         bool notify = false;
@@ -483,10 +527,14 @@ internal sealed class LiveUploader : IDisposable
                 {
                     // Latched whatever the studio said, so a refused or
                     // an unreachable set does not re-open the expire loop
-                    // on every solve. A CANCELLED send did not complete,
-                    // and Cancel has just cleared the key on purpose, so
-                    // that one must not put it back.
-                    if (!token.IsCancellationRequested)
+                    // on every solve. Not latched across a Cancel: that
+                    // cleared the key on purpose, and putting it back
+                    // would leave the author toggling Live off and on and
+                    // being told the set was unchanged. The generation is
+                    // read under the same lock Cancel bumps it under, so
+                    // there is no window; the token is not, and cannot
+                    // do this job (see _cancelGeneration).
+                    if (generation == _cancelGeneration)
                         _lastSentKey = key;
                     _sentOutcome = lines.Count == 0
                         ? "cancelled"
