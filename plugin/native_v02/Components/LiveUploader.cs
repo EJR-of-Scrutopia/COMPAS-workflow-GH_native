@@ -299,8 +299,10 @@ internal sealed class LiveUploader : IDisposable
                 // Not Done while a DIFFERENT set is on the wire: that one
                 // really is sending, and saying otherwise here would put
                 // this set's skip on the canvas over the top of it. The
-                // outcome that lands moves the phase itself, and the
-                // unchanged text is waiting for the solve after it.
+                // outcome that lands moves the phase itself and overwrites
+                // this text with its own lines; the solve it asks for then
+                // skips again and recomputes the unchanged text against
+                // that fresher outcome.
                 if (!_sending)
                     _phase = Phase.Done;
                 return;

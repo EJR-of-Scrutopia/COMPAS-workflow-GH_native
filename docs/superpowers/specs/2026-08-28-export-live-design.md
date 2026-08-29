@@ -131,8 +131,12 @@ one-shot Button behaviour (latch the last write) stays.
   and CLEARS the last-sent key so that turning Live back on sends the
   same set again. The cancelled send records `<kind>: cancelled` in its
   own outcome, which is not a failure and raises no Warning, and the
-  port never shows it: the only caller of `Cancel` is the Live-false
-  branch, and that branch says `Live is off` instead. Clearing the key
+  port does not show it on any path that reaches an enqueue: the only
+  caller of `Cancel` is the Live-false branch, and that branch says
+  `Live is off` instead (the one exception is Live turned back on with
+  a Name that fails the one-segment rule, where nothing is enqueued and
+  the port reads the cancelled outcome beside the Name Warning until
+  the Name is fixed). Clearing the key
   is protected against the send in flight by a cancel GENERATION,
   bumped and compared under the same lock, and not by the token: the
   token has to be cancelled after that lock is released, since
