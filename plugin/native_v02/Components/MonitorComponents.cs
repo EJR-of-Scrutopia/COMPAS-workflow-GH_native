@@ -218,8 +218,11 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Member Force",
                 "F",
-                "Signed axial force in each member, N, in the Result's own "
-                    + "sign convention. As a TREE branched EXACTLY as "
+                "Signed axial force in each member, in the RESULT'S OWN "
+                    + "FORCE UNIT (kN unless the Result says otherwise) and in "
+                    + "its own sign convention. Every force on this component "
+                    + "is in that unit, and the diagnostics name it. As a TREE "
+                    + "branched EXACTLY as "
                     + "DECONSTRUCT's Member Lines for the same Result: one "
                     + "branch per principal line holding that bar's own "
                     + "members, and a LAST branch holding the infill. Item [i] "
@@ -236,8 +239,10 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Horizontal Force",
                 "H",
-                "The horizontal component of each member force, N, branched "
-                    + "exactly as Member Force. Read from the Result's own H "
+                "The horizontal component of each member force, in the "
+                    + "Result's force unit (kN unless the Result says "
+                    + "otherwise), branched exactly as Member Force. Read from "
+                    + "the Result's own H "
                     + "where it carries one, else the force times the member's "
                     + "plan length over its length.",
                 GH_ParamAccess.tree);
@@ -264,8 +269,11 @@ namespace Ananke.COMPAS.Native.Components
                     + "segment the net carries no member for still contributes "
                     + "its length here, and is cut as if it carried no force, "
                     + "so a bar can be longer here than the members Member "
-                    + "Force lists for it; monitor.spool counts any such "
-                    + "segment. As a TREE with ONE BRANCH PER PRINCIPAL LINE "
+                    + "Force lists for it. That is ORDINARY rather than a "
+                    + "fault: a TNA net carries no edge between two supports, "
+                    + "so a run ending anchor to anchor has no member on that "
+                    + "segment. monitor.spool counts them. As a TREE with ONE "
+                    + "BRANCH PER PRINCIPAL LINE "
                     + "holding that bar's single length, so branch {b} is bar "
                     + "{b}: the same branch that bar's members sit in in "
                     + "Member Force and in DECONSTRUCT's Member Lines.",
@@ -284,7 +292,8 @@ namespace Ananke.COMPAS.Native.Components
                 "Anchor Along",
                 "AA",
                 "The part of each anchor's reaction acting ALONG its tensioner "
-                    + "axis, N, positive along that axis: the pull the "
+                    + "axis, in the Result's force unit (kN unless the Result "
+                    + "says otherwise), positive along that axis: the pull the "
                     + "tensioner itself takes. The axis is the unit mean "
                     + "direction of the members leaving the anchor into the "
                     + "net, and document 07's legs are these anchors. As a "
@@ -296,7 +305,8 @@ namespace Ananke.COMPAS.Native.Components
                 "Anchor Across",
                 "AX",
                 "What is left of the reaction once the along part is taken "
-                    + "out, as a magnitude, N. This is what the ANCHORAGE has "
+                    + "out, as a magnitude in the same unit as Anchor Along. "
+                    + "This is what the ANCHORAGE has "
                     + "to carry, because a tensioner can only pull along its "
                     + "own axis. Branched exactly as Anchor Along.",
                 GH_ParamAccess.tree);
@@ -304,8 +314,10 @@ namespace Ananke.COMPAS.Native.Components
                 "Tip Reaction",
                 "TR",
                 "The axial force of the member under each column head, as a "
-                    + "vector along that member pointing UP into the head, N. "
-                    + "It comes from the block's own member forces and not "
+                    + "vector along that member pointing UP into the head, in "
+                    + "the Result's force unit (kN unless the Result says "
+                    + "otherwise). It comes from the block's own member forces "
+                    + "and not "
                     + "from a solver's node reactions, because the columns are "
                     + "solved as a block upstream. As a TREE branched EXACTLY "
                     + "as DECONSTRUCT's Heads: one branch per column tree, "
@@ -317,7 +329,9 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Column Force",
                 "CF",
-                "Axial demand in each column member, N. As a TREE branched "
+                "Axial demand in each column member, in the Result's force "
+                    + "unit (kN unless the Result says otherwise). As a TREE "
+                    + "branched "
                     + "EXACTLY as DECONSTRUCT's Columns: one branch per column "
                     + "tree, members in the block's own order. Measured at the "
                     + "frame the Result carries, where DECONSTRUCT draws the "
@@ -327,8 +341,10 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddNumberParameter(
                 "Thrust",
                 "TH",
-                "The horizontal force in each column member, N: the part of a "
-                    + "leaning member's axial force that acts sideways. A "
+                "The horizontal force in each column member, in the Result's "
+                    + "force unit (kN unless the Result says otherwise): the "
+                    + "part of a leaning member's axial force that acts "
+                    + "sideways. A "
                     + "plumb member reads zero. Only the members STANDING ON "
                     + "THE GROUND put theirs into the foundation, and the "
                     + "monitor.thrust_into_ground diagnostic sums those alone; "
@@ -421,7 +437,8 @@ namespace Ananke.COMPAS.Native.Components
                 "Cable Utilisation",
                 "CU",
                 "The ABSOLUTE FORCE OVER CAPACITY per member, the magnitude "
-                    + "of N over Cable Capacity, branched exactly as Member "
+                    + "of the force in NEWTONS over Cable Capacity, branched "
+                    + "exactly as Member "
                     + "Force. A utilisation is a magnitude ratio, so a cable "
                     + "pushing rather than pulling reads its size here and "
                     + "SLACK is what names the sign. The Result's force is "
@@ -437,7 +454,8 @@ namespace Ananke.COMPAS.Native.Components
                 "Column Utilisation",
                 "CLU",
                 "The ABSOLUTE FORCE OVER CAPACITY per column member, the "
-                    + "magnitude of N over Column Capacity, branched exactly "
+                    + "magnitude of the force in NEWTONS over Column "
+                    + "Capacity, branched exactly "
                     + "as Column Force. A utilisation is a magnitude ratio, so "
                     + "the sign of the member force is not in it. The block's "
                     + "member force is in the net's own unit and is converted "
@@ -566,7 +584,14 @@ namespace Ananke.COMPAS.Native.Components
                 // small. An unknown unit buys nothing: a ratio between two
                 // different units is not a utilisation, so none is published
                 // and monitor.utilisation names the unit instead.
-                string forceUnit = (equilibrium.ForceUnit ?? string.Empty).Trim();
+                // Read ONCE, and every force this component reports carries
+                // it: a port saying N beside a utilisation computed from kN is
+                // a reader's trap, and the utilisation is the only figure that
+                // was ever converted. The contract refuses an empty forceUnit,
+                // so the fallback is for a hand-built DTO alone, and it is the
+                // contract's own default.
+                string declaredUnit = (equilibrium.ForceUnit ?? string.Empty).Trim();
+                string forceUnit = declaredUnit.Length > 0 ? declaredUnit : "kN";
                 bool newtons = string.Equals(
                     forceUnit, "N", StringComparison.OrdinalIgnoreCase);
                 bool kilonewtons = string.Equals(
@@ -1083,6 +1108,10 @@ namespace Ananke.COMPAS.Native.Components
                 nodes.Add(run.Select(i => v[i]).ToList());
                 if (run.Count < 2)
                 {
+                    // Fewer than two notches is nothing to bend between at
+                    // all, which is the same fact the support test below
+                    // reports and belongs in the same count.
+                    unheld++;
                     sag.Add(new List<double>());
                     continue;
                 }
@@ -1159,8 +1188,9 @@ namespace Ananke.COMPAS.Native.Components
             if (cableForce.Count > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "monitor.cable_tension", "info",
-                    $"cable tension {cableForce.Min():0} to {cableForce.Max():0} N",
-                    cableForce.Max(), unit: "N",
+                    $"cable tension {cableForce.Min():0} to {cableForce.Max():0} "
+                        + forceUnit,
+                    cableForce.Max(), unit: forceUnit,
                     context: ResultDiagnostics.Context(("min", cableForce.Min().ToString("0", CultureInfo.InvariantCulture)))));
                 d.Add(slackCables == 0
                     ? ResultDiagnostics.Entry(S, "monitor.slack_cables", "ok",
@@ -1174,8 +1204,9 @@ namespace Ananke.COMPAS.Native.Components
             if (barForce.Count > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "monitor.bar_force", "info",
-                    $"bar axial force {barForce.Min():0} to {barForce.Max():0} N",
-                    barForce.Max(), unit: "N"));
+                    $"bar axial force {barForce.Min():0} to {barForce.Max():0} "
+                        + forceUnit,
+                    barForce.Max(), unit: forceUnit));
             }
             if (spool.Count > 0)
             {
@@ -1189,10 +1220,14 @@ namespace Ananke.COMPAS.Native.Components
                                 + "tensioned.")
                         + (spoolSegmentsWithoutMember > 0
                             ? $" {spoolSegmentsWithoutMember} run segments carry no "
-                                + "member in the net: their length is spooled and they "
-                                + "are cut as if they carried no force, so a bar can "
-                                + "account for more length here than Member Force lists "
-                                + "for it."
+                                + "member in the net, which is ordinary rather than a "
+                                + "fault: a TNA net carries no edge between two "
+                                + "supports, because such an edge joins two fixed nodes "
+                                + "and contributes no unknown, so a run ending anchor to "
+                                + "anchor has no member on that segment. Their length is "
+                                + "spooled and they are cut as if they carried no force, "
+                                + "so a bar can account for more length here than Member "
+                                + "Force lists for it."
                             : string.Empty),
                     spool.Max(), unit: "m",
                     context: ResultDiagnostics.Context(
@@ -1204,9 +1239,10 @@ namespace Ananke.COMPAS.Native.Components
             if (columnForce.Count > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "monitor.column_force", "info",
-                    $"column compression {columnForce.Min():0} to {columnForce.Max():0} N, "
-                        + $"carrying {columnForce.Sum():0} N in total",
-                    columnForce.Max(), unit: "N",
+                    $"column compression {columnForce.Min():0} to "
+                        + $"{columnForce.Max():0} {forceUnit}, carrying "
+                        + $"{columnForce.Sum():0} {forceUnit} in total",
+                    columnForce.Max(), unit: forceUnit,
                     context: ResultDiagnostics.Context(("total", columnForce.Sum().ToString("0", CultureInfo.InvariantCulture)))));
                 // Only the FEET push on the ground. A branch inside a tree leans
                 // too, but its horizontal is balanced at the junction by its
@@ -1217,10 +1253,11 @@ namespace Ananke.COMPAS.Native.Components
                 d.Add(footThrust.Length == 0
                     ? ResultDiagnostics.Entry(S, "monitor.thrust_into_ground", "info",
                         "no member reaches the ground in this state, so there is no "
-                            + "foundation thrust to report.", 0.0, unit: "N")
+                            + "foundation thrust to report.", 0.0, unit: forceUnit)
                     : ResultDiagnostics.Entry(S, "monitor.thrust_into_ground", "info",
                         $"horizontal thrust at the {footThrust.Length} feet up to "
-                            + $"{footThrust.Max():0} N, {footThrust.Sum():0} N summed. This "
+                            + $"{footThrust.Max():0} {forceUnit}, "
+                            + $"{footThrust.Sum():0} {forceUnit} summed. This "
                             + "is what the ground has to resist sideways, and it is the "
                             + "price of leaning the arms."
                             + (frame is not null && frame.Time < 100.0 - 1.0e-9
@@ -1237,7 +1274,7 @@ namespace Ananke.COMPAS.Native.Components
                                     + "acted along this frame's lean, not what it is "
                                     + "carrying now."
                                 : string.Empty),
-                        footThrust.Max(), unit: "N",
+                        footThrust.Max(), unit: forceUnit,
                         context: ResultDiagnostics.Context(
                             ("feet", footThrust.Length.ToString(CultureInfo.InvariantCulture)),
                             ("sum", footThrust.Sum().ToString("0", CultureInfo.InvariantCulture)))));
@@ -1255,9 +1292,9 @@ namespace Ananke.COMPAS.Native.Components
                     .DefaultIfEmpty(0.0)
                     .Max();
                 d.Add(ResultDiagnostics.Entry(S, "monitor.anchor_horizontal", "info",
-                    $"anchor pull up to {worst:0} N horizontally: the side ties hold "
-                        + "the perimeter cables against exactly this.",
-                    worst, unit: "N"));
+                    $"anchor pull up to {worst:0} {forceUnit} horizontally: the side "
+                        + "ties hold the perimeter cables against exactly this.",
+                    worst, unit: forceUnit));
             }
             if (anchorAcross.Count > 0)
             {
@@ -1265,7 +1302,8 @@ namespace Ananke.COMPAS.Native.Components
                 double total = anchorReaction.Sum(a => a.Length);
                 double share = total > 1.0e-9 ? anchorAcross.Sum() / total : 0.0;
                 d.Add(ResultDiagnostics.Entry(S, "monitor.anchor_split", "info",
-                    $"the worst anchor puts {worstAcross:0} N ACROSS its tensioner, and "
+                    $"the worst anchor puts {worstAcross:0} {forceUnit} ACROSS its "
+                        + "tensioner, and "
                         + $"{share * 100.0:0.#} percent of all the anchor pull is across "
                         + "rather than along. A tensioner can only pull along its own "
                         + "axis, so that share is the anchorage's to carry."
@@ -1274,7 +1312,7 @@ namespace Ananke.COMPAS.Native.Components
                                 + "leaving them, so their axis was read from the strip "
                                 + "the pattern joins them into rather than from the net."
                             : string.Empty),
-                    worstAcross, unit: "N",
+                    worstAcross, unit: forceUnit,
                     context: ResultDiagnostics.Context(
                         ("share", share.ToString("0.###", CultureInfo.InvariantCulture)),
                         ("axis_from_strip",
@@ -1344,8 +1382,9 @@ namespace Ananke.COMPAS.Native.Components
             // most reassuring numbers on the model, sitting under the least
             // supported bar there is.
             string unheldNote = unheldBars > 0
-                ? $" {unheldBars} of them are held at fewer than two notches, so they "
-                    + "are read as zero here: that is a bar with nothing to bend "
+                ? $" {unheldBars} of them cannot be solved as a beam at all, being "
+                    + "held at fewer than two notches or carrying fewer than two, so "
+                    + "nothing is solved for them: that is a bar with nothing to bend "
                     + "between, not a straight one."
                 : string.Empty;
             if (barSag.Count == 0)
@@ -1379,11 +1418,12 @@ namespace Ananke.COMPAS.Native.Components
             if (unheldBars > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "monitor.bar_unheld", "warning",
-                    $"{unheldBars} bars are held at fewer than two notches, by a column "
-                        + "head or an anchor. A bar on one support or none is a "
-                        + "mechanism, so no sag is solved for it and its branch reads "
-                        + "zero. Run Columns, or place a head on it, before reading its "
-                        + "bending.",
+                    $"{unheldBars} bars cannot be solved as a beam: they are held at "
+                        + "fewer than two notches, by a column head or an anchor, or "
+                        + "carry fewer than two notches at all. A bar on one support or "
+                        + "none is a mechanism, so no sag is solved for it and its "
+                        + "branch reads zero. Run Columns, or place a head on it, "
+                        + "before reading its bending.",
                     unheldBars, unit: "bars"));
             }
 
@@ -1420,12 +1460,21 @@ namespace Ananke.COMPAS.Native.Components
                     said.Add($"infill cable up to {worstCable:0.###}");
                 if (columnUtilisation.Count > 0)
                     said.Add($"column up to {worstColumn:0.###}");
+                // Both units named, because this is the one figure on the
+                // component that mixes them: the forces are the Result's and
+                // the capacity is the author's, in newtons.
+                string denominated = string.Equals(
+                    forceUnit, "N", StringComparison.OrdinalIgnoreCase)
+                    ? " The forces and the capacity are both in N."
+                    : $" The forces are in {forceUnit}, converted to N against "
+                        + "the capacity you supplied, which is in N.";
                 d.Add(ResultDiagnostics.Entry(S, "monitor.utilisation",
                     worstUse > 1.0 ? "warning" : "info",
                     "utilisation " + string.Join(", ", said)
                         + (worstUse > 1.0
                             ? ". Above one a member is OVER the capacity you supplied."
-                            : " of the capacity you supplied."),
+                            : " of the capacity you supplied.")
+                        + denominated,
                     worstUse, tolerance: 1.0, unit: "ratio"));
             }
             d.Add(ResultDiagnostics.Entry(S, "monitor.demand_only", "info",
