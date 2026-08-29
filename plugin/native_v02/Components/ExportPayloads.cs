@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using Ananke.COMPAS.Native.Contracts;
 using Rhino.Geometry;
@@ -25,6 +26,35 @@ internal static class ExportPlan
             kinds.Add("columns");
         return kinds.ToArray();
     }
+
+    // Refused on top of the invalid file name characters the platform
+    // knows about, so the rule reads the same on any of them: these three
+    // are what turn a name into a path or a second route segment.
+    private static readonly char[] SeparatorCharacters = { '/', '\\', ':' };
+
+    /// <summary>
+    /// Whether a study name is ONE segment, which is what both
+    /// destinations need it to be. The files are
+    /// <c>&lt;Name&gt;-&lt;kind&gt;.json</c> inside the folder the author
+    /// chose, so a name carrying a separator or a <c>..</c> writes the set
+    /// somewhere else entirely, quietly and successfully; the studio's
+    /// route takes the name as one path segment too. Blank is refused
+    /// here, and the caller has already turned a blank Name into the
+    /// default before asking.
+    /// </summary>
+    public static bool NameIsOneSegment(string name)
+    {
+        if (name is null)
+            return false;
+        string trimmed = name.Trim();
+        if (trimmed.Length == 0)
+            return false;
+        if (trimmed == "." || trimmed == "..")
+            return false;
+        if (trimmed.IndexOfAny(SeparatorCharacters) >= 0)
+            return false;
+        return trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
+    }
 }
 
 /// <summary>
@@ -36,21 +66,42 @@ internal static class ExportPlan
 /// </summary>
 internal static class ColumnsMesh
 {
+    /// <summary>
+    /// A prism needs three sides to be a solid and a radius that is not
+    /// zero to have a surface, so both are floored here. The floor is the
+    /// last line of defence: Export refuses a non-positive Column Radius
+    /// and says so long before this.
+    /// </summary>
+    public const int MinimumSides = 3;
+
+    public const double MinimumRadius = 1.0e-9;
+
+    /// <summary>
+    /// A member this short has no direction to build a prism about. It is
+    /// skipped in BOTH lists, the prisms and the members, so a consumer
+    /// pairing the nth of one with the nth of the other never finds them
+    /// out of step.
+    /// </summary>
+    public const double MinimumLength = 1.0e-9;
+
+    public static bool IsTooShort(Point3d from, Point3d to) =>
+        (to - from).Length <= MinimumLength;
+
     public static (double[][] Vertices, int[][] Faces) Build(
         IReadOnlyList<(Point3d From, Point3d To, double Force)> members,
         double radius,
         int sides = 6)
     {
-        sides = Math.Max(sides, 3);
-        radius = Math.Max(radius, 1.0e-9);
+        sides = Math.Max(sides, MinimumSides);
+        radius = Math.Max(radius, MinimumRadius);
         var vertices = new List<double[]>();
         var faces = new List<int[]>();
         foreach ((Point3d from, Point3d to, double _) in members)
         {
+            if (IsTooShort(from, to))
+                continue;
             Vector3d axis = to - from;
             double length = axis.Length;
-            if (length <= 1.0e-9)
-                continue;
             axis = axis / length;
             Vector3d helper = Math.Abs(axis.Z) < 0.9 ? Vector3d.ZAxis : Vector3d.XAxis;
             Vector3d u = Cross(axis, helper);
@@ -87,10 +138,17 @@ internal static class ColumnsMesh
         string forceUnit,
         double unitFactor)
     {
+        // Clamped once, here, and the clamped value is both what the mesh
+        // is built at and what the document declares: a radius floored
+        // inside Build alone put a prism at one size on the page and
+        // another size in the "radius" key beside it.
+        radius = Math.Max(radius, MinimumRadius);
         (double[][] vertices, int[][] faces) = Build(members, radius);
         var memberPayloads = new List<Dictionary<string, object?>>(members.Count);
         foreach ((Point3d from, Point3d to, double force) in members)
         {
+            if (IsTooShort(from, to))
+                continue;
             memberPayloads.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["from"] = new[] { from.X, from.Y, from.Z },
