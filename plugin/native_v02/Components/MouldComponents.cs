@@ -135,9 +135,10 @@ namespace Ananke.COMPAS.Native.Components
             : base(
                 "Animate",
                 "AN",
-                "Replay the mould building itself from one timeline slider: the "
-                    + "steppers reeling the net into shape on the ground, the "
-                    + "columns lifting it, then the final tensioning. Sag and "
+                "Replay the mould building itself from one timeline slider, in "
+                    + "four phases: reel the net into shape on the ground, raise "
+                    + "it on the columns, finish by tensioning both axes against "
+                    + "them, then hold the shape while load arrives. Sag and "
                     + "height are read from the solved Result, not dialled.",
                 ComponentCategories.Visualise,
                 "mould_animate")
@@ -489,10 +490,9 @@ namespace Ananke.COMPAS.Native.Components
                 // only thing left to drive.
                 double time = Math.Min(Math.Max(timePct, 0.0), 100.0) / 100.0;
                 double pre = Math.Min(Math.Max(preSag, 0.0), 100.0) / 100.0;
-                (double sag, double lift, string phaseWord) =
+                (double sag, double lift, string phase) =
                     MouldGeometry.Phases(time, pre);
-                string phase = phaseWord;
-                string phaseDetail = phaseWord switch
+                string phaseDetail = phase switch
                 {
                     "reel" => $"reel: reeling flat on the ground, {sag * 100:0}% "
                         + $"of the final sag, heading for {pre * 100:0}%",
@@ -503,12 +503,13 @@ namespace Ananke.COMPAS.Native.Components
                     _ => "hold: the mould holds its shape while load arrives",
                 };
 
-                // Re-aim on this frame's own geometry, so a column follows
-                // the line of thrust the whole way up instead of only arriving
-                // on it at the end. Same formula Column Finder places by, which
-                // is the point of it living in MouldGeometry.
+                // The thrust direction at each notch on THIS frame's own
+                // geometry. Nothing is re-aimed by it: the columns are rigid
+                // and stand where their feet and their notches put them. It is
+                // computed only so animate.column_alignment can measure each
+                // trunk against the thrust at its notch and report how far off
+                // the force path the machine is at this frame.
                 var liveAim = new Dictionary<int, Vector3d>();
-                var liveLoad = new Dictionary<int, double>();
 
                 var live = new Point3d[n];
                 for (int i = 0; i < n; i++)
@@ -557,7 +558,6 @@ namespace Ananke.COMPAS.Native.Components
                         for (int k = 0; k < run.Count; k++)
                         {
                             liveAim[run[k]] = MouldGeometry.AimFrom(across[k]);
-                            liveLoad[run[k]] = across[k].Length;
                         }
                     }
                 }
@@ -673,6 +673,7 @@ namespace Ananke.COMPAS.Native.Components
                 int ramViolations = 0;
                 double worstRatio = 1.0;
                 double worstAlign = 0.0;
+                int alignedTrunks = 0;
 
                 Point3d[]? liveColumnNodes = null;
                 if (hasColumns)
@@ -727,6 +728,7 @@ namespace Ananke.COMPAS.Native.Components
                                 Vector3d direction = at[upper] - at[lower];
                                 worstAlign = Math.Max(
                                     worstAlign, ColumnPlacement.AngleBetween(direction, aim));
+                                alignedTrunks++;
                             }
                         }
                         columnBranches.Add(branch);
@@ -745,11 +747,19 @@ namespace Ananke.COMPAS.Native.Components
                             ("shortest", shortest.ToString("0.###", CultureInfo.InvariantCulture)),
                             ("longest", longest.ToString("0.###", CultureInfo.InvariantCulture)))));
                     entries.Add(ResultDiagnostics.Entry(S, "animate.column_alignment", "info",
-                        $"trunks stand up to {worstAlign:0.#} degrees off the live "
-                            + "thrust at their notch at this frame. Nothing is "
-                            + "re-aimed: a trunk points where its foot and its notch "
-                            + "put it.",
-                        worstAlign, unit: "degrees"));
+                        alignedTrunks == 0
+                            ? "no trunk could be measured against a live aim at this "
+                                + "frame, so the zero below is nothing measured rather "
+                                + "than perfect alignment. Nothing is re-aimed either "
+                                + "way: a trunk points where its foot and its notch "
+                                + "put it."
+                            : $"{alignedTrunks} trunk(s) measured, standing up to "
+                                + $"{worstAlign:0.#} degrees off the live thrust at "
+                                + "their notch at this frame. Nothing is re-aimed: a "
+                                + "trunk points where its foot and its notch put it.",
+                        worstAlign, unit: "degrees",
+                        context: ResultDiagnostics.Context(
+                            ("measured", alignedTrunks.ToString(CultureInfo.InvariantCulture)))));
                     if (ramViolations > 0)
                     {
                         entries.Add(ResultDiagnostics.Entry(S, "animate.ram_range", "warning",
@@ -761,7 +771,7 @@ namespace Ananke.COMPAS.Native.Components
                             worstRatio, unit: "ratio",
                             context: ResultDiagnostics.Context(
                                 ("violations", ramViolations.ToString(CultureInfo.InvariantCulture)),
-                                ("extension", extendPct.ToString("0", CultureInfo.InvariantCulture)))));
+                                ("extension", (extend * 100.0).ToString("0", CultureInfo.InvariantCulture)))));
                     }
                 }
 
@@ -1776,10 +1786,11 @@ namespace Ananke.COMPAS.Native.Components
         /// what the ram delivers.
         ///
         /// A node nothing resolves (a head with no HeadNode, a fragment with
-        /// no foot) keeps its built position rather than vanishing. A fork
-        /// whose lower node is itself a fork cannot be resolved by this loop
-        /// and keeps its built position; the plugin never builds that shape,
-        /// since Columns places exactly one fork per tree.
+        /// no foot) keeps its built position rather than vanishing. Two forks
+        /// in a chain along one trunk block each other in this loop (each
+        /// needs the other placed first) and keep their built positions; the
+        /// plugin never builds that shape, since Columns places exactly one
+        /// fork per tree.
         /// </summary>
         public static Point3d[] LiveColumnNodes(
             MouldColumnsDto block, Point3d[] live)
