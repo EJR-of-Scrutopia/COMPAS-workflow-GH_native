@@ -872,12 +872,33 @@ internal static class Program
                 "PASS  LiveUploader: the retry schedule is 2, 4, 8 seconds "
                 + "then deferred, the routes are the studio's, a 2xx is "
                 + "stored, a 409 retries until the schedule runs out, "
-                + "anything else is refused, and an identical set keys the "
-                + "same.");
+                + "anything else is refused, and the set key reads the "
+                + "Name, the Studio and every kind EXCEPT the compas "
+                + "document's own bytes, whose fresh uuid per serialisation "
+                + "would stop the key ever repeating; the compas kind's "
+                + "presence still counts.");
         }
         catch (Exception exception)
         {
             failures.Add($"LiveUploader: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportWriteFolder(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.TryResolveWriteFolder: an "
+                + "extensionless Path is the folder to write into even "
+                + "before it exists, a Path with an extension gives its "
+                + "own directory, and a bare name is refused rather than "
+                + "written to whatever the process's working directory "
+                + "happens to be.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.TryResolveWriteFolder: "
+                + $"{DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -4640,19 +4661,104 @@ internal static class Program
         if (Verdict(409, 0) != "retry" || Verdict(409, 2) != "retry") throw new InvalidOperationException("409 retries while the schedule has entries.");
         if (Verdict(409, 3) != "deferred") throw new InvalidOperationException("409 after the schedule is deferred.");
         if (Verdict(400, 0) != "refused" || Verdict(500, 0) != "refused") throw new InvalidOperationException("Anything else is refused.");
-        var a = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"b\":2}") };
-        var b = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"b\":2}") };
-        var c = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"b\":3}") };
-        string ka = (string)key.Invoke(null, new object?[] { a })!;
-        string kb = (string)key.Invoke(null, new object?[] { b })!;
-        string kc = (string)key.Invoke(null, new object?[] { c })!;
-        if (ka != kb) throw new InvalidOperationException("Equal sets key the same.");
-        if (ka == kc) throw new InvalidOperationException("A set differing in one byte keys differently.");
+        // The set key. It decides whether a re-solve sends again, and the
+        // component expires itself on every outcome, so a key that cannot
+        // repeat is an unbounded loop of worker calls and PUTs rather than
+        // a cosmetic defect. What it must read: the Name, the Studio and
+        // every kind by name and by content. What it must NOT read: the
+        // compas document's own bytes, because the worker's json_dumps
+        // stamps a fresh uuid4 into every serialisation of the same Result
+        // (compas/data/data.py), so those bytes differ on every solve of
+        // an unchanged definition.
+        string Key(string name, string studio, List<(string, string)> set) =>
+            (string)key.Invoke(null, new object?[] { name, studio, set })!;
+        const string Studio = "http://127.0.0.1:8600";
+        var a = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"aaa\"}") };
+        var b = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"aaa\"}") };
+        if (Key("arch", Studio, a) != Key("arch", Studio, b))
+            throw new InvalidOperationException("Equal sets key the same.");
+        // The loop guard itself: same Result, second solve, a fresh guid
+        // inside the compas document and nothing else changed.
+        var freshGuid = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"bbb\"}") };
+        if (Key("arch", Studio, a) != Key("arch", Studio, freshGuid))
+        {
+            throw new InvalidOperationException(
+                "Two sets differing ONLY in the compas kind's JSON must key the SAME: "
+                + "the worker mints a fresh uuid per serialisation, so a key that read "
+                + "those bytes could never repeat and the expire-on-outcome loop would "
+                + "never terminate.");
+        }
+        // What the key does read, one part at a time.
+        var changedContract = new List<(string, string)> { ("contract", "{\"a\":2}"), ("compas", "{\"guid\":\"aaa\"}") };
+        if (Key("arch", Studio, a) == Key("arch", Studio, changedContract))
+            throw new InvalidOperationException("A set differing in the contract kind's JSON keys differently.");
+        var withoutCompas = new List<(string, string)> { ("contract", "{\"a\":1}") };
+        if (Key("arch", Studio, a) == Key("arch", Studio, withoutCompas))
+        {
+            throw new InvalidOperationException(
+                "A set carrying a compas kind and the same set without one must key "
+                + "differently: the compas kind's PRESENCE counts even though its bytes "
+                + "do not, so a set recovered after a worker failure is sent.");
+        }
+        if (Key("arch", Studio, a) == Key("arch-b", Studio, a))
+            throw new InvalidOperationException("The same set under a different Name keys differently.");
+        if (Key("arch", Studio, a) == Key("arch", "http://127.0.0.1:8601", a))
+            throw new InvalidOperationException("The same set going to a different Studio keys differently.");
         var d = new List<(string, string)> { ("contract", "{\"a\":1}") };
         var e = new List<(string, string)> { ("compas", "{\"a\":1}") };
-        string kd = (string)key.Invoke(null, new object?[] { d })!;
-        string ke = (string)key.Invoke(null, new object?[] { e })!;
-        if (kd == ke) throw new InvalidOperationException("A set differing only in Kind keys differently.");
+        if (Key("arch", Studio, d) == Key("arch", Studio, e))
+            throw new InvalidOperationException("A set differing only in Kind keys differently.");
+    }
+
+    /// <summary>
+    /// Export's Path resolution, which decides where a whole set of files
+    /// lands. Reflection only: the method is pure (it reads
+    /// <c>Directory.Exists</c> but creates nothing and writes nothing), so
+    /// this asserts against paths that do not exist on this machine.
+    /// </summary>
+    private static void ValidateExportWriteFolder(Assembly plugin)
+    {
+        Type export = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo resolve = export.GetMethod(
+            "TryResolveWriteFolder",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.TryResolveWriteFolder was not found.");
+        (bool Ok, string Folder, string Refusal) Resolve(string path)
+        {
+            object?[] args = { path, null, null };
+            bool ok = (bool)resolve.Invoke(null, args)!;
+            return (ok, (string)args[1]!, (string)args[2]!);
+        }
+
+        // A folder the author means to create: read as a file path, the
+        // whole set landed one level up, silently, beside it.
+        (bool ok, string folder, string refusal) = Resolve(@"C:\ananke-smoke-nowhere\my-study");
+        if (!ok || folder != @"C:\ananke-smoke-nowhere\my-study")
+            throw new InvalidOperationException(
+                $"An extensionless Path is the folder, whether or not it exists yet; got ok={ok}, folder '{folder}'.");
+        (ok, folder, refusal) = Resolve(@"C:\ananke-smoke-nowhere\my-study\");
+        if (!ok || folder.TrimEnd('\\') != @"C:\ananke-smoke-nowhere\my-study")
+            throw new InvalidOperationException(
+                $"A trailing separator is a folder; got ok={ok}, folder '{folder}'.");
+        (ok, folder, refusal) = Resolve(@"C:\ananke-smoke-nowhere\study.json");
+        if (!ok || folder != @"C:\ananke-smoke-nowhere")
+            throw new InvalidOperationException(
+                $"A Path with an extension uses its own directory; got ok={ok}, folder '{folder}'.");
+        (ok, folder, refusal) = Resolve("  C:\\ananke-smoke-nowhere\\my-study  ");
+        if (!ok || folder != @"C:\ananke-smoke-nowhere\my-study")
+            throw new InvalidOperationException("The Path is trimmed before it is read.");
+        // A bare name has no folder in it at all, so the set would land in
+        // the process working directory, which under Rhino is not
+        // somewhere an author can find.
+        (ok, folder, refusal) = Resolve("my-study");
+        if (ok || refusal.Length == 0 || !refusal.Contains("my-study", StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"A bare relative name is refused, naming the path; got ok={ok}, refusal '{refusal}'.");
+        (ok, folder, refusal) = Resolve("study.json");
+        if (ok || refusal.Length == 0)
+            throw new InvalidOperationException(
+                $"A bare file name is refused; got ok={ok}, refusal '{refusal}'.");
     }
 
     /// <summary>

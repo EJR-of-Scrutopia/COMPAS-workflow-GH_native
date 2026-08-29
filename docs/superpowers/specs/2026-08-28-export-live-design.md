@@ -25,7 +25,7 @@ Inputs, in order:
 | Slot | Name | Nick | Type | Default | Meaning |
 | --- | --- | --- | --- | --- | --- |
 | 0 | Result | RES | ResultParam item | required | Solved FD or TNA Result. |
-| 1 | Path | P | text, optional | "" | A folder, or a file whose folder is used; created when missing. |
+| 1 | Path | P | text, optional | "" | A folder, or a file whose folder is used; created when missing. A Path with no extension is a folder whether or not it exists yet; a Path with no folder in it at all (a bare `my-study` or `study.json`, which would land in the process working directory) is refused with a Warning and nothing is written. |
 | 2 | Write | W | boolean | false | While true, every solve writes the set to Path. |
 | 3 | Name | N | text, optional | "" | The study name: the files are `<Name>-<kind>.json` and the studio's export name is `<Name>`; blank uses `ananke-export`. |
 | 4 | Cells | C | curves, list, FLATTENED | none | Closed plan outlines per cutting cell, from Skin's Face Polylines. |
@@ -49,7 +49,13 @@ component count stays 19; the persistent parameter count stays 12.
 
 - contract: `ContractJson.Serialize(result)`, as today.
 - compas: the worker's `export.compas` with `lengthUnitToMetres`, as
-  today.
+  today. The only kind that needs the worker, and so the only one that
+  can fail for a reason outside this component: a worker that will not
+  start, a timeout or a worker-side error leaves the COMPAS JSON output
+  empty and adds a Warning naming the failure, and the rest of the set
+  (the contract, the tessellation, the columns, the disk write and
+  Written, none of which touch the worker) stands and is uploaded
+  without it.
 - tessellation: `bench.tessellation/1`, as today, from the flattened
   Cells and Courses; the same validation (negative courses refused,
   open cells warned).
@@ -98,11 +104,19 @@ one-shot Button behaviour (latch the last write) stays.
   posts its outcome into a field the next solve reads, and calls
   `ExpireSolution` on the UI thread through `Rhino.RhinoApp.InvokeOnUiThread`
   when an outcome arrives, so the component shows it. To keep that
-  expire from re-sending forever, the uploader hashes each set's
-  payloads and skips a set identical to the last one sent (the outcome
-  text is kept); only a changed Result, Name or Studio sends again.
-  `LiveUploader.SetKey(IReadOnlyList<(string Kind, string Json)>)`
-  is the pure hash, measured.
+  expire from re-sending forever, the uploader hashes the Name, the
+  Studio and the set's payloads and skips a set identical to the last
+  one sent (the outcome text is kept); only a changed Result, Name or
+  Studio sends again.
+  `LiveUploader.SetKey(string name, string studio, IReadOnlyList<(string
+  Kind, string Json)> set)` is the pure hash, measured. The compas
+  kind's JSON is the one thing the hash does not read: the worker's
+  `compas.data.json_dumps` writes a fresh uuid4 `guid` into every
+  serialisation, so a key that read those bytes could never repeat and
+  the expire would send again for as long as Live was left on. Its
+  presence in the set still counts, so a set that lost the compas kind
+  to a worker failure and the same set with it back key differently. A
+  changed Result changes the contract kind, which the hash does read.
 
 ## 5. Files (binding)
 
@@ -165,8 +179,17 @@ for that study with the run id in the body; everything else in section
   for columns, with a trailing slash on Studio tolerated;
   `LiveUploader.Outcome(int status, int attempt)` classifies 200 to 299
   as stored, 409 as retry while `RetryDelay(attempt)` is not null and
-  deferred after, anything else as refused. `SetKey` of two equal sets is equal and of two sets
-  differing in one byte differs.
+  deferred after, anything else as refused. `SetKey` of two equal sets
+  is equal; two sets differing ONLY in the compas kind's JSON are equal
+  too (the loop guard of section 4); two sets differing in the contract
+  kind's JSON differ, as do a set with a compas entry and the same set
+  without one, the same set under a different Name, and the same set
+  going to a different Studio.
+- `ValidateExportWriteFolder`: `TryResolveWriteFolder` reads an
+  extensionless Path as the folder itself (whether or not it exists), a
+  Path with an extension as its own directory, a trailing separator as a
+  folder, and refuses a bare name with no folder in it, naming the path
+  and creating nothing.
 - Export's nine inputs and six outputs pinned in `VisualiseContracts`;
   Cells and Courses pinned flattened in `FlattenedInputs` (indices 4
   and 5).

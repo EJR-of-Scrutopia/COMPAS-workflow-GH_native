@@ -19,13 +19,18 @@ namespace Ananke.COMPAS.Native.Components;
 /// waits and retries on a short schedule, then gives up for this set and
 /// says so. A set identical to the last one sent is skipped, which is
 /// what lets the component expire itself to show an outcome without
-/// sending again. Nothing here touches a Grasshopper object; the
-/// outcome lands in a field and the owner is told through a callback it
-/// marshals to the UI thread itself.
+/// sending again (<see cref="SetKey"/> defines identical). Nothing here
+/// touches a Grasshopper object; the outcome lands in a field and the
+/// owner is told through a callback it marshals to the UI thread itself.
 /// </summary>
 internal sealed class LiveUploader : IDisposable
 {
     public const int DebounceMilliseconds = 500;
+
+    /// <summary>
+    /// The one kind whose bytes <see cref="SetKey"/> does not read.
+    /// </summary>
+    public const string CompasKind = "compas";
 
     private static readonly HttpClient Client = new()
     {
@@ -43,6 +48,7 @@ internal sealed class LiveUploader : IDisposable
     private Pending? _pending;
     private string? _lastSentKey;
     private string _lastOutcome = "idle";
+    private bool _lastOutcomeFailed;
     private bool _disposed;
     private bool _sending;
     private long _latestStarted;
@@ -58,6 +64,36 @@ internal sealed class LiveUploader : IDisposable
         {
             lock (_gate)
                 return _lastOutcome;
+        }
+    }
+
+    /// <summary>
+    /// Whether what <see cref="LastOutcome"/> carries names a refusal, a
+    /// deferral or a transport failure. Recorded here from the
+    /// classified verdicts as the lines are built, so the owner asks the
+    /// uploader what happened instead of reading its prose back: rewording
+    /// an outcome line must not be able to turn a Warning off.
+    /// </summary>
+    public bool LastOutcomeFailed
+    {
+        get
+        {
+            lock (_gate)
+                return _lastOutcomeFailed;
+        }
+    }
+
+    /// <summary>
+    /// A disposed uploader accepts nothing more, so an owner that outlives
+    /// one (a component deleted and then undone) can see it has to build
+    /// another.
+    /// </summary>
+    public bool IsDisposed
+    {
+        get
+        {
+            lock (_gate)
+                return _disposed;
         }
     }
 
@@ -86,13 +122,42 @@ internal sealed class LiveUploader : IDisposable
         return "refused";
     }
 
-    public static string SetKey(IReadOnlyList<(string Kind, string Json)> payloads)
+    /// <summary>
+    /// What "the same set as the last one sent" means: the study name,
+    /// the studio it is going to, and every kind in the set, by name and
+    /// by content.
+    ///
+    /// Except the compas kind's content. That document is the worker's
+    /// <c>compas.data.json_dumps</c> of freshly built Mesh and Graph
+    /// objects, and json_dumps writes each object's <c>guid</c>, a fresh
+    /// uuid4 per call, so two solves of an unchanged Result produce two
+    /// different compas strings. A key that read them could never repeat:
+    /// every outcome would expire the component, the re-solve would
+    /// enqueue a set that looked new, and the sending would go round for
+    /// as long as Live was left on. The compas document is a pure
+    /// function of the contract apart from those guids, so leaving its
+    /// bytes out of the key loses nothing: a changed Result changes the
+    /// contract kind, which IS read.
+    ///
+    /// Its PRESENCE still counts, so a set carrying a compas kind and a
+    /// set without one (a worker failure dropped it) key differently, and
+    /// the recovered set is sent rather than skipped.
+    /// </summary>
+    public static string SetKey(
+        string name,
+        string studio,
+        IReadOnlyList<(string Kind, string Json)> set)
     {
         using var sha = SHA256.Create();
         var builder = new StringBuilder();
-        foreach ((string kind, string json) in payloads)
+        builder.Append(name).Append('\u001f')
+            .Append(studio).Append('\u001e');
+        foreach ((string kind, string json) in set)
         {
-            builder.Append(kind).Append('\u001f').Append(json).Append('\u001e');
+            builder.Append(kind).Append('\u001f');
+            if (kind != CompasKind)
+                builder.Append(json);
+            builder.Append('\u001e');
         }
         byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(builder.ToString()));
         return Convert.ToHexString(hash);
@@ -122,7 +187,7 @@ internal sealed class LiveUploader : IDisposable
             set = _pending;
             if (set is null)
                 return;
-            key = SetKey(set.Payloads);
+            key = SetKey(set.Name, set.Studio, set.Payloads);
             if (key == _lastSentKey)
             {
                 _pending = null;
@@ -138,6 +203,10 @@ internal sealed class LiveUploader : IDisposable
     private async Task SendAsync(Pending set, string key, long sequence)
     {
         var lines = new List<string>();
+        // Recorded as the verdicts are classified, not read back out of the
+        // lines afterwards: the owner turns a Warning on from this, and a
+        // reworded outcome line must not be able to turn it off.
+        bool anyFailed = false;
         foreach ((string kind, string json) in set.Payloads)
         {
             string route = RouteFor(kind, set.Name, set.Studio);
@@ -157,6 +226,8 @@ internal sealed class LiveUploader : IDisposable
                         continue;
                     }
                     string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (verdict != "stored")
+                        anyFailed = true;
                     line += verdict switch
                     {
                         "stored" => "stored",
@@ -166,6 +237,7 @@ internal sealed class LiveUploader : IDisposable
                 }
                 catch (Exception error)
                 {
+                    anyFailed = true;
                     line += "failed: " + error.GetBaseException().Message;
                 }
                 break;
@@ -186,6 +258,7 @@ internal sealed class LiveUploader : IDisposable
             {
                 _lastSentKey = key;
                 _lastOutcome = string.Join(Environment.NewLine, lines);
+                _lastOutcomeFailed = anyFailed;
                 notify = true;
             }
             if (!_disposed && _pending is not null)

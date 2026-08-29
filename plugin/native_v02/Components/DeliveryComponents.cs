@@ -73,7 +73,10 @@ public sealed class ExportComponent :
     // retry independently. Its callback arrives on a thread-pool thread,
     // so the expire it asks for is marshalled to the UI thread here:
     // nothing off that thread is allowed to touch a Grasshopper object.
-    private readonly LiveUploader _uploader;
+    // Not readonly and not built in the constructor: RemovedFromDocument
+    // disposes it, and Grasshopper puts the SAME instance back when that
+    // removal is undone, so it has to be replaceable.
+    private LiveUploader? _uploader;
 
     public ExportComponent()
         : base(
@@ -86,13 +89,24 @@ public sealed class ExportComponent :
             ComponentCategories.Delivery,
             "export")
     {
-        _uploader = new LiveUploader(
-            () => RhinoApp.InvokeOnUiThread(
-                new Action(() => ExpireSolution(true))));
     }
 
     public override Guid ComponentGuid =>
         new("f2a6c8e4-1b5d-49a3-b7e0-3c9f5d8a2617");
+
+    /// <summary>
+    /// An ordinary delete disposes the uploader (below), and an undo, a
+    /// paste or a move into a cluster hands the very same instance back to
+    /// a document. A disposed uploader accepts nothing, so without this
+    /// Live would be dead for the rest of the session with nothing said
+    /// anywhere. Built here, and lazily again before an enqueue, for a
+    /// document that never announces the object at all.
+    /// </summary>
+    public override void AddedToDocument(GH_Document document)
+    {
+        EnsureUploader();
+        base.AddedToDocument(document);
+    }
 
     /// <summary>
     /// The uploader owns a debounce timer and may have a send in flight; a
@@ -102,8 +116,23 @@ public sealed class ExportComponent :
     /// </summary>
     public override void RemovedFromDocument(GH_Document document)
     {
-        _uploader.Dispose();
+        _uploader?.Dispose();
         base.RemovedFromDocument(document);
+    }
+
+    /// <summary>
+    /// The live uploader, built on first use and rebuilt after a disposal.
+    /// Called on the UI/solve thread only.
+    /// </summary>
+    private LiveUploader EnsureUploader()
+    {
+        if (_uploader is null || _uploader.IsDisposed)
+        {
+            _uploader = new LiveUploader(
+                () => RhinoApp.InvokeOnUiThread(
+                    new Action(() => ExpireSolution(true))));
+        }
+        return _uploader;
     }
 
     protected override void RegisterInputParams(
@@ -201,7 +230,9 @@ public sealed class ExportComponent :
             "COMPAS JSON",
             "MJ",
             "The native COMPAS json_dumps geometry the worker's " +
-            "export.compas command produces, always produced.",
+            "export.compas command produces; empty, with a warning, when " +
+            "the worker could not produce it, and the rest of the export " +
+            "stands.",
             GH_ParamAccess.item);
         parameters.AddTextParameter(
             "Tessellation JSON",
@@ -261,11 +292,26 @@ public sealed class ExportComponent :
                 return;
             }
 
+            // One Export is one study: it writes one set of
+            // <name>-<kind>.json files and enqueues one upload. Slot 0 is
+            // item access, so a Result tree with more than one item makes
+            // every iteration after the first overwrite the files the last
+            // one wrote and supersede the set it enqueued, and only the
+            // last one survives. Said once, on the second iteration, so a
+            // wide tree does not repeat itself down the whole chin.
+            if (data.Iteration == 1)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Export handles one Result per component; the last " +
+                    "one wins.");
+            }
+
             // The post phase re-reads the inputs itself: the disk write
             // and the upload are side effects and belong on this thread,
             // where a Button's release re-solve cannot cancel them
-            // mid-flight, and where the uploader is only ever enqueued
-            // once per solve rather than once per pre-solve branch.
+            // mid-flight, and where a cancelled pre-solve branch cannot
+            // leave half a set behind.
             if (!TryReadInputs(data, out ExportInputs? inputs))
                 return;
             ExportComponentTaskResult taskResult;
@@ -321,31 +367,43 @@ public sealed class ExportComponent :
 
             if (inputs.Write && !string.IsNullOrWhiteSpace(inputs.Path))
             {
-                // Declared outside the try so a set that fails halfway
-                // still latches the files that did land: which kinds
-                // reached disk is exactly what the author needs to see
-                // when one of them could not.
-                var written = new List<string>(taskResult.Payloads.Count);
-                try
-                {
-                    string folder = ResolveWriteFolder(inputs.Path);
-                    foreach ((string kind, string json) in taskResult.Payloads)
-                    {
-                        string target = Path.Combine(
-                            folder, $"{name}-{kind}.json");
-                        File.WriteAllText(target, json);
-                        written.Add(target);
-                    }
-                }
-                catch (Exception writeException)
+                if (!TryResolveWriteFolder(
+                        inputs.Path,
+                        out string folder,
+                        out string refusal))
                 {
                     AddRuntimeMessage(
-                        GH_RuntimeMessageLevel.Error,
-                        "Export: failed to write file: " +
-                        writeException.Message);
+                        GH_RuntimeMessageLevel.Warning,
+                        "Export: " + refusal);
                 }
-                if (written.Count > 0)
-                    _lastWritten = written;
+                else
+                {
+                    // Declared outside the try so a set that fails halfway
+                    // still latches the files that did land: which kinds
+                    // reached disk is exactly what the author needs to see
+                    // when one of them could not.
+                    var written = new List<string>(taskResult.Payloads.Count);
+                    try
+                    {
+                        Directory.CreateDirectory(folder);
+                        foreach ((string kind, string json) in taskResult.Payloads)
+                        {
+                            string target = Path.Combine(
+                                folder, $"{name}-{kind}.json");
+                            File.WriteAllText(target, json);
+                            written.Add(target);
+                        }
+                    }
+                    catch (Exception writeException)
+                    {
+                        AddRuntimeMessage(
+                            GH_RuntimeMessageLevel.Error,
+                            "Export: failed to write file: " +
+                            writeException.Message);
+                    }
+                    if (written.Count > 0)
+                        _lastWritten = written;
+                }
             }
 
             string contractJson = string.Empty;
@@ -375,21 +433,27 @@ public sealed class ExportComponent :
             // effect on the studio, the pre phase runs once per branch and
             // can be cancelled, and the uploader is not the solve thread's
             // to drive twice.
+            string uploaded = "Live is off";
             if (inputs.Live)
             {
-                _uploader.Enqueue(new LiveUploader.Pending(
+                LiveUploader uploader = EnsureUploader();
+                uploader.Enqueue(new LiveUploader.Pending(
                     inputs.Studio,
                     name,
                     taskResult.Payloads));
-            }
-            string uploaded = inputs.Live
-                ? _uploader.LastOutcome
-                : "Live is off";
-            if (inputs.Live && NamesAnUploadFailure(uploaded))
-            {
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    "Export live: " + uploaded);
+                uploaded = uploader.LastOutcome;
+                // The upload is best effort: the files and the JSON
+                // outputs stand whatever the studio said, so a refusal, a
+                // deferral or a transport failure is a Warning here and
+                // never an Error. Whether it was one is the uploader's own
+                // record of the verdicts it classified, not this
+                // component's reading of its prose.
+                if (uploader.LastOutcomeFailed)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Warning,
+                        "Export live: " + uploaded);
+                }
             }
 
             data.SetData(0, contractJson);
@@ -413,17 +477,6 @@ public sealed class ExportComponent :
     }
 
     /// <summary>
-    /// The upload is best effort: the files and the JSON outputs stand
-    /// whatever the studio said, so a refusal, a deferral or a transport
-    /// failure is a Warning here and never an Error. The three words are
-    /// the ones LiveUploader writes into its outcome lines.
-    /// </summary>
-    private static bool NamesAnUploadFailure(string outcome) =>
-        outcome.Contains("refused", StringComparison.Ordinal) ||
-        outcome.Contains("deferred", StringComparison.Ordinal) ||
-        outcome.Contains("failed", StringComparison.Ordinal);
-
-    /// <summary>
     /// The Message is one line of a component's chin; the outcome carries
     /// one line per kind, so only the first of them fits.
     /// </summary>
@@ -437,13 +490,28 @@ public sealed class ExportComponent :
     /// A Path may name a file or a folder: canvas path pickers commonly
     /// hand over a directory when the target file does not exist yet, and
     /// a definition saved before this rework may still carry a file path.
-    /// Either way only the folder is used now, because one solve writes a
+    /// Either way only the folder is used, because one solve writes a
     /// whole set of files and the names inside it are the study's, not the
-    /// Path's: a directory (existing, or spelled with a trailing
-    /// separator) is that folder, and a file path's own directory is. The
-    /// folder is created when missing.
+    /// Path's.
+    ///
+    /// A Path with no extension is a FOLDER, whether or not it exists yet:
+    /// an author who types C:\exports\my-study means a new folder to hold
+    /// the study, and reading it as a file dropped the whole set one level
+    /// up, silently, beside the folder they meant. A trailing separator
+    /// and an existing directory are folders too. A Path with an extension
+    /// is a file and its own directory is used.
+    ///
+    /// Refused, rather than resolved, when the folder that comes out has
+    /// no directory part of its own: a bare name (my-study, or
+    /// export.json) is relative to the process working directory, which
+    /// under Rhino is somewhere the author will never find, and a drive
+    /// root is not a place to scatter a study. Nothing is written and the
+    /// caller says so.
     /// </summary>
-    private static string ResolveWriteFolder(string path)
+    private static bool TryResolveWriteFolder(
+        string path,
+        out string folder,
+        out string refusal)
     {
         string trimmed = path.Trim();
         bool looksLikeDirectory =
@@ -453,13 +521,22 @@ public sealed class ExportComponent :
             trimmed.EndsWith(
                 Path.AltDirectorySeparatorChar.ToString(),
                 StringComparison.Ordinal) ||
-            Directory.Exists(trimmed);
-        string folder = looksLikeDirectory
+            Directory.Exists(trimmed) ||
+            Path.GetExtension(trimmed).Length == 0;
+        folder = looksLikeDirectory
             ? trimmed
             : Path.GetDirectoryName(trimmed) ?? string.Empty;
-        if (folder.Length > 0)
-            Directory.CreateDirectory(folder);
-        return folder;
+        if (string.IsNullOrEmpty(Path.GetDirectoryName(folder)))
+        {
+            refusal =
+                "Path '" + trimmed + "' names no folder to write into, " +
+                "so nothing was written. Give a full folder path, for " +
+                "example C:\\exports\\my-study.";
+            folder = string.Empty;
+            return false;
+        }
+        refusal = string.Empty;
+        return true;
     }
 
     /// <summary>
@@ -718,10 +795,12 @@ public sealed class ExportComponent :
 
     /// <summary>
     /// Every kind the Result can be, in ExportPlan's order, built once.
-    /// The contract and the COMPAS document are always in the set; the
-    /// tessellation sidecar joins it when cells were wired and the columns
-    /// mesh when the Mould block carries at least one member. Each kind's
-    /// own warning joins the one warning the post phase reports.
+    /// The contract and the COMPAS document are always asked for; the
+    /// tessellation sidecar joins them when cells were wired and the
+    /// columns mesh when the Mould block carries at least one member. Each
+    /// kind's own warning joins the one warning the post phase reports,
+    /// and a COMPAS document the worker could not produce is one of those
+    /// warnings rather than the end of the whole export.
     /// </summary>
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
@@ -749,15 +828,40 @@ public sealed class ExportComponent :
                         break;
                     case "compas":
                     {
-                        (string json, string? warning) =
-                            await BuildCompasJsonAsync(
-                                    result,
-                                    unitFactor,
-                                    cancellationToken)
-                                .ConfigureAwait(false);
-                        payloads.Add((kind, json));
-                        if (!string.IsNullOrEmpty(warning))
-                            warnings.Add(warning!);
+                        // The only kind that needs the worker, and so the
+                        // only one that can fail because something outside
+                        // this component is down. Caught on its own: a
+                        // worker that will not start, a request that times
+                        // out or a worker-side error used to cost the
+                        // contract, the tessellation, the columns, the
+                        // disk write and the Written output too, none of
+                        // which ever touch the worker. Now the set simply
+                        // lacks this kind, which is the same shape as any
+                        // other absent kind, and everything else stands.
+                        try
+                        {
+                            (string json, string? warning) =
+                                await BuildCompasJsonAsync(
+                                        result,
+                                        unitFactor,
+                                        cancellationToken)
+                                    .ConfigureAwait(false);
+                            payloads.Add((kind, json));
+                            if (!string.IsNullOrEmpty(warning))
+                                warnings.Add(warning!);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // A cancellation is not a verdict on the
+                            // worker; the post phase recomputes.
+                            throw;
+                        }
+                        catch (Exception compasError)
+                        {
+                            warnings.Add(
+                                "compas: " +
+                                compasError.GetBaseException().Message);
+                        }
                         break;
                     }
                     case "tessellation":
