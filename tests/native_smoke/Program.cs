@@ -130,12 +130,17 @@ internal static class Program
                         "Phase"
                     }),
                 // Export's ports are pinned because Format's removal moved
-                // every input after slot 0 up one and split the single JSON
-                // output into one per kind: the order below IS the canvas
-                // contract, and the four kind outputs are read by slot.
+                // every input after slot 0 up one: the order below IS the
+                // canvas contract. The outputs are one JSON list and one
+                // Status, and a reader tells the kinds apart by the schema
+                // key each text carries rather than by slot.
                 ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
-                    new[] { "Result", "Path", "Write", "Name", "Cells", "Courses", "Live", "Studio", "Column Radius" },
-                    new[] { "Contract JSON", "COMPAS JSON", "Tessellation JSON", "Columns JSON", "Written", "Uploaded" })
+                    new[]
+                    {
+                        "Result", "Path", "Write", "Name", "Cells", "Courses",
+                        "Live", "Studio", "Column Radius"
+                    },
+                    new[] { "JSON", "Status" })
             };
     private static readonly IReadOnlyDictionary<
         string,
@@ -895,13 +900,29 @@ internal static class Program
                 + "current ports is told nothing; MONITOR's case, twenty-one "
                 + "outputs before and after with the Result moved to the front, "
                 + "is caught by NAME where a count says nothing; Export's seven "
-                + "inputs and two outputs against nine and six is named; and an "
+                + "inputs and two outputs against nine and two is named; and an "
                 + "archived chunk with no readable Name raises nothing by "
                 + "itself.");
         }
         catch (Exception exception)
         {
             failures.Add($"ParameterIdentity.Mismatch: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportDefaultTessellation(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.ChooseCells: wired cells win, an "
+                + "unwired Cells with faces on the Result is tessellated by "
+                + "Export itself, neither gives no sidecar at all, and Courses "
+                + "wired alone is ignored with a remark; three faces come out "
+                + "as three cells in face order, all at course 0.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.ChooseCells: {DescribeException(exception)}");
         }
 
         try
@@ -3696,21 +3717,25 @@ internal static class Program
 
         // Export's own move, and the reason it holds Live: a definition
         // saved before the export-live branch carries seven inputs and two
-        // outputs against the nine and six registered now, so every wire in
-        // it lands on a different port, three of them silently, and one of
-        // those three is the Live toggle.
+        // outputs against the nine and two registered now, so every INPUT
+        // wire in it lands on a different port, three of them silently, and
+        // one of those three is the Live toggle. The output count came back
+        // to two by a different route (one JSON list and one Status), so
+        // the outputs alone would say nothing.
         string? exportMoved = Ask(
             Names(7, "in"),
             Names(2, "out"),
             Registered(9, "in"),
-            Registered(6, "out"));
+            Registered(2, "out"));
         if (exportMoved is not string exportText ||
             !exportText.Contains("7 inputs and 2 outputs", StringComparison.Ordinal) ||
-            !exportText.Contains("9 and 6", StringComparison.Ordinal))
+            !exportText.Contains("9 and 2", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "A saved Export, 7 inputs and 2 outputs against the 9 and 6 it "
-                + "registers now, must be warned and both counts named; got "
+                "A saved Export, 7 inputs and 2 outputs against the 9 and 2 it "
+                + "registers now, must be warned and both counts named: the "
+                + "output count came back to two by a different route and every "
+                + "input wire still moved; got "
                 + $"'{exportMoved}'.");
         }
 
@@ -6468,6 +6493,108 @@ internal static class Program
                 "BuildTessellationJson did not convert document units to " +
                 $"metres; expected '{expectedMillimetres}', received " +
                 $"'{millimetres}'.");
+        }
+    }
+
+    /// <summary>
+    /// <c>ExportComponent.ChooseCells</c> and the JSON the default cells
+    /// make: where a tessellation comes from when nobody wired one.
+    ///
+    /// The rule of spec section 4. Wired cells always win, whatever the
+    /// Result carries. With no cells wired and faces on the Result, Export
+    /// tessellates the faces itself, one cell per face in face order at
+    /// course 0, so the sidecar is there for every TNA Result and the
+    /// studio's build animation has something to draw even before anyone
+    /// authors a pattern. With neither there is no sidecar. Courses wired
+    /// alone is ignored, with a remark, because a course belongs to a cell
+    /// and there are no authored cells for it to belong to.
+    ///
+    /// Split for the same reason FrameGeometry is: the decision is
+    /// arithmetic and runs here, while the faces themselves are a Rhino mesh
+    /// this process has no Rhino for. The cells the decision leads to are
+    /// measured through BuildTessellationJson, which is the code that
+    /// actually writes them.
+    /// </summary>
+    private static void ValidateExportDefaultTessellation(Assembly plugin)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo choose = RequireStatic(exportType, "ChooseCells");
+        string Source(int cells, int courses, int faces, out string? remark)
+        {
+            object?[] arguments = { cells, courses, faces, null };
+            object verdict = choose.Invoke(null, arguments)
+                ?? throw new InvalidOperationException("ChooseCells returned null.");
+            remark = arguments[3] as string;
+            return verdict.ToString() ?? string.Empty;
+        }
+
+        if (Source(12, 12, 400, out string? wiredRemark) != "Wired" ||
+            wiredRemark is not null)
+        {
+            throw new InvalidOperationException(
+                "Cells wired always win, however many faces the Result "
+                + "carries, and nothing is remarked on.");
+        }
+        if (Source(0, 0, 400, out string? facesRemark) != "Faces" ||
+            facesRemark is not null)
+        {
+            throw new InvalidOperationException(
+                "With no cells wired and faces on the Result, Export "
+                + "tessellates the faces itself.");
+        }
+        if (Source(0, 0, 0, out _) != "None")
+        {
+            throw new InvalidOperationException(
+                "No cells and no faces is no tessellation: an FD Result "
+                + "carries no faces and gets the contract and the compas "
+                + "document alone.");
+        }
+        if (Source(0, 7, 400, out string? ignored) != "Faces" ||
+            ignored is null ||
+            !ignored.Contains("Courses", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Courses wired with no Cells is IGNORED and said out loud, "
+                + "because a course belongs to a cell and the default "
+                + $"tessellation is course 0 throughout; got '{ignored}'.");
+        }
+
+        // The cells the Faces verdict leads to, through the writer itself:
+        // one per face, in face order, every one at course 0, keyed the way
+        // the studio reads them.
+        Type cellType = RequireComponentType(plugin, "TessellationCell");
+        MethodInfo build = exportType.GetMethod(
+            "BuildTessellationJson",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.BuildTessellationJson was not found.");
+        Type cellListType = typeof(List<>).MakeGenericType(cellType);
+        object cellList = Activator.CreateInstance(cellListType)!;
+        MethodInfo add = cellListType.GetMethod("Add")!;
+        for (int face = 0; face < 3; face++)
+        {
+            var outline = new List<double[]>
+            {
+                new[] { (double)face, 0.0 },
+                new[] { face + 1.0, 0.0 },
+                new[] { (double)face, 1.0 }
+            };
+            add.Invoke(cellList, new[] { Activator.CreateInstance(cellType, 0, outline) });
+        }
+        string json = build.Invoke(null, new object[] { cellList, 1.0 }) as string
+            ?? throw new InvalidOperationException(
+                "BuildTessellationJson returned an unexpected type.");
+        const string expected =
+            "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
+            "\"domain\":\"plan\",\"pattern\":\"authored\",\"cells\":[" +
+            "{\"key\":\"c0p0\",\"course\":0,\"outline\":[[0,0],[1,0],[0,1]]}," +
+            "{\"key\":\"c0p1\",\"course\":0,\"outline\":[[1,0],[2,0],[1,1]]}," +
+            "{\"key\":\"c0p2\",\"course\":0,\"outline\":[[2,0],[3,0],[2,1]]}]}";
+        if (!string.Equals(json, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Three faces give three cells, in face order, every one at "
+                + $"course 0; expected '{expected}', received '{json}'.");
         }
     }
 

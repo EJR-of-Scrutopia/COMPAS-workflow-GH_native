@@ -182,9 +182,12 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// One closed polyline per mesh face, in face order: Export takes
         /// these as authored Cells verbatim (it drops z and dedupes the
-        /// closing repeat itself).
+        /// closing repeat itself). Internal because EXPORT calls it too,
+        /// for the tessellation it builds when nobody wired one: the same
+        /// code, so wiring Skin in later changes the courses and nothing
+        /// else.
         /// </summary>
-        private static IReadOnlyList<PolylineCurve> FacePolylines(Mesh mesh)
+        internal static IReadOnlyList<PolylineCurve> FacePolylines(Mesh mesh)
         {
             var polylines = new List<PolylineCurve>(mesh.Faces.Count);
             for (int i = 0; i < mesh.Faces.Count; i++)
