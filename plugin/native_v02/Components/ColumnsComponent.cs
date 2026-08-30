@@ -206,10 +206,16 @@ namespace Ananke.COMPAS.Native.Components
 
         protected override void SolveInstance(IGH_DataAccess data)
         {
+            // The Message is cleared FIRST. It is set only where a level is
+            // actually built, so without this the last good solve's "Type 2,
+            // 12 feet" sat under an error balloon, or beside an input that had
+            // just been unwired, saying columns were standing that are not.
+            Message = null;
             ResultGoo? goo = null;
             if (!data.GetData(0, ref goo) ||
                 goo?.Value is not ResultDto result)
             {
+                Message = "No Result";
                 return;
             }
 
@@ -403,8 +409,7 @@ namespace Ananke.COMPAS.Native.Components
                             + "the chain keeps running. Diagnose counts them and "
                             + "names the lever.");
                 }
-                int standing = placement.Trees.Count(t => !t.Ring);
-                bool nothingGathered = built.Peeled > 0 && built.Peeled >= standing;
+                bool nothingGathered = built.Peeled > 0 && built.Peeled >= built.Banded;
                 if (built.Peeled > 0)
                 {
                     AddRuntimeMessage(
@@ -464,6 +469,7 @@ namespace Ananke.COMPAS.Native.Components
             }
             catch (Exception ex)
             {
+                Message = "Error";
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
         }
@@ -558,12 +564,17 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             string asked = groundAsked < 0 ? "Auto" : groundAsked.ToString(CultureInfo.InvariantCulture);
-            int standing = placement.Trees.Count(t => !t.Ring);
             // Every trunk peeled is the state this branch was written to make
             // visible: the level is placed, and the geometry that comes back
             // is Type 0's exactly. Saying the trees gathered would be saying
             // the opposite of what the author is looking at.
-            bool nothingGathered = built.Peeled > 0 && built.Peeled >= standing;
+            //
+            // Judged against the trees the level HANDED A BAND, not against
+            // every tree it holds. At an even Type the centre tree of an odd
+            // count takes no band and stands on its own foot, and the ring
+            // tree never had one, so counting those made the state
+            // unreachable on exactly the arch it was written for.
+            bool nothingGathered = built.Peeled > 0 && built.Peeled >= built.Banded;
             string gathered = placement.GroundPlaced == 0
                 ? $"every tree stands on its own foot; {Count(built.Feet.Count, "foot", "feet")}"
                 : nothingGathered
