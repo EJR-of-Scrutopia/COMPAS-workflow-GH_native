@@ -812,6 +812,25 @@ internal static class Program
 
         try
         {
+            ValidateFrameGeometry(plugin);
+            Console.WriteLine(
+                "PASS  FrameGeometry.Read: a Result carrying a frame is read at "
+                + "the frame's own vertices and phase, cables and all; a Result "
+                + "with no frame is read at its solved vertices and stands at "
+                + "phase final; a frame with no columns block gives an empty "
+                + "Columns tree; and where the frame carries column nodes they "
+                + "win over the ones the block was built at. With no faces "
+                + "anywhere the boundary comes back as an ESTIMATE that never "
+                + "closes, and with no principal runs every cable lands in the "
+                + "one infill branch.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"FrameGeometry.Read: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMonitorMath(plugin);
             Console.WriteLine(
                 "PASS  MonitorMath: an anchor's reaction splits along its "
@@ -2676,6 +2695,279 @@ internal static class Program
                 $"A principal line {label} must report an offset of "
                 + $"{expectedOffset:G3} from the curve that asked for it; it "
                 + $"reported {offset:G6}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>FrameGeometry.Read</c>: the one reading of a Result that Animate's
+    /// viewport and Frame's ports both come from.
+    ///
+    /// The rule measured here is spec section 3's: positions come from
+    /// <c>Mould.Frame.Vertices</c> when the Result carries a frame and from
+    /// the solved equilibrium when it does not, so Frame on a Solve or a
+    /// Columns Result is the finished vault and Frame on an Animate Result
+    /// is that frame. The columns follow the same rule one level down:
+    /// <c>Frame.ColumnNodes</c> when the frame carries them, the block's own
+    /// nodes otherwise.
+    ///
+    /// The fixture is a three-by-three unit grid, twelve edges, anchored at
+    /// its four corners, with no faces anywhere: no thrust mesh (an FD
+    /// Result carries none) and no pattern topology, which is exactly the
+    /// case where the boundary can only be ESTIMATED from node degree. The
+    /// corners are the only nodes below the median degree, so the estimate
+    /// is the four corners, each its own group because no two corners are
+    /// joined. The Result carries no principal runs either, so every cable
+    /// lands in the infill branch, and Cables is one branch: the infill is
+    /// LAST, and with no bars it is also first.
+    ///
+    /// <c>Read</c> is the half that can run here. <c>Build</c> adds the
+    /// thrust mesh and the polyline curves, both of which P/Invoke
+    /// rhcommon_c and neither of which this process has a Rhino for; both
+    /// read <c>Net.Positions</c>, which is what this pins.
+    /// </summary>
+    private static void ValidateFrameGeometry(Assembly plugin)
+    {
+        Type geometry = RequireComponentType(plugin, "FrameGeometry");
+        MethodInfo read = RequirePublicStatic(geometry, "Read");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(IEnumerable<object> items)
+        {
+            object[] all = items.ToArray();
+            Array array = Array.CreateInstance(point, all.Length);
+            for (int i = 0; i < all.Length; i++)
+                array.SetValue(all[i], i);
+            return array;
+        }
+        object[] Grid(double z) => Enumerable
+            .Range(0, 9)
+            .Select(i => P(i % 3, i / 3, z))
+            .ToArray();
+
+        var pairs = new List<(int U, int V)>();
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 2; column++)
+                pairs.Add(((row * 3) + column, (row * 3) + column + 1));
+        }
+        for (int column = 0; column < 3; column++)
+        {
+            for (int row = 0; row < 2; row++)
+                pairs.Add(((row * 3) + column, ((row + 1) * 3) + column));
+        }
+        Array edges = Array.CreateInstance(edge, pairs.Count);
+        for (int i = 0; i < pairs.Count; i++)
+            edges.SetValue(Activator.CreateInstance(edge, pairs[i].U, pairs[i].V), i);
+
+        object Equilibrium()
+        {
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "Vertices", Points(Grid(0.0)));
+            SetContractProperty(eq, equilibriumType, "Edges", edges);
+            SetContractProperty(
+                eq, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2, 6, 8 });
+            return eq;
+        }
+        object Columns(Array nodes)
+        {
+            object block = CreateInstance(columnsType);
+            SetContractProperty(block, columnsType, "Nodes", nodes);
+            Array members = Array.CreateInstance(edge, 1);
+            members.SetValue(Activator.CreateInstance(edge, 0, 1), 0);
+            SetContractProperty(block, columnsType, "Members", members);
+            SetContractProperty(block, columnsType, "MemberForce", new[] { 100.0 });
+            SetContractProperty(
+                block, columnsType, "Trees", new int[][] { new[] { 0 } });
+            SetContractProperty(block, columnsType, "Heads", new[] { 1 });
+            SetContractProperty(block, columnsType, "Feet", new[] { 0 });
+            SetContractProperty(block, columnsType, "HeadNode", new[] { 4 });
+            return block;
+        }
+        object Frame(Array? columnNodes)
+        {
+            object frame = CreateInstance(frameType);
+            SetContractProperty(frame, frameType, "Time", 50.0);
+            SetContractProperty(frame, frameType, "Phase", "raise");
+            SetContractProperty(frame, frameType, "Lift", 0.5);
+            SetContractProperty(frame, frameType, "Sag", 0.5);
+            SetContractProperty(frame, frameType, "Vertices", Points(Grid(1.0)));
+            SetContractProperty(frame, frameType, "ColumnNodes", columnNodes);
+            return frame;
+        }
+        object Result(object? columns, object? frame)
+        {
+            object result =
+                CreateResultDto(resultType, "fd", Equilibrium(), null, null);
+            if (columns is null && frame is null)
+                return result;
+            object mould = CreateInstance(mouldType);
+            SetContractProperty(mould, mouldType, "Ground", 0.0);
+            SetContractProperty(mould, mouldType, "Columns", columns);
+            SetContractProperty(mould, mouldType, "Frame", frame);
+            SetContractProperty(result, resultType, "Mould", mould);
+            return result;
+        }
+        object Read(object result) =>
+            read.Invoke(null, new object?[] { result, null, Array.Empty<int>() })
+            ?? throw new InvalidOperationException("FrameGeometry.Read returned null.");
+        T Field<T>(object owner, string name) =>
+            (T)(owner.GetType().GetProperty(name)
+                ?? throw new InvalidOperationException(
+                    $"FrameGeometry.Net has no {name}."))
+                .GetValue(owner)!;
+
+        // ---- The frame the Result carries wins.
+        object framed = Read(Result(null, Frame(null)));
+        Array positions = Field<Array>(framed, "Positions");
+        Type point3d = positions.GetType().GetElementType()!;
+        double Axis(object value, string axis) =>
+            (double)point3d.GetProperty(axis)!.GetValue(value)!;
+        if (positions.Length != 9)
+        {
+            throw new InvalidOperationException(
+                "One position per net node; nine went in and "
+                + $"{positions.Length} came back.");
+        }
+        for (int i = 0; i < 9; i++)
+        {
+            object at = positions.GetValue(i)!;
+            if (Math.Abs(Axis(at, "Z") - 1.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Positions come from Mould.Frame.Vertices when the Result "
+                    + $"carries a frame; node {i} came back at z "
+                    + $"{Axis(at, "Z"):0.####}, not the frame's 1.");
+            }
+        }
+        string phase = Field<string>(framed, "Phase");
+        if (!string.Equals(phase, "raise", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Phase is the frame's own word; got '{phase}'.");
+        }
+
+        // ---- Cables: one branch, because there are no principal runs, and
+        // every end on the frame's own positions.
+        IList cables = Field<IList>(framed, "Cables");
+        if (cables.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "With no principal runs every member is infill, and the infill "
+                + $"is one branch; got {cables.Count} branches.");
+        }
+        IList infill = (IList)cables[0]!;
+        if (infill.Count != 12)
+        {
+            throw new InvalidOperationException(
+                $"Twelve edges went in and {infill.Count} cables came back.");
+        }
+        foreach (object? item in infill)
+        {
+            object line = item!;
+            object from = line.GetType().GetProperty("From")!.GetValue(line)!;
+            object to = line.GetType().GetProperty("To")!.GetValue(line)!;
+            if (Math.Abs(Axis(from, "Z") - 1.0) > 1.0e-9 ||
+                Math.Abs(Axis(to, "Z") - 1.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Every cable end stands at the frame's positions, so both "
+                    + "ends are at z 1; one came back at "
+                    + $"{Axis(from, "Z"):0.####} to {Axis(to, "Z"):0.####}.");
+            }
+        }
+
+        // ---- The anchors and the estimated boundary.
+        IList anchors = Field<IList>(framed, "AnchorGroups");
+        if (anchors.Count != 4 || ((IList)anchors[0]!).Count != 1)
+        {
+            throw new InvalidOperationException(
+                "The four corners are anchored and no two of them are joined, "
+                + $"so each is a strip of its own; got {anchors.Count} strips.");
+        }
+        if (!Field<bool>(framed, "PerimeterEstimated"))
+        {
+            throw new InvalidOperationException(
+                "This Result carries no faces of its own and no pattern "
+                + "topology, so the boundary is a degree ESTIMATE and has to "
+                + "say so; Perimeter Lines draws nothing from an estimate.");
+        }
+        int perimeterCount = Field<int>(framed, "PerimeterCount");
+        if (perimeterCount != 4)
+        {
+            throw new InvalidOperationException(
+                "The estimate is the nodes below the median degree, which on a "
+                + $"three-by-three grid is the four corners; got {perimeterCount}.");
+        }
+        bool[] closes = Field<bool[]>(framed, "PerimeterCloses");
+        if (closes.Length != Field<IList>(framed, "PerimeterLoops").Count ||
+            closes.Any(one => one))
+        {
+            throw new InvalidOperationException(
+                "One closing verdict per loop, and an estimated boundary never "
+                + "closes: a single node is not a loop.");
+        }
+
+        // ---- No columns block: an empty tree, not an error.
+        if (Field<IList>(framed, "ColumnBranches").Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A Result with a frame and no columns block gives an EMPTY "
+                + "Columns tree; Diagnose's frame_without_columns is what says "
+                + "so in words.");
+        }
+
+        // ---- No frame at all: the solved state, phase final.
+        object solved = Read(Result(null, null));
+        Array solvedPositions = Field<Array>(solved, "Positions");
+        for (int i = 0; i < 9; i++)
+        {
+            object at = solvedPositions.GetValue(i)!;
+            if (Math.Abs(Axis(at, "Z")) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "With no frame the positions are the SOLVED vertices, so "
+                    + $"node {i} stands at z 0; got {Axis(at, "Z"):0.####}.");
+            }
+        }
+        string solvedPhase = Field<string>(solved, "Phase");
+        if (!string.Equals(solvedPhase, "final", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A Result with no frame stands at its finished shape, and the "
+                + $"word for that is 'final'; got '{solvedPhase}'.");
+        }
+
+        // ---- The frame's column nodes win over the block's own. The block
+        // is built two metres tall and the frame stands it at three, so a
+        // reading that took the block's nodes measures 2 and this measures 3.
+        object standing = Read(Result(
+            Columns(Points(new[] { P(0.0, 0.0, 0.0), P(0.0, 0.0, 2.0) })),
+            Frame(Points(new[] { P(0.0, 0.0, 0.0), P(0.0, 0.0, 3.0) }))));
+        IList branches = Field<IList>(standing, "ColumnBranches");
+        if (branches.Count != 1 || ((IList)branches[0]!).Count != 1)
+        {
+            throw new InvalidOperationException(
+                "One tree of one member gives one branch holding one line; got "
+                + $"{branches.Count} branches.");
+        }
+        object member = ((IList)branches[0]!)[0]!;
+        object lower = member.GetType().GetProperty("From")!.GetValue(member)!;
+        object upper = member.GetType().GetProperty("To")!.GetValue(member)!;
+        double height = Axis(upper, "Z") - Axis(lower, "Z");
+        if (Math.Abs(height - 3.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The column stands where the FRAME puts it, not where it was "
+                + $"built: the frame says 3 and the block says 2, and {height:0.####} "
+                + "came back.");
         }
     }
 
