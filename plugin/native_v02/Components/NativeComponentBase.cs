@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -341,6 +341,22 @@ internal static class ParameterIdentity
         IReadOnlyList<string?> archived,
         IReadOnlyList<string> registered)
     {
+        int index = FirstRenameIndex(archived, registered);
+        return index < 0
+            ? null
+            : $"{side} {index} was '{archived[index]}' and is now " +
+              $"'{registered[index]}'";
+    }
+
+    /// <summary>
+    /// The index of the first shared slot whose archived name is not the
+    /// name registered there now, or -1 when every shared slot agrees or no
+    /// archived name could be read.
+    /// </summary>
+    private static int FirstRenameIndex(
+        IReadOnlyList<string?> archived,
+        IReadOnlyList<string> registered)
+    {
         int shared = Math.Min(archived.Count, registered.Count);
         for (int index = 0; index < shared; index++)
         {
@@ -348,14 +364,26 @@ internal static class ParameterIdentity
             if (was is null)
                 continue;
             if (!string.Equals(was, registered[index], StringComparison.Ordinal))
-            {
-                return
-                    $"{side} {index} was '{was}' and is now " +
-                    $"'{registered[index]}'";
-            }
+                return index;
         }
-        return null;
+        return -1;
     }
+
+    /// <summary>
+    /// Whether ONE side's archived ports differ from the ports registered
+    /// on that side now, by count or by any name.
+    ///
+    /// <see cref="Mismatch"/> asks the question of both sides at once,
+    /// because a warning is owed for either. A component that ACTS on the
+    /// finding rather than only saying it may need one side alone: an
+    /// output-side change cannot land an archived wire on an input, so it
+    /// cannot flip an input the component then obeys.
+    /// </summary>
+    internal static bool SideMoved(
+        IReadOnlyList<string?> archived,
+        IReadOnlyList<string> registered) =>
+        archived.Count != registered.Count ||
+        FirstRenameIndex(archived, registered) >= 0;
 
     /// <summary>
     /// The port NAMES one component's archive carries, in slot order, or
@@ -438,6 +466,7 @@ public abstract class NativeComponentBase : GH_Component
     private bool _readFromArchive;
     private bool _suggestedListsAttempted;
     private string? _portsMoved;
+    private bool _inputPortsMoved;
 
     protected NativeComponentBase(
         string name,
@@ -479,11 +508,15 @@ public abstract class NativeComponentBase : GH_Component
             ParameterIdentity.ArchivedNames(reader);
         if (archivedInputs is not null && archivedOutputs is not null)
         {
+            string[] registeredInputs =
+                Array.ConvertAll(inputs, snapshot => snapshot.Name);
             _portsMoved = ParameterIdentity.Mismatch(
                 archivedInputs,
                 archivedOutputs,
-                Array.ConvertAll(inputs, snapshot => snapshot.Name),
+                registeredInputs,
                 Array.ConvertAll(outputs, snapshot => snapshot.Name));
+            _inputPortsMoved = ParameterIdentity.SideMoved(
+                archivedInputs, registeredInputs);
             if (_portsMoved is not null)
             {
                 AddRuntimeMessage(
@@ -503,6 +536,21 @@ public abstract class NativeComponentBase : GH_Component
     /// already gone out.
     /// </summary>
     protected bool PortsMovedOnLoad => _portsMoved is not null;
+
+    /// <summary>
+    /// Whether the INPUT side alone moved: the archive carried a different
+    /// number of inputs, or a different name at some input index.
+    ///
+    /// This is the half that can change what a component DOES. Grasshopper
+    /// reattaches an archived wire to the live port at the same index, so an
+    /// input wire that used to feed one thing now feeds whatever stands
+    /// there and the component obeys it. An output-side change cannot do
+    /// that: it can only leave a downstream wire reading the wrong thing,
+    /// which the Warning already says. A component holding back a side
+    /// effect wants this rather than <see cref="PortsMovedOnLoad"/>, or it
+    /// holds on every file saved before an output was renamed.
+    /// </summary>
+    protected bool InputPortsMovedOnLoad => _inputPortsMoved;
 
     /// <summary>
     /// Says again, on every solution, what the read found: a message added
@@ -576,6 +624,7 @@ public abstract class NativeTaskComponentBase<TResult> :
     private bool _readFromArchive;
     private bool _suggestedListsAttempted;
     private string? _portsMoved;
+    private bool _inputPortsMoved;
 
     protected NativeTaskComponentBase(
         string name,
@@ -618,11 +667,15 @@ public abstract class NativeTaskComponentBase<TResult> :
             ParameterIdentity.ArchivedNames(reader);
         if (archivedInputs is not null && archivedOutputs is not null)
         {
+            string[] registeredInputs =
+                Array.ConvertAll(inputs, snapshot => snapshot.Name);
             _portsMoved = ParameterIdentity.Mismatch(
                 archivedInputs,
                 archivedOutputs,
-                Array.ConvertAll(inputs, snapshot => snapshot.Name),
+                registeredInputs,
                 Array.ConvertAll(outputs, snapshot => snapshot.Name));
+            _inputPortsMoved = ParameterIdentity.SideMoved(
+                archivedInputs, registeredInputs);
             if (_portsMoved is not null)
             {
                 AddRuntimeMessage(
@@ -642,6 +695,21 @@ public abstract class NativeTaskComponentBase<TResult> :
     /// already gone out.
     /// </summary>
     protected bool PortsMovedOnLoad => _portsMoved is not null;
+
+    /// <summary>
+    /// Whether the INPUT side alone moved: the archive carried a different
+    /// number of inputs, or a different name at some input index.
+    ///
+    /// This is the half that can change what a component DOES. Grasshopper
+    /// reattaches an archived wire to the live port at the same index, so an
+    /// input wire that used to feed one thing now feeds whatever stands
+    /// there and the component obeys it. An output-side change cannot do
+    /// that: it can only leave a downstream wire reading the wrong thing,
+    /// which the Warning already says. A component holding back a side
+    /// effect wants this rather than <see cref="PortsMovedOnLoad"/>, or it
+    /// holds on every file saved before an output was renamed.
+    /// </summary>
+    protected bool InputPortsMovedOnLoad => _inputPortsMoved;
 
     /// <summary>
     /// Says again, on every solution, what the read found: a message added

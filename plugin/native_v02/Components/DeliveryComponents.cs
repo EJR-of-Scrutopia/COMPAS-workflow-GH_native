@@ -34,7 +34,13 @@ public sealed record ExportInputs(
     string? CellWarning,
     bool Live,
     string Studio,
-    double Radius);
+    double Radius,
+    // Which of the two the cells came from, in the word the sidecar's own
+    // "pattern" key carries: "authored" for cells somebody wired, "faces"
+    // for the ones Export made from the Result's own mesh. The studio reads
+    // this to know whether anyone chose the cutting pattern, so the fallback
+    // must not claim to have been authored.
+    string TessellationPattern);
 
 /// <summary>
 /// One authored cutting cell, already reduced to the plan outline the
@@ -78,6 +84,13 @@ public sealed class ExportComponent :
     private const string DefaultName = "ananke-export";
     private const double DefaultColumnRadius = 0.05;
 
+    // The two words the sidecar's "pattern" key can carry. Cells somebody
+    // wired were authored; cells Export built from the Result's own faces
+    // were not, and saying they were told the studio a cutting pattern had
+    // been chosen when nobody had chosen one.
+    private const string AuthoredPattern = "authored";
+    private const string FacesPattern = "faces";
+
     // A Button feeding Write is only True for the press solve; the release
     // immediately triggers a second solve with Write false. Latching the
     // last written set keeps the evidence of the one-shot write on the
@@ -112,6 +125,13 @@ public sealed class ExportComponent :
     // moved. Held until Live is seen False and then True again, which is
     // a deliberate act. Read on the first solve, not in the constructor,
     // because the archive is read after the object is built.
+    //
+    // Gated on the INPUT side only. The hold's whole cause is an archived
+    // wire landing on an input this component then obeys, which an
+    // output-side change cannot do: Export's own outputs went from six to
+    // two on the surface rework with its nine inputs untouched, and holding
+    // on that would have held Live on every definition in existence for a
+    // change that cannot have moved a single input wire.
     private bool _liveHoldRead;
     private bool _liveHeld;
 
@@ -120,9 +140,9 @@ public sealed class ExportComponent :
             "Export",
             "Export",
             "Write everything a solved Result can be, contract and " +
-            "COMPAS always, a tessellation sidecar when cells are wired, " +
-            "a columns mesh when the Result carries columns, and push " +
-            "the set live to the studio.",
+            "COMPAS always, the tessellation sidecar always, from wired " +
+            "cells or from the Result's own faces, a columns mesh when the " +
+            "Result carries columns, and push the set live to the studio.",
             ComponentCategories.Deliver,
             "export")
     {
@@ -154,6 +174,12 @@ public sealed class ExportComponent :
     public override void RemovedFromDocument(GH_Document document)
     {
         _uploader?.Dispose();
+        // And the cached default tessellation goes with it. It holds a whole
+        // ResultDto (equilibrium, form and force graphs, RawWire) plus the
+        // cells prepared from it, and a deleted component has no solve
+        // coming to replace it, so without this every Export ever placed
+        // keeps one solved net alive for the rest of the session.
+        _defaultTessellation = null;
         base.RemovedFromDocument(document);
     }
 
@@ -350,6 +376,7 @@ public sealed class ExportComponent :
                         CloneResult(pre!.Result),
                         pre.Cells,
                         pre.CellWarning,
+                        pre.TessellationPattern,
                         unitFactor,
                         pre.Radius,
                         CancelToken),
@@ -392,6 +419,7 @@ public sealed class ExportComponent :
                         CloneResult(inputs!.Result),
                         inputs.Cells,
                         inputs.CellWarning,
+                        inputs.TessellationPattern,
                         ResolveUnitFactor(),
                         inputs.Radius,
                         CancellationToken.None)
@@ -500,7 +528,7 @@ public sealed class ExportComponent :
             if (!_liveHoldRead)
             {
                 _liveHoldRead = true;
-                _liveHeld = PortsMovedOnLoad;
+                _liveHeld = InputPortsMovedOnLoad;
             }
 
             // Enqueued here and never in InPreSolve: a send is a side
@@ -528,7 +556,16 @@ public sealed class ExportComponent :
             else
             {
                 LiveUploader uploader = EnsureUploader();
-                if (nameIsOneSegment)
+                // Why nothing was enqueued this solve, where nothing was.
+                // Live is on and the uploader still holds the LAST set's
+                // outcome, so reporting that outcome would say "live:
+                // stored" on a solve that sent nothing at all, one line
+                // under a Warning saying nothing was sent. Null while a set
+                // did go out.
+                string? notSent = nameIsOneSegment
+                    ? null
+                    : "name refused";
+                if (notSent is null)
                 {
                     uploader.Enqueue(new LiveUploader.Pending(
                         inputs.Studio,
@@ -540,7 +577,9 @@ public sealed class ExportComponent :
                 // and the component would print one set's failure with
                 // the other set's flag.
                 LiveUploader.Snapshot state = uploader.Current;
-                uploaded = Display(state);
+                uploaded = notSent is null
+                    ? Display(state)
+                    : "nothing sent this solve (" + notSent + ")";
                 // The upload is best effort: the files and the JSON
                 // outputs stand whatever the studio said, so a refusal, a
                 // deferral or a transport failure is a Warning here and
@@ -549,7 +588,11 @@ public sealed class ExportComponent :
                 // component's reading of its prose. Only an outcome that
                 // has landed is worth a Warning; a set still going carries
                 // the previous verdict and nothing to say about this one.
-                if (state.Failed && state.Phase == LiveUploader.Phase.Done)
+                // A solve that enqueued nothing has no outcome of its own
+                // to report, and the previous set's failure was reported on
+                // the solve it happened.
+                if (notSent is null &&
+                    state.Failed && state.Phase == LiveUploader.Phase.Done)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
@@ -870,7 +913,8 @@ public sealed class ExportComponent :
             cellWarning,
             liveInput,
             studio,
-            radius);
+            radius,
+            PatternFor(cellSource));
         return true;
     }
 
@@ -934,6 +978,20 @@ public sealed class ExportComponent :
         }
         return faceCount > 0 ? CellSource.Faces : CellSource.None;
     }
+
+    /// <summary>
+    /// The word the sidecar's "pattern" key carries for a set of cells that
+    /// came from this source. Pure, and separate from
+    /// <see cref="ChooseCells"/>, so the decision and its consequence can
+    /// both be driven without a mesh: an author's cells were authored and
+    /// the Result's own faces were not, and the studio reads the difference
+    /// to know whether a cutting pattern was ever chosen. The None case
+    /// never reaches the sidecar, since no tessellation kind is built for
+    /// it; it answers with the fallback's word rather than inventing a
+    /// third.
+    /// </summary>
+    internal static string PatternFor(CellSource source) =>
+        source == CellSource.Wired ? AuthoredPattern : FacesPattern;
 
     /// <summary>
     /// One Result's default tessellation and everything the component has
@@ -1191,6 +1249,7 @@ public sealed class ExportComponent :
         ResultDto result,
         IReadOnlyList<TessellationCell>? cells,
         string? cellWarning,
+        string tessellationPattern,
         double unitFactor,
         double radius,
         CancellationToken cancellationToken)
@@ -1254,8 +1313,10 @@ public sealed class ExportComponent :
                         // Pure serialisation of cells already reduced to
                         // plain numbers on the solve thread; no worker, no
                         // geometry.
-                        payloads.Add(
-                            (kind, BuildTessellationJson(cells!, unitFactor)));
+                        payloads.Add((
+                            kind,
+                            BuildTessellationJson(
+                                cells!, unitFactor, tessellationPattern)));
                         if (!string.IsNullOrEmpty(cellWarning))
                             warnings.Add(cellWarning!);
                         if (Math.Abs(unitFactor - 1.0) > 1e-12)
@@ -1499,7 +1560,8 @@ public sealed class ExportComponent :
 
     private static string BuildTessellationJson(
         IReadOnlyList<TessellationCell> cells,
-        double unitFactor)
+        double unitFactor,
+        string pattern)
     {
         var perCourse = new Dictionary<int, int>();
         var cellPayloads = new List<Dictionary<string, object?>>(cells.Count);
@@ -1519,7 +1581,12 @@ public sealed class ExportComponent :
             ["schema"] = "bench.tessellation/1",
             ["units"] = "m",
             ["domain"] = "plan",
-            ["pattern"] = "authored",
+            // AUTHORED only where somebody authored it. A sidecar built
+            // from the Result's own faces because nobody wired a cell says
+            // "faces", so the studio can tell a chosen cutting pattern from
+            // the courtesy one and never reports a face fallback as a
+            // decision.
+            ["pattern"] = pattern,
             ["cells"] = cellPayloads
         };
         // The shared wire options every other codec in this component

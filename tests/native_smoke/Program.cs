@@ -992,7 +992,10 @@ internal static class Program
                 + "Result's own mesh, the second of them vertical in plan, "
                 + "come out as three cells in face order at course 0, the "
                 + "unusable one SKIPPED and counted rather than costing the "
-                + "contract, the COMPAS document and every other kind.");
+                + "contract, the COMPAS document and every other kind; "
+                + "and the sidecar those faces make declares pattern "
+                + "'faces', where an author's own cells declare "
+                + "'authored'.");
         }
         catch (Exception exception)
         {
@@ -6712,7 +6715,9 @@ internal static class Program
                 $"{cellListType.FullName} does not expose Add.");
         addMethod.Invoke(cellList, new[] { cell });
 
-        var json = method.Invoke(null, new object[] { cellList, 1.0 }) as string
+        var json =
+            method.Invoke(null, new object[] { cellList, 1.0, "authored" })
+                as string
             ?? throw new InvalidOperationException(
                 "BuildTessellationJson returned an unexpected type.");
         const string expected =
@@ -6735,7 +6740,8 @@ internal static class Program
         // accepts without complaint and reads a thousand times too
         // large: the one shape of unit error that never raises.
         var millimetres =
-            method.Invoke(null, new object[] { cellList, 0.001 }) as string
+            method.Invoke(null, new object[] { cellList, 0.001, "authored" })
+                as string
             ?? throw new InvalidOperationException(
                 "BuildTessellationJson returned an unexpected type.");
         const string expectedMillimetres =
@@ -6791,6 +6797,27 @@ internal static class Program
                 ?? throw new InvalidOperationException("ChooseCells returned null.");
             remark = arguments[3] as string;
             return verdict.ToString() ?? string.Empty;
+        }
+        // The verdict's own consequence: which word the sidecar's "pattern"
+        // key carries. Separate from ChooseCells so both halves can be
+        // driven here, because the plumbing between them lives in
+        // TryReadInputs, which needs a Rhino curve and an IGH_DataAccess.
+        MethodInfo patternFor = RequireStatic(exportType, "PatternFor");
+        Type cellSourceType = choose.ReturnType;
+        string PatternOf(string verdict) =>
+            patternFor.Invoke(
+                null,
+                new[] { Enum.Parse(cellSourceType, verdict) }) as string
+            ?? throw new InvalidOperationException(
+                "PatternFor returned an unexpected type.");
+        if (PatternOf("Wired") != "authored" || PatternOf("Faces") != "faces")
+        {
+            throw new InvalidOperationException(
+                "Cells somebody wired were AUTHORED and the Result's own "
+                + "faces were not; the studio reads that key to know whether "
+                + "a cutting pattern was ever chosen, and the fallback "
+                + "claiming authorship is the one lie it cannot detect. Got "
+                + $"'{PatternOf("Wired")}' and '{PatternOf("Faces")}'.");
         }
 
         if (Source(12, 12, 400, out string? wiredRemark) != "Wired" ||
@@ -6891,12 +6918,15 @@ internal static class Program
                 + "corners is skipped and counted, and the other three "
                 + $"survive; the skipped count came back {skipped}.");
         }
-        string json = build.Invoke(null, new object[] { cellList, 1.0 }) as string
+        string json =
+            build.Invoke(
+                null,
+                new object[] { cellList, 1.0, PatternOf("Faces") }) as string
             ?? throw new InvalidOperationException(
                 "BuildTessellationJson returned an unexpected type.");
         const string expected =
             "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
-            "\"domain\":\"plan\",\"pattern\":\"authored\",\"cells\":[" +
+            "\"domain\":\"plan\",\"pattern\":\"faces\",\"cells\":[" +
             "{\"key\":\"c0p0\",\"course\":0,\"outline\":[[0,0],[1,0],[0,1]]}," +
             "{\"key\":\"c0p1\",\"course\":0,\"outline\":[[1,0],[2,0],[1,1]]}," +
             "{\"key\":\"c0p2\",\"course\":0,\"outline\":[[2,0],[3,0],[2,1]]}]}";
