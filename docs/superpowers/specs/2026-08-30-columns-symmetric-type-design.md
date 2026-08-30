@@ -86,13 +86,20 @@ and its symmetrised aim (the asymmetry removed), measured.
 ### 3.5 Feet
 
 - Type 0: each tree's foot is where the ray from its main notch along
-  `MouldGeometry.AimFrom(-Resultant)` (symmetrised) meets the ground.
-  Never refused.
+  `MouldGeometry.AimFrom(Resultant)` (the symmetrised pull; AimFrom
+  negates it itself) meets the ground. Never refused. A tree whose
+  main notch projects onto the span midpoint takes this foot at every
+  Type (see Type N).
 - Type N (1 to 4): the span's chord is cut into N equal bands about its
-  midpoint; a tree belongs to the band its main notch projects into;
-  each band with a tree gets one foot at the plan centre (midpoint of
-  the extremes) of its trees' main notches, at ground level; mirrored
-  trees land in mirrored bands by construction. Then every tree is
+  midpoint; the band is decided PER MIRROR PAIR: the pair member on the
+  first half takes the band its main notch projects into (`floor(s x
+  N)` on the chord parameter `s`), its partner takes the mirrored band
+  `N-1-band`, so mirrored trees land in mirrored bands whatever the
+  band boundaries; a centre tree (its own partner) at an ODD N takes
+  the central band and at an EVEN N takes its Type 0 foot, which is on
+  the midpoint; each band with a tree gets one foot at the plan centre
+  (midpoint of the extremes) of its trees' main notches, at ground
+  level. Then every tree is
   checked: a trunk (foot to fork, or the single member of a one-notch
   tree) that would lean past `MaxLeanDegrees` (60) to its band foot is
   PEELED: that tree stands on its Type 0 foot instead, and is counted
@@ -102,8 +109,10 @@ and its symmetrised aim (the asymmetry removed), measured.
   feet lie within the clearance of each other merges onto the chord
   midpoint in plan, at ground, counted in `Level.FeetMerged`. Any other
   two feet (different pairs, different spans, the ring foot) closer than
-  the clearance stay two and are counted in `Level.FeetClose`. The
-  ring tree's foot is fixed by 3.2 and never merges.
+  the clearance stay two and are counted in `Level.FeetClose`. Feet at
+  the SAME point (two band feet built from the same mains, as at a
+  crossing) are one node, which is neither a merge nor a close pair.
+  The ring tree's foot is fixed by 3.2 and never merges.
 
 ### 3.7 Judged, never refused
 
