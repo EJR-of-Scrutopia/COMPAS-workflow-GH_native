@@ -59,40 +59,62 @@ as today. Before any foot is placed the resultants are symmetrised:
   normal to `c`. A resultant `R` reads as `(a, x, z) = (R.c, R.n, R.z)`.
 - Symmetric spans. A span is SYMMETRIC when its free notches' chord
   parameters pair off about the midpoint: sorted ascending, `s_i +
-  s_(n-1-i) = 1` for every `i` within `1e-6`. Only a symmetric span is
-  mirror-paired, oriented, family-averaged, banded per pair (3.5) and
+  s_(n-1-i) = 1` for every `i`, within a QUARTER OF THE NOTCH SPACING,
+  which in chord parameter is `0.25 x medianPlanEdge / chordLength`. The
+  tolerance is on POSITION, not on the parameter: the same parameter
+  bound is microns on a long span and centimetres on a short one, and
+  the positions being compared come out of the SOLVE rather than off the
+  curve the author drew, so a solved or relaxed net never mirrors its
+  notches to the last digit. A quarter of the spacing is far tighter
+  than the failures this test exists to catch, which move a notch by a
+  whole spacing or more, and far looser than the millimetres a solver
+  moves a node it meant to leave alone. Only a symmetric span is
+  mirror-paired, family-averaged, banded per pair (3.5) and
   centre-merged (3.5). A span that is not (a crossing took an interior
   notch, or a bar end that is neither anchor nor rim put a notch at
-  parameter 0) keeps every resultant it came in with, takes each tree's
-  band from that tree's own projection with no pair rule, merges
-  nothing, and is counted in `Placement.AsymmetricSpans`; its trees'
-  `Partner` is -1. Index `i` and index `m-1-i` of such a free list are
-  not geometric mirrors, and pairing them would force equal and opposite
-  along-chord pulls onto trees that do not straddle the mirror plane.
+  parameter 0) keeps every resultant it came in with, subject to the
+  dead band below, takes each tree's band from that tree's own
+  projection with no pair rule, merges nothing, and is counted in
+  `Placement.AsymmetricSpans`; its trees' `Partner` is -1. Index `i` and
+  index `m-1-i` of such a free list are not geometric mirrors, and
+  pairing them would force equal and opposite along-chord pulls onto
+  trees that do not straddle the mirror plane.
 - Mirror pairs. The span's trees in grouping order (3.3) are indexed
   `0..m-1`; tree `i` pairs with tree `m-1-i`; with `m` odd the centre
   tree pairs with itself. For a pair `(t, t')`: `a_t := (a_t - a_t')/2`,
   `a_t' := -a_t`, and `x` and `z` are each replaced by the pair's mean.
   The centre tree's `a` is 0.
-- Self-orientation. The chord fixes the frame up to which end of the bar
-  was traced first, and the span's own forces settle that. After the
-  pair step each span takes the mean of its trees' `x`; when that mean is
-  negative the frame is turned round (`c := -c`, `n := -n`, every tree's
-  `a` and `x` negated, and tree index `i` read as `m-1-i`), which is the
-  same span said the other way about. When `|mean x| < 1e-9` the span has
-  no opinion and its node order stands. No span's chord is ever compared
-  with another's.
 - Families. Spans alike in free-notch count, in Branching (one slider, so
   alike by construction) and in chord LENGTH within 10 percent of the
-  family lead's form a FAMILY; a span matching no family is its own
-  family. Tree `i` of every span of a family takes the family's mean
-  `(a, x, z)` at index `i`, each span reading it in its own oriented
-  frame. Length is in the key because a family shares an AIM, and a short
-  steep span handed a long flat one's aim can stand its foot beyond its
-  own anchors. Bars congruent by TRANSLATION (a barrel whose bars are
-  traced in mixed directions) and bars congruent by ROTATION (opposite
-  ribs of a dome, chord and pull turned together) both come out carrying
-  the same columns in the world.
+  family LEAD's form a FAMILY; a span matching no family is its own
+  family. Length is in the key because a family shares an AIM, and a
+  short steep span handed a long flat one's aim can stand its foot
+  beyond its own anchors. Measuring each candidate against the lead
+  rather than pairwise makes the bucketing order dependent and
+  non-transitive (10, 10.9 and 11.8 fall into two families, and a
+  different span order gives one); that is deliberate, because this is a
+  cheap grouping of like with like and not an equivalence relation.
+- What a family shares. The ALONG profile `a` and the VERTICAL profile
+  `z`, at index `i`, and NOTHING ELSE. Tree `i` of every span of the
+  family takes the family's mean `a[i]` and `z[i]`; the across-chord `x`
+  stays the span's own, already mirrored within the span by the pair
+  step above.
+  The reason is that the span frame has one arbitrary choice in it,
+  which end of the bar Pattern traced first, and only `a` and `z` are
+  free of it. After the pair step `a` is antisymmetric and `z`
+  symmetric, so reading a span from either end gives the same `a[i]` and
+  `z[i]`, and tree `i` of one span is tree `i` of the family whichever
+  way either bar was traced. `x` comes out NEGATED, so sharing it would
+  need a rule for which way round a span is, and every such rule has a
+  null: a rib lying IN the structure's own mirror plane, pulled equally
+  from both sides, has no opinion, and would take the family's `x` in a
+  frame that exists only because a curve was drawn left to right. It
+  would lean out of the plane it lies in, and to the other side if the
+  same curve were redrawn. Leaving `x` alone also makes both congruences
+  hold by construction: bars congruent by TRANSLATION (a barrel whose
+  bars are traced in mixed directions) and by ROTATION (opposite ribs of
+  a dome, chord and pull turned together) carry the same columns in the
+  world with no test to get wrong.
 - Dead band. An aim within `PlumbDegrees = 2` of vertical is vertical.
   This applies to every tree of every span, mirrored or not: a degree of
   residual lean out of a solved net is noise wherever it appears.
@@ -262,18 +284,38 @@ names the wrong behaviour each fails against):
   degree, the skew on every notch being a whole one.
 - One family: the same arch four times, offset in Y by 0, 1, 2 and 3, the
   second with every pull scaled by 1.05, the third with its nodes in
-  REVERSED bar order, the fourth turned through 180 degrees in plan about
-  the arch's own centre with its pull turned with it. Type 0. Read in
-  each span's own frame, foot `i` of every bar has the same along-chord
-  and across-chord offset from its span's midpoint to 1e-9, the
-  across-chord offset negated on a span the engine turned round; and the
-  across-chord FORCE each span carries is the hand-derived `lateral`
-  with its own sign, which is the reading the reversed-span rule got
-  wrong (it cancelled the rotated bar against the rest and halved the
-  family mean). The same fixture runs again at Type 2, where each span's
-  band feet must be mirror images in its own frame and its centre tree
-  must stand in the mirror plane: the band path had never run on a span
-  traced backwards at all.
+  REVERSED bar order, the fourth turned through 180 degrees in plan with
+  its pull turned with it. Type 0. Read in each span's own frame, foot
+  `i` of every bar has the same along-chord offset from its span's
+  midpoint to 1e-9 and the across-chord offset negated where that span's
+  own frame reads the world pull negative; and the across-chord FORCE
+  each span carries is the hand-derived `lateral` with its own sign. The
+  backwards bar and the rotated bar hold TRIVIALLY now, which is the
+  point of the rule they are here for: what they measure is that the
+  shared `a` and `z` profiles land at the right index, and that each
+  span's own `x` reaches the world unchanged. The case that distinguishes
+  sharing `x` from not sharing it is the crown bar below, not this one,
+  since all four of these bars carry the same across.
+  The same fixture runs again at Type 2, where each span's band feet must
+  be mirror images in its own frame and its centre tree must stand in the
+  mirror plane. That run drives the band path on a span traced backwards
+  and on a rotated one, which nothing else does; it does NOT distinguish
+  the smaller-chord-parameter rule from the grouping index, because on a
+  plan-monotone bar the chord parameter rises with the grouping order
+  whichever way the bar was traced. Only a bar that is not plan monotone
+  would separate them, and no fixture builds one.
+- A rib in the structure's own mirror plane: three congruent bars, ten
+  wide, at y = -2, 0 and +2, one family. The flanks are pulled sideways
+  toward the middle by +0.5 and -0.5 and the crown, lying in the mirror
+  plane, has no across-chord pull at all; the along bends are 0.2, 0.5
+  and 0.2 and the down magnitudes 1.0, 1.2 and 1.0, so the shared
+  profiles are `a = side x 0.3` and `z = -16/15`. Type 0. Every tree
+  carries `(side x 0.3, its own span's across, -16/15)` and stands
+  `side x 0.28125 z` along its chord and `(across x 15/16) z` across it;
+  the crown bar's feet stand exactly under their own notches ACROSS the
+  chord, to 1e-9. Any rule that pooled `x` over the family hands the
+  crown 1/3 and leans it `0.3125 z` out of the plane it lies in, to
+  whichever side its node order picked.
 - Families are not notch counts: a ten metre shallow span whose pulls
   lean outward beside a three metre steep span of the same free-notch
   count whose pulls hang plumb. `Families` is 2, and every foot of the
@@ -305,12 +347,15 @@ names the wrong behaviour each fails against):
   inward across pulls) at Type 0 where two neighbouring raw feet fall
   within the clearance: the feet count equals the tree count (no
   merge) and `FeetClose >= 1`.
-- The centre pair merges: an even-count arch (10 notches) whose two
-  innermost mirrored feet fall within the clearance of each other gives
-  one foot at the MEAN of the two, which on an arch this symmetric is the
-  midpoint, and `FeetMerged == 1`. Mean against chord midpoint is decided
-  on the plan-curved bar below, where the two answers are two units
-  apart.
+- The centre pair merges: an even-count arch (10 notches) with node 4
+  nudged two hundredths off the mirror, so the pair's own mean (4.49) is
+  not the span's chord midpoint (4.5). Its two innermost mirrored feet
+  fall within the clearance of each other and give one foot at the MEAN
+  of the two, 4.49, with `FeetMerged == 1`. The nudge is a fiftieth of
+  the notch spacing, well inside the quarter-spacing tolerance of 3.4, so
+  the span is still mirrored; that it is also measures the tolerance
+  against the exact-coincidence bound it replaced, under which this span
+  reverts to unmirrored and nothing merges at all.
 - Auto prefers no collision: on the wide arch at Auto, `GroundPlaced`
   equals the level the check itself recomputes from `Tried` by the
   section 3.7 rule (shortest load path among collision-free levels,
@@ -318,6 +363,13 @@ names the wrong behaviour each fails against):
 - Existing cases: the sub-project 3 case that expected Ground 1 to be
   REFUSED on a wide arch (if present) is rewritten to expect it placed
   with peeled trunks; every other case keeps passing unchanged.
+- The idempotence guard, both halves: a second `Symmetrise` on the same
+  trees returns the stored answer and touches nothing, and a call after a
+  tree has been ADDED runs again. The added tree holds the arch's centre
+  notch, so the free notches stay symmetric and the span goes from nine
+  trees with a centre to ten in five pairs: `Partner` is rebuilt ten
+  long, `CentreTrees` falls to 0, and the added tree's `RawResultant` is
+  captured.
 - Component pins: the Columns nicknames in `SpineComponentContracts`
   become `RES, B, T`; the persistent parameter count stays 12 and the
   component count 19, both ENFORCED as failures.
@@ -344,12 +396,16 @@ Three things an author does meet:
   is the whole fix, and the clamp warning says so.
 - The diagnostic code `columns.ground` is now `columns.type`, so a
   downstream filter on Diagnose's `Code` output stops matching.
-- A definition that was CLEAN can now show warnings. `columns.collision`
-  fires at every level where it used to fire at Ground 0 alone, and
-  `columns.feet_close` and `columns.alignment` are both new warnings, so
-  Diagnose's own Message line can flip from clean to N warnings on
-  reopening a working file. Nothing about the geometry got worse; the
-  measures are simply being reported where they were silent.
+- A definition that was CLEAN can now show warnings, and one that showed
+  warnings can now show fewer. `columns.collision` fires at every level
+  where it used to fire at Ground 0 alone, and `columns.feet_close` and
+  `columns.alignment` are both new warnings, so Diagnose's own Message
+  line can flip from clean to N warnings on reopening a working file;
+  the other way, the refusal warning is gone and `columns.type` is INFO
+  even where trunks peel, so a file that was warned at about a refused
+  level comes back quiet. Nothing about the geometry got worse either
+  way; the measures are simply being reported where they were silent,
+  and not reported where there is no fault.
 
 ## 8. Amendments to the columns spec of 2026-08-28
 
