@@ -145,6 +145,13 @@ namespace Ananke.COMPAS.Native.Components
             public int Families;
             /// <summary>Trees that are their own mirror partner.</summary>
             public int CentreTrees;
+            /// <summary>
+            /// Set once <c>Symmetrise</c> has run. A second call on the same
+            /// Placement is a no-op: it would otherwise overwrite
+            /// <c>Tree.RawResultant</c> with the already-symmetrised vector
+            /// and report an <c>AsymmetryRemoved</c> of zero.
+            /// </summary>
+            public bool Symmetrised;
         }
 
         // ------------------------------------------------------------------
@@ -244,6 +251,14 @@ namespace Ananke.COMPAS.Native.Components
         /// </summary>
         public static double Symmetrise(Placement placement, Point3d[] nodes, int[][] bars)
         {
+            // Called exactly once per Place, but guarded rather than trusted:
+            // Tasks 2 and 3 edit around this call site, and a second call
+            // would overwrite RawResultant with the already-symmetrised
+            // vector and report the asymmetry removed as zero.
+            if (placement.Symmetrised)
+                return placement.AsymmetryRemoved;
+            placement.Symmetrised = true;
+
             List<Tree> trees = placement.Trees;
             int count = trees.Count;
             placement.Partner = new int[count];

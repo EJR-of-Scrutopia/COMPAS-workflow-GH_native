@@ -3238,6 +3238,7 @@ internal static class Program
         MethodInfo group = RequirePublicStatic(engine, "Group");
         MethodInfo place = RequirePublicStatic(engine, "Place");
         MethodInfo segment = RequirePublicStatic(engine, "SegmentDistance");
+        MethodInfo symmetrise = RequirePublicStatic(engine, "Symmetrise");
         Type point3d = place.GetParameters()[0].ParameterType.GetElementType()!;
         Type vector3d = place.GetParameters()[3].ParameterType.GetElementType()!.GetElementType()!;
         double forkFraction = (double)engine.GetField("ForkFraction")!.GetValue(null)!;
@@ -3314,6 +3315,9 @@ internal static class Program
         double X(object p) => (double)point3d.GetProperty("X")!.GetValue(p)!;
         double Y(object p) => (double)point3d.GetProperty("Y")!.GetValue(p)!;
         double Z(object p) => (double)point3d.GetProperty("Z")!.GetValue(p)!;
+        double VX(object v) => (double)vector3d.GetProperty("X")!.GetValue(v)!;
+        double VY(object v) => (double)vector3d.GetProperty("Y")!.GetValue(v)!;
+        double VZ(object v) => (double)vector3d.GetProperty("Z")!.GetValue(v)!;
 
         // A parabolic arch whose across pulls are mirrored in SHAPE, carrying
         // the two asymmetries a solved net always has. `bend` is the mirrored
@@ -3416,6 +3420,109 @@ internal static class Program
             double moved = Get<double>(placed, "AsymmetryRemoved");
             if (moved <= 0.0)
                 throw new InvalidOperationException($"Symmetrise reports the largest angle it moved an aim through, and on an arch this lopsided that is more than nothing; it reported {moved:0.######}.");
+            int[] partner = Get<int[]>(placed, "Partner");
+            for (int i = 0; i < m; i++)
+            {
+                int expected = i == m / 2 ? m / 2 : m - 1 - i;
+                if (partner[i] != expected)
+                {
+                    throw new InvalidOperationException(
+                        $"Tree {i} must pair with its mirror partner about the span's midpoint, {expected} (the centre tree {m / 2} is its own partner); "
+                        + $"Partner[{i}] is {partner[i]}.");
+                }
+            }
+            int families = Get<int>(placed, "Families");
+            if (families != 1)
+                throw new InvalidOperationException($"One span holding trees falls into one family; Families is {families}.");
+            int centreTrees = Get<int>(placed, "CentreTrees");
+            if (centreTrees != 1)
+                throw new InvalidOperationException($"Eleven notches at Branching 1 give one centre tree, its own partner; CentreTrees is {centreTrees}.");
+        }
+
+        // ---- Idempotent (spec 3.4, Minor 4). Symmetrise runs once inside
+        // Place, but Tasks 2 and 3 edit the code around that call site, so a
+        // second call on the SAME Placement must be a no-op: it would
+        // otherwise overwrite RawResultant with the already-symmetrised
+        // vector and report the asymmetry removed as zero.
+        {
+            const double skew = 0.0174550649282176;   // tan(1 degree)
+            var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            double firstMoved = Get<double>(placed, "AsymmetryRemoved");
+            var beforeResultant = trees.Select(t => Get<object>(t, "Resultant")).ToArray();
+            var beforeRaw = trees.Select(t => Get<object>(t, "RawResultant")).ToArray();
+            double secondMoved = (double)symmetrise.Invoke(null, new object?[] { placed, arch.Nodes, arch.Bars })!;
+            if (Math.Abs(secondMoved - firstMoved) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"A second Symmetrise call on the same Placement must be a no-op and report the same asymmetry removed; "
+                    + $"the first call reported {firstMoved:0.######}, the second {secondMoved:0.######}.");
+            }
+            for (int t = 0; t < trees.Length; t++)
+            {
+                object raw = Get<object>(trees[t], "RawResultant");
+                if (Math.Abs(VX(raw) - VX(beforeRaw[t])) > 1.0e-12 ||
+                    Math.Abs(VY(raw) - VY(beforeRaw[t])) > 1.0e-12 ||
+                    Math.Abs(VZ(raw) - VZ(beforeRaw[t])) > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        $"A second Symmetrise call must not overwrite RawResultant with the already-symmetrised vector; tree {t}'s raw resultant moved from "
+                        + $"({VX(beforeRaw[t]):0.#########}, {VY(beforeRaw[t]):0.#########}, {VZ(beforeRaw[t]):0.#########}) to "
+                        + $"({VX(raw):0.#########}, {VY(raw):0.#########}, {VZ(raw):0.#########}).");
+                }
+                object resultant = Get<object>(trees[t], "Resultant");
+                if (Math.Abs(VX(resultant) - VX(beforeResultant[t])) > 1.0e-12 ||
+                    Math.Abs(VY(resultant) - VY(beforeResultant[t])) > 1.0e-12 ||
+                    Math.Abs(VZ(resultant) - VZ(beforeResultant[t])) > 1.0e-12)
+                {
+                    throw new InvalidOperationException($"A second Symmetrise call must not change Resultant; tree {t}'s symmetrised resultant moved.");
+                }
+            }
+        }
+
+        // ---- Dead band, measured (spec 3.4, Minor 2). A one-degree
+        // across-chord pull on a mirrored pair of notches: the pair step
+        // leaves both members' across at tan(1 degree) unchanged (across is
+        // already equal for the pair) and along at zero, so the one-degree
+        // residual lean is real, not a byproduct of a centre tree's along
+        // being zeroed by the mirror rule. One degree is inside
+        // PlumbDegrees (2), so each foot must land exactly under its own
+        // main notch in plan.
+        {
+            const double lean1 = 0.0174550649282176;   // tan(1 degree)
+            Array nodes = Array.CreateInstance(point3d, 4);
+            Array acrossBar = Array.CreateInstance(vector3d, 4);
+            nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(1.0, 0.0, 1.0), 1);
+            nodes.SetValue(P(2.0, 0.0, 1.0), 2);
+            nodes.SetValue(P(3.0, 0.0, 0.0), 3);
+            acrossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+            acrossBar.SetValue(V(0.0, lean1, -1.0), 1);
+            acrossBar.SetValue(V(0.0, lean1, -1.0), 2);
+            acrossBar.SetValue(V(0.0, 0.0, 0.0), 3);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            var band = (nodes, new[] { new[] { 0, 1, 2, 3 } }, new[] { 0, 3 }, across, Array.Empty<(int, int)>());
+            object placed = Run(band, Array.Empty<int[]>(), 1.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            if (trees.Length != 2)
+                throw new InvalidOperationException($"Four notches anchored at both ends hold two trees at Branching 1; got {trees.Length}.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            for (int t = 0; t < trees.Length; t++)
+            {
+                int mainNode = Get<int[]>(trees[t], "Nodes")[0];
+                object main = nodes.GetValue(mainNode)!;
+                object foot = levelNodes[footNode[t]];
+                if (Math.Abs(X(foot) - X(main)) > 1.0e-9 || Math.Abs(Y(foot) - Y(main)) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Tree {t}'s one-degree residual lean is inside PlumbDegrees and must read as plumb, so its foot stands exactly under its main notch in plan: "
+                        + $"foot ({X(foot):0.#########}, {Y(foot):0.#########}) against notch ({X(main):0.#########}, {Y(main):0.#########}).");
+                }
+            }
         }
 
         // ---- One family (spec 6). The same arch three times, offset in Y by
@@ -3428,6 +3535,23 @@ internal static class Program
         // carries the same columns in its own frame.
         {
             const double skew = 0.0174550649282176;
+            // A uniform across-chord pull, the same on every notch of every
+            // bar (a wind load, not a mirrored shape): it is the only thing
+            // in this fixture that a wrong reversed mapping can be caught
+            // by. `along`, after each span's own pair step, is already
+            // antisymmetric, so reversing it (index mirror plus sign flip)
+            // is the identity and proves nothing; a mirrored SHAPE on
+            // `across` is symmetric after the pair step for the same
+            // reason. A uniform pull survives the pair step as itself, and
+            // the correctly-reversed bar contributes it with the SAME sign
+            // as the two forward bars (its own normal is flipped, which the
+            // reversed sign flip corrects); forcing every bar to read
+            // forward makes the backward bar's contribution cancel instead
+            // of add, and the family mean drops from `lateral` to
+            // `lateral / 3`, a shift no cross-span equality check can see
+            // because the wrong mean is still shared identically by every
+            // span it is written back to.
+            const double lateral = 0.3;
             const int count = 11;
             Array nodes = Array.CreateInstance(point3d, 3 * count);
             Array across = Array.CreateInstance(vector3d.MakeArrayType(), 3);
@@ -3451,7 +3575,7 @@ internal static class Program
                     // the pull that node carries.
                     int position = b == 2 ? count - 1 - i : i;
                     bar[position] = node;
-                    acrossBar.SetValue(V(scale * ((side * 0.25) + skew), 0.0, -scale), position);
+                    acrossBar.SetValue(V(scale * ((side * 0.25) + skew), lateral, -scale), position);
                 }
                 bars[b] = bar;
                 across.SetValue(acrossBar, b);
@@ -3467,7 +3591,26 @@ internal static class Program
             if (spans.Length != 3)
                 throw new InvalidOperationException($"Three bars anchored at both ends give three spans; got {spans.Length}.");
             int[] footNode = FootOfTree(built, trees.Length);
+            // The lead span's own chord direction: a uniform world-frame pull
+            // (a wind load, not a shape baked into the arch) reads with the
+            // SAME sign in the own frame of every span that shares this
+            // chord direction, and the OPPOSITE sign in a span traced
+            // backwards, because that span's own chord-derived frame is
+            // itself flipped relative to the physical world even though the
+            // bar is not; that sign flip is exactly what makes the world
+            // reading agree once every span is rebuilt from the shared
+            // family mean.
+            object leadSpan = spans[0];
+            int[] leadBar = bars[Get<int>(leadSpan, "Bar")];
+            object leadFirst = nodes.GetValue(leadBar[Get<int>(leadSpan, "First")])!;
+            object leadLast = nodes.GetValue(leadBar[Get<int>(leadSpan, "Last")])!;
+            double leadCx = X(leadLast) - X(leadFirst);
+            double leadCy = Y(leadLast) - Y(leadFirst);
+            double leadLength = Math.Sqrt((leadCx * leadCx) + (leadCy * leadCy));
+            leadCx /= leadLength;
+            leadCy /= leadLength;
             var offsets = new List<(double Along, double Across)>[spans.Length];
+            var reversedSpan = new bool[spans.Length];
             for (int s = 0; s < spans.Length; s++)
             {
                 object span = spans[s];
@@ -3481,6 +3624,8 @@ internal static class Program
                 cy /= length;
                 double midX = 0.5 * (X(first) + X(last));
                 double midY = 0.5 * (Y(first) + Y(last));
+                reversedSpan[s] = ((cx * leadCx) + (cy * leadCy)) < 0.0;
+                double expectedAcross = reversedSpan[s] ? -lateral : lateral;
                 offsets[s] = new List<(double Along, double Across)>();
                 for (int t = 0; t < trees.Length; t++)
                 {
@@ -3490,21 +3635,51 @@ internal static class Program
                     double dx = X(foot) - midX;
                     double dy = Y(foot) - midY;
                     offsets[s].Add(((dx * cx) + (dy * cy), (dx * -cy) + (dy * cx)));
+
+                    // The value itself, not just cross-span agreement: every
+                    // tree of the family carries the uniform lateral pull
+                    // once correctly symmetrised, world-consistent, so a
+                    // span's own frame (R.n with n = (-c.y, c.x), the
+                    // production sign convention) reads it as `lateral` when
+                    // that span's chord agrees with the family's lead and
+                    // `-lateral` when the span is traced backwards.
+                    object resultant = Get<object>(trees[t], "Resultant");
+                    double acrossForce = (VX(resultant) * -cy) + (VY(resultant) * cx);
+                    if (Math.Abs(acrossForce - expectedAcross) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Every tree of a family carries the same uniform across-chord pull once symmetrised: span {s} "
+                            + $"({(reversedSpan[s] ? "reversed" : "forward")}) reads {acrossForce:0.#########}, not {expectedAcross:0.#}. "
+                            + "A span traced backwards must be read reversed, or its across-chord contribution cancels the forward bars' instead of adding to them.");
+                    }
                 }
             }
             for (int s = 1; s < spans.Length; s++)
             {
                 if (offsets[s].Count != offsets[0].Count)
                     throw new InvalidOperationException($"Every span of a family holds the same trees; span {s} holds {offsets[s].Count} against {offsets[0].Count}.");
+                // Along is antisymmetric within a pair by construction (the
+                // mirror rule takes the pair's DIFFERENCE), so the reversed
+                // transform is its own no-op there and a span's own-frame
+                // Along matches the lead's regardless of trace direction.
+                // Across is the pair's MEAN, so a genuine world-frame
+                // across-chord pull (the uniform `lateral` above) is carried
+                // through unchanged in sign, and a span traced backwards
+                // reads its own-frame Across as the NEGATIVE of the lead's,
+                // exactly as the acrossForce check above already measured
+                // directly off the resultant.
+                double sign = reversedSpan[s] ? -1.0 : 1.0;
                 for (int i = 0; i < offsets[0].Count; i++)
                 {
+                    double expectedAcross = sign * offsets[0][i].Across;
                     if (Math.Abs(offsets[s][i].Along - offsets[0][i].Along) > 1.0e-9 ||
-                        Math.Abs(offsets[s][i].Across - offsets[0][i].Across) > 1.0e-9)
+                        Math.Abs(offsets[s][i].Across - expectedAcross) > 1.0e-9)
                     {
                         throw new InvalidOperationException(
-                            $"Foot {i} of span {s}, read in its OWN frame, stands where foot {i} of the family's first span stands: "
-                            + $"({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) against ({offsets[0][i].Along:0.#########}, {offsets[0][i].Across:0.#########}). "
-                            + "A span traced backwards is being read in the world's frame, not the family's.");
+                            $"Foot {i} of span {s}, read in its OWN frame, stands where foot {i} of the family's first span stands (Across negated if the "
+                            + $"span is traced backwards): ({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) against "
+                            + $"({offsets[0][i].Along:0.#########}, {expectedAcross:0.#########}). A span traced backwards is being read in the world's "
+                            + "frame, not the family's.");
                     }
                 }
             }
