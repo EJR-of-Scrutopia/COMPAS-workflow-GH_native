@@ -159,6 +159,12 @@
       "filename": "graphic_diagram_display.png"
     },
     {
+      "key": "frame",
+      "label": "FR",
+      "category": "05 Visualisation",
+      "filename": "frame.png"
+    },
+    {
       "key": "tna_geometry",
       "label": "TG",
       "category": "90 Query",

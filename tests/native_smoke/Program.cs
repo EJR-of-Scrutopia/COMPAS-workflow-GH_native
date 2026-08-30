@@ -106,13 +106,17 @@ internal static class Program
                         "Cable Utilisation", "Column Utilisation",
                         "Result"
                     }),
-                // Animate's ports are pinned because every one of them is an
-                // index a downstream branch is read by. Perimeter Lines was
-                // APPENDED at 8 on purpose: outputs 0 to 7 keep their slots,
-                // so a Grasshopper file saved before it existed still finds
-                // its wires. Moving any of them silently rewires the canvas.
+                // Animate MAKES a frame and emits the Result carrying it.
+                // Its geometry is Frame's, below, so there is one port here
+                // and the RES-first rule holds on both sides of it.
                 ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = (
                     new[] { "Result", "Time", "Pre-Sag", "Extension" },
+                    new[] { "Result" }),
+                // Frame READS one. Every port here is an index a downstream
+                // branch is read by, so pinning them by name in order is what
+                // stops a reorder silently rewiring a canvas.
+                ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
+                    new[] { "Result" },
                     new[]
                     {
                         "Mesh",
@@ -121,9 +125,9 @@ internal static class Program
                         "Principal Nodes",
                         "Anchor Nodes",
                         "Perimeter Nodes",
-                        "Result",
+                        "Perimeter Lines",
                         "Columns",
-                        "Perimeter Lines"
+                        "Phase"
                     }),
                 // Export's ports are pinned because Format's removal moved
                 // every input after slot 0 up one and split the single JSON
@@ -204,6 +208,15 @@ internal static class Program
                     "03 Visualise",
                     new[] { "RES", "B", "T" },
                     new[] { "RES" }),
+                // Frame is pinned nickname by nickname because it is the one
+                // component whose whole job is the ORDER of its ports: nine
+                // trees read by index downstream.
+                ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
+                    "Frame",
+                    "FR",
+                    "03 Visualise",
+                    new[] { "RES" },
+                    new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH" }),
                 ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = (
                     "Import Pieces",
                     "Pieces",
@@ -386,14 +399,14 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 19)
+        if (componentTypes.Length != 20)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
             // with nineteen components' worth of contract untested.
             failures.Add(
-                $"Expected 19 concrete public components, found " +
+                $"Expected 20 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -2724,6 +2737,18 @@ internal static class Program
     /// thrust mesh and the polyline curves, both of which P/Invoke
     /// rhcommon_c and neither of which this process has a Rhino for; both
     /// read <c>Net.Positions</c>, which is what this pins.
+    ///
+    /// Four further fixtures round out the corner cases the plain grid
+    /// cannot reach on its own: a frame whose Vertices, or whose
+    /// ColumnNodes, do not match the net falls back to the solved geometry,
+    /// and Phase must fall back to <c>FinalPhase</c> on the SAME guard
+    /// rather than still say the frame's own word over solved positions; a
+    /// Result with ONE principal run measures Cables' branch structure
+    /// (the bar's own members in branch 0, the infill LAST in branch 1),
+    /// which the plain grid cannot, because with no bars at all first and
+    /// last are the same branch; and a Result with pattern faces gives a
+    /// REAL boundary loop, so <c>PerimeterCloses</c> is measured true for
+    /// once rather than only ever in its all-false, estimated form.
     /// </summary>
     private static void ValidateFrameGeometry(Assembly plugin)
     {
@@ -2736,6 +2761,12 @@ internal static class Program
         Type mouldType = RequireContractType(plugin, "MouldDto");
         Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
         Type frameType = RequireContractType(plugin, "MouldFrameDto");
+        Type equilibriumProblemType =
+            RequireContractType(plugin, "EquilibriumProblemDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type problemType = RequireContractType(plugin, "ProblemDto");
+        Type anchoredType = RequireContractType(plugin, "AnchoredPatternDto");
+        Type tnaPatternType = RequireContractType(plugin, "TnaPatternDto");
 
         object P(double x, double y, double z) =>
             Activator.CreateInstance(point, x, y, z)!;
@@ -2968,6 +2999,142 @@ internal static class Program
                 "The column stands where the FRAME puts it, not where it was "
                 + $"built: the frame says 3 and the block says 2, and {height:0.####} "
                 + "came back.");
+        }
+
+        // ---- A frame whose Vertices count does not match the net falls
+        // back to the solved positions; Phase must fall back to FinalPhase
+        // on the SAME guard, not report the frame's own word over geometry
+        // that is really the solved shape. The same is true when the frame's
+        // ColumnNodes count does not match the block. Both are otherwise
+        // unreachable from Animate, which only ever writes a frame whose
+        // counts hold, but Frame can be handed any Result.
+        object shortFrame = CreateInstance(frameType);
+        SetContractProperty(shortFrame, frameType, "Time", 50.0);
+        SetContractProperty(shortFrame, frameType, "Phase", "raise");
+        SetContractProperty(shortFrame, frameType, "Lift", 0.5);
+        SetContractProperty(shortFrame, frameType, "Sag", 0.5);
+        SetContractProperty(
+            shortFrame,
+            frameType,
+            "Vertices",
+            Points(new[] { P(0.0, 0.0, 1.0), P(1.0, 0.0, 1.0), P(0.0, 1.0, 1.0) }));
+        object mismatched = Read(Result(null, shortFrame));
+        string mismatchedPhase = Field<string>(mismatched, "Phase");
+        if (!string.Equals(mismatchedPhase, "final", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A frame whose Vertices count does not match the net falls "
+                + "back to the SOLVED positions, and Phase must fall back "
+                + $"with it rather than still say 'raise'; got "
+                + $"'{mismatchedPhase}'.");
+        }
+
+        object shortColumnsFrame = Frame(Points(new[] { P(0.0, 0.0, 0.0) }));
+        object mismatchedColumns = Read(Result(
+            Columns(Points(new[] { P(0.0, 0.0, 0.0), P(0.0, 0.0, 2.0) })),
+            shortColumnsFrame));
+        string mismatchedColumnsPhase = Field<string>(mismatchedColumns, "Phase");
+        if (!string.Equals(mismatchedColumnsPhase, "final", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A frame whose ColumnNodes count does not match the block "
+                + "falls back to the block's own nodes, and Phase must fall "
+                + "back with it; got '" + mismatchedColumnsPhase + "'.");
+        }
+
+        // ---- Cables' branch structure with ONE principal run: the bar's
+        // own members land in branch 0, and everything else, the infill,
+        // lands in a LAST branch. Every earlier fixture above has no
+        // principal runs at all, so with no bars first and last are the
+        // SAME branch and an infill-first Read would still pass; this is
+        // the one that would fail it.
+        object runTopology = CreateInstance(topologyType);
+        SetContractProperty(
+            runTopology,
+            topologyType,
+            "PrincipalRuns",
+            new int[][] { new[] { 0, 1, 2 } });
+        object equilibriumProblem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(
+            equilibriumProblem, equilibriumProblemType, "Topology", runTopology);
+        object equilibriumWithRun = Equilibrium();
+        SetContractProperty(
+            equilibriumWithRun, equilibriumType, "Problem", equilibriumProblem);
+        object resultWithRun =
+            CreateResultDto(resultType, "fd", equilibriumWithRun, null, null);
+        object withRun = Read(resultWithRun);
+        IList runCables = Field<IList>(withRun, "Cables");
+        if (runCables.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "One principal run gives two branches, the bar and the "
+                + $"infill LAST; got {runCables.Count}.");
+        }
+        IList barBranch = (IList)runCables[0]!;
+        IList infillBranch = (IList)runCables[1]!;
+        if (barBranch.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "The run 0,1,2 covers two consecutive members, (0,1) and "
+                + $"(1,2); branch 0 came back with {barBranch.Count}.");
+        }
+        if (infillBranch.Count != 10)
+        {
+            throw new InvalidOperationException(
+                "Twelve edges minus the bar's own two leaves ten in the "
+                + $"infill LAST branch; got {infillBranch.Count}.");
+        }
+
+        // ---- A real boundary, from pattern faces: PerimeterCloses reads
+        // true for that loop. Every fixture above carries no faces, so
+        // PerimeterCloses is only ever measured in its all-false, estimated
+        // form; this is the one that exercises the grouping[last].Contains
+        // (first) rule that keeps Perimeter Lines from drawing a chord and
+        // calling it the boundary.
+        object faceTopology = CreateInstance(topologyType);
+        SetContractProperty(faceTopology, topologyType, "Vertices", Points(Grid(0.0)));
+        SetContractProperty(
+            faceTopology,
+            topologyType,
+            "Faces",
+            new int[][]
+            {
+                new[] { 0, 1, 4, 3 },
+                new[] { 1, 2, 5, 4 },
+                new[] { 3, 4, 7, 6 },
+                new[] { 4, 5, 8, 7 }
+            });
+        object tnaPattern = CreateInstance(tnaPatternType);
+        SetContractProperty(tnaPattern, tnaPatternType, "Topology", faceTopology);
+        object anchoredPattern = CreateInstance(anchoredType);
+        SetContractProperty(anchoredPattern, anchoredType, "Pattern", tnaPattern);
+        object problemWithFaces = CreateInstance(problemType);
+        SetContractProperty(problemWithFaces, problemType, "Anchored", anchoredPattern);
+        object resultWithFaces =
+            CreateResultDto(resultType, "fd", Equilibrium(), null, null);
+        SetContractProperty(resultWithFaces, resultType, "Problem", problemWithFaces);
+        object withFaces = Read(resultWithFaces);
+        if (Field<bool>(withFaces, "PerimeterEstimated"))
+        {
+            throw new InvalidOperationException(
+                "Pattern faces give a REAL boundary, not an estimate; "
+                + "PerimeterEstimated came back true.");
+        }
+        int facePerimeterCount = Field<int>(withFaces, "PerimeterCount");
+        if (facePerimeterCount != 8)
+        {
+            throw new InvalidOperationException(
+                "Four quad faces over the three-by-three grid leave the "
+                + "eight outer nodes on the boundary and the centre off it; "
+                + $"got {facePerimeterCount}.");
+        }
+        bool[] faceCloses = Field<bool[]>(withFaces, "PerimeterCloses");
+        if (faceCloses.Length != 1 || !faceCloses[0])
+        {
+            throw new InvalidOperationException(
+                "The eight boundary nodes form one closed loop around the "
+                + "centre; PerimeterCloses must read true for it, not "
+                + $"[{string.Join(", ", faceCloses)}].");
         }
     }
 

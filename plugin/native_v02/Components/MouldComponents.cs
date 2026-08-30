@@ -143,15 +143,12 @@ namespace Ananke.COMPAS.Native.Components
                     + "four phases: reel the net into shape on the ground, raise "
                     + "it on the columns, finish by tensioning both axes against "
                     + "them, then hold the shape while load arrives. Sag and "
-                    + "height are read from the solved Result, not dialled.",
+                    + "height are read from the solved Result, not dialled. The "
+                    + "geometry of a frame is Frame's, which reads it back off "
+                    + "this Result.",
                 ComponentCategories.Visualise,
                 "mould_animate")
         {
-            foreach (IGH_Param output in Params.Output)
-            {
-                if (output is IGH_PreviewObject preview)
-                    preview.Hidden = true;
-            }
         }
 
         private string _bareKey = string.Empty;
@@ -273,56 +270,6 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
-            parameters.AddMeshParameter(
-                "Mesh",
-                "M",
-                "The formwork surface at this frame, rebuilt from the Result's "
-                    + "own faces. Empty for an FD result, which carries no "
-                    + "faces to rebuild from.",
-                GH_ParamAccess.item);
-            parameters.AddLineParameter(
-                "Cables",
-                "C",
-                "Every net member at this frame, infill and bar alike, as a "
-                    + "TREE: one branch per principal line carrying that bar's "
-                    + "own members in order along it, and a LAST branch holding "
-                    + "the infill, everything not on a bar. Branch {i} is bar "
-                    + "{i}, the same bar as branch {i} of Principal Lines and "
-                    + "Principal Nodes.",
-                GH_ParamAccess.tree);
-            parameters.AddCurveParameter(
-                "Principal Lines",
-                "PL",
-                "The notched bars at this frame, bending as they rise, as a "
-                    + "TREE with one branch per bar. One curve per branch.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Principal Nodes",
-                "PN",
-                "Every notch: one crossing cable, and a pair of stepper motors "
-                    + "pulling it, one each side. A TREE with one branch per "
-                    + "bar, the notches IN ORDER ALONG THAT BAR, so branch {i} "
-                    + "runs the length of Principal Lines branch {i}. A node "
-                    + "where two bars cross appears in both branches, because "
-                    + "it is a notch on both.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Anchor Nodes",
-                "AN",
-                "The Result's supports: the side anchors that stay on the "
-                    + "ground and take the perimeter cables' prestress. A TREE "
-                    + "with one branch per CONNECTED STRIP, walked end to end, "
-                    + "so opposite sides of the vault come back as separate "
-                    + "branches instead of one merged list.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Perimeter Nodes",
-                "PRN",
-                "Nodes on the naked boundary of the net, as a TREE with one "
-                    + "branch per boundary LOOP, walked round. A net with a "
-                    + "hole in it has a branch for the outside and one for the "
-                    + "hole.",
-                GH_ParamAccess.tree);
             parameters.AddParameter(
                 new ResultParam(),
                 "Result",
@@ -330,33 +277,10 @@ namespace Ananke.COMPAS.Native.Components
                 "The Result this component was given, with this frame written "
                     + "into its Mould block: time, phase, the live net and the "
                     + "live column nodes. The built columns travel through "
-                    + "untouched. Wire it to Monitor for the numbers at this "
-                    + "frame and to Diagnose for the words.",
+                    + "untouched. Wire it to FRAME for the geometry at this "
+                    + "frame, to Monitor for the numbers and to Diagnose for "
+                    + "the words.",
                 GH_ParamAccess.item);
-            parameters.AddLineParameter(
-                "Columns",
-                "C",
-                "The columns at THIS frame, from frame zero: every tree on its "
-                    + "built foot. The TRUNK lies flat along its rail at time "
-                    + "zero and turns up about the foot as the net rises, "
-                    + "keeping its fork at the fraction it was built at, its "
-                    + "length the ram's travel. The ARMS follow their own "
-                    + "notches, so an arm's length changes with the net and "
-                    + "animate.arm_stretch reports how far. A TREE with one "
-                    + "branch per COLUMN TREE, that is per foot, each branch "
-                    + "holding that tree's trunk and arms together. Empty "
-                    + "unless the Result carries columns from Columns upstream.",
-                GH_ParamAccess.tree);
-            parameters.AddCurveParameter(
-                "Perimeter Lines",
-                "PRL",
-                "The boundary of the net at this frame as polylines, a TREE "
-                    + "with one branch per boundary group, the same group as "
-                    + "branch {i} of Perimeter Nodes: closed when the group is a "
-                    + "loop, open when it is a strip. A net with a hole has one "
-                    + "curve for the outside and one for the hole. Empty, with "
-                    + "a diagnostic, when the boundary could only be estimated.",
-                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -989,15 +913,7 @@ namespace Ananke.COMPAS.Native.Components
 
                 ResultDto output = ResultDiagnostics.Replace(
                     framedResult, "Animate", entries);
-                data.SetData(0, set.Mesh);
-                data.SetDataTree(1, OutputTree.Lines(set.Cables));
-                data.SetDataTree(2, OutputTree.Curves(set.PrincipalLines));
-                data.SetDataTree(3, OutputTree.Points(set.PrincipalNodes));
-                data.SetDataTree(4, OutputTree.Points(set.AnchorGroups));
-                data.SetDataTree(5, OutputTree.Points(set.PerimeterNodes));
-                data.SetData(6, new ResultGoo(output));
-                data.SetDataTree(7, OutputTree.Lines(set.ColumnBranches));
-                data.SetDataTree(8, OutputTree.Curves(set.PerimeterLines));
+                data.SetData(0, new ResultGoo(output));
             }
             catch (Exception ex)
             {
@@ -2528,14 +2444,27 @@ namespace Ananke.COMPAS.Native.Components
                 throw new InvalidOperationException("Result carries no vertices.");
 
             MouldFrameDto? frame = result.Mould?.Frame;
+            bool positionsMatch = frame is not null && frame.Vertices.Count == n;
             Point3d[] positions =
-                frame is not null && frame.Vertices.Count == n
-                    ? frame.Vertices
+                positionsMatch
+                    ? frame!.Vertices
                         .Select(v => new Point3d(v.X, v.Y, v.Z))
                         .ToArray()
                     : solved;
+            (List<List<Line>> columnBranches, bool columnsMatch) =
+                ColumnLines(result, frame);
+
+            // A frame that fails either count guard is not the frame it
+            // claims to be: positions or columns fell back to the solved
+            // state, and reporting the frame's own phase over that would say
+            // "raise" about geometry that is really the finished vault. Both
+            // guards feed the SAME phase, because a Result whose Frame is
+            // malformed in one is not trustworthy in the other either.
             string phase =
-                frame is null || string.IsNullOrWhiteSpace(frame.Phase)
+                frame is null ||
+                string.IsNullOrWhiteSpace(frame.Phase) ||
+                !positionsMatch ||
+                !columnsMatch
                     ? FinalPhase
                     : frame.Phase;
 
@@ -2643,7 +2572,7 @@ namespace Ananke.COMPAS.Native.Components
                 closes,
                 perimeterEstimated,
                 perimeterIds.Length,
-                ColumnLines(result),
+                columnBranches,
                 phase);
         }
 
@@ -2737,18 +2666,29 @@ namespace Ananke.COMPAS.Native.Components
         /// column nodes where it carries them and at the nodes the block was
         /// built with where it does not. Empty when the Result carries no
         /// columns.
+        ///
+        /// The second value is whether the frame's own nodes were usable: a
+        /// Result with no columns block has nothing to mismatch and reports
+        /// true, so it never by itself forces <see cref="Read"/>'s phase back
+        /// to <see cref="FinalPhase"/>. A frame present but short or long
+        /// against the block's own node count reports false, which is the
+        /// same "this frame is not trustworthy" signal <c>positionsMatch</c>
+        /// gives on the vertex count.
         /// </summary>
-        private static List<List<Line>> ColumnLines(ResultDto result)
+        private static (List<List<Line>> Branches, bool ColumnsMatch) ColumnLines(
+            ResultDto result, MouldFrameDto? frame)
         {
             var branches = new List<List<Line>>();
             MouldColumnsDto? block = result.Mould?.Columns;
             if (block is null || block.Members.Count == 0)
-                return branches;
+                return (branches, true);
             MouldGeometry.ColumnTree tree = MouldGeometry.TreeFromBlock(block);
-            IReadOnlyList<Point3Dto>? frameNodes = result.Mould?.Frame?.ColumnNodes;
+            IReadOnlyList<Point3Dto>? frameNodes = frame?.ColumnNodes;
+            bool columnsMatch =
+                frameNodes is not null && frameNodes.Count == tree.Nodes.Count;
             Point3d[] at =
-                frameNodes is not null && frameNodes.Count == tree.Nodes.Count
-                    ? frameNodes
+                columnsMatch
+                    ? frameNodes!
                         .Select(p => new Point3d(p.X, p.Y, p.Z))
                         .ToArray()
                     : tree.Nodes.ToArray();
@@ -2766,7 +2706,7 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 branches.Add(branch);
             }
-            return branches;
+            return (branches, columnsMatch);
         }
     }
 }
