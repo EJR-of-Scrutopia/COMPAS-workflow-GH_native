@@ -44,7 +44,7 @@ public sealed class TnaRelaxComponent :
             "Relax the Problem's plan Pattern, match unsupported-boundary " +
             "sag, and build an inspectable unbalanced topological force " +
             "dual.",
-            ComponentCategories.FormFinding,
+            ComponentCategories.Solve,
             "tna_relax")
     {
     }
@@ -548,20 +548,22 @@ public class TnaSolveComponent :
             "Solve a Relaxed Pattern against the load case its Problem " +
             "carries. Blank Height finds the natural equilibrium height; " +
             "a number solves exactly to that crown height. Blank " +
-            "Iterations auto-converges the reciprocal diagrams.")
+            "Iterations auto-converges the reciprocal diagrams.",
+            "tna_solve")
     {
     }
 
     protected TnaSolveComponent(
         string name,
         string nickname,
-        string description)
+        string description,
+        string iconName)
         : base(
             name,
             nickname,
             description,
-            ComponentCategories.FormFinding,
-            "tna_solve")
+            ComponentCategories.Solve,
+            iconName)
     {
         for (int index = 1; index < Params.Output.Count; index++)
         {
@@ -1008,7 +1010,8 @@ public sealed class TnaSolveAlgebraicComponent : TnaSolveComponent
             "method: exact force densities from the equilibrium matrix " +
             "in one sparse least-squares solve, reaching machine-" +
             "precision reciprocity wherever the pattern admits it. " +
-            "Blank Height finds the natural equilibrium height.")
+            "Blank Height finds the natural equilibrium height.",
+            "tna_solve_algebraic")
     {
     }
 
@@ -1039,7 +1042,7 @@ public sealed class FdSolveComponent :
             "FD Solve",
             "Run whole-network COMPAS force-density form finding against " +
             "the load case the Problem carries.",
-            ComponentCategories.FormFinding,
+            ComponentCategories.Solve,
             "fd_solve")
     {
         for (int index = 1; index < Params.Output.Count; index++)

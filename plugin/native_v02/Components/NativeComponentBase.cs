@@ -10,42 +10,56 @@ using Grasshopper.Kernel.Special;
 namespace Ananke.COMPAS.Native.Components;
 
 /// <summary>
-/// Grasshopper subcategories, one per COMPAS extension family.
+/// Grasshopper subcategories, one per stage of the chain a Result travels.
 ///
-/// The naming follows COMPAS's own family names deliberately, so a tab answers
-/// "which package family backs this" without a lookup. Each backed tab pairs
-/// with one capability flag reported by Backend Health and one optional
-/// dependency group in pyproject.toml, so a tab that does nothing is explained
-/// by a missing package rather than being a mystery.
+/// The tabs used to be named after COMPAS's own extension families, which
+/// answered "which package backs this" and nothing else; eight of the
+/// nineteen components ended up under one of them. They are named after the
+/// WORK now, in the order the work happens: model a pattern, solve it, build
+/// the mould that makes it, read what came out, deliver it. A canvas is
+/// built left to right and the tabs now read that way too.
+///
+/// The three reserved families keep their places at the end, renumbered out
+/// of the way of the five that are in use, and they still name the packages
+/// that would back them.
 ///
 /// Subcategory is display grouping only. Component identity is the GUID, so
-/// regrouping never invalidates a saved definition.
+/// regrouping never invalidates a saved definition and no wire moves.
 /// </summary>
 internal static class ComponentCategories
 {
     public const string Category = "Ananke COMPAS";
 
-    // Shared spine. No backend beyond compas itself.
+    // Pattern, Supports, Loads. No backend beyond compas itself.
     public const string Model = "01 Model";
 
+    // TNA Relax, TNA Solve, TNA Solve Algebraic, FD Solve.
     // compas_fd, compas_tna. Capability: fd.solve, tna.solve. Extra: equilibrium.
-    public const string FormFinding = "02 Form Finding";
+    public const string Solve = "02 Solve";
 
-    // Viewport preview only. No backend.
-    public const string Visualise = "03 Visualise";
+    // Columns and Animate: the reconfigurable mould, which is what turns a
+    // solved net into a machine. No backend.
+    public const string Mould = "03 Mould";
 
-    // compas_dem, compas_assembly, compas_cra. Capability: masonry. Extra: masonry.
-    // Reserved.
-    public const string Masonry = "04 Masonry";
+    // Everything that reads a Result: Deconstruct, Monitor, Skin, Diagnose,
+    // Frame, Style and Display. Geometry, numbers, words and the viewport.
+    // No backend.
+    public const string Read = "04 Read";
+
+    // Export, Import Pieces, Armadillo Dual.
+    // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
+    public const string Deliver = "05 Deliver";
+
+    // compas_dem, compas_assembly, compas_cra. Capability: masonry. Extra:
+    // masonry. Reserved.
+    public const string Masonry = "06 Masonry";
 
     // compas_fea2 plus a solver backend. Capability: fea. Extra: fea.
-    public const string Engineering = "05 Engineering";
+    // Reserved.
+    public const string Engineering = "07 Engineering";
 
-    // compas_fab, compas_robots. Capability: fab. Extra: fab.
-    public const string Fabrication = "06 Fabrication";
-
-    // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
-    public const string Delivery = "07 Delivery";
+    // compas_fab, compas_robots. Capability: fab. Extra: fab. Reserved.
+    public const string Fabrication = "08 Fabrication";
 
     // Backend Health and other diagnostics. No solver backend of its own.
     public const string System = "90 System";
@@ -278,46 +292,138 @@ internal static class ParameterIdentity
     /// only one that visibly breaks. Nothing else in a reopened file says
     /// the surface moved, so this does.
     ///
-    /// Both pairs agreeing is the ordinary case and stays silent, so a
-    /// file saved against the current surface is charged nothing.
+    /// Counting is not enough. Monitor's Result moved from the last output
+    /// to the first with twenty-one outputs before and after, which leaves
+    /// every tree wire one slot low on a tree of the same type: nothing
+    /// breaks, nothing is coloured, and every number is the wrong number.
+    /// So the NAMES are compared index by index as well, and the first
+    /// difference is named in the warning.
+    ///
+    /// A null archived name is an archive this cannot read a name out of,
+    /// not a rename. It is skipped, so an archive shape that stops carrying
+    /// names degrades to the count comparison rather than warning about
+    /// every file ever saved.
+    ///
+    /// Both sides agreeing is the ordinary case and stays silent, so a file
+    /// saved against the current surface is charged nothing.
     /// </summary>
     internal static string? Mismatch(
-        int archivedInputs,
-        int archivedOutputs,
-        int registeredInputs,
-        int registeredOutputs)
+        IReadOnlyList<string?> archivedInputs,
+        IReadOnlyList<string?> archivedOutputs,
+        IReadOnlyList<string> registeredInputs,
+        IReadOnlyList<string> registeredOutputs)
     {
-        if (archivedInputs == registeredInputs &&
-            archivedOutputs == registeredOutputs)
-        {
+        bool countsAgree =
+            archivedInputs.Count == registeredInputs.Count &&
+            archivedOutputs.Count == registeredOutputs.Count;
+        string? renamed =
+            FirstRename("input", archivedInputs, registeredInputs)
+            ?? FirstRename("output", archivedOutputs, registeredOutputs);
+        if (countsAgree && renamed is null)
             return null;
+        // Counts that AGREE are not evidence, and must not open the
+        // sentence. Monitor's warning read "6 inputs and 21 outputs
+        // archived, 6 and 21 registered; output 0 was 'Member Force' and is
+        // now 'Result'", whose first clause reads as a denial of the second,
+        // on the one component the name comparison exists for. Where only
+        // the names moved, the rename leads and the equal counts become
+        // what they actually are: the reason every wire came back attached
+        // to something.
+        if (countsAgree)
+        {
+            return
+                "this component's ports changed since the file was saved: " +
+                renamed +
+                "; the counts are unchanged, so every wire reattached by " +
+                "position: check each one";
         }
         return
             "this component's ports changed since the file was saved: " +
-            $"{archivedInputs} inputs and {archivedOutputs} outputs " +
-            $"archived, {registeredInputs} and {registeredOutputs} " +
-            "registered; wires may now sit on the wrong port, check every " +
-            "one";
+            $"{archivedInputs.Count} inputs and {archivedOutputs.Count} " +
+            $"outputs archived, {registeredInputs.Count} and " +
+            $"{registeredOutputs.Count} registered" +
+            (renamed is null ? string.Empty : "; " + renamed) +
+            "; wires may now sit on the wrong port, check every one";
     }
 
     /// <summary>
-    /// The port counts one component's archive carries, or nulls where it
-    /// carries none.
+    /// The first slot whose archived name is not the name registered there
+    /// now, said the way an author reads a port: which side, which slot,
+    /// what it was, what it is. Null when every shared slot agrees or when
+    /// no archived name could be read.
+    /// </summary>
+    private static string? FirstRename(
+        string side,
+        IReadOnlyList<string?> archived,
+        IReadOnlyList<string> registered)
+    {
+        int index = FirstRenameIndex(archived, registered);
+        return index < 0
+            ? null
+            : $"{side} {index} was '{archived[index]}' and is now " +
+              $"'{registered[index]}'";
+    }
+
+    /// <summary>
+    /// The index of the first shared slot whose archived name is not the
+    /// name registered there now, or -1 when every shared slot agrees or no
+    /// archived name could be read.
+    /// </summary>
+    private static int FirstRenameIndex(
+        IReadOnlyList<string?> archived,
+        IReadOnlyList<string> registered)
+    {
+        int shared = Math.Min(archived.Count, registered.Count);
+        for (int index = 0; index < shared; index++)
+        {
+            string? was = archived[index];
+            if (was is null)
+                continue;
+            if (!string.Equals(was, registered[index], StringComparison.Ordinal))
+                return index;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Whether ONE side's archived ports differ from the ports registered
+    /// on that side now, by count or by any name.
     ///
-    /// Grasshopper writes them as the "InputCount" and "OutputCount" items
-    /// of a "ParameterData" chunk sitting directly under the container
-    /// chunk a component's Read is handed. That shape was read off a real
-    /// definition rather than assumed: converting
+    /// <see cref="Mismatch"/> asks the question of both sides at once,
+    /// because a warning is owed for either. A component that ACTS on the
+    /// finding rather than only saying it may need one side alone: an
+    /// output-side change cannot land an archived wire on an input, so it
+    /// cannot flip an input the component then obeys.
+    /// </summary>
+    internal static bool SideMoved(
+        IReadOnlyList<string?> archived,
+        IReadOnlyList<string> registered) =>
+        archived.Count != registered.Count ||
+        FirstRenameIndex(archived, registered) >= 0;
+
+    /// <summary>
+    /// The port NAMES one component's archive carries, in slot order, or
+    /// nulls where it carries none.
+    ///
+    /// Grasshopper writes the counts as the "InputCount" and "OutputCount"
+    /// items of a "ParameterData" chunk sitting directly under the
+    /// container chunk a component's Read is handed, and each parameter as
+    /// an indexed "InputParam" or "OutputParam" sub-chunk of it carrying
+    /// its own "Name" item. That shape was read off a real definition
+    /// rather than assumed: converting
     /// plugin/definitions/ananke_equilibrium_v01.gh through
     /// GH_Archive.Serialize_Xml gives Definition, DefinitionObjects,
     /// Object, Container, ParameterData, holding InputCount, the InputId
-    /// guids, OutputCount and the OutputId guids.
+    /// guids, OutputCount, the OutputId guids, and the InputParam and
+    /// OutputParam chunks, whose items include Name.
     ///
-    /// An archive without that chunk, or without those items, is one this
+    /// An archive without that chunk, or without those counts, is one this
     /// cannot speak about: nulls come back and the caller says nothing
-    /// rather than inventing a mismatch.
+    /// rather than inventing a mismatch. A parameter chunk that is there
+    /// but carries no readable Name gives a null in its own slot, which
+    /// <see cref="Mismatch"/> skips.
     /// </summary>
-    internal static (int? Inputs, int? Outputs) ArchivedCounts(
+    internal static (string?[]? Inputs, string?[]? Outputs) ArchivedNames(
         GH_IReader? reader)
     {
         if (reader is null)
@@ -331,17 +437,42 @@ internal static class ParameterIdentity
                 return (null, null);
             int inputs = 0;
             int outputs = 0;
+            if (!chunk.TryGetInt32("InputCount", ref inputs) ||
+                !chunk.TryGetInt32("OutputCount", ref outputs))
+            {
+                return (null, null);
+            }
             return (
-                chunk.TryGetInt32("InputCount", ref inputs) ? inputs : null,
-                chunk.TryGetInt32("OutputCount", ref outputs) ? outputs : null);
+                ArchivedSide(chunk, "InputParam", inputs),
+                ArchivedSide(chunk, "OutputParam", outputs));
         }
         catch (Exception)
         {
             // A file that cannot be interrogated must still open. This is
-            // an advisory count, and no advisory is worth failing a
+            // an advisory reading, and no advisory is worth failing a
             // document read for.
             return (null, null);
         }
+    }
+
+    private static string?[] ArchivedSide(
+        GH_IReader chunk,
+        string chunkName,
+        int count)
+    {
+        var names = new string?[Math.Max(count, 0)];
+        for (int index = 0; index < names.Length; index++)
+        {
+            if (!chunk.ChunkExists(chunkName, index))
+                continue;
+            GH_IReader? parameter = chunk.FindChunk(chunkName, index);
+            if (parameter is null)
+                continue;
+            string value = string.Empty;
+            if (parameter.TryGetString("Name", ref value))
+                names[index] = value;
+        }
+        return names;
     }
 }
 
@@ -351,6 +482,7 @@ public abstract class NativeComponentBase : GH_Component
     private bool _readFromArchive;
     private bool _suggestedListsAttempted;
     private string? _portsMoved;
+    private bool _inputPortsMoved;
 
     protected NativeComponentBase(
         string name,
@@ -388,13 +520,19 @@ public abstract class NativeComponentBase : GH_Component
         ParameterIdentity.Restore(Params.Output, outputs);
         // The snapshots were taken before the read, so their lengths are
         // the REGISTERED counts whatever the archive did to Params.
-        (int? archivedInputs, int? archivedOutputs) =
-            ParameterIdentity.ArchivedCounts(reader);
-        if (archivedInputs is int fromFileIn &&
-            archivedOutputs is int fromFileOut)
+        (string?[]? archivedInputs, string?[]? archivedOutputs) =
+            ParameterIdentity.ArchivedNames(reader);
+        if (archivedInputs is not null && archivedOutputs is not null)
         {
+            string[] registeredInputs =
+                Array.ConvertAll(inputs, snapshot => snapshot.Name);
             _portsMoved = ParameterIdentity.Mismatch(
-                fromFileIn, fromFileOut, inputs.Length, outputs.Length);
+                archivedInputs,
+                archivedOutputs,
+                registeredInputs,
+                Array.ConvertAll(outputs, snapshot => snapshot.Name));
+            _inputPortsMoved = ParameterIdentity.SideMoved(
+                archivedInputs, registeredInputs);
             if (_portsMoved is not null)
             {
                 AddRuntimeMessage(
@@ -414,6 +552,21 @@ public abstract class NativeComponentBase : GH_Component
     /// already gone out.
     /// </summary>
     protected bool PortsMovedOnLoad => _portsMoved is not null;
+
+    /// <summary>
+    /// Whether the INPUT side alone moved: the archive carried a different
+    /// number of inputs, or a different name at some input index.
+    ///
+    /// This is the half that can change what a component DOES. Grasshopper
+    /// reattaches an archived wire to the live port at the same index, so an
+    /// input wire that used to feed one thing now feeds whatever stands
+    /// there and the component obeys it. An output-side change cannot do
+    /// that: it can only leave a downstream wire reading the wrong thing,
+    /// which the Warning already says. A component holding back a side
+    /// effect wants this rather than <see cref="PortsMovedOnLoad"/>, or it
+    /// holds on every file saved before an output was renamed.
+    /// </summary>
+    protected bool InputPortsMovedOnLoad => _inputPortsMoved;
 
     /// <summary>
     /// Says again, on every solution, what the read found: a message added
@@ -487,6 +640,7 @@ public abstract class NativeTaskComponentBase<TResult> :
     private bool _readFromArchive;
     private bool _suggestedListsAttempted;
     private string? _portsMoved;
+    private bool _inputPortsMoved;
 
     protected NativeTaskComponentBase(
         string name,
@@ -525,13 +679,19 @@ public abstract class NativeTaskComponentBase<TResult> :
         ParameterIdentity.Restore(Params.Output, outputs);
         // The snapshots were taken before the read, so their lengths are
         // the REGISTERED counts whatever the archive did to Params.
-        (int? archivedInputs, int? archivedOutputs) =
-            ParameterIdentity.ArchivedCounts(reader);
-        if (archivedInputs is int fromFileIn &&
-            archivedOutputs is int fromFileOut)
+        (string?[]? archivedInputs, string?[]? archivedOutputs) =
+            ParameterIdentity.ArchivedNames(reader);
+        if (archivedInputs is not null && archivedOutputs is not null)
         {
+            string[] registeredInputs =
+                Array.ConvertAll(inputs, snapshot => snapshot.Name);
             _portsMoved = ParameterIdentity.Mismatch(
-                fromFileIn, fromFileOut, inputs.Length, outputs.Length);
+                archivedInputs,
+                archivedOutputs,
+                registeredInputs,
+                Array.ConvertAll(outputs, snapshot => snapshot.Name));
+            _inputPortsMoved = ParameterIdentity.SideMoved(
+                archivedInputs, registeredInputs);
             if (_portsMoved is not null)
             {
                 AddRuntimeMessage(
@@ -551,6 +711,21 @@ public abstract class NativeTaskComponentBase<TResult> :
     /// already gone out.
     /// </summary>
     protected bool PortsMovedOnLoad => _portsMoved is not null;
+
+    /// <summary>
+    /// Whether the INPUT side alone moved: the archive carried a different
+    /// number of inputs, or a different name at some input index.
+    ///
+    /// This is the half that can change what a component DOES. Grasshopper
+    /// reattaches an archived wire to the live port at the same index, so an
+    /// input wire that used to feed one thing now feeds whatever stands
+    /// there and the component obeys it. An output-side change cannot do
+    /// that: it can only leave a downstream wire reading the wrong thing,
+    /// which the Warning already says. A component holding back a side
+    /// effect wants this rather than <see cref="PortsMovedOnLoad"/>, or it
+    /// holds on every file saved before an output was renamed.
+    /// </summary>
+    protected bool InputPortsMovedOnLoad => _inputPortsMoved;
 
     /// <summary>
     /// Says again, on every solution, what the read found: a message added

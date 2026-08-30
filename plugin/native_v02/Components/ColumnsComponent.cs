@@ -58,7 +58,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "grouped into trees by Branching and footed by Type. "
                     + "The loads come from the Result's own member forces, "
                     + "mirrored about each span's midpoint before a foot is placed.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Mould,
                 "column_finder")
         {
             foreach (IGH_Param output in Params.Output)
@@ -350,7 +350,11 @@ namespace Ananke.COMPAS.Native.Components
                 // over the union of solved and pattern edges.
                 Mesh? thrust = MouldGeometry.ThrustMeshFromResult(result, out int[] meshToNode);
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
-                int[] perimeterIds = MouldGeometry.PerimeterNodes(thrust, meshToNode, neighbours, n);
+                // The route taken is discarded here on purpose: this walk
+                // only needs the ring to place the anchor trees, and it
+                // labels no curve the boundary.
+                int[] perimeterIds = MouldGeometry.PerimeterNodes(
+                    thrust, meshToNode, neighbours, n, out _);
                 List<int>[] grouping = MouldGeometry.GroupingAdjacency(result, edges, n);
                 List<List<int>> loops = MouldGeometry.ConnectedGroups(perimeterIds, grouping);
 

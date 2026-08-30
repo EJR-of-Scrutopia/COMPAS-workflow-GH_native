@@ -44,7 +44,12 @@ internal static class Program
             "Ananke.COMPAS.Native.Components.TnaSolveComponent",
             "Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent",
             "Ananke.COMPAS.Native.Components.FdSolveComponent",
-            "Ananke.COMPAS.Native.Components.DisplayComponent"
+            "Ananke.COMPAS.Native.Components.DisplayComponent",
+            // Animate is the clearest case this set exists for: one output,
+            // custom Goo, and everything an author sees of the machine is
+            // its viewport drawing. Nothing else in the plugin says that
+            // drawing has to keep existing.
+            "Ananke.COMPAS.Native.Components.MouldAnimateComponent"
         };
     private static readonly HashSet<string> NativeVisibilityGuardComponents =
         new(StringComparer.Ordinal)
@@ -84,11 +89,32 @@ internal static class Program
                         "Reaction Vectors",
                         "Columns",
                         "Heads",
-                        "Feet"
+                        "Feet",
+                        // APPENDED, at 13, and the position is the point:
+                        // Display's Force Lines had no successor anywhere in
+                        // the plugin until this port, and it had to arrive
+                        // without moving one of the twelve slots above,
+                        // every one of which a saved definition's wire
+                        // already sits on.
+                        "Force Lines"
                     }),
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[] { "Result", "Course Height" },
                     new[] { "Face Polylines", "Face Courses" }),
+                // Display DRAWS. Its six outputs went to Deconstruct (the
+                // member and form lines, the load and reaction points and
+                // vectors) and to Diagnose (the report), which carry them
+                // already; what is left here is the drawing, so the pin is
+                // seven inputs and NO outputs. RequiredPreviewComponents and
+                // NativeVisibilityGuardComponents keep it, because the
+                // viewport is now the whole of it.
+                ["Ananke.COMPAS.Native.Components.DisplayComponent"] = (
+                    new[]
+                    {
+                        "Result", "Style", "Elements", "Metric", "Weight",
+                        "Vector Scale", "Gap"
+                    },
+                    Array.Empty<string>()),
                 // Monitor's ports are pinned for the same reason Deconstruct's
                 // are: every number tree here is READ AGAINST a Deconstruct
                 // geometry tree by slot, so a renamed or reordered output is a
@@ -97,22 +123,26 @@ internal static class Program
                     new[] { "Result", "EI", "EA", "Tolerance", "Cable Capacity", "Column Capacity" },
                     new[]
                     {
+                        "Result",
                         "Member Force", "Force Density", "Horizontal Force", "Slack",
                         "Spool Length", "Unstrained Length",
                         "Anchor Along", "Anchor Across",
                         "Tip Reaction", "Column Force", "Thrust", "Lean",
                         "Deviation", "Deviation Stats", "Reachable", "Unreachable",
                         "Bar Sag", "Residuals",
-                        "Cable Utilisation", "Column Utilisation",
-                        "Result"
+                        "Cable Utilisation", "Column Utilisation"
                     }),
-                // Animate's ports are pinned because every one of them is an
-                // index a downstream branch is read by. Perimeter Lines was
-                // APPENDED at 8 on purpose: outputs 0 to 7 keep their slots,
-                // so a Grasshopper file saved before it existed still finds
-                // its wires. Moving any of them silently rewires the canvas.
+                // Animate MAKES a frame and emits the Result carrying it.
+                // Its geometry is Frame's, below, so there is one port here
+                // and the RES-first rule holds on both sides of it.
                 ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = (
                     new[] { "Result", "Time", "Pre-Sag", "Extension" },
+                    new[] { "Result" }),
+                // Frame READS one. Every port here is an index a downstream
+                // branch is read by, so pinning them by name in order is what
+                // stops a reorder silently rewiring a canvas.
+                ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
+                    new[] { "Result" },
                     new[]
                     {
                         "Mesh",
@@ -121,17 +151,22 @@ internal static class Program
                         "Principal Nodes",
                         "Anchor Nodes",
                         "Perimeter Nodes",
-                        "Result",
+                        "Perimeter Lines",
                         "Columns",
-                        "Perimeter Lines"
+                        "Phase"
                     }),
                 // Export's ports are pinned because Format's removal moved
-                // every input after slot 0 up one and split the single JSON
-                // output into one per kind: the order below IS the canvas
-                // contract, and the four kind outputs are read by slot.
+                // every input after slot 0 up one: the order below IS the
+                // canvas contract. The outputs are one JSON list and one
+                // Status, and a reader tells the kinds apart by the schema
+                // key each text carries rather than by slot.
                 ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
-                    new[] { "Result", "Path", "Write", "Name", "Cells", "Courses", "Live", "Studio", "Column Radius" },
-                    new[] { "Contract JSON", "COMPAS JSON", "Tessellation JSON", "Columns JSON", "Written", "Uploaded" })
+                    new[]
+                    {
+                        "Result", "Path", "Write", "Name", "Cells", "Courses",
+                        "Live", "Studio", "Column Radius"
+                    },
+                    new[] { "JSON", "Status" })
             };
     private static readonly IReadOnlyDictionary<
         string,
@@ -167,53 +202,99 @@ internal static class Program
                 ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = (
                     "TNA Relax",
                     "TNA Relax",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "PRB", "q", "Sag %", "FA" },
                     new[] { "RLX" }),
                 ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = (
                     "TNA Solve",
                     "TNA Solve",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "RLX", "H", "I", "Run" },
                     new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent"] = (
                     "TNA Solve Algebraic",
                     "TNA Solve A",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "RLX", "H", "Run" },
                     new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = (
                     "FD Solve",
                     "FD Solve",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "PRB", "q", "Run" },
                     new[] { "RES", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.StyleComponent"] = (
                     "Style",
                     "Style",
-                    "03 Visualise",
+                    "04 Read",
                     new[] { "Preset", "Weight", "Vector" },
                     new[] { "STY" }),
                 // Columns is pinned because slot 2 is RENAMED from Ground to
                 // Type and keeps its slot: the nicknames are the canvas
                 // contract, and a saved wire has to land on the same port it
-                // left.
+                // left. Its TAB is pinned for the same reason at one remove:
+                // 03 Mould is a panel of two, and a component that drifts out
+                // of it is a component nobody can find.
                 ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = (
                     "Columns",
                     "Columns",
-                    "03 Visualise",
+                    "03 Mould",
                     new[] { "RES", "B", "T" },
                     new[] { "RES" }),
+                // Frame is pinned nickname by nickname because it is the one
+                // component whose whole job is the ORDER of its ports: nine
+                // trees read by index downstream.
+                ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
+                    "Frame",
+                    "FR",
+                    "04 Read",
+                    new[] { "RES" },
+                    new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH" }),
                 ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = (
                     "Import Pieces",
                     "Pieces",
-                    "07 Delivery",
+                    "05 Deliver",
                     new[] { "P" },
                     // Addendum, 2026-08-20: the flat Courses (C) output is
                     // removed; M/K/S are trees branched by course, B is
                     // the new base-mesh item.
                     new[] { "M", "K", "S", "B", "D" })
             };
+
+    /// <summary>
+    /// The icon family: every component's key and the two letters on its
+    /// badge, as spec section 6 fixes them. The CATEGORY is not pinned here
+    /// on purpose: it is read off the component's own registered
+    /// subcategory, so the map and the panels cannot disagree without one of
+    /// them being wrong about a component that exists.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string Key, string Label)>
+        NativeIconEntries = new Dictionary<string, (string Key, string Label)>(
+            StringComparer.Ordinal)
+        {
+            ["Ananke.COMPAS.Native.Components.PatternComponent"] = ("tna_pattern", "PA"),
+            ["Ananke.COMPAS.Native.Components.SupportsComponent"] = ("tna_supports", "SU"),
+            ["Ananke.COMPAS.Native.Components.LoadsComponent"] = ("load_case", "LO"),
+            ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = ("tna_relax", "RX"),
+            ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = ("tna_solve", "TS"),
+            ["Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent"] =
+                ("tna_solve_algebraic", "TA"),
+            ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = ("fd_solve", "FD"),
+            ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = ("column_finder", "CO"),
+            ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = ("mould_animate", "AN"),
+            ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = ("result_breakdown", "DE"),
+            ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = ("stress_analysis", "MO"),
+            ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
+            ["Ananke.COMPAS.Native.Components.DiagnoseComponent"] = ("diagnose", "DG"),
+            ["Ananke.COMPAS.Native.Components.FrameComponent"] = ("frame", "FR"),
+            ["Ananke.COMPAS.Native.Components.StyleComponent"] = ("diagram_style", "ST"),
+            ["Ananke.COMPAS.Native.Components.DisplayComponent"] =
+                ("graphic_diagram_display", "DI"),
+            ["Ananke.COMPAS.Native.Components.ExportComponent"] = ("export", "EX"),
+            ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = ("import_pieces", "IP"),
+            ["Ananke.COMPAS.Native.Components.ArmadilloDualComponent"] = ("armadillo_dual", "AD"),
+            ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
+        };
 
     public static int Main(string[] args)
     {
@@ -386,14 +467,14 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 19)
+        if (componentTypes.Length != 20)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
             // with nineteen components' worth of contract untested.
             failures.Add(
-                $"Expected 19 concrete public components, found " +
+                $"Expected 20 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -724,6 +805,19 @@ internal static class Program
 
         try
         {
+            ValidateDeconstructForceLines(plugin);
+            Console.WriteLine(
+                "PASS  Deconstruct force lines: one line per member row, "
+                + "between the force-graph vertices of the force edge that "
+                + "row's state NAMES, and empty for an FD Result.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Deconstruct force lines: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateDiagnoseRules(plugin);
             Console.WriteLine(
                 "PASS  Diagnose rules: the cross-checks no single component "
@@ -812,6 +906,25 @@ internal static class Program
 
         try
         {
+            ValidateFrameGeometry(plugin);
+            Console.WriteLine(
+                "PASS  FrameGeometry.Read: a Result carrying a frame is read at "
+                + "the frame's own vertices and phase, cables and all; a Result "
+                + "with no frame is read at its solved vertices and stands at "
+                + "phase final; a frame with no columns block gives an empty "
+                + "Columns tree; and where the frame carries column nodes they "
+                + "win over the ones the block was built at. With no faces "
+                + "anywhere the boundary comes back as an ESTIMATE that never "
+                + "closes, and with no principal runs every cable lands in the "
+                + "one infill branch.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"FrameGeometry.Read: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateMonitorMath(plugin);
             Console.WriteLine(
                 "PASS  MonitorMath: an anchor's reaction splits along its "
@@ -859,14 +972,64 @@ internal static class Program
             Console.WriteLine(
                 "PASS  ParameterIdentity.Mismatch: a definition saved against a "
                 + "component's older ports is told they moved, naming both what "
-                + "was archived and what is registered, and one saved against "
-                + "the current ports is told nothing; Export's own move, seven "
-                + "inputs and two outputs against nine and six, is the case "
-                + "measured beside Deconstruct's.");
+                + "was archived and what is registered; one saved against the "
+                + "current ports is told nothing; MONITOR's case, twenty-one "
+                + "outputs before and after with the Result moved to the front, "
+                + "is caught by NAME where a count says nothing; Export's seven "
+                + "inputs and two outputs against nine and two is named; and an "
+                + "archived chunk with no readable Name raises nothing by "
+                + "itself; and where only a name moved, the rename LEADS and "
+                + "the equal counts follow it as the reason every wire "
+                + "reattached. SideMoved, which Export's Live hold reads, "
+                + "answers for ONE side: an input move holds, by count or "
+                + "by name, and this branch's own output-only move does "
+                + "not.");
         }
         catch (Exception exception)
         {
             failures.Add($"ParameterIdentity.Mismatch: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateArchivedNamesFromDefinition(plugin, pluginPath);
+            Console.WriteLine(
+                "PASS  ParameterIdentity.ArchivedNames: a real Grasshopper "
+                + "file, plugin/definitions/ananke_equilibrium_v01.gh, read "
+                + "headless through GH_Archive down to the same Container "
+                + "chunk a component's Read is handed, gives back the five "
+                + "input names and two output names the file actually holds. "
+                + "A wrong chunk or item name returns nulls, and nulls are "
+                + "silence: the whole load-time warning would stop firing "
+                + "with nothing else failing anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ParameterIdentity.ArchivedNames: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportDefaultTessellation(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent.ChooseCells: wired cells win, an "
+                + "unwired Cells with faces on the Result is tessellated by "
+                + "Export itself, neither gives no sidecar at all, and Courses "
+                + "wired alone is ignored with a remark, and only where a "
+                + "default tessellation is actually coming; four faces of a "
+                + "Result's own mesh, the second of them vertical in plan, "
+                + "come out as three cells in face order at course 0, the "
+                + "unusable one SKIPPED and counted rather than costing the "
+                + "contract, the COMPAS document and every other kind; "
+                + "and the sidecar those faces make declares pattern "
+                + "'faces', where an author's own cells declare "
+                + "'authored'.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent.ChooseCells: {DescribeException(exception)}");
         }
 
         try
@@ -938,6 +1101,22 @@ internal static class Program
             failures.Add(
                 $"ExportComponent.TryResolveWriteFolder: "
                 + $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateIconMap(plugin, componentTypes, pluginPath);
+            Console.WriteLine(
+                "PASS  Icon family: every one of the twenty components has "
+                + "exactly one icon-map entry, keyed the way the loader reads "
+                + "the resource, labelled the two letters the spec gives, "
+                + "categorised as the panel the component actually registers "
+                + "under, and drawn in that category's own fill, sampled off "
+                + "the embedded badge at (12, 20).");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Icon family: {DescribeException(exception)}");
         }
 
         if (failures.Count == 0)
@@ -1419,7 +1598,13 @@ internal static class Program
         }
     }
 
-    private static void ValidateIcon(object instance, Type componentType)
+    /// <summary>
+    /// The most-derived Icon property, which is where a component's badge
+    /// comes from: <c>PluginResources.Icon</c> returns null for a resource
+    /// that is not embedded, and a null icon is a component with no badge on
+    /// the toolbar at all.
+    /// </summary>
+    private static object RequireIconBitmap(object instance, Type componentType)
     {
         PropertyInfo? iconProperty = null;
         for (Type? current = componentType;
@@ -1432,9 +1617,14 @@ internal static class Program
                 BindingFlags.NonPublic |
                 BindingFlags.DeclaredOnly);
         }
-        object icon = iconProperty?.GetValue(instance)
+        return iconProperty?.GetValue(instance)
             ?? throw new InvalidOperationException(
                 "Component icon is missing.");
+    }
+
+    private static void ValidateIcon(object instance, Type componentType)
+    {
+        object icon = RequireIconBitmap(instance, componentType);
         int width = Convert.ToInt32(
             icon.GetType().GetProperty("Width")?.GetValue(icon));
         int height = Convert.ToInt32(
@@ -2344,6 +2534,326 @@ internal static class Program
     }
 
     /// <summary>
+    /// <c>ParameterIdentity.ArchivedNames</c> against a REAL Grasshopper
+    /// file, read headless.
+    ///
+    /// The whole load-time warning, the count comparison included, is gated
+    /// on getting names out of the archive: <c>Read</c> calls this first and
+    /// says nothing at all when it comes back nulls. A wrong chunk or item
+    /// name would therefore not fail anywhere. It would return
+    /// <c>(null, null)</c>, every component would fall silent, and Monitor's
+    /// same-count reshuffle, the case this branch exists for, would reopen
+    /// unwarned with a green harness behind it. Nothing about the shape can
+    /// be asserted from a hand-built archive either, because a hand-built
+    /// archive is written by the same guesses it would be checked against.
+    ///
+    /// So this drives a definition that is in the repository, written by
+    /// Grasshopper itself: <c>plugin/definitions/ananke_equilibrium_v01.gh</c>.
+    /// <c>GH_Archive</c> is pure serialisation and reads it with no Rhino
+    /// running. Its first object is the v0.1 script component "Network", and
+    /// the seven names below were read out of the file's own XML dump before
+    /// they were pinned here, not assumed:
+    ///
+    ///   Root > Definition > DefinitionObjects > Object[0] > Container
+    ///     > ParameterData
+    ///       items    InputCount 5, OutputCount 2, and the InputId/OutputId
+    ///                guids
+    ///       chunks   InputParam[0..4], OutputParam[0..1], each carrying a
+    ///                Name item of type gh_string
+    ///
+    /// The Container chunk is exactly the reader a component's <c>Read</c>
+    /// override is handed, so this walks to the same place Grasshopper does
+    /// and asks the same question from it.
+    /// </summary>
+    private static void ValidateArchivedNamesFromDefinition(
+        Assembly plugin,
+        string pluginPath)
+    {
+        Type identity = RequireComponentType(plugin, "ParameterIdentity");
+        MethodInfo archivedNames = RequireStatic(identity, "ArchivedNames");
+        // GH_IO as the PLUGIN binds to it, so this cannot end up reading one
+        // assembly's archive with another's reader.
+        Type readerType = archivedNames.GetParameters()[0].ParameterType;
+        Type archiveType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_Archive", throwOnError: true)!;
+
+        string definitionPath = FindRepositoryFile(
+            pluginPath,
+            new[]
+            {
+                Path.Combine(
+                    "plugin", "definitions", "ananke_equilibrium_v01.gh"),
+                Path.Combine("definitions", "ananke_equilibrium_v01.gh")
+            },
+            "plugin/definitions/ananke_equilibrium_v01.gh",
+            "the archive shape is checked against a file Grasshopper wrote");
+
+        object archive = Activator.CreateInstance(archiveType)
+            ?? throw new InvalidOperationException(
+                "GH_Archive could not be constructed.");
+        MethodInfo readFromFile = archiveType.GetMethod(
+            "ReadFromFile", new[] { typeof(string) })
+            ?? throw new InvalidOperationException(
+                "GH_Archive.ReadFromFile(string) was not found.");
+        if (readFromFile.Invoke(archive, new object[] { definitionPath })
+            is not true)
+        {
+            throw new InvalidOperationException(
+                $"GH_Archive refused to read {definitionPath}.");
+        }
+        object root =
+            archiveType.GetProperty("GetRootNode")?.GetValue(archive)
+            ?? throw new InvalidOperationException(
+                "GH_Archive.GetRootNode gave nothing to read.");
+
+        object Chunk(object reader, string name)
+        {
+            MethodInfo find = reader.GetType().GetMethod(
+                "FindChunk", new[] { typeof(string) })
+                ?? throw new InvalidOperationException(
+                    "FindChunk(string) was not found on the archive reader.");
+            return find.Invoke(reader, new object[] { name })
+                ?? throw new InvalidOperationException(
+                    $"The definition carries no '{name}' chunk where one was "
+                    + "expected.");
+        }
+        object IndexedChunk(object reader, string name, int index)
+        {
+            MethodInfo find = reader.GetType().GetMethod(
+                "FindChunk", new[] { typeof(string), typeof(int) })
+                ?? throw new InvalidOperationException(
+                    "FindChunk(string, int) was not found on the archive "
+                    + "reader.");
+            return find.Invoke(reader, new object[] { name, index })
+                ?? throw new InvalidOperationException(
+                    $"The definition carries no '{name}' chunk at {index}.");
+        }
+        string Text(object reader, string item)
+        {
+            MethodInfo tryGet = reader.GetType().GetMethod(
+                "TryGetString",
+                new[] { typeof(string), typeof(string).MakeByRefType() })
+                ?? throw new InvalidOperationException(
+                    "TryGetString was not found on the archive reader.");
+            object?[] arguments = { item, string.Empty };
+            return tryGet.Invoke(reader, arguments) is true
+                ? arguments[1] as string ?? string.Empty
+                : string.Empty;
+        }
+
+        object first = IndexedChunk(
+            Chunk(Chunk(root, "Definition"), "DefinitionObjects"),
+            "Object",
+            0);
+        string component = Text(first, "Name");
+        if (!string.Equals(component, "Network", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The first object of ananke_equilibrium_v01.gh is the "
+                + "'Network' component, whose ports the names below are "
+                + $"pinned from; the file now opens with '{component}', so "
+                + "either the definition was re-saved or the walk to it is "
+                + "wrong.");
+        }
+        object container = Chunk(first, "Container");
+
+        object names = archivedNames.Invoke(null, new[] { container })
+            ?? throw new InvalidOperationException(
+                "ArchivedNames returned nothing.");
+        Type pair = names.GetType();
+        var inputs = pair.GetField("Item1")!.GetValue(names) as string?[];
+        var outputs = pair.GetField("Item2")!.GetValue(names) as string?[];
+        if (inputs is null || outputs is null)
+        {
+            throw new InvalidOperationException(
+                "ArchivedNames read nothing out of a real Grasshopper file. "
+                + "Nulls are how it says an archive cannot be spoken about, "
+                + "and Read then says nothing at all, so a wrong chunk or "
+                + "item name kills the whole load-time warning in silence: "
+                + "no component would announce a moved port, and nothing "
+                + "else would fail.");
+        }
+
+        string?[] expectedInputs =
+        {
+            "Geometry", "Kind", "AnalysisPlane", "Tolerance", "LengthUnit"
+        };
+        string?[] expectedOutputs = { "Topology", "Status" };
+        void Same(string side, string?[] found, string?[] expected)
+        {
+            if (found.Length == expected.Length &&
+                found.SequenceEqual(expected, StringComparer.Ordinal))
+            {
+                return;
+            }
+            throw new InvalidOperationException(
+                $"The {side} names read out of the archive are not the ones "
+                + "the file holds; expected ["
+                + string.Join(", ", expected)
+                + "] and got ["
+                + string.Join(
+                    ", ", found.Select(name => name ?? "<null>"))
+                + "].");
+        }
+        Same("input", inputs, expectedInputs);
+        Same("output", outputs, expectedOutputs);
+    }
+
+    /// <summary>
+    /// Deconstruct's Force Lines: the reciprocal FORCE diagram, which had no
+    /// port anywhere in the plugin between Display giving up its outputs and
+    /// this one being appended.
+    ///
+    /// The rule is one line per MEMBER ROW, in row order, drawn between the
+    /// force-graph vertices of the force edge that row's state NAMES. Naming
+    /// is the whole of it, so the fixture makes every cheaper reading wrong:
+    /// the edge states are listed out of Id order, no state's ForceEdgeId is
+    /// its own Id, and no force edge's id is its own position in the list. A
+    /// reader that took the force edge at the row's index, or at the state's
+    /// place in the list, or that matched Id to Id, would get three different
+    /// answers here and none of them this one.
+    ///
+    /// And nothing at all for FD, which carries no reciprocal diagram: the
+    /// port is registered for both solvers, so it has to come back empty
+    /// rather than reach for graphs an FD Result does not have.
+    /// </summary>
+    private static void ValidateDeconstructForceLines(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType = RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphEdgeType = RequireContractType(plugin, "TnaGraphEdgeDto");
+        Type edgeStateType = RequireContractType(plugin, "TnaEdgeStateDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type tables = RequireComponentType(plugin, "ResultTables");
+        Type deconstruct = RequireComponentType(plugin, "DeconstructComponent");
+        MethodInfo members = RequirePublicStatic(tables, "Members");
+        MethodInfo forceLines = RequireStatic(deconstruct, "ForceLines");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        object Vertex(int id, object at)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            SetContractProperty(vertex, graphVertexType, "Point", at);
+            return vertex;
+        }
+        object GraphEdge(int id, int u, int v)
+        {
+            object edge = CreateInstance(graphEdgeType);
+            SetContractProperty(edge, graphEdgeType, "Id", id);
+            SetContractProperty(edge, graphEdgeType, "U", u);
+            SetContractProperty(edge, graphEdgeType, "V", v);
+            return edge;
+        }
+        object State(int id, int equilibriumEdge, int forceEdge)
+        {
+            object state = CreateInstance(edgeStateType);
+            SetContractProperty(state, edgeStateType, "Id", id);
+            SetContractProperty(
+                state, edgeStateType, "EquilibriumEdgeId", equilibriumEdge);
+            SetContractProperty(state, edgeStateType, "ForceEdgeId", forceEdge);
+            return state;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 2, 0)!));
+
+        // The force polygon: three vertices at three separable heights, so a
+        // line read off the wrong edge is read straight off its Z.
+        object forceGraph = CreateInstance(graphType);
+        SetContractProperty(forceGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                Vertex(70, P(0, 0, 10)),
+                Vertex(80, P(0, 0, 20)),
+                Vertex(90, P(0, 0, 30))));
+        SetContractProperty(forceGraph, graphType, "Edges",
+            Of(graphEdgeType,
+                GraphEdge(300, 70, 80),
+                GraphEdge(301, 80, 90),
+                GraphEdge(302, 90, 70)));
+
+        object tna = CreateResultDto(
+            resultType,
+            "tna",
+            equilibrium,
+            CreateInstance(graphType),
+            forceGraph);
+        SetContractProperty(tna, resultType, "Mappings", CreateInstance(mappingsType));
+        SetContractProperty(tna, resultType, "EdgeStates",
+            Of(edgeStateType,
+                State(2, 1, 300),
+                State(0, 2, 301),
+                State(1, 0, 302)));
+
+        Array rows = (Array)members.Invoke(null, new[] { tna })!;
+        Array lines = (Array)forceLines.Invoke(null, new[] { tna, rows })!;
+        if (lines.Length != rows.Length || lines.Length != 3)
+        {
+            throw new InvalidOperationException(
+                "One force line per member row and no more; got "
+                + $"{lines.Length} against {rows.Length} rows.");
+        }
+        Type lineType = lines.GetType().GetElementType()!;
+        Type point3d = lineType.GetProperty("From")!.PropertyType;
+        double End(int at, string end)
+        {
+            object line = lines.GetValue(at)!;
+            object corner = lineType.GetProperty(end)!.GetValue(line)!;
+            return (double)point3d.GetProperty("Z")!.GetValue(corner)!;
+        }
+        // Row 0 is state 0, which names force edge 301: 20 to 30. Row 1 is
+        // state 1, force edge 302: 30 to 10. Row 2 is state 2, force edge
+        // 300: 10 to 20.
+        (double From, double To)[] expected =
+        {
+            (20.0, 30.0), (30.0, 10.0), (10.0, 20.0)
+        };
+        for (int at = 0; at < expected.Length; at++)
+        {
+            if (Math.Abs(End(at, "From") - expected[at].From) > 1.0e-9 ||
+                Math.Abs(End(at, "To") - expected[at].To) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Force line {at} runs between the force-graph vertices "
+                    + "of the edge that row's state NAMES, not of the edge at "
+                    + $"its own index; expected {expected[at].From} to "
+                    + $"{expected[at].To}, got {End(at, "From")} to "
+                    + $"{End(at, "To")}.");
+            }
+        }
+
+        object fd = CreateResultDto(
+            resultType, "fd", equilibrium, null, null);
+        Array fdRows = (Array)members.Invoke(null, new[] { fd })!;
+        Array fdLines = (Array)forceLines.Invoke(null, new[] { fd, fdRows })!;
+        if (fdLines.Length != 0)
+        {
+            throw new InvalidOperationException(
+                "An FD Result carries no reciprocal diagram, so Force Lines "
+                + $"comes back empty rather than guessing; got {fdLines.Length} "
+                + "lines.");
+        }
+    }
+
+    /// <summary>
     /// Diagnose's cross-checks, the things no single component can see:
     /// Columns ran on a Result with no principal runs; Animate ran with no
     /// Columns upstream; every anchor is isolated; more than half the net
@@ -2673,6 +3183,433 @@ internal static class Program
                 $"A principal line {label} must report an offset of "
                 + $"{expectedOffset:G3} from the curve that asked for it; it "
                 + $"reported {offset:G6}.");
+        }
+    }
+
+    /// <summary>
+    /// <c>FrameGeometry.Read</c>: the one reading of a Result that Animate's
+    /// viewport and Frame's ports both come from.
+    ///
+    /// The rule measured here is spec section 3's: positions come from
+    /// <c>Mould.Frame.Vertices</c> when the Result carries a frame and from
+    /// the solved equilibrium when it does not, so Frame on a Solve or a
+    /// Columns Result is the finished vault and Frame on an Animate Result
+    /// is that frame. The columns follow the same rule one level down:
+    /// <c>Frame.ColumnNodes</c> when the frame carries them, the block's own
+    /// nodes otherwise.
+    ///
+    /// The fixture is a three-by-three unit grid, twelve edges, anchored at
+    /// its four corners, with no faces anywhere: no thrust mesh (an FD
+    /// Result carries none) and no pattern topology, which is exactly the
+    /// case where the boundary can only be ESTIMATED from node degree. The
+    /// corners are the only nodes below the median degree, so the estimate
+    /// is the four corners, each its own group because no two corners are
+    /// joined. The Result carries no principal runs either, so every cable
+    /// lands in the infill branch, and Cables is one branch: the infill is
+    /// LAST, and with no bars it is also first.
+    ///
+    /// <c>Read</c> is the half that can run here. <c>Build</c> adds the
+    /// thrust mesh and the polyline curves, both of which P/Invoke
+    /// rhcommon_c and neither of which this process has a Rhino for; both
+    /// read <c>Net.Positions</c>, which is what this pins.
+    ///
+    /// Four further fixtures round out the corner cases the plain grid
+    /// cannot reach on its own: a frame whose Vertices, or whose
+    /// ColumnNodes, do not match the net falls back to the solved geometry,
+    /// and Phase must fall back to <c>FinalPhase</c> on the SAME guard
+    /// rather than still say the frame's own word over solved positions; a
+    /// Result with ONE principal run measures Cables' branch structure
+    /// (the bar's own members in branch 0, the infill LAST in branch 1),
+    /// which the plain grid cannot, because with no bars at all first and
+    /// last are the same branch; and a Result with pattern faces gives a
+    /// REAL boundary loop, so <c>PerimeterCloses</c> is measured true for
+    /// once rather than only ever in its all-false, estimated form.
+    /// </summary>
+    private static void ValidateFrameGeometry(Assembly plugin)
+    {
+        Type geometry = RequireComponentType(plugin, "FrameGeometry");
+        MethodInfo read = RequirePublicStatic(geometry, "Read");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edge = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+        Type equilibriumProblemType =
+            RequireContractType(plugin, "EquilibriumProblemDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type problemType = RequireContractType(plugin, "ProblemDto");
+        Type anchoredType = RequireContractType(plugin, "AnchoredPatternDto");
+        Type tnaPatternType = RequireContractType(plugin, "TnaPatternDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(IEnumerable<object> items)
+        {
+            object[] all = items.ToArray();
+            Array array = Array.CreateInstance(point, all.Length);
+            for (int i = 0; i < all.Length; i++)
+                array.SetValue(all[i], i);
+            return array;
+        }
+        object[] Grid(double z) => Enumerable
+            .Range(0, 9)
+            .Select(i => P(i % 3, i / 3, z))
+            .ToArray();
+
+        var pairs = new List<(int U, int V)>();
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 2; column++)
+                pairs.Add(((row * 3) + column, (row * 3) + column + 1));
+        }
+        for (int column = 0; column < 3; column++)
+        {
+            for (int row = 0; row < 2; row++)
+                pairs.Add(((row * 3) + column, ((row + 1) * 3) + column));
+        }
+        Array edges = Array.CreateInstance(edge, pairs.Count);
+        for (int i = 0; i < pairs.Count; i++)
+            edges.SetValue(Activator.CreateInstance(edge, pairs[i].U, pairs[i].V), i);
+
+        object Equilibrium()
+        {
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "Vertices", Points(Grid(0.0)));
+            SetContractProperty(eq, equilibriumType, "Edges", edges);
+            SetContractProperty(
+                eq, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2, 6, 8 });
+            return eq;
+        }
+        object Columns(Array nodes)
+        {
+            object block = CreateInstance(columnsType);
+            SetContractProperty(block, columnsType, "Nodes", nodes);
+            Array members = Array.CreateInstance(edge, 1);
+            members.SetValue(Activator.CreateInstance(edge, 0, 1), 0);
+            SetContractProperty(block, columnsType, "Members", members);
+            SetContractProperty(block, columnsType, "MemberForce", new[] { 100.0 });
+            SetContractProperty(
+                block, columnsType, "Trees", new int[][] { new[] { 0 } });
+            SetContractProperty(block, columnsType, "Heads", new[] { 1 });
+            SetContractProperty(block, columnsType, "Feet", new[] { 0 });
+            SetContractProperty(block, columnsType, "HeadNode", new[] { 4 });
+            return block;
+        }
+        object Frame(Array? columnNodes)
+        {
+            object frame = CreateInstance(frameType);
+            SetContractProperty(frame, frameType, "Time", 50.0);
+            SetContractProperty(frame, frameType, "Phase", "raise");
+            SetContractProperty(frame, frameType, "Lift", 0.5);
+            SetContractProperty(frame, frameType, "Sag", 0.5);
+            SetContractProperty(frame, frameType, "Vertices", Points(Grid(1.0)));
+            SetContractProperty(frame, frameType, "ColumnNodes", columnNodes);
+            return frame;
+        }
+        object Result(object? columns, object? frame)
+        {
+            object result =
+                CreateResultDto(resultType, "fd", Equilibrium(), null, null);
+            if (columns is null && frame is null)
+                return result;
+            object mould = CreateInstance(mouldType);
+            SetContractProperty(mould, mouldType, "Ground", 0.0);
+            SetContractProperty(mould, mouldType, "Columns", columns);
+            SetContractProperty(mould, mouldType, "Frame", frame);
+            SetContractProperty(result, resultType, "Mould", mould);
+            return result;
+        }
+        object Read(object result) =>
+            read.Invoke(null, new object?[] { result, null, Array.Empty<int>() })
+            ?? throw new InvalidOperationException("FrameGeometry.Read returned null.");
+        T Field<T>(object owner, string name) =>
+            (T)(owner.GetType().GetProperty(name)
+                ?? throw new InvalidOperationException(
+                    $"FrameGeometry.Net has no {name}."))
+                .GetValue(owner)!;
+
+        // ---- The frame the Result carries wins.
+        object framed = Read(Result(null, Frame(null)));
+        Array positions = Field<Array>(framed, "Positions");
+        Type point3d = positions.GetType().GetElementType()!;
+        double Axis(object value, string axis) =>
+            (double)point3d.GetProperty(axis)!.GetValue(value)!;
+        if (positions.Length != 9)
+        {
+            throw new InvalidOperationException(
+                "One position per net node; nine went in and "
+                + $"{positions.Length} came back.");
+        }
+        for (int i = 0; i < 9; i++)
+        {
+            object at = positions.GetValue(i)!;
+            if (Math.Abs(Axis(at, "Z") - 1.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Positions come from Mould.Frame.Vertices when the Result "
+                    + $"carries a frame; node {i} came back at z "
+                    + $"{Axis(at, "Z"):0.####}, not the frame's 1.");
+            }
+        }
+        string phase = Field<string>(framed, "Phase");
+        if (!string.Equals(phase, "raise", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Phase is the frame's own word; got '{phase}'.");
+        }
+
+        // ---- Cables: one branch, because there are no principal runs, and
+        // every end on the frame's own positions.
+        IList cables = Field<IList>(framed, "Cables");
+        if (cables.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "With no principal runs every member is infill, and the infill "
+                + $"is one branch; got {cables.Count} branches.");
+        }
+        IList infill = (IList)cables[0]!;
+        if (infill.Count != 12)
+        {
+            throw new InvalidOperationException(
+                $"Twelve edges went in and {infill.Count} cables came back.");
+        }
+        foreach (object? item in infill)
+        {
+            object line = item!;
+            object from = line.GetType().GetProperty("From")!.GetValue(line)!;
+            object to = line.GetType().GetProperty("To")!.GetValue(line)!;
+            if (Math.Abs(Axis(from, "Z") - 1.0) > 1.0e-9 ||
+                Math.Abs(Axis(to, "Z") - 1.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Every cable end stands at the frame's positions, so both "
+                    + "ends are at z 1; one came back at "
+                    + $"{Axis(from, "Z"):0.####} to {Axis(to, "Z"):0.####}.");
+            }
+        }
+
+        // ---- The anchors and the estimated boundary.
+        IList anchors = Field<IList>(framed, "AnchorGroups");
+        if (anchors.Count != 4 || ((IList)anchors[0]!).Count != 1)
+        {
+            throw new InvalidOperationException(
+                "The four corners are anchored and no two of them are joined, "
+                + $"so each is a strip of its own; got {anchors.Count} strips.");
+        }
+        if (!Field<bool>(framed, "PerimeterEstimated"))
+        {
+            throw new InvalidOperationException(
+                "This Result carries no faces of its own and no pattern "
+                + "topology, so the boundary is a degree ESTIMATE and has to "
+                + "say so; Perimeter Lines draws nothing from an estimate.");
+        }
+        int perimeterCount = Field<int>(framed, "PerimeterCount");
+        if (perimeterCount != 4)
+        {
+            throw new InvalidOperationException(
+                "The estimate is the nodes below the median degree, which on a "
+                + $"three-by-three grid is the four corners; got {perimeterCount}.");
+        }
+        bool[] closes = Field<bool[]>(framed, "PerimeterCloses");
+        if (closes.Length != Field<IList>(framed, "PerimeterLoops").Count ||
+            closes.Any(one => one))
+        {
+            throw new InvalidOperationException(
+                "One closing verdict per loop, and an estimated boundary never "
+                + "closes: a single node is not a loop.");
+        }
+
+        // ---- No columns block: an empty tree, not an error.
+        if (Field<IList>(framed, "ColumnBranches").Count != 0)
+        {
+            throw new InvalidOperationException(
+                "A Result with a frame and no columns block gives an EMPTY "
+                + "Columns tree; Diagnose's frame_without_columns is what says "
+                + "so in words.");
+        }
+
+        // ---- No frame at all: the solved state, phase final.
+        object solved = Read(Result(null, null));
+        Array solvedPositions = Field<Array>(solved, "Positions");
+        for (int i = 0; i < 9; i++)
+        {
+            object at = solvedPositions.GetValue(i)!;
+            if (Math.Abs(Axis(at, "Z")) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "With no frame the positions are the SOLVED vertices, so "
+                    + $"node {i} stands at z 0; got {Axis(at, "Z"):0.####}.");
+            }
+        }
+        string solvedPhase = Field<string>(solved, "Phase");
+        if (!string.Equals(solvedPhase, "final", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A Result with no frame stands at its finished shape, and the "
+                + $"word for that is 'final'; got '{solvedPhase}'.");
+        }
+
+        // ---- The frame's column nodes win over the block's own. The block
+        // is built two metres tall and the frame stands it at three, so a
+        // reading that took the block's nodes measures 2 and this measures 3.
+        object standing = Read(Result(
+            Columns(Points(new[] { P(0.0, 0.0, 0.0), P(0.0, 0.0, 2.0) })),
+            Frame(Points(new[] { P(0.0, 0.0, 0.0), P(0.0, 0.0, 3.0) }))));
+        IList branches = Field<IList>(standing, "ColumnBranches");
+        if (branches.Count != 1 || ((IList)branches[0]!).Count != 1)
+        {
+            throw new InvalidOperationException(
+                "One tree of one member gives one branch holding one line; got "
+                + $"{branches.Count} branches.");
+        }
+        object member = ((IList)branches[0]!)[0]!;
+        object lower = member.GetType().GetProperty("From")!.GetValue(member)!;
+        object upper = member.GetType().GetProperty("To")!.GetValue(member)!;
+        double height = Axis(upper, "Z") - Axis(lower, "Z");
+        if (Math.Abs(height - 3.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The column stands where the FRAME puts it, not where it was "
+                + $"built: the frame says 3 and the block says 2, and {height:0.####} "
+                + "came back.");
+        }
+
+        // ---- A frame whose Vertices count does not match the net falls
+        // back to the solved positions; Phase must fall back to FinalPhase
+        // on the SAME guard, not report the frame's own word over geometry
+        // that is really the solved shape. The same is true when the frame's
+        // ColumnNodes count does not match the block. Both are otherwise
+        // unreachable from Animate, which only ever writes a frame whose
+        // counts hold, but Frame can be handed any Result.
+        object shortFrame = CreateInstance(frameType);
+        SetContractProperty(shortFrame, frameType, "Time", 50.0);
+        SetContractProperty(shortFrame, frameType, "Phase", "raise");
+        SetContractProperty(shortFrame, frameType, "Lift", 0.5);
+        SetContractProperty(shortFrame, frameType, "Sag", 0.5);
+        SetContractProperty(
+            shortFrame,
+            frameType,
+            "Vertices",
+            Points(new[] { P(0.0, 0.0, 1.0), P(1.0, 0.0, 1.0), P(0.0, 1.0, 1.0) }));
+        object mismatched = Read(Result(null, shortFrame));
+        string mismatchedPhase = Field<string>(mismatched, "Phase");
+        if (!string.Equals(mismatchedPhase, "final", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A frame whose Vertices count does not match the net falls "
+                + "back to the SOLVED positions, and Phase must fall back "
+                + $"with it rather than still say 'raise'; got "
+                + $"'{mismatchedPhase}'.");
+        }
+
+        object shortColumnsFrame = Frame(Points(new[] { P(0.0, 0.0, 0.0) }));
+        object mismatchedColumns = Read(Result(
+            Columns(Points(new[] { P(0.0, 0.0, 0.0), P(0.0, 0.0, 2.0) })),
+            shortColumnsFrame));
+        string mismatchedColumnsPhase = Field<string>(mismatchedColumns, "Phase");
+        if (!string.Equals(mismatchedColumnsPhase, "final", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A frame whose ColumnNodes count does not match the block "
+                + "falls back to the block's own nodes, and Phase must fall "
+                + "back with it; got '" + mismatchedColumnsPhase + "'.");
+        }
+
+        // ---- Cables' branch structure with ONE principal run: the bar's
+        // own members land in branch 0, and everything else, the infill,
+        // lands in a LAST branch. Every earlier fixture above has no
+        // principal runs at all, so with no bars first and last are the
+        // SAME branch and an infill-first Read would still pass; this is
+        // the one that would fail it.
+        object runTopology = CreateInstance(topologyType);
+        SetContractProperty(
+            runTopology,
+            topologyType,
+            "PrincipalRuns",
+            new int[][] { new[] { 0, 1, 2 } });
+        object equilibriumProblem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(
+            equilibriumProblem, equilibriumProblemType, "Topology", runTopology);
+        object equilibriumWithRun = Equilibrium();
+        SetContractProperty(
+            equilibriumWithRun, equilibriumType, "Problem", equilibriumProblem);
+        object resultWithRun =
+            CreateResultDto(resultType, "fd", equilibriumWithRun, null, null);
+        object withRun = Read(resultWithRun);
+        IList runCables = Field<IList>(withRun, "Cables");
+        if (runCables.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "One principal run gives two branches, the bar and the "
+                + $"infill LAST; got {runCables.Count}.");
+        }
+        IList barBranch = (IList)runCables[0]!;
+        IList infillBranch = (IList)runCables[1]!;
+        if (barBranch.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "The run 0,1,2 covers two consecutive members, (0,1) and "
+                + $"(1,2); branch 0 came back with {barBranch.Count}.");
+        }
+        if (infillBranch.Count != 10)
+        {
+            throw new InvalidOperationException(
+                "Twelve edges minus the bar's own two leaves ten in the "
+                + $"infill LAST branch; got {infillBranch.Count}.");
+        }
+
+        // ---- A real boundary, from pattern faces: PerimeterCloses reads
+        // true for that loop. Every fixture above carries no faces, so
+        // PerimeterCloses is only ever measured in its all-false, estimated
+        // form; this is the one that exercises the grouping[last].Contains
+        // (first) rule that keeps Perimeter Lines from drawing a chord and
+        // calling it the boundary.
+        object faceTopology = CreateInstance(topologyType);
+        SetContractProperty(faceTopology, topologyType, "Vertices", Points(Grid(0.0)));
+        SetContractProperty(
+            faceTopology,
+            topologyType,
+            "Faces",
+            new int[][]
+            {
+                new[] { 0, 1, 4, 3 },
+                new[] { 1, 2, 5, 4 },
+                new[] { 3, 4, 7, 6 },
+                new[] { 4, 5, 8, 7 }
+            });
+        object tnaPattern = CreateInstance(tnaPatternType);
+        SetContractProperty(tnaPattern, tnaPatternType, "Topology", faceTopology);
+        object anchoredPattern = CreateInstance(anchoredType);
+        SetContractProperty(anchoredPattern, anchoredType, "Pattern", tnaPattern);
+        object problemWithFaces = CreateInstance(problemType);
+        SetContractProperty(problemWithFaces, problemType, "Anchored", anchoredPattern);
+        object resultWithFaces =
+            CreateResultDto(resultType, "fd", Equilibrium(), null, null);
+        SetContractProperty(resultWithFaces, resultType, "Problem", problemWithFaces);
+        object withFaces = Read(resultWithFaces);
+        if (Field<bool>(withFaces, "PerimeterEstimated"))
+        {
+            throw new InvalidOperationException(
+                "Pattern faces give a REAL boundary, not an estimate; "
+                + "PerimeterEstimated came back true.");
+        }
+        int facePerimeterCount = Field<int>(withFaces, "PerimeterCount");
+        if (facePerimeterCount != 8)
+        {
+            throw new InvalidOperationException(
+                "Four quad faces over the three-by-three grid leave the "
+                + "eight outer nodes on the boundary and the centre off it; "
+                + $"got {facePerimeterCount}.");
+        }
+        bool[] faceCloses = Field<bool[]>(withFaces, "PerimeterCloses");
+        if (faceCloses.Length != 1 || !faceCloses[0])
+        {
+            throw new InvalidOperationException(
+                "The eight boundary nodes form one closed loop around the "
+                + "centre; PerimeterCloses must read true for it, not "
+                + $"[{string.Join(", ", faceCloses)}].");
         }
     }
 
@@ -3115,31 +4052,73 @@ internal static class Program
     /// Grasshopper matches archived parameter chunks to live parameters by
     /// INDEX, so a reshaped component does not come back with broken wires:
     /// they reattach to whatever now stands at that index, silently wherever
-    /// the two ports share a type. The counts this branch actually produced
-    /// on Deconstruct are the case measured here.
+    /// the two ports share a type. Counting the ports catches a component
+    /// that grew or shrank. It does NOT catch Monitor, whose Result moved
+    /// from the last output to the first with the count unchanged, which
+    /// puts every one of twenty tree wires one slot down on a same-typed
+    /// tree. So the NAMES are compared too, index by index.
+    ///
+    /// A null archived name is not evidence of anything: it is an archive
+    /// this cannot read a name out of, and it is skipped rather than counted
+    /// as a difference, so a future Grasshopper that stops writing Name
+    /// degrades to the count check instead of warning every file in the
+    /// world.
     /// </summary>
     private static void ValidateParameterMismatch(Assembly plugin)
     {
         Type identity = RequireComponentType(plugin, "ParameterIdentity");
         MethodInfo mismatch = RequireStatic(identity, "Mismatch");
 
-        object? moved = mismatch.Invoke(null, new object?[] { 2, 20, 1, 13 });
+        string?[] Names(int count, string stem) => Enumerable
+            .Range(0, count)
+            .Select(index => (string?)($"{stem} {index}"))
+            .ToArray();
+        string[] Registered(int count, string stem) => Enumerable
+            .Range(0, count)
+            .Select(index => $"{stem} {index}")
+            .ToArray();
+        string? Ask(
+            IReadOnlyList<string?> archivedIn,
+            IReadOnlyList<string?> archivedOut,
+            IReadOnlyList<string> registeredIn,
+            IReadOnlyList<string> registeredOut) =>
+            mismatch.Invoke(
+                null,
+                new object?[]
+                {
+                    archivedIn, archivedOut, registeredIn, registeredOut
+                }) as string;
+
+        // Deconstruct's own move, the case this check was born on: two
+        // inputs and twenty outputs archived against the one and fourteen
+        // it registers now.
+        string? moved = Ask(
+            Names(2, "in"),
+            Names(20, "out"),
+            Registered(1, "in"),
+            Registered(14, "out"));
         if (moved is not string text)
         {
             throw new InvalidOperationException(
                 "A definition saved against 2 inputs and 20 outputs, opened "
-                + "against 1 and 13, must be warned that its wires moved; nothing "
+                + "against 1 and 14, must be warned that its wires moved; nothing "
                 + "came back.");
         }
         if (!text.Contains("20", StringComparison.Ordinal) ||
-            !text.Contains("13", StringComparison.Ordinal))
+            !text.Contains("14", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "The warning must name what was archived and what is registered, "
                 + $"so the author knows which surface moved; got '{text}'.");
         }
 
-        object? unchanged = mismatch.Invoke(null, new object?[] { 4, 9, 4, 9 });
+        // The ordinary case: a file saved against the surface the plugin
+        // registers today, name for name.
+        string? unchanged = Ask(
+            Names(4, "in"),
+            Names(9, "out"),
+            Registered(4, "in"),
+            Registered(9, "out"));
         if (unchanged is not null)
         {
             throw new InvalidOperationException(
@@ -3148,27 +4127,195 @@ internal static class Program
                 + $"got '{unchanged}'.");
         }
 
+        // MONITOR's case, and the whole reason names are read: twenty-one
+        // outputs before and twenty-one after, with the Result moved from
+        // the end to the front. The counts agree, so a count check says
+        // nothing at all while every tree wire sits one slot low.
+        var monitorTrees = new[]
+        {
+            "Member Force", "Force Density", "Horizontal Force", "Slack",
+            "Spool Length", "Unstrained Length",
+            "Anchor Along", "Anchor Across",
+            "Tip Reaction", "Column Force", "Thrust", "Lean",
+            "Deviation", "Deviation Stats", "Reachable", "Unreachable",
+            "Bar Sag", "Residuals",
+            "Cable Utilisation", "Column Utilisation"
+        };
+        string?[] archivedMonitor = monitorTrees
+            .Select(name => (string?)name)
+            .Append("Result")
+            .ToArray();
+        string[] registeredMonitor = new[] { "Result" }
+            .Concat(monitorTrees)
+            .ToArray();
+        string?[] monitorInputs = new string?[]
+        {
+            "Result", "EI", "EA", "Tolerance", "Cable Capacity",
+            "Column Capacity"
+        };
+        string? monitorMoved = Ask(
+            monitorInputs,
+            archivedMonitor,
+            monitorInputs.Select(name => name!).ToArray(),
+            registeredMonitor);
+        if (monitorMoved is not string monitorText ||
+            !monitorText.Contains("Member Force", StringComparison.Ordinal) ||
+            !monitorText.Contains("Result", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Monitor keeps twenty-one outputs and moves the Result to the "
+                + "front, so the counts agree and only the names say the wires "
+                + "moved; the warning must name the port that changed. Got "
+                + $"'{monitorMoved}'.");
+        }
+        // And it must LEAD with that name. Opening on counts that agree
+        // reads as a denial of the rename that follows it, on the one
+        // component the whole name comparison was built for.
+        if (monitorText.Contains("outputs archived", StringComparison.Ordinal) ||
+            !monitorText.Contains(
+                "the counts are unchanged", StringComparison.Ordinal) ||
+            monitorText.IndexOf("Member Force", StringComparison.Ordinal) >
+                monitorText.IndexOf("counts", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Where only a name moved, the rename LEADS and the equal "
+                + "counts are given after it as the reason every wire came "
+                + "back attached; counts that agree are not evidence and "
+                + $"must not open the sentence. Got '{monitorText}'.");
+        }
+
         // Export's own move, and the reason it holds Live: a definition
-        // saved before this branch carries seven inputs and two outputs
-        // against the nine and six registered now, so every wire in it
-        // lands on a different port, three of them silently, and one of
-        // those three is the Live toggle.
-        object? exportMoved = mismatch.Invoke(null, new object?[] { 7, 2, 9, 6 });
+        // saved before the export-live branch carries seven inputs and two
+        // outputs against the nine and two registered now, so every INPUT
+        // wire in it lands on a different port, three of them silently, and
+        // one of those three is the Live toggle. The output count came back
+        // to two by a different route (one JSON list and one Status), so
+        // the outputs alone would say nothing.
+        string? exportMoved = Ask(
+            Names(7, "in"),
+            Names(2, "out"),
+            Registered(9, "in"),
+            Registered(2, "out"));
         if (exportMoved is not string exportText ||
             !exportText.Contains("7 inputs and 2 outputs", StringComparison.Ordinal) ||
-            !exportText.Contains("9 and 6", StringComparison.Ordinal))
+            !exportText.Contains("9 and 2", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "A saved Export, 7 inputs and 2 outputs against the 9 and 6 it "
-                + "registers now, must be warned and both counts named; got "
+                "A saved Export, 7 inputs and 2 outputs against the 9 and 2 it "
+                + "registers now, must be warned and both counts named: the "
+                + "output count came back to two by a different route and every "
+                + "input wire still moved; got "
                 + $"'{exportMoved}'.");
         }
-        object? exportUnchanged = mismatch.Invoke(null, new object?[] { 9, 6, 9, 6 });
-        if (exportUnchanged is not null)
+
+        // The INPUT SIDE alone, which is what Export's Live hold reads.
+        //
+        // A Warning is owed for either side moving, so Mismatch asks about
+        // both. Acting on the finding is a different question: Grasshopper
+        // reattaches an archived wire to the live port at its own index, so
+        // only an INPUT wire can land on a port the component then obeys,
+        // and Export's Live toggle is one of those ports. An output-side
+        // change cannot flip it. Export's outputs went from six to two on
+        // this branch with its nine inputs untouched, so a hold on any port
+        // move would have held Live on every definition in existence for a
+        // change that could not have moved a single input wire.
+        MethodInfo sideMoved = RequireStatic(identity, "SideMoved");
+        bool Side(
+            IReadOnlyList<string?> archived,
+            IReadOnlyList<string> registered) =>
+            sideMoved.Invoke(null, new object?[] { archived, registered })
+                is true;
+
+        // The case the hold exists for: a pre-export-live definition, seven
+        // archived inputs against the nine registered now.
+        if (!Side(Names(7, "in"), Registered(9, "in")))
         {
             throw new InvalidOperationException(
-                "An Export saved against the current nine and six is told "
-                + $"nothing; got '{exportUnchanged}'.");
+                "Seven archived inputs against nine registered is an input "
+                + "move, and Export must hold Live on it: three input wires "
+                + "land on ports they did not leave, one of them the Live "
+                + "toggle, and a Warning cannot recall a study already "
+                + "pushed to a studio.");
+        }
+        // The same shape with only a NAME moved, which is the half a count
+        // comparison cannot see.
+        string?[] renamedInputs =
+        {
+            "Result", "Path", "Write", "Name", "Courses", "Cells", "Live",
+            "Studio", "Column Radius"
+        };
+        string[] registeredInputs =
+        {
+            "Result", "Path", "Write", "Name", "Cells", "Courses", "Live",
+            "Studio", "Column Radius"
+        };
+        if (!Side(renamedInputs, registeredInputs))
+        {
+            throw new InvalidOperationException(
+                "Nine inputs before and nine after, with two of them "
+                + "swapped, is still an input move: the counts agree and "
+                + "every wire reattached to the wrong port, which is the "
+                + "case names were compared for in the first place.");
+        }
+        // THIS BRANCH's own move, and the one that must NOT hold: the
+        // outputs went six to two and the nine inputs did not move.
+        if (Side(Names(9, "in"), Registered(9, "in")))
+        {
+            throw new InvalidOperationException(
+                "Export's outputs went from six to two on this branch with "
+                + "its nine inputs untouched. The Warning is owed, and "
+                + "Mismatch gives it; the HOLD is not, because no output "
+                + "change can put an archived wire on the Live toggle. "
+                + "Holding here would hold Live on every definition in "
+                + "existence.");
+        }
+        if (!Side(Names(6, "out"), Registered(2, "out")))
+        {
+            throw new InvalidOperationException(
+                "Six archived outputs against two registered is a move on "
+                + "the side it is asked about; the previous case rests on "
+                + "the OUTPUT side having really changed while the input "
+                + "side stayed still.");
+        }
+        // And both sides agreeing is silence, as it is for Mismatch.
+        if (Side(Names(9, "in"), Registered(9, "in")) ||
+            Side(registeredInputs.Select(name => (string?)name).ToArray(),
+                 registeredInputs))
+        {
+            throw new InvalidOperationException(
+                "A side whose archived names and counts are the ports "
+                + "registered there now has not moved, and nothing may be "
+                + "held on it.");
+        }
+
+        // A longer archived list: the one case that visibly breaks in
+        // Grasshopper anyway, and it must still be announced.
+        string? shrunk = Ask(
+            Names(1, "in"),
+            Names(9, "out"),
+            Registered(1, "in"),
+            Registered(6, "out"));
+        if (shrunk is null)
+        {
+            throw new InvalidOperationException(
+                "Nine archived outputs against six registered must be "
+                + "announced; three of those wires have nowhere to land.");
+        }
+
+        // A name the archive does not carry is not a rename. Everything
+        // else agreeing, this stays silent.
+        string?[] blind = new string?[] { "Result", null, "Elements" };
+        string? unreadable = Ask(
+            blind,
+            Names(0, "out"),
+            new[] { "Result", "Style", "Elements" },
+            Array.Empty<string>());
+        if (unreadable is not null)
+        {
+            throw new InvalidOperationException(
+                "An archived parameter chunk this cannot read a Name out of is "
+                + "no evidence that anything moved, and must not raise a "
+                + $"warning on its own; got '{unreadable}'.");
         }
     }
 
@@ -5858,7 +7005,9 @@ internal static class Program
                 $"{cellListType.FullName} does not expose Add.");
         addMethod.Invoke(cellList, new[] { cell });
 
-        var json = method.Invoke(null, new object[] { cellList, 1.0 }) as string
+        var json =
+            method.Invoke(null, new object[] { cellList, 1.0, "authored" })
+                as string
             ?? throw new InvalidOperationException(
                 "BuildTessellationJson returned an unexpected type.");
         const string expected =
@@ -5881,7 +7030,8 @@ internal static class Program
         // accepts without complaint and reads a thousand times too
         // large: the one shape of unit error that never raises.
         var millimetres =
-            method.Invoke(null, new object[] { cellList, 0.001 }) as string
+            method.Invoke(null, new object[] { cellList, 0.001, "authored" })
+                as string
             ?? throw new InvalidOperationException(
                 "BuildTessellationJson returned an unexpected type.");
         const string expectedMillimetres =
@@ -5895,6 +7045,188 @@ internal static class Program
                 "BuildTessellationJson did not convert document units to " +
                 $"metres; expected '{expectedMillimetres}', received " +
                 $"'{millimetres}'.");
+        }
+    }
+
+    /// <summary>
+    /// <c>ExportComponent.ChooseCells</c> and the JSON the default cells
+    /// make: where a tessellation comes from when nobody wired one.
+    ///
+    /// The rule of spec section 4. Wired cells always win, whatever the
+    /// Result carries. With no cells wired and faces on the Result, Export
+    /// tessellates the faces itself, one cell per face in face order at
+    /// course 0, so the sidecar is there for every TNA Result and the
+    /// studio's build animation has something to draw even before anyone
+    /// authors a pattern. With neither there is no sidecar. Courses wired
+    /// alone is ignored, with a remark, because a course belongs to a cell
+    /// and there are no authored cells for it to belong to.
+    ///
+    /// Split for the same reason FrameGeometry is: the decision is
+    /// arithmetic and runs here, while the faces themselves are a Rhino mesh
+    /// this process has no Rhino for. The cells the decision leads to are
+    /// measured through DefaultTessellationCells, which takes plain corner
+    /// points, and then through BuildTessellationJson, which is the code
+    /// that actually writes them.
+    ///
+    /// One half stays unmeasured and cannot be measured here: the plumbing
+    /// between the two, which rebuilds the thrust mesh, asks
+    /// SkinComponent.FacePolylines for one closed polyline per face and
+    /// reads the corners back off it. That needs a Mesh, a Curve and an
+    /// IGH_DataAccess, and this harness has RhinoCommon's structs but no
+    /// native core to build any of them with, so deleting the Faces branch
+    /// of TryReadInputs would leave this check green. Read, not run.
+    /// </summary>
+    private static void ValidateExportDefaultTessellation(Assembly plugin)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo choose = RequireStatic(exportType, "ChooseCells");
+        string Source(int cells, int courses, int faces, out string? remark)
+        {
+            object?[] arguments = { cells, courses, faces, null };
+            object verdict = choose.Invoke(null, arguments)
+                ?? throw new InvalidOperationException("ChooseCells returned null.");
+            remark = arguments[3] as string;
+            return verdict.ToString() ?? string.Empty;
+        }
+        // The verdict's own consequence: which word the sidecar's "pattern"
+        // key carries. Separate from ChooseCells so both halves can be
+        // driven here, because the plumbing between them lives in
+        // TryReadInputs, which needs a Rhino curve and an IGH_DataAccess.
+        MethodInfo patternFor = RequireStatic(exportType, "PatternFor");
+        Type cellSourceType = choose.ReturnType;
+        string PatternOf(string verdict) =>
+            patternFor.Invoke(
+                null,
+                new[] { Enum.Parse(cellSourceType, verdict) }) as string
+            ?? throw new InvalidOperationException(
+                "PatternFor returned an unexpected type.");
+        if (PatternOf("Wired") != "authored" || PatternOf("Faces") != "faces")
+        {
+            throw new InvalidOperationException(
+                "Cells somebody wired were AUTHORED and the Result's own "
+                + "faces were not; the studio reads that key to know whether "
+                + "a cutting pattern was ever chosen, and the fallback "
+                + "claiming authorship is the one lie it cannot detect. Got "
+                + $"'{PatternOf("Wired")}' and '{PatternOf("Faces")}'.");
+        }
+
+        if (Source(12, 12, 400, out string? wiredRemark) != "Wired" ||
+            wiredRemark is not null)
+        {
+            throw new InvalidOperationException(
+                "Cells wired always win, however many faces the Result "
+                + "carries, and nothing is remarked on.");
+        }
+        if (Source(0, 0, 400, out string? facesRemark) != "Faces" ||
+            facesRemark is not null)
+        {
+            throw new InvalidOperationException(
+                "With no cells wired and faces on the Result, Export "
+                + "tessellates the faces itself.");
+        }
+        if (Source(0, 0, 0, out _) != "None")
+        {
+            throw new InvalidOperationException(
+                "No cells and no faces is no tessellation: an FD Result "
+                + "carries no faces and gets the contract and the compas "
+                + "document alone.");
+        }
+        if (Source(0, 7, 400, out string? ignored) != "Faces" ||
+            ignored is null ||
+            !ignored.Contains("Courses", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Courses wired with no Cells is IGNORED and said out loud, "
+                + "because a course belongs to a cell and the default "
+                + $"tessellation is course 0 throughout; got '{ignored}'.");
+        }
+        if (Source(0, 7, 0, out string? silent) != "None" ||
+            silent is not null)
+        {
+            throw new InvalidOperationException(
+                "Courses wired against a Result with no faces at all earns "
+                + "no remark: the remark describes the tessellation Export "
+                + "would have built from the faces, and on this path it "
+                + $"builds none; got '{silent}'.");
+        }
+
+        // The cells the Faces verdict leads to, through the code that
+        // builds them. Four faces of a Result's own mesh are handed over,
+        // each as the closed ring FacePolylines makes (the closing repeat
+        // is dropped here, as the sidecar wants). Point3d is a plain
+        // struct and needs no native core, which is why this seam takes
+        // corners rather than the polylines themselves.
+        //
+        // The SECOND face is vertical in plan: three distinct corners in
+        // space, one corner in plan. Nobody wired it, and nobody asked for
+        // this tessellation at all, so it is SKIPPED and counted, never an
+        // error. Before this the whole export went down with it: the
+        // contract, the COMPAS document, the columns mesh, the disk write
+        // and the live push, on a solve with an empty Cells port.
+        MethodInfo build = exportType.GetMethod(
+            "BuildTessellationJson",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.BuildTessellationJson was not found.");
+        MethodInfo defaults =
+            RequireStatic(exportType, "DefaultTessellationCells");
+        Type faceType = defaults.GetParameters()[0].ParameterType
+            .GetGenericArguments()[0];
+        Type point3d = faceType.GetElementType()
+            ?? throw new InvalidOperationException(
+                "DefaultTessellationCells takes something other than arrays "
+                + "of points per face.");
+        Array faces = Array.CreateInstance(faceType, 4);
+        void Face(int slot, params (double X, double Y, double Z)[] corners)
+        {
+            Array face = Array.CreateInstance(point3d, corners.Length);
+            for (int corner = 0; corner < corners.Length; corner++)
+            {
+                face.SetValue(
+                    Activator.CreateInstance(
+                        point3d,
+                        corners[corner].X,
+                        corners[corner].Y,
+                        corners[corner].Z),
+                    corner);
+            }
+            faces.SetValue(face, slot);
+        }
+        Face(0, (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 0));
+        Face(1, (9, 9, 0), (9, 9, 1), (9, 9, 2), (9, 9, 0));
+        Face(2, (1, 0, 0), (2, 0, 0), (1, 1, 0), (1, 0, 0));
+        Face(3, (2, 0, 0), (3, 0, 0), (2, 1, 0), (2, 0, 0));
+        object?[] defaultArguments = { faces, null };
+        object cellList = defaults.Invoke(null, defaultArguments)
+            ?? throw new InvalidOperationException(
+                "DefaultTessellationCells returned null.");
+        var skipped = (int)defaultArguments[1]!;
+        if (skipped != 1)
+        {
+            throw new InvalidOperationException(
+                "The one face that will not reduce to three distinct plan "
+                + "corners is skipped and counted, and the other three "
+                + $"survive; the skipped count came back {skipped}.");
+        }
+        string json =
+            build.Invoke(
+                null,
+                new object[] { cellList, 1.0, PatternOf("Faces") }) as string
+            ?? throw new InvalidOperationException(
+                "BuildTessellationJson returned an unexpected type.");
+        const string expected =
+            "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
+            "\"domain\":\"plan\",\"pattern\":\"faces\",\"cells\":[" +
+            "{\"key\":\"c0p0\",\"course\":0,\"outline\":[[0,0],[1,0],[0,1]]}," +
+            "{\"key\":\"c0p1\",\"course\":0,\"outline\":[[1,0],[2,0],[1,1]]}," +
+            "{\"key\":\"c0p2\",\"course\":0,\"outline\":[[2,0],[3,0],[2,1]]}]}";
+        if (!string.Equals(json, expected, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The three usable faces give three cells, in face order, "
+                + "every one at course 0, renumbered c0p0 to c0p2 with the "
+                + "skipped face leaving no hole and no error; expected "
+                + $"'{expected}', received '{json}'.");
         }
     }
 
@@ -6753,6 +8085,260 @@ internal static class Program
   ""schemaVersion"": ""0.2"",
   ""kind"": ""Relaxed""
 }";
+
+    /// <summary>
+    /// The icon family, checked against the components themselves.
+    ///
+    /// Five of the twenty badges used to be drawn by a different hand, in a
+    /// different shape, and the map that owns the rest had sixteen entries
+    /// naming components that had been deleted while naming none of the five
+    /// that existed. Nothing measured any of that, because nothing connected
+    /// the map to the assembly. This does: every component's icon key has
+    /// exactly one entry, its category IS the panel the component registers
+    /// under, its label is the two letters the spec fixes, its filename is
+    /// the key (which is what PluginResources.Icon reads), and the badge's
+    /// own pixels carry the category's fill.
+    ///
+    /// The fill is sampled at (12, 20). The badge is a rounded rectangle
+    /// filled edge to edge under a lighter top band of four rows; the label
+    /// is two five-by-seven glyphs at scale two, centred, so it occupies
+    /// rows 5 to 18 and a shadow row 19, and columns 1 to 22 with a
+    /// two-pixel gap between the glyphs. Row 20 is below all of it and
+    /// inside the rounded box, so it is the fill and nothing else.
+    /// </summary>
+    private static void ValidateIconMap(
+        Assembly plugin,
+        Type[] componentTypes,
+        string pluginPath)
+    {
+        string mapPath = FindIconMap(pluginPath);
+        JsonNode map = JsonNode.Parse(File.ReadAllText(mapPath))
+            ?? throw new InvalidOperationException(
+                $"{mapPath} did not parse as JSON.");
+        JsonObject categories = map["categories"]?.AsObject()
+            ?? throw new InvalidOperationException(
+                "icon-map.json carries no categories.");
+        JsonArray native = map["native_components"]?.AsArray()
+            ?? throw new InvalidOperationException(
+                "icon-map.json carries no native_components.");
+
+        var byKey = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        foreach (JsonNode? entry in native)
+        {
+            JsonNode row = entry
+                ?? throw new InvalidOperationException(
+                    "icon-map.json has a null native_components entry.");
+            string key = (string?)row["key"]
+                ?? throw new InvalidOperationException(
+                    "A native_components entry carries no key.");
+            if (!byKey.TryAdd(key, row))
+            {
+                throw new InvalidOperationException(
+                    $"'{key}' has more than one native_components entry, so "
+                    + "two entries own one PNG and the last generated wins.");
+            }
+        }
+        if (byKey.Count != componentTypes.Length)
+        {
+            throw new InvalidOperationException(
+                $"{componentTypes.Length} components and {byKey.Count} icons: "
+                + "the family covers every component and nothing else, or a "
+                + "deleted component's badge stays embedded for ever.");
+        }
+
+        foreach (Type componentType in componentTypes)
+        {
+            string typeName = componentType.FullName ?? componentType.Name;
+            if (!NativeIconEntries.TryGetValue(
+                    typeName, out (string Key, string Label) expected))
+            {
+                throw new InvalidOperationException(
+                    $"{typeName} has no pinned icon key and label; every "
+                    + "component wears one badge from the one family.");
+            }
+            object instance = Activator.CreateInstance(componentType)
+                ?? throw new InvalidOperationException(
+                    $"Could not construct {typeName}.");
+            try
+            {
+                string key = IconKeyOf(instance, componentType);
+                if (!string.Equals(key, expected.Key, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name} asks for icon '{key}'; the "
+                        + $"family gives it '{expected.Key}'.");
+                }
+                if (!byKey.TryGetValue(key, out JsonNode? row))
+                {
+                    throw new InvalidOperationException(
+                        $"'{key}' has no native_components entry, so nothing "
+                        + "generates that badge and the component wears "
+                        + "whatever PNG happens to be lying beside the map.");
+                }
+                string label = (string?)row["label"] ?? string.Empty;
+                if (!string.Equals(label, expected.Label, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name}'s badge reads '{label}'; the "
+                        + $"spec gives it '{expected.Label}'.");
+                }
+                string filename = (string?)row["filename"] ?? string.Empty;
+                if (!string.Equals(filename, key + ".png", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"'{key}' is drawn into '{filename}', but the loader "
+                        + $"reads the resource '{key}.png' and would find "
+                        + "nothing.");
+                }
+                string category = (string?)row["category"] ?? string.Empty;
+                string subCategory =
+                    componentType.GetProperty("SubCategory")?.GetValue(instance)
+                        as string
+                    ?? string.Empty;
+                if (!string.Equals(category, subCategory, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name} sits under '{subCategory}' and "
+                        + $"its badge is filled for '{category}': the colour "
+                        + "is the panel, so a component that moves tab and "
+                        + "keeps its fill lies about where it lives.");
+                }
+                string fill = (string?)categories[category]?["fill"]
+                    ?? throw new InvalidOperationException(
+                        $"icon-map.json has no fill for category '{category}'.");
+                (int r, int g, int b) = ParseFill(fill);
+                (int actualR, int actualG, int actualB) =
+                    BadgeFill(RequireIconBitmap(instance, componentType));
+                if (r != actualR || g != actualG || b != actualB)
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name}'s badge is filled "
+                        + $"#{actualR:X2}{actualG:X2}{actualB:X2} where "
+                        + $"'{category}' is {fill}: the PNG on disk is not the "
+                        + "one this map describes, so the generator has not "
+                        + "been run since the map changed.");
+                }
+            }
+            finally
+            {
+                if (instance is IDisposable disposable)
+                    disposable.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The icon key a component names to its base constructor, which is also
+    /// the embedded resource name and so the file name. Held in a private
+    /// field on both native bases, so the walk goes up until it finds one.
+    /// </summary>
+    private static string IconKeyOf(object instance, Type componentType)
+    {
+        for (Type? current = componentType;
+             current is not null;
+             current = current.BaseType)
+        {
+            FieldInfo? field = current.GetField(
+                "_iconName",
+                BindingFlags.Instance |
+                BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly);
+            if (field is null)
+                continue;
+            return field.GetValue(instance) as string ?? string.Empty;
+        }
+        throw new InvalidOperationException(
+            $"{componentType.Name} carries no icon key; every native "
+            + "component names one to its base constructor.");
+    }
+
+    /// <summary>
+    /// The badge's own fill, read off the embedded bitmap at (12, 20).
+    /// Reflected rather than referenced, in this harness's usual manner, so
+    /// nothing here has to bind to System.Drawing at compile time.
+    /// </summary>
+    private static (int R, int G, int B) BadgeFill(object icon)
+    {
+        MethodInfo getPixel = icon.GetType().GetMethod(
+            "GetPixel", new[] { typeof(int), typeof(int) })
+            ?? throw new InvalidOperationException(
+                "The icon is not a bitmap with pixels to read.");
+        object colour = getPixel.Invoke(icon, new object[] { 12, 20 })
+            ?? throw new InvalidOperationException(
+                "GetPixel returned nothing.");
+        Type colourType = colour.GetType();
+        int Channel(string name) => Convert.ToInt32(
+            colourType.GetProperty(name)?.GetValue(colour));
+        return (Channel("R"), Channel("G"), Channel("B"));
+    }
+
+    private static (int R, int G, int B) ParseFill(string value)
+    {
+        if (value.Length != 7 || value[0] != '#')
+        {
+            throw new InvalidOperationException(
+                $"A category fill is #RRGGBB; got '{value}'.");
+        }
+        return (
+            Convert.ToInt32(value.Substring(1, 2), 16),
+            Convert.ToInt32(value.Substring(3, 2), 16),
+            Convert.ToInt32(value.Substring(5, 2), 16));
+    }
+
+    /// <summary>
+    /// plugin/icons/icon-map.json, found by walking up from the .gha under
+    /// test and then from this harness's own output directory. The map is
+    /// the generator's manifest and lives in the repository, not in the
+    /// build, so there is nothing to resolve it by but the tree.
+    /// </summary>
+    private static string FindIconMap(string pluginPath) =>
+        FindRepositoryFile(
+            pluginPath,
+            new[]
+            {
+                Path.Combine("plugin", "icons", "icon-map.json"),
+                Path.Combine("icons", "icon-map.json")
+            },
+            "plugin/icons/icon-map.json",
+            "the icon family is checked against that map");
+
+    /// <summary>
+    /// A file that lives in the REPOSITORY rather than in the build, found
+    /// by walking up from the plugin under test and then from this harness's
+    /// own output directory. Each candidate is a path relative to a
+    /// repository root, tried in order at every level.
+    /// </summary>
+    private static string FindRepositoryFile(
+        string pluginPath,
+        IReadOnlyList<string> candidates,
+        string what,
+        string why)
+    {
+        var starts = new List<string>();
+        string? beside = Path.GetDirectoryName(Path.GetFullPath(pluginPath));
+        if (beside is not null)
+            starts.Add(beside);
+        starts.Add(AppContext.BaseDirectory);
+        foreach (string start in starts)
+        {
+            for (DirectoryInfo? directory = new(start);
+                 directory is not null;
+                 directory = directory.Parent)
+            {
+                foreach (string candidate in candidates)
+                {
+                    string full = Path.Combine(directory.FullName, candidate);
+                    if (File.Exists(full))
+                        return full;
+                }
+            }
+        }
+        throw new InvalidOperationException(
+            what + " was not found above " +
+            string.Join(" or ", starts) +
+            "; " + why + ", so it has to be findable from the plugin under "
+            + "test.");
+    }
 
     /// <summary>
     /// Constructs the three spine contracts (<c>AnchoredPatternDto</c>,

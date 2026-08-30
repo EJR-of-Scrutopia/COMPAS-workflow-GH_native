@@ -304,11 +304,11 @@ namespace Ananke.COMPAS.Native.Components
                 "Deconstruct",
                 "Deconstruct",
                 "Extract the geometry of one solved FD or TNA Result: " +
-                "thrust and form lines, supports, loads, reactions and " +
-                "columns. Monitor carries the numbers and Skin the cells. " +
-                "Reciprocal-only streams (Thrust Mesh, Form Lines) come out " +
-                "empty for FD.",
-                ComponentCategories.Visualise,
+                "thrust, form and force lines, supports, loads, reactions " +
+                "and columns. Monitor carries the numbers and Skin the " +
+                "cells. Reciprocal-only streams (Thrust Mesh, Form Lines, " +
+                "Force Lines) come out empty for FD.",
+                ComponentCategories.Read,
                 "result_breakdown")
         {
             // Deconstruct is a data boundary, not a renderer: Display owns
@@ -436,6 +436,20 @@ namespace Ananke.COMPAS.Native.Components
                 "The column feet on the ground, branched exactly as Columns; "
                     + "a shared foot appears once in its tree.",
                 GH_ParamAccess.tree);
+            // APPENDED, and it has to stay appended: every slot above is an
+            // index some saved definition's wire already sits on, so a new
+            // port anywhere but the end would move one of them silently.
+            parameters.AddLineParameter(
+                "Force Lines",
+                "FCL",
+                "The reciprocal FORCE diagram's edges, branched and ordered "
+                    + "exactly as Member Lines and Form Lines, so branch {i} "
+                    + "item [k] is the same member in all three. This is the "
+                    + "force polygon at its OWN coordinates: Display lays a "
+                    + "copy of it out beside the model to draw, and this "
+                    + "hands back the diagram itself. Empty for FD, which "
+                    + "has no reciprocal diagram.",
+                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -554,6 +568,14 @@ namespace Ananke.COMPAS.Native.Components
                         .Select(item => (Point(item.Point), Vector(item.Vector)))
                         .ToArray();
                 }
+
+                // The force diagram, on the SAME rows as the form diagram
+                // above. Read from the Result rather than from the locals of
+                // the branch above so the rule "one line per member row, at
+                // the force graph's own coordinates, nothing for FD" is one
+                // method the harness can drive without a Result the whole
+                // component would accept.
+                Line[] forceLines = ForceLines(result, members);
 
                 // ---- grouping ----------------------------------------------
                 // The principal lines this Result carries, resolved upstream by
@@ -681,6 +703,7 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataTree(10, OutputTree.Lines(columnTrees));
                 data.SetDataTree(11, OutputTree.Points(headTrees));
                 data.SetDataTree(12, OutputTree.Points(feetTrees));
+                data.SetDataTree(13, OutputTree.Lines(ByBar(forceLines)));
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · " +
                     $"{memberLines.Length} members";
@@ -888,6 +911,68 @@ namespace Ananke.COMPAS.Native.Components
             return new Line(Point(start), Point(end));
         }
 
+        /// <summary>
+        /// The reciprocal FORCE diagram, one line per member row and in the
+        /// same order, so it branches beside Member Lines and Form Lines
+        /// item for item.
+        ///
+        /// This is the diagram at its own coordinates. Display draws a copy
+        /// laid out beside the model, which is a drawing decision and takes
+        /// a Gap input this component does not have; what travels down a
+        /// wire is the polygon itself, which is what a bake or a measurement
+        /// wants.
+        ///
+        /// Empty for anything that is not a TNA Result: FD carries no
+        /// reciprocal diagram at all. The edge-state lookup is rebuilt here
+        /// rather than shared with the caller, which costs one dictionary
+        /// over the members per solve and buys a rule that can be driven on
+        /// its own, with a Result and nothing else.
+        /// </summary>
+        internal static Line[] ForceLines(
+            ResultDto result,
+            IReadOnlyList<ResultTables.MemberRow> members)
+        {
+            if (!ResultTables.IsTna(result))
+                return Array.Empty<Line>();
+            var stateById = new Dictionary<int, TnaEdgeStateDto>();
+            foreach (TnaEdgeStateDto state in result.EdgeStates)
+                stateById[state.Id] = state;
+            IReadOnlyDictionary<int, TnaGraphEdgeDto> edges =
+                result.ForceGraph!.Edges.ToDictionary(edge => edge.Id);
+            IReadOnlyDictionary<int, Point3Dto> points =
+                result.ForceGraph!.Vertices.ToDictionary(
+                    vertex => vertex.Id,
+                    vertex => vertex.Point);
+            var lines = new Line[members.Count];
+            for (int index = 0; index < members.Count; index++)
+                lines[index] = ForceLine(stateById[members[index].Id], edges, points);
+            return lines;
+        }
+
+        /// <summary>
+        /// <see cref="FormLine"/>'s twin on the other diagram: the force
+        /// edge a member's state NAMES, not the edge at its own index.
+        /// </summary>
+        private static Line ForceLine(
+            TnaEdgeStateDto state,
+            IReadOnlyDictionary<int, TnaGraphEdgeDto> edges,
+            IReadOnlyDictionary<int, Point3Dto> points)
+        {
+            if (!edges.TryGetValue(state.ForceEdgeId, out TnaGraphEdgeDto? edge))
+            {
+                throw new InvalidOperationException(
+                    $"Member {state.Id} references unknown force edge " +
+                    $"{state.ForceEdgeId}.");
+            }
+            if (!points.TryGetValue(edge.U, out Point3Dto? start) ||
+                !points.TryGetValue(edge.V, out Point3Dto? end))
+            {
+                throw new InvalidOperationException(
+                    $"Force edge {edge.Id} references an unknown force vertex.");
+            }
+            return new Line(Point(start), Point(end));
+        }
+
         /// <summary>Copied from <c>ResultBreakdownComponent.MemberLines</c>.</summary>
         private static Line[] MemberLines(EquilibriumResultDto equilibrium)
         {
@@ -934,7 +1019,7 @@ namespace Ananke.COMPAS.Native.Components
                 "Style",
                 "Bundle a display preset, weight scale, and vector scale " +
                 "for the Display component.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "diagram_style")
         {
         }
@@ -1063,21 +1148,11 @@ namespace Ananke.COMPAS.Native.Components
                 "reciprocal force diagram, and mapped " +
                 "load/reaction/residual vectors, with one style preset, " +
                 "auto-scaling, and Elements/Metric filters. The shaded " +
-                "thrust mesh is TNA Solve's preview; here it is data only.",
-                ComponentCategories.Visualise,
+                "thrust mesh is TNA Solve's preview; the geometry itself " +
+                "is Deconstruct's.",
+                ComponentCategories.Read,
                 "graphic_diagram_display")
         {
-            // This component draws element lines only. Grasshopper's
-            // default red preview material on the geometry outputs is what
-            // made the thrust surface clash with every element colour, so
-            // all geometry outputs stay hidden; their data remains
-            // available to every downstream component, and the shaded
-            // mesh preview lives on TNA Solve alone.
-            for (int index = 0; index <= 4; index++)
-            {
-                if (Params.Output[index] is IGH_PreviewObject preview)
-                    preview.Hidden = true;
-            }
         }
 
         public override Guid ComponentGuid =>
@@ -1109,9 +1184,9 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddTextParameter(
                 "Elements",
                 "E",
-                "Which streams to build and draw: thrust, force, loads, " +
-                "reactions, residuals. Residuals draw in the viewport " +
-                "only; every other selected stream also feeds its output.",
+                "Which streams to draw: thrust, force, loads, reactions, " +
+                "residuals. Nothing here is emitted; wire Deconstruct for " +
+                "the lines and the vectors themselves.",
                 GH_ParamAccess.list);
             parameters[2].Optional = true;
             parameters.AddTextParameter(
@@ -1149,43 +1224,13 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
-            parameters.AddMeshParameter(
-                "Thrust Mesh",
-                "TM",
-                "Resolved funicular mesh. Empty unless Elements includes " +
-                "thrust on a TNA result.",
-                GH_ParamAccess.item);
-            parameters.AddLineParameter(
-                "Thrust Lines",
-                "TL",
-                "Spatial thrust-network edges (or FD member axes). Empty " +
-                "unless Elements includes thrust.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
-                "Force Lines",
-                "FCL",
-                "Reciprocal force-diagram edges, laid out beside the form " +
-                "diagram. Empty unless Elements includes force on a TNA " +
-                "result.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
-                "Load Lines",
-                "LL",
-                "Scaled applied-load vectors. Empty unless Elements " +
-                "includes loads.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
-                "Reaction Lines",
-                "RL",
-                "Scaled support-reaction vectors. Empty unless Elements " +
-                "includes reactions.",
-                GH_ParamAccess.list);
-            parameters.AddTextParameter(
-                "Report",
-                "Report",
-                "Auto-scale choices, drawn-element counts, and any " +
-                "unavailable elements or metrics.",
-                GH_ParamAccess.item);
+            // None. Display draws; the data it used to hand back is
+            // Deconstruct's (Member Lines, Form Lines, the load and
+            // reaction points and vectors) and Diagnose's (the report),
+            // branched and ordered the way every other reader of a Result
+            // gets it. Two components emitting the same lines under two
+            // names is two things to keep in step and one of them to be
+            // wrong.
         }
 
         protected override void BeforeSolveInstance()
@@ -1262,16 +1307,26 @@ namespace Ananke.COMPAS.Native.Components
                     result.Mappings is not null &&
                     result.AnalysisPlane is not null;
 
-                var report = new List<string>();
-                if (!string.IsNullOrEmpty(result.Report))
-                    report.Add(result.Report);
+                // The readings that are DISPLAY'S OWN, raised where an
+                // author will meet them. The solver's own report is
+                // Diagnose's and Diagnose carries the no-reciprocal-diagram
+                // line too, but the metric fallback is a fact about THIS
+                // component's Metric input: it never reaches the Result, so
+                // no other component can say it. Asking for H on an FD
+                // Result and being drawn F without a word was the one thing
+                // here that could mislead in silence.
                 if (!isTna)
-                    report.Add("FD result: no reciprocal diagram.");
-                if (!isTna && metric == "H")
                 {
-                    report.Add(
-                        "Metric H unavailable for FD result; used F " +
-                        "magnitude.");
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Remark,
+                        "FD result: no reciprocal diagram.");
+                    if (metric == "H")
+                    {
+                        AddRuntimeMessage(
+                            GH_RuntimeMessageLevel.Remark,
+                            "Metric H unavailable for FD result; used F " +
+                            "magnitude.");
+                    }
                 }
 
                 string preset = style is null
@@ -1304,33 +1359,26 @@ namespace Ananke.COMPAS.Native.Components
                     : 1.0;
 
                 double effectiveVectorScale;
-                string vectorScaleSource;
+                bool vectorScaleIsAuto = false;
                 if (vectorScaleInput > 0.0)
                 {
                     effectiveVectorScale = vectorScaleInput;
-                    vectorScaleSource = "explicit";
                 }
                 else if (style is not null && style.VectorScale > 0.0)
                 {
                     effectiveVectorScale = style.VectorScale;
-                    vectorScaleSource = "style";
                 }
                 else
                 {
                     effectiveVectorScale = autoVectorScale;
-                    vectorScaleSource = "auto";
+                    vectorScaleIsAuto = true;
                 }
-                report.Add(
-                    $"Weight x{effectiveWeight:G4}; vector scale " +
-                    $"{vectorScaleSource} x{effectiveVectorScale:G4} " +
-                    $"(diagonal {diag:G4}, max action {maxAction:G4}).");
 
                 var thrustEdges = new List<MemberEdge>();
                 var forceEdges = new List<MemberEdge>();
                 var loadLines = new List<Line>();
                 var reactionLines = new List<Line>();
                 var residualLines = new List<Line>();
-                Mesh thrustMesh = new();
 
                 if (isTna)
                 {
@@ -1340,7 +1388,6 @@ namespace Ananke.COMPAS.Native.Components
 
                     if (elements.Contains("thrust"))
                     {
-                        thrustMesh = ThrustMesh(result);
                         foreach (TnaEdgeStateDto state in states)
                         {
                             thrustEdges.Add(new MemberEdge(
@@ -1501,19 +1548,17 @@ namespace Ananke.COMPAS.Native.Components
                     ? BoundingBox.Empty
                     : new BoundingBox(previewPoints);
 
-                report.Add(
-                    $"Drawn · thrust {thrustEdges.Count}, force " +
-                    $"{forceEdges.Count}, loads {loadLines.Count}, " +
-                    $"reactions {reactionLines.Count}, residuals " +
-                    $"{residualLines.Count}.");
-
-                data.SetData(0, thrustMesh);
-                data.SetDataList(1, thrustEdges.Select(edge => edge.Line));
-                data.SetDataList(2, forceEdges.Select(edge => edge.Line));
-                data.SetDataList(3, loadLines);
-                data.SetDataList(4, reactionLines);
-                data.SetData(5, string.Join(Environment.NewLine, report));
-                Message = $"{result.Solver.ToUpperInvariant()} · {preset}";
+                // The chin carries the two scales the drawing was made at,
+                // because they are the only readings this component owns
+                // and nothing else emits them now the outputs are gone. A
+                // vector scale the component chose for itself says "auto":
+                // an author comparing two Displays needs to know which of
+                // the two numbers was theirs.
+                Message =
+                    $"{result.Solver.ToUpperInvariant()} · {preset} · " +
+                    $"thrust x{effectiveWeight:G3} · vectors x" +
+                    $"{effectiveVectorScale:G3}" +
+                    (vectorScaleIsAuto ? " auto" : string.Empty);
             }
             catch (Exception error)
             {
@@ -1614,99 +1659,6 @@ namespace Ananke.COMPAS.Native.Components
                 StringComparison.OrdinalIgnoreCase);
             bool tension = positiveTension ? force > 0.0 : force < 0.0;
             return tension ? "tension" : "compression";
-        }
-
-        /// <summary>Copied from <c>DeconstructComponent.ThrustMesh</c>.</summary>
-        private static Mesh ThrustMesh(ResultDto result)
-        {
-            EquilibriumResultDto equilibrium = result.Equilibrium!;
-            TnaDiagramGraphDto formGraph = result.FormGraph!;
-            TnaMappingsDto mappings = result.Mappings!;
-
-            Dictionary<int, int> formToEquilibrium = mappings
-                .SourceVertexToFormVertex
-                .Where(item =>
-                    item.FormVertexId.HasValue &&
-                    item.EquilibriumVertexId.HasValue)
-                .GroupBy(item => item.FormVertexId!.Value)
-                .ToDictionary(
-                    group => group.Key,
-                    group =>
-                    {
-                        int[] equilibriumIds = group
-                            .Select(item => item.EquilibriumVertexId!.Value)
-                            .Distinct()
-                            .ToArray();
-                        if (equilibriumIds.Length != 1)
-                        {
-                            throw new InvalidOperationException(
-                                $"Form vertex {group.Key} maps to multiple " +
-                                "equilibrium vertices.");
-                        }
-                        return equilibriumIds[0];
-                    });
-
-            var mesh = new Mesh();
-            var formToMesh = new Dictionary<int, int>();
-            foreach (TnaGraphVertexDto vertex in
-                     formGraph.Vertices.OrderBy(item => item.Id))
-            {
-                if (!formToEquilibrium.TryGetValue(
-                        vertex.Id,
-                        out int equilibriumId))
-                {
-                    throw new InvalidOperationException(
-                        $"Form vertex {vertex.Id} has no explicit " +
-                        "equilibrium vertex mapping.");
-                }
-                if (equilibriumId < 0 ||
-                    equilibriumId >= equilibrium.Vertices.Count)
-                {
-                    throw new InvalidOperationException(
-                        $"Form vertex {vertex.Id} has no equilibrium vertex.");
-                }
-                formToMesh[vertex.Id] = mesh.Vertices.Add(
-                    Point(equilibrium.Vertices[equilibriumId]));
-            }
-
-            foreach (TnaGraphFaceDto face in
-                     formGraph.Faces.OrderBy(item => item.Id))
-            {
-                int[] vertices = face.Vertices
-                    .Select(id => formToMesh.TryGetValue(id, out int meshId)
-                        ? meshId
-                        : throw new InvalidOperationException(
-                            $"Form face {face.Id} references unknown " +
-                            $"vertex {id}."))
-                    .ToArray();
-                if (vertices.Length == 3)
-                {
-                    mesh.Faces.AddFace(vertices[0], vertices[1], vertices[2]);
-                }
-                else if (vertices.Length == 4)
-                {
-                    mesh.Faces.AddFace(
-                        vertices[0],
-                        vertices[1],
-                        vertices[2],
-                        vertices[3]);
-                }
-                else
-                {
-                    for (int index = 1; index < vertices.Length - 1; index++)
-                    {
-                        mesh.Faces.AddFace(
-                            vertices[0],
-                            vertices[index],
-                            vertices[index + 1]);
-                    }
-                }
-            }
-
-            if (mesh.Faces.Count > 0)
-                mesh.Normals.ComputeNormals();
-            mesh.Compact();
-            return mesh;
         }
 
         /// <summary>

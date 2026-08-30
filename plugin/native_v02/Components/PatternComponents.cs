@@ -69,7 +69,7 @@ public sealed class ArmadilloDualComponent :
             "voussoir cells, every joint crossing the thrust. Refuses " +
             "when the Result carries neither member forces nor a " +
             "form/force diagram pair to align with.",
-            ComponentCategories.Delivery,
+            ComponentCategories.Deliver,
             "armadillo_dual")
     {
     }

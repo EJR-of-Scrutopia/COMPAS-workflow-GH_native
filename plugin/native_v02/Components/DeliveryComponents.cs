@@ -34,7 +34,13 @@ public sealed record ExportInputs(
     string? CellWarning,
     bool Live,
     string Studio,
-    double Radius);
+    double Radius,
+    // Which of the two the cells came from, in the word the sidecar's own
+    // "pattern" key carries: "authored" for cells somebody wired, "faces"
+    // for the ones Export made from the Result's own mesh. The studio reads
+    // this to know whether anyone chose the cutting pattern, so the fallback
+    // must not claim to have been authored.
+    string TessellationPattern);
 
 /// <summary>
 /// One authored cutting cell, already reduced to the plan outline the
@@ -45,6 +51,21 @@ public sealed record ExportInputs(
 public sealed record TessellationCell(
     int Course,
     IReadOnlyList<double[]> Outline);
+
+/// <summary>
+/// Where one solve's cutting cells come from.
+/// </summary>
+internal enum CellSource
+{
+    /// <summary>Cells wired on the canvas, from Skin or from anywhere.</summary>
+    Wired,
+
+    /// <summary>The Result's own thrust-mesh faces, one cell each.</summary>
+    Faces,
+
+    /// <summary>Neither, so the set carries no tessellation sidecar.</summary>
+    None,
+}
 
 /// <summary>
 /// The one delivery boundary for a solved Result, and the Result decides
@@ -63,11 +84,27 @@ public sealed class ExportComponent :
     private const string DefaultName = "ananke-export";
     private const double DefaultColumnRadius = 0.05;
 
+    // The two words the sidecar's "pattern" key can carry. Cells somebody
+    // wired were authored; cells Export built from the Result's own faces
+    // were not, and saying they were told the studio a cutting pattern had
+    // been chosen when nobody had chosen one.
+    private const string AuthoredPattern = "authored";
+    private const string FacesPattern = "faces";
+
     // A Button feeding Write is only True for the press solve; the release
     // immediately triggers a second solve with Write false. Latching the
     // last written set keeps the evidence of the one-shot write on the
     // component instead of wiping it milliseconds after it happened.
     private IReadOnlyList<string>? _lastWritten;
+
+    // The default tessellation is a pure function of the Result, and both
+    // phases of one solve call TryReadInputs against the same Result
+    // instance, so without this the thrust mesh, the face polylines and the
+    // whole reduction ran twice for a set nobody had wired a cell to. Keyed
+    // on the reference: a different Result is a different object, and the
+    // same object is the same mesh. Both phases run on the solve thread, so
+    // there is nothing here for a lock to protect.
+    private DefaultTessellation? _defaultTessellation;
 
     // One uploader per component, so two Exports on a canvas debounce and
     // retry independently. Its callback arrives on a thread-pool thread,
@@ -88,6 +125,13 @@ public sealed class ExportComponent :
     // moved. Held until Live is seen False and then True again, which is
     // a deliberate act. Read on the first solve, not in the constructor,
     // because the archive is read after the object is built.
+    //
+    // Gated on the INPUT side only. The hold's whole cause is an archived
+    // wire landing on an input this component then obeys, which an
+    // output-side change cannot do: Export's own outputs went from six to
+    // two on the surface rework with its nine inputs untouched, and holding
+    // on that would have held Live on every definition in existence for a
+    // change that cannot have moved a single input wire.
     private bool _liveHoldRead;
     private bool _liveHeld;
 
@@ -96,10 +140,10 @@ public sealed class ExportComponent :
             "Export",
             "Export",
             "Write everything a solved Result can be, contract and " +
-            "COMPAS always, a tessellation sidecar when cells are wired, " +
-            "a columns mesh when the Result carries columns, and push " +
-            "the set live to the studio.",
-            ComponentCategories.Delivery,
+            "COMPAS always, the tessellation sidecar always, from wired " +
+            "cells or from the Result's own faces, a columns mesh when the " +
+            "Result carries columns, and push the set live to the studio.",
+            ComponentCategories.Deliver,
             "export")
     {
     }
@@ -130,6 +174,12 @@ public sealed class ExportComponent :
     public override void RemovedFromDocument(GH_Document document)
     {
         _uploader?.Dispose();
+        // And the cached default tessellation goes with it. It holds a whole
+        // ResultDto (equilibrium, form and force graphs, RawWire) plus the
+        // cells prepared from it, and a deleted component has no solve
+        // coming to replace it, so without this every Export ever placed
+        // keeps one solved net alive for the rest of the session.
+        _defaultTessellation = null;
         base.RemovedFromDocument(document);
     }
 
@@ -276,49 +326,30 @@ public sealed class ExportComponent :
         GH_OutputParamManager parameters)
     {
         parameters.AddTextParameter(
-            "Contract JSON",
-            "CJ",
-            "The portable native contract, always produced.",
-            GH_ParamAccess.item);
+            "JSON",
+            "J",
+            "Every JSON this Result can be, one item per kind and in the " +
+            "plan's order: the portable contract and the COMPAS document " +
+            "always, the bench.tessellation/1 sidecar whenever there are " +
+            "cells, and the bench.columns/1 mesh when the Mould block " +
+            "carries columns. A kind that is absent, or that failed, is " +
+            "simply not in the list, and every text names itself, so a " +
+            "reader knows what each item is without counting slots: the " +
+            "contract by its kind and schemaVersion, the COMPAS document " +
+            "by its compasVersion and the dtype inside each diagram it " +
+            "carries, the tessellation and the columns mesh by their " +
+            "schema.",
+            GH_ParamAccess.list);
         parameters.AddTextParameter(
-            "COMPAS JSON",
-            "MJ",
-            "The native COMPAS json_dumps geometry the worker's " +
-            "export.compas command produces; empty, with a warning, when " +
-            "the worker could not produce it, and the rest of the export " +
-            "stands.",
-            GH_ParamAccess.item);
-        parameters.AddTextParameter(
-            "Tessellation JSON",
-            "TJ",
-            "The studio's bench.tessellation/1 authored cutting sidecar; " +
-            "empty unless Cells are wired.",
-            GH_ParamAccess.item);
-        parameters.AddTextParameter(
-            "Columns JSON",
-            "KJ",
-            "The columns mesh, one prism per column member, with the " +
-            "members themselves beside it; empty unless the Result " +
-            "carries columns.",
-            GH_ParamAccess.item);
-        parameters.AddTextParameter(
-            "Written",
-            "W",
-            "The most recent files this component wrote this session, " +
-            "one per line, so a one-shot Button write stays visible " +
-            "after release; empty until a write happens.",
-            GH_ParamAccess.item);
-        parameters.AddTextParameter(
-            "Uploaded",
-            "U",
-            "Where the live push stands, one line per kind: " +
-            LiveUploader.NothingSentYet + " before the first send; " +
-            "sending while a set is waiting out the debounce or on the " +
-            "wire; then stored, refused, deferred or failed, per kind. " +
-            "Unchanged says the set matched the last one sent and was " +
-            "not sent again; held says the file's ports moved when it " +
-            "was opened and Live is waiting to be set off and on; Live " +
-            "is off says so while Live is False.",
+            "Status",
+            "ST",
+            "What this solve did, one per line. written: <path> per file " +
+            "of the most recent write, or written: nothing; then live: " +
+            "<kind>: <outcome> per kind, or live: off while Live is " +
+            "False, live: sending while a set is waiting out the debounce " +
+            "or on the wire, and a live: held line when the file's ports " +
+            "moved on load and Live is waiting to be set off and on; then " +
+            "any warning this solve raised, in its own words.",
             GH_ParamAccess.item);
     }
 
@@ -345,6 +376,7 @@ public sealed class ExportComponent :
                         CloneResult(pre!.Result),
                         pre.Cells,
                         pre.CellWarning,
+                        pre.TessellationPattern,
                         unitFactor,
                         pre.Radius,
                         CancelToken),
@@ -387,6 +419,7 @@ public sealed class ExportComponent :
                         CloneResult(inputs!.Result),
                         inputs.Cells,
                         inputs.CellWarning,
+                        inputs.TessellationPattern,
                         ResolveUnitFactor(),
                         inputs.Radius,
                         CancellationToken.None)
@@ -490,42 +523,19 @@ public sealed class ExportComponent :
                 }
             }
 
-            string contractJson = string.Empty;
-            string compasJson = string.Empty;
-            string tessellationJson = string.Empty;
-            string columnsJson = string.Empty;
-            foreach ((string kind, string json) in taskResult.Payloads)
-            {
-                switch (kind)
-                {
-                    case "contract":
-                        contractJson = json;
-                        break;
-                    case "compas":
-                        compasJson = json;
-                        break;
-                    case "tessellation":
-                        tessellationJson = json;
-                        break;
-                    case "columns":
-                        columnsJson = json;
-                        break;
-                }
-            }
-
             // The hold is read once, on the first solve after the archive
             // was read, and cleared by a solve that sees Live False.
             if (!_liveHoldRead)
             {
                 _liveHoldRead = true;
-                _liveHeld = PortsMovedOnLoad;
+                _liveHeld = InputPortsMovedOnLoad;
             }
 
             // Enqueued here and never in InPreSolve: a send is a side
             // effect on the studio, the pre phase runs once per branch and
             // can be cancelled, and the uploader is not the solve thread's
             // to drive twice.
-            string uploaded = "Live is off";
+            string uploaded = "off";
             if (!inputs.Live)
             {
                 // Live off means nothing is sent, including a set already
@@ -546,7 +556,16 @@ public sealed class ExportComponent :
             else
             {
                 LiveUploader uploader = EnsureUploader();
-                if (nameIsOneSegment)
+                // Why nothing was enqueued this solve, where nothing was.
+                // Live is on and the uploader still holds the LAST set's
+                // outcome, so reporting that outcome would say "live:
+                // stored" on a solve that sent nothing at all, one line
+                // under a Warning saying nothing was sent. Null while a set
+                // did go out.
+                string? notSent = nameIsOneSegment
+                    ? null
+                    : "name refused";
+                if (notSent is null)
                 {
                     uploader.Enqueue(new LiveUploader.Pending(
                         inputs.Studio,
@@ -558,7 +577,9 @@ public sealed class ExportComponent :
                 // and the component would print one set's failure with
                 // the other set's flag.
                 LiveUploader.Snapshot state = uploader.Current;
-                uploaded = Display(state);
+                uploaded = notSent is null
+                    ? Display(state)
+                    : "nothing sent this solve (" + notSent + ")";
                 // The upload is best effort: the files and the JSON
                 // outputs stand whatever the studio said, so a refusal, a
                 // deferral or a transport failure is a Warning here and
@@ -567,7 +588,11 @@ public sealed class ExportComponent :
                 // component's reading of its prose. Only an outcome that
                 // has landed is worth a Warning; a set still going carries
                 // the previous verdict and nothing to say about this one.
-                if (state.Failed && state.Phase == LiveUploader.Phase.Done)
+                // A solve that enqueued nothing has no outcome of its own
+                // to report, and the previous set's failure was reported on
+                // the solve it happened.
+                if (notSent is null &&
+                    state.Failed && state.Phase == LiveUploader.Phase.Done)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
@@ -575,18 +600,46 @@ public sealed class ExportComponent :
                 }
             }
 
-            data.SetData(0, contractJson);
-            data.SetData(1, compasJson);
-            data.SetData(2, tessellationJson);
-            data.SetData(3, columnsJson);
-            data.SetData(
-                4,
-                _lastWritten is null
-                    ? string.Empty
-                    : string.Join(Environment.NewLine, _lastWritten));
-            data.SetData(5, uploaded);
+            // One item per kind, in ExportPlan.Kinds order, each naming
+            // itself: a reader tells them apart by reading one, not by
+            // counting slots, and a kind that is absent or that failed is
+            // simply not in the list.
+            var payloads = new List<string>(taskResult.Payloads.Count);
+            foreach ((string _, string json) in taskResult.Payloads)
+                payloads.Add(json);
+
+            // What this solve did, in lines. The written list is the
+            // session's latest rather than this solve's, so a one-shot
+            // Button write stays visible after the button releases; the
+            // live lines are the uploader's own, one per kind; and the
+            // warnings are repeated here because a bubble is not a value
+            // and the chin holds one line.
+            var status = new List<string>();
+            if (_lastWritten is null || _lastWritten.Count == 0)
+            {
+                status.Add("written: nothing");
+            }
+            else
+            {
+                foreach (string written in _lastWritten)
+                    status.Add("written: " + written);
+            }
+            foreach (string line in uploaded
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Split('\n'))
+            {
+                status.Add("live: " + line);
+            }
+            foreach (string warning in
+                     RuntimeMessages(GH_RuntimeMessageLevel.Warning))
+            {
+                status.Add(warning);
+            }
+
+            data.SetDataList(0, payloads);
+            data.SetData(1, string.Join(Environment.NewLine, status));
             Message =
-                $"{taskResult.Payloads.Count} kinds · {FirstLine(uploaded)}" +
+                $"{taskResult.Payloads.Count} kinds · live {FirstLine(uploaded)}" +
                 (wroteThisSolve ? " written" : string.Empty);
         }
         catch (Exception error)
@@ -737,6 +790,7 @@ public sealed class ExportComponent :
         string? cellWarning = null;
         var errors = new List<string>(resultValue.Validate());
         var notes = new List<string>();
+        var remarks = new List<string>();
         if (writeInput && string.IsNullOrWhiteSpace(pathInput))
         {
             // A missing disk target is not a reason to lose the solve.
@@ -747,7 +801,24 @@ public sealed class ExportComponent :
             // only ever a Warning.
             notes.Add("Write is on but Path is blank; nothing written.");
         }
-        if (cellInput.Count > 0)
+        // The faces are only read when they might be needed, and never
+        // when cells are wired: rebuilding a thrust mesh on every solve to
+        // throw it away is the kind of cost that turns a slider into a
+        // slideshow.
+        DefaultTessellation? fallback = null;
+        int faceCount = 0;
+        if (cellInput.Count == 0 && ResultTables.IsTna(resultValue))
+        {
+            fallback = DefaultTessellationFor(resultValue);
+            faceCount = fallback.FaceCount;
+            if (fallback.Note is not null)
+                notes.Add(fallback.Note);
+        }
+        CellSource cellSource = ChooseCells(
+            cellInput.Count, courseInput.Count, faceCount, out string? cellRemark);
+        if (cellRemark is not null)
+            remarks.Add(cellRemark);
+        if (cellSource == CellSource.Wired)
         {
             if (courseInput.Count != 0 &&
                 courseInput.Count != cellInput.Count)
@@ -772,6 +843,21 @@ public sealed class ExportComponent :
                 cells = PrepareTessellationCells(
                     cellInput, courseInput, errors, out cellWarning);
             }
+        }
+        else if (cellSource == CellSource.Faces && fallback is not null)
+        {
+            // Nothing here can reach the errors list. Nobody wired these
+            // cells and nobody asked for this tessellation: it is the
+            // courtesy the studio's build animation needs, so a face of the
+            // Result's own mesh that will not reduce to a cell is skipped
+            // and counted, never allowed to cost the contract, the COMPAS
+            // document, the columns mesh, the write and the live push. With
+            // no face left the list is empty, hasCells is false, and the
+            // kind is simply absent, which is the shape every other absent
+            // kind already has.
+            cells = fallback.Cells;
+            foreach (string remark in fallback.Remarks)
+                remarks.Add(remark);
         }
 
         double radius = radiusInput;
@@ -814,6 +900,8 @@ public sealed class ExportComponent :
         {
             foreach (string note in notes)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, note);
+            foreach (string remark in remarks)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, remark);
         }
 
         inputs = new ExportInputs(
@@ -825,7 +913,8 @@ public sealed class ExportComponent :
             cellWarning,
             liveInput,
             studio,
-            radius);
+            radius,
+            PatternFor(cellSource));
         return true;
     }
 
@@ -849,6 +938,222 @@ public sealed class ExportComponent :
         }
         detail = string.Join(", ", offending);
         return offending.Count > 0;
+    }
+
+    /// <summary>
+    /// Which cells this solve exports, and what to say about the ones it
+    /// was not given. Pure, so the rule is measured without a mesh.
+    ///
+    /// Wired cells always win: they are what the author authored, and a
+    /// default that could override them would make Skin's course bands
+    /// disappear on a solve nobody touched. With none wired, the Result's
+    /// own faces are a tessellation already, so Export builds it rather
+    /// than write a set with a hole in it, and the sidecar is therefore
+    /// present for every TNA Result.
+    ///
+    /// Courses without Cells is ignored, and said out loud: a course
+    /// belongs to a cell, there are no authored cells for it to belong to,
+    /// and the faces Export falls back on are all course 0.
+    /// </summary>
+    internal static CellSource ChooseCells(
+        int wiredCells,
+        int wiredCourses,
+        int faceCount,
+        out string? remark)
+    {
+        remark = null;
+        if (wiredCells > 0)
+            return CellSource.Wired;
+        // Only where a default tessellation is actually coming: the
+        // sentence describes the thing the courses were ignored in favour
+        // of, and on a Result with no faces at all (an FD Result) that
+        // thing is never built.
+        if (wiredCourses > 0 && faceCount > 0)
+        {
+            remark =
+                "Courses is wired with no Cells, so it was ignored: a " +
+                "course belongs to a cell, and the tessellation Export " +
+                "builds from the Result's own faces is one cell per face " +
+                "at course 0.";
+        }
+        return faceCount > 0 ? CellSource.Faces : CellSource.None;
+    }
+
+    /// <summary>
+    /// The word the sidecar's "pattern" key carries for a set of cells that
+    /// came from this source. Pure, and separate from
+    /// <see cref="ChooseCells"/>, so the decision and its consequence can
+    /// both be driven without a mesh: an author's cells were authored and
+    /// the Result's own faces were not, and the studio reads the difference
+    /// to know whether a cutting pattern was ever chosen. The None case
+    /// never reaches the sidecar, since no tessellation kind is built for
+    /// it; it answers with the fallback's word rather than inventing a
+    /// third.
+    /// </summary>
+    internal static string PatternFor(CellSource source) =>
+        source == CellSource.Wired ? AuthoredPattern : FacesPattern;
+
+    /// <summary>
+    /// One Result's default tessellation and everything the component has
+    /// to say about it, built once and read by both phases of the solve.
+    /// </summary>
+    private sealed record DefaultTessellation(
+        ResultDto Result,
+        int FaceCount,
+        IReadOnlyList<TessellationCell> Cells,
+        IReadOnlyList<string> Remarks,
+        string? Note);
+
+    /// <summary>
+    /// The default tessellation for this Result, off the cache when the
+    /// Result is the one it was built from. Reference equality, not the
+    /// record's own: comparing two solved nets field by field costs more
+    /// than rebuilding the mesh it was meant to save.
+    /// </summary>
+    private DefaultTessellation DefaultTessellationFor(ResultDto result)
+    {
+        if (_defaultTessellation is DefaultTessellation cached &&
+            ReferenceEquals(cached.Result, result))
+        {
+            return cached;
+        }
+        DefaultTessellation built = BuildDefaultTessellation(result);
+        _defaultTessellation = built;
+        return built;
+    }
+
+    /// <summary>
+    /// The Result's own faces as cutting cells: Skin's rule through Skin's
+    /// own code, one closed polyline per face in face order, read back as
+    /// plain corners and reduced to plan outlines at course 0.
+    ///
+    /// A Result whose form graph will not rebuild into a mesh is Skin's to
+    /// report and not a reason to lose the whole export: it comes back as a
+    /// note, with no faces and no cells, and the set goes out without a
+    /// tessellation.
+    /// </summary>
+    private static DefaultTessellation BuildDefaultTessellation(
+        ResultDto result)
+    {
+        Mesh mesh;
+        try
+        {
+            mesh = DeconstructComponent.ThrustMesh(result);
+        }
+        catch (Exception meshError)
+        {
+            return new DefaultTessellation(
+                result,
+                0,
+                Array.Empty<TessellationCell>(),
+                Array.Empty<string>(),
+                "The thrust mesh could not be rebuilt, so no tessellation " +
+                "was built from the Result's own faces: " +
+                meshError.GetBaseException().Message);
+        }
+        IReadOnlyList<PolylineCurve> outlines =
+            SkinComponent.FacePolylines(mesh);
+        var corners = new List<Point3d[]>(outlines.Count);
+        foreach (PolylineCurve outline in outlines)
+        {
+            // Every face is represented, including one whose polyline will
+            // not read back, so the skipped count stays the difference
+            // between the faces the mesh has and the cells that came out.
+            corners.Add(outline.TryGetPolyline(out Polyline polyline)
+                ? polyline.ToArray()
+                : Array.Empty<Point3d>());
+        }
+        IReadOnlyList<TessellationCell> cells =
+            DefaultTessellationCells(corners, out int skipped);
+        var remarks = new List<string>(2);
+        if (cells.Count > 0)
+        {
+            remarks.Add(
+                "Cells is unwired, so Export tessellated the Result's own " +
+                $"{cells.Count} faces, one cell each at course 0. Wire " +
+                "Skin's Face Polylines, or cells of your own, to override " +
+                "it.");
+        }
+        if (skipped > 0)
+        {
+            remarks.Add(
+                $"{skipped} thrust-mesh faces with fewer than three plan " +
+                "corners were skipped from the default tessellation.");
+        }
+        return new DefaultTessellation(
+            result, mesh.Faces.Count, cells, remarks, null);
+    }
+
+    /// <summary>
+    /// One cell per face, in face order, every one at course 0, and the
+    /// count of the faces that gave none. A face that will not reduce to
+    /// three distinct plan corners (one vertical in plan, or carrying a
+    /// repeated vertex) is SKIPPED, never an error: an authored Cells port
+    /// is the author saying what to cut and its faults are errors, while
+    /// this tessellation was never asked for and must not cost another
+    /// kind. The survivors renumber, so the studio's keys have no holes.
+    ///
+    /// Pure, and takes corners rather than curves, so the rule is measured
+    /// in the smoke harness, which has RhinoCommon's structs but no native
+    /// core to build a Curve or a Mesh with.
+    /// </summary>
+    internal static IReadOnlyList<TessellationCell> DefaultTessellationCells(
+        IReadOnlyList<Point3d[]> faces,
+        out int skipped)
+    {
+        var prepared = new List<TessellationCell>(faces.Count);
+        foreach (Point3d[] face in faces)
+        {
+            IReadOnlyList<double[]>? outline = PlanOutline(face, out _);
+            if (outline is not null)
+                prepared.Add(new TessellationCell(0, outline));
+        }
+        skipped = faces.Count - prepared.Count;
+        return prepared;
+    }
+
+    /// <summary>
+    /// One cell's corners as the plan outline the sidecar carries: z
+    /// dropped, consecutive near-duplicates dropped, and the closing repeat
+    /// of a ring dropped because the studio closes every ring implicitly
+    /// ((i + 1) % n). Null when fewer than three distinct plan corners
+    /// survive, which is the one shape neither caller can write; whether
+    /// that is an error or a skip is the caller's to decide.
+    /// <paramref name="closedByRepeat"/> reports that the ring closed
+    /// itself, which is how the wired path tells a genuinely open cell from
+    /// a closed one.
+    /// </summary>
+    private static IReadOnlyList<double[]>? PlanOutline(
+        IEnumerable<Point3d> corners,
+        out bool closedByRepeat)
+    {
+        closedByRepeat = false;
+        var outline = new List<double[]>();
+        foreach (Point3d point in corners)
+        {
+            if (outline.Count > 0)
+            {
+                double[] last = outline[outline.Count - 1];
+                if (Math.Abs(last[0] - point.X) < 1e-9 &&
+                    Math.Abs(last[1] - point.Y) < 1e-9)
+                {
+                    continue;
+                }
+            }
+            outline.Add(new[] { point.X, point.Y });
+        }
+        if (outline.Count > 1)
+        {
+            double[] first = outline[0];
+            double[] final = outline[outline.Count - 1];
+            if (Math.Abs(first[0] - final[0]) < 1e-9 &&
+                Math.Abs(first[1] - final[1]) < 1e-9)
+            {
+                outline.RemoveAt(outline.Count - 1);
+                closedByRepeat = true;
+            }
+        }
+        return outline.Count < 3 ? null : outline;
     }
 
     /// <summary>
@@ -888,42 +1193,16 @@ public sealed class ExportComponent :
                     continue;
                 }
             }
-            var outline = new List<double[]>(polyline.Count);
-            foreach (Point3d point in polyline)
-            {
-                if (outline.Count > 0)
-                {
-                    double[] last = outline[outline.Count - 1];
-                    if (Math.Abs(last[0] - point.X) < 1e-9 &&
-                        Math.Abs(last[1] - point.Y) < 1e-9)
-                    {
-                        continue;
-                    }
-                }
-                outline.Add(new[] { point.X, point.Y });
-            }
-            // The studio closes rings implicitly ((i + 1) % n), so the
-            // closing repeat of a closed polyline is dropped, not kept.
-            if (outline.Count > 1)
-            {
-                double[] first = outline[0];
-                double[] final = outline[outline.Count - 1];
-                if (Math.Abs(first[0] - final[0]) < 1e-9 &&
-                    Math.Abs(first[1] - final[1]) < 1e-9)
-                {
-                    outline.RemoveAt(outline.Count - 1);
-                }
-                else if (!curve.IsClosed)
-                {
-                    openCells.Add(i);
-                }
-            }
-            if (outline.Count < 3)
+            IReadOnlyList<double[]>? outline =
+                PlanOutline(polyline, out bool closedByRepeat);
+            if (outline is null)
             {
                 errors.Add(
                     $"Cell {i} has fewer than 3 distinct plan corners.");
                 continue;
             }
+            if (!closedByRepeat && !curve.IsClosed)
+                openCells.Add(i);
             prepared.Add(new TessellationCell(
                 courses.Count > 0 ? courses[i] : 0,
                 outline));
@@ -970,6 +1249,7 @@ public sealed class ExportComponent :
         ResultDto result,
         IReadOnlyList<TessellationCell>? cells,
         string? cellWarning,
+        string tessellationPattern,
         double unitFactor,
         double radius,
         CancellationToken cancellationToken)
@@ -1033,8 +1313,10 @@ public sealed class ExportComponent :
                         // Pure serialisation of cells already reduced to
                         // plain numbers on the solve thread; no worker, no
                         // geometry.
-                        payloads.Add(
-                            (kind, BuildTessellationJson(cells!, unitFactor)));
+                        payloads.Add((
+                            kind,
+                            BuildTessellationJson(
+                                cells!, unitFactor, tessellationPattern)));
                         if (!string.IsNullOrEmpty(cellWarning))
                             warnings.Add(cellWarning!);
                         if (Math.Abs(unitFactor - 1.0) > 1e-12)
@@ -1278,7 +1560,8 @@ public sealed class ExportComponent :
 
     private static string BuildTessellationJson(
         IReadOnlyList<TessellationCell> cells,
-        double unitFactor)
+        double unitFactor,
+        string pattern)
     {
         var perCourse = new Dictionary<int, int>();
         var cellPayloads = new List<Dictionary<string, object?>>(cells.Count);
@@ -1298,7 +1581,12 @@ public sealed class ExportComponent :
             ["schema"] = "bench.tessellation/1",
             ["units"] = "m",
             ["domain"] = "plan",
-            ["pattern"] = "authored",
+            // AUTHORED only where somebody authored it. A sidecar built
+            // from the Result's own faces because nobody wired a cell says
+            // "faces", so the studio can tell a chosen cutting pattern from
+            // the courtesy one and never reports a face fallback as a
+            // decision.
+            ["pattern"] = pattern,
             ["cells"] = cellPayloads
         };
         // The shared wire options every other codec in this component

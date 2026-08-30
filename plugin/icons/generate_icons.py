@@ -8,6 +8,12 @@ Run from any working directory:
 
     python plugin/icons/generate_icons.py
     python plugin/icons/generate_icons.py --check
+
+--check validates the map, then re-renders every icon it lists IN MEMORY and
+refuses any file whose bytes differ. A header check alone passes a stale badge
+carrying the wrong letters, and the letters are the only thing that tells one
+badge from another inside a panel. Where a key is in both lists, the NATIVE
+entry owns the file and is the one compared.
 """
 
 from __future__ import annotations
@@ -42,15 +48,20 @@ GLYPHS: Dict[str, Tuple[str, ...]] = {
     "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
     "G": ("01111", "10000", "10000", "10111", "10001", "10001", "01111"),
     "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
     "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
     "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
     "N": ("10001", "11001", "11001", "10101", "10011", "10011", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
     "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
     "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
     "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
     "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
     "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
     "W": ("10001", "10001", "10001", "10101", "10101", "10101", "01010"),
+    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
 }
 
 
@@ -206,25 +217,52 @@ def validate_mapping(mapping: dict) -> None:
     categories = mapping.get("categories", {})
     components = mapping.get("components", [])
     native_components = mapping.get("native_components", [])
-    all_components = components + native_components
     manifest = read_manifest_components()
-    mapped_keys = [item.get("key") for item in components]
-    all_keys = [item.get("key") for item in all_components]
 
-    if len(all_keys) != len(set(all_keys)):
-        raise ValueError("icon-map.json contains duplicate component keys")
+    # The LEGACY list answers to plugin/components.toml, the old
+    # script-backed plugin's manifest: the same keys and the same
+    # subcategory, exactly as before. The NATIVE list answers to the .gha's
+    # own panels and is checked against nothing here, because the smoke
+    # harness checks it against the components themselves, which is the only
+    # thing that can say whether it is right.
+    mapped_keys = [item.get("key") for item in components]
     if set(mapped_keys) != set(manifest):
         missing = sorted(set(manifest) - set(mapped_keys))
         extra = sorted(set(mapped_keys) - set(manifest))
         raise ValueError("Icon coverage mismatch: missing={}, extra={}".format(missing, extra))
 
-    filenames: List[str] = []
-    for item in all_components:
+    for name, entries in (
+        ("components", components),
+        ("native_components", native_components),
+    ):
+        keys = [item["key"] for item in entries]
+        filenames = [item["filename"] for item in entries]
+        if len(keys) != len(set(keys)):
+            raise ValueError("{} contains duplicate component keys".format(name))
+        if len(filenames) != len(set(filenames)):
+            raise ValueError("{} contains duplicate filenames".format(name))
+
+    # A key in BOTH lists is one PNG with two readers: four native
+    # components (Loads, TNA Solve, FD Solve, Style) keep the keys the old
+    # manifest gave them, and the .gha loads the file by that name. Allowed,
+    # and the two entries must name the same file, or one list would
+    # silently overwrite a file belonging to the other.
+    native_by_key = {item["key"]: item for item in native_components}
+    for item in components:
+        twin = native_by_key.get(item["key"])
+        if twin is not None and twin["filename"] != item["filename"]:
+            raise ValueError(
+                "{} is in both lists under two filenames: {!r} and {!r}".format(
+                    item["key"], item["filename"], twin["filename"]
+                )
+            )
+
+    for index, item in enumerate(components + native_components):
+        legacy = index < len(components)
         key = item["key"]
         label = item["label"]
         category = item["category"]
         filename = item["filename"]
-        filenames.append(filename)
 
         if not re.fullmatch(r"[A-Z0-9]{2,3}", label):
             raise ValueError("{} label must be 2-3 uppercase characters".format(key))
@@ -233,7 +271,7 @@ def validate_mapping(mapping: dict) -> None:
             raise ValueError("{} label uses unsupported glyphs: {}".format(key, unsupported))
         if category not in categories:
             raise ValueError("{} uses unknown category {!r}".format(key, category))
-        if key in manifest and category != manifest[key]:
+        if legacy and key in manifest and category != manifest[key]:
             raise ValueError(
                 "{} category differs from components.toml: {!r} != {!r}".format(
                     key, category, manifest[key]
@@ -242,9 +280,6 @@ def validate_mapping(mapping: dict) -> None:
         if not re.fullmatch(r"[a-z0-9_]+\.png", filename):
             raise ValueError("{} has unsafe filename {!r}".format(key, filename))
         parse_hex(categories[category]["fill"])
-
-    if len(filenames) != len(set(filenames)):
-        raise ValueError("icon-map.json contains duplicate filenames")
 
 
 def validate_png(path: Path, expected_size: int) -> str:
@@ -265,25 +300,75 @@ def validate_png(path: Path, expected_size: int) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-def generate(mapping: dict) -> None:
+def render(mapping: dict) -> Dict[str, bytes]:
+    """Every file the map describes, drawn in memory, filename to bytes.
+
+    Native LAST, deliberately: where a key is in both lists the native entry
+    owns the pixels, because the .gha is the plugin that is built and its
+    panel is the colour the badge has to carry. One dict, so the rule holds
+    identically whether the bytes are being written or compared.
+    """
     size = mapping["size"][0]
     categories = mapping["categories"]
+    drawn: Dict[str, bytes] = {}
     for item in mapping["components"] + mapping.get("native_components", []):
         fill = parse_hex(categories[item["category"]]["fill"])
-        data = make_icon(size, fill, item["label"])
-        (ICON_DIR / item["filename"]).write_bytes(data)
+        drawn[item["filename"]] = make_icon(size, fill, item["label"])
+    return drawn
 
 
-def check(mapping: dict) -> None:
+def generate(mapping: dict) -> None:
+    for filename, data in render(mapping).items():
+        (ICON_DIR / filename).write_bytes(data)
+
+
+def check(mapping: dict) -> Tuple[int, int]:
+    """Compare every icon file against a fresh render of the entry that OWNS it.
+
+    The PNG header says a file is an icon; only the BYTES say it is THIS icon.
+    A header check passes a stale badge carrying the wrong letters or the wrong
+    panel fill, and the letters are the only thing that tells one badge from
+    another inside a panel, so every file is re-rendered and compared.
+
+    One file per entry, except where a key is in both lists. There the two
+    entries name ONE file and the native entry owns its pixels (see render), so
+    the legacy entry is stepped over rather than compared: comparing it would
+    measure the same file against the same native render a second time and
+    report a legacy label as checked when nothing ever looked at it. Returns
+    the number of files compared and the number of legacy entries skipped.
+    """
     expected_size = mapping["size"][0]
-    for item in mapping["components"] + mapping.get("native_components", []):
+    drawn = render(mapping)
+    native_filenames = {
+        item["filename"] for item in mapping.get("native_components", [])
+    }
+    legacy_count = len(mapping["components"])
+    compared = 0
+    shared = 0
+    for index, item in enumerate(
+        mapping["components"] + mapping.get("native_components", [])
+    ):
+        if index < legacy_count and item["filename"] in native_filenames:
+            shared += 1
+            continue
         path = ICON_DIR / item["filename"]
         if not path.is_file():
             raise FileNotFoundError("Missing icon: {}".format(path))
         digest = validate_png(path, expected_size)
+        on_disk = path.read_bytes()
+        if on_disk != drawn[item["filename"]]:
+            raise ValueError(
+                "{} is not the icon icon-map.json describes: the file on "
+                "disk differs from a fresh render of label {!r} in category "
+                "{!r}. Run the generator without --check.".format(
+                    path, item["label"], item["category"]
+                )
+            )
+        compared += 1
         print("{:<22} {}x{} RGBA8 sha256:{}".format(
             item["filename"], expected_size, expected_size, digest
         ))
+    return compared, shared
 
 
 def main() -> None:
@@ -299,9 +384,12 @@ def main() -> None:
     validate_mapping(mapping)
     if not arguments.check:
         generate(mapping)
-    check(mapping)
-    count = len(mapping["components"]) + len(mapping.get("native_components", []))
-    print("Validated {} component icons.".format(count))
+    compared, shared = check(mapping)
+    print(
+        "Validated {} icon files; every one matches a fresh render of the map "
+        "entry that owns it, byte for byte. {} legacy entries name a file a "
+        "native entry owns and were not compared.".format(compared, shared)
+    )
 
 
 if __name__ == "__main__":

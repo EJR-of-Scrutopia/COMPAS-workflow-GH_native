@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -143,15 +143,12 @@ namespace Ananke.COMPAS.Native.Components
                     + "four phases: reel the net into shape on the ground, raise "
                     + "it on the columns, finish by tensioning both axes against "
                     + "them, then hold the shape while load arrives. Sag and "
-                    + "height are read from the solved Result, not dialled.",
-                ComponentCategories.Visualise,
+                    + "height are read from the solved Result, not dialled. The "
+                    + "geometry of a frame is Frame's, which reads it back off "
+                    + "this Result.",
+                ComponentCategories.Mould,
                 "mould_animate")
         {
-            foreach (IGH_Param output in Params.Output)
-            {
-                if (output is IGH_PreviewObject preview)
-                    preview.Hidden = true;
-            }
         }
 
         private string _bareKey = string.Empty;
@@ -273,56 +270,6 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
-            parameters.AddMeshParameter(
-                "Mesh",
-                "M",
-                "The formwork surface at this frame, rebuilt from the Result's "
-                    + "own faces. Empty for an FD result, which carries no "
-                    + "faces to rebuild from.",
-                GH_ParamAccess.item);
-            parameters.AddLineParameter(
-                "Cables",
-                "C",
-                "Every net member at this frame, infill and bar alike, as a "
-                    + "TREE: one branch per principal line carrying that bar's "
-                    + "own members in order along it, and a LAST branch holding "
-                    + "the infill, everything not on a bar. Branch {i} is bar "
-                    + "{i}, the same bar as branch {i} of Principal Lines and "
-                    + "Principal Nodes.",
-                GH_ParamAccess.tree);
-            parameters.AddCurveParameter(
-                "Principal Lines",
-                "PL",
-                "The notched bars at this frame, bending as they rise, as a "
-                    + "TREE with one branch per bar. One curve per branch.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Principal Nodes",
-                "PN",
-                "Every notch: one crossing cable, and a pair of stepper motors "
-                    + "pulling it, one each side. A TREE with one branch per "
-                    + "bar, the notches IN ORDER ALONG THAT BAR, so branch {i} "
-                    + "runs the length of Principal Lines branch {i}. A node "
-                    + "where two bars cross appears in both branches, because "
-                    + "it is a notch on both.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Anchor Nodes",
-                "AN",
-                "The Result's supports: the side anchors that stay on the "
-                    + "ground and take the perimeter cables' prestress. A TREE "
-                    + "with one branch per CONNECTED STRIP, walked end to end, "
-                    + "so opposite sides of the vault come back as separate "
-                    + "branches instead of one merged list.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Perimeter Nodes",
-                "PRN",
-                "Nodes on the naked boundary of the net, as a TREE with one "
-                    + "branch per boundary LOOP, walked round. A net with a "
-                    + "hole in it has a branch for the outside and one for the "
-                    + "hole.",
-                GH_ParamAccess.tree);
             parameters.AddParameter(
                 new ResultParam(),
                 "Result",
@@ -330,33 +277,10 @@ namespace Ananke.COMPAS.Native.Components
                 "The Result this component was given, with this frame written "
                     + "into its Mould block: time, phase, the live net and the "
                     + "live column nodes. The built columns travel through "
-                    + "untouched. Wire it to Monitor for the numbers at this "
-                    + "frame and to Diagnose for the words.",
+                    + "untouched. Wire it to FRAME for the geometry at this "
+                    + "frame, to Monitor for the numbers and to Diagnose for "
+                    + "the words.",
                 GH_ParamAccess.item);
-            parameters.AddLineParameter(
-                "Columns",
-                "C",
-                "The columns at THIS frame, from frame zero: every tree on its "
-                    + "built foot. The TRUNK lies flat along its rail at time "
-                    + "zero and turns up about the foot as the net rises, "
-                    + "keeping its fork at the fraction it was built at, its "
-                    + "length the ram's travel. The ARMS follow their own "
-                    + "notches, so an arm's length changes with the net and "
-                    + "animate.arm_stretch reports how far. A TREE with one "
-                    + "branch per COLUMN TREE, that is per foot, each branch "
-                    + "holding that tree's trunk and arms together. Empty "
-                    + "unless the Result carries columns from Columns upstream.",
-                GH_ParamAccess.tree);
-            parameters.AddCurveParameter(
-                "Perimeter Lines",
-                "PRL",
-                "The boundary of the net at this frame as polylines, a TREE "
-                    + "with one branch per boundary group, the same group as "
-                    + "branch {i} of Perimeter Nodes: closed when the group is a "
-                    + "loop, open when it is a strip. A net with a hole has one "
-                    + "curve for the outside and one for the hole. Empty, with "
-                    + "a diagnostic, when the boundary could only be estimated.",
-                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -484,9 +408,6 @@ namespace Ananke.COMPAS.Native.Components
                         Math.Sqrt(MouldGeometry.PlanDistanceSquared(
                             start[i], target[i])));
                 }
-                Mesh? mesh = MouldGeometry.ThrustMeshFromResult(
-                    result, out int[] meshToNode);
-
                 List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
 
                 // The principal lines this Result carries, resolved upstream
@@ -605,53 +526,38 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
 
-                // The boundary. With a thrust mesh the naked edges give it
-                // exactly. Without one, which is every FD Result, the PATTERN
-                // topology still names it if it carries faces: an edge used by
-                // exactly one face is a boundary edge. Only when there are no
-                // faces either is the degree heuristic left, and that is an
-                // ESTIMATE rather than a boundary, so it is labelled as one
-                // and Perimeter Lines draws nothing from it.
-                int[] perimeterIds;
-                bool perimeterEstimated = false;
-                if (mesh is null)
-                {
-                    TopologyDto? patternTopology =
-                        result.Problem?.Anchored?.Pattern?.Topology;
-                    IReadOnlyList<IReadOnlyList<int>> faces =
-                        patternTopology is not null &&
-                        patternTopology.Vertices.Count == n
-                            ? patternTopology.Faces
-                            : Array.Empty<IReadOnlyList<int>>();
-                    perimeterIds = MouldGeometry.PerimeterFromFaces(faces, n);
-                    if (perimeterIds.Length == 0)
-                    {
-                        perimeterIds = MouldGeometry.PerimeterNodes(
-                            mesh, meshToNode, neighbours, n);
-                        perimeterEstimated = true;
-                    }
-                }
-                else
-                {
-                    perimeterIds = MouldGeometry.PerimeterNodes(
-                        mesh, meshToNode, neighbours, n);
-                }
+                // The columns at this frame, on the feet the block was built
+                // with. Worked out here, before the diagnostics, because the
+                // FRAME carries them and the frame is what the geometry is
+                // read back out of.
+                Point3d[]? liveColumnNodes = hasColumns
+                    ? MouldGeometry.LiveColumnNodes(columnsBlock!, live)
+                    : null;
 
-                // One BRANCH per bar, holding that bar's curve. Deliberately a
-                // branch rather than a curve, and deliberately added even when
-                // the polyline will not build: branch {i} has to stay bar {i}
-                // to match Principal Nodes and Cables, and a bar silently
-                // missing from the middle of the list would shift every bar
-                // after it and quietly mislabel the lot.
-                var barCurves = new List<List<Curve>>();
-                foreach (List<int> run in bars)
+                // THE FRAME, written into the Result, and its geometry read
+                // straight back out of it. What Animate draws and what Frame
+                // emits are the same call: the mesh, the cables, the notches,
+                // the anchors, the boundary and the columns are
+                // FrameGeometry's, and what is left in this component is the
+                // animation itself.
+                var frame = new MouldFrameDto
                 {
-                    var branch = new List<Curve>();
-                    var polyline = new Polyline(run.Select(i => live[i]));
-                    if (polyline.IsValid && polyline.Count > 1)
-                        branch.Add(polyline.ToNurbsCurve());
-                    barCurves.Add(branch);
-                }
+                    Time = Math.Min(Math.Max(timePct, 0.0), 100.0),
+                    Phase = phase,
+                    Lift = Math.Min(Math.Max(lift, 0.0), 1.0),
+                    Sag = Math.Min(Math.Max(sag, 0.0), 1.0),
+                    Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
+                    ColumnNodes = liveColumnNodes?
+                        .Select(p => new Point3Dto(p.X, p.Y, p.Z))
+                        .ToArray(),
+                };
+                MouldDto mould = (result.Mould ?? new MouldDto()) with
+                {
+                    Ground = ground,
+                    Frame = frame,
+                };
+                ResultDto framedResult = result with { Mould = mould };
+                FrameGeometry.Set set = FrameGeometry.Build(framedResult);
 
                 double barRise = principalIds.Count > 0
                     ? lift * (principalIds
@@ -667,7 +573,7 @@ namespace Ananke.COMPAS.Native.Components
                     ResultDiagnostics.Entry(S, "animate.counts", "info",
                         $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
                             + $"{principalIds.Count} notches; anchors {anchorIds.Count}, "
-                            + $"perimeter nodes {perimeterIds.Length}; "
+                            + $"perimeter nodes {set.PerimeterCount}; "
                             + $"{principalIds.Count * 2} steppers, two per notch",
                         n, unit: "nodes",
                         context: ResultDiagnostics.Context(
@@ -675,7 +581,7 @@ namespace Ananke.COMPAS.Native.Components
                             ("bars", bars.Count.ToString(CultureInfo.InvariantCulture)),
                             ("notches", principalIds.Count.ToString(CultureInfo.InvariantCulture)),
                             ("anchors", anchorIds.Count.ToString(CultureInfo.InvariantCulture)),
-                            ("perimeter", perimeterIds.Length.ToString(CultureInfo.InvariantCulture)),
+                            ("perimeter", set.PerimeterCount.ToString(CultureInfo.InvariantCulture)),
                             ("steppers", (principalIds.Count * 2).ToString(CultureInfo.InvariantCulture)))),
                     ResultDiagnostics.Entry(S, "animate.ground", "info",
                         $"ground read as {ground:0.###}, the level the anchors sit at, "
@@ -710,14 +616,14 @@ namespace Ananke.COMPAS.Native.Components
                         $"bars risen {barRise * 1000.0:0.#} mm at this frame",
                         barRise * 1000.0, unit: "mm"),
                 };
-                if (mesh is null)
+                if (set.Mesh is null)
                 {
                     entries.Add(ResultDiagnostics.Entry(S, "animate.no_faces", "info",
                         "this Result carries no faces, so there is no shaded surface "
                             + "and the perimeter is read from the net's topology "
                             + "instead. That is expected for FD."));
                 }
-                if (perimeterEstimated)
+                if (set.PerimeterEstimated)
                 {
                     entries.Add(ResultDiagnostics.Entry(
                         S, "animate.perimeter_estimated", "info",
@@ -728,7 +634,7 @@ namespace Ananke.COMPAS.Native.Components
                             + "of the net. That set need not be a loop, or even be "
                             + "on the rim, so Perimeter Lines is left EMPTY rather "
                             + "than draw a curve through it and call it the boundary.",
-                        perimeterIds.Length, unit: "nodes"));
+                        set.PerimeterCount, unit: "nodes"));
                 }
                 if (wantsPush > 0)
                 {
@@ -764,7 +670,6 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 double extend = Math.Min(Math.Max(extendPct, 0.0), 95.0) / 100.0;
                 var liveColumns = new List<Line>();
-                var columnBranches = new List<List<Line>>();
                 double shortest = double.MaxValue;
                 double longest = 0.0;
                 int totalMembers = 0;
@@ -780,13 +685,11 @@ namespace Ananke.COMPAS.Native.Components
                 int worstArmBranch = -1;
                 int worstArmMember = -1;
 
-                Point3d[]? liveColumnNodes = null;
                 if (hasColumns)
                 {
                     MouldGeometry.ColumnTree tree =
                         MouldGeometry.TreeFromBlock(columnsBlock!);
-                    Point3d[] at = MouldGeometry.LiveColumnNodes(columnsBlock!, live);
-                    liveColumnNodes = at;
+                    Point3d[] at = liveColumnNodes!;
                     var footSet = new HashSet<int>(tree.Feet);
                     var headVertex = new Dictionary<int, int>();
                     for (int h = 0; h < columnsBlock!.Heads.Count && h < columnsBlock.HeadNode.Count; h++)
@@ -798,21 +701,11 @@ namespace Ananke.COMPAS.Native.Components
                     // without either rederiving the other's answer. TreesByFoot
                     // is the fallback for a block whose Trees do not cover the
                     // members it carries.
-                    var listed = new HashSet<int>(
-                        columnsBlock.Trees.SelectMany(t => t));
-                    bool blockCovers =
-                        columnsBlock.Trees.Count > 0 &&
-                        columnsBlock.Members.Count == tree.Members.Count &&
-                        columnsBlock.Trees.Sum(t => t.Count) == tree.Members.Count &&
-                        listed.Count == tree.Members.Count &&
-                        listed.All(m => m >= 0 && m < tree.Members.Count);
-                    List<List<int>> groups = blockCovers
-                        ? columnsBlock.Trees.Select(t => t.ToList()).ToList()
-                        : MouldGeometry.TreesByFoot(tree);
+                    List<List<int>> groups =
+                        FrameGeometry.ColumnGroups(columnsBlock!, tree);
 
                     for (int b = 0; b < groups.Count; b++)
                     {
-                        var branch = new List<Line>();
                         List<int> group = groups[b];
                         for (int k = 0; k < group.Count; k++)
                         {
@@ -897,11 +790,9 @@ namespace Ananke.COMPAS.Native.Components
                             }
                             var member = new Line(at[lower], at[upper]);
                             liveColumns.Add(member);
-                            branch.Add(member);
                             shortest = Math.Min(shortest, length);
                             longest = Math.Max(longest, length);
                         }
-                        columnBranches.Add(branch);
                     }
                 }
 
@@ -988,90 +879,28 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
 
-                Mesh? framed = mesh is null
-                    ? null
-                    : MouldGeometry.DeformMesh(mesh, meshToNode, live);
-                var cables = edges
-                    .Select(e => new Line(live[e.Item1], live[e.Item2]))
-                    .ToList();
-
-                _previewMesh = framed;
+                _previewMesh = set.Mesh;
                 _previewCables.Clear();
-                _previewCables.AddRange(cables);
+                _previewCables.AddRange(set.Cables.SelectMany(branch => branch));
                 _previewColumns.Clear();
-                _previewColumns.AddRange(liveColumns);
+                _previewColumns.AddRange(
+                    set.ColumnBranches.SelectMany(branch => branch));
                 _previewSupports.Clear();
                 _previewSupports.AddRange(
-                    anchorIds.OrderBy(i => i).Select(i => live[i]));
+                    set.AnchorGroups.SelectMany(strip => strip));
                 _clippingBox = new BoundingBox(
-                    live.Concat(liveColumns.Select(c => c.From)));
-
-                // Every member sorted into the bar it belongs to, with whatever
-                // is left over as the infill branch at the end.
-                int[] memberBar = MouldGeometry.MemberRunIndex(
-                    edges.Select(e => (e.Item1, e.Item2)).ToArray(), bars);
-                var cableBranches = new List<List<Line>>();
-                for (int b = 0; b < bars.Count; b++)
-                    cableBranches.Add(new List<Line>());
-                var infill = new List<Line>();
-                for (int e = 0; e < cables.Count; e++)
-                {
-                    if (memberBar[e] >= 0)
-                        cableBranches[memberBar[e]].Add(cables[e]);
-                    else
-                        infill.Add(cables[e]);
-                }
-                cableBranches.Add(infill);
-
-                // Grouped over the PLAN AS DRAWN unioned with the solved net,
-                // not over the solved net alone. The solved net has no edge
-                // between two supports, so grouping by it alone gave every
-                // anchor a branch to itself. See GroupingAdjacency.
-                List<int>[] grouping = MouldGeometry.GroupingAdjacency(
-                    result, edges, n);
-                List<List<int>> anchorStrips =
-                    MouldGeometry.ConnectedGroups(anchorIds, neighbours: grouping);
-                List<List<int>> perimeterLoops =
-                    MouldGeometry.ConnectedGroups(perimeterIds, neighbours: grouping);
-
-                // One curve per loop, branch {i} the same loop as Perimeter
-                // Nodes branch {i}. A group that cannot make a curve still
-                // keeps its branch so the numbering holds.
-                //
-                // CLOSED ONLY WHEN IT CLOSES. The last node walked has to be
-                // adjacent to the first in the very graph the walk used, or
-                // the closing segment is a chord across the net rather than a
-                // member of it, drawn as a valid closed curve and labelled the
-                // boundary. A group the walk could not close comes back OPEN,
-                // which is visibly not a loop.
-                var perimeterCurves = new List<List<Curve>>();
-                foreach (List<int> loop in perimeterLoops)
-                {
-                    var branch = new List<Curve>();
-                    if (!perimeterEstimated && loop.Count >= 2)
-                    {
-                        bool closes = loop.Count >= 3 &&
-                            grouping[loop[loop.Count - 1]].Contains(loop[0]);
-                        var points = loop.Select(i => live[i]).ToList();
-                        if (closes)
-                            points.Add(points[0]);
-                        var polyline = new Polyline(points);
-                        if (polyline.IsValid && polyline.Count > 1)
-                            branch.Add(polyline.ToNurbsCurve());
-                    }
-                    perimeterCurves.Add(branch);
-                }
+                    live.Concat(_previewColumns.Select(c => c.From)));
 
                 entries.Add(ResultDiagnostics.Entry(S, "animate.anchor_strips", "info",
-                    $"anchors grouped into {anchorStrips.Count} "
-                        + (anchorStrips.Count == 1 ? "strip" : "strips")
-                        + $" of {string.Join("/", anchorStrips.Select(s => s.Count))}, "
-                        + $"perimeter into {perimeterLoops.Count} "
-                        + (perimeterLoops.Count == 1 ? "loop" : "loops"),
-                    anchorStrips.Count, unit: "strips",
+                    $"anchors grouped into {set.AnchorGroups.Count} "
+                        + (set.AnchorGroups.Count == 1 ? "strip" : "strips")
+                        + $" of {string.Join("/", set.AnchorGroups.Select(s => s.Count))}, "
+                        + $"perimeter into {set.PerimeterNodes.Count} "
+                        + (set.PerimeterNodes.Count == 1 ? "loop" : "loops"),
+                    set.AnchorGroups.Count, unit: "strips",
                     context: ResultDiagnostics.Context(
-                        ("loops", perimeterLoops.Count.ToString(CultureInfo.InvariantCulture)))));
-                if (anchorIds.Count > 1 && anchorStrips.Count == anchorIds.Count)
+                        ("loops", set.PerimeterNodes.Count.ToString(CultureInfo.InvariantCulture)))));
+                if (anchorIds.Count > 1 && set.AnchorGroups.Count == anchorIds.Count)
                 {
                     entries.Add(ResultDiagnostics.Entry(S, "animate.anchors_isolated", "warning",
                         "every anchor came back in a branch of its own, which means "
@@ -1079,39 +908,12 @@ namespace Ananke.COMPAS.Native.Components
                             + "solved net. Check that the Result still carries its "
                             + "source Pattern; without it there is no graph in which "
                             + "a side is continuous.",
-                        anchorStrips.Count, unit: "strips"));
+                        set.AnchorGroups.Count, unit: "strips"));
                 }
 
-                data.SetData(0, framed);
-                data.SetDataTree(1, OutputTree.Lines(cableBranches));
-                data.SetDataTree(2, OutputTree.Curves(barCurves));
-                data.SetDataTree(3, OutputTree.Points(
-                    bars.Select(run => run.Select(i => live[i]))));
-                data.SetDataTree(4, OutputTree.Points(
-                    anchorStrips.Select(strip => strip.Select(i => live[i]))));
-                data.SetDataTree(5, OutputTree.Points(
-                    perimeterLoops.Select(loop => loop.Select(i => live[i]))));
-                var frame = new MouldFrameDto
-                {
-                    Time = Math.Min(Math.Max(timePct, 0.0), 100.0),
-                    Phase = phase,
-                    Lift = Math.Min(Math.Max(lift, 0.0), 1.0),
-                    Sag = Math.Min(Math.Max(sag, 0.0), 1.0),
-                    Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
-                    ColumnNodes = liveColumnNodes?
-                        .Select(p => new Point3Dto(p.X, p.Y, p.Z))
-                        .ToArray(),
-                };
-                MouldDto mould = (result.Mould ?? new MouldDto()) with
-                {
-                    Ground = ground,
-                    Frame = frame,
-                };
                 ResultDto output = ResultDiagnostics.Replace(
-                    result with { Mould = mould }, "Animate", entries);
-                data.SetData(6, new ResultGoo(output));
-                data.SetDataTree(7, OutputTree.Lines(columnBranches));
-                data.SetDataTree(8, OutputTree.Curves(perimeterCurves));
+                    framedResult, "Animate", entries);
+                data.SetData(0, new ResultGoo(output));
             }
             catch (Exception ex)
             {
@@ -2395,12 +2197,28 @@ namespace Ananke.COMPAS.Native.Components
             return boundary.OrderBy(i => i).ToArray();
         }
 
+        /// <summary>
+        /// The boundary nodes, and WHICH ROUTE said so. A mesh whose naked
+        /// edges name them gives the boundary exactly and reports
+        /// <paramref name="estimated"/> false; anything else falls through to
+        /// the node-degree heuristic, which is a guess and reports true.
+        ///
+        /// The flag is the whole point of returning it. A closed thrust mesh
+        /// has no naked edge, and a mesh whose vertex count does not match
+        /// the mapping cannot be read at all, so a caller that hands a mesh
+        /// in can still be answered by the heuristic; it used to be answered
+        /// silently, and a polyline drawn through a degree set was then
+        /// labelled the boundary, which is the one thing the estimated flag
+        /// exists to prevent.
+        /// </summary>
         public static int[] PerimeterNodes(
             Mesh? mesh,
             int[] meshToNode,
             List<int>[] neighbours,
-            int count)
+            int count,
+            out bool estimated)
         {
+            estimated = false;
             if (mesh is not null && mesh.Vertices.Count > 0 &&
                 meshToNode.Length == mesh.Vertices.Count)
             {
@@ -2425,6 +2243,7 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
+            estimated = true;
             int[] degrees = neighbours.Select(list => list.Count).ToArray();
             if (degrees.Length == 0)
                 return Array.Empty<int>();
@@ -2539,6 +2358,388 @@ namespace Ananke.COMPAS.Native.Components
             deformed.Normals.ComputeNormals();
             deformed.Compact();
             return deformed;
+        }
+    }
+
+    /// <summary>
+    /// The geometry of the frame a Result stands at, built ONCE and read by
+    /// both the component that makes a frame and the component that reads
+    /// one.
+    ///
+    /// Positions are the whole rule. A Result carrying a Mould frame is read
+    /// at <c>Frame.Vertices</c>; a Result without one is read at
+    /// <c>Equilibrium.Vertices</c>, which is the finished vault. So Frame on
+    /// a Solve or a Columns Result draws the vault, Frame on an Animate
+    /// Result draws that frame, and neither component needs to know which it
+    /// was handed. The columns follow one level down:
+    /// <c>Frame.ColumnNodes</c> where the frame carries them, the block's own
+    /// nodes otherwise.
+    ///
+    /// The topology all travels on the Result and none of it is persisted
+    /// per frame: the edges, the principal runs, the pattern faces and the
+    /// column block are read back out of it every time, exactly as Animate
+    /// used to read them for its own outputs. That is what stops the frame's
+    /// geometry needing a contract of its own.
+    ///
+    /// Split in two on purpose. <see cref="Read"/> is arithmetic over
+    /// managed types (Point3d, Line, index lists) and is measured in the
+    /// smoke harness, which has no Rhino to P/Invoke. <see cref="Build"/> is
+    /// <see cref="Read"/> plus the two things that need one: the thrust mesh
+    /// deformed onto the frame, and the polylines turned into curves. Both
+    /// read the same <see cref="Net.Positions"/>, so what is measured is
+    /// what is drawn.
+    /// </summary>
+    internal static class FrameGeometry
+    {
+        /// <summary>
+        /// What a Result with no frame stands at: its own solved shape, the
+        /// end of the build rather than a moment in it.
+        /// </summary>
+        public const string FinalPhase = "final";
+
+        /// <summary>
+        /// A member whose two ends have met is not drawn. Animate reports it
+        /// (animate.columns counts the collapsed) and this leaves it out, so
+        /// a branch can come back short or empty at an early frame.
+        /// </summary>
+        private const double Collapsed = 1.0e-9;
+
+        /// <summary>
+        /// The frame in managed types: everything that can be worked out
+        /// without a Rhino to call.
+        /// </summary>
+        public sealed record Net(
+            Point3d[] Positions,
+            List<List<Line>> Cables,
+            List<List<Point3d>> PrincipalNodes,
+            List<List<Point3d>> AnchorGroups,
+            List<List<Point3d>> PerimeterLoops,
+            bool[] PerimeterCloses,
+            bool PerimeterEstimated,
+            int PerimeterCount,
+            List<List<Line>> ColumnBranches,
+            string Phase);
+
+        /// <summary>
+        /// The frame as a component emits it: the Net plus the mesh and the
+        /// curves. Branch {i} of Cables, PrincipalLines and PrincipalNodes
+        /// is bar {i}; Cables carries the infill in a LAST branch; branch
+        /// {i} of PerimeterNodes and PerimeterLines is boundary group {i};
+        /// branch {i} of ColumnBranches is column tree {i}.
+        /// </summary>
+        public sealed record Set(
+            Mesh? Mesh,
+            List<List<Line>> Cables,
+            List<List<Curve>> PrincipalLines,
+            List<List<Point3d>> PrincipalNodes,
+            List<List<Point3d>> AnchorGroups,
+            List<List<Point3d>> PerimeterNodes,
+            List<List<Curve>> PerimeterLines,
+            bool PerimeterEstimated,
+            int PerimeterCount,
+            List<List<Line>> ColumnBranches,
+            string Phase);
+
+        /// <summary>
+        /// The frame's geometry, given the Result and whatever thrust mesh it
+        /// has (null for an FD Result, which carries no faces). The mesh is a
+        /// parameter rather than a read, because building one needs Rhino and
+        /// this has to run where there is none; the caller that has one hands
+        /// it over, and the boundary is then read from its naked edges
+        /// instead of from node degree.
+        /// </summary>
+        public static Net Read(ResultDto result, Mesh? mesh, int[] meshToNode)
+        {
+            EquilibriumResultDto equilibrium = result.Equilibrium
+                ?? throw new InvalidOperationException(
+                    "Result carries no equilibrium.");
+            Point3d[] solved = equilibrium.Vertices
+                .Select(v => new Point3d(v.X, v.Y, v.Z))
+                .ToArray();
+            int n = solved.Length;
+            if (n == 0)
+                throw new InvalidOperationException("Result carries no vertices.");
+
+            MouldFrameDto? frame = result.Mould?.Frame;
+            bool positionsMatch = frame is not null && frame.Vertices.Count == n;
+            Point3d[] positions =
+                positionsMatch
+                    ? frame!.Vertices
+                        .Select(v => new Point3d(v.X, v.Y, v.Z))
+                        .ToArray()
+                    : solved;
+            (List<List<Line>> columnBranches, bool columnsMatch) =
+                ColumnLines(result, frame);
+
+            // A frame that fails either count guard is not the frame it
+            // claims to be: positions or columns fell back to the solved
+            // state, and reporting the frame's own phase over that would say
+            // "raise" about geometry that is really the finished vault. Both
+            // guards feed the SAME phase, because a Result whose Frame is
+            // malformed in one is not trustworthy in the other either.
+            //
+            // Neither fallback is reachable through the two components that
+            // call this today. MouldFrameDto.Validate refuses a frame whose
+            // vertices do not number one per net vertex and one whose column
+            // nodes do not number one per column node
+            // (Contracts/MouldContracts.cs:184 and :198), and Frame and
+            // Animate both run result.Validate() before Read is called. The
+            // guards stay as belt: Read takes a ResultDto and nothing in its
+            // signature says the contract was ever checked, so a Result
+            // deserialised straight from JSON reaches here the same way.
+            string phase =
+                frame is null ||
+                string.IsNullOrWhiteSpace(frame.Phase) ||
+                !positionsMatch ||
+                !columnsMatch
+                    ? FinalPhase
+                    : frame.Phase;
+
+            (int, int)[] edges = MouldGeometry.ValidEdges(equilibrium, n, out _);
+            List<List<int>> bars = MouldGeometry.PrincipalRuns(equilibrium, n);
+            List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
+
+            // Every member sorted into the bar it belongs to, with whatever
+            // is left over as the infill branch at the end. The empty
+            // branches are kept, so branch {i} is bar {i} whether or not
+            // that bar carries a member here.
+            int[] memberBar = MouldGeometry.MemberRunIndex(edges, bars);
+            var cables = new List<List<Line>>();
+            for (int b = 0; b < bars.Count; b++)
+                cables.Add(new List<Line>());
+            var infill = new List<Line>();
+            for (int e = 0; e < edges.Length; e++)
+            {
+                var member = new Line(
+                    positions[edges[e].Item1], positions[edges[e].Item2]);
+                if (memberBar[e] >= 0)
+                    cables[memberBar[e]].Add(member);
+                else
+                    infill.Add(member);
+            }
+            cables.Add(infill);
+
+            var principalNodes = bars
+                .Select(run => run.Select(i => positions[i]).ToList())
+                .ToList();
+
+            var anchorIds = new HashSet<int>(
+                equilibrium.ResolvedSupportNodeIds
+                    .Where(i => i >= 0 && i < n));
+
+            // The boundary. With a thrust mesh the naked edges give it
+            // exactly. Without one, which is every FD Result, the PATTERN
+            // topology still names it if it carries faces: an edge used by
+            // exactly one face is a boundary edge. Only when there are no
+            // faces either is the degree heuristic left, and that is an
+            // ESTIMATE rather than a boundary, so it is labelled as one and
+            // no curve is drawn through it.
+            //
+            // A mesh is not a promise of an exact answer either: a closed
+            // thrust mesh has no naked edge and a mismatched mapping cannot
+            // be read, and PerimeterNodes falls through to the same heuristic
+            // on both. So the flag is taken FROM IT rather than from which
+            // branch we are in; a chord through a degree set must never be
+            // labelled the boundary because a mesh happened to be handed in.
+            int[] perimeterIds;
+            bool perimeterEstimated;
+            if (mesh is null)
+            {
+                TopologyDto? patternTopology =
+                    result.Problem?.Anchored?.Pattern?.Topology;
+                IReadOnlyList<IReadOnlyList<int>> faces =
+                    patternTopology is not null &&
+                    patternTopology.Vertices.Count == n
+                        ? patternTopology.Faces
+                        : Array.Empty<IReadOnlyList<int>>();
+                perimeterIds = MouldGeometry.PerimeterFromFaces(faces, n);
+                perimeterEstimated = false;
+                if (perimeterIds.Length == 0)
+                {
+                    perimeterIds = MouldGeometry.PerimeterNodes(
+                        mesh, meshToNode, neighbours, n, out perimeterEstimated);
+                }
+            }
+            else
+            {
+                perimeterIds = MouldGeometry.PerimeterNodes(
+                    mesh, meshToNode, neighbours, n, out perimeterEstimated);
+            }
+
+            // Grouped over the PLAN AS DRAWN unioned with the solved net,
+            // not over the solved net alone. The solved net has no edge
+            // between two supports, so grouping by it alone gave every
+            // anchor a branch to itself. See GroupingAdjacency.
+            List<int>[] grouping =
+                MouldGeometry.GroupingAdjacency(result, edges, n);
+            List<List<int>> anchorStrips =
+                MouldGeometry.ConnectedGroups(anchorIds, neighbours: grouping);
+            List<List<int>> perimeterLoops =
+                MouldGeometry.ConnectedGroups(perimeterIds, neighbours: grouping);
+
+            // CLOSED ONLY WHEN IT CLOSES. The last node walked has to be
+            // adjacent to the first in the very graph the walk used, or the
+            // closing segment is a chord across the net rather than a member
+            // of it, drawn as a valid closed curve and labelled the
+            // boundary.
+            var closes = new bool[perimeterLoops.Count];
+            for (int loop = 0; loop < perimeterLoops.Count; loop++)
+            {
+                List<int> walk = perimeterLoops[loop];
+                closes[loop] =
+                    !perimeterEstimated &&
+                    walk.Count >= 3 &&
+                    grouping[walk[walk.Count - 1]].Contains(walk[0]);
+            }
+
+            return new Net(
+                positions,
+                cables,
+                principalNodes,
+                anchorStrips
+                    .Select(strip => strip.Select(i => positions[i]).ToList())
+                    .ToList(),
+                perimeterLoops
+                    .Select(loop => loop.Select(i => positions[i]).ToList())
+                    .ToList(),
+                closes,
+                perimeterEstimated,
+                perimeterIds.Length,
+                columnBranches,
+                phase);
+        }
+
+        /// <summary>
+        /// The frame as a component emits it: <see cref="Read"/>, the thrust
+        /// mesh deformed onto the frame's own positions, and the polylines
+        /// turned into curves. This is the only entry point that touches
+        /// Rhino, and it is the one both components call.
+        /// </summary>
+        public static Set Build(ResultDto result)
+        {
+            Mesh? source = MouldGeometry.ThrustMeshFromResult(
+                result, out int[] meshToNode);
+            Net net = Read(result, source, meshToNode);
+            Mesh? framed = source is null
+                ? null
+                : MouldGeometry.DeformMesh(source, meshToNode, net.Positions);
+
+            // One BRANCH per bar, holding that bar's curve. Deliberately a
+            // branch rather than a curve, and deliberately added even when
+            // the polyline will not build: branch {i} has to stay bar {i} to
+            // match Principal Nodes and Cables, and a bar silently missing
+            // from the middle of the list would shift every bar after it and
+            // quietly mislabel the lot.
+            var principalLines = new List<List<Curve>>();
+            foreach (List<Point3d> run in net.PrincipalNodes)
+            {
+                var branch = new List<Curve>();
+                var polyline = new Polyline(run);
+                if (polyline.IsValid && polyline.Count > 1)
+                    branch.Add(polyline.ToNurbsCurve());
+                principalLines.Add(branch);
+            }
+
+            var perimeterLines = new List<List<Curve>>();
+            for (int loop = 0; loop < net.PerimeterLoops.Count; loop++)
+            {
+                var branch = new List<Curve>();
+                List<Point3d> walk = net.PerimeterLoops[loop];
+                if (!net.PerimeterEstimated && walk.Count >= 2)
+                {
+                    var points = new List<Point3d>(walk);
+                    if (net.PerimeterCloses[loop])
+                        points.Add(points[0]);
+                    var polyline = new Polyline(points);
+                    if (polyline.IsValid && polyline.Count > 1)
+                        branch.Add(polyline.ToNurbsCurve());
+                }
+                perimeterLines.Add(branch);
+            }
+
+            return new Set(
+                framed,
+                net.Cables,
+                principalLines,
+                net.PrincipalNodes,
+                net.AnchorGroups,
+                net.PerimeterLoops,
+                perimeterLines,
+                net.PerimeterEstimated,
+                net.PerimeterCount,
+                net.ColumnBranches,
+                net.Phase);
+        }
+
+        /// <summary>
+        /// Which members stand together as one tree. The grouping the BLOCK
+        /// carries is used when it accounts for every member exactly once,
+        /// so Columns branch {i} here is Trees[{i}] there and no component
+        /// rederives another's answer; TreesByFoot is the fallback for a
+        /// block whose Trees do not cover the members it carries.
+        /// </summary>
+        public static List<List<int>> ColumnGroups(
+            MouldColumnsDto block,
+            MouldGeometry.ColumnTree tree)
+        {
+            var listed = new HashSet<int>(block.Trees.SelectMany(t => t));
+            bool blockCovers =
+                block.Trees.Count > 0 &&
+                block.Members.Count == tree.Members.Count &&
+                block.Trees.Sum(t => t.Count) == tree.Members.Count &&
+                listed.Count == tree.Members.Count &&
+                listed.All(m => m >= 0 && m < tree.Members.Count);
+            return blockCovers
+                ? block.Trees.Select(t => t.ToList()).ToList()
+                : MouldGeometry.TreesByFoot(tree);
+        }
+
+        /// <summary>
+        /// The live column members, one branch per tree, at the frame's own
+        /// column nodes where it carries them and at the nodes the block was
+        /// built with where it does not. Empty when the Result carries no
+        /// columns.
+        ///
+        /// The second value is whether the frame's own nodes were usable: a
+        /// Result with no columns block has nothing to mismatch and reports
+        /// true, so it never by itself forces <see cref="Read"/>'s phase back
+        /// to <see cref="FinalPhase"/>. A frame present but short or long
+        /// against the block's own node count reports false, which is the
+        /// same "this frame is not trustworthy" signal <c>positionsMatch</c>
+        /// gives on the vertex count.
+        /// </summary>
+        private static (List<List<Line>> Branches, bool ColumnsMatch) ColumnLines(
+            ResultDto result, MouldFrameDto? frame)
+        {
+            var branches = new List<List<Line>>();
+            MouldColumnsDto? block = result.Mould?.Columns;
+            if (block is null || block.Members.Count == 0)
+                return (branches, true);
+            MouldGeometry.ColumnTree tree = MouldGeometry.TreeFromBlock(block);
+            IReadOnlyList<Point3Dto>? frameNodes = frame?.ColumnNodes;
+            bool columnsMatch =
+                frameNodes is not null && frameNodes.Count == tree.Nodes.Count;
+            Point3d[] at =
+                columnsMatch
+                    ? frameNodes!
+                        .Select(p => new Point3d(p.X, p.Y, p.Z))
+                        .ToArray()
+                    : tree.Nodes.ToArray();
+            foreach (List<int> group in ColumnGroups(block, tree))
+            {
+                var branch = new List<Line>();
+                foreach (int m in group)
+                {
+                    if (m < 0 || m >= tree.Members.Count)
+                        continue;
+                    (int lower, int upper) = tree.Members[m];
+                    if (at[lower].DistanceTo(at[upper]) <= Collapsed)
+                        continue;
+                    branch.Add(new Line(at[lower], at[upper]));
+                }
+                branches.Add(branch);
+            }
+            return (branches, columnsMatch);
         }
     }
 }

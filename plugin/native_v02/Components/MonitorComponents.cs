@@ -159,7 +159,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "unless it says otherwise, and are converted to newtons "
                     + "where they meet a stiffness or a capacity you wire. "
                     + "Demands only, unless a capacity is wired.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "stress_analysis")
         {
             foreach (IGH_Param output in Params.Output)
@@ -255,6 +255,16 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
+            parameters.AddParameter(
+                new ResultParam(),
+                "Result",
+                "RES",
+                "The Result passed through with Monitor's own diagnostics "
+                    + "added: counts, cable tension and slack, bar and column "
+                    + "force, foundation thrust, the anchor split, spool "
+                    + "lengths, bar sag, deviation, reachability and "
+                    + "utilisation. Wire it to Diagnose.",
+                GH_ParamAccess.item);
             parameters.AddNumberParameter(
                 "Member Force",
                 "F",
@@ -503,16 +513,6 @@ namespace Ananke.COMPAS.Native.Components
                     + "unless Column Capacity is wired, and empty when the "
                     + "Result's force unit is neither N nor kN.",
                 GH_ParamAccess.tree);
-            parameters.AddParameter(
-                new ResultParam(),
-                "Result",
-                "RES",
-                "The Result passed through with Monitor's own diagnostics "
-                    + "added: counts, cable tension and slack, bar and column "
-                    + "force, foundation thrust, the anchor split, spool "
-                    + "lengths, bar sag, deviation, reachability and "
-                    + "utilisation. Wire it to Diagnose.",
-                GH_ParamAccess.item);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -1010,33 +1010,33 @@ namespace Ananke.COMPAS.Native.Components
                 // is a rule nothing can measure.
                 Vector3d[] residuals = ResultTables.Residuals(result);
 
-                data.SetDataTree(0, OutputTree.Numbers(ByBar(memberForce)));
-                data.SetDataTree(1, OutputTree.Numbers(ByBar(forceDensity)));
-                data.SetDataTree(2, OutputTree.Numbers(ByBar(horizontal)));
-                data.SetDataTree(3, OutputTree.Booleans(ByBar(slack)));
-                data.SetDataTree(4, OutputTree.Numbers(
+                data.SetDataTree(1, OutputTree.Numbers(ByBar(memberForce)));
+                data.SetDataTree(2, OutputTree.Numbers(ByBar(forceDensity)));
+                data.SetDataTree(3, OutputTree.Numbers(ByBar(horizontal)));
+                data.SetDataTree(4, OutputTree.Booleans(ByBar(slack)));
+                data.SetDataTree(5, OutputTree.Numbers(
                     spool.Select(one => new[] { one })));
-                data.SetDataTree(5, OutputTree.Numbers(axialStiffness > 0.0
+                data.SetDataTree(6, OutputTree.Numbers(axialStiffness > 0.0
                     ? unstrained.Select(one => new[] { one })
                     : Enumerable.Empty<IEnumerable<double>>()));
-                data.SetDataTree(6, OutputTree.Numbers(alongBranches));
-                data.SetDataTree(7, OutputTree.Numbers(acrossBranches));
-                data.SetDataTree(8, OutputTree.Vectors(tipReaction));
-                data.SetDataTree(9, OutputTree.Numbers(columnForceBranches));
-                data.SetDataTree(10, OutputTree.Numbers(thrustBranches));
-                data.SetDataTree(11, OutputTree.Numbers(leanBranches));
-                data.SetDataTree(12, OutputTree.Numbers(new[] { deviation }));
-                data.SetDataTree(13, OutputTree.Numbers(
+                data.SetDataTree(7, OutputTree.Numbers(alongBranches));
+                data.SetDataTree(8, OutputTree.Numbers(acrossBranches));
+                data.SetDataTree(9, OutputTree.Vectors(tipReaction));
+                data.SetDataTree(10, OutputTree.Numbers(columnForceBranches));
+                data.SetDataTree(11, OutputTree.Numbers(thrustBranches));
+                data.SetDataTree(12, OutputTree.Numbers(leanBranches));
+                data.SetDataTree(13, OutputTree.Numbers(new[] { deviation }));
+                data.SetDataTree(14, OutputTree.Numbers(
                     new[] { new List<double> { stats.Rms, stats.Max, stats.P95 } }));
-                data.SetDataTree(14, OutputTree.Booleans(
+                data.SetDataTree(15, OutputTree.Booleans(
                     new[] { new List<bool> { unreachable.Count == 0 } }));
-                data.SetDataTree(15, OutputTree.Integers(new[] { unreachable }));
-                data.SetDataTree(16, OutputTree.Numbers(barSag));
-                data.SetDataTree(17, OutputTree.Vectors(new[] { residuals }));
-                data.SetDataTree(18, OutputTree.Numbers(cableRatio
+                data.SetDataTree(16, OutputTree.Integers(new[] { unreachable }));
+                data.SetDataTree(17, OutputTree.Numbers(barSag));
+                data.SetDataTree(18, OutputTree.Vectors(new[] { residuals }));
+                data.SetDataTree(19, OutputTree.Numbers(cableRatio
                     ? ByBar(cableUtilisation)
                     : Enumerable.Empty<IEnumerable<double>>()));
-                data.SetDataTree(19, OutputTree.Numbers(columnRatio
+                data.SetDataTree(20, OutputTree.Numbers(columnRatio
                     ? columnUtilBranches
                     : Enumerable.Empty<IEnumerable<double>>()));
 
@@ -1065,7 +1065,7 @@ namespace Ananke.COMPAS.Native.Components
                     if (slack[i])
                         slackCables++;
                 }
-                data.SetData(20, new ResultGoo(ResultDiagnostics.Replace(
+                data.SetData(0, new ResultGoo(ResultDiagnostics.Replace(
                     result, "Monitor", Diagnostics(
                         frame: frame,
                         cableForce: infillForce,

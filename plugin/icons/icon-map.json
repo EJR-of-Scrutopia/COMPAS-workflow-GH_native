@@ -2,37 +2,45 @@
   "schema_version": 1,
   "size": [24, 24],
   "categories": {
+    "01 Model": {
+      "fill": "#126E82",
+      "meaning": "The pattern, its supports and its loads"
+    },
+    "02 Solve": {
+      "fill": "#A9462E",
+      "meaning": "Relaxation and the equilibrium solvers"
+    },
+    "03 Mould": {
+      "fill": "#2855AF",
+      "meaning": "The reconfigurable mould: the columns and the build"
+    },
+    "04 Read": {
+      "fill": "#2F7D6D",
+      "meaning": "Everything that reads a solved Result"
+    },
+    "05 Deliver": {
+      "fill": "#765300",
+      "meaning": "Export, import and the cutting patterns"
+    },
+    "90 System": {
+      "fill": "#4E5968",
+      "meaning": "Backend inspection"
+    },
     "01 Inputs": {
       "fill": "#126E82",
-      "meaning": "Topology, supports, and loads"
+      "meaning": "Script-backed v0.1: topology, supports, and loads"
     },
     "02 Form Finding": {
       "fill": "#A9462E",
-      "meaning": "FD and TNA configuration and solvers"
-    },
-    "03 Graphic Statics": {
-      "fill": "#2F7D6D",
-      "meaning": "Reciprocal form, force, and thrust diagrams"
+      "meaning": "Script-backed v0.1: FD and TNA configuration and solvers"
     },
     "03 Diagnostics": {
       "fill": "#765300",
-      "meaning": "Validation and diagnostic results"
+      "meaning": "Script-backed v0.1: validation and diagnostic results"
     },
     "04 Visualisation": {
       "fill": "#624494",
-      "meaning": "Diagram styling and preview payloads"
-    },
-    "01 Model": {
-      "fill": "#126E82",
-      "meaning": "Native topology, support, load, and problem contracts"
-    },
-    "05 Visualisation": {
-      "fill": "#624494",
-      "meaning": "Native result previews and diagram display"
-    },
-    "90 Query": {
-      "fill": "#4E5968",
-      "meaning": "Backend inspection and result extraction"
+      "meaning": "Script-backed v0.1: diagram styling and preview payloads"
     }
   },
   "components": [
@@ -99,100 +107,124 @@
   ],
   "native_components": [
     {
-      "key": "equilibrium_problem",
-      "label": "EP",
-      "category": "01 Model",
-      "filename": "equilibrium_problem.png"
-    },
-    {
-      "key": "backend_health",
-      "label": "BH",
-      "category": "90 Query",
-      "filename": "backend_health.png"
-    },
-    {
-      "key": "result_breakdown",
-      "label": "RB",
-      "category": "90 Query",
-      "filename": "result_breakdown.png"
-    },
-    {
-      "key": "equilibrium_preview",
-      "label": "PV",
-      "category": "05 Visualisation",
-      "filename": "equilibrium_preview.png"
-    },
-    {
-      "key": "tna_reciprocal",
-      "label": "TR",
-      "category": "03 Graphic Statics",
-      "filename": "tna_reciprocal.png"
-    },
-    {
       "key": "tna_pattern",
-      "label": "TP",
-      "category": "02 Form Finding",
+      "label": "PA",
+      "category": "01 Model",
       "filename": "tna_pattern.png"
     },
     {
       "key": "tna_supports",
-      "label": "TS",
-      "category": "02 Form Finding",
+      "label": "SU",
+      "category": "01 Model",
       "filename": "tna_supports.png"
     },
     {
+      "key": "load_case",
+      "label": "LO",
+      "category": "01 Model",
+      "filename": "load_case.png"
+    },
+    {
       "key": "tna_relax",
-      "label": "RL",
-      "category": "02 Form Finding",
+      "label": "RX",
+      "category": "02 Solve",
       "filename": "tna_relax.png"
     },
     {
-      "key": "tna_equilibrium",
-      "label": "TE",
-      "category": "02 Form Finding",
-      "filename": "tna_equilibrium.png"
+      "key": "tna_solve",
+      "label": "TS",
+      "category": "02 Solve",
+      "filename": "tna_solve.png"
+    },
+    {
+      "key": "tna_solve_algebraic",
+      "label": "TA",
+      "category": "02 Solve",
+      "filename": "tna_solve_algebraic.png"
+    },
+    {
+      "key": "fd_solve",
+      "label": "FD",
+      "category": "02 Solve",
+      "filename": "fd_solve.png"
+    },
+    {
+      "key": "column_finder",
+      "label": "CO",
+      "category": "03 Mould",
+      "filename": "column_finder.png"
+    },
+    {
+      "key": "mould_animate",
+      "label": "AN",
+      "category": "03 Mould",
+      "filename": "mould_animate.png"
+    },
+    {
+      "key": "result_breakdown",
+      "label": "DE",
+      "category": "04 Read",
+      "filename": "result_breakdown.png"
+    },
+    {
+      "key": "stress_analysis",
+      "label": "MO",
+      "category": "04 Read",
+      "filename": "stress_analysis.png"
+    },
+    {
+      "key": "skin",
+      "label": "SK",
+      "category": "04 Read",
+      "filename": "skin.png"
+    },
+    {
+      "key": "diagnose",
+      "label": "DG",
+      "category": "04 Read",
+      "filename": "diagnose.png"
+    },
+    {
+      "key": "frame",
+      "label": "FR",
+      "category": "04 Read",
+      "filename": "frame.png"
+    },
+    {
+      "key": "diagram_style",
+      "label": "ST",
+      "category": "04 Read",
+      "filename": "diagram_style.png"
     },
     {
       "key": "graphic_diagram_display",
-      "label": "DD",
-      "category": "03 Graphic Statics",
+      "label": "DI",
+      "category": "04 Read",
       "filename": "graphic_diagram_display.png"
     },
     {
-      "key": "tna_geometry",
-      "label": "TG",
-      "category": "90 Query",
-      "filename": "tna_geometry.png"
-    },
-    {
-      "key": "tna_members",
-      "label": "TM",
-      "category": "90 Query",
-      "filename": "tna_members.png"
-    },
-    {
-      "key": "tna_actions",
-      "label": "TA",
-      "category": "90 Query",
-      "filename": "tna_actions.png"
-    },
-    {
       "key": "export",
-      "label": "DLV",
-      "category": "05 Visualisation",
+      "label": "EX",
+      "category": "05 Deliver",
       "filename": "export.png"
     },
     {
+      "key": "import_pieces",
+      "label": "IP",
+      "category": "05 Deliver",
+      "filename": "import_pieces.png"
+    },
+    {
       "key": "armadillo_dual",
-      "label": "ARM",
-      "category": "05 Visualisation",
+      "label": "AD",
+      "category": "05 Deliver",
       "filename": "armadillo_dual.png"
     },
     {
-      "key": "import_pieces",
-      "label": "PCS",
-      "category": "05 Visualisation",
-      "filename": "import_pieces.png"
+      "key": "backend_health",
+      "label": "BH",
+      "category": "90 System",
+      "filename": "backend_health.png"
     }
   ]
 }
