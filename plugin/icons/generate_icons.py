@@ -8,6 +8,11 @@ Run from any working directory:
 
     python plugin/icons/generate_icons.py
     python plugin/icons/generate_icons.py --check
+
+--check validates the map, then re-renders every icon it lists IN MEMORY and
+refuses any file whose bytes differ. A header check alone passes a stale badge
+carrying the wrong letters, and the letters are the only thing that tells one
+badge from another inside a panel.
 """
 
 from __future__ import annotations
@@ -294,25 +299,50 @@ def validate_png(path: Path, expected_size: int) -> str:
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-def generate(mapping: dict) -> None:
+def render(mapping: dict) -> Dict[str, bytes]:
+    """Every file the map describes, drawn in memory, filename to bytes.
+
+    Native LAST, deliberately: where a key is in both lists the native entry
+    owns the pixels, because the .gha is the plugin that is built and its
+    panel is the colour the badge has to carry. One dict, so the rule holds
+    identically whether the bytes are being written or compared.
+    """
     size = mapping["size"][0]
     categories = mapping["categories"]
-    # Native LAST, deliberately: where a key is in both lists the native
-    # entry owns the pixels, because the .gha is the plugin that is built
-    # and its panel is the colour the badge has to carry.
+    drawn: Dict[str, bytes] = {}
     for item in mapping["components"] + mapping.get("native_components", []):
         fill = parse_hex(categories[item["category"]]["fill"])
-        data = make_icon(size, fill, item["label"])
-        (ICON_DIR / item["filename"]).write_bytes(data)
+        drawn[item["filename"]] = make_icon(size, fill, item["label"])
+    return drawn
+
+
+def generate(mapping: dict) -> None:
+    for filename, data in render(mapping).items():
+        (ICON_DIR / filename).write_bytes(data)
 
 
 def check(mapping: dict) -> None:
     expected_size = mapping["size"][0]
+    # The PNG header says a file is an icon; only the BYTES say it is THIS
+    # icon. A header check passes a stale badge carrying the wrong letters or
+    # the wrong panel fill, and the letters are the only thing that tells one
+    # badge from another inside a panel, so --check re-renders every file
+    # from the map and refuses any that differs.
+    drawn = render(mapping)
     for item in mapping["components"] + mapping.get("native_components", []):
         path = ICON_DIR / item["filename"]
         if not path.is_file():
             raise FileNotFoundError("Missing icon: {}".format(path))
         digest = validate_png(path, expected_size)
+        on_disk = path.read_bytes()
+        if on_disk != drawn[item["filename"]]:
+            raise ValueError(
+                "{} is not the icon icon-map.json describes: the file on "
+                "disk differs from a fresh render of label {!r} in category "
+                "{!r}. Run the generator without --check.".format(
+                    path, item["label"], item["category"]
+                )
+            )
         print("{:<22} {}x{} RGBA8 sha256:{}".format(
             item["filename"], expected_size, expected_size, digest
         ))
@@ -333,7 +363,10 @@ def main() -> None:
         generate(mapping)
     check(mapping)
     count = len(mapping["components"]) + len(mapping.get("native_components", []))
-    print("Validated {} component icons.".format(count))
+    print(
+        "Validated {} component icons; every file matches a fresh render of "
+        "its map entry, byte for byte.".format(count)
+    )
 
 
 if __name__ == "__main__":

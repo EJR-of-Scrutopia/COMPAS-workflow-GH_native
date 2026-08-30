@@ -75,3 +75,11 @@ A plain run rewrites every file the map lists. Both commands validate that
 every image is a 24 x 24, 8-bit RGBA PNG, that every label is two or three
 letters the bundled alphabet holds, and that the legacy list still covers
 `plugin/components.toml`.
+
+`--check` then re-renders every icon the map lists IN MEMORY and refuses any
+file whose bytes differ, so a stale badge carrying the wrong letters or the
+wrong panel fill cannot pass it. A header check alone could not say that: the
+letters are the only thing telling one badge from another inside a panel, and
+every badge in a panel shares its fill. The comparison follows the same
+native-last rule the generator writes by, so a key in both lists is checked
+against the native render, which is the one that owns the pixels.
