@@ -859,10 +859,13 @@ internal static class Program
             Console.WriteLine(
                 "PASS  ParameterIdentity.Mismatch: a definition saved against a "
                 + "component's older ports is told they moved, naming both what "
-                + "was archived and what is registered, and one saved against "
-                + "the current ports is told nothing; Export's own move, seven "
-                + "inputs and two outputs against nine and six, is the case "
-                + "measured beside Deconstruct's.");
+                + "was archived and what is registered; one saved against the "
+                + "current ports is told nothing; MONITOR's case, twenty-one "
+                + "outputs before and after with the Result moved to the front, "
+                + "is caught by NAME where a count says nothing; Export's seven "
+                + "inputs and two outputs against nine and six is named; and an "
+                + "archived chunk with no readable Name raises nothing by "
+                + "itself.");
         }
         catch (Exception exception)
         {
@@ -3115,15 +3118,51 @@ internal static class Program
     /// Grasshopper matches archived parameter chunks to live parameters by
     /// INDEX, so a reshaped component does not come back with broken wires:
     /// they reattach to whatever now stands at that index, silently wherever
-    /// the two ports share a type. The counts this branch actually produced
-    /// on Deconstruct are the case measured here.
+    /// the two ports share a type. Counting the ports catches a component
+    /// that grew or shrank. It does NOT catch Monitor, whose Result moved
+    /// from the last output to the first with the count unchanged, which
+    /// puts every one of twenty tree wires one slot down on a same-typed
+    /// tree. So the NAMES are compared too, index by index.
+    ///
+    /// A null archived name is not evidence of anything: it is an archive
+    /// this cannot read a name out of, and it is skipped rather than counted
+    /// as a difference, so a future Grasshopper that stops writing Name
+    /// degrades to the count check instead of warning every file in the
+    /// world.
     /// </summary>
     private static void ValidateParameterMismatch(Assembly plugin)
     {
         Type identity = RequireComponentType(plugin, "ParameterIdentity");
         MethodInfo mismatch = RequireStatic(identity, "Mismatch");
 
-        object? moved = mismatch.Invoke(null, new object?[] { 2, 20, 1, 13 });
+        string?[] Names(int count, string stem) => Enumerable
+            .Range(0, count)
+            .Select(index => (string?)($"{stem} {index}"))
+            .ToArray();
+        string[] Registered(int count, string stem) => Enumerable
+            .Range(0, count)
+            .Select(index => $"{stem} {index}")
+            .ToArray();
+        string? Ask(
+            IReadOnlyList<string?> archivedIn,
+            IReadOnlyList<string?> archivedOut,
+            IReadOnlyList<string> registeredIn,
+            IReadOnlyList<string> registeredOut) =>
+            mismatch.Invoke(
+                null,
+                new object?[]
+                {
+                    archivedIn, archivedOut, registeredIn, registeredOut
+                }) as string;
+
+        // Deconstruct's own move, the case this check was born on: two
+        // inputs and twenty outputs archived against the one and thirteen
+        // it registers now.
+        string? moved = Ask(
+            Names(2, "in"),
+            Names(20, "out"),
+            Registered(1, "in"),
+            Registered(13, "out"));
         if (moved is not string text)
         {
             throw new InvalidOperationException(
@@ -3139,7 +3178,13 @@ internal static class Program
                 + $"so the author knows which surface moved; got '{text}'.");
         }
 
-        object? unchanged = mismatch.Invoke(null, new object?[] { 4, 9, 4, 9 });
+        // The ordinary case: a file saved against the surface the plugin
+        // registers today, name for name.
+        string? unchanged = Ask(
+            Names(4, "in"),
+            Names(9, "out"),
+            Registered(4, "in"),
+            Registered(9, "out"));
         if (unchanged is not null)
         {
             throw new InvalidOperationException(
@@ -3148,12 +3193,58 @@ internal static class Program
                 + $"got '{unchanged}'.");
         }
 
+        // MONITOR's case, and the whole reason names are read: twenty-one
+        // outputs before and twenty-one after, with the Result moved from
+        // the end to the front. The counts agree, so a count check says
+        // nothing at all while every tree wire sits one slot low.
+        var monitorTrees = new[]
+        {
+            "Member Force", "Force Density", "Horizontal Force", "Slack",
+            "Spool Length", "Unstrained Length",
+            "Anchor Along", "Anchor Across",
+            "Tip Reaction", "Column Force", "Thrust", "Lean",
+            "Deviation", "Deviation Stats", "Reachable", "Unreachable",
+            "Bar Sag", "Residuals",
+            "Cable Utilisation", "Column Utilisation"
+        };
+        string?[] archivedMonitor = monitorTrees
+            .Select(name => (string?)name)
+            .Append("Result")
+            .ToArray();
+        string[] registeredMonitor = new[] { "Result" }
+            .Concat(monitorTrees)
+            .ToArray();
+        string?[] monitorInputs = new string?[]
+        {
+            "Result", "EI", "EA", "Tolerance", "Cable Capacity",
+            "Column Capacity"
+        };
+        string? monitorMoved = Ask(
+            monitorInputs,
+            archivedMonitor,
+            monitorInputs.Select(name => name!).ToArray(),
+            registeredMonitor);
+        if (monitorMoved is not string monitorText ||
+            !monitorText.Contains("Member Force", StringComparison.Ordinal) ||
+            !monitorText.Contains("Result", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Monitor keeps twenty-one outputs and moves the Result to the "
+                + "front, so the counts agree and only the names say the wires "
+                + "moved; the warning must name the port that changed. Got "
+                + $"'{monitorMoved}'.");
+        }
+
         // Export's own move, and the reason it holds Live: a definition
-        // saved before this branch carries seven inputs and two outputs
-        // against the nine and six registered now, so every wire in it
-        // lands on a different port, three of them silently, and one of
+        // saved before the export-live branch carries seven inputs and two
+        // outputs against the nine and six registered now, so every wire in
+        // it lands on a different port, three of them silently, and one of
         // those three is the Live toggle.
-        object? exportMoved = mismatch.Invoke(null, new object?[] { 7, 2, 9, 6 });
+        string? exportMoved = Ask(
+            Names(7, "in"),
+            Names(2, "out"),
+            Registered(9, "in"),
+            Registered(6, "out"));
         if (exportMoved is not string exportText ||
             !exportText.Contains("7 inputs and 2 outputs", StringComparison.Ordinal) ||
             !exportText.Contains("9 and 6", StringComparison.Ordinal))
@@ -3163,12 +3254,35 @@ internal static class Program
                 + "registers now, must be warned and both counts named; got "
                 + $"'{exportMoved}'.");
         }
-        object? exportUnchanged = mismatch.Invoke(null, new object?[] { 9, 6, 9, 6 });
-        if (exportUnchanged is not null)
+
+        // A longer archived list: the one case that visibly breaks in
+        // Grasshopper anyway, and it must still be announced.
+        string? shrunk = Ask(
+            Names(1, "in"),
+            Names(9, "out"),
+            Registered(1, "in"),
+            Registered(6, "out"));
+        if (shrunk is null)
         {
             throw new InvalidOperationException(
-                "An Export saved against the current nine and six is told "
-                + $"nothing; got '{exportUnchanged}'.");
+                "Nine archived outputs against six registered must be "
+                + "announced; three of those wires have nowhere to land.");
+        }
+
+        // A name the archive does not carry is not a rename. Everything
+        // else agreeing, this stays silent.
+        string?[] blind = new string?[] { "Result", null, "Elements" };
+        string? unreadable = Ask(
+            blind,
+            Names(0, "out"),
+            new[] { "Result", "Style", "Elements" },
+            Array.Empty<string>());
+        if (unreadable is not null)
+        {
+            throw new InvalidOperationException(
+                "An archived parameter chunk this cannot read a Name out of is "
+                + "no evidence that anything moved, and must not raise a "
+                + $"warning on its own; got '{unreadable}'.");
         }
     }
 

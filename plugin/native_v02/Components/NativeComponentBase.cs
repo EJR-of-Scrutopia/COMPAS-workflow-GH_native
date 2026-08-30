@@ -278,46 +278,94 @@ internal static class ParameterIdentity
     /// only one that visibly breaks. Nothing else in a reopened file says
     /// the surface moved, so this does.
     ///
-    /// Both pairs agreeing is the ordinary case and stays silent, so a
-    /// file saved against the current surface is charged nothing.
+    /// Counting is not enough. Monitor's Result moved from the last output
+    /// to the first with twenty-one outputs before and after, which leaves
+    /// every tree wire one slot low on a tree of the same type: nothing
+    /// breaks, nothing is coloured, and every number is the wrong number.
+    /// So the NAMES are compared index by index as well, and the first
+    /// difference is named in the warning.
+    ///
+    /// A null archived name is an archive this cannot read a name out of,
+    /// not a rename. It is skipped, so an archive shape that stops carrying
+    /// names degrades to the count comparison rather than warning about
+    /// every file ever saved.
+    ///
+    /// Both sides agreeing is the ordinary case and stays silent, so a file
+    /// saved against the current surface is charged nothing.
     /// </summary>
     internal static string? Mismatch(
-        int archivedInputs,
-        int archivedOutputs,
-        int registeredInputs,
-        int registeredOutputs)
+        IReadOnlyList<string?> archivedInputs,
+        IReadOnlyList<string?> archivedOutputs,
+        IReadOnlyList<string> registeredInputs,
+        IReadOnlyList<string> registeredOutputs)
     {
-        if (archivedInputs == registeredInputs &&
-            archivedOutputs == registeredOutputs)
-        {
+        bool countsAgree =
+            archivedInputs.Count == registeredInputs.Count &&
+            archivedOutputs.Count == registeredOutputs.Count;
+        string? renamed =
+            FirstRename("input", archivedInputs, registeredInputs)
+            ?? FirstRename("output", archivedOutputs, registeredOutputs);
+        if (countsAgree && renamed is null)
             return null;
-        }
         return
             "this component's ports changed since the file was saved: " +
-            $"{archivedInputs} inputs and {archivedOutputs} outputs " +
-            $"archived, {registeredInputs} and {registeredOutputs} " +
-            "registered; wires may now sit on the wrong port, check every " +
-            "one";
+            $"{archivedInputs.Count} inputs and {archivedOutputs.Count} " +
+            $"outputs archived, {registeredInputs.Count} and " +
+            $"{registeredOutputs.Count} registered" +
+            (renamed is null ? string.Empty : "; " + renamed) +
+            "; wires may now sit on the wrong port, check every one";
     }
 
     /// <summary>
-    /// The port counts one component's archive carries, or nulls where it
-    /// carries none.
+    /// The first slot whose archived name is not the name registered there
+    /// now, said the way an author reads a port: which side, which slot,
+    /// what it was, what it is. Null when every shared slot agrees or when
+    /// no archived name could be read.
+    /// </summary>
+    private static string? FirstRename(
+        string side,
+        IReadOnlyList<string?> archived,
+        IReadOnlyList<string> registered)
+    {
+        int shared = Math.Min(archived.Count, registered.Count);
+        for (int index = 0; index < shared; index++)
+        {
+            string? was = archived[index];
+            if (was is null)
+                continue;
+            if (!string.Equals(was, registered[index], StringComparison.Ordinal))
+            {
+                return
+                    $"{side} {index} was '{was}' and is now " +
+                    $"'{registered[index]}'";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The port NAMES one component's archive carries, in slot order, or
+    /// nulls where it carries none.
     ///
-    /// Grasshopper writes them as the "InputCount" and "OutputCount" items
-    /// of a "ParameterData" chunk sitting directly under the container
-    /// chunk a component's Read is handed. That shape was read off a real
-    /// definition rather than assumed: converting
+    /// Grasshopper writes the counts as the "InputCount" and "OutputCount"
+    /// items of a "ParameterData" chunk sitting directly under the
+    /// container chunk a component's Read is handed, and each parameter as
+    /// an indexed "InputParam" or "OutputParam" sub-chunk of it carrying
+    /// its own "Name" item. That shape was read off a real definition
+    /// rather than assumed: converting
     /// plugin/definitions/ananke_equilibrium_v01.gh through
     /// GH_Archive.Serialize_Xml gives Definition, DefinitionObjects,
     /// Object, Container, ParameterData, holding InputCount, the InputId
-    /// guids, OutputCount and the OutputId guids.
+    /// guids, OutputCount, the OutputId guids, and the InputParam and
+    /// OutputParam chunks, whose items include Name.
     ///
-    /// An archive without that chunk, or without those items, is one this
+    /// An archive without that chunk, or without those counts, is one this
     /// cannot speak about: nulls come back and the caller says nothing
-    /// rather than inventing a mismatch.
+    /// rather than inventing a mismatch. A parameter chunk that is there
+    /// but carries no readable Name gives a null in its own slot, which
+    /// <see cref="Mismatch"/> skips.
     /// </summary>
-    internal static (int? Inputs, int? Outputs) ArchivedCounts(
+    internal static (string?[]? Inputs, string?[]? Outputs) ArchivedNames(
         GH_IReader? reader)
     {
         if (reader is null)
@@ -331,17 +379,42 @@ internal static class ParameterIdentity
                 return (null, null);
             int inputs = 0;
             int outputs = 0;
+            if (!chunk.TryGetInt32("InputCount", ref inputs) ||
+                !chunk.TryGetInt32("OutputCount", ref outputs))
+            {
+                return (null, null);
+            }
             return (
-                chunk.TryGetInt32("InputCount", ref inputs) ? inputs : null,
-                chunk.TryGetInt32("OutputCount", ref outputs) ? outputs : null);
+                ArchivedSide(chunk, "InputParam", inputs),
+                ArchivedSide(chunk, "OutputParam", outputs));
         }
         catch (Exception)
         {
             // A file that cannot be interrogated must still open. This is
-            // an advisory count, and no advisory is worth failing a
+            // an advisory reading, and no advisory is worth failing a
             // document read for.
             return (null, null);
         }
+    }
+
+    private static string?[] ArchivedSide(
+        GH_IReader chunk,
+        string chunkName,
+        int count)
+    {
+        var names = new string?[Math.Max(count, 0)];
+        for (int index = 0; index < names.Length; index++)
+        {
+            if (!chunk.ChunkExists(chunkName, index))
+                continue;
+            GH_IReader? parameter = chunk.FindChunk(chunkName, index);
+            if (parameter is null)
+                continue;
+            string value = string.Empty;
+            if (parameter.TryGetString("Name", ref value))
+                names[index] = value;
+        }
+        return names;
     }
 }
 
@@ -388,13 +461,15 @@ public abstract class NativeComponentBase : GH_Component
         ParameterIdentity.Restore(Params.Output, outputs);
         // The snapshots were taken before the read, so their lengths are
         // the REGISTERED counts whatever the archive did to Params.
-        (int? archivedInputs, int? archivedOutputs) =
-            ParameterIdentity.ArchivedCounts(reader);
-        if (archivedInputs is int fromFileIn &&
-            archivedOutputs is int fromFileOut)
+        (string?[]? archivedInputs, string?[]? archivedOutputs) =
+            ParameterIdentity.ArchivedNames(reader);
+        if (archivedInputs is not null && archivedOutputs is not null)
         {
             _portsMoved = ParameterIdentity.Mismatch(
-                fromFileIn, fromFileOut, inputs.Length, outputs.Length);
+                archivedInputs,
+                archivedOutputs,
+                Array.ConvertAll(inputs, snapshot => snapshot.Name),
+                Array.ConvertAll(outputs, snapshot => snapshot.Name));
             if (_portsMoved is not null)
             {
                 AddRuntimeMessage(
@@ -525,13 +600,15 @@ public abstract class NativeTaskComponentBase<TResult> :
         ParameterIdentity.Restore(Params.Output, outputs);
         // The snapshots were taken before the read, so their lengths are
         // the REGISTERED counts whatever the archive did to Params.
-        (int? archivedInputs, int? archivedOutputs) =
-            ParameterIdentity.ArchivedCounts(reader);
-        if (archivedInputs is int fromFileIn &&
-            archivedOutputs is int fromFileOut)
+        (string?[]? archivedInputs, string?[]? archivedOutputs) =
+            ParameterIdentity.ArchivedNames(reader);
+        if (archivedInputs is not null && archivedOutputs is not null)
         {
             _portsMoved = ParameterIdentity.Mismatch(
-                fromFileIn, fromFileOut, inputs.Length, outputs.Length);
+                archivedInputs,
+                archivedOutputs,
+                Array.ConvertAll(inputs, snapshot => snapshot.Name),
+                Array.ConvertAll(outputs, snapshot => snapshot.Name));
             if (_portsMoved is not null)
             {
                 AddRuntimeMessage(
