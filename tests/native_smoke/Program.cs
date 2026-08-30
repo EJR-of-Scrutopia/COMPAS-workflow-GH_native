@@ -3626,40 +3626,39 @@ internal static class Program
         }
 
         // ---- One family (spec 6). The same arch four times, offset in Y by
-        // 0, 1, 2 and 3, the second's pulls scaled by 1.05, the third traced
-        // BACKWARDS, and the fourth turned through 180 degrees in plan about
-        // the arch's own centre with its pull turned with it. A family is the
+        // 0, 1, 2 and 3, the second with every pull scaled by 1.05, the third
+        // with its nodes in REVERSED bar order, and the fourth turned through
+        // 180 degrees in plan with its pull turned with it. A family is the
         // spans alike in free-notch count and in chord length (Branching is
-        // one slider, so the tree count and layout follow); each span orients
-        // ITSELF by its own mean across-chord pull, and each then takes the
-        // family's mean at its own index. Every principal line of a family
-        // therefore carries the same columns in its own frame.
+        // one slider, so the tree count and layout follow), and it shares the
+        // ALONG and DOWN profiles at each index while every span keeps its own
+        // ACROSS. Every principal line of a family therefore carries the same
+        // columns in its own frame.
         {
             const double skew = 0.0174550649282176;
             // A uniform across-chord pull, the same on every notch of every
-            // bar (a wind load, not a mirrored shape): it is the only thing
-            // in this fixture that a wrong orientation rule can be caught
-            // by. `along`, after each span's own pair step, is already
-            // antisymmetric, so turning it round (index mirror plus sign
-            // flip) is the identity and proves nothing; a mirrored SHAPE on
-            // `across` is symmetric after the pair step for the same
-            // reason. A uniform pull survives the pair step as itself, and
-            // once every span has oriented itself all four bars contribute it
-            // with the same sign, so the family mean is `lateral` exactly.
+            // bar: a wind load, not a mirrored shape.
             //
-            // Bar 3 is what the REVERSED-SPAN rule got wrong. That rule read
-            // every span in the frame of the family's LEAD and negated any
-            // span whose chord opposed the lead's. Bar 2, the same physical
-            // line traced backwards, it corrected. Bar 3, a genuine 180
-            // degree rotation with the chord AND the pull turned together
-            // (which is what two opposite ribs of a dome are), it negated as
-            // well, cancelling the rotated bar's across-chord pull against
-            // the others: the four contributions became +l, +l, +l, -l, the
-            // mean fell to l/2, and every bar took half the pull it carries,
-            // the rotated one with the wrong sign. No cross-span equality
-            // check can see that, because the wrong mean is shared
-            // identically by every span it is written back to, so the value
-            // itself is asserted below.
+            // The backwards bar and the rotated bar now hold TRIVIALLY, and
+            // that is the point of the rule they are here for. A family
+            // shares `along` and `down` only. After each span's own pair step
+            // `along` is antisymmetric and `down` symmetric, so reading a span
+            // from either end gives the same `along[i]` and `down[i]`, and
+            // tree i of one span is tree i of the family whichever way the bar
+            // was traced. `across` is the one that comes out negated, and it
+            // is never shared: each span keeps its own, already mirrored
+            // within itself by the pair step, so it is rebuilt against that
+            // span's own normal and lands back in the world where the net put
+            // it. Congruence by translation and congruence by rotation both
+            // hold by construction, with no rule left to get wrong.
+            //
+            // What these four bars still measure is that the SHARED profiles
+            // land at the right index (a wrong index mapping would put a
+            // flank tree's along on the other flank, which the offsets check
+            // below would see) and that each span's own across survives into
+            // the world unchanged. The case that distinguishes sharing across
+            // from not sharing it is the crown bar below; this one does not,
+            // because all four of these bars carry the same across.
             const double lateral = 0.3;
             const int count = 11;
             const int barCount = 4;
@@ -3676,8 +3675,9 @@ internal static class Program
                 {
                     double s = (double)i / (count - 1);
                     int node = (b * count) + i;
-                    // Bar 3 is bar 0 rotated 180 degrees in plan about the
-                    // arch's plan centre (5, 3): its plan x runs backwards
+                    // Bar 3 is bar 0 rotated 180 degrees in plan about
+                    // (5, 1.5), the point halfway between the two bars on the
+                    // arch's own plan centreline: its plan x runs backwards
                     // while its node ORDER does not, so its chord is
                     // antiparallel to the lead's, and its pull is turned with
                     // it, both plan components negated. In its own frame it is
@@ -3713,19 +3713,19 @@ internal static class Program
             int[] footNode = FootOfTree(built, trees.Length);
             // What each span's OWN frame must read once the family has been
             // averaged, derived by hand rather than recomputed from the rule
-            // under test. Symmetrisation never turns a span's own pull round,
-            // so a span reads the shared world-frame lateral pull with the
-            // sign its own trace gives it: bars 0 and 1 are traced along +x
-            // with the pull to +y, so +lateral; bar 2 is the same physical
-            // line traced backwards, so its own normal points the other way
-            // and it reads -lateral; bar 3 is bar 0 turned through 180
-            // degrees with its pull turned too, so its chord AND its normal
-            // are both reversed and it reads +lateral again. A span whose own
-            // reading is negative is the one the engine turns round for the
-            // family, which is bar 2 alone.
+            // under test. A span's across is its own and is never shared, so
+            // it reads the world-frame lateral pull with the sign its own
+            // trace gives it: bars 0 and 1 are traced along +x with the pull
+            // to +y, so +lateral; bar 2 is the same physical line traced
+            // backwards, so its own normal points the other way and it reads
+            // -lateral; bar 3 is bar 0 turned through 180 degrees with its
+            // pull turned too, so its chord AND its normal are both reversed
+            // and it reads +lateral again. All four therefore stand in the
+            // same place in the world, which is what the offsets check below
+            // says in the spans' own frames.
             double[] expectedOwnAcross = { lateral, lateral, -lateral, lateral };
             var offsets = new List<(double Along, double Across)>[spans.Length];
-            var turnedRound = new bool[spans.Length];
+            var readsNegative = new bool[spans.Length];
             for (int s = 0; s < spans.Length; s++)
             {
                 object span = spans[s];
@@ -3740,7 +3740,7 @@ internal static class Program
                 double midX = 0.5 * (X(first) + X(last));
                 double midY = 0.5 * (Y(first) + Y(last));
                 double expectedAcross = expectedOwnAcross[s];
-                turnedRound[s] = expectedAcross < 0.0;
+                readsNegative[s] = expectedAcross < 0.0;
                 offsets[s] = new List<(double Along, double Across)>();
                 for (int t = 0; t < trees.Length; t++)
                 {
@@ -3751,24 +3751,21 @@ internal static class Program
                     double dy = Y(foot) - midY;
                     offsets[s].Add(((dx * cx) + (dy * cy), (dx * -cy) + (dy * cx)));
 
-                    // The value itself, not just cross-span agreement: every
-                    // tree of the family carries the WHOLE uniform lateral
-                    // pull once correctly symmetrised, world-consistent, so a
-                    // span's own frame (R.n with n = (-c.y, c.x), the
-                    // production sign convention) reads it as the hand-derived
-                    // value above. Under the reversed-span rule the rotated
-                    // bar cancels instead of adding, the mean halves, and
-                    // every one of these four readings comes back at half
-                    // size, the rotated bar's with the wrong sign as well.
+                    // The value itself, not just cross-span agreement: each
+                    // span keeps the WHOLE across-chord pull its own net hands
+                    // it, so a span's own frame (R.n with n = (-c.y, c.x), the
+                    // production sign convention) reads the hand-derived value
+                    // above. Any rule that pooled across over the family would
+                    // have to decide which way round each span was, and would
+                    // shrink or flip these four readings the moment one bar's
+                    // own reading disagreed with another's.
                     object resultant = Get<object>(trees[t], "Resultant");
                     double acrossForce = (VX(resultant) * -cy) + (VY(resultant) * cx);
                     if (Math.Abs(acrossForce - expectedAcross) > 1.0e-9)
                     {
                         throw new InvalidOperationException(
-                            $"Every tree of a family carries the same uniform across-chord pull once symmetrised: span {s} "
-                            + $"({(turnedRound[s] ? "turned round" : "as traced")}) reads {acrossForce:0.#########}, not {expectedAcross:0.#}. "
-                            + "Each span must orient itself by its OWN mean across pull; reading them all in the family lead's frame cancels a bar "
-                            + "congruent by rotation against the rest instead of adding it.");
+                            $"Every tree of a family keeps its own span's across-chord pull whole: span {s} "
+                            + $"({(readsNegative[s] ? "reading negative" : "reading positive")}) reads {acrossForce:0.#########}, not {expectedAcross:0.#}.");
                     }
                 }
             }
@@ -3777,16 +3774,13 @@ internal static class Program
                 if (offsets[s].Count != offsets[0].Count)
                     throw new InvalidOperationException($"Every span of a family holds the same trees; span {s} holds {offsets[s].Count} against {offsets[0].Count}.");
                 // Along is antisymmetric within a pair by construction (the
-                // mirror rule takes the pair's DIFFERENCE), so turning a span
-                // round is its own no-op there and a span's own-frame Along
-                // matches the lead's whichever way it was traced. Across is
-                // the pair's MEAN, so a genuine world-frame across-chord pull
-                // (the uniform `lateral` above) is carried through unchanged
-                // in sign, and a span the engine turned round reads its
-                // own-frame Across as the NEGATIVE of the lead's, exactly as
-                // the acrossForce check above already measured directly off
-                // the resultant.
-                double sign = turnedRound[s] ? -1.0 : 1.0;
+                // mirror rule takes the pair's DIFFERENCE), so reading a span
+                // from either end gives the same own-frame Along and the
+                // shared profile lands at the same index on every bar. Across
+                // is the span's own, so a bar whose own frame reads the world
+                // pull negative stands at the NEGATIVE own-frame offset,
+                // which is the same place in the world.
+                double sign = readsNegative[s] ? -1.0 : 1.0;
                 for (int i = 0; i < offsets[0].Count; i++)
                 {
                     double expectedAcross = sign * offsets[0][i].Across;
@@ -3794,10 +3788,10 @@ internal static class Program
                         Math.Abs(offsets[s][i].Across - expectedAcross) > 1.0e-9)
                     {
                         throw new InvalidOperationException(
-                            $"Foot {i} of span {s}, read in its OWN frame, stands where foot {i} of the family's first span stands (Across negated if the "
-                            + $"engine turned that span round): ({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) against "
-                            + $"({offsets[0][i].Along:0.#########}, {expectedAcross:0.#########}). A span is being read in the world's frame, not in "
-                            + "the one its own pull orients it to.");
+                            $"Foot {i} of span {s}, read in its OWN frame, stands where foot {i} of the family's first span stands (Across negated where "
+                            + $"that span's own frame reads the world pull negative): ({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) "
+                            + $"against ({offsets[0][i].Along:0.#########}, {expectedAcross:0.#########}). The shared along profile is landing at the wrong "
+                            + "index, or a span is being read in the world's frame rather than its own.");
                     }
                 }
             }
@@ -3854,6 +3848,178 @@ internal static class Program
                     if (Math.Abs(centre.Along) > 1.0e-9)
                         throw new InvalidOperationException($"The centre tree of span {s} stands in the mirror plane, no distance along the chord from the midpoint; it stands {centre.Along:0.#########} along.");
                 }
+            }
+        }
+
+        // ---- A rib in the structure's own mirror plane does not lean
+        // (spec 3.4, amended). Three congruent bars, ten wide and 2.5 up, at
+        // y = -2, 0 and +2: one family, since they hold nine free notches
+        // each on chords of equal length. Every notch is pulled OUTWARD along
+        // its own chord, by 0.2 on the flanks and 0.5 on the crown, and the
+        // two flank bars are also pulled sideways toward the middle of the
+        // structure, by +0.5 and -0.5. The CROWN bar lies in the structure's
+        // own mirror plane, is pulled equally from both sides, and has no
+        // across-chord pull at all.
+        //
+        // A family shares the ALONG and DOWN profiles and nothing else, so
+        // every tree of every bar comes out with
+        //
+        //     along  = side x (0.2 + 0.5 + 0.2)/3 = side x 0.3
+        //     down   = -(1.0 + 1.2 + 1.0)/3       = -16/15
+        //     across = its own span's: +0.5, 0, -0.5
+        //
+        // and a Type 0 foot stands (along / |down|) x z along the chord from
+        // its main notch and (across / |down|) x z across it:
+        //
+        //     along offset  = side x 0.3 x 15/16 x z = side x 0.28125 z
+        //     across offset = +0.46875 z, 0, -0.46875 z
+        //
+        // The crown bar's feet therefore stand exactly under their own notches
+        // ACROSS the chord, and its centre tree, which has no along pull
+        // either, stands plumb.
+        //
+        // Sharing the across profile across the family cannot do that. It
+        // needs a rule for which way round each span is, and every such rule
+        // has a null exactly here: the crown's own mean across is zero, so it
+        // has no opinion, and whatever the rule falls back on is the order
+        // Pattern happened to trace the curve in. Under the frame each span
+        // oriented for itself, the two flanks read +0.5 and -0.5 in their own
+        // frames, the second is turned round to agree, the family mean comes
+        // out 1/3, and the crown is handed it: 0.3125 z out of the plane it
+        // lies in, to whichever side its node order picked, and to the other
+        // side if the same curve were drawn the other way.
+        {
+            const int count = 11;
+            const int barCount = 3;
+            double[] barY = { -2.0, 0.0, 2.0 };
+            double[] barAcross = { 0.5, 0.0, -0.5 };
+            double[] barBend = { 0.2, 0.5, 0.2 };
+            double[] barDown = { 1.0, 1.2, 1.0 };
+            const double sharedBend = 0.3;          // (0.2 + 0.5 + 0.2) / 3
+            const double sharedDown = 16.0 / 15.0;  // (1.0 + 1.2 + 1.0) / 3
+            Array nodes = Array.CreateInstance(point3d, barCount * count);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), barCount);
+            var bars = new int[barCount][];
+            var anchors = new List<int>();
+            double middle = (count - 1) / 2.0;
+            for (int b = 0; b < barCount; b++)
+            {
+                Array acrossBar = Array.CreateInstance(vector3d, count);
+                var bar = new int[count];
+                for (int i = 0; i < count; i++)
+                {
+                    double s = (double)i / (count - 1);
+                    int node = (b * count) + i;
+                    nodes.SetValue(P(10.0 * s, barY[b], 2.5 * 4.0 * s * (1.0 - s)), node);
+                    bar[i] = node;
+                    double side = i < middle ? -1.0 : (i > middle ? 1.0 : 0.0);
+                    acrossBar.SetValue(
+                        V(side * barBend[b], barAcross[b], -barDown[b]), i);
+                }
+                bars[b] = bar;
+                across.SetValue(acrossBar, b);
+                anchors.Add(b * count);
+                anchors.Add((b * count) + count - 1);
+            }
+            var ribs = (nodes, bars, anchors.ToArray(), across, Array.Empty<(int, int)>());
+            object placed = Run(ribs, Array.Empty<int[]>(), 1.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            if (Get<int>(placed, "Families") != 1)
+                throw new InvalidOperationException($"Three bars of nine notches on chords of equal length are ONE family, or this fixture is not measuring what a family does; Families is {Get<int>(placed, "Families")}.");
+            if (Get<int>(placed, "AsymmetricSpans") != 0)
+                throw new InvalidOperationException($"Every one of these spans is symmetric about its own midpoint; {Get<int>(placed, "AsymmetricSpans")} were placed unmirrored.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            // The crown first, because it is the whole case: a bar in the
+            // structure's own mirror plane, pulled equally from both sides,
+            // stands in that plane.
+            for (int t = 0; t < trees.Length; t++)
+            {
+                if (Get<int>(trees[t], "Span") != 1)
+                    continue;
+                object crownMain = nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!;
+                object crownFoot = levelNodes[footNode[t]];
+                if (Math.Abs(Y(crownFoot) - Y(crownMain)) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The crown bar lies in the structure's own mirror plane and is pulled equally from both sides, so its feet stand "
+                        + $"exactly under their notches ACROSS the chord; tree {t} stands {Y(crownFoot) - Y(crownMain):0.#########} off, which is a lean "
+                        + "out of that plane, to the side its node order picked. The family is sharing an across profile that belongs to "
+                        + "each span alone.");
+                }
+            }
+            for (int t = 0; t < trees.Length; t++)
+            {
+                int b = Get<int>(trees[t], "Span");
+                object main = nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!;
+                double side = X(main) < 5.0 ? -1.0 : (X(main) > 5.0 ? 1.0 : 0.0);
+                double z = Z(main);
+                object resultant = Get<object>(trees[t], "Resultant");
+                if (Math.Abs(VX(resultant) - (side * sharedBend)) > 1.0e-9 ||
+                    Math.Abs(VY(resultant) - barAcross[b]) > 1.0e-9 ||
+                    Math.Abs(VZ(resultant) + sharedDown) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"A family shares ALONG and DOWN and leaves ACROSS alone, so tree {t} of bar {b} carries "
+                        + $"({side * sharedBend:0.#########}, {barAcross[b]:0.#########}, {-sharedDown:0.#########}); it carries "
+                        + $"({VX(resultant):0.#########}, {VY(resultant):0.#########}, {VZ(resultant):0.#########}).");
+                }
+                object foot = levelNodes[footNode[t]];
+                double expectedX = X(main) + (side * sharedBend / sharedDown * z);
+                double expectedY = Y(main) + (barAcross[b] / sharedDown * z);
+                if (Math.Abs(X(foot) - expectedX) > 1.0e-9 || Math.Abs(Y(foot) - expectedY) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Tree {t} of bar {b} stands at ({expectedX:0.#########}, {expectedY:0.#########}); it stands at "
+                        + $"({X(foot):0.#########}, {Y(foot):0.#########}).");
+                }
+            }
+        }
+
+        // ---- The guard's other half (spec 3.4). The case above measures that
+        // a second Symmetrise on the same trees is a no-op; this one measures
+        // that a call after a tree has been ADDED runs again, which is what
+        // keys the guard on the tree count as well as the flag. Without it the
+        // new tree would stand on the raw aim it came in with while every
+        // other tree stood on a symmetrised one, in silence.
+        //
+        // The added tree holds the arch's CENTRE notch, so the span's free
+        // notch parameters stay symmetric about the midpoint (0.5 is its own
+        // partner, twice over) and the span goes from nine trees with a centre
+        // to ten trees in five pairs: CentreTrees falls from 1 to 0, and
+        // Partner is rebuilt ten long.
+        {
+            const double skew = 0.0174550649282176;   // tan(1 degree)
+            var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            if (Get<int>(placed, "CentreTrees") != 1 || Get<int[]>(placed, "Partner").Length != 9)
+                throw new InvalidOperationException("Eleven notches at Branching 1 hold nine trees, the middle one its own partner.");
+            Type treeType = engine.GetNestedType("Tree", BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("ColumnPlacement has no Tree.");
+            object extra = Activator.CreateInstance(treeType)!;
+            treeType.GetField("Bar")!.SetValue(extra, 0);
+            treeType.GetField("Span")!.SetValue(extra, 0);
+            treeType.GetField("Nodes")!.SetValue(extra, new[] { 5 });
+            treeType.GetField("Load")!.SetValue(extra, new[] { 1.0 });
+            treeType.GetField("Resultant")!.SetValue(extra, V(0.4, 0.0, -1.0));
+            object treeList = Get<object>(placed, "Trees");
+            treeList.GetType().GetMethod("Add")!.Invoke(treeList, new[] { extra });
+            symmetrise.Invoke(null, new object?[] { placed, arch.Nodes, arch.Bars });
+            int[] partner = Get<int[]>(placed, "Partner");
+            if (partner.Length != 10)
+                throw new InvalidOperationException($"A Placement that gained a tree is symmetrised again, so Partner is rebuilt for every tree it now holds; it is {partner.Length} long against 10 trees.");
+            if (Get<int>(placed, "CentreTrees") != 0)
+                throw new InvalidOperationException($"Ten trees on one span pair off completely, so no tree is its own partner; CentreTrees is {Get<int>(placed, "CentreTrees")}, which is the count from before the tree was added.");
+            object addedRaw = Get<object>(extra, "RawResultant");
+            if (Math.Abs(VX(addedRaw) - 0.4) > 1.0e-12 ||
+                Math.Abs(VY(addedRaw)) > 1.0e-12 ||
+                Math.Abs(VZ(addedRaw) + 1.0) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"The added tree's raw resultant is captured by the re-run, so it reads (0.4, 0, -1); it reads "
+                    + $"({VX(addedRaw):0.#########}, {VY(addedRaw):0.#########}, {VZ(addedRaw):0.#########}), which is what a guard "
+                    + "keyed on the flag alone leaves behind.");
             }
         }
 
@@ -4228,21 +4394,24 @@ internal static class Program
 
         // ---- The centre pair merges (spec 3.5). Ten notches, an even count,
         // so there is no centre tree and the two innermost trees ARE a
-        // mirrored pair. Their mains stand at x 4 and 5, both 2.469 above the
-        // ground, and an inward pull of 0.2 to 1 runs each foot 0.494 toward
-        // the middle: 4.494 and 4.506, a gap of 0.0123 inside a clearance of
+        // mirrored pair. Node 4 is nudged two hundredths off the mirror, so
+        // the pair's mains stand at x 3.98 and 5, both 2.469 above the ground,
+        // and an inward pull of 0.2 to 1 runs each foot 0.494 toward the
+        // middle: 4.4738 and 4.5062, a gap of 0.0323 inside a clearance of
         // 0.05 and far outside the weld epsilon. They stand on ONE foot at the
-        // MEAN of the two, x = 4.5, which on geometry this symmetric is the
-        // mirror plane.
+        // MEAN of the two, x = (3.98 + 5)/2 = 4.49 exactly, the two rise terms
+        // cancelling. The span's chord MIDPOINT is 4.5, so a merge that snaps
+        // a pair to the chord rather than to itself reads a hundredth out.
         //
-        // The node this fixture used to nudge two hundredths off the mirror is
-        // back where it belongs: an offset notch makes the span's free notches
-        // asymmetric about its chord midpoint, and such a span is no longer
-        // mirrored, paired or merged at all. Mean against chord midpoint is
-        // measured instead on the plan-curved bar below, where the two answers
-        // are two units apart.
+        // The nudge is a fiftieth of the notch spacing, and the symmetry test
+        // of 3.4 allows a quarter of it, so the span is still mirrored: a
+        // solved net never puts its notches on the mirror to the last digit,
+        // and a tolerance that demanded it would hand an ordinary arch back
+        // its unmirrored placement.
         {
             var arch = SkewArch(10, 9.0, 2.5, bend: -0.2, skew: 0.0, flank: 1.0);
+            object node4 = arch.Nodes.GetValue(4)!;
+            arch.Nodes.SetValue(P(3.98, 0.0, Z(node4)), 4);
             object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
@@ -4254,8 +4423,10 @@ internal static class Program
             int[] footNode = FootOfTree(built, trees.Length);
             if (footNode[3] != footNode[4])
                 throw new InvalidOperationException("The innermost mirrored pair stands on ONE foot.");
-            if (Math.Abs(X(nodes[footNode[3]]) - 4.5) > 1.0e-9)
-                throw new InvalidOperationException($"A merged pair stands on the MEAN of its two feet, x = (4.4938 + 4.5062) / 2 = 4.5; it stands at {X(nodes[footNode[3]]):0.#########}.");
+            if (Get<int>(placed, "AsymmetricSpans") != 0)
+                throw new InvalidOperationException($"A notch a fiftieth of the spacing off the mirror is still mirrored; the span was placed unmirrored, so the symmetry tolerance is tighter than a solved net can ever be.");
+            if (Math.Abs(X(nodes[footNode[3]]) - 4.49) > 1.0e-9)
+                throw new InvalidOperationException($"A merged pair stands on the MEAN of its own two feet, x = (4.4738 + 4.5062) / 2 = 4.49, and NOT on the span's chord midpoint of 4.5; it stands at {X(nodes[footNode[3]]):0.#########}.");
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 7)
                 throw new InvalidOperationException($"Eight trees on seven feet once the pair has merged; {feet.Length} built.");

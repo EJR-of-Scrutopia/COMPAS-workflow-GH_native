@@ -120,6 +120,14 @@ namespace Ananke.COMPAS.Native.Components
             public int FeetMerged;
             /// <summary>Trunks that stepped off a shared foot onto their own.</summary>
             public int Peeled;
+            /// <summary>
+            /// Trees that were handed a band to gather onto: every tree but
+            /// the ring tree and, at an even Type, the centre tree, which has
+            /// no central band and stands on its own foot. Peeled counts a
+            /// subset of these, so the two together say whether ANY trunk
+            /// reached the shared feet.
+            /// </summary>
+            public int Banded;
             /// <summary>Pairs of feet inside the clearance that stayed two.</summary>
             public int FeetClose;
             public double WorstLean;
@@ -147,6 +155,14 @@ namespace Ananke.COMPAS.Native.Components
             public List<Tree> Trees = new();
             public Tree? RingTree;
             public double Clearance;
+            /// <summary>
+            /// The net's median plan edge, which is the notch spacing along a
+            /// bar. The symmetry test of 3.4 is a tolerance on POSITION, so it
+            /// is measured in these, not in the chord parameter, where the
+            /// same number means microns on a long span and centimetres on a
+            /// short one.
+            /// </summary>
+            public double MedianPlanEdge;
             /// <summary>
             /// The mirror partner of each tree: the tree it pairs with about
             /// its span's midpoint, ITSELF for the centre tree of an odd
@@ -282,37 +298,47 @@ namespace Ananke.COMPAS.Native.Components
         /// its own partner and its along part is zero.
         ///
         /// A span is only mirrored when it CAN be: when its free notches are
-        /// symmetric about its chord midpoint. A crossing that takes an
-        /// interior notch, or a bar end that is neither anchor nor rim and so
-        /// puts a notch on the chord's own start, leaves a free list whose
-        /// index i and index m-1-i are not geometric mirrors at all, and
-        /// forcing them equal and opposite would move feet toward a plane
-        /// nothing straddles. Such a span keeps its own aims, takes its bands
-        /// from each tree's own projection, merges nothing, and is counted in
-        /// AsymmetricSpans.
+        /// symmetric about its chord midpoint, each notch's partner standing
+        /// within a quarter of the notch spacing of where the mirror would put
+        /// it. A crossing that takes an interior notch, or a bar end that is
+        /// neither anchor nor rim and so puts a notch on the chord's own
+        /// start, leaves a free list whose index i and index m-1-i are not
+        /// geometric mirrors at all, and forcing them equal and opposite would
+        /// move feet toward a plane nothing straddles. Such a span keeps its
+        /// own aims, takes its bands from each tree's own projection, merges
+        /// nothing, and is counted in AsymmetricSpans.
         ///
-        /// Then each span ORIENTS ITSELF: the chord gives a frame up to which
-        /// end was traced first, and the span's own mean across-chord pull
-        /// settles it. A span whose mean across is negative is read with its
-        /// frame turned round (c and n negated, every tree's along and across
-        /// negated, and the trees read from the far end), which is the same
-        /// span said the other way about. A family then averages tree i of
-        /// every span directly. This is what makes congruent bars carry
-        /// identical columns whether they are congruent by TRANSLATION (a
-        /// barrel whose bars are traced in mixed directions) or by ROTATION
-        /// (opposite ribs of a dome, whose chords are antiparallel and whose
-        /// pulls are turned with them). Reading every span in the frame of the
-        /// family's lead, and flipping the sign of any span whose chord
-        /// opposed the lead's, got the second case backwards: it cancelled the
-        /// rotated rib's across-chord pull against the others instead of
-        /// adding it, and near perpendicular the test that decided it carried
-        /// no information at all.
+        /// A FAMILY then shares the ALONG and DOWN profiles only, and every
+        /// span keeps its OWN across. That is what makes the frame's one
+        /// arbitrary choice, which end of the bar Pattern traced first, drop
+        /// out of the answer entirely. Read a span in either node order and
+        /// the pair step leaves along ANTISYMMETRIC and down SYMMETRIC, so
+        /// along[i] and down[i] come out the same both ways and can be
+        /// averaged at face value; across comes out NEGATED, and is left
+        /// alone, so it is rebuilt against the same negated normal and lands
+        /// back in the world where the net put it. Bars congruent by
+        /// TRANSLATION (a barrel whose bars are traced in mixed directions)
+        /// and by ROTATION (opposite ribs of a dome, chord and pull turned
+        /// together) therefore both carry the same columns, by construction
+        /// and with no test to get wrong.
         ///
-        /// A FAMILY is the spans alike in free-notch count, in Branching (one
+        /// Sharing across as well needed a rule for which way round a span
+        /// was, and every such rule has a null: a rib lying IN the structure's
+        /// own mirror plane, pulled equally from both sides, has no opinion,
+        /// and would take the family's across in a frame that exists only
+        /// because a curve was drawn left to right. It would lean out of the
+        /// plane it lies in, and to the other side if the curve were redrawn.
+        /// The across a span needs is its own, mirrored within itself by the
+        /// pair step, which is what 3.4 always said it was.
+        ///
+        /// A family is the spans alike in free-notch count, in Branching (one
         /// slider, so alike by construction) and in chord LENGTH within a
-        /// tenth of the family lead's. Length is in the key because the aim is
+        /// tenth of the family LEAD's. Length is in the key because the aim is
         /// shared, and a short steep span handed a long flat one's aim can put
-        /// its foot beyond its own anchors. A span like no other is its own
+        /// its foot beyond its own anchors. Measuring against the lead rather
+        /// than pairwise makes the bucketing non-transitive and order
+        /// dependent, which is deliberate: it is a cheap grouping of like with
+        /// like, not an equivalence relation. A span like no other is its own
         /// family and keeps its own aims. An aim within PlumbDegrees of
         /// vertical is vertical.
         ///
@@ -393,6 +419,18 @@ namespace Ananke.COMPAS.Native.Components
             // one of them in exactly one tree. A crossing that took an
             // interior notch, or a free bar end that put the first notch at
             // parameter zero, breaks it.
+            //
+            // The tolerance is a quarter of the NOTCH SPACING, converted into
+            // chord parameter as 0.25 x medianPlanEdge / chordLength. The
+            // positions being compared come out of the solve, not off the
+            // curve the author drew, so they are never mirrored to the last
+            // digit: an exact-coincidence tolerance would call an ordinary
+            // relaxed arch asymmetric and quietly hand it back its pre-branch
+            // placement. A quarter of the spacing is far tighter than the
+            // failures this test exists to catch, which move a notch by a
+            // whole spacing or more (a crossing takes one out; a free end
+            // shifts every partner by half of one), and far looser than the
+            // millimetres a solver moves a node it meant to leave alone.
             var symmetric = new bool[spanCount];
             var parameters = new List<double>();
             for (int s = 0; s < spanCount; s++)
@@ -411,11 +449,14 @@ namespace Ananke.COMPAS.Native.Components
                         parameters.Add(ChordParameter(first, last, nodes[node]));
                 }
                 parameters.Sort();
+                double spacing = chordLength[s] > 1.0e-12
+                    ? 0.25 * Math.Max(placement.MedianPlanEdge, 0.0) / chordLength[s]
+                    : 1.0;
                 symmetric[s] = true;
                 for (int i = 0; i < parameters.Count; i++)
                 {
                     double partner = parameters[parameters.Count - 1 - i];
-                    if (Math.Abs(parameters[i] + partner - 1.0) > 1.0e-6)
+                    if (Math.Abs(parameters[i] + partner - 1.0) > spacing)
                     {
                         symmetric[s] = false;
                         break;
@@ -475,45 +516,17 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
-            // Each span orients ITSELF, by its own mean across-chord pull.
-            //
-            // The chord gives a frame up to one thing: which end of the bar
-            // was traced first. Nothing physical decides that, so the span's
-            // own forces do. A span whose trees pull, on average, to the
-            // negative side of its own normal is read with the frame turned
-            // round: c and n negated, every tree's along and across negated,
-            // and the trees read from the far end (index i becoming m-1-i).
-            // That is the same span said the other way about, and it puts
-            // every span of a family into one canonical orientation without
-            // ever comparing one span's chord with another's.
-            //
-            // A span whose mean across is zero to within nothing at all has no
-            // opinion, so it keeps its node order.
-            for (int s = 0; s < spanCount; s++)
-            {
-                if (order[s].Count == 0 || !symmetric[s])
-                    continue;
-                double mean = order[s].Sum(t => across[t]) / order[s].Count;
-                if (mean >= -1.0e-9)
-                    continue;
-                chord[s] = -chord[s];
-                normal[s] = -normal[s];
-                foreach (int t in order[s])
-                {
-                    along[t] = -along[t];
-                    across[t] = -across[t];
-                }
-                order[s].Reverse();
-            }
-
             // Families: the symmetric spans alike in free-notch count (hence
             // in tree count and layout at this one Branching) and in chord
-            // LENGTH within a tenth of the family lead's. Length is in the key
+            // LENGTH within a tenth of the family LEAD's. Length is in the key
             // because the family shares an AIM: without it a three metre span
             // and a ten metre one holding the same number of notches average
             // together, and the short one takes an aim that can throw its foot
-            // past its own anchors. A span that matches no family is its own
-            // family, and averaging it with itself changes nothing.
+            // past its own anchors. Measuring against the lead makes the
+            // grouping order dependent and non-transitive, which is what a
+            // bucket is; it is not claiming to be an equivalence relation. A
+            // span that matches no family is its own family, and averaging it
+            // with itself changes nothing.
             var families = new List<List<int>>();
             var familyNotches = new List<int>();
             var familyLength = new List<double>();
@@ -547,8 +560,16 @@ namespace Ananke.COMPAS.Native.Components
                 if (family.Any(s => order[s].Count != m))
                     continue;
                 placement.Families++;
+                // ALONG and DOWN only. Both are node-order invariant after the
+                // pair step, along by being antisymmetric and down by being
+                // symmetric, so tree i of one span and tree i of another are
+                // the same tree of the family whichever way either bar was
+                // traced. ACROSS is not: it comes out negated when a bar is
+                // traced the other way, and there is no way to tell which way
+                // round a span is that does not fail on a span pulled equally
+                // from both sides. So across stays the span's own, already
+                // mirrored within the span by the pair step.
                 var meanAlong = new double[m];
-                var meanAcross = new double[m];
                 var meanDown = new double[m];
                 foreach (int s in family)
                 {
@@ -556,14 +577,12 @@ namespace Ananke.COMPAS.Native.Components
                     {
                         int t = order[s][i];
                         meanAlong[i] += along[t];
-                        meanAcross[i] += across[t];
                         meanDown[i] += down[t];
                     }
                 }
                 for (int i = 0; i < m; i++)
                 {
                     meanAlong[i] /= family.Count;
-                    meanAcross[i] /= family.Count;
                     meanDown[i] /= family.Count;
                 }
                 foreach (int s in family)
@@ -572,7 +591,6 @@ namespace Ananke.COMPAS.Native.Components
                     {
                         int t = order[s][i];
                         along[t] = meanAlong[i];
-                        across[t] = meanAcross[i];
                         down[t] = meanDown[i];
                     }
                 }
@@ -642,6 +660,7 @@ namespace Ananke.COMPAS.Native.Components
             {
                 GroundAsked = groundAsked,
                 Clearance = clearance,
+                MedianPlanEdge = medianPlanEdge,
             };
 
             var held = new HashSet<int>();
@@ -995,6 +1014,7 @@ namespace Ananke.COMPAS.Native.Components
                     if (mirrored >= 0)
                         band[mirrored] = level - 1 - chosen;
                 }
+                result.Banded = band.Count(b => b >= 0);
 
                 // A band's foot is the plan CENTROID of the main notches it
                 // carries, at ground level: the plain mean of their plan
