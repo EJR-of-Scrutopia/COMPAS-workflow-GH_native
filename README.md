@@ -21,7 +21,7 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains thirteen components:
+The native v0.2 vertical slice contains twenty components:
 
 ```text
 01 Model
@@ -31,7 +31,7 @@ The native v0.2 vertical slice contains thirteen components:
                                                  by default, point loads
                                                  with NodeIDs)
 
-02 Form Finding
+02 Solve
   TNA Relax    PRB, ForceDensity, Sag%        -> RLX  relaxed state
   TNA Solve    RLX, Height (optional),
                Iterations (optional), Run     -> RES  result + native
@@ -44,31 +44,50 @@ The native v0.2 vertical slice contains thirteen components:
   FD Solve     PRB, ForceDensity, Run         -> RES  result (same type) +
                                                  native Lines/Supports
 
-03 Visualise
-  Display      RES, STY, Elements, Metric,
-               Weight, VectorScale, Gap       -> viewport + ThrustMesh,
-                                                 Thrust/Force/Load/Reaction
-                                                 lines, Report
+03 Mould
+  Columns      RES, Branching, Type           -> RES  the built column trees,
+                                                 in the Result's Mould block
+  Animate      RES, Time, Pre-Sag, Extension  -> RES  the same Result with
+                                                 this frame written into its
+                                                 Mould block
+
+04 Read
+  Frame        RES                            -> Mesh, Cables, Principal
+                                                 Lines, Principal Nodes,
+                                                 Anchor Nodes, Perimeter
+                                                 Nodes, Perimeter Lines,
+                                                 Columns, Phase
+  Deconstruct  RES                            -> every geometry stream
+  Monitor      RES, EI, EA, Tol,
+               Cable/Column Capacity          -> RES + twenty number trees,
+                                                 branched as Deconstruct's
+                                                 and Frame's geometry
+  Skin         RES, Course Height             -> Face Polylines, Face
+                                                 Courses (Export's cells)
+  Diagnose     RES                            -> Text, Source, Code,
+                                                 Severity, Message, Value
   Style        Preset, Weight Scale,
                Vector Scale                   -> STY  display preset
-  Deconstruct  RES                            -> every data stream
+  Display      RES, STY, Elements, Metric,
+               Weight, VectorScale, Gap       -> the viewport, and nothing
+                                                 else
 
-07 Delivery
+05 Deliver
+  Export       RES, Path, Write, Name,
+               Cells, Courses, Live,
+               Studio, Column Radius          -> JSON  one text per kind,
+                                                 each naming itself; Status,
+                                                 the written files, the live
+                                                 outcome per kind and any
+                                                 warning
+  Import       Path                           -> Meshes, Keys, Supports,
+  Pieces                                         Base Mesh, Diagnostics
   Armadillo    RES, S (target voussoir
   Dual         size, m)                       -> C closed voussoir curves,
                                                  CO course band per cell, FL
                                                  advected flow lines, D
                                                  diagnostics (feeds Export's
                                                  Cells/Courses)
-  Export       RES,
-               Path (optional), Write,
-               Name (optional),
-               Cells (optional, flattened),
-               Courses (optional, flattened),
-               Live, Studio (optional),
-               Column Radius (optional)        -> Contract JSON, COMPAS JSON,
-                                                  Tessellation JSON, Columns
-                                                  JSON, Written, Uploaded
 
 90 System
   Backend Health                              -> ready, packages,
@@ -99,7 +118,8 @@ The implemented solver paths share the same registered Problem:
 Geometry -> Pattern -> Supports -> Loads = Problem
 Problem -> TNA Relax -> TNA Solve -> Result
 Problem -> FD Solve ------------------> Result (same type)
-Result -> Display / Deconstruct / Export
+Result -> Columns -> Animate -> Result (carrying its Mould block)
+Result -> Frame / Deconstruct / Monitor / Skin / Diagnose / Display / Export
 Style feeds Display.
 ```
 
@@ -154,8 +174,8 @@ mean those Grasshopper workflows have been implemented or structurally
 verified.
 
 FD, TNA, and graphic statics will remain distinct methods sharing neutral
-inputs, diagnostics, and one shared Display/Deconstruct/Export surface. They
-will not be hidden behind one ambiguous solver.
+inputs, diagnostics, and one shared Frame/Deconstruct/Monitor/Skin/Diagnose/
+Display/Export surface. They will not be hidden behind one ambiguous solver.
 
 The implemented RhinoVault-style authoring path groups its inspectable
 operations into the spine itself: `Pattern -> Supports -> Loads -> TNA Relax
@@ -168,7 +188,7 @@ implemented surface and later design-by-statics roadmap are detailed in
 
 ## Next step: visualise and cut your export
 
-Export a solved result (`07 Delivery > Export`) and open it in
+Export a solved result (`05 Deliver > Export`) and open it in
 [Bench Studio](https://github.com/EJR-of-Scrutopia/COMPAS_UI-integration-tool),
 a local web UI that turns the thrust network into masonry, lets you walk
 the cutting sequence stage by stage, and renders the result. Rhino is not
@@ -176,7 +196,7 @@ required for that half of the workflow.
 
 For the Armadillo Vault's own cutting pattern -- a mesh aligned with the
 thrust flow whose dual becomes the blocks, so every joint runs across the
-thrust -- wire `07 Delivery > Armadillo Dual` from RES ahead of Export:
+thrust -- wire `05 Deliver > Armadillo Dual` from RES ahead of Export:
 its C and CO outputs feed Export's Cells and Courses, and wiring Cells
 is what adds the tessellation kind, so Export writes the
 `<Name>-tessellation.json` sidecar Bench Studio imports as an authored
