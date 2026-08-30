@@ -97,14 +97,14 @@ internal static class Program
                     new[] { "Result", "EI", "EA", "Tolerance", "Cable Capacity", "Column Capacity" },
                     new[]
                     {
+                        "Result",
                         "Member Force", "Force Density", "Horizontal Force", "Slack",
                         "Spool Length", "Unstrained Length",
                         "Anchor Along", "Anchor Across",
                         "Tip Reaction", "Column Force", "Thrust", "Lean",
                         "Deviation", "Deviation Stats", "Reachable", "Unreachable",
                         "Bar Sag", "Residuals",
-                        "Cable Utilisation", "Column Utilisation",
-                        "Result"
+                        "Cable Utilisation", "Column Utilisation"
                     }),
                 // Animate MAKES a frame and emits the Result carrying it.
                 // Its geometry is Frame's, below, so there is one port here
