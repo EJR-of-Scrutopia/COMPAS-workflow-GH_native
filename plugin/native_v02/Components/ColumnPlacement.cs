@@ -292,7 +292,8 @@ namespace Ananke.COMPAS.Native.Components
         /// A span is only mirrored when it CAN be: when its free notches are
         /// symmetric about its chord midpoint, each notch's partner standing
         /// within a quarter of THAT SPAN'S notch spacing of where the mirror
-        /// would put it, which in chord parameter is 0.25 / (count + 1). A crossing that takes an interior notch, or a bar end that is
+        /// would put it, which in chord parameter is 0.25 / (count + 1).
+        /// A crossing that takes an interior notch, or a bar end that is
         /// neither anchor nor rim and so puts a notch on the chord's own
         /// start, leaves a free list whose index i and index m-1-i are not
         /// geometric mirrors at all, and forcing them equal and opposite would

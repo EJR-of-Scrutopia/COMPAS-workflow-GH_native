@@ -409,7 +409,7 @@ namespace Ananke.COMPAS.Native.Components
                             + "the chain keeps running. Diagnose counts them and "
                             + "names the lever.");
                 }
-                bool nothingGathered = built.Peeled > 0 && built.Peeled >= built.Banded;
+                bool nothingGathered = built.Banded > 0 && built.Peeled >= built.Banded;
                 if (built.Peeled > 0)
                 {
                     AddRuntimeMessage(
@@ -574,7 +574,7 @@ namespace Ananke.COMPAS.Native.Components
             // count takes no band and stands on its own foot, and the ring
             // tree never had one, so counting those made the state
             // unreachable on exactly the arch it was written for.
-            bool nothingGathered = built.Peeled > 0 && built.Peeled >= built.Banded;
+            bool nothingGathered = built.Banded > 0 && built.Peeled >= built.Banded;
             string gathered = placement.GroundPlaced == 0
                 ? $"every tree stands on its own foot; {Count(built.Feet.Count, "foot", "feet")}"
                 : nothingGathered
@@ -611,8 +611,9 @@ namespace Ananke.COMPAS.Native.Components
             d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "info",
                 $"{Count(spansWithTrees, "span", "spans")} with trees in "
                     + $"{Count(placement.Families, "family", "families")}; "
-                    + "feet mirrored about each span's midpoint and shared across "
-                    + "each family; the largest aim moved "
+                    + "feet mirrored about each span's midpoint, the along-chord "
+                    + "and vertical pulls shared across each family and each line "
+                    + "keeping its own across-chord pull; the largest aim moved "
                     + $"{placement.AsymmetryRemoved:0.##} degrees; "
                     + $"{placement.CentreTrees} centre tree(s) standing in the "
                     + "mirror plane"

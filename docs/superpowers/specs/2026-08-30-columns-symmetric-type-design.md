@@ -59,16 +59,23 @@ as today. Before any foot is placed the resultants are symmetrised:
   normal to `c`. A resultant `R` reads as `(a, x, z) = (R.c, R.n, R.z)`.
 - Symmetric spans. A span is SYMMETRIC when its free notches' chord
   parameters pair off about the midpoint: sorted ascending, `s_i +
-  s_(n-1-i) = 1` for every `i`, within a QUARTER OF THE NOTCH SPACING,
-  which in chord parameter is `0.25 x medianPlanEdge / chordLength`. The
-  tolerance is on POSITION, not on the parameter: the same parameter
-  bound is microns on a long span and centimetres on a short one, and
-  the positions being compared come out of the SOLVE rather than off the
-  curve the author drew, so a solved or relaxed net never mirrors its
-  notches to the last digit. A quarter of the spacing is far tighter
-  than the failures this test exists to catch, which move a notch by a
-  whole spacing or more, and far looser than the millimetres a solver
-  moves a node it meant to leave alone. Only a symmetric span is
+  s_(n-1-i) = 1` for every `i`, within a QUARTER OF THAT SPAN'S OWN
+  NOTCH SPACING, which in chord parameter is `0.25 / (count + 1)`, since
+  `count` notches cut the chord into `count + 1` gaps. The span's own
+  spacing, not the net's median plan edge: that median is taken over
+  every edge in both mesh directions and stands in no fixed ratio to the
+  spacing along any one bar, so scaling by it makes the bound several
+  whole spacings on a mesh refined along its principal lines and exact
+  coincidence again on one refined across them. The tolerance is on
+  POSITION, not on the parameter, and the positions being compared come
+  out of the SOLVE rather than off the curve the author drew, so a
+  solved or relaxed net never mirrors its notches to the last digit. A
+  quarter of the spacing sits at a constant factor of four inside the
+  failures this test exists to catch, which move a notch by a whole
+  spacing or more, and far outside the millimetres a solver moves a node
+  it meant to leave alone. A span with a free END has one interval fewer
+  than `count + 1`, an error of one part in `count` that a
+  quarter-spacing bound does not notice. Only a symmetric span is
   mirror-paired, family-averaged, banded per pair (3.5) and
   centre-merged (3.5). A span that is not (a crossing took an interior
   notch, or a bar end that is neither anchor nor rim put a notch at
@@ -115,6 +122,15 @@ as today. Before any foot is placed the resultants are symmetrised:
   bars are traced in mixed directions) and by ROTATION (opposite ribs of
   a dome, chord and pull turned together) carry the same columns in the
   world with no test to get wrong.
+  What follows, and is the price: a family removes along-chord and
+  vertical disagreement between neighbouring principal lines and leaves
+  across-chord disagreement standing, as the net's own. Two neighbouring
+  lines handed slightly different across-chord pulls still stand
+  slightly differently across the chord. Section 1 lists neighbouring
+  lines disagreeing among the symptoms this section removes; it removes
+  the half of that disagreement which is an artefact of the frame, and
+  keeps the half that is the net saying two lines are carrying different
+  loads.
 - Dead band. An aim within `PlumbDegrees = 2` of vertical is vertical.
   This applies to every tree of every span, mirrored or not: a degree of
   residual lean out of a solved net is noise wherever it appears.
@@ -225,9 +241,10 @@ Source "Columns". Renamed and reworded:
   would say the opposite of what the author is looking at. Context:
   asked, placed, peeled, feet.
 - `columns.symmetry` (info, new): `S spans with trees in K families; feet
-  mirrored about each span's midpoint and shared across each family; the
-  largest aim moved D degrees; C centre tree(s) standing in the mirror
-  plane`, and, when `AsymmetricSpans` is nonzero, `; S spans placed
+  mirrored about each span's midpoint, the along-chord and vertical pulls
+  shared across each family and each line keeping its own across-chord
+  pull; the largest aim moved D degrees; C centre tree(s) standing in the
+  mirror plane`, and, when `AsymmetricSpans` is nonzero, `; S spans placed
   unmirrored: a crossing or a free end breaks their symmetry`. Spans WITH
   TREES, not every span: one whose free notches were all claimed by a
   crossing or by the ring tree joins no family. Only a centre tree's
