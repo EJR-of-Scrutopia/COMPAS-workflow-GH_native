@@ -57,20 +57,45 @@ as today. Before any foot is placed the resultants are symmetrised:
   its last, `n` is `c` turned a quarter turn in plan (`(-c.y, c.x)`),
   the mirror plane is the vertical plane through the chord's midpoint
   normal to `c`. A resultant `R` reads as `(a, x, z) = (R.c, R.n, R.z)`.
+- Symmetric spans. A span is SYMMETRIC when its free notches' chord
+  parameters pair off about the midpoint: sorted ascending, `s_i +
+  s_(n-1-i) = 1` for every `i` within `1e-6`. Only a symmetric span is
+  mirror-paired, oriented, family-averaged, banded per pair (3.5) and
+  centre-merged (3.5). A span that is not (a crossing took an interior
+  notch, or a bar end that is neither anchor nor rim put a notch at
+  parameter 0) keeps every resultant it came in with, takes each tree's
+  band from that tree's own projection with no pair rule, merges
+  nothing, and is counted in `Placement.AsymmetricSpans`; its trees'
+  `Partner` is -1. Index `i` and index `m-1-i` of such a free list are
+  not geometric mirrors, and pairing them would force equal and opposite
+  along-chord pulls onto trees that do not straddle the mirror plane.
 - Mirror pairs. The span's trees in grouping order (3.3) are indexed
   `0..m-1`; tree `i` pairs with tree `m-1-i`; with `m` odd the centre
   tree pairs with itself. For a pair `(t, t')`: `a_t := (a_t - a_t')/2`,
   `a_t' := -a_t`, and `x` and `z` are each replaced by the pair's mean.
   The centre tree's `a` is 0.
-- Families. Spans with the same free-notch count and the same
-  Branching (hence the same tree count and layout) form a FAMILY. Every
-  span of a family is read in the frame of the family's first span: a
-  span whose chord points against that span's chord (`c.c_first < 0`)
-  is read REVERSED, its tree index `i` reading as `m-1-i` and its `a`
-  and `x` negated. Tree `i` of every span in the family then takes the
-  family's mean `(a, x, z)` at index `i`. Every principal line of a
-  family therefore has the same columns in its own frame.
+- Self-orientation. The chord fixes the frame up to which end of the bar
+  was traced first, and the span's own forces settle that. After the
+  pair step each span takes the mean of its trees' `x`; when that mean is
+  negative the frame is turned round (`c := -c`, `n := -n`, every tree's
+  `a` and `x` negated, and tree index `i` read as `m-1-i`), which is the
+  same span said the other way about. When `|mean x| < 1e-9` the span has
+  no opinion and its node order stands. No span's chord is ever compared
+  with another's.
+- Families. Spans alike in free-notch count, in Branching (one slider, so
+  alike by construction) and in chord LENGTH within 10 percent of the
+  family lead's form a FAMILY; a span matching no family is its own
+  family. Tree `i` of every span of a family takes the family's mean
+  `(a, x, z)` at index `i`, each span reading it in its own oriented
+  frame. Length is in the key because a family shares an AIM, and a short
+  steep span handed a long flat one's aim can stand its foot beyond its
+  own anchors. Bars congruent by TRANSLATION (a barrel whose bars are
+  traced in mixed directions) and bars congruent by ROTATION (opposite
+  ribs of a dome, chord and pull turned together) both come out carrying
+  the same columns in the world.
 - Dead band. An aim within `PlumbDegrees = 2` of vertical is vertical.
+  This applies to every tree of every span, mirrored or not: a degree of
+  residual lean out of a solved net is noise wherever it appears.
 - The ring tree (3.2) has no mirror partner and no family; it is not
   symmetrised and keeps its own resultant.
 - `Tree.Resultant` holds the symmetrised vector, rebuilt from `(a, x,
@@ -81,7 +106,11 @@ as today. Before any foot is placed the resultants are symmetrised:
 
 `ColumnPlacement.Symmetrise(placement, nodes, bars)` does all of this
 and returns the largest angle, in degrees, between any tree's raw aim
-and its symmetrised aim (the asymmetry removed), measured.
+and its symmetrised aim (the asymmetry removed), measured. It runs once
+per `Place` and guards itself: a second call with the same
+`Trees.Count` returns the stored answer, and a call after the tree count
+changed runs again, so a tree added to a `Placement` is never left
+standing on its raw aim in silence.
 
 ### 3.5 Feet
 
@@ -96,18 +125,34 @@ and its symmetrised aim (the asymmetry removed), measured.
   N)` on the chord parameter `s`), its partner takes the mirrored band
   `N-1-band`, so mirrored trees land in mirrored bands whatever the
   band boundaries; a centre tree (its own partner) at an ODD N takes
-  the central band and at an EVEN N takes its Type 0 foot, which is on
-  the midpoint; each band with a tree gets one foot at the plan centre
-  (midpoint of the extremes) of its trees' main notches, at ground
-  level. Then every tree is
-  checked: a trunk (foot to fork, or the single member of a one-notch
-  tree) that would lean past `MaxLeanDegrees` (60) to its band foot is
-  PEELED: that tree stands on its Type 0 foot instead, and is counted
-  in `Level.Peeled`. A band whose trees were all peeled builds no foot.
-  The level is never refused for it.
+  the central band and at an EVEN N takes its Type 0 foot, which is in
+  the mirror plane; each band with a tree gets one foot at the plan
+  CENTROID (the plain mean) of its trees' main notches, at ground level.
+  The mean, not the centre of their axis-aligned bounding box: a
+  reflection about the span's mirror plane is affine but not axis
+  aligned, so the box does not commute with it unless the chord runs
+  along an axis or the band's X and Y extremes fall on the same two
+  notches, and mirrored bands then get feet that are not mirror images.
+  Then every tree is checked: a trunk (foot to fork, or the single member
+  of a one-notch tree) that would lean past `MaxLeanDegrees` (60) to its
+  band foot is PEELED: that tree stands on its Type 0 foot instead, and
+  is counted in `Level.Peeled`. A band that loses trees that way REBUILDS
+  its foot from the mains of the trees still standing on it, and the cap
+  is judged again; the peel only ever takes trees off a band, so this
+  settles. A band with no survivors builds no foot. The level is never
+  refused for it, and where EVERY non-ring tree peels the level is Type
+  0's geometry exactly, which section 4 says in as many words.
 - Merging. Feet merge in ONE case only: a mirrored pair (3.4) whose two
-  feet lie within the clearance of each other merges onto the chord
-  midpoint in plan, at ground, counted in `Level.FeetMerged`. Any other
+  feet lie within the clearance of each other merges onto the plan MEAN
+  of the two, at ground, counted in `Level.FeetMerged`. The mean, not the
+  span's chord midpoint: a pair's two feet differ only in their
+  along-chord part, so the clearance test bounds how far apart they are
+  ALONG the chord and says nothing about how far off it they sit, and on
+  a bar that curves in plan the innermost notches sit off the chord by
+  the plan sagitta. Merging onto the chord midpoint moved such a pair
+  sideways by that sagitta, out from under its own bar. On symmetric
+  geometry the mean is in the mirror plane, which is where the pair's own
+  symmetry puts it. Any other
   two feet (different pairs, different spans, the ring foot) closer than
   the clearance stay two and are counted in `Level.FeetClose`. Feet at
   the SAME point (two band feet built from the same mains, as at a
@@ -116,13 +161,23 @@ and its symmetrised aim (the asymmetry removed), measured.
 
 ### 3.7 Judged, never refused
 
-For every level the engine measures, as today: the worst trunk lean
-(which is at most 60 by construction now), the worst per-foot alignment
-(3.7 of the columns spec), the member and net collisions (3.7 of the
-columns spec, unchanged tests). None of them refuses a level.
-`Level.Feasible` now means `Collisions == 0` and is used by Auto alone;
-`Level.Rule` and `Level.Value` name the worst measure for the
-diagnostics (`"lean"`, `"alignment"`, `"collision"`, or `"none"`).
+For every level the engine measures, as today: the worst trunk lean, the
+worst per-foot alignment (3.7 of the columns spec), the member and net
+collisions (3.7 of the columns spec, unchanged tests). None of them
+refuses a level. `Level.Feasible` now means `Collisions == 0`, and Auto
+READS that field rather than recomputing the test; `Level.Rule` and
+`Level.Value` name the worst measure for the diagnostics (`"lean"`,
+`"alignment"`, `"collision"`, or `"none"`).
+
+The lean is at most 60 by construction with one narrow caveat: the peel
+of 3.5 runs BEFORE the centre merge and is not re-run after it, while
+the lean is measured after. A merge moves each of the pair's two feet by
+half the gap between them, which the clearance bounds at half a
+clearance, so a trunk sitting just under the cap can be reported a
+fraction past it and `Level.Rule` can then read `"lean"`. The move is
+toward the pair's own centre and is bounded; re-running the peel after
+the merge would trade that for a foot the merge had already welded
+walking away again.
 
 Type N asked: level N alone is built and placed; `GroundPlaced ==
 GroundAsked`. Auto (`GroundAsked = -1`): levels 4 down to 0 are all
@@ -138,15 +193,27 @@ Source "Columns". Renamed and reworded:
 - `columns.type` replaces `columns.ground`. Info: `Type asked N, placed
   N: each span's trees gather onto up to N feet about its midpoint; F
   feet built` (or, for 0, `every tree stands on its own foot; F feet`).
-  Warning when `Peeled > 0`: `... ; P trunk(s) stand on their own feet
-  because a trunk to the shared foot would lean past 60 degrees`.
-  Context: asked, placed, peeled, feet.
-- `columns.symmetry` (info, new): `S spans in K families; feet mirrored
-  about each span's midpoint and shared across each family; the largest
-  aim moved D degrees; C centre tree(s) plumb`. Context: spans,
-  families, moved, centres.
-- `columns.feet_merged` (info) now counts centre-pair merges only, and
-  says so.
+  With `Peeled > 0`, still INFO, and `... ; P trunk(s) stand on their own
+  feet because a trunk to the shared foot would lean past 60 degrees`: a
+  peel is the rule working, not a fault, and the canvas carries it as a
+  Remark. Where EVERY non-ring tree peeled the gathering clause is
+  replaced by `nothing gathered: every trunk to the shared feet would
+  lean past 60 degrees; the columns stand as Type 0`, because the
+  geometry that comes back is Type 0's and saying the trees gathered
+  would say the opposite of what the author is looking at. Context:
+  asked, placed, peeled, feet.
+- `columns.symmetry` (info, new): `S spans with trees in K families; feet
+  mirrored about each span's midpoint and shared across each family; the
+  largest aim moved D degrees; C centre tree(s) standing in the mirror
+  plane`, and, when `AsymmetricSpans` is nonzero, `; S spans placed
+  unmirrored: a crossing or a free end breaks their symmetry`. Spans WITH
+  TREES, not every span: one whose free notches were all claimed by a
+  crossing or by the ring tree joins no family. Only a centre tree's
+  along-chord pull is zeroed, so it stands in the mirror plane rather
+  than plumb. Context: spans, families, moved, centres, unmirrored.
+- `columns.feet_merged` (info) now counts centre-pair merges only, says
+  so, and says the pair stands at the mean of its own two feet, in its
+  span's mirror plane.
 - `columns.feet_close` (warning, new): `F pairs of feet closer than the
   clearance stand separately; raise Type to gather them, or space the
   principal lines`.
@@ -160,7 +227,11 @@ Source "Columns". Renamed and reworded:
 
 Diagnose's cross-checks that read `columns.ground` read `columns.type`.
 Every mention of Ground in ColumnsComponent's messages, tooltips and
-value list says Type.
+value list says Type. Counts read as counts: `1 foot`, `1 family`, `1
+span`, `1 pair`. The component carries a `Message`, `Type N, F feet`,
+with `, P peeled` when trunks peeled and `, unmirrored S` when spans were
+placed unmirrored, prefixed `Auto: ` under Auto, so the slider's answer
+is legible without opening Diagnose.
 
 ## 5. Files (binding)
 
@@ -169,8 +240,9 @@ value list says Type.
   peel, the one-case merge, judged-not-refused, Auto's preference.
 - `plugin/native_v02/Components/ColumnsComponent.cs`: the port, the
   value list, the diagnostics of section 4.
-- `plugin/native_v02/Components/DiagnoseComponents.cs`: the code rename.
 - `tests/native_smoke/Program.cs`: section 6.
+- `plugin/native_v02/Contracts/MouldContracts.cs`: the `GroundPlaced`
+  comment, which still described a fallback.
 - `docs/component-taxonomy.md`: the Columns row.
 - `docs/superpowers/specs/2026-08-28-columns-two-sliders-design.md` is
   NOT edited; section 8 here is the amendment record.
@@ -186,13 +258,45 @@ names the wrong behaviour each fails against):
   1 degree along-chord skew on every notch. Type 0. For every mirrored
   pair the feet satisfy `foot_i + foot_(m-1-i) = 2 x midpoint` in plan
   to 1e-9; the centre foot is on the midpoint to 1e-9 and its member is
-  vertical; `Symmetrise` reports the asymmetry removed greater than 0.
-- One family: the same arch three times, offset in Y by 0, 1 and 2, the
+  vertical; `Symmetrise` reports the asymmetry removed above half a
+  degree, the skew on every notch being a whole one.
+- One family: the same arch four times, offset in Y by 0, 1, 2 and 3, the
   second with every pull scaled by 1.05, the third with its nodes in
-  REVERSED bar order. Type 0. Read in each span's own frame, foot `i`
-  of every bar has the same along-chord and across-chord offset from
-  its span's midpoint to 1e-9; the reversed bar's feet mirror correctly
-  (its index mapping is exercised).
+  REVERSED bar order, the fourth turned through 180 degrees in plan about
+  the arch's own centre with its pull turned with it. Type 0. Read in
+  each span's own frame, foot `i` of every bar has the same along-chord
+  and across-chord offset from its span's midpoint to 1e-9, the
+  across-chord offset negated on a span the engine turned round; and the
+  across-chord FORCE each span carries is the hand-derived `lateral`
+  with its own sign, which is the reading the reversed-span rule got
+  wrong (it cancelled the rotated bar against the rest and halved the
+  family mean). The same fixture runs again at Type 2, where each span's
+  band feet must be mirror images in its own frame and its centre tree
+  must stand in the mirror plane: the band path had never run on a span
+  traced backwards at all.
+- Families are not notch counts: a ten metre shallow span whose pulls
+  lean outward beside a three metre steep span of the same free-notch
+  count whose pulls hang plumb. `Families` is 2, and every foot of the
+  short span stands within its own chord, plumb under its own main
+  notch. Keyed on the count alone the short span's outermost foot lands
+  at -0.78, beyond its own anchor.
+- A span placed unmirrored: an eleven-notch arch crossed at its position
+  3 by a lower-indexed bar, so its free notches are 0.1, 0.2, 0.4, 0.5,
+  0.6, 0.7, 0.8, 0.9 and 0.7 has no partner. `AsymmetricSpans` is 1, the
+  level is placed, every tree of that span keeps its raw resultant and
+  takes `Partner` -1, and the crossing bar's own span, symmetric at
+  parameter 0.5, IS mirrored (its 0.3 along-chord pull comes back
+  zeroed). The same arch untouched reports `AsymmetricSpans` 0.
+- A bar that curves IN PLAN, chord along `(1, 2)/sqrt(5)`, ten nodes on a
+  plan parabola of sagitta 2 with the anchors on the chord, pulls leaning
+  inward. Three cases on it: at Type 2 the two band feet are the exact
+  mirror images `(-2, 40/27)` and `(2, 40/27)` in the chord frame, where
+  the bounding-box centre gives `(-2.0185, 1.4198)` against `(2,
+  1.3827)`; at Type 0 the centre pair merges onto `(0, 160/81)`, the mean
+  of its two feet, where the chord midpoint is `(0, 0)`, two units away;
+  at Type 1 two trunks peel and the band foot rebuilds from the six
+  survivors at `(0, 832/486)` rather than staying at the eight-main
+  `(0, 40/27)`.
 - Type 1 placed, not refused: the wide arch (rise 2.5 on span 10) at
   Type 1 gives `GroundPlaced == 1`, `Peeled >= 2` (the flank trunks),
   every trunk's lean at most 60 + 1e-9, no level with `Rule == "lean"`
@@ -203,7 +307,10 @@ names the wrong behaviour each fails against):
   merge) and `FeetClose >= 1`.
 - The centre pair merges: an even-count arch (10 notches) whose two
   innermost mirrored feet fall within the clearance of each other gives
-  one foot on the midpoint and `FeetMerged == 1`.
+  one foot at the MEAN of the two, which on an arch this symmetric is the
+  midpoint, and `FeetMerged == 1`. Mean against chord midpoint is decided
+  on the plan-curved bar below, where the two answers are two units
+  apart.
 - Auto prefers no collision: on the wide arch at Auto, `GroundPlaced`
   equals the level the check itself recomputes from `Tried` by the
   section 3.7 rule (shortest load path among collision-free levels,
@@ -213,7 +320,11 @@ names the wrong behaviour each fails against):
   with peeled trunks; every other case keeps passing unchanged.
 - Component pins: the Columns nicknames in `SpineComponentContracts`
   become `RES, B, T`; the persistent parameter count stays 12 and the
-  component count 19.
+  component count 19, both ENFORCED as failures.
+- Margins: the asymmetry removed is asserted above half a degree, the
+  fixture's own skew being one degree, rather than merely above zero; and
+  the cross fixture's two coincident feet are called a WELD, with
+  `FeetMerged == 0` asserted there, rather than a merge.
 
 ## 7. What breaks on the canvas
 
@@ -221,6 +332,24 @@ Nothing rewires: slot 2 keeps its slot and values; the label reads
 Type; an old Ground value list still drives it. Definitions that showed
 Ground 0 after asking for 1 now show Type 1 with peeled flank trunks,
 and their feet move to mirrored positions.
+
+Three things an author does meet:
+
+- The old value list is a separate canvas object and is not relabelled on
+  load. A list still titled **Ground**, whose first item still reads `0 ·
+  standalone`, hangs off a port now labelled **Type** and still drives
+  it; nothing replaces it, and placing the new list from the component
+  menu does nothing while the old one is wired, because a suggested list
+  skips any input that already has a source. Deleting the old list first
+  is the whole fix, and the clamp warning says so.
+- The diagnostic code `columns.ground` is now `columns.type`, so a
+  downstream filter on Diagnose's `Code` output stops matching.
+- A definition that was CLEAN can now show warnings. `columns.collision`
+  fires at every level where it used to fire at Ground 0 alone, and
+  `columns.feet_close` and `columns.alignment` are both new warnings, so
+  Diagnose's own Message line can flip from clean to N warnings on
+  reopening a working file. Nothing about the geometry got worse; the
+  measures are simply being reported where they were silent.
 
 ## 8. Amendments to the columns spec of 2026-08-28
 
