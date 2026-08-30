@@ -2197,12 +2197,28 @@ namespace Ananke.COMPAS.Native.Components
             return boundary.OrderBy(i => i).ToArray();
         }
 
+        /// <summary>
+        /// The boundary nodes, and WHICH ROUTE said so. A mesh whose naked
+        /// edges name them gives the boundary exactly and reports
+        /// <paramref name="estimated"/> false; anything else falls through to
+        /// the node-degree heuristic, which is a guess and reports true.
+        ///
+        /// The flag is the whole point of returning it. A closed thrust mesh
+        /// has no naked edge, and a mesh whose vertex count does not match
+        /// the mapping cannot be read at all, so a caller that hands a mesh
+        /// in can still be answered by the heuristic; it used to be answered
+        /// silently, and a polyline drawn through a degree set was then
+        /// labelled the boundary, which is the one thing the estimated flag
+        /// exists to prevent.
+        /// </summary>
         public static int[] PerimeterNodes(
             Mesh? mesh,
             int[] meshToNode,
             List<int>[] neighbours,
-            int count)
+            int count,
+            out bool estimated)
         {
+            estimated = false;
             if (mesh is not null && mesh.Vertices.Count > 0 &&
                 meshToNode.Length == mesh.Vertices.Count)
             {
@@ -2227,6 +2243,7 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
+            estimated = true;
             int[] degrees = neighbours.Select(list => list.Count).ToArray();
             if (degrees.Length == 0)
                 return Array.Empty<int>();
@@ -2460,6 +2477,16 @@ namespace Ananke.COMPAS.Native.Components
             // "raise" about geometry that is really the finished vault. Both
             // guards feed the SAME phase, because a Result whose Frame is
             // malformed in one is not trustworthy in the other either.
+            //
+            // Neither fallback is reachable through the two components that
+            // call this today. MouldFrameDto.Validate refuses a frame whose
+            // vertices do not number one per net vertex and one whose column
+            // nodes do not number one per column node
+            // (Contracts/MouldContracts.cs:184 and :198), and Frame and
+            // Animate both run result.Validate() before Read is called. The
+            // guards stay as belt: Read takes a ResultDto and nothing in its
+            // signature says the contract was ever checked, so a Result
+            // deserialised straight from JSON reaches here the same way.
             string phase =
                 frame is null ||
                 string.IsNullOrWhiteSpace(frame.Phase) ||
@@ -2476,8 +2503,7 @@ namespace Ananke.COMPAS.Native.Components
             // is left over as the infill branch at the end. The empty
             // branches are kept, so branch {i} is bar {i} whether or not
             // that bar carries a member here.
-            int[] memberBar = MouldGeometry.MemberRunIndex(
-                edges.Select(e => (e.Item1, e.Item2)).ToArray(), bars);
+            int[] memberBar = MouldGeometry.MemberRunIndex(edges, bars);
             var cables = new List<List<Line>>();
             for (int b = 0; b < bars.Count; b++)
                 cables.Add(new List<Line>());
@@ -2508,8 +2534,15 @@ namespace Ananke.COMPAS.Native.Components
             // faces either is the degree heuristic left, and that is an
             // ESTIMATE rather than a boundary, so it is labelled as one and
             // no curve is drawn through it.
+            //
+            // A mesh is not a promise of an exact answer either: a closed
+            // thrust mesh has no naked edge and a mismatched mapping cannot
+            // be read, and PerimeterNodes falls through to the same heuristic
+            // on both. So the flag is taken FROM IT rather than from which
+            // branch we are in; a chord through a degree set must never be
+            // labelled the boundary because a mesh happened to be handed in.
             int[] perimeterIds;
-            bool perimeterEstimated = false;
+            bool perimeterEstimated;
             if (mesh is null)
             {
                 TopologyDto? patternTopology =
@@ -2520,17 +2553,17 @@ namespace Ananke.COMPAS.Native.Components
                         ? patternTopology.Faces
                         : Array.Empty<IReadOnlyList<int>>();
                 perimeterIds = MouldGeometry.PerimeterFromFaces(faces, n);
+                perimeterEstimated = false;
                 if (perimeterIds.Length == 0)
                 {
                     perimeterIds = MouldGeometry.PerimeterNodes(
-                        mesh, meshToNode, neighbours, n);
-                    perimeterEstimated = true;
+                        mesh, meshToNode, neighbours, n, out perimeterEstimated);
                 }
             }
             else
             {
                 perimeterIds = MouldGeometry.PerimeterNodes(
-                    mesh, meshToNode, neighbours, n);
+                    mesh, meshToNode, neighbours, n, out perimeterEstimated);
             }
 
             // Grouped over the PLAN AS DRAWN unioned with the solved net,

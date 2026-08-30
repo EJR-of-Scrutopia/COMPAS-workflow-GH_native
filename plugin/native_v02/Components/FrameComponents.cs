@@ -22,10 +22,15 @@ namespace Ananke.COMPAS.Native.Components
     /// them meant the geometry could only be had by animating, and could
     /// never be had of the finished vault at all.
     ///
-    /// No custom preview. Every output is ordinary Grasshopper geometry and
-    /// previews as itself, visible by default: Animate owns the drawing of
-    /// the machine, and a second component drawing the same net in the same
-    /// place would only double it.
+    /// No custom preview, and the geometry outputs start HIDDEN, the way
+    /// every other reader of a Result starts them (Deconstruct, Monitor,
+    /// Skin, Columns). Animate owns the drawing of the machine and this
+    /// component owns the data; left visible, Grasshopper's default red drew
+    /// the same mesh, the same cables and the same columns a second time
+    /// over Animate's own shaded preview, which is the very doubling having
+    /// no custom preview here was meant to avoid. Each output can still be
+    /// switched on from its own context menu. Phase is text and previews
+    /// nothing either way.
     /// </summary>
     public sealed class FrameComponent : NativeComponentBase
     {
@@ -41,6 +46,11 @@ namespace Ananke.COMPAS.Native.Components
                 ComponentCategories.Read,
                 "frame")
         {
+            foreach (IGH_Param output in Params.Output)
+            {
+                if (output is IGH_PreviewObject preview)
+                    preview.Hidden = true;
+            }
         }
 
         public override Guid ComponentGuid =>
@@ -150,6 +160,11 @@ namespace Ananke.COMPAS.Native.Components
             if (!data.GetData(0, ref goo) ||
                 goo?.Value is not ResultDto result)
             {
+                // Said in the chin as well as by the empty ports, the way
+                // Export says it: without this the component sits under the
+                // previous solve's phase word, so a Frame with nothing wired
+                // reads "hold" as though a frame were still standing on it.
+                Message = "No Result";
                 return;
             }
 

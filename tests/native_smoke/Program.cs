@@ -84,7 +84,14 @@ internal static class Program
                         "Reaction Vectors",
                         "Columns",
                         "Heads",
-                        "Feet"
+                        "Feet",
+                        // APPENDED, at 13, and the position is the point:
+                        // Display's Force Lines had no successor anywhere in
+                        // the plugin until this port, and it had to arrive
+                        // without moving one of the twelve slots above,
+                        // every one of which a saved definition's wire
+                        // already sits on.
+                        "Force Lines"
                     }),
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[] { "Result", "Course Height" },
@@ -789,6 +796,19 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"Deconstruct column trees: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateDeconstructForceLines(plugin);
+            Console.WriteLine(
+                "PASS  Deconstruct force lines: one line per member row, "
+                + "between the force-graph vertices of the force edge that "
+                + "row's state NAMES, and empty for an FD Result.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Deconstruct force lines: {DescribeException(exception)}");
         }
 
         try
@@ -2482,6 +2502,160 @@ internal static class Program
     }
 
     /// <summary>
+    /// Deconstruct's Force Lines: the reciprocal FORCE diagram, which had no
+    /// port anywhere in the plugin between Display giving up its outputs and
+    /// this one being appended.
+    ///
+    /// The rule is one line per MEMBER ROW, in row order, drawn between the
+    /// force-graph vertices of the force edge that row's state NAMES. Naming
+    /// is the whole of it, so the fixture makes every cheaper reading wrong:
+    /// the edge states are listed out of Id order, no state's ForceEdgeId is
+    /// its own Id, and no force edge's id is its own position in the list. A
+    /// reader that took the force edge at the row's index, or at the state's
+    /// place in the list, or that matched Id to Id, would get three different
+    /// answers here and none of them this one.
+    ///
+    /// And nothing at all for FD, which carries no reciprocal diagram: the
+    /// port is registered for both solvers, so it has to come back empty
+    /// rather than reach for graphs an FD Result does not have.
+    /// </summary>
+    private static void ValidateDeconstructForceLines(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType = RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphEdgeType = RequireContractType(plugin, "TnaGraphEdgeDto");
+        Type edgeStateType = RequireContractType(plugin, "TnaEdgeStateDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type tables = RequireComponentType(plugin, "ResultTables");
+        Type deconstruct = RequireComponentType(plugin, "DeconstructComponent");
+        MethodInfo members = RequirePublicStatic(tables, "Members");
+        MethodInfo forceLines = RequireStatic(deconstruct, "ForceLines");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+        object Vertex(int id, object at)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            SetContractProperty(vertex, graphVertexType, "Point", at);
+            return vertex;
+        }
+        object GraphEdge(int id, int u, int v)
+        {
+            object edge = CreateInstance(graphEdgeType);
+            SetContractProperty(edge, graphEdgeType, "Id", id);
+            SetContractProperty(edge, graphEdgeType, "U", u);
+            SetContractProperty(edge, graphEdgeType, "V", v);
+            return edge;
+        }
+        object State(int id, int equilibriumEdge, int forceEdge)
+        {
+            object state = CreateInstance(edgeStateType);
+            SetContractProperty(state, edgeStateType, "Id", id);
+            SetContractProperty(
+                state, edgeStateType, "EquilibriumEdgeId", equilibriumEdge);
+            SetContractProperty(state, edgeStateType, "ForceEdgeId", forceEdge);
+            return state;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 2, 0)!));
+
+        // The force polygon: three vertices at three separable heights, so a
+        // line read off the wrong edge is read straight off its Z.
+        object forceGraph = CreateInstance(graphType);
+        SetContractProperty(forceGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                Vertex(70, P(0, 0, 10)),
+                Vertex(80, P(0, 0, 20)),
+                Vertex(90, P(0, 0, 30))));
+        SetContractProperty(forceGraph, graphType, "Edges",
+            Of(graphEdgeType,
+                GraphEdge(300, 70, 80),
+                GraphEdge(301, 80, 90),
+                GraphEdge(302, 90, 70)));
+
+        object tna = CreateResultDto(
+            resultType,
+            "tna",
+            equilibrium,
+            CreateInstance(graphType),
+            forceGraph);
+        SetContractProperty(tna, resultType, "Mappings", CreateInstance(mappingsType));
+        SetContractProperty(tna, resultType, "EdgeStates",
+            Of(edgeStateType,
+                State(2, 1, 300),
+                State(0, 2, 301),
+                State(1, 0, 302)));
+
+        Array rows = (Array)members.Invoke(null, new[] { tna })!;
+        Array lines = (Array)forceLines.Invoke(null, new[] { tna, rows })!;
+        if (lines.Length != rows.Length || lines.Length != 3)
+        {
+            throw new InvalidOperationException(
+                "One force line per member row and no more; got "
+                + $"{lines.Length} against {rows.Length} rows.");
+        }
+        Type lineType = lines.GetType().GetElementType()!;
+        Type point3d = lineType.GetProperty("From")!.PropertyType;
+        double End(int at, string end)
+        {
+            object line = lines.GetValue(at)!;
+            object corner = lineType.GetProperty(end)!.GetValue(line)!;
+            return (double)point3d.GetProperty("Z")!.GetValue(corner)!;
+        }
+        // Row 0 is state 0, which names force edge 301: 20 to 30. Row 1 is
+        // state 1, force edge 302: 30 to 10. Row 2 is state 2, force edge
+        // 300: 10 to 20.
+        (double From, double To)[] expected =
+        {
+            (20.0, 30.0), (30.0, 10.0), (10.0, 20.0)
+        };
+        for (int at = 0; at < expected.Length; at++)
+        {
+            if (Math.Abs(End(at, "From") - expected[at].From) > 1.0e-9 ||
+                Math.Abs(End(at, "To") - expected[at].To) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Force line {at} runs between the force-graph vertices "
+                    + "of the edge that row's state NAMES, not of the edge at "
+                    + $"its own index; expected {expected[at].From} to "
+                    + $"{expected[at].To}, got {End(at, "From")} to "
+                    + $"{End(at, "To")}.");
+            }
+        }
+
+        object fd = CreateResultDto(
+            resultType, "fd", equilibrium, null, null);
+        Array fdRows = (Array)members.Invoke(null, new[] { fd })!;
+        Array fdLines = (Array)forceLines.Invoke(null, new[] { fd, fdRows })!;
+        if (fdLines.Length != 0)
+        {
+            throw new InvalidOperationException(
+                "An FD Result carries no reciprocal diagram, so Force Lines "
+                + $"comes back empty rather than guessing; got {fdLines.Length} "
+                + "lines.");
+        }
+    }
+
+    /// <summary>
     /// Diagnose's cross-checks, the things no single component can see:
     /// Columns ran on a Result with no principal runs; Animate ran with no
     /// Columns upstream; every anchor is isolated; more than half the net
@@ -3718,22 +3892,22 @@ internal static class Program
                 }) as string;
 
         // Deconstruct's own move, the case this check was born on: two
-        // inputs and twenty outputs archived against the one and thirteen
+        // inputs and twenty outputs archived against the one and fourteen
         // it registers now.
         string? moved = Ask(
             Names(2, "in"),
             Names(20, "out"),
             Registered(1, "in"),
-            Registered(13, "out"));
+            Registered(14, "out"));
         if (moved is not string text)
         {
             throw new InvalidOperationException(
                 "A definition saved against 2 inputs and 20 outputs, opened "
-                + "against 1 and 13, must be warned that its wires moved; nothing "
+                + "against 1 and 14, must be warned that its wires moved; nothing "
                 + "came back.");
         }
         if (!text.Contains("20", StringComparison.Ordinal) ||
-            !text.Contains("13", StringComparison.Ordinal))
+            !text.Contains("14", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "The warning must name what was archived and what is registered, "
