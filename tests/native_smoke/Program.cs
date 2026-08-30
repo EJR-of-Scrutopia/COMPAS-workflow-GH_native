@@ -3498,6 +3498,8 @@ internal static class Program
             double centre = X(nodes[footNode[m / 2]]);
             if (Math.Abs(centre - midpoint) > 1.0e-9)
                 throw new InvalidOperationException($"The centre tree stands outside the pairing and its foot is ON the midpoint; it is at {centre:0.#########}.");
+            if (Get<int>(built, "Banded") != 0)
+                throw new InvalidOperationException($"Type 0 cuts no bands at all, so no tree is handed one; Banded is {Get<int>(built, "Banded")}.");
             int[] memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
             (int Lower, int Upper)[] members = MembersOf(built);
             for (int k = 0; k < members.Length; k++)
@@ -4132,8 +4134,19 @@ internal static class Program
             object placed = Run(crossed, Array.Empty<int[]>(), 1.0, 1, 2);
             if (Get<int>(placed, "GroundPlaced") != 2)
                 throw new InvalidOperationException($"An unmirrored span is placed like any other, its bands read off each tree's own projection; it placed {Get<int>(placed, "GroundPlaced")}.");
+            // The deviation against the bound, by hand. Eight free notches
+            // remain on the arch, so the test allows a quarter of that span's
+            // own spacing, 0.25 / 9 = 0.027778 in chord parameter. The pair
+            // the crossing broke is (0.4, 0.7), which sums to 1.1: a deviation
+            // of 0.1, outside the bound by a factor of 3.6. The bound scales
+            // with the span and with nothing else, so this margin is the same
+            // on a span of three metres and on one of thirty.
+            const double crossedDeviation = 0.1;
+            const double crossedBound = 0.25 / 9.0;
+            if (crossedDeviation <= crossedBound)
+                throw new InvalidOperationException($"This fixture only measures anything while the removed notch's deviation, {crossedDeviation:0.######}, is outside the quarter-spacing bound of {crossedBound:0.######}.");
             if (Get<int>(placed, "AsymmetricSpans") != 1)
-                throw new InvalidOperationException($"One of the two spans lost an interior notch to the crossing and is no longer symmetric about its chord midpoint; AsymmetricSpans is {Get<int>(placed, "AsymmetricSpans")}.");
+                throw new InvalidOperationException($"One of the two spans lost an interior notch to the crossing, so a pair of its free notches sums to 1.1 rather than 1, a deviation of {crossedDeviation:0.######} against a bound of {crossedBound:0.######}; AsymmetricSpans is {Get<int>(placed, "AsymmetricSpans")}.");
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             if (trees.Length != 9)
                 throw new InvalidOperationException($"One tree on the crossing bar and eight on the arch, whose ninth notch is the crossing itself; got {trees.Length}.");
@@ -4248,6 +4261,71 @@ internal static class Program
             }
         }
 
+        // ---- The same plan-curved bar, crossed (spec 3.4). A second bar
+        // holds its position-3 notch, so seven free notches remain at chord
+        // parameters 1/9, 2/9, 4/9, 5/9, 6/9, 7/9, 8/9. Sorted and paired
+        // across the midpoint, the middle pair is (4/9, 6/9), which sums to
+        // 10/9: a deviation of 1/9 = 0.1111 against a bound of a quarter of
+        // that span's own spacing, 0.25 / 8 = 0.03125. Outside by 3.6, so the
+        // span is placed unmirrored, which is what a lost interior notch has
+        // to do.
+        //
+        // This is the case the NET's median plan edge could not judge. These
+        // fixtures run at a median of 4 on a chord of 9 whose notches are one
+        // unit apart, which is a perfectly ordinary net with widely spaced
+        // principal lines and fine notching along them; scaled by that, the
+        // bound came out at 0.25 x 4 / 9 = 1/9, exactly the deviation, so this
+        // removal sat on the boundary and its answer was decided by the last
+        // bit of a division. The span's own spacing knows nothing about how
+        // far apart the bars are.
+        {
+            var curved = PlanCurved(0.15);
+            // Two anchors either side of the plan-curved bar's node 3, out
+            // along the chord normal, so the crossing bar's own single notch
+            // sits at parameter 0.5 and its span stays symmetric.
+            double cx = 1.0 / Math.Sqrt(5.0);
+            double cy = 2.0 / Math.Sqrt(5.0);
+            object crossed = curved.Nodes.GetValue(3)!;
+            Array nodes = Array.CreateInstance(point3d, 12);
+            for (int i = 0; i < 10; i++)
+                nodes.SetValue(curved.Nodes.GetValue(i)!, i);
+            nodes.SetValue(P(X(crossed) + (2.0 * cy), Y(crossed) - (2.0 * cx), 0.0), 10);
+            nodes.SetValue(P(X(crossed) - (2.0 * cy), Y(crossed) + (2.0 * cx), 0.0), 11);
+            Array crossBar = Array.CreateInstance(vector3d, 3);
+            crossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+            crossBar.SetValue(V(0.0, 0.0, -1.0), 1);
+            crossBar.SetValue(V(0.0, 0.0, 0.0), 2);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            across.SetValue(crossBar, 0);
+            across.SetValue(((Array)curved.Across.GetValue(0)!), 1);
+            var net = (nodes, new[] { new[] { 10, 3, 11 }, Enumerable.Range(0, 10).ToArray() },
+                new[] { 0, 9, 10, 11 }, across, Array.Empty<(int, int)>());
+            object placed = Run(net, Array.Empty<int[]>(), 4.0, 1, 0);
+            const double removedDeviation = 1.0 / 9.0;
+            const double removedBound = 0.25 / 8.0;
+            if (removedDeviation <= removedBound)
+                throw new InvalidOperationException($"This fixture only measures anything while the deviation {removedDeviation:0.######} is outside the bound {removedBound:0.######}.");
+            if (Get<int>(placed, "AsymmetricSpans") != 1)
+            {
+                throw new InvalidOperationException(
+                    $"The plan-curved bar lost an interior notch, so its free notches no longer straddle its midpoint: the middle pair sums to 10/9, a "
+                    + $"deviation of {removedDeviation:0.######} against a bound of {removedBound:0.######}. AsymmetricSpans is "
+                    + $"{Get<int>(placed, "AsymmetricSpans")}. Scaled by the NET's median plan edge, 4 on a chord of 9, the bound was 1/9: the same "
+                    + "deviation exactly, so this span sat on the boundary.");
+            }
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            if (trees.Length != 8)
+                throw new InvalidOperationException($"One tree on the crossing bar and seven on what is left of the plan-curved one; got {trees.Length}.");
+            int[] partner = Get<int[]>(placed, "Partner");
+            if (partner[0] != 0)
+                throw new InvalidOperationException($"The crossing bar's one notch sits at parameter 0.5, so its span IS symmetric and its tree is its own partner; Partner[0] is {partner[0]}.");
+            for (int t = 1; t < trees.Length; t++)
+            {
+                if (partner[t] != -1)
+                    throw new InvalidOperationException($"No tree of an unmirrored span has a mirror partner; Partner[{t}] is {partner[t]}.");
+            }
+        }
+
         // ---- A band that loses trees to the peel rebuilds its foot from the
         // survivors (spec 3.5, amended), on the same bar at Type 1. All eight
         // trees take the one band, whose first foot is the centroid of all
@@ -4304,6 +4382,13 @@ internal static class Program
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 5)
                 throw new InvalidOperationException($"One band foot and four peeled feet is five; {feet.Length} built.");
+            // Every one of the nine trees was HANDED a band here (Type 1 is
+            // odd, so even the centre tree takes the central one), and Banded
+            // counts them before the peel runs, which is what lets the
+            // component tell "four trunks stepped off" from "nothing gathered
+            // at all".
+            if (Get<int>(built, "Banded") != 9)
+                throw new InvalidOperationException($"At an odd Type every tree of the span takes a band, so all nine were banded before four of them peeled; Banded is {Get<int>(built, "Banded")}.");
             foreach ((int lower, int upper) in MembersOf(built))
             {
                 if (!feet.Contains(lower))
@@ -4367,6 +4452,8 @@ internal static class Program
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 3)
                 throw new InvalidOperationException($"Two band feet at 2.5 and 7.5 and the centre tree's own at 5 is three; {feet.Length} built.");
+            if (Get<int>(built, "Banded") != 8)
+                throw new InvalidOperationException($"At an EVEN Type the centre tree has no central band to take and stands on its own foot, so eight of the nine trees were banded; Banded is {Get<int>(built, "Banded")}.");
         }
 
         // ---- Neighbours stay apart (spec 3.5). A narrow bay, span four,

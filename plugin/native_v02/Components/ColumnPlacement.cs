@@ -156,14 +156,6 @@ namespace Ananke.COMPAS.Native.Components
             public Tree? RingTree;
             public double Clearance;
             /// <summary>
-            /// The net's median plan edge, which is the notch spacing along a
-            /// bar. The symmetry test of 3.4 is a tolerance on POSITION, so it
-            /// is measured in these, not in the chord parameter, where the
-            /// same number means microns on a long span and centimetres on a
-            /// short one.
-            /// </summary>
-            public double MedianPlanEdge;
-            /// <summary>
             /// The mirror partner of each tree: the tree it pairs with about
             /// its span's midpoint, ITSELF for the centre tree of an odd
             /// count, -1 where there is no partner at all: the ring tree, and
@@ -299,8 +291,8 @@ namespace Ananke.COMPAS.Native.Components
         ///
         /// A span is only mirrored when it CAN be: when its free notches are
         /// symmetric about its chord midpoint, each notch's partner standing
-        /// within a quarter of the notch spacing of where the mirror would put
-        /// it. A crossing that takes an interior notch, or a bar end that is
+        /// within a quarter of THAT SPAN'S notch spacing of where the mirror
+        /// would put it, which in chord parameter is 0.25 / (count + 1). A crossing that takes an interior notch, or a bar end that is
         /// neither anchor nor rim and so puts a notch on the chord's own
         /// start, leaves a free list whose index i and index m-1-i are not
         /// geometric mirrors at all, and forcing them equal and opposite would
@@ -420,17 +412,30 @@ namespace Ananke.COMPAS.Native.Components
             // interior notch, or a free bar end that put the first notch at
             // parameter zero, breaks it.
             //
-            // The tolerance is a quarter of the NOTCH SPACING, converted into
-            // chord parameter as 0.25 x medianPlanEdge / chordLength. The
-            // positions being compared come out of the solve, not off the
+            // The tolerance is a quarter of THIS SPAN'S notch spacing. In
+            // chord parameter that is 0.25 / (count + 1): count notches cut
+            // the chord into count + 1 gaps, so one gap is 1 / (count + 1) of
+            // it. The span's own count, not the net's median plan edge, which
+            // is a median over every edge in both mesh directions and stands
+            // in no fixed ratio to the spacing along any one bar: on a mesh
+            // refined along its principal lines that median is several notch
+            // spacings and the test stops discriminating, and on one refined
+            // across them it is a fraction of one and the test becomes exact
+            // coincidence again.
+            //
+            // The positions being compared come out of the solve, not off the
             // curve the author drew, so they are never mirrored to the last
             // digit: an exact-coincidence tolerance would call an ordinary
             // relaxed arch asymmetric and quietly hand it back its pre-branch
-            // placement. A quarter of the spacing is far tighter than the
-            // failures this test exists to catch, which move a notch by a
-            // whole spacing or more (a crossing takes one out; a free end
-            // shifts every partner by half of one), and far looser than the
-            // millimetres a solver moves a node it meant to leave alone.
+            // placement. A quarter of the spacing is a constant factor of four
+            // inside the failures this test exists to catch, which move a
+            // notch by a whole spacing or more (a crossing takes one out; a
+            // free end shifts every partner by half of one), and far outside
+            // the millimetres a solver moves a node it meant to leave alone.
+            //
+            // A span with a free END has one interval fewer than count + 1,
+            // an error of one part in count that a quarter-spacing bound does
+            // not notice.
             var symmetric = new bool[spanCount];
             var parameters = new List<double>();
             for (int s = 0; s < spanCount; s++)
@@ -449,8 +454,8 @@ namespace Ananke.COMPAS.Native.Components
                         parameters.Add(ChordParameter(first, last, nodes[node]));
                 }
                 parameters.Sort();
-                double spacing = chordLength[s] > 1.0e-12
-                    ? 0.25 * Math.Max(placement.MedianPlanEdge, 0.0) / chordLength[s]
+                double spacing = parameters.Count > 0
+                    ? 0.25 / (parameters.Count + 1)
                     : 1.0;
                 symmetric[s] = true;
                 for (int i = 0; i < parameters.Count; i++)
@@ -660,7 +665,6 @@ namespace Ananke.COMPAS.Native.Components
             {
                 GroundAsked = groundAsked,
                 Clearance = clearance,
-                MedianPlanEdge = medianPlanEdge,
             };
 
             var held = new HashSet<int>();
