@@ -386,6 +386,16 @@ internal static class Program
                     disposable.Dispose();
             }
         }
+        if (componentTypes.Length != 19)
+        {
+            // Spec 6 pins three counts and only two were enforced. A
+            // component quietly dropped from the assembly, by a failed
+            // registration or a merge, would have left the whole suite green
+            // with nineteen components' worth of contract untested.
+            failures.Add(
+                $"Expected 19 concrete public components, found " +
+                $"{componentTypes.Length}.");
+        }
         if (parameterTypes.Length != 12)
         {
             failures.Add(
@@ -3502,8 +3512,14 @@ internal static class Program
                     throw new InvalidOperationException($"The centre tree's along-chord pull is mirrored away, so its member stands vertical; it leans {lean:0.######} degrees.");
             }
             double moved = Get<double>(placed, "AsymmetryRemoved");
-            if (moved <= 0.0)
-                throw new InvalidOperationException($"Symmetrise reports the largest angle it moved an aim through, and on an arch this lopsided that is more than nothing; it reported {moved:0.######}.");
+            // Not "more than zero": every notch of this arch carries a one
+            // degree along-chord skew that the mirror rule takes off the
+            // centre tree entirely, so the angle removed is at least a whole
+            // degree. Against a bare `> 0` an implementation that moved an aim
+            // by a millionth of a degree, or that reported floating-point
+            // noise, would pass.
+            if (moved <= 0.5)
+                throw new InvalidOperationException($"Symmetrise reports the largest angle it moved an aim through, and the one degree skew on every notch of this arch puts that above half a degree; it reported {moved:0.######}.");
             int[] partner = Get<int[]>(placed, "Partner");
             for (int i = 0; i < m; i++)
             {
@@ -3783,6 +3799,60 @@ internal static class Program
                             + $"({offsets[0][i].Along:0.#########}, {expectedAcross:0.#########}). A span is being read in the world's frame, not in "
                             + "the one its own pull orients it to.");
                     }
+                }
+            }
+
+            // The same family at Type 2. Everything above runs at Type 0, so
+            // the BAND path had never been driven on a span traced backwards
+            // or on one turned through 180 degrees at all: the member of each
+            // mirror pair with the smaller chord parameter takes the band its
+            // main projects into and its partner takes the mirrored one, and
+            // on these spans that parameter rises with the grouping order
+            // whichever way the bar was traced, so what is measured here is
+            // that the bands come out mirrored in each span's OWN frame, not
+            // that the parameter is read in preference to the index.
+            //
+            // Nine trees at Branching 1: four mirror pairs into two bands, and
+            // the centre tree, which has no central band at an even Type,
+            // standing on its own foot on the mirror plane. Three feet per
+            // span, twelve in all.
+            {
+                object banded = Run(family, Array.Empty<int[]>(), 1.0, 1, 2);
+                object bandedBuilt = Get<object>(banded, "Built");
+                var bandedNodes = ((IEnumerable)Get<object>(bandedBuilt, "Nodes")).Cast<object>().ToArray();
+                var bandedTrees = ((IEnumerable)Get<object>(banded, "Trees")).Cast<object>().ToArray();
+                var bandedSpans = ((IEnumerable)Get<object>(banded, "Spans")).Cast<object>().ToArray();
+                if (Get<int>(bandedBuilt, "Peeled") != 0)
+                    throw new InvalidOperationException($"Every trunk reaches its band foot here, the outermost leaning 59 degrees; {Get<int>(bandedBuilt, "Peeled")} peeled.");
+                var bandedFeet = ((IEnumerable)Get<object>(bandedBuilt, "Feet")).Cast<int>().ToArray();
+                if (bandedFeet.Length != 12)
+                    throw new InvalidOperationException($"Two band feet and one centre foot on each of four spans is twelve; {bandedFeet.Length} built.");
+                int[] bandedFoot = FootOfTree(bandedBuilt, bandedTrees.Length);
+                for (int s = 0; s < bandedSpans.Length; s++)
+                {
+                    int[] bar = bars[Get<int>(bandedSpans[s], "Bar")];
+                    int[] own = Enumerable.Range(0, bandedTrees.Length)
+                        .Where(t => Get<int>(bandedTrees[t], "Span") == s).ToArray();
+                    int m = own.Length;
+                    for (int i = 0; i < m / 2; i++)
+                    {
+                        (double Along, double Across) low = InSpanFrame(
+                            nodes, bar, bandedSpans[s], bandedNodes[bandedFoot[own[i]]]);
+                        (double Along, double Across) high = InSpanFrame(
+                            nodes, bar, bandedSpans[s], bandedNodes[bandedFoot[own[m - 1 - i]]]);
+                        if (Math.Abs(low.Along + high.Along) > 1.0e-9 ||
+                            Math.Abs(low.Across - high.Across) > 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"Trees {i} and {m - 1 - i} of span {s} are a mirror pair, so their band feet are mirror images about that span's own "
+                                + $"midpoint: equal and opposite along the chord, equal across it. They stand at ({low.Along:0.#########}, "
+                                + $"{low.Across:0.#########}) and ({high.Along:0.#########}, {high.Across:0.#########}).");
+                        }
+                    }
+                    (double Along, double Across) centre = InSpanFrame(
+                        nodes, bar, bandedSpans[s], bandedNodes[bandedFoot[own[m / 2]]]);
+                    if (Math.Abs(centre.Along) > 1.0e-9)
+                        throw new InvalidOperationException($"The centre tree of span {s} stands in the mirror plane, no distance along the chord from the midpoint; it stands {centre.Along:0.#########} along.");
                 }
             }
         }
@@ -4419,7 +4489,9 @@ internal static class Program
             if (Get<int>(placed, "GroundPlaced") != 1)
                 throw new InvalidOperationException($"Ground 1 on this cross is feasible (rise three over a half-width of four leans the outer trunks 53 degrees, and the mirrored pairs sum vertical at the foot) and must be placed; placed {Get<int>(placed, "GroundPlaced")}.");
             if (feet.Length != 1)
-                throw new InvalidOperationException($"Ground 1 on a cross merges the two midpoint feet into one; {feet.Length} built.");
+                throw new InvalidOperationException($"Type 1 on a cross puts both bars' feet on the same point, where they are one node; {feet.Length} built.");
+            if (Get<int>(built, "FeetMerged") != 0)
+                throw new InvalidOperationException($"Two feet at the SAME point are one node whatever put them there, which is a WELD and is neither a merge nor a close pair; {Get<int>(built, "FeetMerged")} merges reported.");
         }
 
         // ---- The segment distance, the primitive under the member rule.
