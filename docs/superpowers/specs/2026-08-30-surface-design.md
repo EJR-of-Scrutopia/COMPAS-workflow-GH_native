@@ -119,7 +119,12 @@ Outputs: 0 JSON `J` (text LIST), 1 Status `ST` (text item, lines).
   final fix round: the key was `authored` on both paths, and the Remark
   sentence read as unconditional.
 - Everything else of the export spec of 2026-08-28 stands: the nine
-  inputs, the write rules, Live, the uploader, the hold.
+  inputs, the write rules, Live, the uploader. The HOLD does not stand
+  as written there: it now reads the INPUT side alone (section 11).
+  Amended 2026-08-30 in the final fix round, because Export's outputs
+  went from six to two on this branch with its nine inputs untouched,
+  and a hold on any port move would have held Live on every definition
+  in existence for a change that cannot have moved an input wire.
 
 ## 5. Display without outputs (binding)
 
@@ -134,7 +139,11 @@ FORCE LINES, Load and Reaction Points and Vectors) and Diagnose's
 
 Amended 2026-08-30 in the final fix round. Deconstruct gains `Force
 Lines` `FCL` (Line tree, branched as Form Lines, from the ForceGraph,
-empty for FD), APPENDED at slot 13 so no existing port moves: without it
+empty for FD), APPENDED at slot 13 so no existing port moves. It carries
+the force diagram at its OWN coordinates, where Display's old `FCL`
+carried a copy laid out beside the form diagram by Display's Gap input,
+which Deconstruct has not got: same shape, different place, and a data
+boundary is the wrong owner of a drawing decision. Without it
 the reciprocal force diagram had no data port anywhere in the plugin,
 which the sentence above assumed it had. And two readings are Display's
 OWN, not Deconstruct's or Diagnose's, so they are raised on the
@@ -242,8 +251,12 @@ overload is deleted).
   it, so `python plugin/icons/generate_icons.py --check` carries the
   other half: it re-renders every icon the map lists IN MEMORY and
   refuses any file whose BYTES differ, which is what stops a stale PNG
-  with the wrong letters surviving. `--check` runs in the same gates the
-  harness does and at install time, beside the build.
+  with the wrong letters surviving. One comparison per FILE, against the
+  entry that owns it: a key in both lists is one file the native entry
+  owns, so the legacy entry is skipped and the closing line counts what
+  was compared and what was skipped rather than claiming both. `--check`
+  runs in the same gates the harness does and at install time, beside
+  the build.
 - `ValidateParameterMismatch` extended: same counts with one output
   name moved (Monitor's case) reports a mismatch; equal names report
   none; a longer archived list reports one; the old count-only
@@ -287,11 +300,12 @@ overload is deleted).
 
 ## 10. What breaks on the canvas
 
-Every saved Animate, Monitor, Export and Display raises the port Warning
-on load. Display trips the count rule alone; Animate, Export and Monitor
-trip the NAME rule as well, so all three warnings NAME the port that
-moved, which is the useful half of the message. Monitor trips ONLY the
-name rule, which is what section 7 was written for.
+Every saved Animate, Monitor, Export, Display and Deconstruct raises the
+port Warning on load. Display and Deconstruct trip the count rule alone;
+Animate, Export and Monitor trip the NAME rule as well, so all three of
+those warnings NAME the port that moved, which is the useful half of the
+message. Monitor trips ONLY the name rule, which is what section 7 was
+written for.
 
 The mechanism, stated once because every paragraph below depends on it:
 Grasshopper matches archived parameter chunks to live parameters BY
@@ -331,7 +345,16 @@ not move (section 4).
 
 **Display.** Every output wire is dropped; feed Deconstruct for the
 lines, points and vectors, including the reciprocal force diagram on its
-new Force Lines port, and Diagnose for the report.
+new Force Lines port, and Diagnose for the report. One thing to expect
+of that port: it hands back the force diagram at its own coordinates,
+not the copy Display drew beside the form diagram, so an author who had
+the old laid-out `FCL` wired gets the same shape somewhere else.
+
+**Deconstruct.** Its outputs went from thirteen to fourteen, so it warns
+too, by count. Nothing moved and nothing is dropped: `Force Lines` was
+APPENDED at slot 13, the names at slots 0 to 12 are what they were, and
+every archived wire lands on the port it left. The warning is
+precautionary there, and it is the price of adding the port at all.
 
 The panel move does not touch saved files: the subcategory is display
 grouping and no GUID changed. The new icons appear after the restart.
@@ -344,7 +367,10 @@ grouping and no GUID changed. The new icons appear after the restart.
 - Monitor/Deconstruct/Skin spec section 2: Monitor's Result output is
   slot 0.
 - Export spec section 2: outputs JSON and Status; section 3: the
-  default tessellation; section 4: Uploaded's texts are Status lines.
+  default tessellation; section 3's Live row (and the paragraph in
+  section 4 that repeats it): the hold reads the INPUT side, by count
+  or by name, not the archived port counts of both sides; section 4:
+  Uploaded's texts are Status lines.
 - Columns spec: unchanged (RES already first).
 
 ## 12. Out of scope

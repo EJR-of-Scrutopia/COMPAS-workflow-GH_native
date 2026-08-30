@@ -81,5 +81,10 @@ file whose bytes differ, so a stale badge carrying the wrong letters or the
 wrong panel fill cannot pass it. A header check alone could not say that: the
 letters are the only thing telling one badge from another inside a panel, and
 every badge in a panel shares its fill. The comparison follows the same
-native-last rule the generator writes by, so a key in both lists is checked
-against the native render, which is the one that owns the pixels.
+native-last rule the generator writes by: a key in both lists names ONE file,
+the native entry owns its pixels, and that is the entry compared. The legacy
+entry for such a key is stepped over rather than measured against a render it
+did not make, and the closing line counts the files compared and the legacy
+entries skipped, so it never claims to have checked a label nothing looked at.
+The four shared keys are therefore checked once each, on the native side; a
+typo in one of their legacy labels changes no pixel and raises nothing.
