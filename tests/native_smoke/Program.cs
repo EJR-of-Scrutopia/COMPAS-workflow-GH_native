@@ -973,11 +973,32 @@ internal static class Program
                 + "is caught by NAME where a count says nothing; Export's seven "
                 + "inputs and two outputs against nine and two is named; and an "
                 + "archived chunk with no readable Name raises nothing by "
-                + "itself.");
+                + "itself; and where only a name moved, the rename LEADS and "
+                + "the equal counts follow it as the reason every wire "
+                + "reattached.");
         }
         catch (Exception exception)
         {
             failures.Add($"ParameterIdentity.Mismatch: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateArchivedNamesFromDefinition(plugin, pluginPath);
+            Console.WriteLine(
+                "PASS  ParameterIdentity.ArchivedNames: a real Grasshopper "
+                + "file, plugin/definitions/ananke_equilibrium_v01.gh, read "
+                + "headless through GH_Archive down to the same Container "
+                + "chunk a component's Read is handed, gives back the five "
+                + "input names and two output names the file actually holds. "
+                + "A wrong chunk or item name returns nulls, and nulls are "
+                + "silence: the whole load-time warning would stop firing "
+                + "with nothing else failing anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ParameterIdentity.ArchivedNames: {DescribeException(exception)}");
         }
 
         try
@@ -2505,6 +2526,172 @@ internal static class Program
     }
 
     /// <summary>
+    /// <c>ParameterIdentity.ArchivedNames</c> against a REAL Grasshopper
+    /// file, read headless.
+    ///
+    /// The whole load-time warning, the count comparison included, is gated
+    /// on getting names out of the archive: <c>Read</c> calls this first and
+    /// says nothing at all when it comes back nulls. A wrong chunk or item
+    /// name would therefore not fail anywhere. It would return
+    /// <c>(null, null)</c>, every component would fall silent, and Monitor's
+    /// same-count reshuffle, the case this branch exists for, would reopen
+    /// unwarned with a green harness behind it. Nothing about the shape can
+    /// be asserted from a hand-built archive either, because a hand-built
+    /// archive is written by the same guesses it would be checked against.
+    ///
+    /// So this drives a definition that is in the repository, written by
+    /// Grasshopper itself: <c>plugin/definitions/ananke_equilibrium_v01.gh</c>.
+    /// <c>GH_Archive</c> is pure serialisation and reads it with no Rhino
+    /// running. Its first object is the v0.1 script component "Network", and
+    /// the seven names below were read out of the file's own XML dump before
+    /// they were pinned here, not assumed:
+    ///
+    ///   Root > Definition > DefinitionObjects > Object[0] > Container
+    ///     > ParameterData
+    ///       items    InputCount 5, OutputCount 2, and the InputId/OutputId
+    ///                guids
+    ///       chunks   InputParam[0..4], OutputParam[0..1], each carrying a
+    ///                Name item of type gh_string
+    ///
+    /// The Container chunk is exactly the reader a component's <c>Read</c>
+    /// override is handed, so this walks to the same place Grasshopper does
+    /// and asks the same question from it.
+    /// </summary>
+    private static void ValidateArchivedNamesFromDefinition(
+        Assembly plugin,
+        string pluginPath)
+    {
+        Type identity = RequireComponentType(plugin, "ParameterIdentity");
+        MethodInfo archivedNames = RequireStatic(identity, "ArchivedNames");
+        // GH_IO as the PLUGIN binds to it, so this cannot end up reading one
+        // assembly's archive with another's reader.
+        Type readerType = archivedNames.GetParameters()[0].ParameterType;
+        Type archiveType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_Archive", throwOnError: true)!;
+
+        string definitionPath = FindRepositoryFile(
+            pluginPath,
+            new[]
+            {
+                Path.Combine(
+                    "plugin", "definitions", "ananke_equilibrium_v01.gh"),
+                Path.Combine("definitions", "ananke_equilibrium_v01.gh")
+            },
+            "plugin/definitions/ananke_equilibrium_v01.gh",
+            "the archive shape is checked against a file Grasshopper wrote");
+
+        object archive = Activator.CreateInstance(archiveType)
+            ?? throw new InvalidOperationException(
+                "GH_Archive could not be constructed.");
+        MethodInfo readFromFile = archiveType.GetMethod(
+            "ReadFromFile", new[] { typeof(string) })
+            ?? throw new InvalidOperationException(
+                "GH_Archive.ReadFromFile(string) was not found.");
+        if (readFromFile.Invoke(archive, new object[] { definitionPath })
+            is not true)
+        {
+            throw new InvalidOperationException(
+                $"GH_Archive refused to read {definitionPath}.");
+        }
+        object root =
+            archiveType.GetProperty("GetRootNode")?.GetValue(archive)
+            ?? throw new InvalidOperationException(
+                "GH_Archive.GetRootNode gave nothing to read.");
+
+        object Chunk(object reader, string name)
+        {
+            MethodInfo find = reader.GetType().GetMethod(
+                "FindChunk", new[] { typeof(string) })
+                ?? throw new InvalidOperationException(
+                    "FindChunk(string) was not found on the archive reader.");
+            return find.Invoke(reader, new object[] { name })
+                ?? throw new InvalidOperationException(
+                    $"The definition carries no '{name}' chunk where one was "
+                    + "expected.");
+        }
+        object IndexedChunk(object reader, string name, int index)
+        {
+            MethodInfo find = reader.GetType().GetMethod(
+                "FindChunk", new[] { typeof(string), typeof(int) })
+                ?? throw new InvalidOperationException(
+                    "FindChunk(string, int) was not found on the archive "
+                    + "reader.");
+            return find.Invoke(reader, new object[] { name, index })
+                ?? throw new InvalidOperationException(
+                    $"The definition carries no '{name}' chunk at {index}.");
+        }
+        string Text(object reader, string item)
+        {
+            MethodInfo tryGet = reader.GetType().GetMethod(
+                "TryGetString",
+                new[] { typeof(string), typeof(string).MakeByRefType() })
+                ?? throw new InvalidOperationException(
+                    "TryGetString was not found on the archive reader.");
+            object?[] arguments = { item, string.Empty };
+            return tryGet.Invoke(reader, arguments) is true
+                ? arguments[1] as string ?? string.Empty
+                : string.Empty;
+        }
+
+        object first = IndexedChunk(
+            Chunk(Chunk(root, "Definition"), "DefinitionObjects"),
+            "Object",
+            0);
+        string component = Text(first, "Name");
+        if (!string.Equals(component, "Network", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The first object of ananke_equilibrium_v01.gh is the "
+                + "'Network' component, whose ports the names below are "
+                + $"pinned from; the file now opens with '{component}', so "
+                + "either the definition was re-saved or the walk to it is "
+                + "wrong.");
+        }
+        object container = Chunk(first, "Container");
+
+        object names = archivedNames.Invoke(null, new[] { container })
+            ?? throw new InvalidOperationException(
+                "ArchivedNames returned nothing.");
+        Type pair = names.GetType();
+        var inputs = pair.GetField("Item1")!.GetValue(names) as string?[];
+        var outputs = pair.GetField("Item2")!.GetValue(names) as string?[];
+        if (inputs is null || outputs is null)
+        {
+            throw new InvalidOperationException(
+                "ArchivedNames read nothing out of a real Grasshopper file. "
+                + "Nulls are how it says an archive cannot be spoken about, "
+                + "and Read then says nothing at all, so a wrong chunk or "
+                + "item name kills the whole load-time warning in silence: "
+                + "no component would announce a moved port, and nothing "
+                + "else would fail.");
+        }
+
+        string?[] expectedInputs =
+        {
+            "Geometry", "Kind", "AnalysisPlane", "Tolerance", "LengthUnit"
+        };
+        string?[] expectedOutputs = { "Topology", "Status" };
+        void Same(string side, string?[] found, string?[] expected)
+        {
+            if (found.Length == expected.Length &&
+                found.SequenceEqual(expected, StringComparer.Ordinal))
+            {
+                return;
+            }
+            throw new InvalidOperationException(
+                $"The {side} names read out of the archive are not the ones "
+                + "the file holds; expected ["
+                + string.Join(", ", expected)
+                + "] and got ["
+                + string.Join(
+                    ", ", found.Select(name => name ?? "<null>"))
+                + "].");
+        }
+        Same("input", inputs, expectedInputs);
+        Same("output", outputs, expectedOutputs);
+    }
+
+    /// <summary>
     /// Deconstruct's Force Lines: the reciprocal FORCE diagram, which had no
     /// port anywhere in the plugin between Display giving up its outputs and
     /// this one being appended.
@@ -3972,6 +4159,21 @@ internal static class Program
                 + "front, so the counts agree and only the names say the wires "
                 + "moved; the warning must name the port that changed. Got "
                 + $"'{monitorMoved}'.");
+        }
+        // And it must LEAD with that name. Opening on counts that agree
+        // reads as a denial of the rename that follows it, on the one
+        // component the whole name comparison was built for.
+        if (monitorText.Contains("outputs archived", StringComparison.Ordinal) ||
+            !monitorText.Contains(
+                "the counts are unchanged", StringComparison.Ordinal) ||
+            monitorText.IndexOf("Member Force", StringComparison.Ordinal) >
+                monitorText.IndexOf("counts", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Where only a name moved, the rename LEADS and the equal "
+                + "counts are given after it as the reason every wire came "
+                + "back attached; counts that agree are not evidence and "
+                + $"must not open the sentence. Got '{monitorText}'.");
         }
 
         // Export's own move, and the reason it holds Live: a definition
@@ -8001,7 +8203,28 @@ internal static class Program
     /// the generator's manifest and lives in the repository, not in the
     /// build, so there is nothing to resolve it by but the tree.
     /// </summary>
-    private static string FindIconMap(string pluginPath)
+    private static string FindIconMap(string pluginPath) =>
+        FindRepositoryFile(
+            pluginPath,
+            new[]
+            {
+                Path.Combine("plugin", "icons", "icon-map.json"),
+                Path.Combine("icons", "icon-map.json")
+            },
+            "plugin/icons/icon-map.json",
+            "the icon family is checked against that map");
+
+    /// <summary>
+    /// A file that lives in the REPOSITORY rather than in the build, found
+    /// by walking up from the plugin under test and then from this harness's
+    /// own output directory. Each candidate is a path relative to a
+    /// repository root, tried in order at every level.
+    /// </summary>
+    private static string FindRepositoryFile(
+        string pluginPath,
+        IReadOnlyList<string> candidates,
+        string what,
+        string why)
     {
         var starts = new List<string>();
         string? beside = Path.GetDirectoryName(Path.GetFullPath(pluginPath));
@@ -8014,21 +8237,19 @@ internal static class Program
                  directory is not null;
                  directory = directory.Parent)
             {
-                string underPlugin = Path.Combine(
-                    directory.FullName, "plugin", "icons", "icon-map.json");
-                if (File.Exists(underPlugin))
-                    return underPlugin;
-                string alongside = Path.Combine(
-                    directory.FullName, "icons", "icon-map.json");
-                if (File.Exists(alongside))
-                    return alongside;
+                foreach (string candidate in candidates)
+                {
+                    string full = Path.Combine(directory.FullName, candidate);
+                    if (File.Exists(full))
+                        return full;
+                }
             }
         }
         throw new InvalidOperationException(
-            "plugin/icons/icon-map.json was not found above " +
+            what + " was not found above " +
             string.Join(" or ", starts) +
-            "; the icon family is checked against that map, so it has to be "
-            + "findable from the plugin under test.");
+            "; " + why + ", so it has to be findable from the plugin under "
+            + "test.");
     }
 
     /// <summary>

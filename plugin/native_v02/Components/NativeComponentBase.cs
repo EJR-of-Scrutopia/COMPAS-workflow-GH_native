@@ -321,6 +321,22 @@ internal static class ParameterIdentity
             ?? FirstRename("output", archivedOutputs, registeredOutputs);
         if (countsAgree && renamed is null)
             return null;
+        // Counts that AGREE are not evidence, and must not open the
+        // sentence. Monitor's warning read "6 inputs and 21 outputs
+        // archived, 6 and 21 registered; output 0 was 'Member Force' and is
+        // now 'Result'", whose first clause reads as a denial of the second,
+        // on the one component the name comparison exists for. Where only
+        // the names moved, the rename leads and the equal counts become
+        // what they actually are: the reason every wire came back attached
+        // to something.
+        if (countsAgree)
+        {
+            return
+                "this component's ports changed since the file was saved: " +
+                renamed +
+                "; the counts are unchanged, so every wire reattached by " +
+                "position: check each one";
+        }
         return
             "this component's ports changed since the file was saved: " +
             $"{archivedInputs.Count} inputs and {archivedOutputs.Count} " +
