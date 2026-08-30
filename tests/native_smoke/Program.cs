@@ -916,8 +916,12 @@ internal static class Program
                 "PASS  ExportComponent.ChooseCells: wired cells win, an "
                 + "unwired Cells with faces on the Result is tessellated by "
                 + "Export itself, neither gives no sidecar at all, and Courses "
-                + "wired alone is ignored with a remark; three faces come out "
-                + "as three cells in face order, all at course 0.");
+                + "wired alone is ignored with a remark, and only where a "
+                + "default tessellation is actually coming; four faces of a "
+                + "Result's own mesh, the second of them vertical in plan, "
+                + "come out as three cells in face order at course 0, the "
+                + "unusable one SKIPPED and counted rather than costing the "
+                + "contract, the COMPAS document and every other kind.");
         }
         catch (Exception exception)
         {
@@ -6512,8 +6516,17 @@ internal static class Program
     /// Split for the same reason FrameGeometry is: the decision is
     /// arithmetic and runs here, while the faces themselves are a Rhino mesh
     /// this process has no Rhino for. The cells the decision leads to are
-    /// measured through BuildTessellationJson, which is the code that
-    /// actually writes them.
+    /// measured through DefaultTessellationCells, which takes plain corner
+    /// points, and then through BuildTessellationJson, which is the code
+    /// that actually writes them.
+    ///
+    /// One half stays unmeasured and cannot be measured here: the plumbing
+    /// between the two, which rebuilds the thrust mesh, asks
+    /// SkinComponent.FacePolylines for one closed polyline per face and
+    /// reads the corners back off it. That needs a Mesh, a Curve and an
+    /// IGH_DataAccess, and this harness has RhinoCommon's structs but no
+    /// native core to build any of them with, so deleting the Faces branch
+    /// of TryReadInputs would leave this check green. Read, not run.
     /// </summary>
     private static void ValidateExportDefaultTessellation(Assembly plugin)
     {
@@ -6558,28 +6571,73 @@ internal static class Program
                 + "because a course belongs to a cell and the default "
                 + $"tessellation is course 0 throughout; got '{ignored}'.");
         }
+        if (Source(0, 7, 0, out string? silent) != "None" ||
+            silent is not null)
+        {
+            throw new InvalidOperationException(
+                "Courses wired against a Result with no faces at all earns "
+                + "no remark: the remark describes the tessellation Export "
+                + "would have built from the faces, and on this path it "
+                + $"builds none; got '{silent}'.");
+        }
 
-        // The cells the Faces verdict leads to, through the writer itself:
-        // one per face, in face order, every one at course 0, keyed the way
-        // the studio reads them.
-        Type cellType = RequireComponentType(plugin, "TessellationCell");
+        // The cells the Faces verdict leads to, through the code that
+        // builds them. Four faces of a Result's own mesh are handed over,
+        // each as the closed ring FacePolylines makes (the closing repeat
+        // is dropped here, as the sidecar wants). Point3d is a plain
+        // struct and needs no native core, which is why this seam takes
+        // corners rather than the polylines themselves.
+        //
+        // The SECOND face is vertical in plan: three distinct corners in
+        // space, one corner in plan. Nobody wired it, and nobody asked for
+        // this tessellation at all, so it is SKIPPED and counted, never an
+        // error. Before this the whole export went down with it: the
+        // contract, the COMPAS document, the columns mesh, the disk write
+        // and the live push, on a solve with an empty Cells port.
         MethodInfo build = exportType.GetMethod(
             "BuildTessellationJson",
             BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException(
                 "ExportComponent.BuildTessellationJson was not found.");
-        Type cellListType = typeof(List<>).MakeGenericType(cellType);
-        object cellList = Activator.CreateInstance(cellListType)!;
-        MethodInfo add = cellListType.GetMethod("Add")!;
-        for (int face = 0; face < 3; face++)
+        MethodInfo defaults =
+            RequireStatic(exportType, "DefaultTessellationCells");
+        Type faceType = defaults.GetParameters()[0].ParameterType
+            .GetGenericArguments()[0];
+        Type point3d = faceType.GetElementType()
+            ?? throw new InvalidOperationException(
+                "DefaultTessellationCells takes something other than arrays "
+                + "of points per face.");
+        Array faces = Array.CreateInstance(faceType, 4);
+        void Face(int slot, params (double X, double Y, double Z)[] corners)
         {
-            var outline = new List<double[]>
+            Array face = Array.CreateInstance(point3d, corners.Length);
+            for (int corner = 0; corner < corners.Length; corner++)
             {
-                new[] { (double)face, 0.0 },
-                new[] { face + 1.0, 0.0 },
-                new[] { (double)face, 1.0 }
-            };
-            add.Invoke(cellList, new[] { Activator.CreateInstance(cellType, 0, outline) });
+                face.SetValue(
+                    Activator.CreateInstance(
+                        point3d,
+                        corners[corner].X,
+                        corners[corner].Y,
+                        corners[corner].Z),
+                    corner);
+            }
+            faces.SetValue(face, slot);
+        }
+        Face(0, (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 0));
+        Face(1, (9, 9, 0), (9, 9, 1), (9, 9, 2), (9, 9, 0));
+        Face(2, (1, 0, 0), (2, 0, 0), (1, 1, 0), (1, 0, 0));
+        Face(3, (2, 0, 0), (3, 0, 0), (2, 1, 0), (2, 0, 0));
+        object?[] defaultArguments = { faces, null };
+        object cellList = defaults.Invoke(null, defaultArguments)
+            ?? throw new InvalidOperationException(
+                "DefaultTessellationCells returned null.");
+        var skipped = (int)defaultArguments[1]!;
+        if (skipped != 1)
+        {
+            throw new InvalidOperationException(
+                "The one face that will not reduce to three distinct plan "
+                + "corners is skipped and counted, and the other three "
+                + $"survive; the skipped count came back {skipped}.");
         }
         string json = build.Invoke(null, new object[] { cellList, 1.0 }) as string
             ?? throw new InvalidOperationException(
@@ -6593,8 +6651,10 @@ internal static class Program
         if (!string.Equals(json, expected, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "Three faces give three cells, in face order, every one at "
-                + $"course 0; expected '{expected}', received '{json}'.");
+                "The three usable faces give three cells, in face order, "
+                + "every one at course 0, renumbered c0p0 to c0p2 with the "
+                + "skipped face leaving no hole and no error; expected "
+                + $"'{expected}', received '{json}'.");
         }
     }
 

@@ -84,10 +84,14 @@ Outputs: 0 JSON `J` (text LIST), 1 Status `ST` (text item, lines).
 - `J` carries one JSON text per kind in `ExportPlan.Kinds` order:
   contract, compas, tessellation, columns; a kind that is absent (no
   cells, no columns) or failed (the compas worker) is simply not in the
-  list, and every text carries its `schema` key (`bench.contract/…` as
-  today, the compas document's own, `bench.tessellation/1`,
-  `bench.columns/1`) so a reader knows what each item is without its
-  index.
+  list, and every text carries its own identity key (the contract's
+  `kind` and `schemaVersion`, the compas document's `compasVersion`
+  and the `dtype` inside each diagram it carries, `schema` on
+  `bench.tessellation/1` and on `bench.columns/1`) so a reader knows
+  what each item is without its index. Amended 2026-08-30 in the Task
+  5 fix round: the earlier wording promised a `schema` key on all
+  four, which the contract and the compas document do not carry and
+  which no wire format was going to be changed to give them.
 - `ST` is the former Written and Uploaded, as lines: `written: <path>`
   per file of the LATEST write (the one-shot Button latch of the export
   spec; `written: nothing` before any), then `live: <kind>:

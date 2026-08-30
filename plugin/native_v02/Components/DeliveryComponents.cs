@@ -84,6 +84,15 @@ public sealed class ExportComponent :
     // component instead of wiping it milliseconds after it happened.
     private IReadOnlyList<string>? _lastWritten;
 
+    // The default tessellation is a pure function of the Result, and both
+    // phases of one solve call TryReadInputs against the same Result
+    // instance, so without this the thrust mesh, the face polylines and the
+    // whole reduction ran twice for a set nobody had wired a cell to. Keyed
+    // on the reference: a different Result is a different object, and the
+    // same object is the same mesh. Both phases run on the solve thread, so
+    // there is nothing here for a lock to protect.
+    private DefaultTessellation? _defaultTessellation;
+
     // One uploader per component, so two Exports on a canvas debounce and
     // retry independently. Its callback arrives on a thread-pool thread,
     // so the expire it asks for is marshalled to the UI thread here:
@@ -298,9 +307,12 @@ public sealed class ExportComponent :
             "always, the bench.tessellation/1 sidecar whenever there are " +
             "cells, and the bench.columns/1 mesh when the Mould block " +
             "carries columns. A kind that is absent, or that failed, is " +
-            "simply not in the list, and every text carries its own " +
-            "schema key, so a reader knows what each item is without " +
-            "counting slots.",
+            "simply not in the list, and every text names itself, so a " +
+            "reader knows what each item is without counting slots: the " +
+            "contract by its kind and schemaVersion, the COMPAS document " +
+            "by its compasVersion and the dtype inside each diagram it " +
+            "carries, the tessellation and the columns mesh by their " +
+            "schema.",
             GH_ParamAccess.list);
         parameters.AddTextParameter(
             "Status",
@@ -545,10 +557,10 @@ public sealed class ExportComponent :
                 }
             }
 
-            // One item per kind, in ExportPlan.Kinds order, each carrying
-            // its own schema key: a reader tells them apart by reading one,
-            // not by counting slots, and a kind that is absent or that
-            // failed is simply not in the list.
+            // One item per kind, in ExportPlan.Kinds order, each naming
+            // itself: a reader tells them apart by reading one, not by
+            // counting slots, and a kind that is absent or that failed is
+            // simply not in the list.
             var payloads = new List<string>(taskResult.Payloads.Count);
             foreach ((string _, string json) in taskResult.Payloads)
                 payloads.Add(json);
@@ -584,7 +596,7 @@ public sealed class ExportComponent :
             data.SetDataList(0, payloads);
             data.SetData(1, string.Join(Environment.NewLine, status));
             Message =
-                $"{taskResult.Payloads.Count} kinds · {FirstLine(uploaded)}" +
+                $"{taskResult.Payloads.Count} kinds · live {FirstLine(uploaded)}" +
                 (wroteThisSolve ? " written" : string.Empty);
         }
         catch (Exception error)
@@ -746,30 +758,18 @@ public sealed class ExportComponent :
             // only ever a Warning.
             notes.Add("Write is on but Path is blank; nothing written.");
         }
-        // The faces are only rebuilt when they might be needed, and never
+        // The faces are only read when they might be needed, and never
         // when cells are wired: rebuilding a thrust mesh on every solve to
         // throw it away is the kind of cost that turns a slider into a
         // slideshow.
-        Mesh? faces = null;
+        DefaultTessellation? fallback = null;
         int faceCount = 0;
         if (cellInput.Count == 0 && ResultTables.IsTna(resultValue))
         {
-            try
-            {
-                faces = DeconstructComponent.ThrustMesh(resultValue);
-                faceCount = faces.Faces.Count;
-            }
-            catch (Exception meshError)
-            {
-                // A Result whose form graph will not rebuild into a mesh is
-                // Skin's to report and not a reason to lose the whole
-                // export. Said once, and the set goes out without a
-                // tessellation.
-                notes.Add(
-                    "The thrust mesh could not be rebuilt, so no " +
-                    "tessellation was built from the Result's own faces: " +
-                    meshError.GetBaseException().Message);
-            }
+            fallback = DefaultTessellationFor(resultValue);
+            faceCount = fallback.FaceCount;
+            if (fallback.Note is not null)
+                notes.Add(fallback.Note);
         }
         CellSource cellSource = ChooseCells(
             cellInput.Count, courseInput.Count, faceCount, out string? cellRemark);
@@ -801,25 +801,20 @@ public sealed class ExportComponent :
                     cellInput, courseInput, errors, out cellWarning);
             }
         }
-        else if (cellSource == CellSource.Faces && faces is not null)
+        else if (cellSource == CellSource.Faces && fallback is not null)
         {
-            // Skin's own rule, through Skin's own code: one closed polyline
-            // per face, in face order. The courses are handed over as an
-            // explicit run of zeros rather than an empty list, so the
-            // "no Courses wired" warning stays for the author who wired
-            // cells and not for the component that made its own.
-            IReadOnlyList<PolylineCurve> outlines =
-                SkinComponent.FacePolylines(faces);
-            var authored = new List<Curve>(outlines.Count);
-            foreach (PolylineCurve outline in outlines)
-                authored.Add(outline);
-            cells = PrepareTessellationCells(
-                authored, new int[authored.Count], errors, out cellWarning);
-            remarks.Add(
-                $"Cells is unwired, so Export tessellated the Result's own " +
-                $"{authored.Count} faces, one cell each at course 0. Wire " +
-                "Skin's Face Polylines, or cells of your own, to override " +
-                "it.");
+            // Nothing here can reach the errors list. Nobody wired these
+            // cells and nobody asked for this tessellation: it is the
+            // courtesy the studio's build animation needs, so a face of the
+            // Result's own mesh that will not reduce to a cell is skipped
+            // and counted, never allowed to cost the contract, the COMPAS
+            // document, the columns mesh, the write and the live push. With
+            // no face left the list is empty, hasCells is false, and the
+            // kind is simply absent, which is the shape every other absent
+            // kind already has.
+            cells = fallback.Cells;
+            foreach (string remark in fallback.Remarks)
+                remarks.Add(remark);
         }
 
         double radius = radiusInput;
@@ -925,7 +920,11 @@ public sealed class ExportComponent :
         remark = null;
         if (wiredCells > 0)
             return CellSource.Wired;
-        if (wiredCourses > 0)
+        // Only where a default tessellation is actually coming: the
+        // sentence describes the thing the courses were ignored in favour
+        // of, and on a Result with no faces at all (an FD Result) that
+        // thing is never built.
+        if (wiredCourses > 0 && faceCount > 0)
         {
             remark =
                 "Courses is wired with no Cells, so it was ignored: a " +
@@ -934,6 +933,169 @@ public sealed class ExportComponent :
                 "at course 0.";
         }
         return faceCount > 0 ? CellSource.Faces : CellSource.None;
+    }
+
+    /// <summary>
+    /// One Result's default tessellation and everything the component has
+    /// to say about it, built once and read by both phases of the solve.
+    /// </summary>
+    private sealed record DefaultTessellation(
+        ResultDto Result,
+        int FaceCount,
+        IReadOnlyList<TessellationCell> Cells,
+        IReadOnlyList<string> Remarks,
+        string? Note);
+
+    /// <summary>
+    /// The default tessellation for this Result, off the cache when the
+    /// Result is the one it was built from. Reference equality, not the
+    /// record's own: comparing two solved nets field by field costs more
+    /// than rebuilding the mesh it was meant to save.
+    /// </summary>
+    private DefaultTessellation DefaultTessellationFor(ResultDto result)
+    {
+        if (_defaultTessellation is DefaultTessellation cached &&
+            ReferenceEquals(cached.Result, result))
+        {
+            return cached;
+        }
+        DefaultTessellation built = BuildDefaultTessellation(result);
+        _defaultTessellation = built;
+        return built;
+    }
+
+    /// <summary>
+    /// The Result's own faces as cutting cells: Skin's rule through Skin's
+    /// own code, one closed polyline per face in face order, read back as
+    /// plain corners and reduced to plan outlines at course 0.
+    ///
+    /// A Result whose form graph will not rebuild into a mesh is Skin's to
+    /// report and not a reason to lose the whole export: it comes back as a
+    /// note, with no faces and no cells, and the set goes out without a
+    /// tessellation.
+    /// </summary>
+    private static DefaultTessellation BuildDefaultTessellation(
+        ResultDto result)
+    {
+        Mesh mesh;
+        try
+        {
+            mesh = DeconstructComponent.ThrustMesh(result);
+        }
+        catch (Exception meshError)
+        {
+            return new DefaultTessellation(
+                result,
+                0,
+                Array.Empty<TessellationCell>(),
+                Array.Empty<string>(),
+                "The thrust mesh could not be rebuilt, so no tessellation " +
+                "was built from the Result's own faces: " +
+                meshError.GetBaseException().Message);
+        }
+        IReadOnlyList<PolylineCurve> outlines =
+            SkinComponent.FacePolylines(mesh);
+        var corners = new List<Point3d[]>(outlines.Count);
+        foreach (PolylineCurve outline in outlines)
+        {
+            // Every face is represented, including one whose polyline will
+            // not read back, so the skipped count stays the difference
+            // between the faces the mesh has and the cells that came out.
+            corners.Add(outline.TryGetPolyline(out Polyline polyline)
+                ? polyline.ToArray()
+                : Array.Empty<Point3d>());
+        }
+        IReadOnlyList<TessellationCell> cells =
+            DefaultTessellationCells(corners, out int skipped);
+        var remarks = new List<string>(2);
+        if (cells.Count > 0)
+        {
+            remarks.Add(
+                "Cells is unwired, so Export tessellated the Result's own " +
+                $"{cells.Count} faces, one cell each at course 0. Wire " +
+                "Skin's Face Polylines, or cells of your own, to override " +
+                "it.");
+        }
+        if (skipped > 0)
+        {
+            remarks.Add(
+                $"{skipped} thrust-mesh faces with fewer than three plan " +
+                "corners were skipped from the default tessellation.");
+        }
+        return new DefaultTessellation(
+            result, mesh.Faces.Count, cells, remarks, null);
+    }
+
+    /// <summary>
+    /// One cell per face, in face order, every one at course 0, and the
+    /// count of the faces that gave none. A face that will not reduce to
+    /// three distinct plan corners (one vertical in plan, or carrying a
+    /// repeated vertex) is SKIPPED, never an error: an authored Cells port
+    /// is the author saying what to cut and its faults are errors, while
+    /// this tessellation was never asked for and must not cost another
+    /// kind. The survivors renumber, so the studio's keys have no holes.
+    ///
+    /// Pure, and takes corners rather than curves, so the rule is measured
+    /// in the smoke harness, which has RhinoCommon's structs but no native
+    /// core to build a Curve or a Mesh with.
+    /// </summary>
+    internal static IReadOnlyList<TessellationCell> DefaultTessellationCells(
+        IReadOnlyList<Point3d[]> faces,
+        out int skipped)
+    {
+        var prepared = new List<TessellationCell>(faces.Count);
+        foreach (Point3d[] face in faces)
+        {
+            IReadOnlyList<double[]>? outline = PlanOutline(face, out _);
+            if (outline is not null)
+                prepared.Add(new TessellationCell(0, outline));
+        }
+        skipped = faces.Count - prepared.Count;
+        return prepared;
+    }
+
+    /// <summary>
+    /// One cell's corners as the plan outline the sidecar carries: z
+    /// dropped, consecutive near-duplicates dropped, and the closing repeat
+    /// of a ring dropped because the studio closes every ring implicitly
+    /// ((i + 1) % n). Null when fewer than three distinct plan corners
+    /// survive, which is the one shape neither caller can write; whether
+    /// that is an error or a skip is the caller's to decide.
+    /// <paramref name="closedByRepeat"/> reports that the ring closed
+    /// itself, which is how the wired path tells a genuinely open cell from
+    /// a closed one.
+    /// </summary>
+    private static IReadOnlyList<double[]>? PlanOutline(
+        IEnumerable<Point3d> corners,
+        out bool closedByRepeat)
+    {
+        closedByRepeat = false;
+        var outline = new List<double[]>();
+        foreach (Point3d point in corners)
+        {
+            if (outline.Count > 0)
+            {
+                double[] last = outline[outline.Count - 1];
+                if (Math.Abs(last[0] - point.X) < 1e-9 &&
+                    Math.Abs(last[1] - point.Y) < 1e-9)
+                {
+                    continue;
+                }
+            }
+            outline.Add(new[] { point.X, point.Y });
+        }
+        if (outline.Count > 1)
+        {
+            double[] first = outline[0];
+            double[] final = outline[outline.Count - 1];
+            if (Math.Abs(first[0] - final[0]) < 1e-9 &&
+                Math.Abs(first[1] - final[1]) < 1e-9)
+            {
+                outline.RemoveAt(outline.Count - 1);
+                closedByRepeat = true;
+            }
+        }
+        return outline.Count < 3 ? null : outline;
     }
 
     /// <summary>
@@ -973,42 +1135,16 @@ public sealed class ExportComponent :
                     continue;
                 }
             }
-            var outline = new List<double[]>(polyline.Count);
-            foreach (Point3d point in polyline)
-            {
-                if (outline.Count > 0)
-                {
-                    double[] last = outline[outline.Count - 1];
-                    if (Math.Abs(last[0] - point.X) < 1e-9 &&
-                        Math.Abs(last[1] - point.Y) < 1e-9)
-                    {
-                        continue;
-                    }
-                }
-                outline.Add(new[] { point.X, point.Y });
-            }
-            // The studio closes rings implicitly ((i + 1) % n), so the
-            // closing repeat of a closed polyline is dropped, not kept.
-            if (outline.Count > 1)
-            {
-                double[] first = outline[0];
-                double[] final = outline[outline.Count - 1];
-                if (Math.Abs(first[0] - final[0]) < 1e-9 &&
-                    Math.Abs(first[1] - final[1]) < 1e-9)
-                {
-                    outline.RemoveAt(outline.Count - 1);
-                }
-                else if (!curve.IsClosed)
-                {
-                    openCells.Add(i);
-                }
-            }
-            if (outline.Count < 3)
+            IReadOnlyList<double[]>? outline =
+                PlanOutline(polyline, out bool closedByRepeat);
+            if (outline is null)
             {
                 errors.Add(
                     $"Cell {i} has fewer than 3 distinct plan corners.");
                 continue;
             }
+            if (!closedByRepeat && !curve.IsClosed)
+                openCells.Add(i);
             prepared.Add(new TessellationCell(
                 courses.Count > 0 ? courses[i] : 0,
                 outline));
