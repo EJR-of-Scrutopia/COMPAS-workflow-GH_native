@@ -190,41 +190,43 @@ internal static class Program
                 ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = (
                     "TNA Relax",
                     "TNA Relax",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "PRB", "q", "Sag %", "FA" },
                     new[] { "RLX" }),
                 ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = (
                     "TNA Solve",
                     "TNA Solve",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "RLX", "H", "I", "Run" },
                     new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent"] = (
                     "TNA Solve Algebraic",
                     "TNA Solve A",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "RLX", "H", "Run" },
                     new[] { "RES", "M", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = (
                     "FD Solve",
                     "FD Solve",
-                    "02 Form Finding",
+                    "02 Solve",
                     new[] { "PRB", "q", "Run" },
                     new[] { "RES", "L", "S" }),
                 ["Ananke.COMPAS.Native.Components.StyleComponent"] = (
                     "Style",
                     "Style",
-                    "03 Visualise",
+                    "04 Read",
                     new[] { "Preset", "Weight", "Vector" },
                     new[] { "STY" }),
                 // Columns is pinned because slot 2 is RENAMED from Ground to
                 // Type and keeps its slot: the nicknames are the canvas
                 // contract, and a saved wire has to land on the same port it
-                // left.
+                // left. Its TAB is pinned for the same reason at one remove:
+                // 03 Mould is a panel of two, and a component that drifts out
+                // of it is a component nobody can find.
                 ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = (
                     "Columns",
                     "Columns",
-                    "03 Visualise",
+                    "03 Mould",
                     new[] { "RES", "B", "T" },
                     new[] { "RES" }),
                 // Frame is pinned nickname by nickname because it is the one
@@ -233,13 +235,13 @@ internal static class Program
                 ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
                     "Frame",
                     "FR",
-                    "03 Visualise",
+                    "04 Read",
                     new[] { "RES" },
                     new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH" }),
                 ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = (
                     "Import Pieces",
                     "Pieces",
-                    "07 Delivery",
+                    "05 Deliver",
                     new[] { "P" },
                     // Addendum, 2026-08-20: the flat Courses (C) output is
                     // removed; M/K/S are trees branched by course, B is

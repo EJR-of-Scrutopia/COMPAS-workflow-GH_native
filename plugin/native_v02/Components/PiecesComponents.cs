@@ -94,7 +94,7 @@ public sealed class ImportPiecesComponent :
             "Read a bench.pieces/1 export and land the studio's final " +
             "cut-block solids on the canvas as mesh/key/support trees " +
             "branched by course, plus the study's base wireframe mesh.",
-            ComponentCategories.Delivery,
+            ComponentCategories.Deliver,
             "import_pieces")
     {
     }

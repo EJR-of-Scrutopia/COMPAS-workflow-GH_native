@@ -38,7 +38,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "columns. A Result from a solver or from Columns gives "
                     + "the finished vault; a Result from Animate gives that "
                     + "frame of the build.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "frame")
         {
         }

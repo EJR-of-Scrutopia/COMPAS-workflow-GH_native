@@ -32,7 +32,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "plain English what is wrong and which lever to pull. "
                     + "Replaces the Report ports the mould components used to "
                     + "carry.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "diagnose")
         {
         }

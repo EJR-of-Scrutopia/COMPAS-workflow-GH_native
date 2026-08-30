@@ -146,7 +146,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "height are read from the solved Result, not dialled. The "
                     + "geometry of a frame is Frame's, which reads it back off "
                     + "this Result.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Mould,
                 "mould_animate")
         {
         }

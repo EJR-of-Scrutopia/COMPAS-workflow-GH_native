@@ -308,7 +308,7 @@ namespace Ananke.COMPAS.Native.Components
                 "columns. Monitor carries the numbers and Skin the cells. " +
                 "Reciprocal-only streams (Thrust Mesh, Form Lines) come out " +
                 "empty for FD.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "result_breakdown")
         {
             // Deconstruct is a data boundary, not a renderer: Display owns
@@ -934,7 +934,7 @@ namespace Ananke.COMPAS.Native.Components
                 "Style",
                 "Bundle a display preset, weight scale, and vector scale " +
                 "for the Display component.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "diagram_style")
         {
         }
@@ -1065,7 +1065,7 @@ namespace Ananke.COMPAS.Native.Components
                 "auto-scaling, and Elements/Metric filters. The shaded " +
                 "thrust mesh is TNA Solve's preview; the geometry itself " +
                 "is Deconstruct's.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "graphic_diagram_display")
         {
         }

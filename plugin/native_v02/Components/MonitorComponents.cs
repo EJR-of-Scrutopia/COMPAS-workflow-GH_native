@@ -159,7 +159,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "unless it says otherwise, and are converted to newtons "
                     + "where they meet a stiffness or a capacity you wire. "
                     + "Demands only, unless a capacity is wired.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "stress_analysis")
         {
             foreach (IGH_Param output in Params.Output)

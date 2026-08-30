@@ -123,7 +123,7 @@ public sealed class ExportComponent :
             "COMPAS always, a tessellation sidecar when cells are wired, " +
             "a columns mesh when the Result carries columns, and push " +
             "the set live to the studio.",
-            ComponentCategories.Delivery,
+            ComponentCategories.Deliver,
             "export")
     {
     }

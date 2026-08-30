@@ -25,7 +25,7 @@ namespace Ananke.COMPAS.Native.Components
                 "One closed polyline per face of the thrust mesh, banded into "
                     + "courses by Course Height: the Cells and Courses for "
                     + "Export, which flattens them itself.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Read,
                 "skin")
         {
             foreach (IGH_Param output in Params.Output)

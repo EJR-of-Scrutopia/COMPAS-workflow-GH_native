@@ -44,7 +44,7 @@ public sealed class TnaRelaxComponent :
             "Relax the Problem's plan Pattern, match unsupported-boundary " +
             "sag, and build an inspectable unbalanced topological force " +
             "dual.",
-            ComponentCategories.FormFinding,
+            ComponentCategories.Solve,
             "tna_relax")
     {
     }
@@ -560,7 +560,7 @@ public class TnaSolveComponent :
             name,
             nickname,
             description,
-            ComponentCategories.FormFinding,
+            ComponentCategories.Solve,
             "tna_solve")
     {
         for (int index = 1; index < Params.Output.Count; index++)
@@ -1039,7 +1039,7 @@ public sealed class FdSolveComponent :
             "FD Solve",
             "Run whole-network COMPAS force-density form finding against " +
             "the load case the Problem carries.",
-            ComponentCategories.FormFinding,
+            ComponentCategories.Solve,
             "fd_solve")
     {
         for (int index = 1; index < Params.Output.Count; index++)

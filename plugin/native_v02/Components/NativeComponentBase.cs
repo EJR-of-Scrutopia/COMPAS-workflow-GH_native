@@ -10,42 +10,56 @@ using Grasshopper.Kernel.Special;
 namespace Ananke.COMPAS.Native.Components;
 
 /// <summary>
-/// Grasshopper subcategories, one per COMPAS extension family.
+/// Grasshopper subcategories, one per stage of the chain a Result travels.
 ///
-/// The naming follows COMPAS's own family names deliberately, so a tab answers
-/// "which package family backs this" without a lookup. Each backed tab pairs
-/// with one capability flag reported by Backend Health and one optional
-/// dependency group in pyproject.toml, so a tab that does nothing is explained
-/// by a missing package rather than being a mystery.
+/// The tabs used to be named after COMPAS's own extension families, which
+/// answered "which package backs this" and nothing else; eight of the
+/// nineteen components ended up under one of them. They are named after the
+/// WORK now, in the order the work happens: model a pattern, solve it, build
+/// the mould that makes it, read what came out, deliver it. A canvas is
+/// built left to right and the tabs now read that way too.
+///
+/// The three reserved families keep their places at the end, renumbered out
+/// of the way of the five that are in use, and they still name the packages
+/// that would back them.
 ///
 /// Subcategory is display grouping only. Component identity is the GUID, so
-/// regrouping never invalidates a saved definition.
+/// regrouping never invalidates a saved definition and no wire moves.
 /// </summary>
 internal static class ComponentCategories
 {
     public const string Category = "Ananke COMPAS";
 
-    // Shared spine. No backend beyond compas itself.
+    // Pattern, Supports, Loads. No backend beyond compas itself.
     public const string Model = "01 Model";
 
+    // TNA Relax, TNA Solve, TNA Solve Algebraic, FD Solve.
     // compas_fd, compas_tna. Capability: fd.solve, tna.solve. Extra: equilibrium.
-    public const string FormFinding = "02 Form Finding";
+    public const string Solve = "02 Solve";
 
-    // Viewport preview only. No backend.
-    public const string Visualise = "03 Visualise";
+    // Columns and Animate: the reconfigurable mould, which is what turns a
+    // solved net into a machine. No backend.
+    public const string Mould = "03 Mould";
 
-    // compas_dem, compas_assembly, compas_cra. Capability: masonry. Extra: masonry.
-    // Reserved.
-    public const string Masonry = "04 Masonry";
+    // Everything that reads a Result: Deconstruct, Monitor, Skin, Diagnose,
+    // Frame, Style and Display. Geometry, numbers, words and the viewport.
+    // No backend.
+    public const string Read = "04 Read";
+
+    // Export, Import Pieces, Armadillo Dual.
+    // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
+    public const string Deliver = "05 Deliver";
+
+    // compas_dem, compas_assembly, compas_cra. Capability: masonry. Extra:
+    // masonry. Reserved.
+    public const string Masonry = "06 Masonry";
 
     // compas_fea2 plus a solver backend. Capability: fea. Extra: fea.
-    public const string Engineering = "05 Engineering";
+    // Reserved.
+    public const string Engineering = "07 Engineering";
 
-    // compas_fab, compas_robots. Capability: fab. Extra: fab.
-    public const string Fabrication = "06 Fabrication";
-
-    // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
-    public const string Delivery = "07 Delivery";
+    // compas_fab, compas_robots. Capability: fab. Extra: fab. Reserved.
+    public const string Fabrication = "08 Fabrication";
 
     // Backend Health and other diagnostics. No solver backend of its own.
     public const string System = "90 System";

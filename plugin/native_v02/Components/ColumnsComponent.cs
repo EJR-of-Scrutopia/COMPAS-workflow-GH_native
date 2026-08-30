@@ -58,7 +58,7 @@ namespace Ananke.COMPAS.Native.Components
                     + "grouped into trees by Branching and footed by Type. "
                     + "The loads come from the Result's own member forces, "
                     + "mirrored about each span's midpoint before a foot is placed.",
-                ComponentCategories.Visualise,
+                ComponentCategories.Mould,
                 "column_finder")
         {
             foreach (IGH_Param output in Params.Output)
