@@ -980,7 +980,10 @@ internal static class Program
                 + "archived chunk with no readable Name raises nothing by "
                 + "itself; and where only a name moved, the rename LEADS and "
                 + "the equal counts follow it as the reason every wire "
-                + "reattached.");
+                + "reattached. SideMoved, which Export's Live hold reads, "
+                + "answers for ONE side: an input move holds, by count or "
+                + "by name, and this branch's own output-only move does "
+                + "not.");
         }
         catch (Exception exception)
         {
@@ -4203,6 +4206,86 @@ internal static class Program
                 + "output count came back to two by a different route and every "
                 + "input wire still moved; got "
                 + $"'{exportMoved}'.");
+        }
+
+        // The INPUT SIDE alone, which is what Export's Live hold reads.
+        //
+        // A Warning is owed for either side moving, so Mismatch asks about
+        // both. Acting on the finding is a different question: Grasshopper
+        // reattaches an archived wire to the live port at its own index, so
+        // only an INPUT wire can land on a port the component then obeys,
+        // and Export's Live toggle is one of those ports. An output-side
+        // change cannot flip it. Export's outputs went from six to two on
+        // this branch with its nine inputs untouched, so a hold on any port
+        // move would have held Live on every definition in existence for a
+        // change that could not have moved a single input wire.
+        MethodInfo sideMoved = RequireStatic(identity, "SideMoved");
+        bool Side(
+            IReadOnlyList<string?> archived,
+            IReadOnlyList<string> registered) =>
+            sideMoved.Invoke(null, new object?[] { archived, registered })
+                is true;
+
+        // The case the hold exists for: a pre-export-live definition, seven
+        // archived inputs against the nine registered now.
+        if (!Side(Names(7, "in"), Registered(9, "in")))
+        {
+            throw new InvalidOperationException(
+                "Seven archived inputs against nine registered is an input "
+                + "move, and Export must hold Live on it: three input wires "
+                + "land on ports they did not leave, one of them the Live "
+                + "toggle, and a Warning cannot recall a study already "
+                + "pushed to a studio.");
+        }
+        // The same shape with only a NAME moved, which is the half a count
+        // comparison cannot see.
+        string?[] renamedInputs =
+        {
+            "Result", "Path", "Write", "Name", "Courses", "Cells", "Live",
+            "Studio", "Column Radius"
+        };
+        string[] registeredInputs =
+        {
+            "Result", "Path", "Write", "Name", "Cells", "Courses", "Live",
+            "Studio", "Column Radius"
+        };
+        if (!Side(renamedInputs, registeredInputs))
+        {
+            throw new InvalidOperationException(
+                "Nine inputs before and nine after, with two of them "
+                + "swapped, is still an input move: the counts agree and "
+                + "every wire reattached to the wrong port, which is the "
+                + "case names were compared for in the first place.");
+        }
+        // THIS BRANCH's own move, and the one that must NOT hold: the
+        // outputs went six to two and the nine inputs did not move.
+        if (Side(Names(9, "in"), Registered(9, "in")))
+        {
+            throw new InvalidOperationException(
+                "Export's outputs went from six to two on this branch with "
+                + "its nine inputs untouched. The Warning is owed, and "
+                + "Mismatch gives it; the HOLD is not, because no output "
+                + "change can put an archived wire on the Live toggle. "
+                + "Holding here would hold Live on every definition in "
+                + "existence.");
+        }
+        if (!Side(Names(6, "out"), Registered(2, "out")))
+        {
+            throw new InvalidOperationException(
+                "Six archived outputs against two registered is a move on "
+                + "the side it is asked about; the previous case rests on "
+                + "the OUTPUT side having really changed while the input "
+                + "side stayed still.");
+        }
+        // And both sides agreeing is silence, as it is for Mismatch.
+        if (Side(Names(9, "in"), Registered(9, "in")) ||
+            Side(registeredInputs.Select(name => (string?)name).ToArray(),
+                 registeredInputs))
+        {
+            throw new InvalidOperationException(
+                "A side whose archived names and counts are the ports "
+                + "registered there now has not moved, and nothing may be "
+                + "held on it.");
         }
 
         // A longer archived list: the one case that visibly breaks in

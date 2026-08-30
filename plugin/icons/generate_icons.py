@@ -12,7 +12,8 @@ Run from any working directory:
 --check validates the map, then re-renders every icon it lists IN MEMORY and
 refuses any file whose bytes differ. A header check alone passes a stale badge
 carrying the wrong letters, and the letters are the only thing that tells one
-badge from another inside a panel.
+badge from another inside a panel. Where a key is in both lists, the NATIVE
+entry owns the file and is the one compared.
 """
 
 from __future__ import annotations
@@ -321,15 +322,35 @@ def generate(mapping: dict) -> None:
         (ICON_DIR / filename).write_bytes(data)
 
 
-def check(mapping: dict) -> None:
+def check(mapping: dict) -> Tuple[int, int]:
+    """Compare every icon file against a fresh render of the entry that OWNS it.
+
+    The PNG header says a file is an icon; only the BYTES say it is THIS icon.
+    A header check passes a stale badge carrying the wrong letters or the wrong
+    panel fill, and the letters are the only thing that tells one badge from
+    another inside a panel, so every file is re-rendered and compared.
+
+    One file per entry, except where a key is in both lists. There the two
+    entries name ONE file and the native entry owns its pixels (see render), so
+    the legacy entry is stepped over rather than compared: comparing it would
+    measure the same file against the same native render a second time and
+    report a legacy label as checked when nothing ever looked at it. Returns
+    the number of files compared and the number of legacy entries skipped.
+    """
     expected_size = mapping["size"][0]
-    # The PNG header says a file is an icon; only the BYTES say it is THIS
-    # icon. A header check passes a stale badge carrying the wrong letters or
-    # the wrong panel fill, and the letters are the only thing that tells one
-    # badge from another inside a panel, so --check re-renders every file
-    # from the map and refuses any that differs.
     drawn = render(mapping)
-    for item in mapping["components"] + mapping.get("native_components", []):
+    native_filenames = {
+        item["filename"] for item in mapping.get("native_components", [])
+    }
+    legacy_count = len(mapping["components"])
+    compared = 0
+    shared = 0
+    for index, item in enumerate(
+        mapping["components"] + mapping.get("native_components", [])
+    ):
+        if index < legacy_count and item["filename"] in native_filenames:
+            shared += 1
+            continue
         path = ICON_DIR / item["filename"]
         if not path.is_file():
             raise FileNotFoundError("Missing icon: {}".format(path))
@@ -343,9 +364,11 @@ def check(mapping: dict) -> None:
                     path, item["label"], item["category"]
                 )
             )
+        compared += 1
         print("{:<22} {}x{} RGBA8 sha256:{}".format(
             item["filename"], expected_size, expected_size, digest
         ))
+    return compared, shared
 
 
 def main() -> None:
@@ -361,11 +384,11 @@ def main() -> None:
     validate_mapping(mapping)
     if not arguments.check:
         generate(mapping)
-    check(mapping)
-    count = len(mapping["components"]) + len(mapping.get("native_components", []))
+    compared, shared = check(mapping)
     print(
-        "Validated {} component icons; every file matches a fresh render of "
-        "its map entry, byte for byte.".format(count)
+        "Validated {} icon files; every one matches a fresh render of the map "
+        "entry that owns it, byte for byte. {} legacy entries name a file a "
+        "native entry owns and were not compared.".format(compared, shared)
     )
 
 
