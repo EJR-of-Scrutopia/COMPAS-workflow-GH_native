@@ -3366,6 +3366,71 @@ internal static class Program
             return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
         }
 
+        // A bar that curves IN PLAN, which is the case BarTransverse exists
+        // for and the case every other fixture in this file is blind to.
+        //
+        // Ten nodes read in a chord frame: u along the chord in unit steps
+        // from -4.5 to 4.5, v across it, a plan parabola with a sagitta of 2
+        // at the crown falling to zero at both ends, so the two ANCHORS are
+        // the chord itself and all eight free notches stand off it. Elevation
+        // is the usual parabola, rise 3. The whole plan is then turned onto
+        // the direction (1, 2)/sqrt(5). That direction matters: a bounding box
+        // mirrors correctly about a chord running along either axis or at 45
+        // degrees, and it mirrors correctly here too whenever a band's world X
+        // and Y extremes fall on the same two notches, which a plan bulge
+        // rising monotonically toward the crown arranges at most chord
+        // angles. At this one the world X of a band turns back on itself
+        // (the steps are -0.083, +0.094, +0.271), so the X extreme moves off
+        // the band's end notch and the box stops mirroring while the mean
+        // still does.
+        //
+        // Every pull leans INWARD along the chord by `lean` to 1 with no
+        // across-chord part at all, so the span's own mean across is zero and
+        // it keeps the frame its node order gives it.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) PlanCurved(double lean)
+        {
+            const int count = 10;
+            const double half = 4.5;
+            const double sag = 2.0;
+            const double rise = 3.0;
+            double cx = 1.0 / Math.Sqrt(5.0);
+            double cy = 2.0 / Math.Sqrt(5.0);
+            Array nodes = Array.CreateInstance(point3d, count);
+            Array acrossBar = Array.CreateInstance(vector3d, count);
+            var edges = new List<(int, int)>();
+            for (int i = 0; i < count; i++)
+            {
+                double u = i - half;
+                double v = sag * (1.0 - ((u / half) * (u / half)));
+                double s = (double)i / (count - 1);
+                nodes.SetValue(
+                    P((u * cx) - (v * cy), (u * cy) + (v * cx), rise * 4.0 * s * (1.0 - s)), i);
+                double along = (i * 2) < count ? lean : -lean;
+                acrossBar.SetValue(V(along * cx, along * cy, -1.0), i);
+                if (i > 0)
+                    edges.Add((i - 1, i));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
+        }
+
+        // A span's own frame, read off its first and last node: how far along
+        // the chord from its midpoint a plan point stands, and how far across.
+        (double Along, double Across) InSpanFrame(Array netNodes, int[] bar, object span, object point)
+        {
+            object first = netNodes.GetValue(bar[Get<int>(span, "First")])!;
+            object last = netNodes.GetValue(bar[Get<int>(span, "Last")])!;
+            double dx = X(last) - X(first);
+            double dy = Y(last) - Y(first);
+            double length = Math.Sqrt((dx * dx) + (dy * dy));
+            dx /= length;
+            dy /= length;
+            double ox = X(point) - (0.5 * (X(first) + X(last)));
+            double oy = Y(point) - (0.5 * (Y(first) + Y(last)));
+            return ((ox * dx) + (oy * dy), (ox * -dy) + (oy * dx));
+        }
+
         (int Lower, int Upper)[] MembersOf(object level) =>
             ((IEnumerable)Get<object>(level, "Members")).Cast<object>()
                 .Select(m => ((int)m.GetType().GetField("Item1")!.GetValue(m)!,
@@ -3544,40 +3609,50 @@ internal static class Program
             }
         }
 
-        // ---- One family (spec 6). The same arch three times, offset in Y by
-        // 0, 1 and 2, the second's pulls scaled by 1.05, the third traced
-        // BACKWARDS. A family is every span with the same free-notch count
-        // (Branching is one slider, so the tree count and layout follow);
-        // each span is read in the frame of the family's first span, a span
-        // whose chord points the other way being read reversed, and each
-        // takes the family's mean. Every principal line of a family therefore
-        // carries the same columns in its own frame.
+        // ---- One family (spec 6). The same arch four times, offset in Y by
+        // 0, 1, 2 and 3, the second's pulls scaled by 1.05, the third traced
+        // BACKWARDS, and the fourth turned through 180 degrees in plan about
+        // the arch's own centre with its pull turned with it. A family is the
+        // spans alike in free-notch count and in chord length (Branching is
+        // one slider, so the tree count and layout follow); each span orients
+        // ITSELF by its own mean across-chord pull, and each then takes the
+        // family's mean at its own index. Every principal line of a family
+        // therefore carries the same columns in its own frame.
         {
             const double skew = 0.0174550649282176;
             // A uniform across-chord pull, the same on every notch of every
             // bar (a wind load, not a mirrored shape): it is the only thing
-            // in this fixture that a wrong reversed mapping can be caught
+            // in this fixture that a wrong orientation rule can be caught
             // by. `along`, after each span's own pair step, is already
-            // antisymmetric, so reversing it (index mirror plus sign flip)
-            // is the identity and proves nothing; a mirrored SHAPE on
+            // antisymmetric, so turning it round (index mirror plus sign
+            // flip) is the identity and proves nothing; a mirrored SHAPE on
             // `across` is symmetric after the pair step for the same
             // reason. A uniform pull survives the pair step as itself, and
-            // the correctly-reversed bar contributes it with the SAME sign
-            // as the two forward bars (its own normal is flipped, which the
-            // reversed sign flip corrects); forcing every bar to read
-            // forward makes the backward bar's contribution cancel instead
-            // of add, and the family mean drops from `lateral` to
-            // `lateral / 3`, a shift no cross-span equality check can see
-            // because the wrong mean is still shared identically by every
-            // span it is written back to.
+            // once every span has oriented itself all four bars contribute it
+            // with the same sign, so the family mean is `lateral` exactly.
+            //
+            // Bar 3 is what the REVERSED-SPAN rule got wrong. That rule read
+            // every span in the frame of the family's LEAD and negated any
+            // span whose chord opposed the lead's. Bar 2, the same physical
+            // line traced backwards, it corrected. Bar 3, a genuine 180
+            // degree rotation with the chord AND the pull turned together
+            // (which is what two opposite ribs of a dome are), it negated as
+            // well, cancelling the rotated bar's across-chord pull against
+            // the others: the four contributions became +l, +l, +l, -l, the
+            // mean fell to l/2, and every bar took half the pull it carries,
+            // the rotated one with the wrong sign. No cross-span equality
+            // check can see that, because the wrong mean is shared
+            // identically by every span it is written back to, so the value
+            // itself is asserted below.
             const double lateral = 0.3;
             const int count = 11;
-            Array nodes = Array.CreateInstance(point3d, 3 * count);
-            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 3);
-            var bars = new int[3][];
+            const int barCount = 4;
+            Array nodes = Array.CreateInstance(point3d, barCount * count);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), barCount);
+            var bars = new int[barCount][];
             var anchors = new List<int>();
             double middle = (count - 1) / 2.0;
-            for (int b = 0; b < 3; b++)
+            for (int b = 0; b < barCount; b++)
             {
                 Array acrossBar = Array.CreateInstance(vector3d, count);
                 var bar = new int[count];
@@ -3585,16 +3660,26 @@ internal static class Program
                 {
                     double s = (double)i / (count - 1);
                     int node = (b * count) + i;
-                    nodes.SetValue(P(10.0 * s, b, 2.5 * 4.0 * s * (1.0 - s)), node);
+                    // Bar 3 is bar 0 rotated 180 degrees in plan about the
+                    // arch's plan centre (5, 3): its plan x runs backwards
+                    // while its node ORDER does not, so its chord is
+                    // antiparallel to the lead's, and its pull is turned with
+                    // it, both plan components negated. In its own frame it is
+                    // bar 0 exactly, notch for notch.
+                    double x = b == 3 ? 10.0 - (10.0 * s) : 10.0 * s;
+                    nodes.SetValue(P(x, b, 2.5 * 4.0 * s * (1.0 - s)), node);
                     double side = i < middle ? -1.0 : (i > middle ? 1.0 : 0.0);
                     double flank = i < middle ? 1.1 : 1.0;
                     double scale = flank * (b == 1 ? 1.05 : 1.0);
+                    double turn = b == 3 ? -1.0 : 1.0;
                     // Bar 2 is traced from its far end: bar position k holds
                     // the node at count-1-k, and the pull at that POSITION is
                     // the pull that node carries.
                     int position = b == 2 ? count - 1 - i : i;
                     bar[position] = node;
-                    acrossBar.SetValue(V(scale * ((side * 0.25) + skew), lateral, -scale), position);
+                    acrossBar.SetValue(
+                        V(turn * scale * ((side * 0.25) + skew), turn * lateral, -scale),
+                        position);
                 }
                 bars[b] = bar;
                 across.SetValue(acrossBar, b);
@@ -3607,29 +3692,24 @@ internal static class Program
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
-            if (spans.Length != 3)
-                throw new InvalidOperationException($"Three bars anchored at both ends give three spans; got {spans.Length}.");
+            if (spans.Length != barCount)
+                throw new InvalidOperationException($"Four bars anchored at both ends give four spans; got {spans.Length}.");
             int[] footNode = FootOfTree(built, trees.Length);
-            // The lead span's own chord direction: a uniform world-frame pull
-            // (a wind load, not a shape baked into the arch) reads with the
-            // SAME sign in the own frame of every span that shares this
-            // chord direction, and the OPPOSITE sign in a span traced
-            // backwards, because that span's own chord-derived frame is
-            // itself flipped relative to the physical world even though the
-            // bar is not; that sign flip is exactly what makes the world
-            // reading agree once every span is rebuilt from the shared
-            // family mean.
-            object leadSpan = spans[0];
-            int[] leadBar = bars[Get<int>(leadSpan, "Bar")];
-            object leadFirst = nodes.GetValue(leadBar[Get<int>(leadSpan, "First")])!;
-            object leadLast = nodes.GetValue(leadBar[Get<int>(leadSpan, "Last")])!;
-            double leadCx = X(leadLast) - X(leadFirst);
-            double leadCy = Y(leadLast) - Y(leadFirst);
-            double leadLength = Math.Sqrt((leadCx * leadCx) + (leadCy * leadCy));
-            leadCx /= leadLength;
-            leadCy /= leadLength;
+            // What each span's OWN frame must read once the family has been
+            // averaged, derived by hand rather than recomputed from the rule
+            // under test. Symmetrisation never turns a span's own pull round,
+            // so a span reads the shared world-frame lateral pull with the
+            // sign its own trace gives it: bars 0 and 1 are traced along +x
+            // with the pull to +y, so +lateral; bar 2 is the same physical
+            // line traced backwards, so its own normal points the other way
+            // and it reads -lateral; bar 3 is bar 0 turned through 180
+            // degrees with its pull turned too, so its chord AND its normal
+            // are both reversed and it reads +lateral again. A span whose own
+            // reading is negative is the one the engine turns round for the
+            // family, which is bar 2 alone.
+            double[] expectedOwnAcross = { lateral, lateral, -lateral, lateral };
             var offsets = new List<(double Along, double Across)>[spans.Length];
-            var reversedSpan = new bool[spans.Length];
+            var turnedRound = new bool[spans.Length];
             for (int s = 0; s < spans.Length; s++)
             {
                 object span = spans[s];
@@ -3643,8 +3723,8 @@ internal static class Program
                 cy /= length;
                 double midX = 0.5 * (X(first) + X(last));
                 double midY = 0.5 * (Y(first) + Y(last));
-                reversedSpan[s] = ((cx * leadCx) + (cy * leadCy)) < 0.0;
-                double expectedAcross = reversedSpan[s] ? -lateral : lateral;
+                double expectedAcross = expectedOwnAcross[s];
+                turnedRound[s] = expectedAcross < 0.0;
                 offsets[s] = new List<(double Along, double Across)>();
                 for (int t = 0; t < trees.Length; t++)
                 {
@@ -3656,20 +3736,23 @@ internal static class Program
                     offsets[s].Add(((dx * cx) + (dy * cy), (dx * -cy) + (dy * cx)));
 
                     // The value itself, not just cross-span agreement: every
-                    // tree of the family carries the uniform lateral pull
-                    // once correctly symmetrised, world-consistent, so a
+                    // tree of the family carries the WHOLE uniform lateral
+                    // pull once correctly symmetrised, world-consistent, so a
                     // span's own frame (R.n with n = (-c.y, c.x), the
-                    // production sign convention) reads it as `lateral` when
-                    // that span's chord agrees with the family's lead and
-                    // `-lateral` when the span is traced backwards.
+                    // production sign convention) reads it as the hand-derived
+                    // value above. Under the reversed-span rule the rotated
+                    // bar cancels instead of adding, the mean halves, and
+                    // every one of these four readings comes back at half
+                    // size, the rotated bar's with the wrong sign as well.
                     object resultant = Get<object>(trees[t], "Resultant");
                     double acrossForce = (VX(resultant) * -cy) + (VY(resultant) * cx);
                     if (Math.Abs(acrossForce - expectedAcross) > 1.0e-9)
                     {
                         throw new InvalidOperationException(
                             $"Every tree of a family carries the same uniform across-chord pull once symmetrised: span {s} "
-                            + $"({(reversedSpan[s] ? "reversed" : "forward")}) reads {acrossForce:0.#########}, not {expectedAcross:0.#}. "
-                            + "A span traced backwards must be read reversed, or its across-chord contribution cancels the forward bars' instead of adding to them.");
+                            + $"({(turnedRound[s] ? "turned round" : "as traced")}) reads {acrossForce:0.#########}, not {expectedAcross:0.#}. "
+                            + "Each span must orient itself by its OWN mean across pull; reading them all in the family lead's frame cancels a bar "
+                            + "congruent by rotation against the rest instead of adding it.");
                     }
                 }
             }
@@ -3678,16 +3761,16 @@ internal static class Program
                 if (offsets[s].Count != offsets[0].Count)
                     throw new InvalidOperationException($"Every span of a family holds the same trees; span {s} holds {offsets[s].Count} against {offsets[0].Count}.");
                 // Along is antisymmetric within a pair by construction (the
-                // mirror rule takes the pair's DIFFERENCE), so the reversed
-                // transform is its own no-op there and a span's own-frame
-                // Along matches the lead's regardless of trace direction.
-                // Across is the pair's MEAN, so a genuine world-frame
-                // across-chord pull (the uniform `lateral` above) is carried
-                // through unchanged in sign, and a span traced backwards
-                // reads its own-frame Across as the NEGATIVE of the lead's,
-                // exactly as the acrossForce check above already measured
-                // directly off the resultant.
-                double sign = reversedSpan[s] ? -1.0 : 1.0;
+                // mirror rule takes the pair's DIFFERENCE), so turning a span
+                // round is its own no-op there and a span's own-frame Along
+                // matches the lead's whichever way it was traced. Across is
+                // the pair's MEAN, so a genuine world-frame across-chord pull
+                // (the uniform `lateral` above) is carried through unchanged
+                // in sign, and a span the engine turned round reads its
+                // own-frame Across as the NEGATIVE of the lead's, exactly as
+                // the acrossForce check above already measured directly off
+                // the resultant.
+                double sign = turnedRound[s] ? -1.0 : 1.0;
                 for (int i = 0; i < offsets[0].Count; i++)
                 {
                     double expectedAcross = sign * offsets[0][i].Across;
@@ -3696,11 +3779,269 @@ internal static class Program
                     {
                         throw new InvalidOperationException(
                             $"Foot {i} of span {s}, read in its OWN frame, stands where foot {i} of the family's first span stands (Across negated if the "
-                            + $"span is traced backwards): ({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) against "
-                            + $"({offsets[0][i].Along:0.#########}, {expectedAcross:0.#########}). A span traced backwards is being read in the world's "
-                            + "frame, not the family's.");
+                            + $"engine turned that span round): ({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) against "
+                            + $"({offsets[0][i].Along:0.#########}, {expectedAcross:0.#########}). A span is being read in the world's frame, not in "
+                            + "the one its own pull orients it to.");
                     }
                 }
+            }
+        }
+
+        // ---- A family is not a notch count (spec 3.4, amended). Two spans
+        // of nine free notches each: one ten wide and shallow whose pulls
+        // lean hard OUTWARD along the chord, one three wide and three high
+        // whose pulls hang straight down and ask for plumb columns. Keyed on
+        // the notch count alone they are ONE family, and the short span takes
+        // the mean of the two: its outermost tree's along-chord pull becomes
+        // -1 against a down of -1, an aim 45 degrees outward, and its notch
+        // 1.08 above the ground puts its foot at x = 0.3 - 1.08 = -0.78,
+        // three quarters of a metre BEYOND its own anchor. Chord length is in
+        // the key, within a tenth of the family lead's, and 3 is not within a
+        // tenth of 10, so they are two families and the short span keeps the
+        // plumb aims its own net asked for.
+        {
+            const int count = 11;
+            Array nodes = Array.CreateInstance(point3d, 2 * count);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            var bars = new int[2][];
+            var anchors = new List<int>();
+            double middle = (count - 1) / 2.0;
+            for (int b = 0; b < 2; b++)
+            {
+                Array acrossBar = Array.CreateInstance(vector3d, count);
+                var bar = new int[count];
+                double width = b == 0 ? 10.0 : 3.0;
+                double rise = b == 0 ? 2.5 : 3.0;
+                for (int i = 0; i < count; i++)
+                {
+                    double s = (double)i / (count - 1);
+                    int node = (b * count) + i;
+                    nodes.SetValue(P(width * s, 5.0 * b, rise * 4.0 * s * (1.0 - s)), node);
+                    bar[i] = node;
+                    double side = i < middle ? -1.0 : (i > middle ? 1.0 : 0.0);
+                    acrossBar.SetValue(V(b == 0 ? side * 2.0 : 0.0, 0.0, -1.0), i);
+                }
+                bars[b] = bar;
+                across.SetValue(acrossBar, b);
+                anchors.Add(b * count);
+                anchors.Add((b * count) + count - 1);
+            }
+            var unlike = (nodes, bars, anchors.ToArray(), across, Array.Empty<(int, int)>());
+            object placed = Run(unlike, Array.Empty<int[]>(), 1.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int families = Get<int>(placed, "Families");
+            if (families != 2)
+                throw new InvalidOperationException($"A ten metre span and a three metre one holding nine notches each are TWO families, however many notches they share; Families is {families}.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            for (int t = 0; t < trees.Length; t++)
+            {
+                if (Get<int>(trees[t], "Span") != 1)
+                    continue;
+                object main = nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!;
+                object foot = levelNodes[footNode[t]];
+                double parameter = X(foot) / 3.0;
+                if (parameter < -1.0e-9 || parameter > 1.0 + 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The short span's feet stand within its own chord, parameter 0 to 1; tree {t} stands at {parameter:0.#########} "
+                        + $"(x {X(foot):0.#########}). Keyed on the notch count alone it inherits the long span's outward pull and its "
+                        + "outermost foot lands at -0.78, beyond its own anchor.");
+                }
+                if (Math.Abs(X(foot) - X(main)) > 1.0e-9 || Math.Abs(Y(foot) - Y(main)) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The short span's net hangs its notches straight down, so each of its trees stands PLUMB under its own main notch: "
+                        + $"foot ({X(foot):0.#########}, {Y(foot):0.#########}) against notch ({X(main):0.#########}, {Y(main):0.#########}).");
+                }
+            }
+        }
+
+        // ---- A span whose free notches are not symmetric is placed
+        // UNMIRRORED (spec 3.4, amended). An eleven-notch arch crossed at its
+        // position 3 by a second bar, which holds that notch because it is
+        // the lower-indexed bar: the arch is left with free notches at chord
+        // parameters 0.1, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8 and 0.9, where 0.7 has
+        // no partner at 0.3. Index i and index m-1-i of that list are not
+        // geometric mirrors, so pairing them would force equal and opposite
+        // along-chord pulls onto trees that do not straddle the mirror plane,
+        // and would merge a "pair" onto a midpoint that is not between them.
+        // The arch therefore keeps every raw resultant it came in with, its
+        // trees take Partner -1, and it is counted in AsymmetricSpans. The
+        // crossing bar's own span, one notch at parameter 0.5 exactly, IS
+        // symmetric and IS mirrored, which is why its along-chord pull of 0.3
+        // comes back zeroed.
+        {
+            Array nodes = Array.CreateInstance(point3d, 13);
+            for (int i = 0; i < 11; i++)
+            {
+                double s = i / 10.0;
+                nodes.SetValue(P(10.0 * s, 0.0, 2.5 * 4.0 * s * (1.0 - s)), i);
+            }
+            nodes.SetValue(P(3.0, -2.0, 0.0), 11);
+            nodes.SetValue(P(3.0, 2.0, 0.0), 12);
+            Array crossBar = Array.CreateInstance(vector3d, 3);
+            crossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+            crossBar.SetValue(V(0.0, 0.3, -1.0), 1);
+            crossBar.SetValue(V(0.0, 0.0, 0.0), 2);
+            Array archBar = Array.CreateInstance(vector3d, 11);
+            for (int p = 0; p < 11; p++)
+                archBar.SetValue(V(0.1 * p, 0.0, -1.0), p);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            across.SetValue(crossBar, 0);
+            across.SetValue(archBar, 1);
+            var crossed = (nodes, new[] { new[] { 11, 3, 12 }, Enumerable.Range(0, 11).ToArray() },
+                new[] { 0, 10, 11, 12 }, across, Array.Empty<(int, int)>());
+            object placed = Run(crossed, Array.Empty<int[]>(), 1.0, 1, 2);
+            if (Get<int>(placed, "GroundPlaced") != 2)
+                throw new InvalidOperationException($"An unmirrored span is placed like any other, its bands read off each tree's own projection; it placed {Get<int>(placed, "GroundPlaced")}.");
+            if (Get<int>(placed, "AsymmetricSpans") != 1)
+                throw new InvalidOperationException($"One of the two spans lost an interior notch to the crossing and is no longer symmetric about its chord midpoint; AsymmetricSpans is {Get<int>(placed, "AsymmetricSpans")}.");
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            if (trees.Length != 9)
+                throw new InvalidOperationException($"One tree on the crossing bar and eight on the arch, whose ninth notch is the crossing itself; got {trees.Length}.");
+            int[] partner = Get<int[]>(placed, "Partner");
+            if (partner[0] != 0)
+                throw new InvalidOperationException($"The crossing bar's single notch sits at parameter 0.5, so that span IS symmetric and its one tree is its own partner; Partner[0] is {partner[0]}.");
+            object crossing = Get<object>(trees[0], "Resultant");
+            if (Math.Abs(VX(crossing)) > 1.0e-9 || Math.Abs(VY(crossing)) > 1.0e-9 || Math.Abs(VZ(crossing) + 1.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"A symmetric span IS still mirrored: the crossing tree is its own partner, so its along-chord pull of 0.3 goes and it is left with (0, 0, -1); it reads "
+                    + $"({VX(crossing):0.#########}, {VY(crossing):0.#########}, {VZ(crossing):0.#########}).");
+            }
+            for (int t = 1; t < trees.Length; t++)
+            {
+                if (partner[t] != -1)
+                    throw new InvalidOperationException($"No tree of an unmirrored span has a mirror partner; Partner[{t}] is {partner[t]}.");
+                object raw = Get<object>(trees[t], "RawResultant");
+                object now = Get<object>(trees[t], "Resultant");
+                if (Math.Abs(VX(now) - VX(raw)) > 1.0e-12 ||
+                    Math.Abs(VY(now) - VY(raw)) > 1.0e-12 ||
+                    Math.Abs(VZ(now) - VZ(raw)) > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        $"An unmirrored span keeps its own aims: tree {t}'s resultant moved from ({VX(raw):0.#########}, {VY(raw):0.#########}, {VZ(raw):0.#########}) "
+                        + $"to ({VX(now):0.#########}, {VY(now):0.#########}, {VZ(now):0.#########}). Its pulls ramp along the bar and are not mirrored in shape, so any pairing shows here.");
+                }
+            }
+            // The same arch with nothing taken out of it is symmetric.
+            object whole = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1.0, 1, 2);
+            if (Get<int>(whole, "AsymmetricSpans") != 0)
+                throw new InvalidOperationException($"An arch anchored at both ends with every notch free IS symmetric; AsymmetricSpans is {Get<int>(whole, "AsymmetricSpans")}.");
+        }
+
+        // ---- A band foot is the plan CENTROID of its mains (spec 3.5,
+        // amended), on the plan-curved bar at Type 2. Eight free notches, so
+        // the four mirror pairs put trees 0 to 3 in band 0 (chord parameters
+        // 1/9 to 4/9, every one under a half) and their partners 4 to 7 in
+        // band 1. Band 0's mains stand at chord u = -3.5, -2.5, -1.5, -0.5
+        // and across v = 64/81, 112/81, 144/81, 160/81, so its centroid is
+        // u = -2, v = (480/81)/4 = 40/27, and band 1's is its exact mirror.
+        // The centre of the axis-aligned bounding box, which is what stood
+        // here, comes out at u = -2.0185, v = 1.4198 for band 0 against
+        // u = 2, v = 1.3827 for band 1: not mirror images, on geometry that
+        // is exactly symmetric, because a reflection about this chord is not
+        // axis aligned and band 0's world X extreme falls on its second main
+        // rather than on an end one.
+        {
+            var curved = PlanCurved(0.15);
+            object placed = Run(curved, Array.Empty<int[]>(), 4.0, 1, 2);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (trees.Length != 8)
+                throw new InvalidOperationException($"Ten nodes anchored at both ends hold eight trees at Branching 1; got {trees.Length}.");
+            if (Get<int>(built, "Peeled") != 0)
+                throw new InvalidOperationException($"Every trunk reaches its band foot here, the outermost leaning 54 degrees; {Get<int>(built, "Peeled")} peeled, so a band foot is in the wrong place.");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 2)
+                throw new InvalidOperationException($"Two bands, two feet, four unit steps apart; {feet.Length} built.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            (double Along, double Across) low = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[0]]);
+            (double Along, double Across) high = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[7]]);
+            const double centroidAlong = 2.0;
+            const double centroidAcross = 40.0 / 27.0;
+            if (Math.Abs(low.Along + centroidAlong) > 1.0e-9 || Math.Abs(low.Across - centroidAcross) > 1.0e-9 ||
+                Math.Abs(high.Along - centroidAlong) > 1.0e-9 || Math.Abs(high.Across - centroidAcross) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"A band's foot is the plan MEAN of its mains, so on this bar the two bands stand at chord (-2, {centroidAcross:0.#########}) and "
+                    + $"(2, {centroidAcross:0.#########}), exact mirror images; they stand at ({low.Along:0.#########}, {low.Across:0.#########}) and "
+                    + $"({high.Along:0.#########}, {high.Across:0.#########}). The centre of an axis-aligned bounding box does not commute with a mirror "
+                    + "about a chord that runs along neither axis.");
+            }
+        }
+
+        // ---- A centre pair merges onto the MEAN of its two feet (spec 3.5,
+        // amended), on the same plan-curved bar at Type 0. The innermost
+        // mirror pair's mains stand at chord u = -0.5 and 0.5, both across at
+        // v = 160/81 and both 240/81 above the ground; the inward pull of
+        // 0.15 to 1 runs each foot 0.15 x 240/81 = 4/9 toward the middle, to
+        // u = -1/18 and 1/18, a gap of 1/9 inside a clearance of 0.2. Their
+        // mean is chord (0, 160/81): on the mirror plane, and off the CHORD
+        // midpoint (0, 0) by the plan sagitta at those notches, very nearly
+        // two whole units. Merging onto the chord midpoint, which is what
+        // stood here, moved both feet that far sideways, out from under the
+        // bar, in the name of symmetry.
+        {
+            var curved = PlanCurved(0.15);
+            object placed = Run(curved, Array.Empty<int[]>(), 4.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (Get<int>(built, "FeetMerged") != 1)
+                throw new InvalidOperationException($"Exactly one mirrored pair lies inside the clearance here; {Get<int>(built, "FeetMerged")} merges reported.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            if (footNode[3] != footNode[4])
+                throw new InvalidOperationException("The innermost mirrored pair stands on ONE foot.");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 7)
+                throw new InvalidOperationException($"Eight trees on seven feet once the pair has merged; {feet.Length} built.");
+            (double Along, double Across) merged = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[3]]);
+            const double pairAcross = 160.0 / 81.0;
+            if (Math.Abs(merged.Along) > 1.0e-9 || Math.Abs(merged.Across - pairAcross) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"A merged pair stands on the mean of its own two feet, chord (0, {pairAcross:0.#########}), which is on the mirror plane and NOT on the "
+                    + $"chord midpoint (0, 0); it stands at ({merged.Along:0.#########}, {merged.Across:0.#########}). The clearance test bounds how far apart "
+                    + "a pair's feet are ALONG the chord and says nothing at all about how far off it they sit.");
+            }
+        }
+
+        // ---- A band that loses trees to the peel rebuilds its foot from the
+        // survivors (spec 3.5, amended), on the same bar at Type 1. All eight
+        // trees take the one band, whose first foot is the centroid of all
+        // eight mains, chord (0, 40/27). The two outermost trunks lean 71.6
+        // degrees to it and peel onto their own feet; the six that stay would
+        // then be standing on a foot two of whose eight mains have walked
+        // away. Rebuilt from the six survivors it is chord (0, 832/486), a
+        // fifth of a unit further across, and their worst lean falls to 50.6
+        // degrees, so nothing else steps off.
+        {
+            var curved = PlanCurved(0.15);
+            object placed = Run(curved, Array.Empty<int[]>(), 4.0, 1, 1);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (Get<int>(built, "Peeled") != 2)
+                throw new InvalidOperationException($"The outermost trunk on each flank leans 71.6 degrees to the shared foot and peels; {Get<int>(built, "Peeled")} peeled.");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 3)
+                throw new InvalidOperationException($"One band foot and two peeled feet is three; {feet.Length} built.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            (double Along, double Across) band = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[3]]);
+            const double survivorsAcross = 832.0 / 486.0;
+            if (Math.Abs(band.Along) > 1.0e-9 || Math.Abs(band.Across - survivorsAcross) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"The band foot is the centroid of the trees still STANDING on it, chord (0, {survivorsAcross:0.#########}); it stands at "
+                    + $"({band.Along:0.#########}, {band.Across:0.#########}). Built once from all eight mains and left there it would read "
+                    + $"(0, {40.0 / 27.0:0.#########}), positioned in part by two trunks that have walked away.");
             }
         }
 
@@ -3817,16 +4158,21 @@ internal static class Program
 
         // ---- The centre pair merges (spec 3.5). Ten notches, an even count,
         // so there is no centre tree and the two innermost trees ARE a
-        // mirrored pair; their inward-leaning feet fall a thirtieth apart,
-        // inside the clearance, and they stand on ONE foot at the span's
-        // chord midpoint. Node 4 is nudged two hundredths off the mirror so
-        // that the pair's own plan centre (4.49) is not the midpoint (4.5):
-        // welding a pair wherever its feet happen to meet is what the old
-        // rule did, and on a solved net that is never quite the middle.
+        // mirrored pair. Their mains stand at x 4 and 5, both 2.469 above the
+        // ground, and an inward pull of 0.2 to 1 runs each foot 0.494 toward
+        // the middle: 4.494 and 4.506, a gap of 0.0123 inside a clearance of
+        // 0.05 and far outside the weld epsilon. They stand on ONE foot at the
+        // MEAN of the two, x = 4.5, which on geometry this symmetric is the
+        // mirror plane.
+        //
+        // The node this fixture used to nudge two hundredths off the mirror is
+        // back where it belongs: an offset notch makes the span's free notches
+        // asymmetric about its chord midpoint, and such a span is no longer
+        // mirrored, paired or merged at all. Mean against chord midpoint is
+        // measured instead on the plan-curved bar below, where the two answers
+        // are two units apart.
         {
             var arch = SkewArch(10, 9.0, 2.5, bend: -0.2, skew: 0.0, flank: 1.0);
-            object node4 = arch.Nodes.GetValue(4)!;
-            arch.Nodes.SetValue(P(3.98, 0.0, Z(node4)), 4);
             object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
@@ -3839,7 +4185,7 @@ internal static class Program
             if (footNode[3] != footNode[4])
                 throw new InvalidOperationException("The innermost mirrored pair stands on ONE foot.");
             if (Math.Abs(X(nodes[footNode[3]]) - 4.5) > 1.0e-9)
-                throw new InvalidOperationException($"A merged pair stands on its span's chord midpoint, x = 4.5, not on wherever its two feet happened to meet; it stands at {X(nodes[footNode[3]]):0.#########}.");
+                throw new InvalidOperationException($"A merged pair stands on the MEAN of its two feet, x = (4.4938 + 4.5062) / 2 = 4.5; it stands at {X(nodes[footNode[3]]):0.#########}.");
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 7)
                 throw new InvalidOperationException($"Eight trees on seven feet once the pair has merged; {feet.Length} built.");
