@@ -3315,6 +3315,201 @@ internal static class Program
         double Y(object p) => (double)point3d.GetProperty("Y")!.GetValue(p)!;
         double Z(object p) => (double)point3d.GetProperty("Z")!.GetValue(p)!;
 
+        // A parabolic arch whose across pulls are mirrored in SHAPE, carrying
+        // the two asymmetries a solved net always has. `bend` is the mirrored
+        // part (positive leans the pulls outward from the midpoint), `skew` a
+        // common along-chord tilt on every notch, `flank` a scale on the left
+        // half alone. Neither asymmetry survives the mirror rule of spec 3.4,
+        // and both move the feet today.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) SkewArch(
+            int count, double width, double rise, double bend, double skew, double flank)
+        {
+            Array nodes = Array.CreateInstance(point3d, count);
+            Array acrossBar = Array.CreateInstance(vector3d, count);
+            var edges = new List<(int, int)>();
+            double middle = (count - 1) / 2.0;
+            for (int i = 0; i < count; i++)
+            {
+                double s = (double)i / (count - 1);
+                nodes.SetValue(P(width * s, 0.0, rise * 4.0 * s * (1.0 - s)), i);
+                double side = i < middle ? -1.0 : (i > middle ? 1.0 : 0.0);
+                double scale = i < middle ? flank : 1.0;
+                acrossBar.SetValue(V(scale * ((side * bend) + skew), 0.0, -scale), i);
+                if (i > 0)
+                    edges.Add((i - 1, i));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
+        }
+
+        (int Lower, int Upper)[] MembersOf(object level) =>
+            ((IEnumerable)Get<object>(level, "Members")).Cast<object>()
+                .Select(m => ((int)m.GetType().GetField("Item1")!.GetValue(m)!,
+                    (int)m.GetType().GetField("Item2")!.GetValue(m)!))
+                .ToArray();
+
+        // Which node each tree stands on: the lower end of the first member
+        // of that tree that leaves a foot.
+        int[] FootOfTree(object level, int treeCount)
+        {
+            (int Lower, int Upper)[] members = MembersOf(level);
+            var feet = ((IEnumerable)Get<object>(level, "Feet")).Cast<int>().ToHashSet();
+            int[] memberTree = ((IEnumerable)Get<object>(level, "MemberTree")).Cast<int>().ToArray();
+            int[] byTree = Enumerable.Repeat(-1, treeCount).ToArray();
+            for (int m = 0; m < members.Length; m++)
+            {
+                int t = memberTree[m];
+                if (byTree[t] < 0 && feet.Contains(members[m].Lower))
+                    byTree[t] = members[m].Lower;
+            }
+            return byTree;
+        }
+
+        // ---- Mirrored feet (spec 6). Eleven notches, span ten, rise 2.5:
+        // the across pulls mirrored in shape and leaning outward, the LEFT
+        // flank scaled by 1.1, and every notch skewed one degree along the
+        // chord. Spec 3.4 mirrors the resultants about the span's midpoint
+        // before a single foot is placed, so the scale and the skew both go:
+        // the along-chord parts of a pair are made equal and opposite, its
+        // across and down parts equal, and the centre tree stands plumb.
+        {
+            const double skew = 0.0174550649282176;   // tan(1 degree)
+            var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int m = trees.Length;
+            if (m != 9)
+                throw new InvalidOperationException($"Eleven notches anchored at both ends hold nine trees at Branching 1; got {m}.");
+            int[] footNode = FootOfTree(built, m);
+            const double midpoint = 5.0;
+            for (int i = 0; i < m / 2; i++)
+            {
+                double left = X(nodes[footNode[i]]);
+                double right = X(nodes[footNode[m - 1 - i]]);
+                if (Math.Abs((left + right) - (2.0 * midpoint)) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Trees {i} and {m - 1 - i} are a mirrored pair and their feet straddle the span's midpoint: "
+                        + $"{left:0.#########} and {right:0.#########} sum to {left + right:0.#########}, not {2.0 * midpoint:0.#}. "
+                        + "The feet are following each tree's RAW resultant, which the along-chord skew tilts the same way on both flanks.");
+                }
+            }
+            double centre = X(nodes[footNode[m / 2]]);
+            if (Math.Abs(centre - midpoint) > 1.0e-9)
+                throw new InvalidOperationException($"The centre tree stands outside the pairing and its foot is ON the midpoint; it is at {centre:0.#########}.");
+            int[] memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
+            (int Lower, int Upper)[] members = MembersOf(built);
+            for (int k = 0; k < members.Length; k++)
+            {
+                if (memberTree[k] != m / 2)
+                    continue;
+                object a = nodes[members[k].Lower];
+                object b = nodes[members[k].Upper];
+                double lean = AngleDeg(
+                    X(b) - X(a), Y(b) - Y(a), Z(b) - Z(a), 0.0, 0.0, 1.0);
+                if (lean > 1.0e-9)
+                    throw new InvalidOperationException($"The centre tree's along-chord pull is mirrored away, so its member stands vertical; it leans {lean:0.######} degrees.");
+            }
+            double moved = Get<double>(placed, "AsymmetryRemoved");
+            if (moved <= 0.0)
+                throw new InvalidOperationException($"Symmetrise reports the largest angle it moved an aim through, and on an arch this lopsided that is more than nothing; it reported {moved:0.######}.");
+        }
+
+        // ---- One family (spec 6). The same arch three times, offset in Y by
+        // 0, 1 and 2, the second's pulls scaled by 1.05, the third traced
+        // BACKWARDS. A family is every span with the same free-notch count
+        // (Branching is one slider, so the tree count and layout follow);
+        // each span is read in the frame of the family's first span, a span
+        // whose chord points the other way being read reversed, and each
+        // takes the family's mean. Every principal line of a family therefore
+        // carries the same columns in its own frame.
+        {
+            const double skew = 0.0174550649282176;
+            const int count = 11;
+            Array nodes = Array.CreateInstance(point3d, 3 * count);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 3);
+            var bars = new int[3][];
+            var anchors = new List<int>();
+            double middle = (count - 1) / 2.0;
+            for (int b = 0; b < 3; b++)
+            {
+                Array acrossBar = Array.CreateInstance(vector3d, count);
+                var bar = new int[count];
+                for (int i = 0; i < count; i++)
+                {
+                    double s = (double)i / (count - 1);
+                    int node = (b * count) + i;
+                    nodes.SetValue(P(10.0 * s, b, 2.5 * 4.0 * s * (1.0 - s)), node);
+                    double side = i < middle ? -1.0 : (i > middle ? 1.0 : 0.0);
+                    double flank = i < middle ? 1.1 : 1.0;
+                    double scale = flank * (b == 1 ? 1.05 : 1.0);
+                    // Bar 2 is traced from its far end: bar position k holds
+                    // the node at count-1-k, and the pull at that POSITION is
+                    // the pull that node carries.
+                    int position = b == 2 ? count - 1 - i : i;
+                    bar[position] = node;
+                    acrossBar.SetValue(V(scale * ((side * 0.25) + skew), 0.0, -scale), position);
+                }
+                bars[b] = bar;
+                across.SetValue(acrossBar, b);
+                anchors.Add(b * count);
+                anchors.Add((b * count) + count - 1);
+            }
+            var family = (nodes, bars, anchors.ToArray(), across, Array.Empty<(int, int)>());
+            object placed = Run(family, Array.Empty<int[]>(), 1.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            if (spans.Length != 3)
+                throw new InvalidOperationException($"Three bars anchored at both ends give three spans; got {spans.Length}.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            var offsets = new List<(double Along, double Across)>[spans.Length];
+            for (int s = 0; s < spans.Length; s++)
+            {
+                object span = spans[s];
+                int[] bar = bars[Get<int>(span, "Bar")];
+                object first = nodes.GetValue(bar[Get<int>(span, "First")])!;
+                object last = nodes.GetValue(bar[Get<int>(span, "Last")])!;
+                double cx = X(last) - X(first);
+                double cy = Y(last) - Y(first);
+                double length = Math.Sqrt((cx * cx) + (cy * cy));
+                cx /= length;
+                cy /= length;
+                double midX = 0.5 * (X(first) + X(last));
+                double midY = 0.5 * (Y(first) + Y(last));
+                offsets[s] = new List<(double Along, double Across)>();
+                for (int t = 0; t < trees.Length; t++)
+                {
+                    if (Get<int>(trees[t], "Span") != s)
+                        continue;
+                    object foot = levelNodes[footNode[t]];
+                    double dx = X(foot) - midX;
+                    double dy = Y(foot) - midY;
+                    offsets[s].Add(((dx * cx) + (dy * cy), (dx * -cy) + (dy * cx)));
+                }
+            }
+            for (int s = 1; s < spans.Length; s++)
+            {
+                if (offsets[s].Count != offsets[0].Count)
+                    throw new InvalidOperationException($"Every span of a family holds the same trees; span {s} holds {offsets[s].Count} against {offsets[0].Count}.");
+                for (int i = 0; i < offsets[0].Count; i++)
+                {
+                    if (Math.Abs(offsets[s][i].Along - offsets[0][i].Along) > 1.0e-9 ||
+                        Math.Abs(offsets[s][i].Across - offsets[0][i].Across) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Foot {i} of span {s}, read in its OWN frame, stands where foot {i} of the family's first span stands: "
+                            + $"({offsets[s][i].Along:0.#########}, {offsets[s][i].Across:0.#########}) against ({offsets[0][i].Along:0.#########}, {offsets[0][i].Across:0.#########}). "
+                            + "A span traced backwards is being read in the world's frame, not the family's.");
+                    }
+                }
+            }
+        }
+
         // ---- Fork on the segment, collinear. Rise five over eight: when
         // this arch is reused below at Ground 1 its outer trunks lean 54
         // degrees, inside the 60-degree cap, and alignment is judged at the

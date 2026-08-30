@@ -42,6 +42,13 @@ namespace Ananke.COMPAS.Native.Components
         /// </summary>
         public const double AlignmentDegrees = 30.0;
 
+        /// <summary>
+        /// How close to vertical an aim has to be to BE vertical. A degree of
+        /// residual lean out of a solved net is noise, not a thrust line, and
+        /// a column that follows it stands crooked for no reason.
+        /// </summary>
+        public const double PlumbDegrees = 2.0;
+
         /// <summary>Collision clearance as a fraction of the median plan edge.</summary>
         public const double ClearanceFraction = 0.05;
 
@@ -76,6 +83,12 @@ namespace Ananke.COMPAS.Native.Components
             public double[] Load = Array.Empty<double>();
             /// <summary>Sum of the notches' transverse pulls.</summary>
             public Vector3d Resultant;
+            /// <summary>
+            /// The resultant as the net handed it over, before the mirror
+            /// rule of spec 3.4. The diagnostics measure how far the
+            /// symmetrised aim moved from this one.
+            /// </summary>
+            public Vector3d RawResultant;
             /// <summary>Fixed foot, ring tree only.</summary>
             public Point3d? FixedFoot;
             public bool Ring;
@@ -120,6 +133,18 @@ namespace Ananke.COMPAS.Native.Components
             public List<Tree> Trees = new();
             public Tree? RingTree;
             public double Clearance;
+            /// <summary>
+            /// The mirror partner of each tree: the tree it pairs with about
+            /// its span's midpoint, ITSELF for the centre tree of an odd
+            /// count, -1 for the ring tree, which has no partner.
+            /// </summary>
+            public int[] Partner = Array.Empty<int>();
+            /// <summary>The largest angle Symmetrise moved an aim through, in degrees.</summary>
+            public double AsymmetryRemoved;
+            /// <summary>How many families the spans fell into.</summary>
+            public int Families;
+            /// <summary>Trees that are their own mirror partner.</summary>
+            public int CentreTrees;
         }
 
         // ------------------------------------------------------------------
@@ -183,6 +208,217 @@ namespace Ananke.COMPAS.Native.Components
                 at += size;
             }
             return (groups.ToArray(), mains.ToArray());
+        }
+
+        // ------------------------------------------------------------------
+        // Symmetry
+
+        /// <summary>
+        /// Mirror every span's resultants about its own midpoint, share them
+        /// across every span that holds the same notches, and report the
+        /// largest angle an aim moved through.
+        ///
+        /// The GROUPING of spec 3.3 was already mirrored about the span's
+        /// midpoint; the FEET were not, because each tree aimed from its own
+        /// resultant and a solved net's forces are never mirrored to the last
+        /// digit and differ from bar to bar. That is what came back off
+        /// Param's review arch as columns that did not match across a span, a
+        /// centre column leaning, and neighbouring principal lines
+        /// disagreeing with one another.
+        ///
+        /// So each resultant is read in its span's frame as (along, across,
+        /// down): along the chord from the span's first node to its last,
+        /// across it in plan, and down. Tree i and tree m-1-i are a mirrored
+        /// pair, so their along parts are made equal and opposite and their
+        /// across and down parts equal; the centre tree of an odd count is
+        /// its own partner and its along part is zero. Then every span with
+        /// the same free-notch count (a FAMILY, since Branching is one
+        /// slider) is read in the frame of the family's first span, a span
+        /// whose chord points against that one being read REVERSED with its
+        /// index mirrored and its along and across parts negated, and each
+        /// takes the family's mean. An aim within PlumbDegrees of vertical is
+        /// vertical.
+        ///
+        /// Tree.Load is deliberately NOT averaged. The forces a tree reports
+        /// are its own; only WHERE IT STANDS is shared.
+        /// </summary>
+        public static double Symmetrise(Placement placement, Point3d[] nodes, int[][] bars)
+        {
+            List<Tree> trees = placement.Trees;
+            int count = trees.Count;
+            placement.Partner = new int[count];
+            for (int t = 0; t < count; t++)
+            {
+                placement.Partner[t] = -1;
+                trees[t].RawResultant = trees[t].Resultant;
+            }
+            placement.Families = 0;
+            placement.CentreTrees = 0;
+            if (count == 0)
+                return 0.0;
+
+            // Span frames, and each span's trees in grouping order: they are
+            // added to Trees span by span, group by group, so insertion order
+            // IS grouping order.
+            int spanCount = placement.Spans.Count;
+            var chord = new Vector3d[spanCount];
+            var normal = new Vector3d[spanCount];
+            var order = new List<int>[spanCount];
+            for (int s = 0; s < spanCount; s++)
+            {
+                Span span = placement.Spans[s];
+                int[] bar = bars[span.Bar];
+                Point3d first = nodes[bar[span.First]];
+                Point3d last = nodes[bar[span.Last]];
+                double dx = last.X - first.X;
+                double dy = last.Y - first.Y;
+                double length = Math.Sqrt((dx * dx) + (dy * dy));
+                if (length <= 1.0e-12)
+                {
+                    dx = 1.0;
+                    dy = 0.0;
+                    length = 1.0;
+                }
+                chord[s] = new Vector3d(dx / length, dy / length, 0.0);
+                normal[s] = new Vector3d(-chord[s].Y, chord[s].X, 0.0);
+                order[s] = new List<int>();
+            }
+            for (int t = 0; t < count; t++)
+            {
+                Tree tree = trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
+                    continue;
+                order[tree.Span].Add(t);
+            }
+
+            var along = new double[count];
+            var across = new double[count];
+            var down = new double[count];
+            for (int t = 0; t < count; t++)
+            {
+                Tree tree = trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
+                    continue;
+                int s = tree.Span;
+                Vector3d r = tree.Resultant;
+                along[t] = (r.X * chord[s].X) + (r.Y * chord[s].Y);
+                across[t] = (r.X * normal[s].X) + (r.Y * normal[s].Y);
+                down[t] = r.Z;
+            }
+
+            // Mirror pairs, per span.
+            for (int s = 0; s < spanCount; s++)
+            {
+                List<int> ids = order[s];
+                int m = ids.Count;
+                for (int i = 0; i < m - 1 - i; i++)
+                {
+                    int low = ids[i];
+                    int high = ids[m - 1 - i];
+                    placement.Partner[low] = high;
+                    placement.Partner[high] = low;
+                    double half = 0.5 * (along[low] - along[high]);
+                    along[low] = half;
+                    along[high] = -half;
+                    double side = 0.5 * (across[low] + across[high]);
+                    across[low] = side;
+                    across[high] = side;
+                    double weight = 0.5 * (down[low] + down[high]);
+                    down[low] = weight;
+                    down[high] = weight;
+                }
+                if ((m % 2) == 1)
+                {
+                    int centre = ids[m / 2];
+                    placement.Partner[centre] = centre;
+                    along[centre] = 0.0;
+                    placement.CentreTrees++;
+                }
+            }
+
+            // Families: the spans that hold the same free notches, hence the
+            // same trees in the same layout at this Branching.
+            var families = new Dictionary<int, List<int>>();
+            for (int s = 0; s < spanCount; s++)
+            {
+                if (order[s].Count == 0)
+                    continue;
+                int notches = order[s].Sum(t => trees[t].Nodes.Length);
+                if (!families.TryGetValue(notches, out List<int>? list))
+                {
+                    list = new List<int>();
+                    families[notches] = list;
+                }
+                list.Add(s);
+            }
+            placement.Families = families.Count;
+            foreach (List<int> family in families.Values)
+            {
+                int lead = family[0];
+                int m = order[lead].Count;
+                if (family.Any(s => order[s].Count != m))
+                    continue;
+                var reversed = new bool[family.Count];
+                var meanAlong = new double[m];
+                var meanAcross = new double[m];
+                var meanDown = new double[m];
+                for (int k = 0; k < family.Count; k++)
+                {
+                    int s = family[k];
+                    reversed[k] =
+                        ((chord[s].X * chord[lead].X) + (chord[s].Y * chord[lead].Y)) < 0.0;
+                    for (int i = 0; i < m; i++)
+                    {
+                        int t = order[s][i];
+                        int index = reversed[k] ? m - 1 - i : i;
+                        double sign = reversed[k] ? -1.0 : 1.0;
+                        meanAlong[index] += sign * along[t];
+                        meanAcross[index] += sign * across[t];
+                        meanDown[index] += down[t];
+                    }
+                }
+                for (int i = 0; i < m; i++)
+                {
+                    meanAlong[i] /= family.Count;
+                    meanAcross[i] /= family.Count;
+                    meanDown[i] /= family.Count;
+                }
+                for (int k = 0; k < family.Count; k++)
+                {
+                    int s = family[k];
+                    for (int i = 0; i < m; i++)
+                    {
+                        int t = order[s][i];
+                        int index = reversed[k] ? m - 1 - i : i;
+                        double sign = reversed[k] ? -1.0 : 1.0;
+                        along[t] = sign * meanAlong[index];
+                        across[t] = sign * meanAcross[index];
+                        down[t] = meanDown[index];
+                    }
+                }
+            }
+
+            // Back into each span's own frame, with the dead band, and the
+            // angle every aim moved through.
+            double moved = 0.0;
+            for (int t = 0; t < count; t++)
+            {
+                Tree tree = trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
+                    continue;
+                int s = tree.Span;
+                var rebuilt = new Vector3d(
+                    (along[t] * chord[s].X) + (across[t] * normal[s].X),
+                    (along[t] * chord[s].Y) + (across[t] * normal[s].Y),
+                    down[t]);
+                if (AngleBetween(MouldGeometry.AimFrom(rebuilt), Vector3d.ZAxis) <= PlumbDegrees)
+                    rebuilt = new Vector3d(0.0, 0.0, down[t]);
+                tree.Resultant = rebuilt;
+                moved = Math.Max(moved, AngleBetween(
+                    MouldGeometry.AimFrom(tree.RawResultant),
+                    MouldGeometry.AimFrom(tree.Resultant)));
+            }
+            return moved;
         }
 
         // ------------------------------------------------------------------
@@ -260,6 +496,12 @@ namespace Ananke.COMPAS.Native.Components
                     placement.Trees.Add(tree);
                 }
             }
+
+            // Spec 3.4: the resultants are mirrored about each span's
+            // midpoint and shared across each family BEFORE a single foot is
+            // placed. The ring tree keeps its own; it has no mirror partner
+            // and no family, and its foot is fixed by 3.2 anyway.
+            placement.AsymmetryRemoved = Symmetrise(placement, nodes, bars);
 
             if (groundAsked >= 0)
             {
