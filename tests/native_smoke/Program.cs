@@ -3685,6 +3685,147 @@ internal static class Program
             }
         }
 
+        // ---- Type 1 is PLACED, not refused (spec 3.5 and 3.7). The wide
+        // arch, rise 2.5 on a span of ten: the flank trunks to a single
+        // central foot would lean 77 and 62 degrees, past the 60 degree cap,
+        // so those four trees step off onto their own feet and the level
+        // stands. It used to be refused whole and fall back to Type 0, which
+        // is what made the slider look dead.
+        {
+            var wide = Arch(11, 10.0, 2.5, 1.0);
+            object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 1);
+            if (Get<int>(placed, "GroundAsked") != 1 || Get<int>(placed, "GroundPlaced") != 1)
+                throw new InvalidOperationException($"Type 1 asked is Type 1 placed; asked {Get<int>(placed, "GroundAsked")}, placed {Get<int>(placed, "GroundPlaced")}.");
+            var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
+            if (tried.Length != 1)
+                throw new InvalidOperationException($"Type N asked builds level N alone; {tried.Length} levels were built.");
+            if (tried.Any(t => Get<string>(t, "Rule") == "lean"))
+                throw new InvalidOperationException("No level can name lean any more: the peel holds every trunk inside the cap.");
+            object built = Get<object>(placed, "Built");
+            if (Get<int>(built, "Peeled") != 4)
+                throw new InvalidOperationException($"The two trunks on each flank lean 77 and 62 degrees to the central foot and peel; {Get<int>(built, "Peeled")} peeled.");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 5)
+                throw new InvalidOperationException($"One band foot and four peeled feet is five; {feet.Length} built.");
+            foreach ((int lower, int upper) in MembersOf(built))
+            {
+                if (!feet.Contains(lower))
+                    continue;
+                double lean = AngleDeg(
+                    X(nodes[upper]) - X(nodes[lower]), Y(nodes[upper]) - Y(nodes[lower]), Z(nodes[upper]) - Z(nodes[lower]),
+                    0.0, 0.0, 1.0);
+                if (lean > maxLean + 1.0e-9)
+                    throw new InvalidOperationException($"Every trunk stands inside the {maxLean:0} degree cap once the peel has run; one leans {lean:0.###}.");
+            }
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int[] footNode = FootOfTree(built, trees.Length);
+            int shared = footNode[4];
+            if (Math.Abs(X(nodes[shared]) - 5.0) > 1.0e-9)
+                throw new InvalidOperationException($"The band's foot stands on the plan centre of the main notches it carries, x = 5; it is at {X(nodes[shared]):0.#########}.");
+            for (int t = 2; t <= 6; t++)
+            {
+                if (footNode[t] != shared)
+                    throw new InvalidOperationException($"The five centre trees share the band foot; tree {t} stands on node {footNode[t]} against {shared}.");
+            }
+        }
+
+        // ---- Type 2 on the same wide arch (spec 3.5, amended): the band is
+        // decided PER MIRROR PAIR, so a pair lands in mirrored bands wherever
+        // the boundaries fall. The centre notch of a uniform arch projects
+        // EXACTLY onto the mirror plane, which at an even Type is a band
+        // boundary: reading its own projection put it in the upper band, so
+        // the two bands held four trees and five and their feet came out at
+        // 2.5 and 7, unmirrored on a symmetric arch. It has no central band
+        // to take, so it stands on its own Type 0 foot, which is on the
+        // midpoint, and the two bands come out at 2.5 and 7.5.
+        {
+            var wide = Arch(11, 10.0, 2.5, 1.0);
+            object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 2);
+            if (Get<int>(placed, "GroundPlaced") != 2)
+                throw new InvalidOperationException($"Type 2 asked is Type 2 placed; it placed {Get<int>(placed, "GroundPlaced")}.");
+            object built = Get<object>(placed, "Built");
+            if (Get<int>(built, "Peeled") != 0)
+                throw new InvalidOperationException($"Every trunk reaches its band foot here, the outermost leaning 59 degrees; {Get<int>(built, "Peeled")} peeled, so a band foot is in the wrong place.");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int m = trees.Length;
+            int[] footNode = FootOfTree(built, m);
+            for (int i = 0; i < m / 2; i++)
+            {
+                double left = X(nodes[footNode[i]]);
+                double right = X(nodes[footNode[m - 1 - i]]);
+                if (Math.Abs((left + right) - 10.0) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Trees {i} and {m - 1 - i} are a mirrored pair, so their BANDS are mirrored and their feet straddle the midpoint: "
+                        + $"{left:0.#########} and {right:0.#########} sum to {left + right:0.#########}, not 10. "
+                        + "A band read from each tree's own projection puts the centre notch, which sits exactly on the boundary, in the upper band.");
+                }
+            }
+            double centre = X(nodes[footNode[m / 2]]);
+            if (Math.Abs(centre - 5.0) > 1.0e-9)
+                throw new InvalidOperationException($"At an EVEN Type the centre tree has no central band and stands on its own foot, on the midpoint; it stands at {centre:0.#########}.");
+            if (footNode[m / 2] == footNode[0] || footNode[m / 2] == footNode[m - 1])
+                throw new InvalidOperationException("At an even Type the centre tree stands on its OWN foot, not on either band's.");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 3)
+                throw new InvalidOperationException($"Two band feet at 2.5 and 7.5 and the centre tree's own at 5 is three; {feet.Length} built.");
+        }
+
+        // ---- Neighbours stay apart (spec 3.5). A narrow bay, span four,
+        // seven notches, the across pulls leaning INWARD hard enough that the
+        // two feet either side of the centre land a fortieth of a unit from
+        // it, inside a clearance of a thirtieth. Neither is a mirrored pair
+        // with it, so nothing merges: five trees keep five feet and the close
+        // pairs are counted instead. Welding them is what turned leaning
+        // neighbours into accidental V's and X's on the review arch.
+        {
+            var bay = SkewArch(7, 4.0, 2.5, bend: -0.28875, skew: 0.0, flank: 1.0);
+            object placed = Run(bay, Array.Empty<int[]>(), 2.0 / 3.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (trees.Length != 5)
+                throw new InvalidOperationException($"Seven notches anchored at both ends hold five trees at Branching 1; got {trees.Length}.");
+            if (feet.Length != trees.Length)
+                throw new InvalidOperationException($"No two of these feet are a mirrored pair inside the clearance, so every tree keeps its own foot; {feet.Length} feet under {trees.Length} trees.");
+            if (Get<int>(built, "FeetMerged") != 0)
+                throw new InvalidOperationException($"Nothing merges here; {Get<int>(built, "FeetMerged")} merges reported.");
+            if (Get<int>(built, "FeetClose") < 1)
+                throw new InvalidOperationException("Feet that stand within the clearance and stay two are counted, so the author can raise Type or space the lines; none was.");
+        }
+
+        // ---- The centre pair merges (spec 3.5). Ten notches, an even count,
+        // so there is no centre tree and the two innermost trees ARE a
+        // mirrored pair; their inward-leaning feet fall a thirtieth apart,
+        // inside the clearance, and they stand on ONE foot at the span's
+        // chord midpoint. Node 4 is nudged two hundredths off the mirror so
+        // that the pair's own plan centre (4.49) is not the midpoint (4.5):
+        // welding a pair wherever its feet happen to meet is what the old
+        // rule did, and on a solved net that is never quite the middle.
+        {
+            var arch = SkewArch(10, 9.0, 2.5, bend: -0.2, skew: 0.0, flank: 1.0);
+            object node4 = arch.Nodes.GetValue(4)!;
+            arch.Nodes.SetValue(P(3.98, 0.0, Z(node4)), 4);
+            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            object built = Get<object>(placed, "Built");
+            var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            if (trees.Length != 8)
+                throw new InvalidOperationException($"Ten notches anchored at both ends hold eight trees at Branching 1; got {trees.Length}.");
+            if (Get<int>(built, "FeetMerged") != 1)
+                throw new InvalidOperationException($"Exactly one mirrored pair lies inside the clearance here; {Get<int>(built, "FeetMerged")} merges reported.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            if (footNode[3] != footNode[4])
+                throw new InvalidOperationException("The innermost mirrored pair stands on ONE foot.");
+            if (Math.Abs(X(nodes[footNode[3]]) - 4.5) > 1.0e-9)
+                throw new InvalidOperationException($"A merged pair stands on its span's chord midpoint, x = 4.5, not on wherever its two feet happened to meet; it stands at {X(nodes[footNode[3]]):0.#########}.");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 7)
+                throw new InvalidOperationException($"Eight trees on seven feet once the pair has merged; {feet.Length} built.");
+        }
+
         // ---- Fork on the segment, collinear. Rise five over eight: when
         // this arch is reused below at Ground 1 its outer trunks lean 54
         // degrees, inside the 60-degree cap, and alignment is judged at the
@@ -3773,20 +3914,27 @@ internal static class Program
             }
         }
 
-        // ---- The wide arch refuses one central foot.
+        // ---- The shallow arch twelve wide, which USED to refuse Type 1 on
+        // lean and fall back to Type 0. Three trunks on each flank pass the
+        // cap to a foot at the span's centre and peel onto their own feet;
+        // the level itself stands, and nothing names lean.
         {
             var wide = Arch(13, 12.0, 2.0, 1.0);
             object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 1);
             int asked = Get<int>(placed, "GroundAsked");
             int got = Get<int>(placed, "GroundPlaced");
-            if (asked != 1 || got != 0)
-                throw new InvalidOperationException($"A shallow arch twelve wide asked for one foot must fall back to standalone; asked {asked}, placed {got}.");
+            if (asked != 1 || got != 1)
+                throw new InvalidOperationException($"A level is never refused now: Type 1 asked is Type 1 placed; asked {asked}, placed {got}.");
+            object built = Get<object>(placed, "Built");
+            if (Get<int>(built, "Peeled") != 6)
+                throw new InvalidOperationException($"The three trunks on each flank lean 83, 74 and 63 degrees to the central foot and peel; {Get<int>(built, "Peeled")} peeled.");
             var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
             object first = tried[0];
-            if (Get<int>(first, "Ground") != 1 || Get<bool>(first, "Feasible") || Get<string>(first, "Rule") != "lean")
-                throw new InvalidOperationException("Level 1 must be recorded as refused on lean.");
-            if (Get<double>(first, "Value") <= maxLean)
-                throw new InvalidOperationException("The refusing lean must exceed the cap.");
+            if (Get<int>(first, "Ground") != 1 || Get<string>(first, "Rule") == "lean")
+                throw new InvalidOperationException($"The level built is level 1 and it names no lean; it names '{Get<string>(first, "Rule")}'.");
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Length != 7)
+                throw new InvalidOperationException($"Six peeled feet and one band foot is seven; {feet.Length} built.");
         }
 
         // ---- The centred foot, odd and even counts.

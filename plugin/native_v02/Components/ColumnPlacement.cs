@@ -116,6 +116,10 @@ namespace Ananke.COMPAS.Native.Components
             /// <summary>Node indices that are feet.</summary>
             public List<int> Feet = new();
             public int FeetMerged;
+            /// <summary>Trunks that stepped off a shared foot onto their own.</summary>
+            public int Peeled;
+            /// <summary>Pairs of feet inside the clearance that stayed two.</summary>
+            public int FeetClose;
             public double WorstLean;
             public double WorstAlignment;
             public double WorstBranchOff;
@@ -744,33 +748,78 @@ namespace Ananke.COMPAS.Native.Components
                 aim[t] = MouldGeometry.AimFrom(trees[t].Resultant);
             }
 
+            // Every tree's OWN foot, where the ray from its main notch along
+            // the aim meets the ground: what Type 0 stands on, and what a
+            // peeled trunk falls back to.
+            var own = new Point3d[trees.Count];
+            for (int t = 0; t < trees.Count; t++)
+            {
+                if (trees[t].FixedFoot is Point3d fixedFoot)
+                {
+                    own[t] = fixedFoot;
+                    continue;
+                }
+                Point3d ownMain = nodes[trees[t].Nodes[0]];
+                double ownRise = Math.Max(ownMain.Z - ground, 0.0);
+                double ownAlong = ownRise / Math.Max(aim[t].Z, 1.0e-9);
+                own[t] = new Point3d(
+                    ownMain.X - (aim[t].X * ownAlong),
+                    ownMain.Y - (aim[t].Y * ownAlong),
+                    ground);
+            }
+
             if (level == 0)
             {
                 // Each tree stands on its own foot, on the line of the force
                 // it carries. AimFrom caps the lean, so this is never refused.
                 for (int t = 0; t < trees.Count; t++)
-                {
-                    if (trees[t].FixedFoot is Point3d fixedFoot)
-                    {
-                        foot[t] = fixedFoot;
-                        continue;
-                    }
-                    Point3d main = nodes[trees[t].Nodes[0]];
-                    double rise = Math.Max(main.Z - ground, 0.0);
-                    double along = rise / Math.Max(aim[t].Z, 1.0e-9);
-                    foot[t] = new Point3d(
-                        main.X - (aim[t].X * along),
-                        main.Y - (aim[t].Y * along),
-                        ground);
-                }
+                    foot[t] = own[t];
             }
             else
             {
-                // N bands per span about its own midpoint, by plan position
-                // along the chord; a band's foot is the plan centre (midpoint
-                // of the extremes) of the main notches it carries. Mirrored
-                // trees land in mirrored bands, so an odd count gets a
-                // genuinely central band and the centre never drifts.
+                // N bands per span about its own midpoint. The band is
+                // decided PER MIRROR PAIR (spec 3.5): the pair member on the
+                // first half of the chord takes the band its main notch
+                // projects into, and its partner takes the MIRRORED band,
+                // level-1-band, so a pair lands in mirrored bands wherever
+                // the boundaries fall. Reading every tree's own projection
+                // put a main notch sitting exactly ON a boundary, which is
+                // where the centre notch of a uniform arch sits at an even
+                // Type, into the upper band: the two central bands then held
+                // different trees and their feet came out unmirrored on a
+                // symmetric arch. A centre tree is its own partner: at an ODD
+                // Type it takes the central band; at an EVEN Type the mirror
+                // plane IS a boundary and there is no central band to take,
+                // so it stands on its Type 0 foot, which is on that plane
+                // already.
+                var band = new int[trees.Count];
+                for (int t = 0; t < trees.Count; t++)
+                    band[t] = -1;
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    if (trees[t].FixedFoot is not null || band[t] >= 0)
+                        continue;
+                    int partner = t < placement.Partner.Length ? placement.Partner[t] : -1;
+                    if (partner == t)
+                    {
+                        if ((level % 2) == 1)
+                            band[t] = level / 2;
+                        continue;
+                    }
+                    bool paired = partner >= 0 && partner < trees.Count;
+                    // A span's trees are added in grouping order, so the
+                    // LOWER index of a pair is the one on the first half of
+                    // the chord.
+                    int first = paired ? Math.Min(t, partner) : t;
+                    int mirrored = paired ? Math.Max(t, partner) : -1;
+                    int chosen = BandIndex(nodes, placement, bars, trees[first], level);
+                    band[first] = chosen;
+                    if (mirrored >= 0)
+                        band[mirrored] = level - 1 - chosen;
+                }
+
+                // A band's foot is the plan centre (midpoint of the extremes)
+                // of the main notches it carries, at ground level.
                 var bandMains = new Dictionary<(int Span, int Band), List<int>>();
                 for (int t = 0; t < trees.Count; t++)
                 {
@@ -780,22 +829,17 @@ namespace Ananke.COMPAS.Native.Components
                         foot[t] = fixedFoot;
                         continue;
                     }
-                    Span span = placement.Spans[tree.Span];
-                    int[] bar = bars[span.Bar];
-                    Point3d a = nodes[bar[span.First]];
-                    Point3d b = nodes[bar[span.Last]];
-                    double cx = b.X - a.X;
-                    double cy = b.Y - a.Y;
-                    double chord = (cx * cx) + (cy * cy);
-                    Point3d main = nodes[tree.Nodes[0]];
-                    double s = chord > 1.0e-18
-                        ? (((main.X - a.X) * cx) + ((main.Y - a.Y) * cy)) / chord
-                        : 0.5;
-                    int band = Math.Min(Math.Max((int)Math.Floor(s * level), 0), level - 1);
-                    if (!bandMains.TryGetValue((tree.Span, band), out List<int>? list))
+                    if (band[t] < 0)
+                    {
+                        // The centre tree at an even Type: no band, its own
+                        // foot, which stands on the mirror plane.
+                        foot[t] = own[t];
+                        continue;
+                    }
+                    if (!bandMains.TryGetValue((tree.Span, band[t]), out List<int>? list))
                     {
                         list = new List<int>();
-                        bandMains[(tree.Span, band)] = list;
+                        bandMains[(tree.Span, band[t])] = list;
                     }
                     list.Add(t);
                 }
@@ -815,13 +859,34 @@ namespace Ananke.COMPAS.Native.Components
                     foreach (int t in members)
                         foot[t] = centre;
                 }
+
+                // The PEEL (spec 3.5). A trunk runs from its foot to a fork
+                // that lies on the segment to its main notch, so the trunk's
+                // lean IS that segment's lean and no fork can change it. Past
+                // the cap the TREE steps off the shared foot onto its own,
+                // rather than the level being refused: on any wide span the
+                // flank trunks always pass the cap, so Type 1 fell back to
+                // Type 0 whole and the slider looked dead. A band whose trees
+                // all peel simply builds no foot, because nothing stands on
+                // it.
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    if (trees[t].FixedFoot is not null)
+                        continue;
+                    double lean = MouldGeometry.LeanFromVertical(
+                        foot[t], nodes[trees[t].Nodes[0]]);
+                    if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
+                        continue;
+                    foot[t] = own[t];
+                    result.Peeled++;
+                }
             }
 
-            // Feet closer than the clearance are one foot, at their plan
-            // centre. Ground 1 on two crossing bars puts a foot at each bar's
-            // midpoint, which is the crossing, and they merge here.
-            int[] footIndex = MergeFeet(foot, clearance, result.Nodes, out int merged);
+            int[] footIndex = MergeFeet(
+                placement, foot, nodes, bars, clearance, result.Nodes,
+                out int merged, out int close);
             result.FeetMerged = merged;
+            result.FeetClose = close;
             for (int i = 0; i < result.Nodes.Count; i++)
                 result.Feet.Add(i);
 
@@ -1004,63 +1069,120 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Weld feet closer than the clearance in plan into one node each,
-        /// at the plan centre of the feet it replaces. Returns, per tree,
-        /// the node index of its foot; the feet are the first nodes added.
+        /// The band a main notch projects into: the chord from the span's
+        /// first node to its last is cut into <paramref name="level"/> equal
+        /// bands and the notch's parameter along it says which. Only the
+        /// FIRST-HALF member of a mirror pair is read this way; its partner
+        /// takes the mirrored band, and a centre tree takes the central band
+        /// or none (spec 3.5).
         /// </summary>
-        private static int[] MergeFeet(Point3d[] foot, double clearance, List<Point3d> nodes, out int merged)
+        private static int BandIndex(
+            Point3d[] nodes, Placement placement, int[][] bars, Tree tree, int level)
+        {
+            Span span = placement.Spans[tree.Span];
+            int[] bar = bars[span.Bar];
+            Point3d a = nodes[bar[span.First]];
+            Point3d b = nodes[bar[span.Last]];
+            double cx = b.X - a.X;
+            double cy = b.Y - a.Y;
+            double chord = (cx * cx) + (cy * cy);
+            Point3d main = nodes[tree.Nodes[0]];
+            double s = chord > 1.0e-18
+                ? (((main.X - a.X) * cx) + ((main.Y - a.Y) * cy)) / chord
+                : 0.5;
+            return Math.Min(Math.Max((int)Math.Floor(s * level), 0), level - 1);
+        }
+
+        /// <summary>
+        /// Where the feet become NODES, and the one case in which two of them
+        /// become one.
+        ///
+        /// Feet at the SAME point are one node whatever put them there: two
+        /// trees in one band, every tree of a span at Type 1, or two spans
+        /// whose bands meet at a crossing. That is WELDING, and it is not a
+        /// merge and is not counted.
+        ///
+        /// Beyond that only a MIRRORED PAIR merges (spec 3.5): when its two
+        /// feet lie within the clearance of each other the pair stands on one
+        /// foot at its span's chord midpoint, which is where its own symmetry
+        /// says it belongs and not wherever two solved-net forces happened to
+        /// aim it. Any other two feet inside the clearance stay two and are
+        /// counted in FeetClose. Merging those was what turned leaning
+        /// neighbours into accidental V's and X's on Param's review arch: two
+        /// trees that lean toward one another are not one tree, and the ring
+        /// tree's foot, fixed by 3.2, never merges at all.
+        /// </summary>
+        private static int[] MergeFeet(
+            Placement placement,
+            Point3d[] foot,
+            Point3d[] nodes,
+            int[][] bars,
+            double clearance,
+            List<Point3d> levelNodes,
+            out int merged,
+            out int close)
         {
             int n = foot.Length;
-            var parent = Enumerable.Range(0, n).ToArray();
-            int Find(int i)
-            {
-                while (parent[i] != i)
-                {
-                    parent[i] = parent[parent[i]];
-                    i = parent[i];
-                }
-                return i;
-            }
-            double squared = clearance * clearance;
-            for (int i = 0; i < n; i++)
-            {
-                for (int j = i + 1; j < n; j++)
-                {
-                    if (MouldGeometry.PlanDistanceSquared(foot[i], foot[j]) <= squared)
-                        parent[Find(i)] = Find(j);
-                }
-            }
-            var clusterNode = new Dictionary<int, int>();
-            var clusterMembers = new Dictionary<int, List<int>>();
-            for (int i = 0; i < n; i++)
-            {
-                int root = Find(i);
-                if (!clusterMembers.TryGetValue(root, out List<int>? list))
-                {
-                    list = new List<int>();
-                    clusterMembers[root] = list;
-                }
-                list.Add(i);
-            }
-            var footIndex = new int[n];
             merged = 0;
-            foreach ((int root, List<int> members) in clusterMembers)
+            double squared = clearance * clearance;
+            const double weldSquared = 1.0e-18;
+
+            for (int t = 0; t < n; t++)
             {
-                double x = members.Average(i => foot[i].X);
-                double y = members.Average(i => foot[i].Y);
-                double z = members.Average(i => foot[i].Z);
-                nodes.Add(new Point3d(x, y, z));
-                clusterNode[root] = nodes.Count - 1;
-                // Distinct positions that merged, so two trees already
-                // sharing one band's foot do not count as a merge.
-                int distinct = members
-                    .Select(i => (Math.Round(foot[i].X, 9), Math.Round(foot[i].Y, 9)))
-                    .Distinct()
-                    .Count();
-                merged += Math.Max(distinct - 1, 0);
+                int partner = t < placement.Partner.Length ? placement.Partner[t] : -1;
+                // -1 is the ring tree, t is a centre tree standing alone, and
+                // anything below t was handled when its partner came round.
+                if (partner <= t || partner >= n)
+                    continue;
+                if (placement.Trees[t].FixedFoot is not null ||
+                    placement.Trees[partner].FixedFoot is not null)
+                    continue;
+                double gap = MouldGeometry.PlanDistanceSquared(foot[t], foot[partner]);
+                if (gap <= weldSquared || gap > squared)
+                    continue;
+                Span span = placement.Spans[placement.Trees[t].Span];
+                int[] bar = bars[span.Bar];
+                Point3d first = nodes[bar[span.First]];
+                Point3d last = nodes[bar[span.Last]];
+                var middle = new Point3d(
+                    0.5 * (first.X + last.X), 0.5 * (first.Y + last.Y), foot[t].Z);
+                foot[t] = middle;
+                foot[partner] = middle;
+                merged++;
             }
-            for (int i = 0; i < n; i++)
-                footIndex[i] = clusterNode[Find(i)];
+
+            var footIndex = new int[n];
+            for (int t = 0; t < n; t++)
+            {
+                footIndex[t] = -1;
+                for (int u = 0; u < t; u++)
+                {
+                    if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= weldSquared &&
+                        Math.Abs(foot[t].Z - foot[u].Z) <= 1.0e-9)
+                    {
+                        footIndex[t] = footIndex[u];
+                        break;
+                    }
+                }
+                if (footIndex[t] < 0)
+                {
+                    levelNodes.Add(foot[t]);
+                    footIndex[t] = levelNodes.Count - 1;
+                }
+            }
+
+            // What stands close but apart, counted once per pair of feet.
+            // The feet are the only nodes in the level so far, which is why
+            // this runs here and not after the members are built.
+            close = 0;
+            for (int i = 0; i < levelNodes.Count; i++)
+            {
+                for (int j = i + 1; j < levelNodes.Count; j++)
+                {
+                    if (MouldGeometry.PlanDistanceSquared(levelNodes[i], levelNodes[j]) <= squared)
+                        close++;
+                }
+            }
             return footIndex;
         }
 
