@@ -98,10 +98,11 @@ namespace Ananke.COMPAS.Native.Components
         public sealed class Level
         {
             public int Ground;
+            /// <summary>No member collides. Auto reads this and nothing else.</summary>
             public bool Feasible = true;
-            /// <summary>lean, alignment, member_collision, net_collision, or empty.</summary>
-            public string Rule = string.Empty;
-            /// <summary>The measured value that refused it.</summary>
+            /// <summary>collision, lean, alignment, or none: the worst measure.</summary>
+            public string Rule = "none";
+            /// <summary>The measure Rule names.</summary>
             public double Value;
             /// <summary>Sum over members of axial force times length.</summary>
             public double LoadPath;
@@ -524,35 +525,36 @@ namespace Ananke.COMPAS.Native.Components
 
             if (groundAsked >= 0)
             {
-                int start = Math.Min(groundAsked, MaxGround);
-                for (int level = start; level >= 0; level--)
-                {
-                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
-                    placement.Tried.Add(built);
-                    if (built.Feasible || level == 0)
-                    {
-                        placement.Built = built;
-                        placement.GroundPlaced = level;
-                        break;
-                    }
-                }
+                // Type N asked is Type N built: nothing refuses a level any
+                // more, so there is nothing to fall back to and GroundPlaced
+                // always equals GroundAsked.
+                int level = Math.Min(groundAsked, MaxGround);
+                Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
+                placement.Tried.Add(built);
+                placement.Built = built;
+                placement.GroundPlaced = level;
             }
             else
             {
+                // Auto: build all five and prefer the shortest load path
+                // among those with NO COLLISION. Descending, so a tie goes to
+                // the higher level. When every level collides the shortest of
+                // them is placed anyway, because a Result with no columns
+                // breaks the chain.
                 Level? best = null;
+                Level? bestAny = null;
                 for (int level = MaxGround; level >= 0; level--)
                 {
                     Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
                     placement.Tried.Add(built);
-                    if (built.Feasible && (best is null || built.LoadPath < best.LoadPath))
+                    if (bestAny is null || built.LoadPath < bestAny.LoadPath)
+                        bestAny = built;
+                    if (built.Collisions == 0 && (best is null || built.LoadPath < best.LoadPath))
                         best = built;
                 }
-                // Nothing feasible at all: level 0 is placed anyway, with its
-                // collision reported, because a Result with no columns
-                // breaks the chain.
-                best ??= placement.Tried[placement.Tried.Count - 1];
-                placement.Built = best;
-                placement.GroundPlaced = best.Ground;
+                Level chosen = best ?? bestAny!;
+                placement.Built = chosen;
+                placement.GroundPlaced = chosen.Ground;
             }
             return placement;
         }
@@ -807,11 +809,21 @@ namespace Ananke.COMPAS.Native.Components
                         continue;
                     }
                     bool paired = partner >= 0 && partner < trees.Count;
-                    // A span's trees are added in grouping order, so the
-                    // LOWER index of a pair is the one on the first half of
-                    // the chord.
-                    int first = paired ? Math.Min(t, partner) : t;
-                    int mirrored = paired ? Math.Max(t, partner) : -1;
+                    // The pair member with the SMALLER chord parameter is on
+                    // the first half of the span. Grouping order usually
+                    // agrees with this, but a bar that is not plan-monotone
+                    // (its parameter along the chord does not rise with its
+                    // node order) can disagree, so the chord parameter itself
+                    // decides, never the grouping index.
+                    int first = t;
+                    int mirrored = paired ? partner : -1;
+                    if (paired &&
+                        ChordParameter(nodes, placement, bars, trees[partner]) <
+                        ChordParameter(nodes, placement, bars, trees[t]))
+                    {
+                        first = partner;
+                        mirrored = t;
+                    }
                     int chosen = BandIndex(nodes, placement, bars, trees[first], level);
                     band[first] = chosen;
                     if (mirrored >= 0)
@@ -1014,30 +1026,35 @@ namespace Ananke.COMPAS.Native.Components
                 result.LoadPath += result.Axial[m] * result.Nodes[lower].DistanceTo(result.Nodes[upper]);
             }
 
-            if (level > 0)
+            // Judged, never refused (spec 3.7). Every level is BUILDABLE: the
+            // aim caps the lean at Type 0 and the peel caps it at Type N, and
+            // an alignment past the bound is a foundation taking thrust, not
+            // an impossibility. So Feasible carries the one thing that is a
+            // fault, a collision, and Auto reads it; Rule and Value name the
+            // worst measure for the author, in the order they matter. A level
+            // that used to be refused is now placed and reported.
+            result.Feasible = result.Collisions == 0;
+            if (result.Collisions > 0)
             {
-                if (worstLean > MouldGeometry.MaxLeanDegrees + 1.0e-9)
-                    Refuse(result, "lean", worstLean);
-                else if (worstAlign > AlignmentDegrees + 1.0e-9)
-                    Refuse(result, "alignment", worstAlign);
-                else if (result.Collisions > 0)
-                    Refuse(result, "collision", result.Collisions);
-            }
-            else if (result.Collisions > 0)
-            {
-                // Level 0 is placed regardless; the collision is reported.
-                result.Feasible = false;
                 result.Rule = "collision";
                 result.Value = result.Collisions;
             }
+            else if (worstLean > MouldGeometry.MaxLeanDegrees + 1.0e-9)
+            {
+                result.Rule = "lean";
+                result.Value = worstLean;
+            }
+            else if (worstAlign > AlignmentDegrees + 1.0e-9)
+            {
+                result.Rule = "alignment";
+                result.Value = worstAlign;
+            }
+            else
+            {
+                result.Rule = "none";
+                result.Value = 0.0;
+            }
             return result;
-        }
-
-        private static void Refuse(Level level, string rule, double value)
-        {
-            level.Feasible = false;
-            level.Rule = rule;
-            level.Value = value;
         }
 
         private static int AddNode(List<Point3d> nodes, Point3d point)
@@ -1069,6 +1086,28 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// A main notch's parameter along its span's chord: 0 at the first
+        /// node, 1 at the last. Used both to pick a band and, in
+        /// <c>BuildLevel</c>, to decide which member of a mirror pair sits on
+        /// the first half of the chord.
+        /// </summary>
+        private static double ChordParameter(
+            Point3d[] nodes, Placement placement, int[][] bars, Tree tree)
+        {
+            Span span = placement.Spans[tree.Span];
+            int[] bar = bars[span.Bar];
+            Point3d a = nodes[bar[span.First]];
+            Point3d b = nodes[bar[span.Last]];
+            double cx = b.X - a.X;
+            double cy = b.Y - a.Y;
+            double chord = (cx * cx) + (cy * cy);
+            Point3d main = nodes[tree.Nodes[0]];
+            return chord > 1.0e-18
+                ? (((main.X - a.X) * cx) + ((main.Y - a.Y) * cy)) / chord
+                : 0.5;
+        }
+
+        /// <summary>
         /// The band a main notch projects into: the chord from the span's
         /// first node to its last is cut into <paramref name="level"/> equal
         /// bands and the notch's parameter along it says which. Only the
@@ -1079,17 +1118,7 @@ namespace Ananke.COMPAS.Native.Components
         private static int BandIndex(
             Point3d[] nodes, Placement placement, int[][] bars, Tree tree, int level)
         {
-            Span span = placement.Spans[tree.Span];
-            int[] bar = bars[span.Bar];
-            Point3d a = nodes[bar[span.First]];
-            Point3d b = nodes[bar[span.Last]];
-            double cx = b.X - a.X;
-            double cy = b.Y - a.Y;
-            double chord = (cx * cx) + (cy * cy);
-            Point3d main = nodes[tree.Nodes[0]];
-            double s = chord > 1.0e-18
-                ? (((main.X - a.X) * cx) + ((main.Y - a.Y) * cy)) / chord
-                : 0.5;
+            double s = ChordParameter(nodes, placement, bars, tree);
             return Math.Min(Math.Max((int)Math.Floor(s * level), 0), level - 1);
         }
 

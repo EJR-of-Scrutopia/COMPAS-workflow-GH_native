@@ -603,10 +603,18 @@ internal static class Program
                 + "centre single and four mirrored pairs with mirrored mains, "
                 + "eight at Branching 3 into two triples and a single at each "
                 + "anchor end; the fork lies on the foot-to-main segment at "
-                + "65% height with trunk and main branch collinear; a shallow "
-                + "arch asked for one central foot REFUSES it on lean and "
-                + "records asked 1, placed 0; a symmetric arch puts its one "
-                + "foot on the span centre within a hundredth of the span; "
+                + "65% height with trunk and main branch collinear; an arch "
+                + "whose pulls carry a flank scale and an along-chord skew "
+                + "still puts every mirrored pair of feet astride the span's "
+                + "midpoint and its centre foot ON it, plumb; three bars of "
+                + "one family, one of them traced backwards, carry the same "
+                + "feet in their own frames; a wide arch asked for one "
+                + "central foot PLACES it and peels the flank trunks that "
+                + "would pass the 60 degree cap, and at two feet its bands "
+                + "come out mirrored with the centre tree on the midpoint on "
+                + "its own foot; a symmetric arch puts its one foot on the "
+                + "span centre within a hundredth of the span; feet inside the clearance stay two unless they are a "
+                + "mirrored pair, which stands on its span's midpoint; "
                 + "mid-bar anchors give half-spans and no head; two bars "
                 + "ending on an anchor-free rim get one ring tree at their "
                 + "tangents' plan intersection; a crossing node is held once; "
@@ -614,9 +622,9 @@ internal static class Program
                 + "end first and no held head becomes a foot in mid-air; "
                 + "CountCollisions refuses two members at half the clearance, "
                 + "passes them at twice, and refuses a member that rises "
-                + "above the nearest net vertex; Auto places Ground 1 where "
-                + "1 and 0 are both feasible and 1 is the shorter load "
-                + "path.");
+                + "above the nearest net vertex; no level is refused, and "
+                + "Auto places the shortest load path among the levels that "
+                + "do not collide.");
         }
         catch (Exception exception)
         {
@@ -3245,6 +3253,7 @@ internal static class Program
         Type geometry = plugin.GetType(
             "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
         double maxLean = (double)geometry.GetField("MaxLeanDegrees")!.GetValue(null)!;
+        double alignmentCap = (double)engine.GetField("AlignmentDegrees")!.GetValue(null)!;
 
         // ---- Grouping.
         (int[][] Groups, int[] Mains) Grouped(int count, int branching)
@@ -4137,6 +4146,25 @@ internal static class Program
                 throw new InvalidOperationException("A member under the net does not collide with it.");
         }
 
+        // Spec 3.7's Auto rule, recomputed by the check from what the engine
+        // recorded: the shortest load path among the levels with NO
+        // collision, ties to the higher level; and when every level collides,
+        // the shortest of them all.
+        int AutoWinner(object[] levels)
+        {
+            object? best = null;
+            object? bestAny = null;
+            foreach (object level in levels.OrderByDescending(l => Get<int>(l, "Ground")))
+            {
+                if (bestAny is null || Get<double>(level, "LoadPath") < Get<double>(bestAny, "LoadPath"))
+                    bestAny = level;
+                if (Get<int>(level, "Collisions") == 0 &&
+                    (best is null || Get<double>(level, "LoadPath") < Get<double>(best, "LoadPath")))
+                    best = level;
+            }
+            return Get<int>(best ?? bestAny!, "Ground");
+        }
+
         // ---- Auto picks the shorter load path where both are feasible.
         {
             // Spec 6's case, which the old fixture did not build: Ground 1
@@ -4151,8 +4179,9 @@ internal static class Program
             // push against a vertical wanted, so alignment passes. Levels 2,
             // 3 and 4 hand every tree its own plumb foot again, where a
             // single tilted aim is 35 degrees off its own plumb trunk, past
-            // the 30-degree cap, so they are refused and cannot take the
-            // tie-to-the-higher-level rule off 1.
+            // the 30-degree cap, so alignment is the worst measure each of
+            // them names. Nothing is refused any more, and Auto weighs all
+            // five levels by load path.
             const double tilt = 0.7;
             Array archNodes = Array.CreateInstance(point3d, 5);
             Array archAcross = Array.CreateInstance(vector3d, 5);
@@ -4180,19 +4209,66 @@ internal static class Program
             object one = AtLevel(1);
             object zero = AtLevel(0);
             if (!Get<bool>(one, "Feasible"))
-                throw new InvalidOperationException($"Spec 6 wants Ground 1 feasible here; it was refused on {Get<string>(one, "Rule")} at {Get<double>(one, "Value"):0.###}.");
+                throw new InvalidOperationException($"Feasible now means no collision, and Type 1 has none here; it reports {Get<int>(one, "Collisions")}.");
             if (!Get<bool>(zero, "Feasible"))
-                throw new InvalidOperationException($"Spec 6 wants Ground 0 feasible here; it was refused on {Get<string>(zero, "Rule")} at {Get<double>(zero, "Value"):0.###}.");
+                throw new InvalidOperationException($"Feasible now means no collision, and Type 0 has none here; it reports {Get<int>(zero, "Collisions")}.");
             if (Get<double>(one, "LoadPath") >= Get<double>(zero, "LoadPath"))
                 throw new InvalidOperationException($"Ground 1 must carry the SHORTER load path here; it scores {Get<double>(one, "LoadPath"):0.###} against Ground 0 at {Get<double>(zero, "LoadPath"):0.###}.");
-            if (Get<int>(placed, "GroundPlaced") != 1)
-                throw new InvalidOperationException($"Auto must place Ground 1, the feasible level with the least load path; it placed {Get<int>(placed, "GroundPlaced")}.");
+            // Levels 2, 3 and 4 hand every tree its own plumb foot under a
+            // tilted aim, 35 degrees off the thrust the foot is asked for.
+            // That USED to refuse them. Spec 3.7 judges and never refuses:
+            // they stand, alignment is named as the worst measure, and Auto
+            // weighs them by load path like any other level.
             foreach (int level in new[] { 2, 3, 4 })
             {
-                object refused = AtLevel(level);
-                if (Get<bool>(refused, "Feasible") || Get<string>(refused, "Rule") != "alignment")
-                    throw new InvalidOperationException($"Level {level} gives every tree its own plumb foot under a tilted aim and must be refused on alignment; it came back {(Get<bool>(refused, "Feasible") ? "feasible" : Get<string>(refused, "Rule"))}.");
+                object judged = AtLevel(level);
+                if (!Get<bool>(judged, "Feasible"))
+                    throw new InvalidOperationException($"Level {level} has no collision here, so it is feasible; it came back refused on {Get<string>(judged, "Rule")}.");
+                if (Get<string>(judged, "Rule") != "alignment")
+                    throw new InvalidOperationException($"Level {level} stands a plumb trunk under a tilted aim, so alignment is the worst measure it names; it names '{Get<string>(judged, "Rule")}'.");
+                if (Get<double>(judged, "Value") <= alignmentCap)
+                    throw new InvalidOperationException($"The named alignment is the measured angle, past the {alignmentCap:0} degree bound; it is {Get<double>(judged, "Value"):0.###}.");
             }
+            int winner = AutoWinner(tried);
+            if (Get<int>(placed, "GroundPlaced") != winner)
+                throw new InvalidOperationException($"Auto places the shortest load path among the levels with no collision, ties to the higher; that is {winner} and it placed {Get<int>(placed, "GroundPlaced")}.");
+        }
+
+        // ---- Auto prefers the level that does not collide (spec 3.7). The
+        // rise-five arch eight wide at a clearance of 1.2 (a median plan edge
+        // of 24 gives ClearanceFraction 0.05 that) stands its seven Type 0
+        // feet one unit apart, so every neighbouring pair of members is
+        // inside the clearance and Type 0 collides six times. Type 1 gathers
+        // all seven onto one foot, where every member shares an end and
+        // nothing can collide. Type 0 still carries the SHORTEST load path,
+        // being plumb throughout, so an Auto that only minimised the load
+        // path would take it.
+        {
+            var arch = Arch(9, 8.0, 5.0, 1.0);
+            object placed = Run(arch, Array.Empty<int[]>(), 24.0, 1, -1);
+            var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
+            if (tried.Length != 5)
+                throw new InvalidOperationException($"Auto builds all five levels; it built {tried.Length}.");
+            object AtLevel(int level) =>
+                tried.FirstOrDefault(t => Get<int>(t, "Ground") == level)
+                ?? throw new InvalidOperationException($"Auto must build every level; {level} is missing.");
+            object zero = AtLevel(0);
+            object one = AtLevel(1);
+            if (Get<int>(zero, "Collisions") == 0)
+                throw new InvalidOperationException("This fixture wants Type 0 to collide: seven plumb members a unit apart inside a clearance of 1.2.");
+            if (Get<bool>(zero, "Feasible"))
+                throw new InvalidOperationException("Feasible means no collision, and Type 0 collides here.");
+            if (Get<string>(zero, "Rule") != "collision")
+                throw new InvalidOperationException($"A colliding level names the collision as its worst measure; it names '{Get<string>(zero, "Rule")}'.");
+            if (Get<int>(one, "Collisions") != 0)
+                throw new InvalidOperationException($"Type 1 gathers every tree onto one foot, where every member shares an end; it reports {Get<int>(one, "Collisions")} collisions.");
+            if (tried.Any(t => Get<double>(t, "LoadPath") < Get<double>(zero, "LoadPath")))
+                throw new InvalidOperationException("Type 0 carries the shortest load path here, or the preference for a collision-free level is not being tested at all.");
+            int winner = AutoWinner(tried);
+            if (winner == 0)
+                throw new InvalidOperationException("The recomputed winner is a collision-free level, and Type 0 is not one.");
+            if (Get<int>(placed, "GroundPlaced") != winner)
+                throw new InvalidOperationException($"Auto places the shortest load path among the levels with no collision, ties to the higher; that is {winner} and it placed {Get<int>(placed, "GroundPlaced")}.");
         }
     }
 
