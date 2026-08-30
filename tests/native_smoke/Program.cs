@@ -44,7 +44,12 @@ internal static class Program
             "Ananke.COMPAS.Native.Components.TnaSolveComponent",
             "Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent",
             "Ananke.COMPAS.Native.Components.FdSolveComponent",
-            "Ananke.COMPAS.Native.Components.DisplayComponent"
+            "Ananke.COMPAS.Native.Components.DisplayComponent",
+            // Animate is the clearest case this set exists for: one output,
+            // custom Goo, and everything an author sees of the machine is
+            // its viewport drawing. Nothing else in the plugin says that
+            // drawing has to keep existing.
+            "Ananke.COMPAS.Native.Components.MouldAnimateComponent"
         };
     private static readonly HashSet<string> NativeVisibilityGuardComponents =
         new(StringComparer.Ordinal)

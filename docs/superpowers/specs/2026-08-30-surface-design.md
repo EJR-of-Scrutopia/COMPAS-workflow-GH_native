@@ -74,8 +74,14 @@ PrincipalNodes, AnchorGroups, PerimeterLoops, PerimeterEstimated,
 ColumnBranches, Phase, so Animate's viewport and Frame's outputs cannot
 drift. Animate keeps its viewport preview (shaded mesh, cables, blue
 columns, green supports) and its diagnostics; its `animate.*` codes are
-unchanged. Frame has no custom preview: its outputs preview as ordinary
-Grasshopper geometry, visible by default.
+unchanged. Frame has no custom preview, and its eight geometry outputs
+start HIDDEN, as every other reader of a Result starts them (Deconstruct,
+Monitor, Skin, Columns): Animate draws the frame, Frame carries the data.
+Amended 2026-08-30 in the final fix round; the earlier wording said
+"visible by default", which drew the mesh, the cables and the columns a
+second time in Grasshopper's default red over Animate's own preview.
+Each output can still be switched on from its own context menu, and
+Phase is text and previews nothing either way.
 
 ## 4. Export: one JSON and one Status (binding)
 
@@ -102,8 +108,16 @@ Outputs: 0 JSON `J` (text LIST), 1 Status `ST` (text item, lines).
   face of the thrust mesh in face order, course 0 for every cell, via
   `SkinComponent.FacePolylines` made `internal static` (the same code
   Skin uses). Wiring Cells (from Skin or a custom pattern) overrides,
-  as today; Courses without Cells is ignored with a Remark. The
-  tessellation kind is therefore present for every TNA Result.
+  as today. The tessellation kind is therefore present for every TNA
+  Result. The sidecar's `pattern` key says which of the two it is:
+  `authored` for cells somebody wired, `faces` for the ones Export made
+  from the Result's own mesh, so the studio can tell a chosen cutting
+  pattern from the courtesy one. Courses without Cells is ignored, with
+  a Remark accompanying a FACE-BUILT default only: on a Result with no
+  faces at all, which is every FD Result, no tessellation is built and
+  the Remark would describe nothing. Both amended 2026-08-30 in the
+  final fix round: the key was `authored` on both paths, and the Remark
+  sentence read as unconditional.
 - Everything else of the export spec of 2026-08-28 stands: the nine
   inputs, the write rules, Live, the uploader, the hold.
 
@@ -113,9 +127,23 @@ Display keeps its seven inputs and its whole viewport job (the element
 lines with the Style preset, the Elements and Metric filters, the
 auto-scaled vectors, the residual arrows) and registers NO outputs. The
 data those outputs carried is Deconstruct's (Member Lines, Form Lines,
-Load and Reaction Points and Vectors) and Diagnose's (Report).
-`RequiredPreviewComponents` and `NativeVisibilityGuardComponents` keep
-Display; it stays a `NativePreviewComponentBase`.
+FORCE LINES, Load and Reaction Points and Vectors) and Diagnose's
+(Report). `RequiredPreviewComponents` and
+`NativeVisibilityGuardComponents` keep Display; it stays a
+`NativePreviewComponentBase`.
+
+Amended 2026-08-30 in the final fix round. Deconstruct gains `Force
+Lines` `FCL` (Line tree, branched as Form Lines, from the ForceGraph,
+empty for FD), APPENDED at slot 13 so no existing port moves: without it
+the reciprocal force diagram had no data port anywhere in the plugin,
+which the sentence above assumed it had. And two readings are Display's
+OWN, not Deconstruct's or Diagnose's, so they are raised on the
+component as Remarks rather than emitted: "FD result: no reciprocal
+diagram" and "Metric H unavailable for FD result; used F magnitude",
+the second of which is a fact about Display's own Metric input and
+reaches no other component. The chin carries the scales the drawing was
+made at (`TNA . analysis . thrust x1 . vectors x0.0153 auto`), saying
+`auto` where the vector scale was the component's own choice.
 
 ## 6. Panels and icons (binding)
 
@@ -196,8 +224,9 @@ overload is deleted).
 - `VisualiseContracts`: Animate (inputs Result, Time, Pre-Sag,
   Extension; output Result), Monitor (output 0 Result then the twenty
   names in order), Export (outputs JSON, Status), Display (seven inputs,
-  NO outputs), Frame (input Result; the nine outputs of section 3), all
-  pinned by name in order.
+  NO outputs), Deconstruct (the twelve outputs it had, then `Force
+  Lines` appended at 13), Frame (input Result; the nine outputs of
+  section 3), all pinned by name in order.
 - `SpineComponentContracts`: every Tab string updated to the six panels
   for the components it pins; Frame pinned with nick `FR`, tab `04
   Read`, output nicks `M, C, PL, PN, AN, PRN, PRL, CO, PH`.
@@ -208,37 +237,104 @@ overload is deleted).
   `native_components` entry whose category is the component's
   registered subcategory; every embedded icon's fill, sampled at pixel
   (12, 20) of the badge, equals its category's fill; every label is the
-  two letters the spec table gives.
+  two letters the spec table gives. The fill sample cannot tell one
+  badge from another inside a panel, since every badge in a panel shares
+  it, so `python plugin/icons/generate_icons.py --check` carries the
+  other half: it re-renders every icon the map lists IN MEMORY and
+  refuses any file whose BYTES differ, which is what stops a stale PNG
+  with the wrong letters surviving. `--check` runs in the same gates the
+  harness does and at install time, beside the build.
 - `ValidateParameterMismatch` extended: same counts with one output
   name moved (Monitor's case) reports a mismatch; equal names report
   none; a longer archived list reports one; the old count-only
   behaviour is gone.
-- `ValidateFrameGeometry` (new, pure): a Result with a frame whose
-  vertices are the solved vertices raised by 1 gives Frame's mesh and
-  cable ends at the raised positions and Animate's preview the same
-  (both from `FrameGeometry.Build`); a Result without a frame gives the
-  solved positions and Phase `final`; a Result with a frame and no
-  columns block gives an empty Columns tree.
+- `ValidateFrameGeometry` (new, pure): it measures `FrameGeometry.Read`,
+  which is the whole of the frame's reading bar the mesh and the curves.
+  A Result with a frame whose vertices are the solved vertices raised by
+  1 gives cable ends at the raised positions; a Result without a frame
+  gives the solved positions and Phase `final`; a Result with a frame
+  and no columns block gives an empty Columns tree; and a Result with no
+  faces anywhere gives a boundary marked ESTIMATED. `Build` is not
+  driven here and cannot be: it is the Rhino-bound half (`Mesh`,
+  `Polyline.ToNurbsCurve`), and section 13 forbids launching Rhino. That
+  Frame's ports and Animate's preview cannot drift is structural rather
+  than measured: both take one `FrameGeometry.Build` on the same
+  Result. Amended 2026-08-30 in the final fix round, which found the
+  earlier sentence claiming both meshes were asserted.
 - `ValidateExportDefaultTessellation` (new): with no cells wired and a
   Result carrying faces, the plan includes `tessellation` and the JSON
   holds one cell per face at course 0; with cells wired the wired cells
   win; Courses without Cells is ignored.
+- `RequiredPreviewComponents` gains `MouldAnimateComponent`, which pins
+  "Animate keeps its viewport preview": Animate is now the one component
+  whose only output is custom Goo and whose whole visible behaviour is
+  the drawing, which is exactly the case that set exists for.
+- `ValidateDeconstructForceLines` (new, pure): one force line per member
+  row, in row order, between the force-graph vertices of the force edge
+  that row's state NAMES, driven by a fixture whose state ids, list
+  order and force-edge ids all disagree; and nothing at all for an FD
+  Result.
+- `ValidateArchivedNamesFromDefinition` (new): `ArchivedNames` driven
+  over a REAL archive, `plugin/definitions/ananke_equilibrium_v01.gh`,
+  read headless through `GH_IO`'s `GH_Archive` down to the same
+  `Container` chunk a component's `Read` is handed, asserting the five
+  input names and two output names the file's first object holds. This
+  is the case that catches a wrong chunk or item name, which returns
+  nulls and silences the whole load-time warning without failing
+  anywhere else.
 - Every existing check keeps passing; the Animate-specific checks that
   read its geometry outputs move to Frame or to `FrameGeometry`.
 
 ## 10. What breaks on the canvas
 
-Every saved Animate, Monitor, Export and Display raises the port
-Warning on load (Animate and Export by count, Display by count, Monitor
-by NAME, which section 7 makes possible). Animate: only the old Result
-wire survives (it lands on RES by name after the rewire; old slot 6's
-wire lands on slot 0 by index and is dropped if typed Mesh); every
-geometry wire must be moved to a Frame fed by Animate's RES. Monitor:
-every wire sits one slot low and must be moved up one. Export: old
-Contract JSON lands on JSON (right content, now a list), old COMPAS JSON
-on Status (wrong; rewire), the rest dropped. Display: every output wire
-is dropped; feed Deconstruct or Diagnose instead. The panel move does
-not touch saved files. The new icons appear after the restart.
+Every saved Animate, Monitor, Export and Display raises the port Warning
+on load. Display trips the count rule alone; Animate, Export and Monitor
+trip the NAME rule as well, so all three warnings NAME the port that
+moved, which is the useful half of the message. Monitor trips ONLY the
+name rule, which is what section 7 was written for.
+
+The mechanism, stated once because every paragraph below depends on it:
+Grasshopper matches archived parameter chunks to live parameters BY
+INDEX, and a wire is stored on the receiving port as the source
+parameter's instance guid. An archived wire therefore reattaches to
+whatever port now stands at ITS OWN INDEX, and an archived slot beyond
+the new range simply has nowhere to land and is dropped. Nothing is
+matched by name.
+
+**Animate.** NO output wire keeps its meaning. Nine outputs become one,
+so the old MESH wire, at index 0, is the one that reattaches, and it now
+carries a Result: any mesh or geometry consumer downstream turns red on
+a data conversion, and a Panel there reads `TNA Result . #<hash>`. Every
+other output wire is dropped for want of an index, INCLUDING the old
+Result wire at slot 6, which is the wire that fed Monitor, Diagnose or
+Export and the one an author is least likely to look for. Rewire RES,
+and take the geometry from a Frame fed by that same RES. The four input
+wires and their slider values are untouched.
+
+**Monitor.** All twenty-one wires reattach, and every one of them now
+delivers the metric ABOVE the one it used to, because the Result was
+inserted at the front. Move each wire DOWN one port, to the next higher
+slot: a wire that read slot 16, Bar Sag, moves to slot 17. The old
+Member Force wire, on slot 0, now delivers the Result itself and turns
+red on a number consumer; the old Result wire, on slot 20, now delivers
+Column Utilisation numbers into a RES input and turns red too. Between
+them, slots 1 to 19 change quantity with no colour and no complaint,
+which is why the warning is the only thing that says so.
+
+**Export.** Slot 0's wire lands on JSON, which is now a text LIST
+carrying the contract AND the COMPAS document AND the tessellation AND
+the columns, so a File-write on that wire writes four documents into one
+file. Slot 1's wire lands on Status, which is lines of prose and not
+JSON at all; rewire it. Slots 2 to 5 are dropped. Live is not held by
+this load: the hold reads the INPUT side, and Export's nine inputs did
+not move (section 4).
+
+**Display.** Every output wire is dropped; feed Deconstruct for the
+lines, points and vectors, including the reciprocal force diagram on its
+new Force Lines port, and Diagnose for the report.
+
+The panel move does not touch saved files: the subcategory is display
+grouping and no GUID changed. The new icons appear after the restart.
 
 ## 11. Amendments to earlier specs
 

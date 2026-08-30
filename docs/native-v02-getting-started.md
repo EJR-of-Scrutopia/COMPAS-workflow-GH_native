@@ -111,6 +111,19 @@ the JSON to guessed locations.
 
 ## Build the first whole-network FD definition
 
+> **These two chapters describe the v0.1 script-backed surface, not the
+> plugin you just installed.** The component names, tab names and chains
+> below (`Network`, `Support Set`, `Equilibrium Problem`, `TNA Pattern`,
+> `TNA Equilibrium`, `Graphic Diagram Display` and the rest) belong to the
+> script components under `plugin/native`, and several of them no longer
+> exist: see `docs/removed-guids.md`. The native plugin's twenty components
+> sit under six tabs, `01 Model` through `90 System`, and the chain runs
+> Pattern, Supports, Loads, TNA Relax, TNA Solve, then Columns and Animate,
+> then Frame, Deconstruct, Monitor, Diagnose, Skin, Display and Export.
+> `docs/component-taxonomy.md` is the accurate account of every one of them,
+> port by port. Rewriting the walkthrough below against that surface is its
+> own task; the install chapters above it are current.
+
 The current component chain is:
 
 ```text
@@ -220,8 +233,10 @@ TNA Reciprocal.Diagram -----> Graphic Diagram Display
 
 ### 1. Register the pattern
 
-Place `02 Form Finding > TNA Pattern`. Connect the complete mesh or line
-pattern as one Geometry list.
+Place the pattern component. In the v0.1 script set that was
+`02 Form Finding > TNA Pattern`; the native plugin registers it as
+`01 Model > Pattern`, and `02 Form Finding` is not a tab any more.
+Connect the complete mesh or line pattern as one Geometry list.
 
 The `Mode` value list contains `Mesh`, `Lines`, `Surface`, `Grid`,
 `Triangulation`, and `Skeleton`, but only the first two are implemented:
