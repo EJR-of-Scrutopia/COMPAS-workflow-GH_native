@@ -194,6 +194,16 @@ internal static class Program
                     "03 Visualise",
                     new[] { "Preset", "Weight", "Vector" },
                     new[] { "STY" }),
+                // Columns is pinned because slot 2 is RENAMED from Ground to
+                // Type and keeps its slot: the nicknames are the canvas
+                // contract, and a saved wire has to land on the same port it
+                // left.
+                ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = (
+                    "Columns",
+                    "Columns",
+                    "03 Visualise",
+                    new[] { "RES", "B", "T" },
+                    new[] { "RES" }),
                 ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = (
                     "Import Pieces",
                     "Pieces",

@@ -14,10 +14,10 @@ namespace Ananke.COMPAS.Native.Components
 {
     /// <summary>
     /// Columns: every notch of every principal line gets a column head, the
-    /// heads group into trees by Branching, and the trees reach the ground
-    /// by Ground. Nothing is chosen by a beam search any more; the machine
-    /// has a joint at every notch and this component says how the joints
-    /// are held up.
+    /// heads group into trees by Branching, and the trees meet the ground by
+    /// Type. Nothing is chosen by a beam search any more; the machine has a
+    /// joint at every notch and this component says how the joints are held
+    /// up.
     ///
     /// The Result is the form finder: the principal lines travel in it,
     /// resolved once by Pattern, and the load each notch hands its bar comes
@@ -34,10 +34,10 @@ namespace Ananke.COMPAS.Native.Components
         {
             new(
                 2,
-                "Ground",
+                "Type",
                 new (string Label, string Value)[]
                 {
-                    ("0 · standalone", "0"),
+                    ("0 · own feet", "0"),
                     ("1 · one central foot", "1"),
                     ("2 · two feet", "2"),
                     ("3 · three feet", "3"),
@@ -55,8 +55,9 @@ namespace Ananke.COMPAS.Native.Components
                 "Columns",
                 "Columns",
                 "Hold every notch of every principal line with a column head, "
-                    + "grouped into trees by Branching and footed by Ground. "
-                    + "The loads come from the Result's own member forces.",
+                    + "grouped into trees by Branching and footed by Type. "
+                    + "The loads come from the Result's own member forces, "
+                    + "mirrored about each span's midpoint before a foot is placed.",
                 ComponentCategories.Visualise,
                 "column_finder")
         {
@@ -162,16 +163,19 @@ namespace Ananke.COMPAS.Native.Components
                 GH_ParamAccess.item,
                 1);
             parameters.AddIntegerParameter(
-                "Ground",
-                "G",
-                "How the trees reach the ground. 0 stands each tree on its "
-                    + "own foot on the line of the force it carries; 1 to 4 "
-                    + "gather each span's trees onto that many feet about its "
-                    + "midpoint, and a level that would lean a trunk past 60 "
-                    + "degrees, stand it more than 30 degrees off its force, "
-                    + "or run a member into another or into the net is "
-                    + "refused and the next lower one tried. -1 is Auto: every "
-                    + "level is tried and the shortest load path is built.",
+                "Type",
+                "T",
+                "How the trees meet the ground. 0 stands each tree on its own "
+                    + "foot on the line of the force it carries; 1 to 4 gather "
+                    + "each span's trees onto that many mirrored feet in bands "
+                    + "about the span's midpoint, and a trunk that would lean "
+                    + "past 60 degrees to its shared foot steps back onto its "
+                    + "own foot instead of the level being refused; -1 is "
+                    + "Auto, which builds every level and places the shortest "
+                    + "load path among those whose members do not collide. "
+                    + "The feet are mirrored about each span's midpoint and "
+                    + "shared across every span that holds the same notches, "
+                    + "so the principal lines agree with one another.",
                 GH_ParamAccess.item,
                 0);
             parameters[1].Optional = true;
@@ -206,22 +210,22 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             int branching = 1;
-            int ground = 0;
+            int type = 0;
             data.GetData(1, ref branching);
-            data.GetData(2, ref ground);
+            data.GetData(2, ref type);
             branching = Math.Min(Math.Max(branching, 1), ColumnPlacement.MaxBranching);
-            if (ground > ColumnPlacement.MaxGround)
+            if (type > ColumnPlacement.MaxGround)
             {
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
-                    $"Ground {ground} is above the {ColumnPlacement.MaxGround} feet "
-                        + "per span this machine places; clamped. An old Type "
-                        + "value list goes to 6; place the Ground list from the "
-                        + "component menu.");
-                ground = ColumnPlacement.MaxGround;
+                    $"Type {type} is above the {ColumnPlacement.MaxGround} feet "
+                        + "per span this machine places; clamped. An old Ground "
+                        + "or Type value list goes to 6; place the Type list "
+                        + "from the component menu.");
+                type = ColumnPlacement.MaxGround;
             }
-            if (ground < -1)
-                ground = -1;
+            if (type < -1)
+                type = -1;
 
             try
             {
@@ -348,7 +352,7 @@ namespace Ananke.COMPAS.Native.Components
                     groundLevel,
                     median,
                     branching,
-                    ground);
+                    type);
                 ColumnPlacement.Level built = placement.Built;
                 if (placement.Trees.Count == 0)
                 {
@@ -384,20 +388,21 @@ namespace Ananke.COMPAS.Native.Components
                     _previewCables.Concat(_previewColumns),
                     _previewSupports);
 
-                if (placement.GroundPlaced != Math.Max(ground, 0) && ground >= 0)
+                if (built.Collisions > 0)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Warning,
-                        $"Ground {ground} was refused and Ground "
-                            + $"{placement.GroundPlaced} built instead; Diagnose "
-                            + "says which rule refused it.");
+                        $"{built.Collisions} member(s) come within the clearance "
+                            + "of another member or of the net; placed anyway so "
+                            + "the chain keeps running. Diagnose says where.");
                 }
-                if (!built.Feasible && built.Ground == 0)
+                if (built.Peeled > 0)
                 {
                     AddRuntimeMessage(
-                        GH_RuntimeMessageLevel.Warning,
-                        $"{built.Collisions} member(s) collide even standing "
-                            + "alone; placed anyway so the chain keeps running.");
+                        GH_RuntimeMessageLevel.Remark,
+                        $"{built.Peeled} trunk(s) stand on their own feet: a "
+                            + "trunk from the shared foot would lean past 60 "
+                            + "degrees. The level itself is placed.");
                 }
 
                 Point3d[] netNodes = nodes.ToArray();
@@ -409,7 +414,7 @@ namespace Ananke.COMPAS.Native.Components
                     netNodes,
                     weld,
                     branching: branching,
-                    groundAsked: ground,
+                    groundAsked: type,
                     groundPlaced: placement.GroundPlaced,
                     forkFraction: ColumnPlacement.ForkFraction,
                     forksRaised: 0);
@@ -429,7 +434,7 @@ namespace Ananke.COMPAS.Native.Components
                 string declaredUnit = (equilibrium.ForceUnit ?? string.Empty).Trim();
                 string forceUnit = declaredUnit.Length > 0 ? declaredUnit : "kN";
                 output = ResultDiagnostics.Replace(output, "Columns", Diagnostics(
-                    bars, placement, built, force, angle, branching, ground,
+                    bars, placement, built, force, angle, branching, type,
                     groundLevel, alongToAnchors, acrossToColumns, overlapping,
                     barShape, forceUnit));
                 data.SetData(0, new ResultGoo(output));
@@ -522,52 +527,99 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             string asked = groundAsked < 0 ? "Auto" : groundAsked.ToString(CultureInfo.InvariantCulture);
-            var refused = placement.Tried.Where(t => !t.Feasible && t.Ground > 0)
-                .Select(t => $"level {t.Ground} refused on {t.Rule} at {t.Value:0.##}")
-                .ToList();
-            bool fellBack = groundAsked >= 0 && placement.GroundPlaced < groundAsked;
-            d.Add(ResultDiagnostics.Entry(S, "columns.ground",
-                fellBack ? "warning" : "info",
-                $"Ground asked {asked}, placed {placement.GroundPlaced}"
-                    + (refused.Count > 0 ? "; " + string.Join("; ", refused) : "")
-                    + (placement.GroundPlaced == 0
-                        ? $". Every tree stands on its own foot on the line of its force; {built.Feet.Count} feet."
-                        : $". Each span's trees gather onto up to {placement.GroundPlaced} feet about its midpoint, an empty band getting none; {built.Feet.Count} feet built in all."),
+            string gathered = placement.GroundPlaced == 0
+                ? $"every tree stands on its own foot; {built.Feet.Count} feet"
+                : $"each span's trees gather onto up to {placement.GroundPlaced} feet "
+                    + $"about its midpoint; {built.Feet.Count} feet built";
+            d.Add(ResultDiagnostics.Entry(S, "columns.type",
+                built.Peeled > 0 ? "warning" : "info",
+                $"Type asked {asked}, placed {placement.GroundPlaced}: {gathered}"
+                    + (built.Peeled > 0
+                        ? $"; {built.Peeled} trunk(s) stand on their own feet because "
+                            + $"a trunk to the shared foot would lean past {cap:0} degrees"
+                        : string.Empty)
+                    + ".",
                 placement.GroundPlaced, unit: "feet per span",
                 context: ResultDiagnostics.Context(
                     ("asked", groundAsked.ToString(CultureInfo.InvariantCulture)),
                     ("placed", placement.GroundPlaced.ToString(CultureInfo.InvariantCulture)),
-                    ("refused", refused.Count.ToString(CultureInfo.InvariantCulture)))));
+                    ("peeled", built.Peeled.ToString(CultureInfo.InvariantCulture)),
+                    ("feet", built.Feet.Count.ToString(CultureInfo.InvariantCulture)))));
 
-            var scored = placement.Tried.Where(t => t.Feasible)
-                .Select(t => (t.Ground.ToString(CultureInfo.InvariantCulture), Inv(t.LoadPath, "0")))
+            // Placement.Families groups only the spans that hold at least one
+            // tree (a span whose only free notches were already claimed by an
+            // earlier crossing or by the ring tree holds none), so the count
+            // reported here is spans WITH TREES, not placement.Spans.Count:
+            // saying "S spans in K families" would claim every span joined a
+            // family when some hold no tree to symmetrise at all.
+            int spansWithTrees = placement.Trees
+                .Where(t => !t.Ring)
+                .Select(t => t.Span)
+                .Distinct()
+                .Count();
+            d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "info",
+                $"{spansWithTrees} spans with trees in {placement.Families} families; "
+                    + "feet mirrored about each span's midpoint and shared across "
+                    + "each family; the largest aim moved "
+                    + $"{placement.AsymmetryRemoved:0.##} degrees; "
+                    + $"{placement.CentreTrees} centre tree(s) plumb.",
+                placement.AsymmetryRemoved, unit: "degrees",
+                context: ResultDiagnostics.Context(
+                    ("spans", spansWithTrees.ToString(CultureInfo.InvariantCulture)),
+                    ("families", placement.Families.ToString(CultureInfo.InvariantCulture)),
+                    ("moved", Inv(placement.AsymmetryRemoved, "0.##")),
+                    ("centres", placement.CentreTrees.ToString(CultureInfo.InvariantCulture)))));
+
+            var scored = placement.Tried
+                .OrderByDescending(t => t.Ground)
+                .Select(t => (t.Ground.ToString(CultureInfo.InvariantCulture),
+                    Inv(t.LoadPath, "0") + (t.Collisions > 0 ? " collides" : string.Empty)))
                 .ToArray();
             d.Add(ResultDiagnostics.Entry(S, "columns.load_path", "info",
                 $"load path {built.LoadPath:0} {forceUnit} x model units, the sum "
                     + "over members of force times length"
-                    + (groundAsked < 0 ? $"; feasible levels scored: {string.Join(", ", scored.Select(s => $"{s.Item1}={s.Item2}"))}" : ""),
+                    + (groundAsked < 0
+                        ? $"; levels scored: {string.Join(", ", scored.Select(s => $"{s.Item1}={s.Item2}"))}"
+                        : string.Empty),
                 built.LoadPath, unit: forceUnit + " x model units",
                 context: ResultDiagnostics.Context(scored)));
 
             if (built.FeetMerged > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.feet_merged", "info",
-                    $"{built.FeetMerged} feet closer than the clearance were "
-                        + "merged into one, at their plan centre.",
+                    $"{built.FeetMerged} MIRRORED PAIR(S) of feet lay within the "
+                        + "clearance of each other and stand on one foot at their "
+                        + "span's midpoint. Only a mirrored pair merges; any other "
+                        + "two feet stay two, however close.",
                     built.FeetMerged, unit: "feet"));
+            }
+            if (built.FeetClose > 0)
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.feet_close", "warning",
+                    $"{built.FeetClose} pairs of feet closer than the clearance "
+                        + "stand separately; raise Type to gather them, or space "
+                        + "the principal lines.",
+                    built.FeetClose, unit: "pairs"));
+            }
+            if (built.WorstAlignment > ColumnPlacement.AlignmentDegrees)
+            {
+                d.Add(ResultDiagnostics.Entry(S, "columns.alignment", "warning",
+                    $"a foot's push is {built.WorstAlignment:0.#} degrees off the "
+                        + "thrust its trees ask for; the foundation sees that as "
+                        + "thrust.",
+                    built.WorstAlignment, ColumnPlacement.AlignmentDegrees, "degrees"));
             }
             d.Add(ResultDiagnostics.Entry(S, "columns.branch_off_thrust", "info",
                 $"branches stand up to {built.WorstBranchOff:0.#} degrees off the "
                     + "pull at their notch; a fork can only be in one place, and "
                     + "what is left is bending for the joint to take.",
                 built.WorstBranchOff, unit: "degrees"));
-            if (!built.Feasible && built.Ground == 0)
+            if (built.Collisions > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.collision", "warning",
                     $"{built.Collisions} member(s) come within the clearance of "
-                        + "another member or of the net even standing alone; placed "
-                        + "anyway. Draw the principal lines further apart or lower "
-                        + "Branching.",
+                        + "another member or of the net; placed anyway. Draw the "
+                        + "principal lines further apart or lower Branching.",
                     built.Collisions, unit: "members"));
             }
             d.Add(ResultDiagnostics.Entry(S, "columns.head_load_total", "info",
