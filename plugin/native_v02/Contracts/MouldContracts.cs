@@ -67,7 +67,11 @@ public sealed record MouldColumnsDto
     /// <summary>The Ground level asked for; -1 is Auto.</summary>
     public int GroundAsked { get; init; }
 
-    /// <summary>Equal to GroundAsked unless a fallback was recorded.</summary>
+    /// <summary>
+    /// Equal to GroundAsked except under Auto (-1), where it is the level
+    /// chosen. No level is refused any more, so there is no fallback to
+    /// record.
+    /// </summary>
     public int GroundPlaced { get; init; }
 
     public double ForkFraction { get; init; }

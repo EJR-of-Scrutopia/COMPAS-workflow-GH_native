@@ -12,15 +12,16 @@ namespace Ananke.COMPAS.Native.Components
     ///
     /// Every notch of every principal line is a joint with two steppers and a
     /// column head; nothing is chosen. What is decided here is how the heads
-    /// GROUP into trees (Branching) and how the trees reach the GROUND
-    /// (Ground), and every rule below is measured by the smoke harness on
+    /// GROUP into trees (Branching) and how the trees reach the ground
+    /// (Type), and every rule below is measured by the smoke harness on
     /// hand-built nets, which is why nothing in this file touches a Mesh, a
     /// Curve, or Rhino's native core.
     ///
-    /// Order of operations for one Ground level: spans, ring tree, grouping,
-    /// feet, fork, members, then the rejection tests. The fork lies ON THE
-    /// SEGMENT from its foot to its main notch, so trunk and main branch are
-    /// one straight line by construction and a fork can never kink.
+    /// Order of operations: spans, ring tree, grouping, symmetrise, and then
+    /// for each Type level the feet, the fork, the members, then the measures.
+    /// The fork lies ON THE SEGMENT from its foot to its main notch, so trunk
+    /// and main branch are one straight line by construction and a fork can
+    /// never kink.
     /// </summary>
     internal static class ColumnPlacement
     {
@@ -41,6 +42,13 @@ namespace Ananke.COMPAS.Native.Components
         /// and that is joint bending the machine takes, not a refusal.
         /// </summary>
         public const double AlignmentDegrees = 30.0;
+
+        /// <summary>
+        /// How close to vertical an aim has to be to BE vertical. A degree of
+        /// residual lean out of a solved net is noise, not a thrust line, and
+        /// a column that follows it stands crooked for no reason.
+        /// </summary>
+        public const double PlumbDegrees = 2.0;
 
         /// <summary>Collision clearance as a fraction of the median plan edge.</summary>
         public const double ClearanceFraction = 0.05;
@@ -76,19 +84,26 @@ namespace Ananke.COMPAS.Native.Components
             public double[] Load = Array.Empty<double>();
             /// <summary>Sum of the notches' transverse pulls.</summary>
             public Vector3d Resultant;
+            /// <summary>
+            /// The resultant as the net handed it over, before the mirror
+            /// rule of spec 3.4. The diagnostics measure how far the
+            /// symmetrised aim moved from this one.
+            /// </summary>
+            public Vector3d RawResultant;
             /// <summary>Fixed foot, ring tree only.</summary>
             public Point3d? FixedFoot;
             public bool Ring;
         }
 
-        /// <summary>One Ground level, built and judged.</summary>
+        /// <summary>One Type level, built and judged.</summary>
         public sealed class Level
         {
             public int Ground;
+            /// <summary>No member collides. Auto reads this and nothing else.</summary>
             public bool Feasible = true;
-            /// <summary>lean, alignment, member_collision, net_collision, or empty.</summary>
-            public string Rule = string.Empty;
-            /// <summary>The measured value that refused it.</summary>
+            /// <summary>collision, lean, alignment, or none: the worst measure.</summary>
+            public string Rule = "none";
+            /// <summary>The measure Rule names.</summary>
             public double Value;
             /// <summary>Sum over members of axial force times length.</summary>
             public double LoadPath;
@@ -103,10 +118,30 @@ namespace Ananke.COMPAS.Native.Components
             /// <summary>Node indices that are feet.</summary>
             public List<int> Feet = new();
             public int FeetMerged;
+            /// <summary>Trunks that stepped off a shared foot onto their own.</summary>
+            public int Peeled;
+            /// <summary>
+            /// Trees that were handed a band to gather onto: every tree but
+            /// the ring tree and, at an even Type, the centre tree, which has
+            /// no central band and stands on its own foot. Peeled counts a
+            /// subset of these, so the two together say whether ANY trunk
+            /// reached the shared feet.
+            /// </summary>
+            public int Banded;
+            /// <summary>Pairs of feet inside the clearance that stayed two.</summary>
+            public int FeetClose;
             public double WorstLean;
             public double WorstAlignment;
             public double WorstBranchOff;
             public int Collisions;
+            /// <summary>
+            /// Trees with no thrust line to follow at all, because the net
+            /// pulls their notch onto the column rather than off it, which is
+            /// the one input <c>MouldGeometry.AimFrom</c> answers with plain
+            /// vertical. NOT the trees the dead band stood plumb: those have a
+            /// thrust line and it is within two degrees of vertical.
+            /// <c>ColumnsComponent</c> reads this as columns.plumb_fallback.
+            /// </summary>
             public int PlumbTrees;
         }
 
@@ -120,6 +155,52 @@ namespace Ananke.COMPAS.Native.Components
             public List<Tree> Trees = new();
             public Tree? RingTree;
             public double Clearance;
+            /// <summary>
+            /// The mirror partner of each tree: the tree it pairs with about
+            /// its span's midpoint, ITSELF for the centre tree of an odd
+            /// count, -1 where there is no partner at all: the ring tree, and
+            /// every tree of a span whose free notches are not symmetric about
+            /// its chord midpoint (see <c>AsymmetricSpans</c>).
+            /// </summary>
+            public int[] Partner = Array.Empty<int>();
+            /// <summary>The largest angle Symmetrise moved an aim through, in degrees.</summary>
+            public double AsymmetryRemoved;
+            /// <summary>
+            /// How many families were actually averaged: the spans alike in
+            /// free-notch count, in Branching and in chord length, counted
+            /// AFTER the guard that drops a family whose spans disagree on
+            /// tree count, so the number reported is the number shared.
+            /// </summary>
+            public int Families;
+            /// <summary>Trees that are their own mirror partner.</summary>
+            public int CentreTrees;
+            /// <summary>
+            /// Spans placed UNMIRRORED, because their free notches are not
+            /// symmetric about their chord midpoint: a crossing that took an
+            /// interior notch, or a free bar end that put the first notch on
+            /// the chord's own start. Mirroring those would pair trees that do
+            /// not straddle the mirror plane.
+            /// </summary>
+            public int AsymmetricSpans;
+            /// <summary>
+            /// Spans holding at least one tree. A span whose only free notches
+            /// were already claimed by a crossing or by the ring tree holds
+            /// none, and is not a span the symmetry rules ever touch.
+            /// </summary>
+            public int SpansWithTrees;
+            /// <summary>
+            /// Set once <c>Symmetrise</c> has run. A second call on the same
+            /// Placement with the same trees is a no-op: it would otherwise
+            /// overwrite <c>Tree.RawResultant</c> with the already-symmetrised
+            /// vector and report an <c>AsymmetryRemoved</c> of zero.
+            /// </summary>
+            public bool Symmetrised;
+            /// <summary>
+            /// The tree count at the last <c>Symmetrise</c>. The guard keys on
+            /// this as well as the flag, so a tree added after the first call
+            /// is symmetrised rather than left standing on its raw aim.
+            /// </summary>
+            public int SymmetrisedTrees = -1;
         }
 
         // ------------------------------------------------------------------
@@ -183,6 +264,371 @@ namespace Ananke.COMPAS.Native.Components
                 at += size;
             }
             return (groups.ToArray(), mains.ToArray());
+        }
+
+        // ------------------------------------------------------------------
+        // Symmetry
+
+        /// <summary>
+        /// Mirror every span's resultants about its own midpoint, share them
+        /// across every span that holds the same notches, and report the
+        /// largest angle an aim moved through.
+        ///
+        /// The GROUPING of spec 3.3 was already mirrored about the span's
+        /// midpoint; the FEET were not, because each tree aimed from its own
+        /// resultant and a solved net's forces are never mirrored to the last
+        /// digit and differ from bar to bar. That is what came back off
+        /// Param's review arch as columns that did not match across a span, a
+        /// centre column leaning, and neighbouring principal lines
+        /// disagreeing with one another.
+        ///
+        /// So each resultant is read in its span's frame as (along, across,
+        /// down): along the chord from the span's first node to its last,
+        /// across it in plan, and down. Tree i and tree m-1-i are a mirrored
+        /// pair, so their along parts are made equal and opposite and their
+        /// across and down parts equal; the centre tree of an odd count is
+        /// its own partner and its along part is zero.
+        ///
+        /// A span is only mirrored when it CAN be: when its free notches are
+        /// symmetric about its chord midpoint, each notch's partner standing
+        /// within a quarter of THAT SPAN'S notch spacing of where the mirror
+        /// would put it, which in chord parameter is 0.25 / (count + 1).
+        /// A crossing that takes an interior notch, or a bar end that is
+        /// neither anchor nor rim and so puts a notch on the chord's own
+        /// start, leaves a free list whose index i and index m-1-i are not
+        /// geometric mirrors at all, and forcing them equal and opposite would
+        /// move feet toward a plane nothing straddles. Such a span keeps its
+        /// own aims, takes its bands from each tree's own projection, merges
+        /// nothing, and is counted in AsymmetricSpans.
+        ///
+        /// A FAMILY then shares the ALONG and DOWN profiles only, and every
+        /// span keeps its OWN across. That is what makes the frame's one
+        /// arbitrary choice, which end of the bar Pattern traced first, drop
+        /// out of the answer entirely. Read a span in either node order and
+        /// the pair step leaves along ANTISYMMETRIC and down SYMMETRIC, so
+        /// along[i] and down[i] come out the same both ways and can be
+        /// averaged at face value; across comes out NEGATED, and is left
+        /// alone, so it is rebuilt against the same negated normal and lands
+        /// back in the world where the net put it. Bars congruent by
+        /// TRANSLATION (a barrel whose bars are traced in mixed directions)
+        /// and by ROTATION (opposite ribs of a dome, chord and pull turned
+        /// together) therefore both carry the same columns, by construction
+        /// and with no test to get wrong.
+        ///
+        /// Sharing across as well needed a rule for which way round a span
+        /// was, and every such rule has a null: a rib lying IN the structure's
+        /// own mirror plane, pulled equally from both sides, has no opinion,
+        /// and would take the family's across in a frame that exists only
+        /// because a curve was drawn left to right. It would lean out of the
+        /// plane it lies in, and to the other side if the curve were redrawn.
+        /// The across a span needs is its own, mirrored within itself by the
+        /// pair step, which is what 3.4 always said it was.
+        ///
+        /// A family is the spans alike in free-notch count, in Branching (one
+        /// slider, so alike by construction) and in chord LENGTH within a
+        /// tenth of the family LEAD's. Length is in the key because the aim is
+        /// shared, and a short steep span handed a long flat one's aim can put
+        /// its foot beyond its own anchors. Measuring against the lead rather
+        /// than pairwise makes the bucketing non-transitive and order
+        /// dependent, which is deliberate: it is a cheap grouping of like with
+        /// like, not an equivalence relation. A span like no other is its own
+        /// family and keeps its own aims. An aim within PlumbDegrees of
+        /// vertical is vertical.
+        ///
+        /// Tree.Load is deliberately NOT averaged. The forces a tree reports
+        /// are its own; only WHERE IT STANDS is shared.
+        /// </summary>
+        public static double Symmetrise(Placement placement, Point3d[] nodes, int[][] bars)
+        {
+            // Called exactly once per Place, but guarded rather than trusted:
+            // Tasks 2 and 3 edit around this call site, and a second call
+            // would overwrite RawResultant with the already-symmetrised
+            // vector and report the asymmetry removed as zero. The guard keys
+            // on the TREE COUNT as well as the flag, so a caller that adds a
+            // tree to a Placement already symmetrised gets the whole set
+            // symmetrised again rather than a silent no-op that would leave
+            // the new tree standing on its own raw aim.
+            if (placement.Symmetrised && placement.SymmetrisedTrees == placement.Trees.Count)
+                return placement.AsymmetryRemoved;
+            placement.Symmetrised = true;
+            placement.SymmetrisedTrees = placement.Trees.Count;
+
+            List<Tree> trees = placement.Trees;
+            int count = trees.Count;
+            placement.Partner = new int[count];
+            for (int t = 0; t < count; t++)
+            {
+                placement.Partner[t] = -1;
+                trees[t].RawResultant = trees[t].Resultant;
+            }
+            placement.Families = 0;
+            placement.CentreTrees = 0;
+            placement.AsymmetricSpans = 0;
+            placement.SpansWithTrees = 0;
+            if (count == 0)
+                return 0.0;
+
+            // Span frames, and each span's trees in grouping order: they are
+            // added to Trees span by span, group by group, so insertion order
+            // IS grouping order.
+            int spanCount = placement.Spans.Count;
+            var chord = new Vector3d[spanCount];
+            var normal = new Vector3d[spanCount];
+            var chordLength = new double[spanCount];
+            var order = new List<int>[spanCount];
+            for (int s = 0; s < spanCount; s++)
+            {
+                Span span = placement.Spans[s];
+                int[] bar = bars[span.Bar];
+                Point3d first = nodes[bar[span.First]];
+                Point3d last = nodes[bar[span.Last]];
+                double dx = last.X - first.X;
+                double dy = last.Y - first.Y;
+                double length = Math.Sqrt((dx * dx) + (dy * dy));
+                chordLength[s] = length;
+                if (length <= 1.0e-12)
+                {
+                    dx = 1.0;
+                    dy = 0.0;
+                    length = 1.0;
+                }
+                chord[s] = new Vector3d(dx / length, dy / length, 0.0);
+                normal[s] = new Vector3d(-chord[s].Y, chord[s].X, 0.0);
+                order[s] = new List<int>();
+            }
+            for (int t = 0; t < count; t++)
+            {
+                Tree tree = trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
+                    continue;
+                order[tree.Span].Add(t);
+            }
+
+            // Which spans can be mirrored at all. A span is SYMMETRIC when
+            // every free notch's chord parameter s has a partner at 1 - s: the
+            // sorted parameters then pair off across the midpoint, which is
+            // exactly what index i and index m-1-i of the grouping claim to
+            // be. The free notches are the nodes the span's trees hold, every
+            // one of them in exactly one tree. A crossing that took an
+            // interior notch, or a free bar end that put the first notch at
+            // parameter zero, breaks it.
+            //
+            // The tolerance is a quarter of THIS SPAN'S notch spacing. In
+            // chord parameter that is 0.25 / (count + 1): count notches cut
+            // the chord into count + 1 gaps, so one gap is 1 / (count + 1) of
+            // it. The span's own count, not the net's median plan edge, which
+            // is a median over every edge in both mesh directions and stands
+            // in no fixed ratio to the spacing along any one bar: on a mesh
+            // refined along its principal lines that median is several notch
+            // spacings and the test stops discriminating, and on one refined
+            // across them it is a fraction of one and the test becomes exact
+            // coincidence again.
+            //
+            // The positions being compared come out of the solve, not off the
+            // curve the author drew, so they are never mirrored to the last
+            // digit: an exact-coincidence tolerance would call an ordinary
+            // relaxed arch asymmetric and quietly hand it back its pre-branch
+            // placement. A quarter of the spacing is a constant factor of four
+            // inside the failures this test exists to catch, which move a
+            // notch by a whole spacing or more (a crossing takes one out; a
+            // free end shifts every partner by half of one), and far outside
+            // the millimetres a solver moves a node it meant to leave alone.
+            //
+            // A span with a free END has one interval fewer than count + 1,
+            // an error of one part in count that a quarter-spacing bound does
+            // not notice.
+            var symmetric = new bool[spanCount];
+            var parameters = new List<double>();
+            for (int s = 0; s < spanCount; s++)
+            {
+                if (order[s].Count == 0)
+                    continue;
+                placement.SpansWithTrees++;
+                Span span = placement.Spans[s];
+                int[] bar = bars[span.Bar];
+                Point3d first = nodes[bar[span.First]];
+                Point3d last = nodes[bar[span.Last]];
+                parameters.Clear();
+                foreach (int t in order[s])
+                {
+                    foreach (int node in trees[t].Nodes)
+                        parameters.Add(ChordParameter(first, last, nodes[node]));
+                }
+                parameters.Sort();
+                double spacing = parameters.Count > 0
+                    ? 0.25 / (parameters.Count + 1)
+                    : 1.0;
+                symmetric[s] = true;
+                for (int i = 0; i < parameters.Count; i++)
+                {
+                    double partner = parameters[parameters.Count - 1 - i];
+                    if (Math.Abs(parameters[i] + partner - 1.0) > spacing)
+                    {
+                        symmetric[s] = false;
+                        break;
+                    }
+                }
+                if (!symmetric[s])
+                    placement.AsymmetricSpans++;
+            }
+
+            var along = new double[count];
+            var across = new double[count];
+            var down = new double[count];
+            for (int t = 0; t < count; t++)
+            {
+                Tree tree = trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
+                    continue;
+                int s = tree.Span;
+                Vector3d r = tree.Resultant;
+                along[t] = (r.X * chord[s].X) + (r.Y * chord[s].Y);
+                across[t] = (r.X * normal[s].X) + (r.Y * normal[s].Y);
+                down[t] = r.Z;
+            }
+
+            // Mirror pairs, per span. An asymmetric span has no pairs at all:
+            // its trees keep Partner -1, which is what makes BuildLevel read
+            // each of their bands off its own projection and MergeFeet leave
+            // them alone.
+            for (int s = 0; s < spanCount; s++)
+            {
+                if (!symmetric[s])
+                    continue;
+                List<int> ids = order[s];
+                int m = ids.Count;
+                for (int i = 0; i < m - 1 - i; i++)
+                {
+                    int low = ids[i];
+                    int high = ids[m - 1 - i];
+                    placement.Partner[low] = high;
+                    placement.Partner[high] = low;
+                    double half = 0.5 * (along[low] - along[high]);
+                    along[low] = half;
+                    along[high] = -half;
+                    double side = 0.5 * (across[low] + across[high]);
+                    across[low] = side;
+                    across[high] = side;
+                    double weight = 0.5 * (down[low] + down[high]);
+                    down[low] = weight;
+                    down[high] = weight;
+                }
+                if ((m % 2) == 1)
+                {
+                    int centre = ids[m / 2];
+                    placement.Partner[centre] = centre;
+                    along[centre] = 0.0;
+                    placement.CentreTrees++;
+                }
+            }
+
+            // Families: the symmetric spans alike in free-notch count (hence
+            // in tree count and layout at this one Branching) and in chord
+            // LENGTH within a tenth of the family LEAD's. Length is in the key
+            // because the family shares an AIM: without it a three metre span
+            // and a ten metre one holding the same number of notches average
+            // together, and the short one takes an aim that can throw its foot
+            // past its own anchors. Measuring against the lead makes the
+            // grouping order dependent and non-transitive, which is what a
+            // bucket is; it is not claiming to be an equivalence relation. A
+            // span that matches no family is its own family, and averaging it
+            // with itself changes nothing.
+            var families = new List<List<int>>();
+            var familyNotches = new List<int>();
+            var familyLength = new List<double>();
+            for (int s = 0; s < spanCount; s++)
+            {
+                if (order[s].Count == 0 || !symmetric[s])
+                    continue;
+                int notches = order[s].Sum(t => trees[t].Nodes.Length);
+                int found = -1;
+                for (int f = 0; f < families.Count && found < 0; f++)
+                {
+                    if (familyNotches[f] != notches)
+                        continue;
+                    if (Math.Abs(chordLength[s] - familyLength[f]) > 0.10 * familyLength[f])
+                        continue;
+                    found = f;
+                }
+                if (found < 0)
+                {
+                    families.Add(new List<int>());
+                    familyNotches.Add(notches);
+                    familyLength.Add(chordLength[s]);
+                    found = families.Count - 1;
+                }
+                families[found].Add(s);
+            }
+            foreach (List<int> family in families)
+            {
+                int lead = family[0];
+                int m = order[lead].Count;
+                if (family.Any(s => order[s].Count != m))
+                    continue;
+                placement.Families++;
+                // ALONG and DOWN only. Both are node-order invariant after the
+                // pair step, along by being antisymmetric and down by being
+                // symmetric, so tree i of one span and tree i of another are
+                // the same tree of the family whichever way either bar was
+                // traced. ACROSS is not: it comes out negated when a bar is
+                // traced the other way, and there is no way to tell which way
+                // round a span is that does not fail on a span pulled equally
+                // from both sides. So across stays the span's own, already
+                // mirrored within the span by the pair step.
+                var meanAlong = new double[m];
+                var meanDown = new double[m];
+                foreach (int s in family)
+                {
+                    for (int i = 0; i < m; i++)
+                    {
+                        int t = order[s][i];
+                        meanAlong[i] += along[t];
+                        meanDown[i] += down[t];
+                    }
+                }
+                for (int i = 0; i < m; i++)
+                {
+                    meanAlong[i] /= family.Count;
+                    meanDown[i] /= family.Count;
+                }
+                foreach (int s in family)
+                {
+                    for (int i = 0; i < m; i++)
+                    {
+                        int t = order[s][i];
+                        along[t] = meanAlong[i];
+                        down[t] = meanDown[i];
+                    }
+                }
+            }
+
+            // Back into each span's own frame, with the dead band, and the
+            // angle every aim moved through. An asymmetric span was never
+            // read into a pair or a family, so it is handed back the
+            // resultant it came in with; the dead band is not part of the
+            // mirror machinery and still applies, because a degree of
+            // residual lean out of a solved net is noise on any span.
+            double moved = 0.0;
+            for (int t = 0; t < count; t++)
+            {
+                Tree tree = trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
+                    continue;
+                int s = tree.Span;
+                Vector3d rebuilt = symmetric[s]
+                    ? new Vector3d(
+                        (along[t] * chord[s].X) + (across[t] * normal[s].X),
+                        (along[t] * chord[s].Y) + (across[t] * normal[s].Y),
+                        down[t])
+                    : tree.Resultant;
+                if (AngleBetween(MouldGeometry.AimFrom(rebuilt), Vector3d.ZAxis) <= PlumbDegrees)
+                    rebuilt = new Vector3d(0.0, 0.0, down[t]);
+                tree.Resultant = rebuilt;
+                moved = Math.Max(moved, AngleBetween(
+                    MouldGeometry.AimFrom(tree.RawResultant),
+                    MouldGeometry.AimFrom(tree.Resultant)));
+            }
+            return moved;
         }
 
         // ------------------------------------------------------------------
@@ -261,37 +707,44 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
+            // Spec 3.4: the resultants are mirrored about each span's
+            // midpoint and shared across each family BEFORE a single foot is
+            // placed. The ring tree keeps its own; it has no mirror partner
+            // and no family, and its foot is fixed by 3.2 anyway.
+            placement.AsymmetryRemoved = Symmetrise(placement, nodes, bars);
+
             if (groundAsked >= 0)
             {
-                int start = Math.Min(groundAsked, MaxGround);
-                for (int level = start; level >= 0; level--)
-                {
-                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
-                    placement.Tried.Add(built);
-                    if (built.Feasible || level == 0)
-                    {
-                        placement.Built = built;
-                        placement.GroundPlaced = level;
-                        break;
-                    }
-                }
+                // Type N asked is Type N built: nothing refuses a level any
+                // more, so there is nothing to fall back to and GroundPlaced
+                // always equals GroundAsked.
+                int level = Math.Min(groundAsked, MaxGround);
+                Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
+                placement.Tried.Add(built);
+                placement.Built = built;
+                placement.GroundPlaced = level;
             }
             else
             {
+                // Auto: build all five and prefer the shortest load path
+                // among those with NO COLLISION. Descending, so a tie goes to
+                // the higher level. When every level collides the shortest of
+                // them is placed anyway, because a Result with no columns
+                // breaks the chain.
                 Level? best = null;
+                Level? bestAny = null;
                 for (int level = MaxGround; level >= 0; level--)
                 {
                     Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
                     placement.Tried.Add(built);
+                    if (bestAny is null || built.LoadPath < bestAny.LoadPath)
+                        bestAny = built;
                     if (built.Feasible && (best is null || built.LoadPath < best.LoadPath))
                         best = built;
                 }
-                // Nothing feasible at all: level 0 is placed anyway, with its
-                // collision reported, because a Result with no columns
-                // breaks the chain.
-                best ??= placement.Tried[placement.Tried.Count - 1];
-                placement.Built = best;
-                placement.GroundPlaced = best.Ground;
+                Level chosen = best ?? bestAny!;
+                placement.Built = chosen;
+                placement.GroundPlaced = chosen.Ground;
             }
             return placement;
         }
@@ -487,33 +940,98 @@ namespace Ananke.COMPAS.Native.Components
                 aim[t] = MouldGeometry.AimFrom(trees[t].Resultant);
             }
 
+            // Every tree's OWN foot, where the ray from its main notch along
+            // the aim meets the ground: what Type 0 stands on, and what a
+            // peeled trunk falls back to.
+            var own = new Point3d[trees.Count];
+            for (int t = 0; t < trees.Count; t++)
+            {
+                if (trees[t].FixedFoot is Point3d fixedFoot)
+                {
+                    own[t] = fixedFoot;
+                    continue;
+                }
+                Point3d ownMain = nodes[trees[t].Nodes[0]];
+                double ownRise = Math.Max(ownMain.Z - ground, 0.0);
+                double ownAlong = ownRise / Math.Max(aim[t].Z, 1.0e-9);
+                own[t] = new Point3d(
+                    ownMain.X - (aim[t].X * ownAlong),
+                    ownMain.Y - (aim[t].Y * ownAlong),
+                    ground);
+            }
+
             if (level == 0)
             {
                 // Each tree stands on its own foot, on the line of the force
                 // it carries. AimFrom caps the lean, so this is never refused.
                 for (int t = 0; t < trees.Count; t++)
-                {
-                    if (trees[t].FixedFoot is Point3d fixedFoot)
-                    {
-                        foot[t] = fixedFoot;
-                        continue;
-                    }
-                    Point3d main = nodes[trees[t].Nodes[0]];
-                    double rise = Math.Max(main.Z - ground, 0.0);
-                    double along = rise / Math.Max(aim[t].Z, 1.0e-9);
-                    foot[t] = new Point3d(
-                        main.X - (aim[t].X * along),
-                        main.Y - (aim[t].Y * along),
-                        ground);
-                }
+                    foot[t] = own[t];
             }
             else
             {
-                // N bands per span about its own midpoint, by plan position
-                // along the chord; a band's foot is the plan centre (midpoint
-                // of the extremes) of the main notches it carries. Mirrored
-                // trees land in mirrored bands, so an odd count gets a
-                // genuinely central band and the centre never drifts.
+                // N bands per span about its own midpoint. The band is
+                // decided PER MIRROR PAIR (spec 3.5): the pair member on the
+                // first half of the chord takes the band its main notch
+                // projects into, and its partner takes the MIRRORED band,
+                // level-1-band, so a pair lands in mirrored bands wherever
+                // the boundaries fall. Reading every tree's own projection
+                // put a main notch sitting exactly ON a boundary, which is
+                // where the centre notch of a uniform arch sits at an even
+                // Type, into the upper band: the two central bands then held
+                // different trees and their feet came out unmirrored on a
+                // symmetric arch. A centre tree is its own partner: at an ODD
+                // Type it takes the central band; at an EVEN Type the mirror
+                // plane IS a boundary and there is no central band to take,
+                // so it stands on its Type 0 foot, which is on that plane
+                // already.
+                var band = new int[trees.Count];
+                for (int t = 0; t < trees.Count; t++)
+                    band[t] = -1;
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    if (trees[t].FixedFoot is not null || band[t] >= 0)
+                        continue;
+                    int partner = t < placement.Partner.Length ? placement.Partner[t] : -1;
+                    if (partner == t)
+                    {
+                        if ((level % 2) == 1)
+                            band[t] = level / 2;
+                        continue;
+                    }
+                    bool paired = partner >= 0 && partner < trees.Count;
+                    // The pair member with the SMALLER chord parameter is on
+                    // the first half of the span. Grouping order usually
+                    // agrees with this, but a bar that is not plan-monotone
+                    // (its parameter along the chord does not rise with its
+                    // node order) can disagree, so the chord parameter itself
+                    // decides, never the grouping index.
+                    int first = t;
+                    int mirrored = paired ? partner : -1;
+                    if (paired &&
+                        ChordParameter(nodes, placement, bars, trees[partner]) <
+                        ChordParameter(nodes, placement, bars, trees[t]))
+                    {
+                        first = partner;
+                        mirrored = t;
+                    }
+                    int chosen = BandIndex(nodes, placement, bars, trees[first], level);
+                    band[first] = chosen;
+                    if (mirrored >= 0)
+                        band[mirrored] = level - 1 - chosen;
+                }
+                result.Banded = band.Count(b => b >= 0);
+
+                // A band's foot is the plan CENTROID of the main notches it
+                // carries, at ground level: the plain mean of their plan
+                // positions. Not the centre of their axis-aligned bounding
+                // box, which is what stood here: a reflection about the span's
+                // mirror plane is affine but not axis aligned, so the bounding
+                // box does not commute with it unless the chord happens to run
+                // along an axis or the band's X and Y extremes happen to fall
+                // on the same two notches. Break either and two mirrored bands
+                // get feet that are not mirror images, which is the one thing
+                // this rule exists to prevent. The mean commutes with any
+                // reflection, whatever the chord's direction.
                 var bandMains = new Dictionary<(int Span, int Band), List<int>>();
                 for (int t = 0; t < trees.Count; t++)
                 {
@@ -523,48 +1041,90 @@ namespace Ananke.COMPAS.Native.Components
                         foot[t] = fixedFoot;
                         continue;
                     }
-                    Span span = placement.Spans[tree.Span];
-                    int[] bar = bars[span.Bar];
-                    Point3d a = nodes[bar[span.First]];
-                    Point3d b = nodes[bar[span.Last]];
-                    double cx = b.X - a.X;
-                    double cy = b.Y - a.Y;
-                    double chord = (cx * cx) + (cy * cy);
-                    Point3d main = nodes[tree.Nodes[0]];
-                    double s = chord > 1.0e-18
-                        ? (((main.X - a.X) * cx) + ((main.Y - a.Y) * cy)) / chord
-                        : 0.5;
-                    int band = Math.Min(Math.Max((int)Math.Floor(s * level), 0), level - 1);
-                    if (!bandMains.TryGetValue((tree.Span, band), out List<int>? list))
+                    if (band[t] < 0)
+                    {
+                        // The centre tree at an even Type: no band, its own
+                        // foot, which stands on the mirror plane.
+                        foot[t] = own[t];
+                        continue;
+                    }
+                    if (!bandMains.TryGetValue((tree.Span, band[t]), out List<int>? list))
                     {
                         list = new List<int>();
-                        bandMains[(tree.Span, band)] = list;
+                        bandMains[(tree.Span, band[t])] = list;
                     }
                     list.Add(t);
                 }
-                foreach (List<int> members in bandMains.Values)
+                // The band feet and the PEEL (spec 3.5), settled together.
+                //
+                // A trunk runs from its foot to a fork that lies on the
+                // segment to its main notch, so the trunk's lean IS that
+                // segment's lean and no fork can change it. Past the cap the
+                // TREE steps off the shared foot onto its own, rather than the
+                // level being refused: on any wide span the flank trunks
+                // always pass the cap, so Type 1 fell back to Type 0 whole and
+                // the slider looked dead.
+                //
+                // A band that loses trees to the peel then rebuilds its foot
+                // from the trees still standing on it, because a foot placed
+                // in part by trunks that have walked away is nobody's centre.
+                // Rebuilding moves the foot, so the cap is judged again; the
+                // peel only ever takes trees off a band, so this settles, and
+                // a band nothing stands on builds no foot at all.
+                var peeled = new bool[trees.Count];
+                while (true)
                 {
-                    double minX = double.MaxValue, maxX = double.MinValue;
-                    double minY = double.MaxValue, maxY = double.MinValue;
-                    foreach (int t in members)
+                    foreach (List<int> members in bandMains.Values)
                     {
-                        Point3d main = nodes[trees[t].Nodes[0]];
-                        minX = Math.Min(minX, main.X);
-                        maxX = Math.Max(maxX, main.X);
-                        minY = Math.Min(minY, main.Y);
-                        maxY = Math.Max(maxY, main.Y);
+                        double sumX = 0.0;
+                        double sumY = 0.0;
+                        int standing = 0;
+                        foreach (int t in members)
+                        {
+                            if (peeled[t])
+                                continue;
+                            Point3d main = nodes[trees[t].Nodes[0]];
+                            sumX += main.X;
+                            sumY += main.Y;
+                            standing++;
+                        }
+                        if (standing == 0)
+                            continue;
+                        var centre = new Point3d(sumX / standing, sumY / standing, ground);
+                        foreach (int t in members)
+                        {
+                            if (!peeled[t])
+                                foot[t] = centre;
+                        }
                     }
-                    var centre = new Point3d(0.5 * (minX + maxX), 0.5 * (minY + maxY), ground);
-                    foreach (int t in members)
-                        foot[t] = centre;
+
+                    bool stepped = false;
+                    for (int t = 0; t < trees.Count; t++)
+                    {
+                        // A tree already on its own foot cannot step off it:
+                        // AimFrom caps the aim at the lean cap, so its trunk
+                        // is inside it by construction.
+                        if (peeled[t] || band[t] < 0 || trees[t].FixedFoot is not null)
+                            continue;
+                        double lean = MouldGeometry.LeanFromVertical(
+                            foot[t], nodes[trees[t].Nodes[0]]);
+                        if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
+                            continue;
+                        peeled[t] = true;
+                        foot[t] = own[t];
+                        result.Peeled++;
+                        stepped = true;
+                    }
+                    if (!stepped)
+                        break;
                 }
             }
 
-            // Feet closer than the clearance are one foot, at their plan
-            // centre. Ground 1 on two crossing bars puts a foot at each bar's
-            // midpoint, which is the crossing, and they merge here.
-            int[] footIndex = MergeFeet(foot, clearance, result.Nodes, out int merged);
+            int[] footIndex = MergeFeet(
+                placement, foot, clearance, result.Nodes,
+                out int merged, out int close);
             result.FeetMerged = merged;
+            result.FeetClose = close;
             for (int i = 0; i < result.Nodes.Count; i++)
                 result.Feet.Add(i);
 
@@ -692,30 +1252,35 @@ namespace Ananke.COMPAS.Native.Components
                 result.LoadPath += result.Axial[m] * result.Nodes[lower].DistanceTo(result.Nodes[upper]);
             }
 
-            if (level > 0)
+            // Judged, never refused (spec 3.7). Every level is BUILDABLE: the
+            // aim caps the lean at Type 0 and the peel caps it at Type N, and
+            // an alignment past the bound is a foundation taking thrust, not
+            // an impossibility. So Feasible carries the one thing that is a
+            // fault, a collision, and Auto reads it; Rule and Value name the
+            // worst measure for the author, in the order they matter. A level
+            // that used to be refused is now placed and reported.
+            result.Feasible = result.Collisions == 0;
+            if (result.Collisions > 0)
             {
-                if (worstLean > MouldGeometry.MaxLeanDegrees + 1.0e-9)
-                    Refuse(result, "lean", worstLean);
-                else if (worstAlign > AlignmentDegrees + 1.0e-9)
-                    Refuse(result, "alignment", worstAlign);
-                else if (result.Collisions > 0)
-                    Refuse(result, "collision", result.Collisions);
-            }
-            else if (result.Collisions > 0)
-            {
-                // Level 0 is placed regardless; the collision is reported.
-                result.Feasible = false;
                 result.Rule = "collision";
                 result.Value = result.Collisions;
             }
+            else if (worstLean > MouldGeometry.MaxLeanDegrees + 1.0e-9)
+            {
+                result.Rule = "lean";
+                result.Value = worstLean;
+            }
+            else if (worstAlign > AlignmentDegrees + 1.0e-9)
+            {
+                result.Rule = "alignment";
+                result.Value = worstAlign;
+            }
+            else
+            {
+                result.Rule = "none";
+                result.Value = 0.0;
+            }
             return result;
-        }
-
-        private static void Refuse(Level level, string rule, double value)
-        {
-            level.Feasible = false;
-            level.Rule = rule;
-            level.Value = value;
         }
 
         private static int AddNode(List<Point3d> nodes, Point3d point)
@@ -747,63 +1312,143 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Weld feet closer than the clearance in plan into one node each,
-        /// at the plan centre of the feet it replaces. Returns, per tree,
-        /// the node index of its foot; the feet are the first nodes added.
+        /// A main notch's parameter along its span's chord: 0 at the first
+        /// node, 1 at the last. Used both to pick a band and, in
+        /// <c>BuildLevel</c>, to decide which member of a mirror pair sits on
+        /// the first half of the chord.
         /// </summary>
-        private static int[] MergeFeet(Point3d[] foot, double clearance, List<Point3d> nodes, out int merged)
+        private static double ChordParameter(
+            Point3d[] nodes, Placement placement, int[][] bars, Tree tree)
+        {
+            Span span = placement.Spans[tree.Span];
+            int[] bar = bars[span.Bar];
+            return ChordParameter(
+                nodes[bar[span.First]], nodes[bar[span.Last]], nodes[tree.Nodes[0]]);
+        }
+
+        /// <summary>
+        /// The same parameter for any plan point against any chord: how far
+        /// along from <paramref name="a"/> to <paramref name="b"/> it
+        /// projects. A chord of no length puts everything at its middle.
+        /// </summary>
+        private static double ChordParameter(Point3d a, Point3d b, Point3d point)
+        {
+            double cx = b.X - a.X;
+            double cy = b.Y - a.Y;
+            double chord = (cx * cx) + (cy * cy);
+            return chord > 1.0e-18
+                ? (((point.X - a.X) * cx) + ((point.Y - a.Y) * cy)) / chord
+                : 0.5;
+        }
+
+        /// <summary>
+        /// The band a main notch projects into: the chord from the span's
+        /// first node to its last is cut into <paramref name="level"/> equal
+        /// bands and the notch's parameter along it says which. Only the
+        /// FIRST-HALF member of a mirror pair is read this way; its partner
+        /// takes the mirrored band, and a centre tree takes the central band
+        /// or none (spec 3.5).
+        /// </summary>
+        private static int BandIndex(
+            Point3d[] nodes, Placement placement, int[][] bars, Tree tree, int level)
+        {
+            double s = ChordParameter(nodes, placement, bars, tree);
+            return Math.Min(Math.Max((int)Math.Floor(s * level), 0), level - 1);
+        }
+
+        /// <summary>
+        /// Where the feet become NODES, and the one case in which two of them
+        /// become one.
+        ///
+        /// Feet at the SAME point are one node whatever put them there: two
+        /// trees in one band, every tree of a span at Type 1, or two spans
+        /// whose bands meet at a crossing. That is WELDING, and it is not a
+        /// merge and is not counted.
+        ///
+        /// Beyond that only a MIRRORED PAIR merges (spec 3.5): when its two
+        /// feet lie within the clearance of each other the pair stands on one
+        /// foot at the MEAN of the two, which on symmetric geometry is on the
+        /// mirror plane, where its own symmetry says it belongs. Not the
+        /// span's chord midpoint, which is where this stood: a pair's two feet
+        /// differ only in their along-chord part, so the clearance test says
+        /// nothing at all about how far off the chord they sit, and on a bar
+        /// that curves in plan the innermost notches sit off it by the plan
+        /// sagitta. Merging onto the chord midpoint moved such a pair sideways
+        /// by that sagitta, out from under its own bar, with nothing measuring
+        /// the move. Any other two feet inside the clearance stay two and are
+        /// counted in FeetClose. Merging those was what turned leaning
+        /// neighbours into accidental V's and X's on Param's review arch: two
+        /// trees that lean toward one another are not one tree, and the ring
+        /// tree's foot, fixed by 3.2, never merges at all.
+        /// </summary>
+        private static int[] MergeFeet(
+            Placement placement,
+            Point3d[] foot,
+            double clearance,
+            List<Point3d> levelNodes,
+            out int merged,
+            out int close)
         {
             int n = foot.Length;
-            var parent = Enumerable.Range(0, n).ToArray();
-            int Find(int i)
-            {
-                while (parent[i] != i)
-                {
-                    parent[i] = parent[parent[i]];
-                    i = parent[i];
-                }
-                return i;
-            }
-            double squared = clearance * clearance;
-            for (int i = 0; i < n; i++)
-            {
-                for (int j = i + 1; j < n; j++)
-                {
-                    if (MouldGeometry.PlanDistanceSquared(foot[i], foot[j]) <= squared)
-                        parent[Find(i)] = Find(j);
-                }
-            }
-            var clusterNode = new Dictionary<int, int>();
-            var clusterMembers = new Dictionary<int, List<int>>();
-            for (int i = 0; i < n; i++)
-            {
-                int root = Find(i);
-                if (!clusterMembers.TryGetValue(root, out List<int>? list))
-                {
-                    list = new List<int>();
-                    clusterMembers[root] = list;
-                }
-                list.Add(i);
-            }
-            var footIndex = new int[n];
             merged = 0;
-            foreach ((int root, List<int> members) in clusterMembers)
+            double squared = clearance * clearance;
+            const double weldSquared = 1.0e-18;
+
+            for (int t = 0; t < n; t++)
             {
-                double x = members.Average(i => foot[i].X);
-                double y = members.Average(i => foot[i].Y);
-                double z = members.Average(i => foot[i].Z);
-                nodes.Add(new Point3d(x, y, z));
-                clusterNode[root] = nodes.Count - 1;
-                // Distinct positions that merged, so two trees already
-                // sharing one band's foot do not count as a merge.
-                int distinct = members
-                    .Select(i => (Math.Round(foot[i].X, 9), Math.Round(foot[i].Y, 9)))
-                    .Distinct()
-                    .Count();
-                merged += Math.Max(distinct - 1, 0);
+                int partner = t < placement.Partner.Length ? placement.Partner[t] : -1;
+                // -1 is the ring tree or a tree on an unmirrored span, t is a
+                // centre tree standing alone, and anything below t was handled
+                // when its partner came round.
+                if (partner <= t || partner >= n)
+                    continue;
+                if (placement.Trees[t].FixedFoot is not null ||
+                    placement.Trees[partner].FixedFoot is not null)
+                    continue;
+                double gap = MouldGeometry.PlanDistanceSquared(foot[t], foot[partner]);
+                if (gap <= weldSquared || gap > squared)
+                    continue;
+                var middle = new Point3d(
+                    0.5 * (foot[t].X + foot[partner].X),
+                    0.5 * (foot[t].Y + foot[partner].Y),
+                    foot[t].Z);
+                foot[t] = middle;
+                foot[partner] = middle;
+                merged++;
             }
-            for (int i = 0; i < n; i++)
-                footIndex[i] = clusterNode[Find(i)];
+
+            var footIndex = new int[n];
+            for (int t = 0; t < n; t++)
+            {
+                footIndex[t] = -1;
+                for (int u = 0; u < t; u++)
+                {
+                    if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= weldSquared &&
+                        Math.Abs(foot[t].Z - foot[u].Z) <= 1.0e-9)
+                    {
+                        footIndex[t] = footIndex[u];
+                        break;
+                    }
+                }
+                if (footIndex[t] < 0)
+                {
+                    levelNodes.Add(foot[t]);
+                    footIndex[t] = levelNodes.Count - 1;
+                }
+            }
+
+            // What stands close but apart, counted once per pair of feet.
+            // The feet are the only nodes in the level so far, which is why
+            // this runs here and not after the members are built.
+            close = 0;
+            for (int i = 0; i < levelNodes.Count; i++)
+            {
+                for (int j = i + 1; j < levelNodes.Count; j++)
+                {
+                    if (MouldGeometry.PlanDistanceSquared(levelNodes[i], levelNodes[j]) <= squared)
+                        close++;
+                }
+            }
             return footIndex;
         }
 
@@ -819,7 +1464,7 @@ namespace Ananke.COMPAS.Native.Components
         ///
         /// It used to be more and less than that at once. It also refused a
         /// sample within the clearance of any net EDGE the member did not end
-        /// on, a rule the spec does not state, which could refuse a Ground
+        /// on, a rule the spec does not state, which could refuse a Type
         /// level the spec accepts; and it narrowed the height test to
         /// vertices within half a median plan edge, which let a member rise
         /// above the net anywhere away from a vertex, and skipped the
@@ -828,7 +1473,7 @@ namespace Ananke.COMPAS.Native.Components
         ///
         /// ANCHORS are still left out, and that is a deliberate, measured
         /// deviation from the spec's "nearest net vertex": an anchor sits ON
-        /// the ground, and spec 3.5 puts every Ground 0 foot out along the
+        /// the ground, and spec 3.5 puts every Type 0 foot out along the
         /// AimFrom ray, which on a one-sided bay lands beside or beyond an
         /// anchor. Counting anchors would make the nearest vertex to that
         /// trunk's lower samples an anchor at ground level and refuse the
