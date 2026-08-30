@@ -1063,21 +1063,11 @@ namespace Ananke.COMPAS.Native.Components
                 "reciprocal force diagram, and mapped " +
                 "load/reaction/residual vectors, with one style preset, " +
                 "auto-scaling, and Elements/Metric filters. The shaded " +
-                "thrust mesh is TNA Solve's preview; here it is data only.",
+                "thrust mesh is TNA Solve's preview; the geometry itself " +
+                "is Deconstruct's.",
                 ComponentCategories.Visualise,
                 "graphic_diagram_display")
         {
-            // This component draws element lines only. Grasshopper's
-            // default red preview material on the geometry outputs is what
-            // made the thrust surface clash with every element colour, so
-            // all geometry outputs stay hidden; their data remains
-            // available to every downstream component, and the shaded
-            // mesh preview lives on TNA Solve alone.
-            for (int index = 0; index <= 4; index++)
-            {
-                if (Params.Output[index] is IGH_PreviewObject preview)
-                    preview.Hidden = true;
-            }
         }
 
         public override Guid ComponentGuid =>
@@ -1109,9 +1099,9 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddTextParameter(
                 "Elements",
                 "E",
-                "Which streams to build and draw: thrust, force, loads, " +
-                "reactions, residuals. Residuals draw in the viewport " +
-                "only; every other selected stream also feeds its output.",
+                "Which streams to draw: thrust, force, loads, reactions, " +
+                "residuals. Nothing here is emitted; wire Deconstruct for " +
+                "the lines and the vectors themselves.",
                 GH_ParamAccess.list);
             parameters[2].Optional = true;
             parameters.AddTextParameter(
@@ -1149,43 +1139,13 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
-            parameters.AddMeshParameter(
-                "Thrust Mesh",
-                "TM",
-                "Resolved funicular mesh. Empty unless Elements includes " +
-                "thrust on a TNA result.",
-                GH_ParamAccess.item);
-            parameters.AddLineParameter(
-                "Thrust Lines",
-                "TL",
-                "Spatial thrust-network edges (or FD member axes). Empty " +
-                "unless Elements includes thrust.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
-                "Force Lines",
-                "FCL",
-                "Reciprocal force-diagram edges, laid out beside the form " +
-                "diagram. Empty unless Elements includes force on a TNA " +
-                "result.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
-                "Load Lines",
-                "LL",
-                "Scaled applied-load vectors. Empty unless Elements " +
-                "includes loads.",
-                GH_ParamAccess.list);
-            parameters.AddLineParameter(
-                "Reaction Lines",
-                "RL",
-                "Scaled support-reaction vectors. Empty unless Elements " +
-                "includes reactions.",
-                GH_ParamAccess.list);
-            parameters.AddTextParameter(
-                "Report",
-                "Report",
-                "Auto-scale choices, drawn-element counts, and any " +
-                "unavailable elements or metrics.",
-                GH_ParamAccess.item);
+            // None. Display draws; the data it used to hand back is
+            // Deconstruct's (Member Lines, Form Lines, the load and
+            // reaction points and vectors) and Diagnose's (the report),
+            // branched and ordered the way every other reader of a Result
+            // gets it. Two components emitting the same lines under two
+            // names is two things to keep in step and one of them to be
+            // wrong.
         }
 
         protected override void BeforeSolveInstance()
@@ -1330,7 +1290,6 @@ namespace Ananke.COMPAS.Native.Components
                 var loadLines = new List<Line>();
                 var reactionLines = new List<Line>();
                 var residualLines = new List<Line>();
-                Mesh thrustMesh = new();
 
                 if (isTna)
                 {
@@ -1340,7 +1299,6 @@ namespace Ananke.COMPAS.Native.Components
 
                     if (elements.Contains("thrust"))
                     {
-                        thrustMesh = ThrustMesh(result);
                         foreach (TnaEdgeStateDto state in states)
                         {
                             thrustEdges.Add(new MemberEdge(
@@ -1507,12 +1465,6 @@ namespace Ananke.COMPAS.Native.Components
                     $"reactions {reactionLines.Count}, residuals " +
                     $"{residualLines.Count}.");
 
-                data.SetData(0, thrustMesh);
-                data.SetDataList(1, thrustEdges.Select(edge => edge.Line));
-                data.SetDataList(2, forceEdges.Select(edge => edge.Line));
-                data.SetDataList(3, loadLines);
-                data.SetDataList(4, reactionLines);
-                data.SetData(5, string.Join(Environment.NewLine, report));
                 Message = $"{result.Solver.ToUpperInvariant()} · {preset}";
             }
             catch (Exception error)
@@ -1614,99 +1566,6 @@ namespace Ananke.COMPAS.Native.Components
                 StringComparison.OrdinalIgnoreCase);
             bool tension = positiveTension ? force > 0.0 : force < 0.0;
             return tension ? "tension" : "compression";
-        }
-
-        /// <summary>Copied from <c>DeconstructComponent.ThrustMesh</c>.</summary>
-        private static Mesh ThrustMesh(ResultDto result)
-        {
-            EquilibriumResultDto equilibrium = result.Equilibrium!;
-            TnaDiagramGraphDto formGraph = result.FormGraph!;
-            TnaMappingsDto mappings = result.Mappings!;
-
-            Dictionary<int, int> formToEquilibrium = mappings
-                .SourceVertexToFormVertex
-                .Where(item =>
-                    item.FormVertexId.HasValue &&
-                    item.EquilibriumVertexId.HasValue)
-                .GroupBy(item => item.FormVertexId!.Value)
-                .ToDictionary(
-                    group => group.Key,
-                    group =>
-                    {
-                        int[] equilibriumIds = group
-                            .Select(item => item.EquilibriumVertexId!.Value)
-                            .Distinct()
-                            .ToArray();
-                        if (equilibriumIds.Length != 1)
-                        {
-                            throw new InvalidOperationException(
-                                $"Form vertex {group.Key} maps to multiple " +
-                                "equilibrium vertices.");
-                        }
-                        return equilibriumIds[0];
-                    });
-
-            var mesh = new Mesh();
-            var formToMesh = new Dictionary<int, int>();
-            foreach (TnaGraphVertexDto vertex in
-                     formGraph.Vertices.OrderBy(item => item.Id))
-            {
-                if (!formToEquilibrium.TryGetValue(
-                        vertex.Id,
-                        out int equilibriumId))
-                {
-                    throw new InvalidOperationException(
-                        $"Form vertex {vertex.Id} has no explicit " +
-                        "equilibrium vertex mapping.");
-                }
-                if (equilibriumId < 0 ||
-                    equilibriumId >= equilibrium.Vertices.Count)
-                {
-                    throw new InvalidOperationException(
-                        $"Form vertex {vertex.Id} has no equilibrium vertex.");
-                }
-                formToMesh[vertex.Id] = mesh.Vertices.Add(
-                    Point(equilibrium.Vertices[equilibriumId]));
-            }
-
-            foreach (TnaGraphFaceDto face in
-                     formGraph.Faces.OrderBy(item => item.Id))
-            {
-                int[] vertices = face.Vertices
-                    .Select(id => formToMesh.TryGetValue(id, out int meshId)
-                        ? meshId
-                        : throw new InvalidOperationException(
-                            $"Form face {face.Id} references unknown " +
-                            $"vertex {id}."))
-                    .ToArray();
-                if (vertices.Length == 3)
-                {
-                    mesh.Faces.AddFace(vertices[0], vertices[1], vertices[2]);
-                }
-                else if (vertices.Length == 4)
-                {
-                    mesh.Faces.AddFace(
-                        vertices[0],
-                        vertices[1],
-                        vertices[2],
-                        vertices[3]);
-                }
-                else
-                {
-                    for (int index = 1; index < vertices.Length - 1; index++)
-                    {
-                        mesh.Faces.AddFace(
-                            vertices[0],
-                            vertices[index],
-                            vertices[index + 1]);
-                    }
-                }
-            }
-
-            if (mesh.Faces.Count > 0)
-                mesh.Normals.ComputeNormals();
-            mesh.Compact();
-            return mesh;
         }
 
         /// <summary>

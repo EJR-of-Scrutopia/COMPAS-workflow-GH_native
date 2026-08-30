@@ -89,6 +89,20 @@ internal static class Program
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[] { "Result", "Course Height" },
                     new[] { "Face Polylines", "Face Courses" }),
+                // Display DRAWS. Its six outputs went to Deconstruct (the
+                // member and form lines, the load and reaction points and
+                // vectors) and to Diagnose (the report), which carry them
+                // already; what is left here is the drawing, so the pin is
+                // seven inputs and NO outputs. RequiredPreviewComponents and
+                // NativeVisibilityGuardComponents keep it, because the
+                // viewport is now the whole of it.
+                ["Ananke.COMPAS.Native.Components.DisplayComponent"] = (
+                    new[]
+                    {
+                        "Result", "Style", "Elements", "Metric", "Weight",
+                        "Vector Scale", "Gap"
+                    },
+                    Array.Empty<string>()),
                 // Monitor's ports are pinned for the same reason Deconstruct's
                 // are: every number tree here is READ AGAINST a Deconstruct
                 // geometry tree by slot, so a renamed or reordered output is a
