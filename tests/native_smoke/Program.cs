@@ -249,6 +249,41 @@ internal static class Program
                     new[] { "M", "K", "S", "B", "D" })
             };
 
+    /// <summary>
+    /// The icon family: every component's key and the two letters on its
+    /// badge, as spec section 6 fixes them. The CATEGORY is not pinned here
+    /// on purpose: it is read off the component's own registered
+    /// subcategory, so the map and the panels cannot disagree without one of
+    /// them being wrong about a component that exists.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string Key, string Label)>
+        NativeIconEntries = new Dictionary<string, (string Key, string Label)>(
+            StringComparer.Ordinal)
+        {
+            ["Ananke.COMPAS.Native.Components.PatternComponent"] = ("tna_pattern", "PA"),
+            ["Ananke.COMPAS.Native.Components.SupportsComponent"] = ("tna_supports", "SU"),
+            ["Ananke.COMPAS.Native.Components.LoadsComponent"] = ("load_case", "LO"),
+            ["Ananke.COMPAS.Native.Components.TnaRelaxComponent"] = ("tna_relax", "RX"),
+            ["Ananke.COMPAS.Native.Components.TnaSolveComponent"] = ("tna_solve", "TS"),
+            ["Ananke.COMPAS.Native.Components.TnaSolveAlgebraicComponent"] =
+                ("tna_solve_algebraic", "TA"),
+            ["Ananke.COMPAS.Native.Components.FdSolveComponent"] = ("fd_solve", "FD"),
+            ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = ("column_finder", "CO"),
+            ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = ("mould_animate", "AN"),
+            ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = ("result_breakdown", "DE"),
+            ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = ("stress_analysis", "MO"),
+            ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
+            ["Ananke.COMPAS.Native.Components.DiagnoseComponent"] = ("diagnose", "DG"),
+            ["Ananke.COMPAS.Native.Components.FrameComponent"] = ("frame", "FR"),
+            ["Ananke.COMPAS.Native.Components.StyleComponent"] = ("diagram_style", "ST"),
+            ["Ananke.COMPAS.Native.Components.DisplayComponent"] =
+                ("graphic_diagram_display", "DI"),
+            ["Ananke.COMPAS.Native.Components.ExportComponent"] = ("export", "EX"),
+            ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = ("import_pieces", "IP"),
+            ["Ananke.COMPAS.Native.Components.ArmadilloDualComponent"] = ("armadillo_dual", "AD"),
+            ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
+        };
+
     public static int Main(string[] args)
     {
         try
@@ -1016,6 +1051,22 @@ internal static class Program
                 + $"{DescribeException(exception)}");
         }
 
+        try
+        {
+            ValidateIconMap(plugin, componentTypes, pluginPath);
+            Console.WriteLine(
+                "PASS  Icon family: every one of the twenty components has "
+                + "exactly one icon-map entry, keyed the way the loader reads "
+                + "the resource, labelled the two letters the spec gives, "
+                + "categorised as the panel the component actually registers "
+                + "under, and drawn in that category's own fill, sampled off "
+                + "the embedded badge at (12, 20).");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Icon family: {DescribeException(exception)}");
+        }
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -1495,7 +1546,13 @@ internal static class Program
         }
     }
 
-    private static void ValidateIcon(object instance, Type componentType)
+    /// <summary>
+    /// The most-derived Icon property, which is where a component's badge
+    /// comes from: <c>PluginResources.Icon</c> returns null for a resource
+    /// that is not embedded, and a null icon is a component with no badge on
+    /// the toolbar at all.
+    /// </summary>
+    private static object RequireIconBitmap(object instance, Type componentType)
     {
         PropertyInfo? iconProperty = null;
         for (Type? current = componentType;
@@ -1508,9 +1565,14 @@ internal static class Program
                 BindingFlags.NonPublic |
                 BindingFlags.DeclaredOnly);
         }
-        object icon = iconProperty?.GetValue(instance)
+        return iconProperty?.GetValue(instance)
             ?? throw new InvalidOperationException(
                 "Component icon is missing.");
+    }
+
+    private static void ValidateIcon(object instance, Type componentType)
+    {
+        object icon = RequireIconBitmap(instance, componentType);
         int width = Convert.ToInt32(
             icon.GetType().GetProperty("Width")?.GetValue(icon));
         int height = Convert.ToInt32(
@@ -7529,6 +7591,241 @@ internal static class Program
   ""schemaVersion"": ""0.2"",
   ""kind"": ""Relaxed""
 }";
+
+    /// <summary>
+    /// The icon family, checked against the components themselves.
+    ///
+    /// Five of the twenty badges used to be drawn by a different hand, in a
+    /// different shape, and the map that owns the rest had sixteen entries
+    /// naming components that had been deleted while naming none of the five
+    /// that existed. Nothing measured any of that, because nothing connected
+    /// the map to the assembly. This does: every component's icon key has
+    /// exactly one entry, its category IS the panel the component registers
+    /// under, its label is the two letters the spec fixes, its filename is
+    /// the key (which is what PluginResources.Icon reads), and the badge's
+    /// own pixels carry the category's fill.
+    ///
+    /// The fill is sampled at (12, 20). The badge is a rounded rectangle
+    /// filled edge to edge under a lighter top band of four rows; the label
+    /// is two five-by-seven glyphs at scale two, centred, so it occupies
+    /// rows 5 to 18 and a shadow row 19, and columns 1 to 22 with a
+    /// two-pixel gap between the glyphs. Row 20 is below all of it and
+    /// inside the rounded box, so it is the fill and nothing else.
+    /// </summary>
+    private static void ValidateIconMap(
+        Assembly plugin,
+        Type[] componentTypes,
+        string pluginPath)
+    {
+        string mapPath = FindIconMap(pluginPath);
+        JsonNode map = JsonNode.Parse(File.ReadAllText(mapPath))
+            ?? throw new InvalidOperationException(
+                $"{mapPath} did not parse as JSON.");
+        JsonObject categories = map["categories"]?.AsObject()
+            ?? throw new InvalidOperationException(
+                "icon-map.json carries no categories.");
+        JsonArray native = map["native_components"]?.AsArray()
+            ?? throw new InvalidOperationException(
+                "icon-map.json carries no native_components.");
+
+        var byKey = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
+        foreach (JsonNode? entry in native)
+        {
+            JsonNode row = entry
+                ?? throw new InvalidOperationException(
+                    "icon-map.json has a null native_components entry.");
+            string key = (string?)row["key"]
+                ?? throw new InvalidOperationException(
+                    "A native_components entry carries no key.");
+            if (!byKey.TryAdd(key, row))
+            {
+                throw new InvalidOperationException(
+                    $"'{key}' has more than one native_components entry, so "
+                    + "two entries own one PNG and the last generated wins.");
+            }
+        }
+        if (byKey.Count != componentTypes.Length)
+        {
+            throw new InvalidOperationException(
+                $"{componentTypes.Length} components and {byKey.Count} icons: "
+                + "the family covers every component and nothing else, or a "
+                + "deleted component's badge stays embedded for ever.");
+        }
+
+        foreach (Type componentType in componentTypes)
+        {
+            string typeName = componentType.FullName ?? componentType.Name;
+            if (!NativeIconEntries.TryGetValue(
+                    typeName, out (string Key, string Label) expected))
+            {
+                throw new InvalidOperationException(
+                    $"{typeName} has no pinned icon key and label; every "
+                    + "component wears one badge from the one family.");
+            }
+            object instance = Activator.CreateInstance(componentType)
+                ?? throw new InvalidOperationException(
+                    $"Could not construct {typeName}.");
+            try
+            {
+                string key = IconKeyOf(instance, componentType);
+                if (!string.Equals(key, expected.Key, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name} asks for icon '{key}'; the "
+                        + $"family gives it '{expected.Key}'.");
+                }
+                if (!byKey.TryGetValue(key, out JsonNode? row))
+                {
+                    throw new InvalidOperationException(
+                        $"'{key}' has no native_components entry, so nothing "
+                        + "generates that badge and the component wears "
+                        + "whatever PNG happens to be lying beside the map.");
+                }
+                string label = (string?)row["label"] ?? string.Empty;
+                if (!string.Equals(label, expected.Label, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name}'s badge reads '{label}'; the "
+                        + $"spec gives it '{expected.Label}'.");
+                }
+                string filename = (string?)row["filename"] ?? string.Empty;
+                if (!string.Equals(filename, key + ".png", StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"'{key}' is drawn into '{filename}', but the loader "
+                        + $"reads the resource '{key}.png' and would find "
+                        + "nothing.");
+                }
+                string category = (string?)row["category"] ?? string.Empty;
+                string subCategory =
+                    componentType.GetProperty("SubCategory")?.GetValue(instance)
+                        as string
+                    ?? string.Empty;
+                if (!string.Equals(category, subCategory, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name} sits under '{subCategory}' and "
+                        + $"its badge is filled for '{category}': the colour "
+                        + "is the panel, so a component that moves tab and "
+                        + "keeps its fill lies about where it lives.");
+                }
+                string fill = (string?)categories[category]?["fill"]
+                    ?? throw new InvalidOperationException(
+                        $"icon-map.json has no fill for category '{category}'.");
+                (int r, int g, int b) = ParseFill(fill);
+                (int actualR, int actualG, int actualB) =
+                    BadgeFill(RequireIconBitmap(instance, componentType));
+                if (r != actualR || g != actualG || b != actualB)
+                {
+                    throw new InvalidOperationException(
+                        $"{componentType.Name}'s badge is filled "
+                        + $"#{actualR:X2}{actualG:X2}{actualB:X2} where "
+                        + $"'{category}' is {fill}: the PNG on disk is not the "
+                        + "one this map describes, so the generator has not "
+                        + "been run since the map changed.");
+                }
+            }
+            finally
+            {
+                if (instance is IDisposable disposable)
+                    disposable.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// The icon key a component names to its base constructor, which is also
+    /// the embedded resource name and so the file name. Held in a private
+    /// field on both native bases, so the walk goes up until it finds one.
+    /// </summary>
+    private static string IconKeyOf(object instance, Type componentType)
+    {
+        for (Type? current = componentType;
+             current is not null;
+             current = current.BaseType)
+        {
+            FieldInfo? field = current.GetField(
+                "_iconName",
+                BindingFlags.Instance |
+                BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly);
+            if (field is null)
+                continue;
+            return field.GetValue(instance) as string ?? string.Empty;
+        }
+        throw new InvalidOperationException(
+            $"{componentType.Name} carries no icon key; every native "
+            + "component names one to its base constructor.");
+    }
+
+    /// <summary>
+    /// The badge's own fill, read off the embedded bitmap at (12, 20).
+    /// Reflected rather than referenced, in this harness's usual manner, so
+    /// nothing here has to bind to System.Drawing at compile time.
+    /// </summary>
+    private static (int R, int G, int B) BadgeFill(object icon)
+    {
+        MethodInfo getPixel = icon.GetType().GetMethod(
+            "GetPixel", new[] { typeof(int), typeof(int) })
+            ?? throw new InvalidOperationException(
+                "The icon is not a bitmap with pixels to read.");
+        object colour = getPixel.Invoke(icon, new object[] { 12, 20 })
+            ?? throw new InvalidOperationException(
+                "GetPixel returned nothing.");
+        Type colourType = colour.GetType();
+        int Channel(string name) => Convert.ToInt32(
+            colourType.GetProperty(name)?.GetValue(colour));
+        return (Channel("R"), Channel("G"), Channel("B"));
+    }
+
+    private static (int R, int G, int B) ParseFill(string value)
+    {
+        if (value.Length != 7 || value[0] != '#')
+        {
+            throw new InvalidOperationException(
+                $"A category fill is #RRGGBB; got '{value}'.");
+        }
+        return (
+            Convert.ToInt32(value.Substring(1, 2), 16),
+            Convert.ToInt32(value.Substring(3, 2), 16),
+            Convert.ToInt32(value.Substring(5, 2), 16));
+    }
+
+    /// <summary>
+    /// plugin/icons/icon-map.json, found by walking up from the .gha under
+    /// test and then from this harness's own output directory. The map is
+    /// the generator's manifest and lives in the repository, not in the
+    /// build, so there is nothing to resolve it by but the tree.
+    /// </summary>
+    private static string FindIconMap(string pluginPath)
+    {
+        var starts = new List<string>();
+        string? beside = Path.GetDirectoryName(Path.GetFullPath(pluginPath));
+        if (beside is not null)
+            starts.Add(beside);
+        starts.Add(AppContext.BaseDirectory);
+        foreach (string start in starts)
+        {
+            for (DirectoryInfo? directory = new(start);
+                 directory is not null;
+                 directory = directory.Parent)
+            {
+                string underPlugin = Path.Combine(
+                    directory.FullName, "plugin", "icons", "icon-map.json");
+                if (File.Exists(underPlugin))
+                    return underPlugin;
+                string alongside = Path.Combine(
+                    directory.FullName, "icons", "icon-map.json");
+                if (File.Exists(alongside))
+                    return alongside;
+            }
+        }
+        throw new InvalidOperationException(
+            "plugin/icons/icon-map.json was not found above " +
+            string.Join(" or ", starts) +
+            "; the icon family is checked against that map, so it has to be "
+            + "findable from the plugin under test.");
+    }
 
     /// <summary>
     /// Constructs the three spine contracts (<c>AnchoredPatternDto</c>,
