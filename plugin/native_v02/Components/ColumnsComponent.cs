@@ -174,8 +174,12 @@ namespace Ananke.COMPAS.Native.Components
                     + "Auto, which builds every level and places the shortest "
                     + "load path among those whose members do not collide. "
                     + "The feet are mirrored about each span's midpoint and "
-                    + "shared across every span that holds the same notches, "
-                    + "so the principal lines agree with one another.",
+                    + "shared across every span that holds the same NUMBER of "
+                    + "notches and whose chord is within a tenth of its length, "
+                    + "so the principal lines agree with one another. A span "
+                    + "whose free notches are not symmetric about its midpoint, "
+                    + "which is what a crossing or a free bar end leaves behind, "
+                    + "is placed unmirrored.",
                 GH_ParamAccess.item,
                 0);
             parameters[1].Optional = true;
@@ -219,9 +223,11 @@ namespace Ananke.COMPAS.Native.Components
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
                     $"Type {type} is above the {ColumnPlacement.MaxGround} feet "
-                        + "per span this machine places; clamped. An old Ground "
-                        + "or Type value list goes to 6; place the Type list "
-                        + "from the component menu.");
+                        + "per span this machine places; clamped. A seven-item "
+                        + "Type value list from before the two-slider rework goes "
+                        + "to 6; delete it, then place the Type list from the "
+                        + "component menu. A list already wired is never "
+                        + "replaced.");
                 type = ColumnPlacement.MaxGround;
             }
             if (type < -1)
@@ -394,16 +400,33 @@ namespace Ananke.COMPAS.Native.Components
                         GH_RuntimeMessageLevel.Warning,
                         $"{built.Collisions} member(s) come within the clearance "
                             + "of another member or of the net; placed anyway so "
-                            + "the chain keeps running. Diagnose says where.");
+                            + "the chain keeps running. Diagnose counts them and "
+                            + "names the lever.");
                 }
+                int standing = placement.Trees.Count(t => !t.Ring);
+                bool nothingGathered = built.Peeled > 0 && built.Peeled >= standing;
                 if (built.Peeled > 0)
                 {
                     AddRuntimeMessage(
                         GH_RuntimeMessageLevel.Remark,
-                        $"{built.Peeled} trunk(s) stand on their own feet: a "
-                            + "trunk from the shared foot would lean past 60 "
-                            + "degrees. The level itself is placed.");
+                        nothingGathered
+                            ? "nothing gathered: every trunk to the shared feet "
+                                + "would lean past 60 degrees; the columns stand "
+                                + "as Type 0."
+                            : $"{built.Peeled} trunk(s) stand on their own feet: a "
+                                + "trunk from the shared foot would lean past 60 "
+                                + "degrees. The level itself is placed.");
                 }
+
+                // What the canvas can read without opening Diagnose. This is
+                // the branch that made the slider mean something, so the
+                // slider's answer belongs on the component.
+                Message = (type < 0 ? "Auto: " : string.Empty)
+                    + $"Type {placement.GroundPlaced}, {Count(built.Feet.Count, "foot", "feet")}"
+                    + (built.Peeled > 0 ? $", {built.Peeled} peeled" : string.Empty)
+                    + (placement.AsymmetricSpans > 0
+                        ? $", unmirrored {placement.AsymmetricSpans}"
+                        : string.Empty);
 
                 Point3d[] netNodes = nodes.ToArray();
                 double weld = 1.0e-6 * Math.Max(
@@ -444,6 +467,14 @@ namespace Ananke.COMPAS.Native.Components
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Error, ex.Message);
             }
         }
+
+        /// <summary>
+        /// A count and its noun, so a diagnostic reads "1 foot" and not
+        /// "1 feet". Type 1 and one family are the ordinary settings, so the
+        /// plural was the one an author met most often.
+        /// </summary>
+        private static string Count(int count, string one, string many) =>
+            count.ToString(CultureInfo.InvariantCulture) + " " + (count == 1 ? one : many);
 
         private static string Inv(double value, string format) =>
             value.ToString(format, CultureInfo.InvariantCulture);
@@ -527,14 +558,27 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             string asked = groundAsked < 0 ? "Auto" : groundAsked.ToString(CultureInfo.InvariantCulture);
+            int standing = placement.Trees.Count(t => !t.Ring);
+            // Every trunk peeled is the state this branch was written to make
+            // visible: the level is placed, and the geometry that comes back
+            // is Type 0's exactly. Saying the trees gathered would be saying
+            // the opposite of what the author is looking at.
+            bool nothingGathered = built.Peeled > 0 && built.Peeled >= standing;
             string gathered = placement.GroundPlaced == 0
-                ? $"every tree stands on its own foot; {built.Feet.Count} feet"
-                : $"each span's trees gather onto up to {placement.GroundPlaced} feet "
-                    + $"about its midpoint; {built.Feet.Count} feet built";
-            d.Add(ResultDiagnostics.Entry(S, "columns.type",
-                built.Peeled > 0 ? "warning" : "info",
+                ? $"every tree stands on its own foot; {Count(built.Feet.Count, "foot", "feet")}"
+                : nothingGathered
+                    ? "nothing gathered: every trunk to the shared feet would lean "
+                        + $"past {cap:0} degrees; the columns stand as Type 0; "
+                        + $"{Count(built.Feet.Count, "foot", "feet")}"
+                    : $"each span's trees gather onto up to "
+                        + $"{Count(placement.GroundPlaced, "foot", "feet")} about its "
+                        + $"midpoint; {Count(built.Feet.Count, "foot", "feet")} built";
+            // A peel is not a fault. It is the rule working: the level stands
+            // and the trunk that could not reach the shared foot stands on its
+            // own, which is what the refusal used to prevent.
+            d.Add(ResultDiagnostics.Entry(S, "columns.type", "info",
                 $"Type asked {asked}, placed {placement.GroundPlaced}: {gathered}"
-                    + (built.Peeled > 0
+                    + (built.Peeled > 0 && !nothingGathered
                         ? $"; {built.Peeled} trunk(s) stand on their own feet because "
                             + $"a trunk to the shared foot would lean past {cap:0} degrees"
                         : string.Empty)
@@ -546,29 +590,33 @@ namespace Ananke.COMPAS.Native.Components
                     ("peeled", built.Peeled.ToString(CultureInfo.InvariantCulture)),
                     ("feet", built.Feet.Count.ToString(CultureInfo.InvariantCulture)))));
 
-            // Placement.Families groups only the spans that hold at least one
-            // tree (a span whose only free notches were already claimed by an
-            // earlier crossing or by the ring tree holds none), so the count
-            // reported here is spans WITH TREES, not placement.Spans.Count:
-            // saying "S spans in K families" would claim every span joined a
-            // family when some hold no tree to symmetrise at all.
-            int spansWithTrees = placement.Trees
-                .Where(t => !t.Ring)
-                .Select(t => t.Span)
-                .Distinct()
-                .Count();
+            // Spans WITH TREES, not placement.Spans.Count: a span whose only
+            // free notches were already claimed by a crossing or by the ring
+            // tree holds none, and saying "S spans in K families" would claim
+            // every span joined a family when some hold no tree to symmetrise
+            // at all. The engine counts them as it walks the spans, so this
+            // reads that count rather than deriving it a second way.
+            int spansWithTrees = placement.SpansWithTrees;
             d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "info",
-                $"{spansWithTrees} spans with trees in {placement.Families} families; "
+                $"{Count(spansWithTrees, "span", "spans")} with trees in "
+                    + $"{Count(placement.Families, "family", "families")}; "
                     + "feet mirrored about each span's midpoint and shared across "
                     + "each family; the largest aim moved "
                     + $"{placement.AsymmetryRemoved:0.##} degrees; "
-                    + $"{placement.CentreTrees} centre tree(s) plumb.",
+                    + $"{placement.CentreTrees} centre tree(s) standing in the "
+                    + "mirror plane"
+                    + (placement.AsymmetricSpans > 0
+                        ? $"; {Count(placement.AsymmetricSpans, "span", "spans")} placed "
+                            + "unmirrored: a crossing or a free end breaks their symmetry"
+                        : string.Empty)
+                    + ".",
                 placement.AsymmetryRemoved, unit: "degrees",
                 context: ResultDiagnostics.Context(
                     ("spans", spansWithTrees.ToString(CultureInfo.InvariantCulture)),
                     ("families", placement.Families.ToString(CultureInfo.InvariantCulture)),
                     ("moved", Inv(placement.AsymmetryRemoved, "0.##")),
-                    ("centres", placement.CentreTrees.ToString(CultureInfo.InvariantCulture)))));
+                    ("centres", placement.CentreTrees.ToString(CultureInfo.InvariantCulture)),
+                    ("unmirrored", placement.AsymmetricSpans.ToString(CultureInfo.InvariantCulture)))));
 
             var scored = placement.Tried
                 .OrderByDescending(t => t.Ground)
@@ -587,18 +635,19 @@ namespace Ananke.COMPAS.Native.Components
             if (built.FeetMerged > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.feet_merged", "info",
-                    $"{built.FeetMerged} MIRRORED PAIR(S) of feet lay within the "
-                        + "clearance of each other and stand on one foot at their "
-                        + "span's midpoint. Only a mirrored pair merges; any other "
-                        + "two feet stay two, however close.",
+                    $"{Count(built.FeetMerged, "MIRRORED PAIR", "MIRRORED PAIRS")} of "
+                        + "feet lay within the clearance of each other and stand on "
+                        + "one foot at the mean of the two, in their span's mirror "
+                        + "plane. Only a mirrored pair merges; any other two feet "
+                        + "stay two, however close.",
                     built.FeetMerged, unit: "feet"));
             }
             if (built.FeetClose > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.feet_close", "warning",
-                    $"{built.FeetClose} pairs of feet closer than the clearance "
-                        + "stand separately; raise Type to gather them, or space "
-                        + "the principal lines.",
+                    $"{Count(built.FeetClose, "pair", "pairs")} of feet closer than "
+                        + "the clearance stand separately; raise Type to gather them, "
+                        + "or space the principal lines.",
                     built.FeetClose, unit: "pairs"));
             }
             if (built.WorstAlignment > ColumnPlacement.AlignmentDegrees)
