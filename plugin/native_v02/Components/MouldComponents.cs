@@ -2705,6 +2705,13 @@ namespace Ananke.COMPAS.Native.Components
             MouldColumnsDto block,
             MouldGeometry.ColumnTree tree)
         {
+            // A memberless tree draws nothing in ColumnLines, which returns
+            // before ever reaching this call; answering no groups keeps
+            // Supports and Forces on that same nothing instead of letting a
+            // hand-built Trees of empty lists pass the coverage test
+            // vacuously and hand them phantom empty branches.
+            if (tree.Members.Count == 0)
+                return new List<List<int>>();
             var listed = new HashSet<int>(block.Trees.SelectMany(t => t));
             bool blockCovers =
                 block.Trees.Count > 0 &&

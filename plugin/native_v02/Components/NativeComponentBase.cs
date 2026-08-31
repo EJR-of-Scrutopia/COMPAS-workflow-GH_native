@@ -378,10 +378,16 @@ internal static class ParameterIdentity
         // port it left and only new empty ports appeared. Frame gaining
         // Anchor Lines is this case, and telling its author to check
         // every wire would be telling them the append story is false.
+        // And only when every archived name was READABLE: an archive with
+        // no names would make every registered port look appended, and the
+        // contract above is to degrade to the count comparison on such an
+        // archive, not to invent an append story nothing supports.
         bool pureAppend =
             removed.Length == 0 &&
             added.Length > 0 &&
             renamed is null &&
+            archivedInputs.All(name => name is not null) &&
+            archivedOutputs.All(name => name is not null) &&
             archivedInputs.Count <= registeredInputs.Count &&
             archivedOutputs.Count <= registeredOutputs.Count;
         if (pureAppend)
