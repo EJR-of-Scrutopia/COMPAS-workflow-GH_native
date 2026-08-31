@@ -652,6 +652,38 @@ internal static class Program
 
         try
         {
+            ValidateSkinHexagonal(plugin);
+            Console.WriteLine(
+                "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
+                "pinned at 68 cells with 28 clipped rim cells KEPT, an " +
+                "interior cell carries the stated six vertex offsets in " +
+                "order, lattice neighbours share mapped corners, course " +
+                "indices follow the centre bands on unclipped and " +
+                "clipped cells alike, and both fixtures' plan " +
+                "projections are disjoint and simple.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin hexagonal engine: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinGuards(plugin);
+            Console.WriteLine(
+                "PASS  Skin floors: S and Course Height below 1 mm, NaN " +
+                "included, are refused by the negated-comparison guard " +
+                "in both engines.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin floors: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -8884,6 +8916,303 @@ internal static class Program
         RequireDisjointSimplePlans(
             domeCells.Select(cell => cell.Outline).ToArray(),
             "courses/dome");
+    }
+
+    /// <summary>
+    /// The hexagonal engine (spec section 6), measured on the barrel,
+    /// where the front strip's setout maps to x = 3 + u and z = z, so
+    /// setout coordinates read straight off the geometry. The kept and
+    /// clipped counts are pinned at 68 and 28, hand-derived from the
+    /// lattice: per chart, even columns i in {0, +-2, +-4, +-6} carry 2
+    /// full-height cells each (14, none clipped), odd columns i in
+    /// {+-1, +-3, +-5} carry 3 each of which the top and bottom are
+    /// z-clipped (18 cells, 12 clipped), and the rim columns i = +-7
+    /// carry 1 u-clipped cell each; 34 cells and 14 clipped per chart,
+    /// two charts. Every lattice site with a vertex strictly inside the
+    /// chart appears: none dropped. Course indices are asserted on
+    /// UNCLIPPED and CLIPPED cells alike, under the engine's stated
+    /// centre rule (the Task 3 centre-for-centroid note): the clipped
+    /// population splits 12 bottom-clipped in course 0, 12 top-clipped
+    /// in course 3 and 4 u-clipped rim cells in course 2, classified
+    /// off each outline's own height range.
+    /// </summary>
+    private static void ValidateSkinHexagonal(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrelNet = Activator.CreateInstance(
+            netType, new object[] { barrelVertices, barrelFaces })!;
+        object generated = hexagonal.Invoke(
+            null, new object[] { barrelNet, 0.6, 0.5 })!;
+        var cells = SkinCells(generated);
+
+        if (cells.Length != 68)
+        {
+            throw new InvalidOperationException(
+                "Every lattice site with a vertex strictly inside a " +
+                "chart is a cell, clipped rim cells KEPT: 34 per chart, " +
+                $"68 in all; got {cells.Length}.");
+        }
+        int clipped = cells.Count(cell => cell.Clipped);
+        if (clipped != 28)
+        {
+            throw new InvalidOperationException(
+                "The rim is clipped, not dropped: 14 clipped cells per " +
+                $"chart, 28 in all; got {clipped}.");
+        }
+
+        // ---- one interior cell, corner by corner: column i = 1 of the
+        // front chart, centre (0.45, 1.0). Its six corners in (x, z),
+        // x = 3 + u on this fixture, in outline order.
+        (double X, double Z)[] corners =
+        {
+            (3.3, 0.5), (3.6, 0.5), (3.75, 1.0),
+            (3.6, 1.5), (3.3, 1.5), (3.15, 1.0)
+        };
+        var interior = cells.Where(cell =>
+                !cell.Clipped &&
+                cell.Course == 2 &&
+                Math.Abs(cell.U0 - 0.15) < 1.0e-9 &&
+                Math.Abs(cell.U1 - 0.75) < 1.0e-9 &&
+                PlanCentroidY(cell.Outline) < 2.0)
+            .ToArray();
+        if (interior.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "Exactly one unclipped front-chart cell spans " +
+                "[0.15, 0.75] in course 2 (the column-1 interior " +
+                $"hexagon); got {interior.Length}.");
+        }
+        double[][] outline = interior[0].Outline;
+        var where = new int[corners.Length];
+        for (int c = 0; c < corners.Length; c++)
+        {
+            where[c] = Array.FindIndex(outline, point =>
+                Math.Abs(point[0] - corners[c].X) < 1.0e-6 &&
+                Math.Abs(point[2] - corners[c].Z) < 1.0e-6);
+            if (where[c] < 0)
+            {
+                throw new InvalidOperationException(
+                    "An interior cell is six-sided with the stated " +
+                    "vertex offsets (S/4 and S/2 across, CH up); " +
+                    $"corner ({corners[c].X}, {corners[c].Z}) is not " +
+                    "in the outline.");
+            }
+            if (c > 0 && where[c] <= where[c - 1])
+            {
+                throw new InvalidOperationException(
+                    "The six corners appear in outline order: bottom " +
+                    "edge, east point, top edge back, west point.");
+            }
+        }
+
+        // ---- lattice neighbours share edges: the column-2 cell one
+        // translation (0.75 S, CH) away shares two corners with it,
+        // mapped to the same 3D points.
+        var neighbour = cells.Where(cell =>
+                cell.Course == 3 &&
+                Math.Abs(cell.U0 - 0.6) < 1.0e-9 &&
+                PlanCentroidY(cell.Outline) < 2.0)
+            .ToArray();
+        if (neighbour.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "The (0.75 S, CH) neighbour of the interior cell " +
+                "exists once, spanning [0.6, 1.2] in course 3; got " +
+                $"{neighbour.Length}.");
+        }
+        foreach ((double x, double z) in
+                 new[] { (3.75, 1.0), (3.6, 1.5) })
+        {
+            bool inFirst = outline.Any(point =>
+                Math.Abs(point[0] - x) < 1.0e-9 &&
+                Math.Abs(point[2] - z) < 1.0e-9);
+            bool inSecond = neighbour[0].Outline.Any(point =>
+                Math.Abs(point[0] - x) < 1.0e-9 &&
+                Math.Abs(point[2] - z) < 1.0e-9);
+            if (!inFirst || !inSecond)
+            {
+                throw new InvalidOperationException(
+                    "Lattice neighbours SHARE their edge: the corner " +
+                    $"({x}, {z}) must appear in both outlines, mapped " +
+                    "to the same point.");
+            }
+        }
+
+        // ---- course indices follow the centre bands. An unclipped
+        // cell's outline mean z is its lattice centre height, give or
+        // take the epsilon the extreme traces are pulled inside the
+        // surface by (about 2e-6 here), so the banding slack is 1e-4:
+        // far above that pull, far below the 0.25 gap to the next band.
+        foreach (var cell in cells.Where(cell => !cell.Clipped))
+        {
+            double meanZ = cell.Outline.Average(point => point[2]);
+            int band = Math.Min(3, Math.Max(0,
+                (int)Math.Floor(meanZ / 0.5 + 1.0e-4)));
+            if (cell.Course != band)
+            {
+                throw new InvalidOperationException(
+                    "The course index is the band holding the cell's " +
+                    $"centre height; a cell centred at z {meanZ:F3} " +
+                    $"carries course {cell.Course}, not {band}.");
+            }
+        }
+
+        // ---- course indices on the CLIPPED cells, the only ones where
+        // the engine's centre rule and the spec's centroid wording could
+        // diverge. On this fixture the clamped lattice centres give:
+        // bottom-clipped cells (centre row 0, outline never above z
+        // 0.5) course 0; top-clipped (centre row 4, outline never below
+        // z 1.5) course 3; the u-clipped rim cells (centre row 2)
+        // course 2. 12, 12 and 4 of them across both charts.
+        int bottomClipped = 0;
+        int topClipped = 0;
+        int rimClipped = 0;
+        foreach (var cell in cells.Where(cell => cell.Clipped))
+        {
+            double maxZ = cell.Outline.Max(point => point[2]);
+            double minZ = cell.Outline.Min(point => point[2]);
+            int expected;
+            if (maxZ <= 0.5 + 1.0e-6)
+            {
+                expected = 0;
+                bottomClipped++;
+            }
+            else if (minZ >= 1.5 - 1.0e-6)
+            {
+                expected = 3;
+                topClipped++;
+            }
+            else
+            {
+                expected = 2;
+                rimClipped++;
+            }
+            if (cell.Course != expected)
+            {
+                throw new InvalidOperationException(
+                    "A clipped cell's course is the band of its " +
+                    $"clamped lattice centre: expected {expected}, got " +
+                    $"{cell.Course} (outline z {minZ:F3}..{maxZ:F3}).");
+            }
+        }
+        if (bottomClipped != 12 || topClipped != 12 || rimClipped != 4)
+        {
+            throw new InvalidOperationException(
+                "The clipped population splits 12 bottom (course 0), " +
+                "12 top (course 3) and 4 rim (course 2); got " +
+                $"{bottomClipped}, {topClipped} and {rimClipped}.");
+        }
+
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/barrel");
+        string diagnostics = (string)generated.GetType()
+            .GetProperty("Diagnostics")!.GetValue(generated)!;
+        if (!diagnostics.Contains("Pattern: hexagonal",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains("Boundary-clipped cells: 28",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Diagnostics name the pattern and count the clipped " +
+                $"cells; got '{diagnostics}'.");
+        }
+
+        // ---- the dome: closed loops. The honeycomb is cut at the
+        // meridian opposite the seam rather than wrapped (the plan's
+        // Task 3 spec-deviation note), so the plans stay disjoint. The
+        // dome's assertions are deliberately STRUCTURAL only: cells
+        // exist, clipped cells are kept, courses are in range, plans
+        // disjoint. Spec section 11's vertex-offset, neighbour-sharing
+        // and course-band bullets are measured exactly on the barrel
+        // above, where x = 3 + u reads the setout straight off the
+        // geometry; a hand-pinned dome count would re-derive the
+        // anti-seam cut the spec has not yet blessed, so the dome pins
+        // wait for the spec review to settle that rule.
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object domeNet = Activator.CreateInstance(
+            netType, new object[] { domeVertices, domeFaces })!;
+        object domeGenerated = hexagonal.Invoke(
+            null, new object[] { domeNet, 0.6, 0.5 })!;
+        var domeCells = SkinCells(domeGenerated);
+        if (domeCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The dome grows a honeycomb.");
+        }
+        if (!domeCells.Any(cell => cell.Clipped))
+        {
+            throw new InvalidOperationException(
+                "The dome's rim and anti-seam cells are CLIPPED and " +
+                "kept, not dropped.");
+        }
+        int domeCourses = (int)domeGenerated.GetType()
+            .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
+        foreach (var cell in domeCells)
+        {
+            if (cell.Outline.Length < 3 ||
+                cell.Course < 0 || cell.Course >= domeCourses)
+            {
+                throw new InvalidOperationException(
+                    "Every dome cell is a real polygon in a real " +
+                    "course band.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            domeCells.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/dome");
+    }
+
+    /// <summary>
+    /// The floors, engine level (spec section 3): S and CH refuse below
+    /// 1 mm through the negated-comparison guard, so NaN is refused too.
+    /// The component floors CH with a warning before calling; the engine
+    /// refusal is what the harness can measure.
+    /// </summary>
+    private static void ValidateSkinGuards(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+
+        void MustRefuse(MethodInfo engine, double size,
+            double courseHeight, string expectedFragment)
+        {
+            try
+            {
+                engine.Invoke(
+                    null, new object[] { net, size, courseHeight });
+            }
+            catch (TargetInvocationException wrapped)
+                when (wrapped.InnerException is ArgumentException inner &&
+                      inner.Message.Contains(
+                          expectedFragment, StringComparison.Ordinal))
+            {
+                return;
+            }
+            throw new InvalidOperationException(
+                $"{engine.Name}({size}, {courseHeight}) must refuse " +
+                $"with '{expectedFragment}'.");
+        }
+
+        MustRefuse(courses, 0.0, 0.35, "S must be greater than 1 mm");
+        MustRefuse(courses, double.NaN, 0.35,
+            "S must be greater than 1 mm");
+        MustRefuse(courses, 0.6, 0.0005,
+            "Course Height must be greater than 1 mm");
+        MustRefuse(hexagonal, -1.0, 0.35,
+            "S must be greater than 1 mm");
+        MustRefuse(hexagonal, 0.6, double.NaN,
+            "Course Height must be greater than 1 mm");
     }
 
     private static Type RequireComponentType(Assembly plugin, string typeName)
