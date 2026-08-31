@@ -62,8 +62,6 @@ The native v0.2 vertical slice contains twenty components:
                Cable/Column Capacity          -> RES + twenty number trees,
                                                  branched as Deconstruct's
                                                  and Frame's geometry
-  Skin         RES, Course Height             -> Face Polylines, Face
-                                                 Courses (Export's cells)
   Diagnose     RES                            -> Text, Source, Code,
                                                  Severity, Message, Value
   Style        Preset, Weight Scale,
@@ -82,12 +80,14 @@ The native v0.2 vertical slice contains twenty components:
                                                  warning
   Import       Path                           -> Meshes, Keys, Supports,
   Pieces                                         Base Mesh, Diagnostics
-  Armadillo    RES, S (target voussoir
-  Dual         size, m)                       -> C closed voussoir curves,
-                                                 CO course band per cell, FL
-                                                 advected flow lines, D
-                                                 diagnostics (feeds Export's
-                                                 Cells/Courses)
+  Skin         RES, Pattern (0 courses /
+               1 hexagonal / 2 force
+               aligned), S, CH               -> C cells as a tree by
+                                                 course, CO courses
+                                                 aligned, FL flow lines
+                                                 (pattern 2 only), D
+                                                 diagnostics (feeds
+                                                 Export's Cells/Courses)
 
 90 System
   Backend Health                              -> ready, packages,
@@ -119,7 +119,7 @@ Geometry -> Pattern -> Supports -> Loads = Problem
 Problem -> TNA Relax -> TNA Solve -> Result
 Problem -> FD Solve ------------------> Result (same type)
 Result -> Columns -> Animate -> Result (carrying its Mould block)
-Result -> Frame / Deconstruct / Monitor / Skin / Diagnose / Display / Export
+Result -> Frame / Deconstruct / Monitor / Diagnose / Display / Skin / Export
 Style feeds Display.
 ```
 
@@ -174,8 +174,8 @@ mean those Grasshopper workflows have been implemented or structurally
 verified.
 
 FD, TNA, and graphic statics will remain distinct methods sharing neutral
-inputs, diagnostics, and one shared Frame/Deconstruct/Monitor/Skin/Diagnose/
-Display/Export surface. They will not be hidden behind one ambiguous solver.
+inputs, diagnostics, and one shared Frame/Deconstruct/Monitor/Diagnose/
+Display/Skin/Export surface. They will not be hidden behind one ambiguous solver.
 
 The implemented RhinoVault-style authoring path groups its inspectable
 operations into the spine itself: `Pattern -> Supports -> Loads -> TNA Relax
@@ -196,11 +196,11 @@ required for that half of the workflow.
 
 For the Armadillo Vault's own cutting pattern -- a mesh aligned with the
 thrust flow whose dual becomes the blocks, so every joint runs across the
-thrust -- wire `05 Deliver > Armadillo Dual` from RES ahead of Export:
+thrust -- wire `05 Deliver > Skin` from RES ahead of Export with Pattern set to 2 (force aligned):
 its C and CO outputs feed Export's Cells and Courses, and wiring Cells
 is what adds the tessellation kind, so Export writes the
 `<Name>-tessellation.json` sidecar Bench Studio imports as an authored
-cut. `Armadillo Dual` aligns to the
+cut. The force-aligned pattern aligns to the
 result's own member forces, falling back to the form/force diagram pair
 when forces are absent; it refuses rather than guessing a curvature when
 neither is present. S defaults to 0.6 m: the smallest target voussoir
