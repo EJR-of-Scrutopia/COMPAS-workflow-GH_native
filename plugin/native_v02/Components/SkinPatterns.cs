@@ -635,4 +635,276 @@ internal static class SkinPatterns
         }
         return cleaned;
     }
+
+    // ---- pattern 0: courses (spec section 5) ----------------------------
+
+    /// <summary>
+    /// Running-bond quads, the Bench Studio bonded-courses algorithm
+    /// restated on the thrust surface. Bands of Course Height from the
+    /// base; on each band's MID-height level curve the pitch is
+    /// P = L / max(1, round(L / S)), uniform within the course; a CLOSED
+    /// loop is n equal pieces rotated half a pitch on odd courses; an
+    /// OPEN strip's joints lie on a grid of pitch P anchored at the seam
+    /// with the course's phase, truncated at the ends, so interior pieces
+    /// are exactly P, only the two end pieces absorb the phase, every
+    /// course is individually symmetric about the seam and adjacent
+    /// courses carry the half-piece stagger. Cells map to the band
+    /// boundary curves by normalised arc length from the matching seams.
+    /// </summary>
+    public static SkinPatternResult Courses(
+        SkinNet net,
+        double size,
+        double courseHeight)
+    {
+        RequireSizes(size, courseHeight);
+        (double zMin, double zMax) = HeightRange(net);
+        if (net.Faces.Count == 0 || !(zMax - zMin > 1.0e-9))
+            return Empty("courses");
+
+        int bands = BandCount(zMin, zMax, courseHeight);
+        double epsilon = Math.Max((zMax - zMin) * 1.0e-6, 1.0e-9);
+
+        // Heights, ascending: the boundary of band r at index 2r, its
+        // mid-height at 2r + 1. The extreme cuts are pulled inside the
+        // surface by epsilon so the trace exists at the base and the
+        // crown; the top band's mid runs to the true crown height.
+        var heights = new List<double>();
+        for (int r = 0; r <= bands; r++)
+        {
+            heights.Add(
+                r == 0 ? zMin + epsilon
+                : r == bands ? zMax - epsilon
+                : zMin + r * courseHeight);
+            if (r < bands)
+            {
+                double bandTop = r == bands - 1
+                    ? zMax
+                    : zMin + (r + 1) * courseHeight;
+                heights.Add((zMin + r * courseHeight + bandTop) / 2.0);
+            }
+        }
+        IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
+            TraceAll(net, heights);
+
+        var keyed =
+            new List<(int Course, int Order, double U0, SkinCell Cell)>();
+        var pieceLengths = new List<double>();
+        int clipped = 0;
+        for (int r = 0; r < bands; r++)
+        {
+            IReadOnlyList<SkinLevelCurve> mids = traced[2 * r + 1];
+            IReadOnlyList<SkinLevelCurve> lowers = traced[2 * r];
+            IReadOnlyList<SkinLevelCurve> uppers = traced[2 * r + 2];
+            for (int component = 0; component < mids.Count; component++)
+            {
+                SkinLevelCurve mid = mids[component];
+                int lowerAt = MatchBelow(mid, lowers);
+                int upperAt = MatchBelow(mid, uppers);
+                if (lowerAt < 0 || upperAt < 0 || !(mid.Length > 1.0e-9))
+                    continue;
+                SkinLevelCurve lowerCurve = lowers[lowerAt];
+                SkinLevelCurve upperCurve = uppers[upperAt];
+                int pieces = Math.Max(
+                    1, (int)Math.Round(mid.Length / size));
+                double pitch = mid.Length / pieces;
+                double phase = r % 2 == 0 ? 0.0 : 0.5 * pitch;
+                foreach ((double u0, double u1) in
+                         CourseSpans(mid, pieces, pitch, phase))
+                {
+                    // Only an open strip's end piece is shorter than the
+                    // pitch: it absorbed the phase, and it is the
+                    // "boundary-clipped" cell of this pattern.
+                    bool endPiece = u1 - u0 < pitch - 1.0e-9;
+                    SkinCell cell = BandCell(
+                        r, lowerCurve, mid, upperCurve, u0, u1, endPiece);
+                    if (cell.Outline.Count < 3)
+                        continue;
+                    if (cell.Clipped)
+                        clipped++;
+                    pieceLengths.Add(u1 - u0);
+                    keyed.Add((r, component, u0, cell));
+                }
+            }
+        }
+        List<SkinCell> cells = keyed
+            .OrderBy(item => item.Course)
+            .ThenBy(item => item.Order)
+            .ThenBy(item => item.U0)
+            .Select(item => item.Cell)
+            .ToList();
+        return new SkinPatternResult(
+            cells,
+            bands,
+            PatternDiagnostics(
+                "courses", cells.Count, bands, pieceLengths,
+                "half a pitch on odd courses", clipped));
+    }
+
+    /// <summary>
+    /// Spec section 5's banding: course r spans
+    /// [zMin + r CH, zMin + (r + 1) CH); the top band runs to the crown,
+    /// and a top band whose rise is under a quarter of CH merges into the
+    /// band below rather than shipping a sliver course.
+    /// </summary>
+    public static int BandCount(
+        double zMin,
+        double zMax,
+        double courseHeight)
+    {
+        double rise = zMax - zMin;
+        int bands = Math.Max(
+            1, (int)Math.Ceiling(rise / courseHeight - 1.0e-9));
+        if (bands > 1 &&
+            rise - (bands - 1) * courseHeight < courseHeight / 4.0)
+        {
+            bands -= 1;
+        }
+        return bands;
+    }
+
+    /// <summary>
+    /// The 1 mm floors, negated comparisons so NaN is caught: NaN fails
+    /// every comparison, so a guard written "value <= floor" would let
+    /// NaN sail past. The component floors CH with a warning before
+    /// calling; the engine refuses outright so the harness can measure
+    /// the floor without a canvas.
+    /// </summary>
+    private static void RequireSizes(double size, double courseHeight)
+    {
+        if (!(size > 0.001))
+        {
+            throw new ArgumentException(
+                "S must be greater than 1 mm (0.001 m); received " +
+                $"{size}.");
+        }
+        if (!(courseHeight > 0.001))
+        {
+            throw new ArgumentException(
+                "Course Height must be greater than 1 mm (0.001 m); " +
+                $"received {courseHeight}.");
+        }
+    }
+
+    private static (double Min, double Max) HeightRange(SkinNet net)
+    {
+        double min = double.PositiveInfinity;
+        double max = double.NegativeInfinity;
+        foreach (double[] vertex in net.Vertices)
+        {
+            min = Math.Min(min, vertex[2]);
+            max = Math.Max(max, vertex[2]);
+        }
+        return (min, max);
+    }
+
+    /// <summary>
+    /// The joint grid on one mid-height level curve, as spans. CLOSED:
+    /// n equal pieces from the seam, the whole division rotated by the
+    /// phase. OPEN: grid joints at phase + k P strictly inside
+    /// (-L/2, L/2) plus the two strip ends, so interior pieces are
+    /// exactly P and the end pieces absorb the phase.
+    /// </summary>
+    private static List<(double U0, double U1)> CourseSpans(
+        SkinLevelCurve mid,
+        int pieces,
+        double pitch,
+        double phase)
+    {
+        var spans = new List<(double, double)>();
+        if (mid.Closed)
+        {
+            for (int k = 0; k < pieces; k++)
+            {
+                spans.Add(
+                    (phase + k * pitch, phase + (k + 1) * pitch));
+            }
+            return spans;
+        }
+        double half = mid.Length / 2.0;
+        var joints = new List<double> { -half };
+        int first = (int)Math.Ceiling((-half - phase) / pitch - 1.0e-9);
+        for (int k = first; ; k++)
+        {
+            double joint = phase + k * pitch;
+            if (joint >= half - 1.0e-9)
+                break;
+            if (joint > -half + 1.0e-9)
+                joints.Add(joint);
+        }
+        joints.Add(half);
+        for (int j = 0; j + 1 < joints.Count; j++)
+            spans.Add((joints[j], joints[j + 1]));
+        return spans;
+    }
+
+    /// <summary>
+    /// Spec section 5's cell: the lower boundary curve's sampled run
+    /// between the two joints, the straight joint edge up, the upper
+    /// curve's run back, and the implicit closing edge down. A joint at
+    /// signed arc u on the mid curve lands at u (L_boundary / L_mid) on
+    /// each boundary curve, normalised arc length from the matching
+    /// seams.
+    /// </summary>
+    private static SkinCell BandCell(
+        int course,
+        SkinLevelCurve lowerCurve,
+        SkinLevelCurve mid,
+        SkinLevelCurve upperCurve,
+        double u0,
+        double u1,
+        bool clipped)
+    {
+        double lowerRatio = lowerCurve.Length / mid.Length;
+        double upperRatio = upperCurve.Length / mid.Length;
+        var outline = new List<double[]>();
+        outline.AddRange(
+            Run(lowerCurve, u0 * lowerRatio, u1 * lowerRatio));
+        List<double[]> back =
+            Run(upperCurve, u0 * upperRatio, u1 * upperRatio);
+        back.Reverse();
+        outline.AddRange(back);
+        return new SkinCell(course, Dedupe(outline), clipped, u0, u1);
+    }
+
+    /// <summary>The D output's text for a native pattern: the pattern
+    /// name, cell and course counts, mean/min/max piece length, the
+    /// stagger, and the count of boundary-clipped cells.</summary>
+    private static string PatternDiagnostics(
+        string name,
+        int cellCount,
+        int courseCount,
+        IReadOnlyList<double> pieceLengths,
+        string stagger,
+        int clipped)
+    {
+        static string F(double value) =>
+            value.ToString("F3", CultureInfo.InvariantCulture);
+        var lines = new List<string>
+        {
+            $"Pattern: {name}",
+            $"Cells: {cellCount}",
+            $"Courses: {courseCount}"
+        };
+        if (pieceLengths.Count > 0)
+        {
+            lines.Add(
+                $"Piece length: mean {F(pieceLengths.Average())} m, " +
+                $"min {F(pieceLengths.Min())} m, " +
+                $"max {F(pieceLengths.Max())} m");
+        }
+        lines.Add($"Stagger: {stagger}");
+        lines.Add($"Boundary-clipped cells: {clipped}");
+        return string.Join("\n", lines);
+    }
+
+    private static SkinPatternResult Empty(string name) =>
+        new(
+            Array.Empty<SkinCell>(),
+            0,
+            PatternDiagnostics(
+                name, 0, 0, Array.Empty<double>(),
+                name == "courses"
+                    ? "half a pitch on odd courses"
+                    : "0.75 x S per course row",
+                0));
 }

@@ -632,6 +632,26 @@ internal static class Program
 
         try
         {
+            ValidateSkinCourses(plugin);
+            Console.WriteLine(
+                "PASS  Skin courses engine: the barrel's joint sets are " +
+                "pinned exactly (even courses ten 0.6 pieces with a " +
+                "joint at the seam, odd courses staggered half a pitch " +
+                "with 0.3 end pieces, mirror-symmetric about the seam); " +
+                "the dome's closed courses are round(L/S) equal pieces " +
+                "rotated half a pitch on odd courses; cells arrive in " +
+                "build order (course, then position along it), engine " +
+                "outlines are open rings, the sliver-merge rule holds, " +
+                "and every plan projection is disjoint and simple.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin courses engine: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -8495,6 +8515,375 @@ internal static class Program
             throw new InvalidOperationException(
                 "A closed loop's u WRAPS: u = L + 0.1 is u = 0.1.");
         }
+    }
+
+    /// <summary>Read a SkinPatternResult's cells through reflection into
+    /// plain tuples the checks can measure.</summary>
+    private static (int Course, double[][] Outline, bool Clipped,
+        double U0, double U1)[] SkinCells(object generated)
+    {
+        IList cells = (IList)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        var read = new List<(int, double[][], bool, double, double)>();
+        foreach (object? item in cells)
+        {
+            object cell = item!;
+            Type type = cell.GetType();
+            IList outline =
+                (IList)type.GetProperty("Outline")!.GetValue(cell)!;
+            read.Add((
+                (int)type.GetProperty("Course")!.GetValue(cell)!,
+                outline.Cast<double[]>().ToArray(),
+                (bool)type.GetProperty("Clipped")!.GetValue(cell)!,
+                (double)type.GetProperty("U0")!.GetValue(cell)!,
+                (double)type.GetProperty("U1")!.GetValue(cell)!));
+        }
+        return read.ToArray();
+    }
+
+    private static double PlanCentroidY(double[][] outline) =>
+        outline.Average(point => point[1]);
+
+    /// <summary>
+    /// The height-field guarantee, asserted (spec section 4): cells set
+    /// out through the map project to plan without overlap. Every
+    /// outline must be SIMPLE in plan (no two non-adjacent edges
+    /// properly crossing) and every pair DISJOINT (no proper edge
+    /// crossing between cells, and no cell's own interior centroid
+    /// strictly inside another). Touching along a shared joint edge is
+    /// not overlap, so every test is strict.
+    /// </summary>
+    private static void RequireDisjointSimplePlans(
+        IReadOnlyList<double[][]> outlines,
+        string label)
+    {
+        static double Side(double[] from, double[] to, double[] at) =>
+            (to[0] - from[0]) * (at[1] - from[1]) -
+            (to[1] - from[1]) * (at[0] - from[0]);
+        static bool Crosses(
+            double[] a, double[] b, double[] c, double[] d)
+        {
+            double d1 = Side(a, b, c);
+            double d2 = Side(a, b, d);
+            double d3 = Side(c, d, a);
+            double d4 = Side(c, d, b);
+            return ((d1 > 1.0e-9 && d2 < -1.0e-9) ||
+                    (d1 < -1.0e-9 && d2 > 1.0e-9)) &&
+                   ((d3 > 1.0e-9 && d4 < -1.0e-9) ||
+                    (d3 < -1.0e-9 && d4 > 1.0e-9));
+        }
+        static bool Inside(double x, double y, double[][] polygon)
+        {
+            bool inside = false;
+            for (int i = 0, j = polygon.Length - 1;
+                 i < polygon.Length;
+                 j = i++)
+            {
+                if ((polygon[i][1] > y) != (polygon[j][1] > y) &&
+                    x < (polygon[j][0] - polygon[i][0]) *
+                        (y - polygon[i][1]) /
+                        (polygon[j][1] - polygon[i][1]) + polygon[i][0])
+                {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        }
+        static (double X, double Y) Mean(double[][] polygon) =>
+            (polygon.Average(p => p[0]), polygon.Average(p => p[1]));
+
+        for (int at = 0; at < outlines.Count; at++)
+        {
+            double[][] cell = outlines[at];
+            int count = cell.Length;
+            for (int i = 0; i < count; i++)
+            {
+                for (int j = i + 1; j < count; j++)
+                {
+                    // Adjacent edges share a vertex, the closing edge
+                    // included; a shared vertex is not a crossing.
+                    if (j == i + 1 || (i == 0 && j == count - 1))
+                        continue;
+                    if (Crosses(
+                            cell[i], cell[(i + 1) % count],
+                            cell[j], cell[(j + 1) % count]))
+                    {
+                        throw new InvalidOperationException(
+                            $"{label}: cell {at}'s plan projection " +
+                            "self-crosses, which the height-field " +
+                            "setout guarantees against.");
+                    }
+                }
+            }
+        }
+        for (int a = 0; a < outlines.Count; a++)
+        {
+            for (int b = a + 1; b < outlines.Count; b++)
+            {
+                double[][] first = outlines[a];
+                double[][] second = outlines[b];
+                for (int i = 0; i < first.Length; i++)
+                {
+                    for (int j = 0; j < second.Length; j++)
+                    {
+                        if (Crosses(
+                                first[i],
+                                first[(i + 1) % first.Length],
+                                second[j],
+                                second[(j + 1) % second.Length]))
+                        {
+                            throw new InvalidOperationException(
+                                $"{label}: cells {a} and {b} overlap " +
+                                "in plan (edges properly cross).");
+                        }
+                    }
+                }
+                (double x, double y) = Mean(first);
+                if (Inside(x, y, first) && Inside(x, y, second))
+                {
+                    throw new InvalidOperationException(
+                        $"{label}: cell {a}'s interior lies inside " +
+                        $"cell {b}: the plans are not disjoint.");
+                }
+                (x, y) = Mean(second);
+                if (Inside(x, y, second) && Inside(x, y, first))
+                {
+                    throw new InvalidOperationException(
+                        $"{label}: cell {b}'s interior lies inside " +
+                        $"cell {a}: the plans are not disjoint.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The courses engine (spec section 5), measured joint for joint.
+    /// Barrel (S 0.6, CH 0.5, four bands of the 2 m rise): every course
+    /// on each strip carries the EXACT pinned joint set: even courses
+    /// eleven joints at -3 + 0.6k (ten pieces of 0.6, a joint AT the
+    /// seam), odd courses those shifted half a pitch plus the two strip
+    /// ends (eleven pieces, the two 0.3 end pieces absorbing the phase),
+    /// which pins the pitch, the phase, the truncation, the half-piece
+    /// stagger and the mirror symmetry in one assertion. Dome: each
+    /// closed course is round(L/S) EQUAL pieces (L from the octagon
+    /// perimeter formula), rotated half a pitch on odd courses. Both:
+    /// cells arrive sorted by course, outlines are real polygons, and
+    /// the plan projections are pairwise disjoint and simple, the
+    /// height-field guarantee. Groups are taken in ARRIVAL order, never
+    /// re-sorted, so the ascending joint and span pins also assert spec
+    /// section 3's within-course ordering, the studio's build sequence.
+    /// BandCount's sliver-merge branch is exercised directly (a 2.05 m
+    /// rise merges its 0.05 sliver, a 2.2 m rise ships its 0.2 top
+    /// band). Outlines are asserted OPEN rings, first point not
+    /// repeated: the closing repeat is appended by the component's
+    /// ClosedOutlineCurve, which, like the C and CO tree building beside
+    /// it, lives in SolveInstance and needs an IGH_DataAccess this
+    /// harness cannot build, so spec section 11's "every cell closed"
+    /// and "trees aligned" bullets are covered here by their engine
+    /// halves (the open-ring convention pinned, one sorted cell list for
+    /// both trees) and the component halves are read, not run, the
+    /// ValidateExportDefaultTessellation convention.
+    /// </summary>
+    private static void ValidateSkinCourses(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrelNet = Activator.CreateInstance(
+            netType, new object[] { barrelVertices, barrelFaces })!;
+        object generated = courses.Invoke(
+            null, new object[] { barrelNet, 0.6, 0.5 })!;
+        var cells = SkinCells(generated);
+        int courseCount = (int)generated.GetType()
+            .GetProperty("CourseCount")!.GetValue(generated)!;
+        if (courseCount != 4)
+        {
+            throw new InvalidOperationException(
+                "A 2 m rise at CH 0.5 is four courses (no sliver to " +
+                $"merge); got {courseCount}.");
+        }
+        MethodInfo bandCount = RequirePublicStatic(patterns, "BandCount");
+        int Bands(double zMax) => (int)bandCount.Invoke(
+            null, new object[] { 0.0, zMax, 0.5 })!;
+        if (Bands(2.05) != 4 || Bands(2.2) != 5)
+        {
+            throw new InvalidOperationException(
+                "The sliver-merge rule: a top band whose rise is under " +
+                "a quarter of CH merges into the band below (a 2.05 m " +
+                "rise at CH 0.5 is FOUR bands, the 0.05 sliver merged), " +
+                "while one over it ships (a 2.2 m rise is FIVE, the " +
+                "0.2 top band kept).");
+        }
+        for (int at = 1; at < cells.Length; at++)
+        {
+            if (cells[at].Course < cells[at - 1].Course)
+            {
+                throw new InvalidOperationException(
+                    "Cells arrive sorted by course then position, the " +
+                    "studio's build sequence.");
+            }
+        }
+        for (int course = 0; course < 4; course++)
+        {
+            foreach (bool front in new[] { true, false })
+            {
+                // ARRIVAL order, deliberately un-sorted: the ascending
+                // joint comparison below then also asserts the
+                // within-course ordering the studio's build sequence
+                // depends on (the engine's ThenBy(U0)).
+                var group = cells
+                    .Where(cell =>
+                        cell.Course == course &&
+                        (PlanCentroidY(cell.Outline) < 2.0) == front)
+                    .ToArray();
+                double[] joints = course % 2 == 0
+                    ? Enumerable.Range(0, 11)
+                        .Select(k => -3.0 + 0.6 * k)
+                        .ToArray()
+                    : new[] { -3.0 }
+                        .Concat(Enumerable.Range(0, 10)
+                            .Select(k => -2.7 + 0.6 * k))
+                        .Concat(new[] { 3.0 })
+                        .ToArray();
+                if (group.Length != joints.Length - 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Course {course} on one strip carries " +
+                        $"{joints.Length - 1} pieces; got " +
+                        $"{group.Length}.");
+                }
+                for (int at = 0; at < group.Length; at++)
+                {
+                    if (Math.Abs(group[at].U0 - joints[at]) > 1.0e-9 ||
+                        Math.Abs(group[at].U1 - joints[at + 1]) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            "The seam-anchored pitch grid: course " +
+                            $"{course} piece {at} must span " +
+                            $"[{joints[at]}, {joints[at + 1]}]; got " +
+                            $"[{group[at].U0}, {group[at].U1}]. Even " +
+                            "courses put a joint AT the seam, odd " +
+                            "courses centre a piece on it, and only " +
+                            "the end pieces absorb the phase.");
+                    }
+                }
+                foreach (var cell in group)
+                {
+                    if (!group.Any(other =>
+                        Math.Abs(other.U0 + cell.U1) < 1.0e-9 &&
+                        Math.Abs(other.U1 + cell.U0) < 1.0e-9))
+                    {
+                        throw new InvalidOperationException(
+                            "A mirror-symmetric fixture gets " +
+                            "mirror-symmetric joints: the span " +
+                            $"[{cell.U0}, {cell.U1}] has no mirrored " +
+                            "partner about the seam.");
+                    }
+                }
+                bool[] clippedFlags =
+                    group.Select(cell => cell.Clipped).ToArray();
+                int endPieces = clippedFlags.Count(flag => flag);
+                if (course % 2 == 0 ? endPieces != 0 : endPieces != 2)
+                {
+                    throw new InvalidOperationException(
+                        "On this fixture only the odd courses' two end " +
+                        $"pieces are clipped; course {course} flags " +
+                        $"{endPieces}.");
+                }
+            }
+        }
+        foreach (var cell in cells)
+        {
+            if (cell.Outline.Length < 3)
+            {
+                throw new InvalidOperationException(
+                    "Every cell is a real polygon of at least three " +
+                    "distinct points.");
+            }
+            double[] first = cell.Outline[0];
+            double[] last = cell.Outline[^1];
+            if (Math.Abs(first[0] - last[0]) < 1.0e-9 &&
+                Math.Abs(first[1] - last[1]) < 1.0e-9 &&
+                Math.Abs(first[2] - last[2]) < 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Engine outlines are OPEN rings: the closing repeat " +
+                    "belongs to the component's ClosedOutlineCurve, and " +
+                    "this pin is the convention that method depends on.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "courses/barrel");
+        string diagnostics = (string)generated.GetType()
+            .GetProperty("Diagnostics")!.GetValue(generated)!;
+        if (!diagnostics.Contains("Pattern: courses",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains("Boundary-clipped cells: 8",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Diagnostics name the pattern and count the clipped " +
+                "cells (two odd courses, two strips, two end pieces " +
+                $"each: 8); got '{diagnostics}'.");
+        }
+
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object domeNet = Activator.CreateInstance(
+            netType, new object[] { domeVertices, domeFaces })!;
+        object domeGenerated = courses.Invoke(
+            null, new object[] { domeNet, 0.6, 0.5 })!;
+        var domeCells = SkinCells(domeGenerated);
+        int domeCourses = (int)domeGenerated.GetType()
+            .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
+        if (domeCourses != 4)
+        {
+            throw new InvalidOperationException(
+                $"The dome's 2 m rise at CH 0.5 is four courses; got " +
+                $"{domeCourses}.");
+        }
+        for (int course = 0; course < 4; course++)
+        {
+            // ARRIVAL order here too: the indexed span pin below
+            // asserts the ordering along the loop.
+            var ring = domeCells
+                .Where(cell => cell.Course == course)
+                .ToArray();
+            double midHeight = course == 3 ? 1.75 : 0.25 + 0.5 * course;
+            double expectedLength =
+                16.0 * (2.0 - midHeight) * Math.Sin(Math.PI / 8.0);
+            int expectedPieces = Math.Max(
+                1, (int)Math.Round(expectedLength / 0.6));
+            if (ring.Length != expectedPieces)
+            {
+                throw new InvalidOperationException(
+                    $"A closed course is n = max(1, round(L/S)) equal " +
+                    $"pieces: course {course} (L {expectedLength:F3}) " +
+                    $"must carry {expectedPieces}; got {ring.Length}.");
+            }
+            double pitch = expectedLength / expectedPieces;
+            double expectedPhase = course % 2 == 0 ? 0.0 : pitch / 2.0;
+            for (int at = 0; at < ring.Length; at++)
+            {
+                double expectedU0 = expectedPhase + at * pitch;
+                if (Math.Abs(ring[at].U0 - expectedU0) > 1.0e-9 ||
+                    Math.Abs(ring[at].U1 - ring[at].U0 - pitch) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "A closed course is EQUAL pieces of pitch " +
+                        $"{pitch:F4} in arrival order from the phase " +
+                        "(rotated half a pitch on odd courses): piece " +
+                        $"{at} of course {course} must span " +
+                        $"[{expectedU0:F4}, {expectedU0 + pitch:F4}]; " +
+                        $"got [{ring[at].U0:F4}, {ring[at].U1:F4}].");
+                }
+            }
+        }
+        RequireDisjointSimplePlans(
+            domeCells.Select(cell => cell.Outline).ToArray(),
+            "courses/dome");
     }
 
     private static Type RequireComponentType(Assembly plugin, string typeName)
