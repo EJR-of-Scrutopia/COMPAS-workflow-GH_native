@@ -1280,8 +1280,12 @@ internal static class SkinPatterns
     /// (0, 2 CH), which tiles the plane with these cells exactly;
     /// centres are laid out from the seam outward, so the crown column
     /// sits on the seam. A candidate is a cell when its raw (u, z)
-    /// extent intersects the chart's interior, so a shell shallower than
-    /// CH still grows one clipped course instead of nothing. Each vertex
+    /// extent intersects the chart's interior, measured in z against the
+    /// chart's own extremes and in u against the half-length of the
+    /// level curve at the candidate's CENTRE row: a shell shallower than
+    /// CH still grows one clipped course instead of nothing, and a
+    /// candidate lying wholly beyond the curve it sits on is still not a
+    /// cell. Each vertex
     /// maps through the setout map at its own height; a cell crossing
     /// the surface boundary or the crown is
     /// CLIPPED to it and KEPT (a coverage hole is worse than an
@@ -1396,7 +1400,6 @@ internal static class SkinPatterns
                         (uc - size / 2.0, centreRow)
                     };
                     bool clipped = false;
-                    double widest = 0.0;
                     var mapped =
                         new (double U, SkinLevelCurve Curve)[6];
                     for (int v = 0; v < 6; v++)
@@ -1409,7 +1412,6 @@ internal static class SkinPatterns
                         double half = curve.Length / 2.0;
                         double u = Math.Min(
                             Math.Max(setout[v].U, -half), half);
-                        widest = Math.Max(widest, half);
                         if (Math.Abs(z - zRaw) > clipTolerance ||
                             Math.Abs(u - setout[v].U) > clipTolerance)
                         {
@@ -1417,6 +1419,20 @@ internal static class SkinPatterns
                         }
                         mapped[v] = (u, curve);
                     }
+
+                    // The candidate's OWN level curve is the one at its
+                    // CENTRE row, clamped onto the chart the same way its
+                    // vertices are, and that curve's half-length is what
+                    // the u half of the membership test is measured
+                    // against.
+                    double halfAtCentre = CurveAt(
+                        chart,
+                        Math.Min(
+                            Math.Max(
+                                zMin + courseHeight * centreRow,
+                                chartBottom),
+                            chartTop))
+                        .Length / 2.0;
 
                     // MEMBERSHIP by INTERVAL OVERLAP, not by vertex.
                     // Asking whether any of the six mapped vertices lies
@@ -1434,29 +1450,45 @@ internal static class SkinPatterns
                     // Its z extent is the two lattice rows the hexagon
                     // reaches, CH either side of the centre; its u
                     // extent is the flat-topped hexagon's own width, S,
-                    // centred on the column; and the chart's interior is
-                    // the open box between chartBottom and chartTop by
-                    // the widest half-length of the level curves this
-                    // candidate maps through. The clamp above has
-                    // already pulled every vertex onto the chart and
-                    // Dedupe drops what collapsed, so an intersecting
-                    // candidate arrives as its CLIPPED outline, which is
-                    // the pattern's standing rule for the rim. A
-                    // candidate wholly outside still fails, so the
-                    // ruling that off-surface lattice cells are not
-                    // cells stands.
+                    // centred on the column; the z half is measured
+                    // against chartBottom and chartTop; and the u half
+                    // is measured against the half-length of the curve
+                    // at the candidate's OWN CENTRE ROW.
+                    //
+                    // The centre row, and never the widest of the rows
+                    // the candidate maps through, because the widest is
+                    // where the second defect lived. On a barrel every
+                    // level curve is the same length and the two agree,
+                    // but on any shell whose curves shorten with height
+                    // the widest comes from the row BELOW and admits
+                    // candidates lying wholly beyond the curve the cell
+                    // actually sits on. Those then clamp their vertices
+                    // onto the short curve's ends together and the cells
+                    // land on top of one another. Measured over a
+                    // 210-configuration sweep of seven nets, three
+                    // sizes and five course heights: the widest rule
+                    // leaves 3716 overlapping pairs in plan and the
+                    // centre-row rule 2358, on nets with closed level
+                    // curves almost without exception.
+                    //
+                    // The clamp above has already pulled every vertex
+                    // onto the chart and Dedupe drops what collapsed, so
+                    // an intersecting candidate arrives as its CLIPPED
+                    // outline, which is the pattern's standing rule for
+                    // the rim. A candidate wholly outside its own curve
+                    // fails, so the ruling that off-surface lattice
+                    // cells are not cells stands.
                     //
                     // A closed loop's u domain is still cut at the
                     // meridian opposite the seam rather than wrapped, so
-                    // the honeycomb never folds into itself and the
-                    // disjoint-plan guarantee holds.
+                    // the honeycomb never folds into itself.
                     bool overlaps =
                         zMin + courseHeight * (centreRow + 1)
                             > chartBottom + 1.0e-9 &&
                         zMin + courseHeight * (centreRow - 1)
                             < chartTop - 1.0e-9 &&
-                        uc + size / 2.0 > -widest + 1.0e-9 &&
-                        uc - size / 2.0 < widest - 1.0e-9;
+                        uc + size / 2.0 > -halfAtCentre + 1.0e-9 &&
+                        uc - size / 2.0 < halfAtCentre - 1.0e-9;
                     if (!overlaps)
                         continue;
 

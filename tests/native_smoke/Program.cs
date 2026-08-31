@@ -707,8 +707,12 @@ internal static class Program
                 "interior cell carries the stated six vertex offsets in " +
                 "order, lattice neighbours share mapped corners, course " +
                 "indices follow the centre bands on unclipped and " +
-                "clipped cells alike, and both fixtures' plan " +
-                "projections are disjoint and simple.");
+                "clipped cells alike, membership measures u against the " +
+                "candidate's OWN centre-row curve, and the plans are " +
+                "disjoint and simple on the barrel, on the shallow " +
+                "shell and on the dome at CH 0.2 and 0.5, the dome's " +
+                "0.35 and 0.8 being a pre-existing crown breach the " +
+                "check names rather than asserts.");
         }
         catch (Exception exception)
         {
@@ -9843,7 +9847,17 @@ internal static class Program
     /// The kept and clipped counts are pinned at 76 and 36, hand-derived
     /// from the lattice under Ruling D's interval-overlap membership. A
     /// candidate is a cell when its raw (u, z) extent meets the chart's
-    /// interior. Every level curve of a barrel chart is the whole 6 m
+    /// interior, its u extent measured against the half-length of the
+    /// level curve at its own CENTRE row (item D2's correction: the
+    /// widest of the rows a candidate spans admits candidates lying
+    /// wholly beyond the curve they sit on). On this fixture the
+    /// correction moves NOTHING and the two numbers stand unchanged,
+    /// which is itself the derivation: every level curve of a barrel
+    /// chart is the whole 6 m strip, so the centre row's half-length and
+    /// the widest are both 3 at every height and the two rules are the
+    /// same rule here. The dome grid below is where they part.
+    ///
+    /// Every level curve of a barrel chart is the whole 6 m
     /// strip, so the chart's half-length is 3 at every height and the u
     /// test admits column i while |0.75 S i| - S/2 is under 3, that is
     /// |0.45 i| - 0.3 &lt; 3: i = 7 gives 2.85 and is admitted, i = 8
@@ -9879,7 +9893,10 @@ internal static class Program
     /// Ruling D's own case is pinned at the end: a CH at or above the
     /// rise, which the shipped 0.35 default reaches on any shell rising
     /// less than that, must give ONE clipped course of cells instead of
-    /// nothing.
+    /// nothing. It too is unmoved by the centre-row correction, and for
+    /// the same reason: the chart is the epsilon-pulled base and crown,
+    /// both the whole 6 m strip, so the centre row's half-length is 3
+    /// like every other.
     /// </summary>
     private static void ValidateSkinHexagonal(Assembly plugin)
     {
@@ -10069,49 +10086,128 @@ internal static class Program
                 $"cells; got '{diagnostics}'.");
         }
 
-        // ---- the dome: closed loops. The honeycomb is cut at the
+        // ---- the dome: closed loops, and the only fixture here whose
+        // level curves SHORTEN with height. The honeycomb is cut at the
         // meridian opposite the seam rather than wrapped (the plan's
-        // Task 3 spec-deviation note), so the plans stay disjoint. The
-        // dome's assertions are deliberately STRUCTURAL only: cells
-        // exist, clipped cells are kept, courses are in range, plans
-        // disjoint. Spec section 11's vertex-offset, neighbour-sharing
-        // and course-band bullets are measured exactly on the barrel
-        // above, where x = 3 + u reads the setout straight off the
-        // geometry; a hand-pinned dome count would re-derive the
-        // anti-seam cut the spec has not yet blessed, so the dome pins
-        // wait for the spec review to settle that rule.
+        // Task 3 spec-deviation note). The dome's assertions are
+        // otherwise STRUCTURAL: cells exist, clipped cells are kept,
+        // courses are in range, plans disjoint where the guarantee
+        // holds. Spec section 11's vertex-offset, neighbour-sharing and
+        // course-band bullets are measured exactly on the barrel above,
+        // where x = 3 + u reads the setout straight off the geometry.
+        // One count IS pinned, at CH 0.5, because it is the only thing
+        // in the harness that can tell item D2's centre-row membership
+        // from the widest-row membership it replaced; its derivation and
+        // its dependence on the anti-seam cut are written out beside it.
+        //
+        // Item D2 widens this from the single CH 0.5 case to a GRID of
+        // course heights, so the guarantee is measured where the shipped
+        // default 0.35 actually lives rather than only where it happens
+        // to hold. Two of the four are NOT asserted disjoint, and the
+        // assertion is LEFT OUT rather than weakened: after D2 the dome
+        // honeycomb still comes back with 2 self-crossing cells and 2
+        // overlapping pairs at CH 0.35, and 6 and 16 at CH 0.8. That is a
+        // PRE-EXISTING crown defect, present on the base build before any
+        // of this wave (2 and 6 at CH 0.35, 6 and 26 at CH 0.8) and
+        // untouched by items A2 and B2, which is why D2 measured it and
+        // did not fix it: it is the honeycomb's clamping behaviour where
+        // a closed level curve shrinks towards nothing, it needs its own
+        // ruling, and that ruling is not in this wave. The measurements
+        // are tabled in
+        // .superpowers/sdd/2026-08-31-skin/final-fix-report-2.md.
         (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
         object domeNet = Activator.CreateInstance(
             netType, new object[] { domeVertices, domeFaces })!;
-        object domeGenerated = hexagonal.Invoke(
-            null, new object[] { domeNet, 0.6, 0.5 })!;
-        var domeCells = SkinCells(domeGenerated);
-        if (domeCells.Length == 0)
+        foreach ((double domeHeight, bool plansMeasured, int expected) in
+                 new[]
+                 {
+                     (0.2, true, 0),
+                     (0.35, false, 0),
+                     (0.5, true, 38),
+                     (0.8, false, 0)
+                 })
         {
-            throw new InvalidOperationException(
-                "The dome grows a honeycomb.");
-        }
-        if (!domeCells.Any(cell => cell.Clipped))
-        {
-            throw new InvalidOperationException(
-                "The dome's rim and anti-seam cells are CLIPPED and " +
-                "kept, not dropped.");
-        }
-        int domeCourses = (int)domeGenerated.GetType()
-            .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
-        foreach (var cell in domeCells)
-        {
-            if (cell.Outline.Length < 3 ||
-                cell.Course < 0 || cell.Course >= domeCourses)
+            object domeGenerated = hexagonal.Invoke(
+                null, new object[] { domeNet, 0.6, domeHeight })!;
+            var domeCells = SkinCells(domeGenerated);
+            if (domeCells.Length == 0)
             {
                 throw new InvalidOperationException(
-                    "Every dome cell is a real polygon in a real " +
-                    "course band.");
+                    $"The dome grows a honeycomb at CH {domeHeight}.");
+            }
+            // The one hand-derived dome count, and the assertion that
+            // measures item B2's centre-row correction, because the
+            // barrel cannot: on a barrel every level curve is the same
+            // length so the centre row and the widest row agree, and
+            // only a chart whose curves SHORTEN with height tells the
+            // two rules apart.
+            //
+            // At S 0.6 and CH 0.5 the dome's chart is the five clamped
+            // lattice heights zMin + eps, 0.5, 1.0, 1.5 and zMax - eps.
+            // The cut at height h is a regular octagon of circumradius
+            // 2 - h, so its perimeter is 16 (2 - h) sin(pi / 8) and its
+            // half-length is 8 (2 - h) sin(pi / 8): 6.1229, 4.5922,
+            // 3.0615, 1.5307 and 6.12e-6 at those five heights. The z
+            // test admits centre rows 0 to 4 (row -1 lies at or below
+            // the base, row 5 at or above the crown), and c = 1 + i + 2j
+            // makes an even column carry the ODD rows of that set and an
+            // odd column the EVEN ones. The u test admits column i while
+            // |0.45 i| is under halfAtCentre + 0.3, halfAtCentre being
+            // the half-length at the row's OWN clamped height:
+            //   c = 0, half 6.1229, |i| up to 14, odd i: 14 columns
+            //   c = 1, half 4.5922, |i| up to 10, even i: 11 columns
+            //   c = 2, half 3.0615, |i| up to  7, odd i:  8 columns
+            //   c = 3, half 1.5307, |i| up to  4, even i: 5 columns
+            //   c = 4, half 6.1e-6, |i| up to  0, odd i:  0 columns
+            // 14 + 11 + 8 + 5 + 0 = 38.
+            //
+            // Under the WIDEST rule the same arithmetic runs on the
+            // largest half-length among rows c - 1, c and c + 1, which
+            // gives 6.1229, 6.1229, 4.5922, 3.0615 and 1.5307 and so 14,
+            // 15, 10, 7 and 4 columns, 50 cells. Those extra 12 are the
+            // candidates that lie wholly beyond the curve they sit on,
+            // and they are what the correction removes.
+            //
+            // The count depends on the anti-seam cut as well, a closed
+            // loop's u domain running from -half to +half rather than
+            // wrapping, which is the plan's Task 3 deviation and not yet
+            // blessed by the spec review. If that rule moves, so does
+            // this number.
+            if (expected > 0 && domeCells.Length != expected)
+            {
+                throw new InvalidOperationException(
+                    $"The dome honeycomb at CH {domeHeight} is " +
+                    $"{expected} cells by the derivation in this check " +
+                    "(14 + 11 + 8 + 5 + 0 columns over centre rows 0 to " +
+                    $"4); got {domeCells.Length}. Measuring u against " +
+                    "the widest of the rows a candidate spans instead of " +
+                    "its own centre row gives 50.");
+            }
+            if (!domeCells.Any(cell => cell.Clipped))
+            {
+                throw new InvalidOperationException(
+                    "The dome's rim and anti-seam cells are CLIPPED and " +
+                    $"kept, not dropped, at CH {domeHeight}.");
+            }
+            int domeCourses = (int)domeGenerated.GetType()
+                .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
+            foreach (var cell in domeCells)
+            {
+                if (cell.Outline.Length < 3 ||
+                    cell.Course < 0 || cell.Course >= domeCourses)
+                {
+                    throw new InvalidOperationException(
+                        "Every dome cell is a real polygon in a real " +
+                        $"course band, at CH {domeHeight} as anywhere.");
+                }
+            }
+            if (plansMeasured)
+            {
+                RequireDisjointSimplePlans(
+                    domeCells.Select(cell => cell.Outline).ToArray(),
+                    $"hexagonal/dome CH {domeHeight}");
             }
         }
-        RequireDisjointSimplePlans(
-            domeCells.Select(cell => cell.Outline).ToArray(),
-            "hexagonal/dome");
 
         // ---- Ruling D: a SHALLOW shell, CH at or above the rise. The
         // barrel rises 2 m, so CH 2.0 sits exactly on the rise and CH
