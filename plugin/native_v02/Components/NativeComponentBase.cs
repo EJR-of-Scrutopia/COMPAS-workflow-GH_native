@@ -41,8 +41,9 @@ internal static class ComponentCategories
     // solved net into a machine. No backend.
     public const string Mould = "03 Mould";
 
-    // Everything that reads a Result: Deconstruct, Monitor, Skin, Diagnose,
-    // Frame, Style and Display. Geometry, numbers, words and the viewport.
+    // Everything that reads a Result: Deconstruct, Forces, Fit, Supports,
+    // Skin, Diagnose, Frame, Style and Display. Geometry, numbers, words
+    // and the viewport.
     // No backend.
     public const string Read = "04 Read";
 

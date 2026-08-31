@@ -197,8 +197,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "written into its Mould block: every tree node, every "
                     + "member with the force it carries, which nodes are heads, "
                     + "forks and feet, and which net vertex each head stands "
-                    + "on. Read the geometry back with Deconstruct (Columns, "
-                    + "Heads, Feet), the numbers with Monitor, and the words "
+                    + "on. Read the geometry back with Frame (Columns), the "
+                    + "numbers with Forces, Fit and Supports, and the words "
                     + "with Diagnose. Wire it into Animate to raise the "
                     + "columns with the net.",
                 GH_ParamAccess.item);
@@ -461,8 +461,8 @@ namespace Ananke.COMPAS.Native.Components
                 };
                 // The loads and forces below are the Result's own, in the
                 // Result's own unit, so they are labelled with it rather than
-                // with a newton this component never converted to. Monitor
-                // reads it the same way. No arithmetic here changes.
+                // with a newton this component never converted to. The
+                // readers read it the same way. No arithmetic here changes.
                 string declaredUnit = (equilibrium.ForceUnit ?? string.Empty).Trim();
                 string forceUnit = declaredUnit.Length > 0 ? declaredUnit : "kN";
                 output = ResultDiagnostics.Replace(output, "Columns", Diagnostics(

@@ -278,8 +278,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "into its Mould block: time, phase, the live net and the "
                     + "live column nodes. The built columns travel through "
                     + "untouched. Wire it to FRAME for the geometry at this "
-                    + "frame, to Monitor for the numbers and to Diagnose for "
-                    + "the words.",
+                    + "frame, to Forces, Fit and Supports for the numbers "
+                    + "and to Diagnose for the words.",
                 GH_ParamAccess.item);
         }
 
@@ -303,8 +303,8 @@ namespace Ananke.COMPAS.Native.Components
             // below are no guard at all. An Expression that divides by zero
             // upstream would put NaN straight into Frame.Time, and this
             // component validates the Result it is GIVEN and never the one it
-            // emits, so the NaN would first surface downstream, in Monitor's
-            // re-validation or as a serialiser failure in Export.
+            // emits, so the NaN would first surface downstream, in the
+            // readers' re-validation or as a serialiser failure in Export.
             var notFinite = new List<string>();
             if (!double.IsFinite(timePct))
             {
