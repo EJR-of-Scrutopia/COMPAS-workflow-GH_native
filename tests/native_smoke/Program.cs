@@ -145,6 +145,17 @@ internal static class Program
                         "Slack", "Spool Length", "Unstrained Length",
                         "Residuals", "Cable Utilisation"
                     }),
+                // Supports owns the ground half: anchors by strip, columns
+                // by tree, aligned with Deconstruct's Reaction Points and
+                // Frame's Columns.
+                ["Ananke.COMPAS.Native.Components.SupportsReaderComponent"] = (
+                    new[] { "Result", "Column Capacity" },
+                    new[]
+                    {
+                        "Result",
+                        "Anchor Along", "Anchor Across", "Tip Reaction",
+                        "Column Force", "Thrust", "Lean", "Column Utilisation"
+                    }),
                 // Animate MAKES a frame and emits the Result carrying it.
                 // Its geometry is Frame's, below, so there is one port here
                 // and the RES-first rule holds on both sides of it.
@@ -298,6 +309,7 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = ("result_breakdown", "DE"),
             ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = ("stress_analysis", "MO"),
             ["Ananke.COMPAS.Native.Components.ForcesComponent"] = ("forces", "FO"),
+            ["Ananke.COMPAS.Native.Components.SupportsReaderComponent"] = ("supports", "SP"),
             ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
             ["Ananke.COMPAS.Native.Components.DiagnoseComponent"] = ("diagnose", "DG"),
             ["Ananke.COMPAS.Native.Components.FrameComponent"] = ("frame", "FR"),
@@ -481,16 +493,17 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 21)
+        if (componentTypes.Length != 22)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
-            // with nineteen components' worth of contract untested. 21 is
+            // with nineteen components' worth of contract untested. 22 is
             // the readers rework in flight: Monitor still stands beside
-            // Forces until Fit arrives and Monitor retires.
+            // Forces and Supports until Fit arrives and Monitor retires,
+            // which is also 22.
             failures.Add(
-                $"Expected 21 concrete public components, found " +
+                $"Expected 22 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -978,6 +991,25 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"Forces readings: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSupportsReadings(plugin);
+            Console.WriteLine(
+                "PASS  Supports readings: two anchors joined only through a "
+                + "free node come back as two strips, each reaction split "
+                + "SIGNED along its own tensioner axis and across it; a "
+                + "plumb post and a diagonal post hand back tip reactions "
+                + "along their members, thrusts of 0 and 0.4 over root two, "
+                + "leans of 0 and 45 degrees, and utilisations of 5 and 4 "
+                + "against 100 N because the kN forces were converted; and "
+                + "the RES leaves carrying supports.* entries alone with no "
+                + "monitor.* anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Supports readings: {DescribeException(exception)}");
         }
 
         try
@@ -4041,6 +4073,190 @@ internal static class Program
             throw new InvalidOperationException(
                 "The infill's 300 N over 50 N is 6, over one and a warning; "
                 + $"got '{One("forces.utilisation").Message}'.");
+        }
+    }
+
+    /// <summary>
+    /// <c>SupportsReaderComponent.Read</c>: the ground half of what Monitor
+    /// used to compute, measured through the child on a fixture with two
+    /// isolated anchors and two one-member column trees, port by port
+    /// against hand numbers, and the RES it emits carrying supports.*
+    /// entries alone with no monitor.* anywhere.
+    /// </summary>
+    private static void ValidateSupportsReadings(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type nodalType = RequireContractType(plugin, "NodalVectorDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type supports = RequireComponentType(plugin, "SupportsReaderComponent");
+        MethodInfo read = RequireStatic(supports, "Read");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2 });
+        SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            equilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+        // Node 0's tensioner axis points at node 1, along +X, so (2,0,5)
+        // splits into along 2 and across 5. Node 2's axis points back at
+        // node 1, along -X, so (1,0,1) splits into along -1 and across 1.
+        SetContractProperty(equilibrium, equilibriumType, "Reactions",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 0, P(0, 0, 0), P(2, 0, 5))!,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(1, 0, 1))!));
+
+        // Two one-member trees: a plumb post of 0.5 kN two metres tall, and
+        // a diagonal post of 0.4 kN running one across and one up.
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes",
+            Of(point, P(1, 0, 0), P(1, 0, 2), P(3, 0, 0), P(4, 0, 1)));
+        SetContractProperty(block, columnsType, "Members",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 2, 3)!));
+        SetContractProperty(block, columnsType, "MemberForce", new[] { 0.5, 0.4 });
+        SetContractProperty(block, columnsType, "Trees",
+            new int[][] { new[] { 0 }, new[] { 1 } });
+        SetContractProperty(block, columnsType, "Heads", new[] { 1, 3 });
+        SetContractProperty(block, columnsType, "Feet", new[] { 0, 2 });
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 1, 1 });
+        SetContractProperty(block, columnsType, "Branching", 1);
+        SetContractProperty(block, columnsType, "ForkFraction", 0.65);
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Ground", 0.0);
+        SetContractProperty(mould, mouldType, "Columns", block);
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        object readings = read.Invoke(null, new object?[] { result, 100.0 })!;
+        object Prop(string name) =>
+            readings.GetType().GetProperty(name)!.GetValue(readings)!;
+        double[][] Branches(string name) =>
+            ((IEnumerable)Prop(name)).Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+        string Render(double[][] tree) => string.Join(" | ", tree.Select(
+            branch => string.Join(",", branch.Select(value =>
+                value.ToString("0.####",
+                    System.Globalization.CultureInfo.InvariantCulture)))));
+        void SameTree(string name, double[][] expected)
+        {
+            double[][] actual = Branches(name);
+            bool same = actual.Length == expected.Length;
+            for (int b = 0; same && b < expected.Length; b++)
+            {
+                same = actual[b].Length == expected[b].Length;
+                for (int i = 0; same && i < expected[b].Length; i++)
+                    same = Math.Abs(actual[b][i] - expected[b][i]) <= 1.0e-9;
+            }
+            if (!same)
+            {
+                throw new InvalidOperationException(
+                    $"{name} must be [{Render(expected)}]; got "
+                    + $"[{Render(actual)}].");
+            }
+        }
+
+        // Two supports joined only through the free node 1 are two strips.
+        SameTree("AnchorAlong", new[] { new[] { 2.0 }, new[] { -1.0 } });
+        SameTree("AnchorAcross", new[] { new[] { 5.0 }, new[] { 1.0 } });
+        SameTree("ColumnForce", new[] { new[] { 0.5 }, new[] { 0.4 } });
+        double diagonal = 0.4 / Math.Sqrt(2.0);
+        SameTree("Thrust", new[] { new[] { 0.0 }, new[] { diagonal } });
+        SameTree("Lean", new[] { new[] { 0.0 }, new[] { 45.0 } });
+        SameTree("ColumnUtilisation", new[] { new[] { 5.0 }, new[] { 4.0 } });
+        if ((bool)Prop("EmitColumnUtilisation") is not true)
+        {
+            throw new InvalidOperationException(
+                "With Column Capacity 100 wired, Column Utilisation is emitted.");
+        }
+
+        object[][] tips = ((IEnumerable)Prop("TipReaction")).Cast<IEnumerable>()
+            .Select(branch => branch.Cast<object>().ToArray())
+            .ToArray();
+        double Axis(object vector, string name) =>
+            (double)vector.GetType().GetProperty(name)!.GetValue(vector)!;
+        if (tips.Length != 2 || tips[0].Length != 1 || tips[1].Length != 1)
+        {
+            throw new InvalidOperationException(
+                "Two one-member trees give two tip branches of one head each; "
+                + $"got {tips.Length} branches.");
+        }
+        if (Math.Abs(Axis(tips[0][0], "X")) > 1.0e-9 ||
+            Math.Abs(Axis(tips[0][0], "Z") - 0.5) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The plumb post's tip reaction points straight up at 0.5; got "
+                + $"({Axis(tips[0][0], "X")}, {Axis(tips[0][0], "Z")}).");
+        }
+        if (Math.Abs(Axis(tips[1][0], "X") - diagonal) > 1.0e-9 ||
+            Math.Abs(Axis(tips[1][0], "Z") - diagonal) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The diagonal post's tip reaction runs along its member, 0.4 "
+                + $"over root two on X and Z; got ({Axis(tips[1][0], "X")}, "
+                + $"{Axis(tips[1][0], "Z")}).");
+        }
+
+        var rows = DiagnosticRows(plugin, Prop("Result"));
+        foreach (string code in new[]
+        {
+            "supports.column_force", "supports.thrust_into_ground",
+            "supports.anchor_horizontal", "supports.anchor_split",
+            "supports.utilisation", "supports.demand_only"
+        })
+        {
+            if (!rows.Any(row => row.Code == code))
+            {
+                throw new InvalidOperationException(
+                    $"The emitted RES must carry {code}; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code == "supports.no_columns"))
+        {
+            throw new InvalidOperationException(
+                "This Result carries columns, so supports.no_columns must not "
+                + "be raised.");
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+        if (rows.Where(row => row.Code.StartsWith("supports.", StringComparison.Ordinal))
+                .Any(row => row.Source != "Supports"))
+        {
+            throw new InvalidOperationException(
+                "Every supports.* entry names Supports as its source.");
+        }
+        (string Code, string Severity, string Source, string Message) One(
+            string code) => rows.Single(row => row.Code == code);
+        if (One("supports.utilisation").Severity != "warning" ||
+            !One("supports.utilisation").Message.Contains("up to 5", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "500 N over 100 N is 5, over one and a warning; got "
+                + $"'{One("supports.utilisation").Message}'.");
         }
     }
 

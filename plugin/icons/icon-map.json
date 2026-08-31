@@ -179,6 +179,12 @@
       "filename": "forces.png"
     },
     {
+      "key": "supports",
+      "label": "SP",
+      "category": "04 Read",
+      "filename": "supports.png"
+    },
+    {
       "key": "skin",
       "label": "SK",
       "category": "04 Read",
