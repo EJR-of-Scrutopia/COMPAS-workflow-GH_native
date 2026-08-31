@@ -61,9 +61,9 @@ internal sealed record SkinCell(
 /// <summary>One generated pattern: the cells sorted by course then
 /// position (the studio's build sequence), the band count, the readable
 /// diagnostics text the component's D output carries, and the count of
-/// bands REFUSED because the level curves changed component count across
-/// them, which the component turns into a runtime Warning because a hole
-/// in the skin has to be said out loud.</summary>
+/// bands REFUSED because the level curves across them do not correspond
+/// one for one, which the component turns into a runtime Warning because
+/// a hole in the skin has to be said out loud.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
@@ -574,6 +574,66 @@ internal static class SkinPatterns
         return best;
     }
 
+    /// <summary>
+    /// Do two levels' components CORRESPOND, one for one? This is the
+    /// test a band is refused on, and it is a test of the MATCHING, not
+    /// of the count.
+    ///
+    /// Counting was the first answer and it is too weak: two ordinary
+    /// surfaces keep the count and change the components. A two-hump
+    /// barrel whose ridge dips between the humps cuts into the front and
+    /// back STRIPS at 0.75 and into the two hump LOOPS at 1.00, two
+    /// components at both heights and not the same two. A net where one
+    /// island splits in the same band as another island dies reads two
+    /// at every height while nothing above corresponds to anything
+    /// below. Both were reproduced against the built plugin: the count
+    /// test refused nothing, the bands were built, and the cells came
+    /// back self-crossing and overlapping in plan (the two-hump barrel
+    /// at S 0.6, CH 0.5: courses 70 cells with 10 self-crossing and 166
+    /// overlapping pairs, the honeycomb 72 with 8 and 85).
+    ///
+    /// The rule: build the correspondence with MatchBelow in BOTH
+    /// directions and require a mutual bijection. No curve on either
+    /// level may be claimed by two, none may be left unclaimed, and the
+    /// two maps must be inverses of each other. One test catches split,
+    /// death, swap and simultaneous split-and-death, because all four
+    /// break the same thing: on the two-hump barrel both mid strips
+    /// claim the same upper loop, and on the split-and-death net both
+    /// mid loops claim the same lower one.
+    ///
+    /// Two levels with no curves at all correspond trivially: there is
+    /// nothing to bond and no cell will be built either way, so refusing
+    /// would report a hole where there is no surface.
+    /// </summary>
+    private static bool Corresponds(
+        IReadOnlyList<SkinLevelCurve> from,
+        IReadOnlyList<SkinLevelCurve> to)
+    {
+        if (from.Count != to.Count)
+            return false;
+        if (from.Count == 0)
+            return true;
+        var forward = new int[from.Count];
+        var claimed = new bool[to.Count];
+        for (int i = 0; i < from.Count; i++)
+        {
+            int match = MatchBelow(from[i], to);
+            if (match < 0 || claimed[match])
+                return false;
+            claimed[match] = true;
+            forward[i] = match;
+        }
+        var back = new bool[from.Count];
+        for (int j = 0; j < to.Count; j++)
+        {
+            int match = MatchBelow(to[j], from);
+            if (match < 0 || back[match] || forward[match] != j)
+                return false;
+            back[match] = true;
+        }
+        return true;
+    }
+
     private static int NearestInPlan(SkinLevelCurve curve, double[] target)
     {
         int best = 0;
@@ -840,17 +900,20 @@ internal static class SkinPatterns
             IReadOnlyList<SkinLevelCurve> mids = traced[2 * r + 1];
             IReadOnlyList<SkinLevelCurve> lowers = traced[2 * r];
             IReadOnlyList<SkinLevelCurve> uppers = traced[2 * r + 2];
-            // A TOPOLOGY TRANSITION: the level curve count changed across
-            // the three levels this band spans, so the components no
-            // longer correspond one for one and MatchBelow would pair
-            // curves that are not the same piece of surface, laying
-            // overlapping and self-crossing cells. Refuse the band whole
-            // (spec is silent on transitions; the ruling is that a stated
-            // hole beats a poisoned sidecar, because Bench Studio rejects
-            // a whole tessellation for one self-crossing cell). Splitting
-            // the band at its transition height is the right long answer
-            // and belongs to a later wave.
-            if (lowers.Count != mids.Count || mids.Count != uppers.Count)
+            // A TOPOLOGY TRANSITION: the components of the three levels
+            // this band spans do not CORRESPOND one for one, so
+            // MatchBelow would pair curves that are not the same piece
+            // of surface and the band would be laid with overlapping and
+            // self-crossing cells. The mid curve is what every cell of
+            // the band is set out on, so the correspondence is tested
+            // from the mid DOWN to the lower level and from the mid UP
+            // to the upper. Refuse the band whole (spec is silent on
+            // transitions; the ruling is that a stated hole beats a
+            // poisoned sidecar, because Bench Studio rejects a whole
+            // tessellation for one self-crossing cell). Splitting the
+            // band at its transition height is the right long answer and
+            // belongs to a later wave.
+            if (!Corresponds(mids, lowers) || !Corresponds(mids, uppers))
             {
                 transitionBands++;
                 AddTransition(
@@ -1269,15 +1332,16 @@ internal static class SkinPatterns
         List<SkinChart> charts = BuildCharts(traced);
 
         // The TOPOLOGY TRANSITIONS, found once for the whole net: a pair
-        // of consecutive chart levels whose component count differs is a
-        // height a hexagon cannot bond across, because the vertices of
-        // one cell would map through curves that are not the same piece
-        // of surface. Every lattice row spanning such an interval is
-        // refused whole, the same ruling the courses engine follows.
+        // of consecutive levels whose components do not CORRESPOND one
+        // for one is a height a hexagon cannot bond across, because the
+        // vertices of one cell would map through curves that are not the
+        // same piece of surface. Every lattice row spanning such an
+        // interval is refused whole, the same ruling the courses engine
+        // follows and the same correspondence test.
         var transitions = new List<(double Low, double High)>();
         for (int level = 0; level + 1 < heights.Count; level++)
         {
-            if (traced[level].Count != traced[level + 1].Count)
+            if (!Corresponds(traced[level], traced[level + 1]))
             {
                 AddTransition(
                     transitions, heights[level], heights[level + 1]);

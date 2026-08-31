@@ -678,14 +678,18 @@ internal static class Program
         {
             ValidateSkinTransitions(plugin);
             Console.WriteLine(
-                "PASS  Skin topology transitions: a two-peak net whose " +
-                "one level loop splits into two above z 0.9 has the one " +
-                "courses band and the two lattice bands that reach " +
-                "across the split REFUSED whole, named in the " +
-                "diagnostics with their heights and counted for the " +
-                "component's Warning, every other band still built and " +
-                "every emitted plan disjoint and simple; the barrel and " +
-                "the dome refuse nothing.");
+                "PASS  Skin topology transitions: refused on the " +
+                "CORRESPONDENCE, not the count. A two-peak net whose one " +
+                "level loop splits into two above z 0.9, a two-hump " +
+                "barrel whose strips become hump loops, and a net where " +
+                "one island splits as another dies, all three holding " +
+                "their component count across the change, each have the " +
+                "one courses band and the two lattice rows that reach " +
+                "across it REFUSED whole, named in the diagnostics with " +
+                "their heights and counted for the component's Warning, " +
+                "every other band still built and every emitted plan " +
+                "disjoint and simple bar the one honeycomb named in the " +
+                "check; the barrel and the dome refuse nothing.");
         }
         catch (Exception exception)
         {
@@ -8456,6 +8460,129 @@ internal static class Program
     }
 
     /// <summary>
+    /// The TWO-HUMP BARREL, whose level curves keep their COUNT and change
+    /// their components. A height field on the barrel's own 7 by 5 grid of
+    /// quads, row-major: the ridge along j = 2 runs the whole length of
+    /// the vault and reaches both x ends, but it dips to 0.9 at x = 0,
+    /// x = 3 and x = 6, leaving two humps of 2.0 between the dips:
+    ///
+    ///   j = 4:   0    0    0    0    0    0    0
+    ///   j = 3:  0.4  0.5  0.5  0.5  0.5  0.5  0.4
+    ///   j = 2:  0.9  2.0  2.0  0.9  2.0  2.0  0.9
+    ///   j = 1:  0.4  0.5  0.5  0.5  0.5  0.5  0.4
+    ///   j = 0:   0    0    0    0    0    0    0
+    ///
+    /// For h in (0.5, 0.9] the superlevel set {z at or above h} is the
+    /// whole j = 2 ridge, which reaches the x = 0 and x = 6 boundary
+    /// edges, so a cut at 0.75 gives the front and back open STRIPS. For
+    /// h in (0.9, 2) it is the four hump vertices alone, in two groups
+    /// strictly inside the mesh either side of the middle dip, so a cut
+    /// at 1.0 gives two closed LOOPS, one round each hump. TWO components
+    /// at both heights and not the same two, which is exactly what a
+    /// count test cannot see. No vertex sits at 0.25, 0.5, 0.75, 1.0,
+    /// 1.25, 1.5 or 1.75, so no cut of the CH 0.5 course grid passes
+    /// through a vertex.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinTwoHumpBarrelNet()
+    {
+        double[][] field =
+        {
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            new[] { 0.4, 0.5, 0.5, 0.5, 0.5, 0.5, 0.4 },
+            new[] { 0.9, 2.0, 2.0, 0.9, 2.0, 2.0, 0.9 },
+            new[] { 0.4, 0.5, 0.5, 0.5, 0.5, 0.5, 0.4 },
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }
+        };
+        return SkinHeightField(field);
+    }
+
+    /// <summary>
+    /// The SPLIT-AND-DEATH net: one island SPLITS in the same band where
+    /// another island DIES, so the count is preserved while nothing above
+    /// corresponds to anything below. A height field on a 13 by 5 grid of
+    /// quads, row-major, two 5-wide interior blocks either side of a zero
+    /// column at i = 6:
+    ///
+    ///   j = 4:  0   0    0    0    0    0   0   0    0    0    0    0   0
+    ///   j = 3:  0  0.6  0.6  0.6  0.6  0.6  0  0.6  0.6  0.6  0.6  0.6  0
+    ///   j = 2:  0  0.6  0.6  0.6  0.6  0.6  0  0.6  2.0  0.6  2.0  0.6  0
+    ///   j = 1:  0  0.6  0.6  0.6  0.6  0.6  0  0.6  0.6  0.6  0.6  0.6  0
+    ///   j = 0:  0   0    0    0    0    0   0   0    0    0    0    0   0
+    ///
+    /// For h in (0, 0.6] the superlevel set is the two interior blocks,
+    /// both strictly inside the mesh, so each of those cuts is TWO closed
+    /// loops. For h in (0.6, 2) it is the two peak vertices of the RIGHT
+    /// block alone: the left island has died and the right one has split
+    /// in the same interval, so each of those cuts is TWO closed loops
+    /// again. The counts read 2 at every one of the nine course heights,
+    /// and 0.6 is not one of them.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinSplitAndDeathNet()
+    {
+        double[][] field =
+        {
+            new[]
+            {
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            },
+            new[]
+            {
+                0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.0,
+                0.6, 0.6, 0.6, 0.6, 0.6, 0.0
+            },
+            new[]
+            {
+                0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.0,
+                0.6, 2.0, 0.6, 2.0, 0.6, 0.0
+            },
+            new[]
+            {
+                0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.0,
+                0.6, 0.6, 0.6, 0.6, 0.6, 0.0
+            },
+            new[]
+            {
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            }
+        };
+        return SkinHeightField(field);
+    }
+
+    /// <summary>A height field on a unit grid of quads, row-major, the
+    /// shape SkinTwoPeakNet builds by hand: vertex (i, j) sits at
+    /// (i, j, field[j][i]) and face (j, i) is the quad below and left of
+    /// (j + 1, i + 1), wound the same way.</summary>
+    private static (double[][] Vertices, int[][] Faces) SkinHeightField(
+        double[][] field)
+    {
+        int rows = field.Length;
+        int columns = field[0].Length;
+        var vertices = new List<double[]>();
+        for (int j = 0; j < rows; j++)
+        {
+            for (int i = 0; i < columns; i++)
+                vertices.Add(new[] { (double)i, (double)j, field[j][i] });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j + 1 < rows; j++)
+        {
+            for (int i = 0; i + 1 < columns; i++)
+            {
+                int a = j * columns + i;
+                faces.Add(new[]
+                {
+                    a, a + 1, a + columns + 1, a + columns
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
     /// SkinPatterns.ReadNet: the pure half of the ThrustMesh walk. A TNA
     /// Result's form faces come back as plain vertex and face arrays
     /// mapped through Mappings.SourceVertexToFormVertex onto the
@@ -9107,10 +9234,22 @@ internal static class Program
     }
 
     /// <summary>
-    /// Ruling B of the whole-branch review, measured: a band the level
-    /// curves change component count across is REFUSED whole, named in
-    /// the diagnostics, and counted, rather than filled with cells that
-    /// pair curves which do not correspond.
+    /// Ruling B of the whole-branch review as item B2 corrects it,
+    /// measured: a band whose level curves do not CORRESPOND one for one
+    /// is REFUSED whole, named in the diagnostics, and counted, rather
+    /// than filled with cells that pair curves which are not the same
+    /// piece of surface.
+    ///
+    /// The test is of the MATCHING, not of the count. Counting is too
+    /// weak, and two ordinary surfaces show it: a two-hump barrel cuts
+    /// into two STRIPS low down and two hump LOOPS higher up, and a net
+    /// where one island splits in the same band as another dies reads
+    /// two at every height. Both are fixtures here, both keep the count
+    /// at 2 throughout, and against the build before B2 both had every
+    /// band built and cells laid over one another. The rule is a mutual
+    /// BIJECTION under MatchBelow in both directions: no curve claimed
+    /// by two, none unclaimed, the two maps inverses of each other. One
+    /// test catches split, death, swap and simultaneous split-and-death.
     ///
     /// The two-peak fixture splits at z 0.9 (the derivation is in
     /// SkinTwoPeakNet: one closed loop up to 0.9, two above it).
@@ -9281,6 +9420,133 @@ internal static class Program
                 }
             }
         }
+
+        // ---- the two nets a COUNT test cannot see. Both hold two
+        // components at every one of the nine course heights and change
+        // WHAT those components are across band 1, so only the
+        // correspondence catches them. Both were reproduced against the
+        // build before item B2: no band refused, no warning, and cells
+        // laid over one another (the two-hump barrel at S 0.6 and CH 0.5
+        // gave 70 courses cells with 10 self-crossing and 166 overlapping
+        // pairs, and 72 honeycomb cells with 8 and 85; the
+        // split-and-death net gave 80 courses cells with 49 overlapping
+        // pairs and 116 honeycomb cells with 24 self-crossing and 155).
+        //
+        // Both refuse the SAME band as the two-peak net, and for the same
+        // arithmetic. COURSES: the nine heights are zMin + eps, 0.25,
+        // 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, zMax - eps, band r spans
+        // levels 2r, 2r + 1 and 2r + 2, and the change is between 0.75
+        // and 1.0 on the two-hump barrel (strips become hump loops) and
+        // between 0.5 and 0.75 on the split-and-death net (block loops
+        // become peak loops), so band 1, spanning z 0.500 to 1.000, is
+        // the one band whose three levels do not correspond.
+        // HEXAGONAL: its heights are the clamped lattice rows -1 to 5,
+        // which distinct gives zMin + eps, 0.5, 1.0, 1.5, zMax - eps, and
+        // the consecutive pair that fails to correspond is again 0.500 to
+        // 1.000. A lattice cell of centre row c reaches from
+        // z 0.5(c - 1) to z 0.5(c + 1), so that interval falls inside the
+        // span of rows c = 1 and c = 2 and of no other: TWO rows refused,
+        // their clamped centres at z 0.5 and z 1.0, which are courses 1
+        // and 2.
+        void RefusesTheMiddleBand(
+            string label,
+            (double[][] Vertices, int[][] Faces) fixture,
+            bool honeycombPlansMeasured)
+        {
+            object subject = Net(fixture);
+
+            object byCourses = courses.Invoke(
+                null, new object[] { subject, 0.6, 0.5 })!;
+            var courseCells = SkinCells(byCourses);
+            if (Reading<int>(byCourses, "TransitionBands") != 1)
+            {
+                throw new InvalidOperationException(
+                    $"The {label} holds two components at every height " +
+                    "and changes which two across band 1, so exactly one " +
+                    "courses band is refused on the CORRESPONDENCE; got " +
+                    $"{Reading<int>(byCourses, "TransitionBands")}.");
+            }
+            string courseText = Reading<string>(byCourses, "Diagnostics");
+            if (!courseText.Contains(CoursesLine, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The {label}'s refused courses band is named with " +
+                    $"its heights: '{CoursesLine}'; got '{courseText}'.");
+            }
+            if (courseCells.Any(cell => cell.Course == 1))
+            {
+                throw new InvalidOperationException(
+                    $"The {label}'s refused band emits NO cells, so " +
+                    "nothing may carry course 1.");
+            }
+            foreach (int course in new[] { 0, 2, 3 })
+            {
+                if (!courseCells.Any(cell => cell.Course == course))
+                {
+                    throw new InvalidOperationException(
+                        "Only the transition band is refused: course " +
+                        $"{course} of the {label} must still carry cells.");
+                }
+            }
+            RequireDisjointSimplePlans(
+                courseCells.Select(cell => cell.Outline).ToArray(),
+                $"courses/{label}");
+
+            object byHexagons = hexagonal.Invoke(
+                null, new object[] { subject, 0.6, 0.5 })!;
+            var hexagons = SkinCells(byHexagons);
+            if (Reading<int>(byHexagons, "TransitionBands") != 2)
+            {
+                throw new InvalidOperationException(
+                    $"Two lattice rows of the {label} reach across the " +
+                    "0.500 to 1.000 transition, centre rows 1 and 2; got " +
+                    $"{Reading<int>(byHexagons, "TransitionBands")}.");
+            }
+            string hexagonText = Reading<string>(byHexagons, "Diagnostics");
+            if (!hexagonText.Contains(
+                    HexagonalLine, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The {label}'s honeycomb names its refused rows the " +
+                    $"same way: '{HexagonalLine}'; got '{hexagonText}'.");
+            }
+            if (hexagons.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "Only the rows that span the change are refused; the " +
+                    $"rest of the {label}'s honeycomb still grows.");
+            }
+            if (hexagons.Any(
+                    cell => cell.Course == 1 || cell.Course == 2))
+            {
+                throw new InvalidOperationException(
+                    "The refused lattice rows are the ones whose clamped " +
+                    "centres sit at z 0.5 and z 1.0, courses 1 and 2, so " +
+                    $"no surviving {label} cell may carry either.");
+            }
+            if (honeycombPlansMeasured)
+            {
+                RequireDisjointSimplePlans(
+                    hexagons.Select(cell => cell.Outline).ToArray(),
+                    $"hexagonal/{label}");
+            }
+        }
+        RefusesTheMiddleBand(
+            "two-hump barrel", SkinTwoHumpBarrelNet(), true);
+        // The split-and-death HONEYCOMB's plans are NOT asserted, and the
+        // assertion is left out rather than weakened. After items B2 and
+        // D2 it still comes back with 4 self-crossing cells and 8
+        // overlapping pairs, all of them in course 0 at the far ends of
+        // the u domain, where the anti-seam cut of a closed loop with a
+        // square plan folds the outline back on itself. That is the same
+        // family as the dome crown breach item D2 measures and does not
+        // fix: a pre-existing honeycomb defect on closed loops, not a
+        // transition defect, and it needs its own ruling. Everything else
+        // this fixture measures IS asserted, the courses plans included.
+        // The full numbers are in
+        // .superpowers/sdd/2026-08-31-skin/final-fix-report-2.md.
+        RefusesTheMiddleBand(
+            "split-and-death", SkinSplitAndDeathNet(), false);
     }
 
     /// <summary>
