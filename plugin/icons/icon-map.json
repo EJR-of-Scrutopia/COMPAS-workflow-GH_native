@@ -167,10 +167,10 @@
       "filename": "result_breakdown.png"
     },
     {
-      "key": "stress_analysis",
-      "label": "MO",
+      "key": "fit",
+      "label": "FI",
       "category": "04 Read",
-      "filename": "stress_analysis.png"
+      "filename": "fit.png"
     },
     {
       "key": "forces",

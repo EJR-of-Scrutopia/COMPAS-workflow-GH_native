@@ -115,22 +115,16 @@ internal static class Program
                         "Vector Scale", "Gap"
                     },
                     Array.Empty<string>()),
-                // Monitor's ports are pinned for the same reason Deconstruct's
-                // are: every number tree here is READ AGAINST a Deconstruct
-                // geometry tree by slot, so a renamed or reordered output is a
-                // silently rewired canvas rather than a compile error.
-                ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = (
-                    new[] { "Result", "EI", "EA", "Tolerance", "Cable Capacity", "Column Capacity" },
+                // Fit owns the geometry-against-the-solved-state half of
+                // Monitor's old surface: deviation in vertex order, the sag
+                // per bar, pinned for the same reason the other children are.
+                ["Ananke.COMPAS.Native.Components.FitComponent"] = (
+                    new[] { "Result", "EI", "Tolerance" },
                     new[]
                     {
                         "Result",
-                        "Member Force", "Force Density", "Horizontal Force", "Slack",
-                        "Spool Length", "Unstrained Length",
-                        "Anchor Along", "Anchor Across",
-                        "Tip Reaction", "Column Force", "Thrust", "Lean",
-                        "Deviation", "Deviation Stats", "Reachable", "Unreachable",
-                        "Bar Sag", "Residuals",
-                        "Cable Utilisation", "Column Utilisation"
+                        "Deviation", "Deviation Stats", "Reachable",
+                        "Unreachable", "Bar Sag"
                     }),
                 // Forces owns the member half of Monitor's old surface:
                 // every number tree here is READ AGAINST a Deconstruct
@@ -307,7 +301,7 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = ("column_finder", "CO"),
             ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = ("mould_animate", "AN"),
             ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = ("result_breakdown", "DE"),
-            ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = ("stress_analysis", "MO"),
+            ["Ananke.COMPAS.Native.Components.FitComponent"] = ("fit", "FI"),
             ["Ananke.COMPAS.Native.Components.ForcesComponent"] = ("forces", "FO"),
             ["Ananke.COMPAS.Native.Components.SupportsReaderComponent"] = ("supports", "SP"),
             ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
@@ -499,9 +493,7 @@ internal static class Program
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
             // with nineteen components' worth of contract untested. 22 is
-            // the readers rework in flight: Monitor still stands beside
-            // Forces and Supports until Fit arrives and Monitor retires,
-            // which is also 22.
+            // the settled readers surface: Monitor retired when Fit arrived.
             failures.Add(
                 $"Expected 22 concrete public components, found " +
                 $"{componentTypes.Length}.");
@@ -766,7 +758,7 @@ internal static class Program
             ValidateStiffnessSeparation(plugin);
             Console.WriteLine(
                 "PASS  EI separation: bar sag scales exactly as one over EI, "
-                + "which is what lets Monitor's one number turn a bending "
+                + "which is what lets Fit's one number turn a bending "
                 + "shape into millimetres; lean from vertical is measured "
                 + "against hand-computed angles.");
         }
@@ -1014,10 +1006,49 @@ internal static class Program
 
         try
         {
+            ValidateFitReadings(plugin);
+            Console.WriteLine(
+                "PASS  Fit readings: a frame standing 1, 10 and -2 mm off "
+                + "the solved state reads those SIGNED deviations in vertex "
+                + "order, RMS root 35 with worst and 95th percentile 10 by "
+                + "absolute value, node 1 alone outside the 5 mm tolerance "
+                + "and reachability a warning naming the count; no principal "
+                + "runs means an empty Bar Sag and fit.bar_sag_absent; the "
+                + "intermediate frame is named; a run held at BOTH ends "
+                + "under a 0.3 kN hanger sags the hand-computed 50 mm at "
+                + "its middle notch and zero at the held ones, because "
+                + "0.3 kN became 300 N before it met EI 1000, with "
+                + "fit.bar_sag naming the worst; held at one notch the "
+                + "same run is a mechanism, three zeros and a "
+                + "fit.bar_unheld warning; and the RES leaves carrying "
+                + "fit.* entries alone with no monitor.* anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Fit readings: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateReaderChaining(plugin);
+            Console.WriteLine(
+                "PASS  Reader chaining: Forces then Supports then Fit "
+                + "accumulate all three prefixes on one RES, none clobbering "
+                + "another's entries, re-running Forces REPLACES its own "
+                + "rather than stacking them, and the monitor.* prefix is "
+                + "extinct.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Reader chaining: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateResultTablesOrder(plugin);
             Console.WriteLine(
                 "PASS  ResultTables order: the one table Deconstruct's geometry "
-                + "and Monitor's numbers are both branched from hands back the "
+                + "and Forces' numbers are both branched from hands back the "
                 + "members in edge order with their ends, forces and ids, no "
                 + "force density or horizontal force where an FD Result carries "
                 + "none, the support ids as the Result lists them, each "
@@ -3040,6 +3071,14 @@ internal static class Program
             throw new InvalidOperationException("Render must print the worker's Report.");
         if (!text.Contains("Columns", StringComparison.Ordinal))
             throw new InvalidOperationException("Render must say which mould components have not run.");
+        if (!text.Contains(
+                "not yet run on this Result: Columns, Animate, Forces, Fit, Supports",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Render's not-run line names each reader separately on a "
+                + "Result none of them has annotated.");
+        }
 
         // An FD Result with no report prints the standing FD line.
         string fdText = (string)render.Invoke(null, new object[] { Result(Array.Empty<int>(), null), none })!;
@@ -3681,7 +3720,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// <c>MonitorMath</c>: the four pure rules Monitor's new outputs rest on,
+    /// <c>MonitorMath</c>: the four pure rules the readers' outputs rest on,
     /// measured on hand-built inputs so a wrong sign or a wrong percentile
     /// rank cannot pass.
     /// </summary>
@@ -4261,8 +4300,308 @@ internal static class Program
     }
 
     /// <summary>
+    /// <c>FitComponent.Read</c>: the solved-state half of what Monitor used
+    /// to compute, measured through the child on a framed fixture against
+    /// hand numbers, and the RES it emits carrying fit.* entries alone with
+    /// no monitor.* anywhere. Bar Sag is driven all three ways: no principal
+    /// runs is an empty tree, a run held at both ends sags a hand-computed
+    /// 50 mm through the moved BarBending (the kN-to-N conversion and the
+    /// metres-to-mm scale both load-bearing), and a run held at one notch
+    /// is a mechanism reported by fit.bar_unheld.
+    /// </summary>
+    private static void ValidateFitReadings(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+        Type fit = RequireComponentType(plugin, "FitComponent");
+        MethodInfo read = RequireStatic(fit, "Read");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2 });
+        SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            equilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+
+        // The frame stands 1 mm high, 10 mm high and 2 mm LOW: a signed
+        // field whose one offender is node 1 against a 5 mm tolerance.
+        object frame = CreateInstance(frameType);
+        SetContractProperty(frame, frameType, "Time", 50.0);
+        SetContractProperty(frame, frameType, "Phase", "raise");
+        SetContractProperty(frame, frameType, "Lift", 0.5);
+        SetContractProperty(frame, frameType, "Sag", 0.5);
+        SetContractProperty(frame, frameType, "Vertices",
+            Of(point, P(0, 0, 0.001), P(1, 0, 0.010), P(2, 0, -0.002)));
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Ground", 0.0);
+        SetContractProperty(mould, mouldType, "Frame", frame);
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        object readings = read.Invoke(null, new object?[] { result, 0.0, 5.0 })!;
+        object Prop(string name) =>
+            readings.GetType().GetProperty(name)!.GetValue(readings)!;
+
+        double[] deviation = ((IEnumerable)Prop("Deviation")).Cast<object>()
+            .Select(Convert.ToDouble).ToArray();
+        var expected = new[] { 1.0, 10.0, -2.0 };
+        if (deviation.Length != 3 ||
+            deviation.Zip(expected, (a, b) => Math.Abs(a - b)).Any(gap => gap > 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "Deviation is SIGNED millimetres in vertex order, [1, 10, -2] "
+                + $"here; got [{string.Join(",", deviation)}].");
+        }
+        double rms = (double)Prop("Rms");
+        double max = (double)Prop("Max");
+        double p95 = (double)Prop("P95");
+        if (Math.Abs(rms - Math.Sqrt(35.0)) > 1.0e-9 ||
+            Math.Abs(max - 10.0) > 1.0e-9 ||
+            Math.Abs(p95 - 10.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The stats of (1, 10, -2) are RMS root 35 with worst and 95th "
+                + $"percentile 10, ABSOLUTE values throughout; got {rms:0.####}, "
+                + $"{max}, {p95}.");
+        }
+        if ((bool)Prop("Reachable") is not false)
+        {
+            throw new InvalidOperationException(
+                "Node 1 sits 10 mm off against a 5 mm tolerance, so Reachable "
+                + "is false.");
+        }
+        int[] unreachable = ((IEnumerable)Prop("Unreachable")).Cast<object>()
+            .Select(Convert.ToInt32).ToArray();
+        if (!unreachable.SequenceEqual(new[] { 1 }))
+        {
+            throw new InvalidOperationException(
+                "Node 1 alone is outside tolerance; got "
+                + $"[{string.Join(",", unreachable)}].");
+        }
+        if (((IEnumerable)Prop("BarSag")).Cast<object>().Any())
+        {
+            throw new InvalidOperationException(
+                "This Result carries no principal runs, so Bar Sag is EMPTY "
+                + "and fit.bar_sag_absent says why.");
+        }
+
+        var rows = DiagnosticRows(plugin, Prop("Result"));
+        foreach (string code in new[]
+        {
+            "fit.deviation", "fit.reachability", "fit.bar_sag_absent",
+            "fit.intermediate_frame"
+        })
+        {
+            if (!rows.Any(row => row.Code == code))
+            {
+                throw new InvalidOperationException(
+                    $"The emitted RES must carry {code}; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+        if (rows.Where(row => row.Code.StartsWith("fit.", StringComparison.Ordinal))
+                .Any(row => row.Source != "Fit"))
+        {
+            throw new InvalidOperationException(
+                "Every fit.* entry names Fit as its source.");
+        }
+        (string Code, string Severity, string Source, string Message) reach =
+            rows.Single(row => row.Code == "fit.reachability");
+        if (reach.Severity != "warning" ||
+            !reach.Message.Contains("1 of 3 nodes", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "One node out of three outside tolerance is a warning naming "
+                + $"the count; got '{reach.Message}'.");
+        }
+
+        // The positive Bar Sag path, through the moved BarBending: the same
+        // three-notch run held at BOTH ends, one 0.3 kN hanger pulling the
+        // middle notch straight down. 0.3 kN converts to 300 N before it
+        // meets EI, the span is 2 m of unit segments, so a simply supported
+        // beam with EI 1000 N.m2 sags P L^3 / 48 EI at the middle notch:
+        // 300 x 8 / 48000 = 0.05 m, which the port reports as 50 mm, zero
+        // at the two held notches (the Hermite beam elements are nodally
+        // exact for a point load at a notch).
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type problemType = RequireContractType(plugin, "EquilibriumProblemDto");
+        object sagEquilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(sagEquilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 0, -1)));
+        SetContractProperty(sagEquilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 1, 3)!));
+        SetContractProperty(sagEquilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2, -0.3 });
+        SetContractProperty(sagEquilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            sagEquilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            sagEquilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+        object sagTopology = CreateInstance(topologyType);
+        SetContractProperty(sagTopology, topologyType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 0, -1)));
+        SetContractProperty(sagTopology, topologyType, "PrincipalRuns",
+            new int[][] { new[] { 0, 1, 2 } });
+        object sagProblem = CreateInstance(problemType);
+        SetContractProperty(sagProblem, problemType, "Topology", sagTopology);
+        SetContractProperty(sagEquilibrium, equilibriumType, "Problem", sagProblem);
+        object sagResult = CreateResultDto(
+            resultType, "fd", sagEquilibrium, null, null);
+
+        object sagReadings = read.Invoke(
+            null, new object?[] { sagResult, 1000.0, 5.0 })!;
+        object SagProp(string name) =>
+            sagReadings.GetType().GetProperty(name)!.GetValue(sagReadings)!;
+        double[][] Tree(object value) =>
+            ((IEnumerable)value).Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+        string Render(double[][] tree) => string.Join(" | ", tree.Select(
+            branch => string.Join(",", branch.Select(value =>
+                value.ToString("0.####",
+                    System.Globalization.CultureInfo.InvariantCulture)))));
+        double[][] sagTree = Tree(SagProp("BarSag"));
+        if (sagTree.Length != 1 || sagTree[0].Length != 3 ||
+            Math.Abs(sagTree[0][0]) > 1.0e-9 ||
+            Math.Abs(sagTree[0][1] - 50.0) > 1.0e-6 ||
+            Math.Abs(sagTree[0][2]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A 0.3 kN hanger on the middle notch of a 2 m run held at "
+                + "both ends sags P L^3 / 48 EI = 50 mm there and zero at "
+                + "the held notches, so Bar Sag is [0, 50, 0]; got "
+                + $"[{Render(sagTree)}]. 0.05 here is the missing "
+                + "metres-to-mm scale; 0.05 mm is the ForceUnit trap, the "
+                + "kN load meeting EI unconverted.");
+        }
+        var sagRows = DiagnosticRows(plugin, SagProp("Result"));
+        (string Code, string Severity, string Source, string Message) sagEntry =
+            sagRows.Single(row => row.Code == "fit.bar_sag");
+        if (sagEntry.Severity != "info" ||
+            !sagEntry.Message.Contains("up to 50 mm", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "fit.bar_sag is info and names the worst sag; got "
+                + $"'{sagEntry.Message}'.");
+        }
+        if (sagRows.Any(row => row.Code == "fit.bar_unheld"))
+        {
+            throw new InvalidOperationException(
+                "Both ends held solves every bar, so fit.bar_unheld does "
+                + "not appear.");
+        }
+
+        // A run held at ONE notch is a mechanism, not a beam: zeros for
+        // alignment and fit.bar_unheld saying why. The shared reader
+        // fixture holds node 2 alone, so with EI wired it is exactly this
+        // case.
+        object unheldReadings = read.Invoke(
+            null, new object?[] { ReaderFixtureResult(plugin), 1000.0, 5.0 })!;
+        object UnheldProp(string name) =>
+            unheldReadings.GetType().GetProperty(name)!.GetValue(unheldReadings)!;
+        double[][] unheldTree = Tree(UnheldProp("BarSag"));
+        if (unheldTree.Length != 1 || unheldTree[0].Length != 3 ||
+            unheldTree[0].Any(value => Math.Abs(value) > 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "One held notch is a mechanism, not a beam: its branch is "
+                + "three zeros for alignment, nothing solved; got "
+                + $"[{Render(unheldTree)}].");
+        }
+        var unheldRows = DiagnosticRows(plugin, UnheldProp("Result"));
+        if (!unheldRows.Any(row => row.Code == "fit.bar_unheld"
+                && row.Severity == "warning"))
+        {
+            throw new InvalidOperationException(
+                "A bar held at one notch raises fit.bar_unheld as a "
+                + "warning.");
+        }
+    }
+
+    /// <summary>
+    /// The chaining rule of spec section 5: each child REPLACES only its own
+    /// prefix, so Forces then Supports then Fit accumulate all three sets on
+    /// one RES, re-running a child does not stack its entries, and the
+    /// monitor.* prefix is extinct.
+    /// </summary>
+    private static void ValidateReaderChaining(Assembly plugin)
+    {
+        object result = ReaderFixtureResult(plugin);
+        object Step(string component, object input, params object[] rest)
+        {
+            Type type = RequireComponentType(plugin, component);
+            MethodInfo read = RequireStatic(type, "Read");
+            object[] arguments = new[] { input }.Concat(rest).ToArray();
+            object readings = read.Invoke(null, arguments)!;
+            return readings.GetType().GetProperty("Result")!.GetValue(readings)!;
+        }
+
+        object afterForces = Step("ForcesComponent", result, 1000.0, 50.0);
+        object afterSupports = Step("SupportsReaderComponent", afterForces, 100.0);
+        object afterFit = Step("FitComponent", afterSupports, 0.0, 5.0);
+        var rows = DiagnosticRows(plugin, afterFit);
+        foreach (string prefix in new[] { "forces.", "supports.", "fit." })
+        {
+            if (!rows.Any(row => row.Code.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    $"After chaining all three children the RES must carry "
+                    + $"{prefix}* entries; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+
+        int forcesEntries = rows.Count(
+            row => row.Code.StartsWith("forces.", StringComparison.Ordinal));
+        object again = Step("ForcesComponent", afterFit, 1000.0, 50.0);
+        var reRun = DiagnosticRows(plugin, again);
+        if (reRun.Count(row => row.Code.StartsWith("forces.", StringComparison.Ordinal))
+            != forcesEntries)
+        {
+            throw new InvalidOperationException(
+                "Re-running Forces must REPLACE its own entries, not stack "
+                + "them.");
+        }
+        if (reRun.Count != rows.Count)
+        {
+            throw new InvalidOperationException(
+                "Re-running Forces must leave the other children's entries "
+                + $"untouched: {rows.Count} entries before, {reRun.Count} "
+                + "after.");
+        }
+    }
+
+    /// <summary>
     /// <c>ResultTables</c> is the ONE order Deconstruct's geometry trees and
-    /// Monitor's number trees are both built from, and nothing measured it:
+    /// Forces' number trees are both built from, and nothing measured it:
     /// the two components agreed because they call the same method, not
     /// because anything said what that method hands back. A minimal FD Result
     /// of three vertices, two edges, one support and one reaction pins the
@@ -4482,7 +4821,7 @@ internal static class Program
                 + $"Result lists them in; got ids {TnaWhole(0, "Id")}, "
                 + $"{TnaWhole(1, "Id")}, {TnaWhole(2, "Id")}. This is the one "
                 + "ordering that decides whether Deconstruct's Member Lines and "
-                + "Monitor's forces describe the same member.");
+                + "Forces' member forces describe the same member.");
         }
         if (TnaWhole(0, "U") != 2 || TnaWhole(0, "V") != 0 ||
             TnaWhole(1, "U") != 0 || TnaWhole(1, "V") != 1 ||
@@ -4522,7 +4861,7 @@ internal static class Program
             throw new InvalidOperationException(
                 "A zero reaction is not a reaction: two went in and only the "
                 + $"non-zero one comes back; got {tnaReactions.Length}. Keeping the "
-                + "zero would give Deconstruct and Monitor different stray branches.");
+                + "zero would give Deconstruct and Supports different stray branches.");
         }
         object tnaPair = tnaReactions.GetValue(0)!;
         int tnaNode = (int)tnaPair.GetType().GetField("Item1")!.GetValue(tnaPair)!;
@@ -6868,7 +7207,7 @@ internal static class Program
     /// Nothing chooses where a column stands by stiffness any more: every
     /// notch is held, so there is no arrangement for EI to pick between and
     /// no way for it to tune a placement while claiming not to. EI is asked
-    /// for on Monitor and nowhere else, and it has one job left, which has
+    /// for on Fit and nowhere else, and it has one job left, which has
     /// to be exact: DEFLECTION SCALES AS ONE OVER EI. The beam knows the
     /// SHAPE of the sag between the notches a column holds, and that exact
     /// reciprocal is what turns the shape into millimetres, which is the
