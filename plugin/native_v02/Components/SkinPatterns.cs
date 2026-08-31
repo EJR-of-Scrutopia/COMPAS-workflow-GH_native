@@ -519,13 +519,53 @@ internal static class SkinPatterns
     }
 
     /// <summary>
-    /// Spec section 4's "matched to the component below it by plan
-    /// overlap": the candidate whose plan bounding box overlaps this
-    /// curve's with the greatest area. Parallel open strips (the barrel)
-    /// have zero-thickness boxes that never overlap, so where nothing
-    /// does, the nearest plan centroid stands in. Ties keep the first
-    /// candidate, which is deterministic because Trace's component order
-    /// is.
+    /// Spec section 4's "matched to the component below it": the
+    /// candidate whose plan projection lies CLOSEST to this curve's.
+    ///
+    /// The measure is a DISTANCE, and it is a distance because a
+    /// distance is the thing a rotation cannot change. The rule this
+    /// replaces scored candidates by the overlap AREA of axis-aligned
+    /// plan bounding boxes, and an axis-aligned box is a property of
+    /// the WORLD AXES rather than of the surface. Turning a model about
+    /// world Z moves no z, no face and no traced component, so it
+    /// cannot change which curves correspond, and yet it changed the
+    /// answer. Measured against the build before this change, the
+    /// two-hump barrel swept 0 to 180 degrees in 5 degree steps had its
+    /// transition band refused at EXACTLY five angles, 0, 45, 90, 135
+    /// and 180. At the other thirty-two the band was built and the
+    /// courses engine emitted 84 cells with 12 to 14 self-crossing and
+    /// 152 to 214 overlapping pairs in plan; at 37 degrees, 13 and 183.
+    /// The mechanism: a long thin strip lying at an angle has an
+    /// axis-aligned box inflated by roughly its own length times the
+    /// sine of that angle, which manufactures an overlap where the
+    /// strips themselves are nowhere near one another, and with it a
+    /// false bijection. The same blind spot refused an ordinary annular
+    /// shell (an oculus dome, whose every cut is two NESTED loops)
+    /// WHOLE at every course height, because the outer loop's box
+    /// CONTAINS the inner loop's and a bounding-box area cannot express
+    /// nesting. An arbitrarily oriented model and an oculus dome are
+    /// both ordinary studio cases.
+    ///
+    /// The score, symmetrised so it does not depend on which curve is
+    /// read first: the mean over this curve's sample points of the plan
+    /// distance to the nearest sample point of the candidate, plus the
+    /// same mean taken the other way round, halved. The trace's own
+    /// points are the sampling, which is why no new sampling rule is
+    /// needed. Distances are invariant under rotation and translation,
+    /// so the answer is a property of the geometry rather than of the
+    /// model's alignment or its siting.
+    ///
+    /// The nearest-centroid fallback went with the boxes. It existed
+    /// only because parallel open strips (the barrel) have
+    /// zero-thickness boxes that overlap in nothing, so the area rule
+    /// had no answer at all there; a distance always has one, and a
+    /// better one than the centroid's, which cannot tell two curves
+    /// sharing a centroid apart. Ties keep the first candidate, which
+    /// is deterministic because Trace's component order is.
+    ///
+    /// Spec section 4 words this rule as "by plan overlap". The words
+    /// are the spec's, the defect is the words' own, and the ruling
+    /// this comment records replaces them with proximity.
     /// </summary>
     private static int MatchBelow(
         SkinLevelCurve curve,
@@ -533,45 +573,61 @@ internal static class SkinPatterns
     {
         if (candidates.Count == 0)
             return -1;
-        (double MinX, double MinY, double MaxX, double MaxY) box =
-            PlanBox(curve);
         int best = -1;
-        double bestArea = 0.0;
+        double bestScore = double.PositiveInfinity;
         for (int i = 0; i < candidates.Count; i++)
         {
-            (double MinX, double MinY, double MaxX, double MaxY) other =
-                PlanBox(candidates[i]);
-            double overlapX =
-                Math.Min(box.MaxX, other.MaxX) -
-                Math.Max(box.MinX, other.MinX);
-            double overlapY =
-                Math.Min(box.MaxY, other.MaxY) -
-                Math.Max(box.MinY, other.MinY);
-            double area =
-                Math.Max(overlapX, 0.0) * Math.Max(overlapY, 0.0);
-            if (area > bestArea + 1.0e-12)
+            double score = PlanProximity(curve, candidates[i]);
+            if (score < bestScore - 1.0e-12)
             {
-                bestArea = area;
-                best = i;
-            }
-        }
-        if (best >= 0)
-            return best;
-        (double X, double Y) centroid = PlanCentroid(curve);
-        double bestDistance = double.PositiveInfinity;
-        for (int i = 0; i < candidates.Count; i++)
-        {
-            (double X, double Y) other = PlanCentroid(candidates[i]);
-            double dx = centroid.X - other.X;
-            double dy = centroid.Y - other.Y;
-            double distance = dx * dx + dy * dy;
-            if (distance < bestDistance - 1.0e-12)
-            {
-                bestDistance = distance;
+                bestScore = score;
                 best = i;
             }
         }
         return best;
+    }
+
+    /// <summary>
+    /// How close two curves lie to one another in PLAN: the mean
+    /// nearest-point distance taken from the first to the second, plus
+    /// the same from the second to the first, halved. Zero for two
+    /// curves whose sample points coincide, and it grows with
+    /// separation. Symmetric by construction, because a correspondence
+    /// that depended on reading order would not be a correspondence.
+    ///
+    /// PLAN only. The two curves being compared are at different
+    /// heights by construction, so a three-dimensional distance would
+    /// score every pair by the course height they are apart rather than
+    /// by where in plan they sit, which is the thing being asked.
+    /// </summary>
+    private static double PlanProximity(
+        SkinLevelCurve first,
+        SkinLevelCurve second) =>
+        (MeanNearestPlanDistance(first, second) +
+         MeanNearestPlanDistance(second, first)) / 2.0;
+
+    /// <summary>The mean, over one curve's sample points, of the plan
+    /// distance from that point to the nearest sample point of the
+    /// other curve.</summary>
+    private static double MeanNearestPlanDistance(
+        SkinLevelCurve from,
+        SkinLevelCurve to)
+    {
+        double total = 0.0;
+        foreach (double[] point in from.Points)
+        {
+            double nearest = double.PositiveInfinity;
+            foreach (double[] other in to.Points)
+            {
+                double dx = point[0] - other[0];
+                double dy = point[1] - other[1];
+                double squared = dx * dx + dy * dy;
+                if (squared < nearest)
+                    nearest = squared;
+            }
+            total += Math.Sqrt(nearest);
+        }
+        return total / from.Points.Count;
     }
 
     /// <summary>
@@ -773,35 +829,6 @@ internal static class SkinPatterns
     }
 
     // ---- small shared arithmetic ----------------------------------------
-
-    private static (double MinX, double MinY, double MaxX, double MaxY)
-        PlanBox(SkinLevelCurve curve)
-    {
-        double minX = double.PositiveInfinity;
-        double minY = double.PositiveInfinity;
-        double maxX = double.NegativeInfinity;
-        double maxY = double.NegativeInfinity;
-        foreach (double[] point in curve.Points)
-        {
-            minX = Math.Min(minX, point[0]);
-            minY = Math.Min(minY, point[1]);
-            maxX = Math.Max(maxX, point[0]);
-            maxY = Math.Max(maxY, point[1]);
-        }
-        return (minX, minY, maxX, maxY);
-    }
-
-    private static (double X, double Y) PlanCentroid(SkinLevelCurve curve)
-    {
-        double x = 0.0;
-        double y = 0.0;
-        foreach (double[] point in curve.Points)
-        {
-            x += point[0];
-            y += point[1];
-        }
-        return (x / curve.Points.Count, y / curve.Points.Count);
-    }
 
     private static double Distance(double[] a, double[] b)
     {
@@ -1215,7 +1242,7 @@ internal static class SkinPatterns
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
 
     /// <summary>One chart: the traced components at successive heights,
-    /// chained bottom-up by plan-overlap matching, so each chain is one
+    /// chained bottom-up by plan-proximity matching, so each chain is one
     /// side of the surface set out independently (spec section 4).</summary>
     private sealed class SkinChart
     {

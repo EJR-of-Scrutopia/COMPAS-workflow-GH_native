@@ -688,8 +688,14 @@ internal static class Program
                 "across it REFUSED whole, named in the diagnostics with " +
                 "their heights and counted for the component's Warning, " +
                 "every other band still built and every emitted plan " +
-                "disjoint and simple bar the one honeycomb named in the " +
-                "check; the barrel and the dome refuse nothing.");
+                "disjoint and simple bar the ones named in the check; " +
+                "the same two-hump barrel TURNED 37 degrees in plan is " +
+                "refused identically, cell count for cell count, because " +
+                "a rotation about world Z cannot change which curves " +
+                "correspond; the barrel and the dome refuse nothing; and " +
+                "an ANNULAR shell, whose every cut is two nested loops, " +
+                "is refused NOWHERE and proposed on by both engines at " +
+                "five course heights.");
         }
         catch (Exception exception)
         {
@@ -8416,6 +8422,106 @@ internal static class Program
     }
 
     /// <summary>
+    /// Any fixture, turned about the world Z axis by the given angle in
+    /// PLAN: (x, y) becomes (x cos a - y sin a, x sin a + y cos a) with z
+    /// untouched, vertex for vertex and face for face.
+    ///
+    /// It is the fixture that measures the ROTATION INVARIANCE of the
+    /// correspondence. A rotation about world Z moves no z, no face and
+    /// no traced component: the cut at a height is the same cut, made of
+    /// the same crossings, in the same order, and the count of
+    /// components at every height is identical at every angle. Nothing
+    /// about which curve corresponds to which can therefore depend on
+    /// the angle, and a rule whose answer does is reading the world axes
+    /// rather than the surface. The rule it caught was the overlap area
+    /// of AXIS-ALIGNED plan bounding boxes: a long thin strip lying at
+    /// an angle has a box inflated by roughly its own length times the
+    /// sine of that angle, which manufactures an overlap where the
+    /// strips are nowhere near one another.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinRotatedInPlan(
+        (double[][] Vertices, int[][] Faces) fixture,
+        double degrees)
+    {
+        double angle = degrees * Math.PI / 180.0;
+        double cos = Math.Cos(angle);
+        double sin = Math.Sin(angle);
+        double[][] turned = fixture.Vertices
+            .Select(vertex => new[]
+            {
+                vertex[0] * cos - vertex[1] * sin,
+                vertex[0] * sin + vertex[1] * cos,
+                vertex[2]
+            })
+            .ToArray();
+        return (turned, fixture.Faces);
+    }
+
+    /// <summary>
+    /// The ANNULAR shell, an oculus dome: five rings of sixteen vertices
+    /// at radii 4, 3.2, 2.5, 1.8 and 1.0 and heights 0, 1.2, 2.0, 1.2
+    /// and 0, quads between consecutive rings. The outer skirt climbs
+    /// from the rim at radius 4 to the ridge circle at radius 2.5 and
+    /// the inner skirt falls back to the oculus rim at radius 1, so
+    /// every cut strictly between the rims and the ridge is TWO NESTED
+    /// closed loops, an outer and an inner. That is what a level curve
+    /// of a surface with a hole in it is, and an oculus dome is an
+    /// ordinary funicular form.
+    ///
+    /// It is the fixture that measures what a bounding box cannot say.
+    /// The outer loop's plan box CONTAINS the inner loop's at every
+    /// height, and here the inner loop's arc length GROWS with height
+    /// while the outer's shrinks, so the inner loop's box overlap with
+    /// the outer loop below exceeded its overlap with the inner loop
+    /// below: both loops claimed the outer, no bijection existed
+    /// anywhere, and both engines refused the WHOLE surface at every
+    /// course height tried, zero cells, while the diagnostics asserted
+    /// that the level curves do not correspond when they correspond
+    /// perfectly, outer to outer and inner to inner. Box area cannot
+    /// express nesting; a distance can, because the inner loop lies
+    /// close to the inner loop and far from the outer.
+    ///
+    /// One arithmetic convenience of these radii, used by the check: the
+    /// outer and inner radii SUM to 5.0 at every height, since both
+    /// skirts are linear in z and 4 + 1 = 3.2 + 1.8 = 2.5 + 2.5 = 5.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinRingVaultNet()
+    {
+        double[] radii = { 4.0, 3.2, 2.5, 1.8, 1.0 };
+        double[] heights = { 0.0, 1.2, 2.0, 1.2, 0.0 };
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < radii.Length; ring++)
+        {
+            for (int k = 0; k < 16; k++)
+            {
+                double angle = Math.PI * 2.0 * k / 16.0;
+                vertices.Add(new[]
+                {
+                    radii[ring] * Math.Cos(angle),
+                    radii[ring] * Math.Sin(angle),
+                    heights[ring]
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < radii.Length; ring++)
+        {
+            for (int k = 0; k < 16; k++)
+            {
+                int next = (k + 1) % 16;
+                faces.Add(new[]
+                {
+                    ring * 16 + k,
+                    ring * 16 + next,
+                    (ring + 1) * 16 + next,
+                    (ring + 1) * 16 + k
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
     /// The two-peak fixture, whose level curves SPLIT. A height field on
     /// the barrel's own 7 by 5 grid of quads, row-major, with the rim at
     /// z 0, the whole interior ring at 0.9, and two peaks of 2.0 at
@@ -9283,6 +9389,23 @@ internal static class Program
     /// both engines must report none on them: the check that the refusal
     /// is a refusal and not a habit.
     ///
+    /// Two more fixtures measure that the correspondence is a property
+    /// of the GEOMETRY rather than of the world axes, which the overlap
+    /// area of axis-aligned plan bounding boxes was not.
+    ///
+    /// The two-hump barrel TURNED 37 degrees in plan must be refused
+    /// exactly as the upright one is, cell count for cell count. A
+    /// rotation about world Z moves no z, no face and no traced
+    /// component, so the transition is at the same heights and the
+    /// refusal must be the same refusal.
+    ///
+    /// An ANNULAR shell, whose every cut is two NESTED closed loops,
+    /// must be refused NOWHERE: nested loops correspond perfectly, outer
+    /// to outer and inner to inner, and an oculus dome is an ordinary
+    /// funicular form the component may not propose nothing for while
+    /// stating a false reason. Box area cannot express nesting, because
+    /// the outer loop's box contains the inner's; a distance can.
+    ///
     /// The component's own half of the ruling, the runtime Warning that
     /// says the skin has a HOLE, lives in SolveInstance and needs an
     /// IGH_DataAccess this harness has no native core to build. What is
@@ -9452,9 +9575,10 @@ internal static class Program
         // span of rows c = 1 and c = 2 and of no other: TWO rows refused,
         // their clamped centres at z 0.5 and z 1.0, which are courses 1
         // and 2.
-        void RefusesTheMiddleBand(
+        (int Courses, int Hexagons) RefusesTheMiddleBand(
             string label,
             (double[][] Vertices, int[][] Faces) fixture,
+            bool coursePlansMeasured,
             bool honeycombPlansMeasured)
         {
             object subject = Net(fixture);
@@ -9492,9 +9616,12 @@ internal static class Program
                         $"{course} of the {label} must still carry cells.");
                 }
             }
-            RequireDisjointSimplePlans(
-                courseCells.Select(cell => cell.Outline).ToArray(),
-                $"courses/{label}");
+            if (coursePlansMeasured)
+            {
+                RequireDisjointSimplePlans(
+                    courseCells.Select(cell => cell.Outline).ToArray(),
+                    $"courses/{label}");
+            }
 
             object byHexagons = hexagonal.Invoke(
                 null, new object[] { subject, 0.6, 0.5 })!;
@@ -9534,9 +9661,10 @@ internal static class Program
                     hexagons.Select(cell => cell.Outline).ToArray(),
                     $"hexagonal/{label}");
             }
+            return (courseCells.Length, hexagons.Length);
         }
-        RefusesTheMiddleBand(
-            "two-hump barrel", SkinTwoHumpBarrelNet(), true);
+        (int Courses, int Hexagons) upright = RefusesTheMiddleBand(
+            "two-hump barrel", SkinTwoHumpBarrelNet(), true, true);
         // The split-and-death HONEYCOMB's plans are NOT asserted, and the
         // assertion is left out rather than weakened. After items B2 and
         // D2 it still comes back with 4 self-crossing cells and 8
@@ -9550,7 +9678,148 @@ internal static class Program
         // The full numbers are in
         // .superpowers/sdd/2026-08-31-skin/final-fix-report-2.md.
         RefusesTheMiddleBand(
-            "split-and-death", SkinSplitAndDeathNet(), false);
+            "split-and-death", SkinSplitAndDeathNet(), true, false);
+
+        // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
+        // world Z leaves every z, every face and every traced component
+        // where it was, so the transition at z 0.500 to 1.000 is there at
+        // every angle and the refusal must be too. Against the build
+        // before this item the two-hump barrel swept 0 to 180 degrees in
+        // 5 degree steps was refused at EXACTLY five angles, 0, 45, 90,
+        // 135 and 180; at the other thirty-two TransitionBands came back
+        // 0, no line was written, no warning fired, and the courses
+        // engine emitted 84 cells with 12 to 14 self-crossing and 152 to
+        // 214 overlapping pairs in plan. 37 degrees is the measured worst
+        // case (13 and 183) and is the angle pinned here; the upright
+        // case above pins the other alignment, so both are measured.
+        //
+        // The cell COUNTS are asserted equal between the two alignments,
+        // which is the invariance itself rather than a number: a
+        // rotation cannot add or remove a cell. They are NOT asserted
+        // cell for cell, and deliberately so. A closed loop's seam falls
+        // back to the trace vertex on the +X bearing from the loop's plan
+        // centroid, a stated GLOBAL rule that reads the world axes on
+        // purpose (as the lowest open strip's does), so turning the model
+        // moves the seam to a different vertex and with it every setout
+        // coordinate of the hump loops. That is the rule working, not a
+        // defect: the SET of cells is a property of the geometry, and
+        // where the setout starts along a closed loop is a convention.
+        //
+        // NEITHER engine's PLANS are asserted on the turned fixture, and
+        // the assertion is left out rather than weakened. Moving the seam
+        // leaves the top course's two hump loops with two cells that
+        // self-cross in plan, and one overlapping pair each, at 30, 37,
+        // 45, 90 and 137 degrees alike (clean at 0 and 17). They are NOT
+        // correspondence damage: TransitionBands is 1 at every angle and
+        // the band that spans the change carries no cells at any of them.
+        // They are a CELL-SHAPE defect on a re-entrant closed loop, the
+        // same family as the L-shaped shell's one bad courses cell and
+        // the honeycomb's over the dome crown, and the plan-validity
+        // filter is what answers it. This assertion is turned ON in the
+        // commit that adds the filter, which is where it becomes a
+        // measurement of something rather than a hope.
+        (int Courses, int Hexagons) turned = RefusesTheMiddleBand(
+            "two-hump barrel rotated 37 degrees",
+            SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
+            false,
+            false);
+        if (turned.Courses != upright.Courses ||
+            turned.Hexagons != upright.Hexagons ||
+            upright.Courses == 0 ||
+            upright.Hexagons == 0)
+        {
+            throw new InvalidOperationException(
+                "Turning a model about world Z cannot add or remove a " +
+                "cell: the two-hump barrel gives " +
+                $"{upright.Courses} courses and {upright.Hexagons} " +
+                $"honeycomb cells upright and {turned.Courses} and " +
+                $"{turned.Hexagons} at 37 degrees.");
+        }
+
+        // ---- the ANNULAR shell, whose every cut is two NESTED loops.
+        // This is the check that would have caught a whole surface class
+        // being silently refused: against the build before this item the
+        // oculus dome came back with ZERO cells on both engines at every
+        // course height tried, every band counted as a transition, and
+        // the diagnostics asserting that the level curves do not
+        // correspond when they correspond perfectly, outer to outer and
+        // inner to inner (the mechanism is in SkinRingVaultNet).
+        //
+        // The courses count is pinned at CH 0.35, the shipped default,
+        // and hand-derived here. A 2 m rise at CH 0.35 is
+        // ceil(2/0.35) = 6 bands, and the top band's own rise,
+        // 2 - 5 x 0.35 = 0.25, is above CH/4 = 0.0875 so no sliver
+        // merges. Band r is set out on its mid height, which is
+        // (r CH + bandTop)/2 with bandTop = (r + 1) CH except on the top
+        // band where it is the crown: 0.175, 0.525, 0.875, 1.225, 1.575
+        // and 1.875. Each mid carries TWO loops, and a regular 16-gon of
+        // circumradius R has perimeter 32 R sin(pi/16) = 6.242890 R. The
+        // outer and inner radii SUM to 5.0 at every height (both skirts
+        // are linear in z and 4 + 1 = 3.2 + 1.8 = 2.5 + 2.5 = 5), so the
+        // two perimeters of a band sum to 6.242890 x 5 = 31.214452 m and
+        // L/S = 52.024 pieces. Taking the two loops separately, every
+        // band's pair rounds to 52: the six pairs are (40, 12), (38, 14),
+        // (36, 16), (33, 19), (30, 22) and (27, 25). 6 x 52 = 312.
+        //
+        // The honeycomb's count is NOT pinned: its per-row column counts
+        // over two charts have no short derivation, and what this fixture
+        // exists to measure is that the surface is not refused, which the
+        // structural assertions carry.
+        object ring = Net(SkinRingVaultNet());
+        foreach (double ringHeight in new[] { 0.2, 0.35, 0.5, 0.8, 1.9 })
+        {
+            foreach (MethodInfo engine in new[] { courses, hexagonal })
+            {
+                object built2 = engine.Invoke(
+                    null, new object[] { ring, 0.6, ringHeight })!;
+                var ringCells = SkinCells(built2);
+                if (Reading<int>(built2, "TransitionBands") != 0 ||
+                    Reading<string>(built2, "Diagnostics").Contains(
+                        "Transition bands skipped",
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "An annular shell's nested loops CORRESPOND, " +
+                        "outer to outer and inner to inner, so " +
+                        $"{engine.Name} must refuse no band of it at CH " +
+                        $"{ringHeight}; it reported " +
+                        $"{Reading<int>(built2, "TransitionBands")}.");
+                }
+                if (ringCells.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "An oculus dome is an ordinary funicular form " +
+                        $"and {engine.Name} must propose a pattern on " +
+                        $"it at CH {ringHeight}; it proposed nothing.");
+                }
+                if (engine == courses && ringHeight == 0.35 &&
+                    ringCells.Length != 312)
+                {
+                    throw new InvalidOperationException(
+                        "The annular shell's courses at CH 0.35 are 312 " +
+                        "cells by the derivation in this check (six " +
+                        "bands, each a pair of nested loops rounding to " +
+                        $"52 pieces); got {ringCells.Length}.");
+                }
+                // The PLANS. Every courses case is asserted; the
+                // honeycomb is asserted at CH 0.2 and 0.35 and LEFT OUT,
+                // not weakened, at CH 0.5, 0.8 and 1.9, where it still
+                // comes back with 4, 6 and 12 self-crossing cells. Those
+                // are not a correspondence defect: they are the same
+                // pre-existing family the dome crown and the
+                // split-and-death honeycomb are in, the honeycomb laying
+                // a lattice in ABSOLUTE arc length across rows whose
+                // lengths differ, which is measured in
+                // .superpowers/sdd/2026-08-31-skin/final-fix-report-3.md
+                // and belongs to the next sub-project.
+                if (engine == courses || ringHeight <= 0.35)
+                {
+                    RequireDisjointSimplePlans(
+                        ringCells.Select(cell => cell.Outline).ToArray(),
+                        $"{engine.Name}/ring vault CH {ringHeight}");
+                }
+            }
+        }
     }
 
     /// <summary>
