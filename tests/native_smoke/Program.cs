@@ -599,6 +599,39 @@ internal static class Program
 
         try
         {
+            ValidateSkinNet(plugin);
+            Console.WriteLine(
+                "PASS  SkinPatterns.ReadNet: a TNA Result's form faces " +
+                "come back as plain vertex/face arrays mapped through " +
+                "SourceVertexToFormVertex onto equilibrium positions " +
+                "(form ids deliberately offset from equilibrium ids); an " +
+                "FD Result gives null, not empty.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"SkinPatterns.ReadNet: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinSetout(plugin);
+            Console.WriteLine(
+                "PASS  Skin setout map: the barrel cut gives two OPEN " +
+                "length-6 strips seamed at their arc midpoints with " +
+                "PointAt walking signed offsets and Run keeping trace " +
+                "vertices; the dome cuts give CLOSED loops, the lowest " +
+                "seamed at the +X vertex, the next propagated nearest in " +
+                "plan, and u wraps.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin setout map: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -8113,6 +8146,354 @@ internal static class Program
             throw new InvalidOperationException(
                 "Only Pattern previews principal runs; these still hold a "
                 + $"principal preview field: {string.Join(", ", others)}.");
+        }
+    }
+
+    /// <summary>
+    /// The barrel fixture: x 0..6 along the barrel (7 columns), a tent
+    /// profile in y: z = 2 - |y - 2| over y 0..4, so both eaves sit at
+    /// z 0 and the crest at z 2. Every level cut is a PAIR of OPEN
+    /// strips, each a straight line of length 6, mirror-symmetric about
+    /// x = 3; on the front strip (y below 2) a mapped point's y and z
+    /// are EQUAL, which is what lets the checks read setout coordinates
+    /// straight off the geometry.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinBarrelNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 4; j++)
+        {
+            double z = 2.0 - Math.Abs(j - 2.0);
+            for (int i = 0; i <= 6; i++)
+                vertices.Add(new double[] { i, j, z });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 4; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = j * 7 + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The dome fixture: two octagonal rings and an apex. Ring 0 has
+    /// radius 2 at z 0, ring 1 radius 1 at z 1, the apex (0, 0, 2);
+    /// quads between the rings, triangles to the apex. The radius at
+    /// height h is 2 - h throughout, so a level curve at h is a CLOSED
+    /// octagon of perimeter 16 (2 - h) sin(pi/8), with a vertex on the
+    /// +X axis.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinDomeNet()
+    {
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < 2; ring++)
+        {
+            double radius = 2.0 - ring;
+            for (int k = 0; k < 8; k++)
+            {
+                double angle = Math.PI * 2.0 * k / 8.0;
+                vertices.Add(new[]
+                {
+                    radius * Math.Cos(angle),
+                    radius * Math.Sin(angle),
+                    (double)ring
+                });
+            }
+        }
+        vertices.Add(new double[] { 0.0, 0.0, 2.0 });
+        var faces = new List<int[]>();
+        for (int k = 0; k < 8; k++)
+        {
+            int next = (k + 1) % 8;
+            faces.Add(new[] { k, next, 8 + next, 8 + k });
+            faces.Add(new[] { 8 + k, 8 + next, 16 });
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// SkinPatterns.ReadNet: the pure half of the ThrustMesh walk. A TNA
+    /// Result's form faces come back as plain vertex and face arrays
+    /// mapped through Mappings.SourceVertexToFormVertex onto the
+    /// equilibrium positions, ordered by form vertex id and re-indexed
+    /// into net positions; an FD Result, which carries no reciprocal
+    /// block, comes back null rather than empty, so the component can say
+    /// WHY there are no cells. The form ids are 10..13 ON PURPOSE,
+    /// distinct from the equilibrium ids, so an engine that reads a form
+    /// id as an index fails loudly here.
+    ///
+    /// The other half of spec section 11's FD bullet, the REMARK the
+    /// component shows beside the empty outputs, is SolveInstance
+    /// behaviour: it needs an IGH_DataAccess this harness has no native
+    /// core to build, so the null contract measured here is the engine
+    /// half and the Remark itself is read, not run, the same honest
+    /// reduction ValidateExportDefaultTessellation records for
+    /// FacePolylines.
+    /// </summary>
+    private static void ValidateSkinNet(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType =
+            RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType =
+            RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphFaceType = RequireContractType(plugin, "TnaGraphFaceDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type vertexMappingType =
+            RequireContractType(plugin, "TnaSourceVertexMappingDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(1, 1, 1), P(0, 1, 1)));
+
+        object GraphVertex(int id)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            return vertex;
+        }
+        object face = CreateInstance(graphFaceType);
+        SetContractProperty(face, graphFaceType, "Id", 0);
+        SetContractProperty(
+            face, graphFaceType, "Vertices", new[] { 10, 11, 12, 13 });
+        object formGraph = CreateInstance(graphType);
+        SetContractProperty(formGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                GraphVertex(10), GraphVertex(11),
+                GraphVertex(12), GraphVertex(13)));
+        SetContractProperty(formGraph, graphType, "Faces",
+            Of(graphFaceType, face));
+
+        object Mapping(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(vertexMappingType);
+            SetContractProperty(
+                item, vertexMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, vertexMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            return item;
+        }
+        object mappings = CreateInstance(mappingsType);
+        SetContractProperty(mappings, mappingsType,
+            "SourceVertexToFormVertex",
+            Of(vertexMappingType,
+                Mapping(10, 0), Mapping(11, 1),
+                Mapping(12, 2), Mapping(13, 3)));
+
+        object result = CreateResultDto(
+            resultType, "tna", equilibrium,
+            CreateInstance(graphType), CreateInstance(graphType));
+        SetContractProperty(result, resultType, "FormGraph", formGraph);
+        SetContractProperty(result, resultType, "Mappings", mappings);
+
+        object? net = readNet.Invoke(null, new[] { result });
+        if (net is null)
+        {
+            throw new InvalidOperationException(
+                "A TNA Result with faces must give a net; null came back.");
+        }
+        IList vertices =
+            (IList)net.GetType().GetProperty("Vertices")!.GetValue(net)!;
+        IList faces =
+            (IList)net.GetType().GetProperty("Faces")!.GetValue(net)!;
+        if (vertices.Count != 4 || faces.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "Four form vertices and one face went in; " +
+                $"{vertices.Count} vertices and {faces.Count} faces " +
+                "came back.");
+        }
+        double[] second = (double[])vertices[1]!;
+        if (Math.Abs(second[0] - 1.0) > 1.0e-12 ||
+            Math.Abs(second[2]) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Net vertices are the EQUILIBRIUM positions in form-id " +
+                "order; vertex 1 must be (1, 0, 0), got " +
+                $"({second[0]}, {second[1]}, {second[2]}).");
+        }
+        int[] corners = (int[])faces[0]!;
+        if (!corners.SequenceEqual(new[] { 0, 1, 2, 3 }))
+        {
+            throw new InvalidOperationException(
+                "Face corners are re-indexed into net positions; got [" +
+                string.Join(",", corners) + "].");
+        }
+
+        object fd = CreateResultDto(
+            resultType, "fd", CreateInstance(equilibriumType), null, null);
+        if (readNet.Invoke(null, new[] { fd }) is not null)
+        {
+            throw new InvalidOperationException(
+                "An FD Result carries no faces and must give a NULL net, " +
+                "so the component can name the reason.");
+        }
+    }
+
+    /// <summary>
+    /// The setout map (spec section 4), measured. Barrel: a cut gives two
+    /// OPEN strips of length 6 whose seam is the arc midpoint, PointAt
+    /// walks signed offsets from it, and Run keeps the trace vertices
+    /// between its ends. Dome: cuts give CLOSED loops; the lowest loop's
+    /// seam takes the trace vertex on the +X bearing from its plan
+    /// centroid, the loop above PROPAGATES from it (nearest in plan), and
+    /// PointAt wraps.
+    /// </summary>
+    private static void ValidateSkinSetout(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo pointAt = RequirePublicStatic(patterns, "PointAt");
+        MethodInfo runMethod = RequirePublicStatic(patterns, "Run");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        T Reading<T>(object curve, string name) =>
+            (T)curve.GetType().GetProperty(name)!.GetValue(curve)!;
+        double[] At(object curve, double u) =>
+            (double[])pointAt.Invoke(null, new[] { curve, (object)u })!;
+
+        object barrel = Net(SkinBarrelNet());
+        IList levels = (IList)traceAll.Invoke(
+            null, new object[] { barrel, new double[] { 0.75 } })!;
+        IList strips = (IList)levels[0]!;
+        if (strips.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "A cut at 0.75 crosses the tent twice, one strip each " +
+                $"side of the crest; got {strips.Count} components.");
+        }
+        foreach (object? item in strips)
+        {
+            object strip = item!;
+            if (Reading<bool>(strip, "Closed"))
+            {
+                throw new InvalidOperationException(
+                    "A strip ending on the boundary is OPEN.");
+            }
+            if (Math.Abs(Reading<double>(strip, "Length") - 6.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Each strip runs the full 6 m of the barrel; got " +
+                    $"{Reading<double>(strip, "Length")}.");
+            }
+            if (Math.Abs(Reading<double>(strip, "Seam") - 3.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "An open strip's seam is its arc-length MIDPOINT, " +
+                    "the centre-outward setout rule; got " +
+                    $"{Reading<double>(strip, "Seam")}.");
+            }
+            double[] mid = At(strip, 0.0);
+            if (Math.Abs(mid[0] - 3.0) > 1.0e-9 ||
+                Math.Abs(mid[2] - 0.75) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "u = 0 is the seam: x 3 at the cut height; got " +
+                    $"({mid[0]}, {mid[1]}, {mid[2]}).");
+            }
+            double[] left = At(strip, -3.0);
+            double[] right = At(strip, 3.0);
+            if (Math.Abs(left[0]) > 1.0e-9 ||
+                Math.Abs(right[0] - 6.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "u runs signed from the seam: -3 is x 0 and +3 is " +
+                    $"x 6; got x {left[0]} and x {right[0]}.");
+            }
+        }
+        IList sampled = (IList)runMethod.Invoke(
+            null, new object[] { strips[0]!, -1.5, 1.5 })!;
+        double[] xs = sampled.Cast<double[]>()
+            .Select(p => p[0])
+            .ToArray();
+        double[] expectedXs = { 1.5, 2.0, 3.0, 4.0, 4.5 };
+        if (xs.Length != expectedXs.Length ||
+            xs.Zip(expectedXs).Any(pair =>
+                Math.Abs(pair.First - pair.Second) > 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "Run(-1.5, 1.5) keeps the trace vertices between its " +
+                "ends: x 1.5, 2, 3, 4, 4.5; got [" +
+                string.Join(", ", xs) + "].");
+        }
+
+        object dome = Net(SkinDomeNet());
+        IList domeLevels = (IList)traceAll.Invoke(
+            null, new object[] { dome, new double[] { 0.25, 0.75 } })!;
+        IList lower = (IList)domeLevels[0]!;
+        IList upper = (IList)domeLevels[1]!;
+        if (lower.Count != 1 || upper.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "Each dome cut is ONE closed loop; got " +
+                $"{lower.Count} and {upper.Count}.");
+        }
+        object lowerLoop = lower[0]!;
+        object upperLoop = upper[0]!;
+        if (!Reading<bool>(lowerLoop, "Closed") ||
+            !Reading<bool>(upperLoop, "Closed"))
+        {
+            throw new InvalidOperationException(
+                "A loop that returns to its first crossing is CLOSED.");
+        }
+        double expectedLower = 16.0 * 1.75 * Math.Sin(Math.PI / 8.0);
+        if (Math.Abs(Reading<double>(lowerLoop, "Length") - expectedLower)
+            > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The 0.25 loop is an octagon of radius 1.75: perimeter " +
+                $"{expectedLower}; got " +
+                $"{Reading<double>(lowerLoop, "Length")}.");
+        }
+        double[] lowerSeam = At(lowerLoop, 0.0);
+        if (Math.Abs(lowerSeam[0] - 1.75) > 1.0e-9 ||
+            Math.Abs(lowerSeam[1]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The LOWEST loop's seam is the trace vertex on the +X " +
+                "bearing from its plan centroid: (1.75, 0); got " +
+                $"({lowerSeam[0]}, {lowerSeam[1]}).");
+        }
+        double[] upperSeam = At(upperLoop, 0.0);
+        if (Math.Abs(upperSeam[0] - 1.25) > 1.0e-9 ||
+            Math.Abs(upperSeam[1]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A higher loop's seam PROPAGATES from the loop below, " +
+                "nearest in plan: (1.25, 0); got " +
+                $"({upperSeam[0]}, {upperSeam[1]}).");
+        }
+        double upperLength = Reading<double>(upperLoop, "Length");
+        double[] wrapped = At(upperLoop, upperLength + 0.1);
+        double[] direct = At(upperLoop, 0.1);
+        if (Math.Abs(wrapped[0] - direct[0]) > 1.0e-9 ||
+            Math.Abs(wrapped[1] - direct[1]) > 1.0e-9 ||
+            Math.Abs(wrapped[2] - direct[2]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A closed loop's u WRAPS: u = L + 0.1 is u = 0.1.");
         }
     }
 
