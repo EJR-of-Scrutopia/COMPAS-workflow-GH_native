@@ -173,6 +173,12 @@
       "filename": "stress_analysis.png"
     },
     {
+      "key": "forces",
+      "label": "FO",
+      "category": "04 Read",
+      "filename": "forces.png"
+    },
+    {
       "key": "skin",
       "label": "SK",
       "category": "04 Read",

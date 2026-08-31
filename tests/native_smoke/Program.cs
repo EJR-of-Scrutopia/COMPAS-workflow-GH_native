@@ -132,6 +132,19 @@ internal static class Program
                         "Bar Sag", "Residuals",
                         "Cable Utilisation", "Column Utilisation"
                     }),
+                // Forces owns the member half of Monitor's old surface:
+                // every number tree here is READ AGAINST a Deconstruct
+                // geometry tree by slot, so the names and the order are the
+                // canvas contract.
+                ["Ananke.COMPAS.Native.Components.ForcesComponent"] = (
+                    new[] { "Result", "EA", "Cable Capacity" },
+                    new[]
+                    {
+                        "Result",
+                        "Member Force", "Force Density", "Horizontal Force",
+                        "Slack", "Spool Length", "Unstrained Length",
+                        "Residuals", "Cable Utilisation"
+                    }),
                 // Animate MAKES a frame and emits the Result carrying it.
                 // Its geometry is Frame's, below, so there is one port here
                 // and the RES-first rule holds on both sides of it.
@@ -284,6 +297,7 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = ("mould_animate", "AN"),
             ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = ("result_breakdown", "DE"),
             ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = ("stress_analysis", "MO"),
+            ["Ananke.COMPAS.Native.Components.ForcesComponent"] = ("forces", "FO"),
             ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
             ["Ananke.COMPAS.Native.Components.DiagnoseComponent"] = ("diagnose", "DG"),
             ["Ananke.COMPAS.Native.Components.FrameComponent"] = ("frame", "FR"),
@@ -467,14 +481,16 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 20)
+        if (componentTypes.Length != 21)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
-            // with nineteen components' worth of contract untested.
+            // with nineteen components' worth of contract untested. 21 is
+            // the readers rework in flight: Monitor still stands beside
+            // Forces until Fit arrives and Monitor retires.
             failures.Add(
-                $"Expected 20 concrete public components, found " +
+                $"Expected 21 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -947,6 +963,25 @@ internal static class Program
 
         try
         {
+            ValidateForcesReadings(plugin);
+            Console.WriteLine(
+                "PASS  Forces readings: on a net of one bar and one infill "
+                + "the member, density and horizontal trees come back bar "
+                + "first and infill LAST with Monitor's old numbers, the "
+                + "slack flag sits on the pushing infill alone, a 2 m spool "
+                + "cuts to 1/1.1 + 1/1.2 with EA wired because 0.1 kN "
+                + "became 100 N, one residual per vertex holds its own "
+                + "node, utilisation converts kN to N against the capacity, "
+                + "and the RES leaves carrying forces.* entries alone, "
+                + "Forces as their source, no monitor.* anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Forces readings: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateResultTablesOrder(plugin);
             Console.WriteLine(
                 "PASS  ResultTables order: the one table Deconstruct's geometry "
@@ -1107,7 +1142,7 @@ internal static class Program
         {
             ValidateIconMap(plugin, componentTypes, pluginPath);
             Console.WriteLine(
-                "PASS  Icon family: every one of the twenty components has "
+                "PASS  Icon family: every component has "
                 + "exactly one icon-map entry, keyed the way the loader reads "
                 + "the resource, labelled the two letters the spec gives, "
                 + "categorised as the panel the component actually registers "
@@ -3767,6 +3802,245 @@ internal static class Program
             throw new InvalidOperationException(
                 "A force of 0.1 kN converted through ToNewtons against EA 1000 N "
                 + $"gives the same 2/1.1 as 100 N does; got {kiloNewtonCut:0.######}.");
+        }
+    }
+
+    /// <summary>
+    /// Every diagnostic on a Result as (Code, Severity, Source, Message)
+    /// rows, read through the plugin's own SourceOf, so the reader checks
+    /// assert prefixes and provenance without binding to DiagnosticDto.
+    /// </summary>
+    private static List<(string Code, string Severity, string Source, string Message)>
+        DiagnosticRows(Assembly plugin, object result)
+    {
+        Type helper = RequireComponentType(plugin, "ResultDiagnostics");
+        MethodInfo sourceOf = RequirePublicStatic(helper, "SourceOf");
+        var rows = new List<(string, string, string, string)>();
+        var list = (IEnumerable)result.GetType()
+            .GetProperty("Diagnostics")!.GetValue(result)!;
+        foreach (object entry in list)
+        {
+            Type type = entry.GetType();
+            rows.Add((
+                (string)type.GetProperty("Code")!.GetValue(entry)!,
+                (string)type.GetProperty("Severity")!.GetValue(entry)!,
+                (string)sourceOf.Invoke(null, new[] { entry })!,
+                (string)type.GetProperty("Message")!.GetValue(entry)!));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// The one fixture the reader checks share: an FD Result of four
+    /// vertices, one principal run 0-1-2 carrying members (0,1) and (1,2)
+    /// at 0.1 and 0.2 kN, one infill member (1,3) at -0.3 kN (slack under
+    /// positive_tension), one support at node 2 with a reaction (0,0,7)
+    /// and a residual (0,0,13). Small forces on purpose: 0.1 kN is 100 N,
+    /// so the EA and capacity conversions give clean hand numbers.
+    /// </summary>
+    private static object ReaderFixtureResult(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type nodalType = RequireContractType(plugin, "NodalVectorDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type equilibriumProblemType =
+            RequireContractType(plugin, "EquilibriumProblemDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 1, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 1, 3)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2, -0.3 });
+        SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            equilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 2 });
+        SetContractProperty(equilibrium, equilibriumType, "Reactions",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 7))!));
+        SetContractProperty(equilibrium, equilibriumType, "Residuals",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 13))!));
+        object topology = CreateInstance(topologyType);
+        SetContractProperty(topology, topologyType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 1, 0)));
+        SetContractProperty(topology, topologyType, "PrincipalRuns",
+            new int[][] { new[] { 0, 1, 2 } });
+        object problem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(problem, equilibriumProblemType, "Topology", topology);
+        SetContractProperty(equilibrium, equilibriumType, "Problem", problem);
+        return CreateResultDto(resultType, "fd", equilibrium, null, null);
+    }
+
+    /// <summary>
+    /// <c>ForcesComponent.Read</c>: the member half of what Monitor used to
+    /// compute, measured through the child on the shared fixture, port by
+    /// port against hand numbers, and the RES it emits carrying forces.*
+    /// entries alone with Forces as their source and no monitor.* anywhere.
+    /// </summary>
+    private static void ValidateForcesReadings(Assembly plugin)
+    {
+        Type forces = RequireComponentType(plugin, "ForcesComponent");
+        MethodInfo read = RequireStatic(forces, "Read");
+        object result = ReaderFixtureResult(plugin);
+
+        object readings = read.Invoke(
+            null, new object?[] { result, 1000.0, 50.0 })!;
+        object Prop(string name) =>
+            readings.GetType().GetProperty(name)!.GetValue(readings)!;
+        double[][] Branches(string name) =>
+            ((IEnumerable)Prop(name)).Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+        string Render(double[][] tree) => string.Join(" | ", tree.Select(
+            branch => string.Join(",", branch.Select(value =>
+                value.ToString("0.####",
+                    System.Globalization.CultureInfo.InvariantCulture)))));
+        void SameTree(string name, double[][] expected)
+        {
+            double[][] actual = Branches(name);
+            bool same = actual.Length == expected.Length;
+            for (int b = 0; same && b < expected.Length; b++)
+            {
+                same = actual[b].Length == expected[b].Length;
+                for (int i = 0; same && i < expected[b].Length; i++)
+                    same = Math.Abs(actual[b][i] - expected[b][i]) <= 1.0e-9;
+            }
+            if (!same)
+            {
+                throw new InvalidOperationException(
+                    $"{name} must be [{Render(expected)}], the bar's members "
+                    + "in branch 0 and the infill LAST; got "
+                    + $"[{Render(actual)}].");
+            }
+        }
+
+        SameTree("MemberForce", new[] { new[] { 0.1, 0.2 }, new[] { -0.3 } });
+        // This FD fixture carries no q and no H, so both are worked out at
+        // the geometry: unit lengths make them equal the force.
+        SameTree("ForceDensity", new[] { new[] { 0.1, 0.2 }, new[] { -0.3 } });
+        SameTree("Horizontal", new[] { new[] { 0.1, 0.2 }, new[] { -0.3 } });
+        SameTree("CableUtilisation", new[] { new[] { 2.0, 4.0 }, new[] { 6.0 } });
+        if ((bool)Prop("EmitCableUtilisation") is not true ||
+            (bool)Prop("EmitUnstrained") is not true)
+        {
+            throw new InvalidOperationException(
+                "With EA 1000 and Cable Capacity 50 both wired, Unstrained "
+                + "Length and Cable Utilisation are both emitted.");
+        }
+
+        bool[][] slack = ((IEnumerable)Prop("Slack")).Cast<IEnumerable>()
+            .Select(branch => branch.Cast<object>()
+                .Select(item => (bool)item).ToArray())
+            .ToArray();
+        if (slack.Length != 2 || slack[0].Length != 2 ||
+            slack[0][0] || slack[0][1] ||
+            slack[1].Length != 1 || !slack[1][0])
+        {
+            throw new InvalidOperationException(
+                "A bar member is never slack and the pushing infill (1,3) is: "
+                + "Slack must be [false,false | true].");
+        }
+
+        double[] spool = ((IEnumerable)Prop("Spool")).Cast<object>()
+            .Select(Convert.ToDouble).ToArray();
+        if (spool.Length != 1 || Math.Abs(spool[0] - 2.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "One bar of two unit segments spools 2 m; got "
+                + $"[{string.Join(",", spool)}].");
+        }
+        double[] unstrained = ((IEnumerable)Prop("Unstrained")).Cast<object>()
+            .Select(Convert.ToDouble).ToArray();
+        double expectedCut = (1.0 / 1.1) + (1.0 / 1.2);
+        if (unstrained.Length != 1 ||
+            Math.Abs(unstrained[0] - expectedCut) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "0.1 and 0.2 kN convert to 100 and 200 N against EA 1000, so "
+                + $"the bar cuts to 1/1.1 + 1/1.2 = {expectedCut:0.######}; "
+                + $"got [{string.Join(",", unstrained)}]. The wrong number "
+                + "here is the ForceUnit trap: an unconverted kN force cuts "
+                + "the bar to very nearly its tensioned length.");
+        }
+
+        Array residuals = (Array)Prop("Residuals");
+        if (residuals.Length != 4)
+        {
+            throw new InvalidOperationException(
+                "Residuals come back ONE PER VERTEX, four here; got "
+                + $"{residuals.Length}.");
+        }
+        double Rz(int at) => (double)residuals.GetValue(at)!.GetType()
+            .GetProperty("Z")!.GetValue(residuals.GetValue(at))!;
+        if (Math.Abs(Rz(2) - 13.0) > 1.0e-9 || Math.Abs(Rz(0)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Node 2's residual lands on node 2 and an absent one is a "
+                + $"zero; got item 0 = {Rz(0)}, item 2 = {Rz(2)}.");
+        }
+
+        var rows = DiagnosticRows(plugin, Prop("Result"));
+        foreach (string code in new[]
+        {
+            "forces.counts", "forces.cable_tension", "forces.slack_cables",
+            "forces.bar_force", "forces.spool", "forces.utilisation",
+            "forces.demand_only"
+        })
+        {
+            if (!rows.Any(row => row.Code == code))
+            {
+                throw new InvalidOperationException(
+                    $"The emitted RES must carry {code}; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+        if (rows.Where(row => row.Code.StartsWith("forces.", StringComparison.Ordinal))
+                .Any(row => row.Source != "Forces"))
+        {
+            throw new InvalidOperationException(
+                "Every forces.* entry names Forces as its source, or Replace "
+                + "cannot own them on the next solve.");
+        }
+        (string Code, string Severity, string Source, string Message) One(
+            string code) => rows.Single(row => row.Code == code);
+        if (!One("forces.counts").Message.Contains(
+                "1 infill cables, 2 bar members, 0 columns, 1 anchors",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "forces.counts keeps Monitor's full four-population sentence; "
+                + $"got '{One("forces.counts").Message}'.");
+        }
+        if (One("forces.slack_cables").Severity != "warning")
+            throw new InvalidOperationException("One slack cable is a warning.");
+        if (One("forces.utilisation").Severity != "warning" ||
+            !One("forces.utilisation").Message.Contains("up to 6", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The infill's 300 N over 50 N is 6, over one and a warning; "
+                + $"got '{One("forces.utilisation").Message}'.");
         }
     }
 
