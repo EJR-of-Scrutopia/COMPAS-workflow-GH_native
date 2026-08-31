@@ -267,7 +267,7 @@ public sealed class ExportComponent :
             "C",
             "One closed planar outline per cutting cell (a brick), " +
             "authored against the solved form the Result still carries. " +
-            "Wire Skin's Face Polylines straight in; the tree is " +
+            "Wire Skin's Cells (C) straight in; the tree is " +
             "flattened here, on every open, so a graft set on this port " +
             "by hand is wiped when the file is reopened. Projected to " +
             "plan (z dropped) into the sidecar's outline points; " +
@@ -280,7 +280,7 @@ public sealed class ExportComponent :
             "Courses",
             "CO",
             "The course (row) index per cell, same length as Cells, from " +
-            "Skin's Face Courses; the tree is flattened here, on every " +
+            "Skin's Courses (CO); the tree is flattened here, on every " +
             "open, so a graft set on this port by hand is wiped when the " +
             "file is reopened. The studio stages the build animation " +
             "course by course. Empty puts every cell in course 0, one " +
@@ -1071,7 +1071,7 @@ public sealed class ExportComponent :
             remarks.Add(
                 "Cells is unwired, so Export tessellated the Result's own " +
                 $"{cells.Count} faces, one cell each at course 0. Wire " +
-                "Skin's Face Polylines, or cells of your own, to override " +
+                "Skin's Cells (C), or cells of your own, to override " +
                 "it.");
         }
         if (skipped > 0)

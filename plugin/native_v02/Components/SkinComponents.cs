@@ -144,9 +144,11 @@ public sealed class SkinComponent :
             "C",
             "One closed polyline per cell, on the thrust surface, as a "
                 + "TREE branched by COURSE (path = course, 0 up from the "
-                + "bottom), cells ordered along the course within each "
-                + "branch: the studio's build sequence. Wire into "
-                + "Export's Cells; Export flattens and projects itself.",
+                + "bottom). The NATIVE patterns order the cells along "
+                + "the course within each branch, the studio's build "
+                + "sequence; the force-aligned pattern keeps the "
+                + "worker's own order. Wire into Export's Cells; Export "
+                + "flattens and projects itself.",
             GH_ParamAccess.tree);
         parameters.AddIntegerParameter(
             "Courses",
