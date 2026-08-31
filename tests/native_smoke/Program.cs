@@ -9323,8 +9323,8 @@ internal static class Program
                 $"{Reading<int>(built, "TransitionBands")}.");
         }
         const string CoursesLine =
-            "Transition bands skipped: 1 (level curve splits between " +
-            "z=0.500 and z=1.000; courses cannot bond across it)";
+            "Transition bands skipped: 1 (level curves do not correspond " +
+            "between z=0.500 and z=1.000; courses cannot bond across it)";
         string diagnostics = Reading<string>(built, "Diagnostics");
         if (!diagnostics.Contains(CoursesLine, StringComparison.Ordinal))
         {
@@ -9363,8 +9363,8 @@ internal static class Program
                 $"{Reading<int>(hexBuilt, "TransitionBands")}.");
         }
         const string HexagonalLine =
-            "Transition bands skipped: 2 (level curve splits between " +
-            "z=0.500 and z=1.000; hexagonal cannot bond across it)";
+            "Transition bands skipped: 2 (level curves do not correspond " +
+            "between z=0.500 and z=1.000; hexagonal cannot bond across it)";
         string hexDiagnostics = Reading<string>(hexBuilt, "Diagnostics");
         if (!hexDiagnostics.Contains(
                 HexagonalLine, StringComparison.Ordinal))

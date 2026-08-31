@@ -1154,9 +1154,13 @@ internal static class SkinPatterns
             " and ",
             transitions.Select(item =>
                 $"between z={F(item.Low)} and z={F(item.High)}"));
+        // "do not correspond" rather than "splits": the refusal is decided
+        // on the matching, so it fires for a curve that splits, one that
+        // dies, and two that swap places at an unchanged count, and the
+        // author is told which heights rather than which of the three.
         return
-            $"Transition bands skipped: {skipped} (level curve splits " +
-            $"{where}; {name} cannot bond across it)";
+            $"Transition bands skipped: {skipped} (level curves do not " +
+            $"correspond {where}; {name} cannot bond across it)";
     }
 
     /// <summary>The D output's text for a native pattern: the pattern
