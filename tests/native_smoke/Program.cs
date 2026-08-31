@@ -676,6 +676,26 @@ internal static class Program
 
         try
         {
+            ValidateSkinTransitions(plugin);
+            Console.WriteLine(
+                "PASS  Skin topology transitions: a two-peak net whose " +
+                "one level loop splits into two above z 0.9 has the one " +
+                "courses band and the two lattice bands that reach " +
+                "across the split REFUSED whole, named in the " +
+                "diagnostics with their heights and counted for the " +
+                "component's Warning, every other band still built and " +
+                "every emitted plan disjoint and simple; the barrel and " +
+                "the dome refuse nothing.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin topology transitions: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinHexagonal(plugin);
             Console.WriteLine(
                 "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
@@ -8365,6 +8385,54 @@ internal static class Program
     }
 
     /// <summary>
+    /// The two-peak fixture, whose level curves SPLIT. A height field on
+    /// the barrel's own 7 by 5 grid of quads, row-major, with the rim at
+    /// z 0, the whole interior ring at 0.9, and two peaks of 2.0 at
+    /// (2, 2) and (4, 2) with the saddle between them left at 0.9:
+    ///
+    ///   j = 4:   0    0    0    0    0    0    0
+    ///   j = 3:   0   0.9  0.9  0.9  0.9  0.9   0
+    ///   j = 2:   0   0.9  2.0  0.9  2.0  0.9   0
+    ///   j = 1:   0   0.9  0.9  0.9  0.9  0.9   0
+    ///   j = 0:   0    0    0    0    0    0    0
+    ///
+    /// The superlevel set {z at or above h} is the whole 5 by 3 interior
+    /// block for every h in (0, 0.9], which is connected, so each of
+    /// those cuts is ONE closed loop; for h in (0.9, 2) it is the two
+    /// peak vertices alone, so each of those cuts is TWO. The split
+    /// height is 0.9, and no vertex sits at 0.25, 0.5, 0.75, 1.0, 1.25,
+    /// 1.5 or 1.75, so no cut of the CH 0.5 course grid passes through a
+    /// vertex and every crossing is a clean interior point.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinTwoPeakNet()
+    {
+        double[][] field =
+        {
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            new[] { 0.0, 0.9, 0.9, 0.9, 0.9, 0.9, 0.0 },
+            new[] { 0.0, 0.9, 2.0, 0.9, 2.0, 0.9, 0.0 },
+            new[] { 0.0, 0.9, 0.9, 0.9, 0.9, 0.9, 0.0 },
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }
+        };
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 4; j++)
+        {
+            for (int i = 0; i <= 6; i++)
+                vertices.Add(new[] { (double)i, (double)j, field[j][i] });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 4; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = j * 7 + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
     /// SkinPatterns.ReadNet: the pure half of the ThrustMesh walk. A TNA
     /// Result's form faces come back as plain vertex and face arrays
     /// mapped through Mappings.SourceVertexToFormVertex onto the
@@ -9013,6 +9081,183 @@ internal static class Program
         RequireDisjointSimplePlans(
             domeCells.Select(cell => cell.Outline).ToArray(),
             "courses/dome");
+    }
+
+    /// <summary>
+    /// Ruling B of the whole-branch review, measured: a band the level
+    /// curves change component count across is REFUSED whole, named in
+    /// the diagnostics, and counted, rather than filled with cells that
+    /// pair curves which do not correspond.
+    ///
+    /// The two-peak fixture splits at z 0.9 (the derivation is in
+    /// SkinTwoPeakNet: one closed loop up to 0.9, two above it).
+    ///
+    /// COURSES at S 0.6 and CH 0.5. A 2 m rise is four bands, and the
+    /// nine traced heights are, in order, zMin + eps, 0.25, 0.5, 0.75,
+    /// 1.0, 1.25, 1.5, 1.75 and zMax - eps, carrying 1, 1, 1, 1, 2, 2,
+    /// 2, 2 and 2 components. Band r spans levels 2r, 2r + 1 and
+    /// 2r + 2, so band 0 sees 1, 1, 1; band 1 sees 1, 1, 2; band 2 sees
+    /// 2, 2, 2; band 3 sees 2, 2, 2. Exactly ONE band, band 1, is a
+    /// transition, and it spans z 0.500 to z 1.000, which is what the
+    /// diagnostics line must name. Courses 0, 2 and 3 still carry cells;
+    /// course 1 carries none.
+    ///
+    /// HEXAGONAL on the same net. Its five traced heights are
+    /// zMin + eps, 0.5, 1.0, 1.5 and zMax - eps, carrying 1, 1, 2, 2 and
+    /// 2, so the one transition interval is again 0.500 to 1.000. A
+    /// lattice cell of centre row c reaches from row c - 1 to row c + 1,
+    /// that is from z 0.5(c - 1) to z 0.5(c + 1) clamped to the surface,
+    /// so the interval falls inside the span of rows c = 1 (z 0 to 1.0)
+    /// and c = 2 (z 0.5 to 1.5) and of no other: TWO lattice bands are
+    /// refused. Their clamped centre heights are 0.5 and 1.0, which are
+    /// courses 1 and 2, so the surviving cells carry courses 0 and 3
+    /// alone.
+    ///
+    /// Neither the barrel nor the dome has a transition anywhere, so
+    /// both engines must report none on them: the check that the refusal
+    /// is a refusal and not a habit.
+    ///
+    /// The component's own half of the ruling, the runtime Warning that
+    /// says the skin has a HOLE, lives in SolveInstance and needs an
+    /// IGH_DataAccess this harness has no native core to build. What is
+    /// measured here is the engine half the component reads: the
+    /// TransitionBands count the Warning is raised on, and the
+    /// diagnostics text the Warning points at. The Warning itself is
+    /// READ, not run, the ValidateExportDefaultTessellation convention.
+    /// </summary>
+    private static void ValidateSkinTransitions(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        static T Reading<T>(object generated, string name) =>
+            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
+
+        object twoPeak = Net(SkinTwoPeakNet());
+
+        object built = courses.Invoke(
+            null, new object[] { twoPeak, 0.6, 0.5 })!;
+        var cells = SkinCells(built);
+        if (Reading<int>(built, "CourseCount") != 4)
+        {
+            throw new InvalidOperationException(
+                "The two-peak net's 2 m rise at CH 0.5 is four bands; " +
+                $"got {Reading<int>(built, "CourseCount")}.");
+        }
+        if (Reading<int>(built, "TransitionBands") != 1)
+        {
+            throw new InvalidOperationException(
+                "Exactly one courses band, band 1, spans the split (its " +
+                "three levels carry 1, 1 and 2 components); got " +
+                $"{Reading<int>(built, "TransitionBands")}.");
+        }
+        const string CoursesLine =
+            "Transition bands skipped: 1 (level curve splits between " +
+            "z=0.500 and z=1.000; courses cannot bond across it)";
+        string diagnostics = Reading<string>(built, "Diagnostics");
+        if (!diagnostics.Contains(CoursesLine, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The diagnostics must NAME the refused band and the " +
+                $"heights it sits between: '{CoursesLine}'; got " +
+                $"'{diagnostics}'.");
+        }
+        if (cells.Any(cell => cell.Course == 1))
+        {
+            throw new InvalidOperationException(
+                "A transition band emits NO cells, so nothing may carry " +
+                "course 1; a stated hole beats overlapping cells.");
+        }
+        foreach (int course in new[] { 0, 2, 3 })
+        {
+            if (!cells.Any(cell => cell.Course == course))
+            {
+                throw new InvalidOperationException(
+                    "Only the transition band is refused: course " +
+                    $"{course} must still carry cells.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "courses/two peaks");
+
+        object hexBuilt = hexagonal.Invoke(
+            null, new object[] { twoPeak, 0.6, 0.5 })!;
+        var hexCells = SkinCells(hexBuilt);
+        if (Reading<int>(hexBuilt, "TransitionBands") != 2)
+        {
+            throw new InvalidOperationException(
+                "Two lattice bands reach across the 0.500 to 1.000 " +
+                "transition, centre rows 1 and 2; got " +
+                $"{Reading<int>(hexBuilt, "TransitionBands")}.");
+        }
+        const string HexagonalLine =
+            "Transition bands skipped: 2 (level curve splits between " +
+            "z=0.500 and z=1.000; hexagonal cannot bond across it)";
+        string hexDiagnostics = Reading<string>(hexBuilt, "Diagnostics");
+        if (!hexDiagnostics.Contains(
+                HexagonalLine, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The honeycomb names its refused bands the same way: " +
+                $"'{HexagonalLine}'; got '{hexDiagnostics}'.");
+        }
+        if (hexCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Only the bands that span the split are refused; the " +
+                "rest of the honeycomb still grows.");
+        }
+        if (hexCells.Any(cell => cell.Course == 1 || cell.Course == 2))
+        {
+            throw new InvalidOperationException(
+                "The refused lattice rows are the ones whose clamped " +
+                "centres sit at z 0.5 and z 1.0, courses 1 and 2, so no " +
+                "surviving cell may carry either.");
+        }
+        foreach (int course in new[] { 0, 3 })
+        {
+            if (!hexCells.Any(cell => cell.Course == course))
+            {
+                throw new InvalidOperationException(
+                    $"The honeycomb still carries course {course}.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            hexCells.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/two peaks");
+
+        // ---- the refusal is a refusal, not a habit.
+        foreach ((string label, (double[][], int[][]) fixture) in
+                 new (string, (double[][], int[][]))[]
+                 {
+                     ("barrel", SkinBarrelNet()),
+                     ("dome", SkinDomeNet())
+                 })
+        {
+            object net = Net(fixture);
+            foreach (MethodInfo engine in new[] { courses, hexagonal })
+            {
+                object plain = engine.Invoke(
+                    null, new object[] { net, 0.6, 0.5 })!;
+                if (Reading<int>(plain, "TransitionBands") != 0 ||
+                    Reading<string>(plain, "Diagnostics").Contains(
+                        "Transition bands skipped",
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"The {label} keeps the same component count at " +
+                        $"every height, so {engine.Name} must refuse no " +
+                        "band and say nothing about transitions; it " +
+                        $"reported {Reading<int>(plain, "TransitionBands")}.");
+                }
+            }
+        }
     }
 
     /// <summary>

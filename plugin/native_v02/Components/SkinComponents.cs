@@ -256,6 +256,24 @@ public sealed class SkinComponent :
                 ? SkinPatterns.Courses(net, size, courseHeight)
                 : SkinPatterns.Hexagonal(net, size, courseHeight);
 
+            // A band the engine REFUSED because the level curves changed
+            // component count across it (a low loop splitting into
+            // separate strips higher up, a two-hump barrel). The engine
+            // records the heights in D; the canvas has to be told there
+            // is a HOLE, because an author who only sees the cells would
+            // read the gap as a pattern he chose.
+            if (generated.TransitionBands > 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{generated.TransitionBands} band" +
+                    (generated.TransitionBands == 1 ? " was" : "s were") +
+                    " skipped where the level curves split, so the skin " +
+                    "has a HOLE at those heights and this pattern does " +
+                    "not cover the surface. Diagnostics names the " +
+                    "heights.");
+            }
+
             var cellBranches = new List<List<Curve>>();
             var courseBranches = new List<List<int>>();
             for (int course = 0; course < generated.CourseCount; course++)

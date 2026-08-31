@@ -59,12 +59,16 @@ internal sealed record SkinCell(
     double U1);
 
 /// <summary>One generated pattern: the cells sorted by course then
-/// position (the studio's build sequence), the band count, and the
-/// readable diagnostics text the component's D output carries.</summary>
+/// position (the studio's build sequence), the band count, the readable
+/// diagnostics text the component's D output carries, and the count of
+/// bands REFUSED because the level curves changed component count across
+/// them, which the component turns into a runtime Warning because a hole
+/// in the skin has to be said out loud.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
-    string Diagnostics);
+    string Diagnostics,
+    int TransitionBands);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -806,12 +810,31 @@ internal static class SkinPatterns
         var keyed =
             new List<(int Course, int Order, double U0, SkinCell Cell)>();
         var pieceLengths = new List<double>();
+        var transitions = new List<(double Low, double High)>();
+        int transitionBands = 0;
         int clipped = 0;
         for (int r = 0; r < bands; r++)
         {
             IReadOnlyList<SkinLevelCurve> mids = traced[2 * r + 1];
             IReadOnlyList<SkinLevelCurve> lowers = traced[2 * r];
             IReadOnlyList<SkinLevelCurve> uppers = traced[2 * r + 2];
+            // A TOPOLOGY TRANSITION: the level curve count changed across
+            // the three levels this band spans, so the components no
+            // longer correspond one for one and MatchBelow would pair
+            // curves that are not the same piece of surface, laying
+            // overlapping and self-crossing cells. Refuse the band whole
+            // (spec is silent on transitions; the ruling is that a stated
+            // hole beats a poisoned sidecar, because Bench Studio rejects
+            // a whole tessellation for one self-crossing cell). Splitting
+            // the band at its transition height is the right long answer
+            // and belongs to a later wave.
+            if (lowers.Count != mids.Count || mids.Count != uppers.Count)
+            {
+                transitionBands++;
+                AddTransition(
+                    transitions, heights[2 * r], heights[2 * r + 2]);
+                continue;
+            }
             for (int component = 0; component < mids.Count; component++)
             {
                 SkinLevelCurve mid = mids[component];
@@ -854,7 +877,9 @@ internal static class SkinPatterns
             bands,
             PatternDiagnostics(
                 "courses", cells.Count, bands, pieceLengths,
-                "half a pitch on odd courses", clipped));
+                "half a pitch on odd courses", clipped,
+                TransitionLine("courses", transitionBands, transitions)),
+            transitionBands);
     }
 
     /// <summary>
@@ -983,16 +1008,86 @@ internal static class SkinPatterns
         return new SkinCell(course, Dedupe(outline), clipped, u0, u1);
     }
 
+    /// <summary>
+    /// Record one transition height interval, keeping the list free of
+    /// duplicates: the honeycomb finds the same interval again for every
+    /// lattice row that spans it, and the diagnostics line names each
+    /// interval once.
+    /// </summary>
+    private static void AddTransition(
+        List<(double Low, double High)> transitions,
+        double low,
+        double high)
+    {
+        foreach ((double at, double to) in transitions)
+        {
+            if (Math.Abs(at - low) <= 1.0e-12 &&
+                Math.Abs(to - high) <= 1.0e-12)
+            {
+                return;
+            }
+        }
+        transitions.Add((low, high));
+    }
+
+    /// <summary>
+    /// True when one of the recorded transition intervals lies WITHIN
+    /// the height span [low, high] a candidate cell reaches across, so
+    /// the cell would have to bond over a level whose component count
+    /// changes. Both ends of a lattice cell's span are themselves traced
+    /// heights, so the comparison is exact but for the usual tolerance.
+    /// </summary>
+    private static bool SpansTransition(
+        IReadOnlyList<(double Low, double High)> transitions,
+        double low,
+        double high)
+    {
+        foreach ((double at, double to) in transitions)
+        {
+            if (at >= low - 1.0e-12 && to <= high + 1.0e-12)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The diagnostics line for refused transition bands, or null when
+    /// there are none. It names how many bands were skipped and the
+    /// heights each transition sits between, because the author needs to
+    /// know WHERE the skin has a hole, not merely that it has one.
+    /// </summary>
+    private static string? TransitionLine(
+        string name,
+        int skipped,
+        IReadOnlyList<(double Low, double High)> transitions)
+    {
+        if (skipped == 0 || transitions.Count == 0)
+            return null;
+        static string F(double value) =>
+            value.ToString("F3", CultureInfo.InvariantCulture);
+        string where = string.Join(
+            " and ",
+            transitions.Select(item =>
+                $"between z={F(item.Low)} and z={F(item.High)}"));
+        return
+            $"Transition bands skipped: {skipped} (level curve splits " +
+            $"{where}; {name} cannot bond across it)";
+    }
+
     /// <summary>The D output's text for a native pattern: the pattern
     /// name, cell and course counts, mean/min/max piece length, the
-    /// stagger, and the count of boundary-clipped cells.</summary>
+    /// stagger, the count of boundary-clipped cells and, where the level
+    /// curves changed component count, the refused transition bands.
+    /// The key of every line is capitalised, so the transition line
+    /// reads beside the rest rather than under it.</summary>
     private static string PatternDiagnostics(
         string name,
         int cellCount,
         int courseCount,
         IReadOnlyList<double> pieceLengths,
         string stagger,
-        int clipped)
+        int clipped,
+        string? transitions = null)
     {
         static string F(double value) =>
             value.ToString("F3", CultureInfo.InvariantCulture);
@@ -1011,6 +1106,8 @@ internal static class SkinPatterns
         }
         lines.Add($"Stagger: {stagger}");
         lines.Add($"Boundary-clipped cells: {clipped}");
+        if (transitions is not null)
+            lines.Add(transitions);
         return string.Join("\n", lines);
     }
 
@@ -1023,7 +1120,8 @@ internal static class SkinPatterns
                 name == "courses"
                     ? "half a pitch on odd courses"
                     : "0.75 x S per course row",
-                0));
+                0),
+            0);
 
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
 
@@ -1145,6 +1243,23 @@ internal static class SkinPatterns
             TraceAll(net, heights);
         List<SkinChart> charts = BuildCharts(traced);
 
+        // The TOPOLOGY TRANSITIONS, found once for the whole net: a pair
+        // of consecutive chart levels whose component count differs is a
+        // height a hexagon cannot bond across, because the vertices of
+        // one cell would map through curves that are not the same piece
+        // of surface. Every lattice row spanning such an interval is
+        // refused whole, the same ruling the courses engine follows.
+        var transitions = new List<(double Low, double High)>();
+        for (int level = 0; level + 1 < heights.Count; level++)
+        {
+            if (traced[level].Count != traced[level + 1].Count)
+            {
+                AddTransition(
+                    transitions, heights[level], heights[level + 1]);
+            }
+        }
+        var skippedRows = new HashSet<int>();
+
         var keyed =
             new List<(int Course, int Chart, double U0, SkinCell Cell)>();
         var pieceLengths = new List<double>();
@@ -1171,6 +1286,15 @@ internal static class SkinPatterns
                         break;
                     if (centreRow < -1)
                         continue;
+                    if (transitions.Count > 0 &&
+                        SpansTransition(
+                            transitions,
+                            ClampedRowHeight(centreRow - 1),
+                            ClampedRowHeight(centreRow + 1)))
+                    {
+                        skippedRows.Add(centreRow);
+                        continue;
+                    }
 
                     // The six setout vertices: (u offset, row offset).
                     (double U, int Row)[] setout =
@@ -1258,6 +1382,9 @@ internal static class SkinPatterns
             bands,
             PatternDiagnostics(
                 "hexagonal", cells.Count, bands, pieceLengths,
-                "0.75 x S per course row", clippedCount));
+                "0.75 x S per course row", clippedCount,
+                TransitionLine(
+                    "hexagonal", skippedRows.Count, transitions)),
+            skippedRows.Count);
     }
 }
