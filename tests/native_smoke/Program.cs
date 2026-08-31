@@ -1112,7 +1112,12 @@ internal static class Program
                 + "archived chunk with no readable Name raises nothing by "
                 + "itself; and where only a name moved, the rename LEADS and "
                 + "the equal counts follow it as the reason every wire "
-                + "reattached. SideMoved, which Export's Live hold reads, "
+                + "reattached. A count change names WHAT changed: "
+                + "Deconstruct's slim lists 'Thrust Mesh', 'Columns', "
+                + "'Heads' and 'Feet' as removed, in archived order, and "
+                + "still closes check-every-wire; Frame's pure append names "
+                + "'Anchor Lines' and closes with existing wires keeping "
+                + "their ports instead. SideMoved, which Export's Live hold reads, "
                 + "answers for ONE side: an input move holds, by count or "
                 + "by name, and this branch's own output-only move does "
                 + "not.");
@@ -5331,6 +5336,86 @@ internal static class Program
                 + "output count came back to two by a different route and every "
                 + "input wire still moved; got "
                 + $"'{exportMoved}'.");
+        }
+
+        // THIS branch's Deconstruct slim, with the real port names: 14
+        // outputs archived against the 10 registered, the Result input
+        // untouched. The four archived names registered nowhere any more,
+        // Thrust Mesh (old slot 0), Columns (10), Heads (11) and Feet
+        // (12), must be NAMED as removed, in archived order, because every
+        // remaining wire reattached one or more slots off and the counts
+        // alone never say which quantities are simply gone. Spec section 8
+        // and the taxonomy's Deconstruct row both promise exactly this.
+        string?[] deconstructArchived =
+        {
+            "Thrust Mesh", "Member Lines", "Form Lines", "Member IDs",
+            "Node IDs", "Support Points", "Load Points", "Load Vectors",
+            "Reaction Points", "Reaction Vectors", "Columns", "Heads",
+            "Feet", "Force Lines"
+        };
+        string[] deconstructRegistered =
+        {
+            "Member Lines", "Form Lines", "Member IDs", "Node IDs",
+            "Support Points", "Load Points", "Load Vectors",
+            "Reaction Points", "Reaction Vectors", "Force Lines"
+        };
+        string? slimmed = Ask(
+            new string?[] { "Result" },
+            deconstructArchived,
+            new[] { "Result" },
+            deconstructRegistered);
+        if (slimmed is not string slimText ||
+            !slimText.Contains("14 outputs archived", StringComparison.Ordinal) ||
+            !slimText.Contains("1 and 10 registered", StringComparison.Ordinal) ||
+            !slimText.Contains(
+                "removed: 'Thrust Mesh', 'Columns', 'Heads', 'Feet'",
+                StringComparison.Ordinal) ||
+            !slimText.Contains("check every", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Deconstruct's slim, 14 outputs to 10, must name both counts "
+                + "and the four removed ports in archived order, so the "
+                + "author knows which quantities are GONE rather than moved, "
+                + "and must still send them to check every reattached wire; "
+                + $"got '{slimmed}'.");
+        }
+
+        // Frame's own append: nine outputs archived against the ten
+        // registered, Anchor Lines new at the END, every shared slot still
+        // holding its name and the Result input untouched (ten archived
+        // ports against eleven registered in all). Nothing moved, so the
+        // author is told WHAT was appended and that the wires kept their
+        // ports, not sent to check every one of them for a change that
+        // could not have moved any.
+        string?[] frameArchived =
+        {
+            "Mesh", "Cables", "Principal Lines", "Principal Nodes",
+            "Anchor Nodes", "Perimeter Nodes", "Perimeter Lines",
+            "Columns", "Phase"
+        };
+        string[] frameRegistered =
+        {
+            "Mesh", "Cables", "Principal Lines", "Principal Nodes",
+            "Anchor Nodes", "Perimeter Nodes", "Perimeter Lines",
+            "Columns", "Phase", "Anchor Lines"
+        };
+        string? appended = Ask(
+            new string?[] { "Result" },
+            frameArchived,
+            new[] { "Result" },
+            frameRegistered);
+        if (appended is not string appendText ||
+            !appendText.Contains(
+                "'Anchor Lines' was appended", StringComparison.Ordinal) ||
+            !appendText.Contains(
+                "existing wires kept their ports", StringComparison.Ordinal) ||
+            appendText.Contains("check every", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Frame's append, nine outputs to ten with Anchor Lines new "
+                + "at the end, must name the append and say the wires kept "
+                + "their ports; 'check every' has no business in a warning "
+                + $"about a change that moved nothing; got '{appended}'.");
         }
 
         // The INPUT SIDE alone, which is what Export's Live hold reads.
