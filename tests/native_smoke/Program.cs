@@ -1004,6 +1004,26 @@ internal static class Program
 
         try
         {
+            ValidateSupportsSharedGrouping(plugin);
+            Console.WriteLine(
+                "PASS  Supports shared grouping: a columns block of three "
+                + "members whose Trees name only member 0 falls back, inside "
+                + "FrameGeometry.ColumnGroups, to TreesByFoot, and Supports "
+                + "branches by THAT: two branches, the count ColumnGroups "
+                + "itself returns, all three members measured as [0.5, 0.3] "
+                + "on foot 0 and [0.4] on foot 3, and no supports.no_columns; "
+                + "with Trees EMPTY beside the same members every member is "
+                + "still measured and no_columns still absent; and Forces "
+                + "counts the same 3 columns through the same call.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Supports shared grouping: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateFitReadings(plugin);
             Console.WriteLine(
                 "PASS  Fit readings: a frame standing 1, 10 and -2 mm off "
@@ -4311,6 +4331,198 @@ internal static class Program
                 "500 N over 100 N is 5, over one and a warning; got "
                 + $"'{One("supports.utilisation").Message}'.");
         }
+    }
+
+    /// <summary>
+    /// <c>SupportsReaderComponent.Read</c> and <c>ForcesComponent.Read</c>
+    /// take their column groups from <c>FrameGeometry.ColumnGroups</c>, the
+    /// code path Frame's Columns output branches by, so the readers cannot
+    /// diverge from Frame on a block whose Trees do not cover its members.
+    ///
+    /// The fixture: a valid columns block of five nodes and THREE members,
+    /// m0 = (0,1), m1 = (1,2), m2 = (3,4) at 0.5, 0.3 and 0.4 kN, whose
+    /// Trees name [[0]] only. That UNDER-COVERS: the Trees sum to 1 member
+    /// against the block's 3, so ColumnGroups' coverage test fails and
+    /// TreesByFoot answers instead. Deriving that by hand: the members make
+    /// nodes 0, 1 and 3 lower ends and 1, 2 and 4 upper ends, so the feet,
+    /// lower and never upper, are 0 and 3, taken ascending. Climbing foot 0
+    /// reaches 0, 1, 2, so m0 and m1 (lower ends 0 and 1) stand on it;
+    /// climbing foot 3 reaches 3, 4, so m2 stands on it. TWO groups,
+    /// [0, 1] and [2]: two branches, three members in all, Column Force
+    /// [0.5, 0.3] and [0.4] in member order. Every member is one metre
+    /// long, none collapsed, so Frame would draw exactly those 3 lines.
+    /// The raw block.Trees walk this replaces would have given ONE branch
+    /// of one member, dropping m1 and m2 from every column port while
+    /// Frame drew them.
+    ///
+    /// The same block with Trees EMPTY is the harsher half of the defect:
+    /// the raw walk measured nothing and raised supports.no_columns while
+    /// Frame drew both trees. Through the shared call it reads identically
+    /// to the under-covering case, and supports.no_columns fires only when
+    /// the grouping itself yields no groups, which is when Frame hands
+    /// back no branches.
+    ///
+    /// Forces counts the same population through the same call: 3 columns
+    /// in forces.counts, the sum of the shared grouping's group sizes,
+    /// 2 + 1.
+    /// </summary>
+    private static void ValidateSupportsSharedGrouping(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type supports = RequireComponentType(plugin, "SupportsReaderComponent");
+        MethodInfo read = RequireStatic(supports, "Read");
+        Type forcesType = RequireComponentType(plugin, "ForcesComponent");
+        MethodInfo forcesRead = RequireStatic(forcesType, "Read");
+        Type frameGeometry = RequireComponentType(plugin, "FrameGeometry");
+        MethodInfo columnGroups = RequirePublicStatic(frameGeometry, "ColumnGroups");
+        Type mouldGeometry = RequireComponentType(plugin, "MouldGeometry");
+        MethodInfo treeFromBlock = RequirePublicStatic(mouldGeometry, "TreeFromBlock");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        (object Result, object Block) Build(int[][] trees)
+        {
+            object equilibrium = CreateInstance(equilibriumType);
+            SetContractProperty(equilibrium, equilibriumType, "Vertices",
+                Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+            SetContractProperty(equilibrium, equilibriumType, "Edges",
+                Of(edgeType,
+                    Activator.CreateInstance(edgeType, 0, 1)!,
+                    Activator.CreateInstance(edgeType, 1, 2)!));
+            SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+                new[] { 0.1, 0.2 });
+            SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+            SetContractProperty(
+                equilibrium, equilibriumType, "SignConvention", "positive_tension");
+            SetContractProperty(
+                equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+
+            object block = CreateInstance(columnsType);
+            SetContractProperty(block, columnsType, "Nodes",
+                Of(point, P(0, 0, 0), P(0, 0, 1), P(0, 0, 2), P(2, 0, 0), P(2, 0, 1)));
+            SetContractProperty(block, columnsType, "Members",
+                Of(edgeType,
+                    Activator.CreateInstance(edgeType, 0, 1)!,
+                    Activator.CreateInstance(edgeType, 1, 2)!,
+                    Activator.CreateInstance(edgeType, 3, 4)!));
+            SetContractProperty(block, columnsType, "MemberForce",
+                new[] { 0.5, 0.3, 0.4 });
+            SetContractProperty(block, columnsType, "Trees", trees);
+            SetContractProperty(block, columnsType, "Heads", new[] { 2, 4 });
+            SetContractProperty(block, columnsType, "Feet", new[] { 0, 3 });
+            SetContractProperty(block, columnsType, "HeadNode", new[] { 1, 1 });
+            SetContractProperty(block, columnsType, "Branching", 1);
+            SetContractProperty(block, columnsType, "ForkFraction", 0.65);
+            object mould = CreateInstance(mouldType);
+            SetContractProperty(mould, mouldType, "Ground", 0.0);
+            SetContractProperty(mould, mouldType, "Columns", block);
+            object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+            SetContractProperty(result, resultType, "Mould", mould);
+            return (result, block);
+        }
+
+        void CheckOne(int[][] trees, string label)
+        {
+            (object result, object block) = Build(trees);
+
+            // The count the shared code path itself returns for this block,
+            // asked through the same two calls Frame's Columns makes.
+            object tree = treeFromBlock.Invoke(null, new[] { block })!;
+            int[] groupSizes = ((IEnumerable)columnGroups
+                .Invoke(null, new[] { block, tree })!)
+                .Cast<IEnumerable>()
+                .Select(group => group.Cast<object>().Count())
+                .ToArray();
+            if (!groupSizes.SequenceEqual(new[] { 2, 1 }))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: TreesByFoot puts m0 and m1 on foot 0 and m2 on "
+                    + "foot 3, so ColumnGroups returns groups of [2, 1]; got "
+                    + $"[{string.Join(",", groupSizes)}].");
+            }
+
+            object readings = read.Invoke(null, new object?[] { result, 0.0 })!;
+            object Prop(string name) =>
+                readings.GetType().GetProperty(name)!.GetValue(readings)!;
+            double[][] force = ((IEnumerable)Prop("ColumnForce"))
+                .Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+            if (force.Length != groupSizes.Length)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Supports must branch by the {groupSizes.Length} "
+                    + "groups ColumnGroups returns, the same tree Frame draws; "
+                    + $"got {force.Length} branches.");
+            }
+            // All 3 members measured: Frame draws 3 lines here, every
+            // member a metre long and none collapsed, 2 + 1 across the
+            // groups.
+            int measured = force.Sum(branch => branch.Length);
+            if (measured != 3)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: every member is measured, 3 Column Force items "
+                    + $"over all branches; got {measured}.");
+            }
+            bool values =
+                force[0].Length == 2 &&
+                Math.Abs(force[0][0] - 0.5) <= 1.0e-9 &&
+                Math.Abs(force[0][1] - 0.3) <= 1.0e-9 &&
+                force[1].Length == 1 &&
+                Math.Abs(force[1][0] - 0.4) <= 1.0e-9;
+            if (!values)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Column Force reads [0.5, 0.3] on foot 0's tree "
+                    + "and [0.4] on foot 3's, in member order; got ["
+                    + string.Join(" | ", force.Select(branch =>
+                        string.Join(",", branch.Select(value =>
+                            value.ToString("0.####",
+                                System.Globalization.CultureInfo.InvariantCulture)))))
+                    + "].");
+            }
+            var rows = DiagnosticRows(plugin, Prop("Result"));
+            if (rows.Any(row => row.Code == "supports.no_columns"))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: the shared grouping yields two groups, so "
+                    + "supports.no_columns must be absent; Frame draws these "
+                    + "columns.");
+            }
+
+            // Forces counts the same population: 2 + 1 = 3 columns.
+            object counted = forcesRead.Invoke(
+                null, new object?[] { result, 0.0, 0.0 })!;
+            object countedResult = counted.GetType()
+                .GetProperty("Result")!.GetValue(counted)!;
+            var countRows = DiagnosticRows(plugin, countedResult);
+            (string Code, string Severity, string Source, string Message) counts =
+                countRows.Single(row => row.Code == "forces.counts");
+            if (!counts.Message.Contains("3 columns", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: forces.counts follows the shared grouping, 3 "
+                    + $"columns; got '{counts.Message}'.");
+            }
+        }
+
+        CheckOne(new int[][] { new[] { 0 } }, "under-covering Trees [[0]]");
+        CheckOne(Array.Empty<int[]>(), "empty Trees beside three members");
     }
 
     /// <summary>

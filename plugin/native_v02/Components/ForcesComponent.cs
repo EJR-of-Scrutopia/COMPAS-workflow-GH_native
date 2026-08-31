@@ -466,27 +466,17 @@ namespace Ananke.COMPAS.Native.Components
             // forces.counts keeps Monitor's full sentence, naming all four
             // populations, so the author sees the whole Result from any one
             // child. The columns and the anchors are Supports' to MEASURE;
-            // here they are only counted, with the same skip tests and the
-            // same grouping calls Supports makes, so the two components
-            // cannot disagree about how many there are.
+            // here they are only counted, through the same grouping call
+            // Supports measures by: the column count is the size of the
+            // shared FrameGeometry.ColumnGroups grouping, fallback
+            // included, so forces.counts agrees with what Frame draws even
+            // where the block's own Trees under-cover its members.
             int columnMembers = 0;
             if (block is not null)
             {
-                foreach (IReadOnlyList<int> group in block.Trees)
-                {
-                    foreach (int m in group)
-                    {
-                        if (m < 0 || m >= block.Members.Count)
-                            continue;
-                        EdgeDto member = block.Members[m];
-                        if (member.U < 0 || member.U >= block.Nodes.Count ||
-                            member.V < 0 || member.V >= block.Nodes.Count)
-                        {
-                            continue;
-                        }
-                        columnMembers++;
-                    }
-                }
+                columnMembers = FrameGeometry
+                    .ColumnGroups(block, MouldGeometry.TreeFromBlock(block))
+                    .Sum(group => group.Count);
             }
             int[] nodeIds = ResultTables.SupportNodes(result);
             List<int>[] grouping = MouldGeometry.GroupingAdjacency(

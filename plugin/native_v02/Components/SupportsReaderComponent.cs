@@ -16,8 +16,9 @@ namespace Ananke.COMPAS.Native.Components
     /// One of Monitor's three children. Every anchor output is branched by
     /// support strip exactly as Deconstruct's Reaction Points, and every
     /// column output by column tree exactly as Frame's Columns, because this
-    /// reads the same <see cref="ResultTables"/> rows and the block's own
-    /// Trees in the same order.
+    /// reads the same <see cref="ResultTables"/> rows and takes its column
+    /// groups from <see cref="FrameGeometry.ColumnGroups"/>, the code path
+    /// Frame draws by.
     ///
     /// The CLASS is SupportsReaderComponent because the 01 Model panel
     /// already has a SupportsComponent; the canvas name is the spec's,
@@ -357,12 +358,13 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             // ---- columns ------------------------------------------------
-            // Branched by the block's own Trees, which is what
-            // DeconstructComponent.ColumnTrees branches by, skipping a
-            // member on exactly the same two tests and taking the heads in
-            // the same first-seen order. Any other grouping here, a
-            // fallback included, would put a number in a branch
-            // Frame's Columns never drew.
+            // Branched by FrameGeometry.ColumnGroups, the one code path
+            // Frame's Columns branches by, fallback included: the block's
+            // own Trees where they cover every member exactly once, and
+            // TreesByFoot where they do not. Sharing the call is what makes
+            // divergence impossible by construction, so branch {b} here is
+            // Frame's Columns branch {b} even on an imported Result whose
+            // Trees under-cover the members.
             var tipReaction = new List<List<Vector3d>>();
             var columnForceBranches = new List<List<double>>();
             var thrustBranches = new List<List<double>>();
@@ -370,6 +372,7 @@ namespace Ananke.COMPAS.Native.Components
             var columnUtilBranches = new List<List<double>>();
             var standsOnGround = new List<bool>();
             bool columnFrameAbsent = false;
+            int columnGroupCount = 0;
             if (block is not null)
             {
                 // MouldFrameDto.Validate only checks ColumnNodes when it
@@ -429,7 +432,15 @@ namespace Ananke.COMPAS.Native.Components
                     return length > 1.0e-12 ? (d / length) * axial : Vector3d.Zero;
                 }
 
-                foreach (IReadOnlyList<int> group in block.Trees)
+                // A group's indices are into TreeFromBlock's tree.Members,
+                // which on a validated Result are block.Members' own:
+                // Validate refuses an out-of-range or self-loop member, so
+                // TreeFromBlock skips nothing and the walk below reads the
+                // block directly.
+                List<List<int>> columnGroups = FrameGeometry.ColumnGroups(
+                    block, MouldGeometry.TreeFromBlock(block));
+                columnGroupCount = columnGroups.Count;
+                foreach (List<int> group in columnGroups)
                 {
                     // The member under a head, resolved WITHIN the tree
                     // that is emitting the head. Built in a pass of its
@@ -512,6 +523,7 @@ namespace Ananke.COMPAS.Native.Components
                     columnUtilisation: columnRatio
                         ? columnUtilBranches.SelectMany(b => b).ToList()
                         : new List<double>(),
+                    columnGroups: columnGroupCount,
                     axisFromStrip: axisFromStrip,
                     columnFrameAbsent: columnFrameAbsent,
                     forceUnit: forceUnit,
@@ -537,6 +549,7 @@ namespace Ananke.COMPAS.Native.Components
             List<Vector3d> anchorReaction,
             List<double> anchorAcross,
             List<double> columnUtilisation,
+            int columnGroups,
             int axisFromStrip,
             bool columnFrameAbsent,
             string forceUnit,
@@ -588,8 +601,12 @@ namespace Ananke.COMPAS.Native.Components
                             ("feet", footThrust.Length.ToString(CultureInfo.InvariantCulture)),
                             ("sum", footThrust.Sum().ToString("0", CultureInfo.InvariantCulture)))));
             }
-            else
+            else if (columnGroups == 0)
             {
+                // Raised only when the shared grouping yields no groups,
+                // which is exactly when Frame's Columns hands back no
+                // branches: a Result with members but empty Trees falls
+                // back to TreesByFoot and is measured, not refused.
                 d.Add(ResultDiagnostics.Entry(S, "supports.no_columns", "info",
                     "no columns on this Result: wire Columns upstream to see what "
                         + "they carry."));
