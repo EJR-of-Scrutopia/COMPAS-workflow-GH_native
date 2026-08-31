@@ -144,9 +144,11 @@ public sealed class SkinComponent :
             "C",
             "One closed polyline per cell, on the thrust surface, as a "
                 + "TREE branched by COURSE (path = course, 0 up from the "
-                + "bottom). The NATIVE patterns order the cells along "
-                + "the course within each branch, the studio's build "
-                + "sequence; the force-aligned pattern keeps the "
+                + "bottom). A NATIVE pattern's branch lists one traced "
+                + "component's run after another, each run ordered along "
+                + "the course, the studio's build sequence within a run; "
+                + "which component comes first still follows the mesh's "
+                + "face order. The force-aligned pattern keeps the "
                 + "worker's own order. Wire into Export's Cells; Export "
                 + "flattens and projects itself.",
             GH_ParamAccess.tree);
@@ -168,8 +170,11 @@ public sealed class SkinComponent :
             "D",
             "Readable text. Native patterns: the pattern name, cell and "
                 + "course counts, mean/min/max piece length, the stagger, "
-                + "and the count of boundary-clipped cells. Force "
-                + "aligned: the worker's diagnostics verbatim.",
+                + "the count of boundary-clipped cells and, where bands "
+                + "were REFUSED because the level curves across them do "
+                + "not correspond, how many and the heights each "
+                + "refusal sits between. Force aligned: the worker's "
+                + "diagnostics verbatim.",
             GH_ParamAccess.item);
     }
 
