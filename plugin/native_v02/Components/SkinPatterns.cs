@@ -22,9 +22,10 @@ internal sealed record SkinNet(
 /// <summary>
 /// One traced level-curve component: the polyline of edge crossings at
 /// Height, OPEN (a strip ending on the surface boundary, the barrel case)
-/// or CLOSED (a loop, the dome case), with cumulative arc lengths and,
-/// once seams are assigned, the seam every setout coordinate is measured
-/// from. Cumulative[i] is the arc length at Points[i] from Points[0]; a
+/// or CLOSED (a loop, the dome case), with cumulative arc lengths, the
+/// nesting depth the correspondence classifies on and, once seams are
+/// assigned, the seam every setout coordinate is measured from.
+/// Cumulative[i] is the arc length at Points[i] from Points[0]; a
 /// closed curve's Length additionally carries the closing segment back to
 /// Points[0], which Points does NOT repeat.
 /// </summary>
@@ -41,6 +42,18 @@ internal sealed class SkinLevelCurve
     public double Length { get; set; }
 
     public double Seam { get; set; }
+
+    /// <summary>
+    /// The NESTING DEPTH of this component within its OWN level: how
+    /// many other closed components at the same height contain it in
+    /// plan. An outer rim loop is 0, the oculus loop inside it is 1, a
+    /// loop inside that 2; an OPEN strip is 0 by the rule, since a
+    /// curve with two ends encloses nothing. Assigned by
+    /// AssignNestingDepths, whose comment carries the rule and the
+    /// argument for it, and read by MatchBelow, which will not match
+    /// across two depths.
+    /// </summary>
+    public int Depth { get; set; }
 }
 
 /// <summary>
@@ -164,10 +177,13 @@ internal static class SkinPatterns
     // ---- level-curve tracing and seams (spec section 4) -----------------
 
     /// <summary>
-    /// Trace the net at every height, ascending, NORMALISE every traced
-    /// curve's direction, and assign every curve its seam, in one pass:
-    /// a direction has to be settled before the seam that is measured
-    /// along it, and a closed loop's seam is propagated from the level
+    /// Trace the net at every height, ascending, CLASSIFY every traced
+    /// component by its nesting depth, NORMALISE every traced curve's
+    /// direction, and assign every curve its seam, in one pass. The
+    /// order is forced: depth is what MatchBelow classifies on, and
+    /// both the direction rule and the seam rule call MatchBelow; a
+    /// direction has to be settled before the seam that is measured
+    /// along it; and a closed loop's seam is propagated from the level
     /// below it, so the propagation only means something bottom-up. The
     /// heights MUST arrive ascending; both engines build them that way.
     /// </summary>
@@ -178,6 +194,7 @@ internal static class SkinPatterns
         var working = new List<List<SkinLevelCurve>>();
         foreach (double height in heights)
             working.Add(Trace(net, height));
+        AssignNestingDepths(working);
         NormaliseDirections(working);
         AssignSeams(working);
         return working;
@@ -344,6 +361,102 @@ internal static class SkinPatterns
             Cumulative = cumulative,
             Length = length
         };
+    }
+
+    /// <summary>
+    /// Classify every traced component by its NESTING DEPTH within its
+    /// own level, before anything measures a distance.
+    ///
+    /// THE RULE. The depth of a CLOSED component is the number of other
+    /// closed components at the same height that contain it in plan: an
+    /// outer rim loop is 0, the oculus loop inside it is 1, a loop
+    /// inside that 2. An OPEN strip is 0, because a curve with two ends
+    /// encloses nothing and is not asked to.
+    ///
+    /// WHY IT EXISTS. The ruling before this one took the world axes
+    /// out of the correspondence and left the SAMPLING in.
+    /// MeanNearestPlanDistance measures each sample point of one curve
+    /// to the nearest SAMPLE POINT of the other, so its score carries an
+    /// error of roughly half the other curve's sample spacing, and where
+    /// two components genuinely lie close together in plan that error,
+    /// and with it the MESH, decides which curve corresponds to which.
+    /// Reproduced against the built plugin on the annular ring vault by
+    /// turning its ridge ring ALONE about world Z, which moves no level
+    /// set, no component and no topology: at 0 and at 0.05 degrees, CH
+    /// 1.9 gave 52 courses cells and refused nothing; at 0.1 degrees,
+    /// 4.4 mm on a 2.5 m circle, it gave ZERO cells and reported a
+    /// transition where the two loops correspond perfectly, outer to
+    /// outer and inner to inner. The same loss followed from
+    /// TRIANGULATING the mesh (312 cells to 260 at the shipped default
+    /// CH 0.35, 208 to 156 at CH 0.5) and from giving the rings UNEQUAL
+    /// densities, neither of which changes any level set.
+    ///
+    /// A finer distance does not answer it and must not be reached for.
+    /// At a ridge the outer and the inner loop genuinely COINCIDE in
+    /// plan, three millionths of a metre apart on this fixture, and no
+    /// distance whatever can separate two curves lying on top of one
+    /// another. Only a classification can.
+    ///
+    /// WHY DEPTH IS THE RIGHT CLASSIFICATION. It is topological, so it
+    /// is invariant under exactly the changes that must not move the
+    /// answer. A rotation about world Z turns both loops together and
+    /// leaves which contains which untouched; a translation likewise; a
+    /// remeshing moves each loop's sample points ALONG the same curve
+    /// and cannot move one loop through another. So on a ring vault the
+    /// outer crown loop is depth 0 and the inner is depth 1 at every
+    /// angle and every mesh density, however close the two lie, and
+    /// MatchBelow decides the correspondence before it measures
+    /// anything.
+    ///
+    /// THE CONTAINMENT TEST is the engine's own PlanContains, the
+    /// even-odd ray cast the plan filter already uses, taken as a VOTE
+    /// over the inner curve's sample points: contained when more than
+    /// half of them lie inside. Two components of ONE level cannot
+    /// properly cross, so in exact arithmetic a single point would
+    /// settle it; the vote is what makes the shared-vertex cases
+    /// harmless, a cut through a vertex row leaving two components
+    /// touching at a point neither strictly inside nor strictly outside.
+    /// It is the same strictness the crossing predicate keeps, where a
+    /// zero side value is not a crossing.
+    /// </summary>
+    private static void AssignNestingDepths(
+        IReadOnlyList<List<SkinLevelCurve>> byHeight)
+    {
+        foreach (List<SkinLevelCurve> level in byHeight)
+        {
+            for (int inner = 0; inner < level.Count; inner++)
+            {
+                int depth = 0;
+                if (level[inner].Closed)
+                {
+                    for (int outer = 0; outer < level.Count; outer++)
+                    {
+                        if (outer == inner || !level[outer].Closed)
+                            continue;
+                        if (PlanEncloses(level[outer], level[inner]))
+                            depth++;
+                    }
+                }
+                level[inner].Depth = depth;
+            }
+        }
+    }
+
+    /// <summary>Does the outer curve's plan projection CONTAIN the inner
+    /// one's? The vote described in AssignNestingDepths: more than half
+    /// of the inner curve's sample points inside the outer curve, by the
+    /// engine's own PlanContains.</summary>
+    private static bool PlanEncloses(
+        SkinLevelCurve outer,
+        SkinLevelCurve inner)
+    {
+        int inside = 0;
+        foreach (double[] point in inner.Points)
+        {
+            if (PlanContains(point[0], point[1], outer.Points))
+                inside++;
+        }
+        return 2 * inside > inner.Points.Count;
     }
 
     /// <summary>
@@ -523,8 +636,25 @@ internal static class SkinPatterns
     }
 
     /// <summary>
-    /// Spec section 4's "matched to the component below it": the
-    /// candidate whose plan projection lies CLOSEST to this curve's.
+    /// Spec section 4's "matched to the component below it", in TWO
+    /// stages: CLASSIFY, then measure.
+    ///
+    /// 1. NESTING DEPTH. A component may only be matched to a candidate
+    /// of EQUAL depth, the depth AssignNestingDepths assigned from
+    /// containment within each component's own level. That comment
+    /// carries the rule, the reproduction and the invariance argument;
+    /// the short of it is that a distance, however fine, cannot separate
+    /// two loops that coincide in plan at a ridge, and depth can,
+    /// because containment survives rotation, translation and
+    /// remeshing. Where no candidate shares this curve's depth there is
+    /// NO match, and -1 comes back: every caller already reads -1 as no
+    /// answer, and in Corresponds a depth class of a different size on
+    /// the two levels is a genuine correspondence failure and refuses
+    /// the band exactly as an unmatched curve does.
+    ///
+    /// 2. DISTANCE WITHIN THE CLASS. Among the candidates of equal
+    /// depth, the one whose plan projection lies CLOSEST to this
+    /// curve's.
     ///
     /// The measure is a DISTANCE, and it is a distance because a
     /// distance is the thing a rotation cannot change. The rule this
@@ -581,6 +711,10 @@ internal static class SkinPatterns
         double bestScore = double.PositiveInfinity;
         for (int i = 0; i < candidates.Count; i++)
         {
+            // Stage one: a candidate of another nesting depth is not a
+            // candidate at all, whatever the distance says.
+            if (candidates[i].Depth != curve.Depth)
+                continue;
             double score = PlanProximity(curve, candidates[i]);
             if (score < bestScore - 1.0e-12)
             {

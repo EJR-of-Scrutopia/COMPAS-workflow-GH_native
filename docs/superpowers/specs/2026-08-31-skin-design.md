@@ -84,14 +84,31 @@ the output boundary, the FrameGeometry Read/Build split.
 - The map: (u, z) is the point at signed arc length u from the seam along the level curve
   at height z (curves interpolated between cut heights where a vertex falls between
   them). Where a height has several components, each component is set out independently,
-  matched to the component below it by a symmetric DISTANCE between the two curves in
-  plan. Erratum: this said "by plan overlap", meaning the overlap area of axis-aligned
-  plan bounding boxes, and that rule was wrong twice over. It is not invariant under a
-  rotation of the model, so the same surface turned through an arbitrary angle answered
-  differently and a genuine topology change went undetected at all but five angles in a
-  180 degree sweep; and a bounding box cannot express nesting, so an oculus dome's inner
-  and outer loops both claimed the outer and every band was refused. Distance is
-  invariant under rotation and reads nesting correctly.
+  matched to the component below it first by NESTING DEPTH and then, within a depth
+  class, by a symmetric DISTANCE between the two curves in plan. Erratum: this said "by
+  plan overlap", meaning the overlap area of axis-aligned plan bounding boxes, and that
+  rule was wrong twice over. It is not invariant under a rotation of the model, so the
+  same surface turned through an arbitrary angle answered differently and a genuine
+  topology change went undetected at all but five angles in a 180 degree sweep; and a
+  bounding box cannot express nesting, so an oculus dome's inner and outer loops both
+  claimed the outer and every band was refused. Distance is invariant under rotation.
+  Second erratum, on the same sentence: distance ALONE does not read nesting correctly,
+  and the claim that it did held on one fixture by luck. The score runs from each sample
+  point of one curve to the nearest SAMPLE POINT of the other, so it carries an error of
+  about half the other curve's sample spacing, and where two components genuinely lie
+  close together in plan that error, and with it the MESH, decides the answer. Turning
+  one ring of an annular shell by a tenth of a degree, triangulating the same shell, and
+  giving its rings unequal densities each turned a whole pattern into nothing while
+  changing no level set. No finer distance answers it: at a ridge the two loops coincide
+  in plan, and nothing measured between them can tell them apart. The rule is therefore
+  CLASSIFY BEFORE MEASURING. Every closed component of a level carries its nesting
+  depth, the number of other closed components of that level containing it in plan,
+  judged by the engine's own point-in-polygon test; an open strip carries depth 0. A
+  component may be matched only to a component of EQUAL depth, and within a depth class
+  the symmetric distance decides. Depth is topological, so it survives rotation,
+  translation and remeshing alike; a depth class of a different size on the two levels
+  is a genuine correspondence failure and refuses the band exactly as an unmatched
+  component does.
 
 Where a level's components do not correspond to the level below (one splits, one dies,
 two swap, or any combination, which a count comparison cannot see), the band is REFUSED:

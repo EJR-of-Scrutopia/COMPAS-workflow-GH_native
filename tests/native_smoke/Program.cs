@@ -717,6 +717,32 @@ internal static class Program
 
         try
         {
+            ValidateSkinRingVaultMeshings(plugin);
+            Console.WriteLine(
+                "PASS  Skin correspondence is the GEOMETRY's, not the " +
+                "mesh's: one annular shell meshed five ways, quad, " +
+                "triangulated, its ridge ring turned by a tenth of a " +
+                "degree and by half its own spacing, and with unequal " +
+                "ring densities, traces two nested loops of nesting " +
+                "depth 0 and 1 at every mid height of every meshing, " +
+                "refuses no band on any of them, and BUILDS the quad " +
+                "fixture's own 312, 208 and 52 courses cells and 252, " +
+                "180 and 108 honeycomb cells at CH 0.35, 0.5 and 1.9, " +
+                "every survivor disjoint and simple. The one count that " +
+                "moves is derived, not tolerated: a 32-gon is longer " +
+                "than a 16-gon, so the unequal meshing's third band " +
+                "rounds to one more piece and its CH 0.35 courses are " +
+                "313.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin correspondence is the geometry's: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinHexagonal(plugin);
             Console.WriteLine(
                 "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
@@ -8559,6 +8585,194 @@ internal static class Program
     }
 
     /// <summary>
+    /// The ring vault TRIANGULATED: the same vertices and the same
+    /// surface, with every quad split on the diagonal that joins its
+    /// lower-ring corner k to its upper-ring corner k + 1, so the net
+    /// holds triangles alone.
+    ///
+    /// It is one of the four meshings that must give ONE answer, and it
+    /// is the one whose answer can be derived rather than measured. Each
+    /// quad of this shell is PLANAR: its two chords, one on each ring,
+    /// are parallel, because the rings are concentric regular 16-gons
+    /// sharing their angular offsets, and two parallel lines lie in a
+    /// plane. Height restricted to that plane is affine, so the level set
+    /// at any height is a straight LINE within it, and the diagonal's
+    /// crossing therefore lies exactly ON the segment the two edge
+    /// crossings already gave. Writing u for the lower chord, v for the
+    /// left edge and lambda = (r1 - r0) / r0, the quad's corners are A0,
+    /// A0 + u, A0 + v and A0 + (1 + lambda) u + v, and the three
+    /// crossings at parameter t come out A0 + t v, A0 + (1 + t lambda) u
+    /// + t v and A0 + t (1 + lambda) u + t v: the same v coefficient, so
+    /// the same line.
+    ///
+    /// So triangulating adds a collinear vertex to every traced
+    /// component and changes NOTHING else: measured, every mid-level
+    /// curve of the CH 0.35 grid comes back at the quad fixture's own
+    /// length to five decimals (24.24322 and 6.97123 at the first mid,
+    /// and so on down the six), and every course therefore carries the
+    /// same round(L / S) pieces. Against the build before this wave the
+    /// courses engine gave 260 cells here against the quad fixture's
+    /// 312 at CH 0.35 and 156 against 208 at CH 0.5, with a band refused
+    /// on a shell that has no transition anywhere, because the
+    /// correspondence was scored point to point and the extra sample
+    /// points moved the score.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinRingVaultTriangulatedNet()
+    {
+        (double[][] vertices, int[][] quads) = SkinRingVaultNet();
+        var faces = new List<int[]>(quads.Length * 2);
+        foreach (int[] quad in quads)
+        {
+            faces.Add(new[] { quad[0], quad[1], quad[2] });
+            faces.Add(new[] { quad[0], quad[2], quad[3] });
+        }
+        return (vertices, faces.ToArray());
+    }
+
+    /// <summary>
+    /// The ring vault with its RIDGE RING alone turned about world Z:
+    /// ring 2, the sixteen vertices of radius 2.5 at z 2.0, rotated by
+    /// the given angle while every other ring stays where it was.
+    ///
+    /// It is the fixture that reproduces this wave's defect, and it was
+    /// chosen because it is so nearly nothing. Turning one ring moves no
+    /// height, no face and no level set: every cut between the rims and
+    /// the ridge is still two nested loops, the outer still contains the
+    /// inner, and the component count at every height is what it was.
+    /// Measured against the build before this wave, driving the courses
+    /// engine at S 0.6 and CH 1.9: 0.00 degrees gave 52 cells and
+    /// refused nothing, 0.05 degrees the same, and 0.10 degrees, which
+    /// is 4.4 mm of arc on a 2.5 m circle, gave ZERO cells with one band
+    /// refused and the diagnostics stating that the level curves do not
+    /// correspond. 0.25 degrees the same. A tenth of a degree turned a
+    /// whole pattern into nothing.
+    ///
+    /// The two angles pinned are 0.1, the smallest measured that broke
+    /// it, and 11.25, which is HALF the ring's own 22.5 degree spacing
+    /// and so the furthest a ring can be turned from its neighbours: the
+    /// two ends of the range rather than two samples from the middle of
+    /// it. At 11.25 degrees the traced lengths do move a little, because
+    /// the faces either side of the ridge are genuinely differently
+    /// shaped (19.84069 m becomes 19.83154 m on the fourth mid), but a
+    /// nine millimetre change in a 19.8 m course is 0.015 of a piece and
+    /// nowhere near the half-piece that would move round(L / S), so
+    /// every course carries the same count.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinRingVaultRidgeTurnedNet(double degrees)
+    {
+        (double[][] vertices, int[][] faces) = SkinRingVaultNet();
+        double angle = degrees * Math.PI / 180.0;
+        double cos = Math.Cos(angle);
+        double sin = Math.Sin(angle);
+        double[][] turned = vertices
+            .Select((vertex, index) => index / 16 == 2
+                ? new[]
+                {
+                    vertex[0] * cos - vertex[1] * sin,
+                    vertex[0] * sin + vertex[1] * cos,
+                    vertex[2]
+                }
+                : vertex)
+            .ToArray();
+        return (turned, faces);
+    }
+
+    /// <summary>
+    /// The ring vault with UNEQUAL ring densities, 16, 16, 16, 32, 32:
+    /// the outer rim, the outer skirt and the ridge keep their sixteen
+    /// vertices and the two inner rings carry thirty-two, so the mesh is
+    /// fine on the oculus side and coarse on the rim side. Between the
+    /// 16-ring and the 32-ring, vertex A[k] sits over B[2k] and the gap
+    /// is filled by the quad A[k], A[k+1], B[2k+2], B[2k+1] and the
+    /// triangle A[k], B[2k+1], B[2k].
+    ///
+    /// It is the meshing that separates a real answer from a lucky one.
+    /// The quad fixture is the ONE annular mesh whose equal sampling
+    /// makes the tangential error of a point-to-point score cancel, so
+    /// it broke the tie correctly by luck; give the rings different
+    /// densities and the luck goes. Against the build before this wave
+    /// the courses engine gave 261 cells here at CH 0.35 against the
+    /// quad fixture's 312, with a band refused on a shell that has no
+    /// transition.
+    ///
+    /// One count genuinely MOVES on this meshing and it is not a defect:
+    /// its courses at CH 0.35 are 313, not 312. Spec section 5 sets a
+    /// course's piece count from round(L / S) on its own mid curve, and
+    /// L is the length of the polygon the mesh actually traces. A
+    /// regular 32-gon inscribed in a circle is LONGER than a 16-gon
+    /// inscribed in the same circle: 64 R sin(pi / 32) = 6.273100 R
+    /// against 32 R sin(pi / 16) = 6.242890 R. At the third mid, z
+    /// 0.875, the inner radius is 1 + 0.8 (0.875 / 1.2) = 1.583333, so
+    /// the 32-gon measures 9.93240 m and the 16-gon 9.88458 m; divided
+    /// by S 0.6 that is 16.554 pieces against 16.474, and the first
+    /// rounds to 17 while the second rounds to 16. That one course is
+    /// the whole difference: the six bands read (40, 12), (38, 14),
+    /// (36, 17), (33, 19), (30, 22) and (27, 25), which is 52, 52, 53,
+    /// 52, 52, 52 = 313 against the quad fixture's 312. At CH 0.5 and
+    /// CH 1.9 no course crosses a rounding boundary and the counts
+    /// agree exactly.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinRingVaultUnequalNet()
+    {
+        double[] radii = { 4.0, 3.2, 2.5, 1.8, 1.0 };
+        double[] heights = { 0.0, 1.2, 2.0, 1.2, 0.0 };
+        int[] counts = { 16, 16, 16, 32, 32 };
+        var starts = new int[radii.Length];
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < radii.Length; ring++)
+        {
+            starts[ring] = vertices.Count;
+            for (int k = 0; k < counts[ring]; k++)
+            {
+                double angle = Math.PI * 2.0 * k / counts[ring];
+                vertices.Add(new[]
+                {
+                    radii[ring] * Math.Cos(angle),
+                    radii[ring] * Math.Sin(angle),
+                    heights[ring]
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < radii.Length; ring++)
+        {
+            int lower = starts[ring];
+            int upper = starts[ring + 1];
+            int here = counts[ring];
+            int there = counts[ring + 1];
+            for (int k = 0; k < here; k++)
+            {
+                int next = (k + 1) % here;
+                if (here == there)
+                {
+                    faces.Add(new[]
+                    {
+                        lower + k, lower + next,
+                        upper + next, upper + k
+                    });
+                    continue;
+                }
+                faces.Add(new[]
+                {
+                    lower + k, lower + next,
+                    upper + (2 * k + 2) % there,
+                    upper + (2 * k + 1) % there
+                });
+                faces.Add(new[]
+                {
+                    lower + k,
+                    upper + (2 * k + 1) % there,
+                    upper + 2 * k % there
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
     /// The two-peak fixture, whose level curves SPLIT. A height field on
     /// the barrel's own 7 by 5 grid of quads, row-major, with the rim at
     /// z 0, the whole interior ring at 0.9, and two peaks of 2.0 at
@@ -9953,6 +10167,321 @@ internal static class Program
                         $"{expectedDrops.Degenerate} self-crossing and " +
                         $"{expectedDrops.Overlap} overlapping cells; it " +
                         $"dropped {ringDegenerate} and {ringOverlap}.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// ONE surface, FIVE meshings, ONE answer. This is the check that
+    /// makes the correspondence a property of the geometry rather than
+    /// of the mesh, and it is the check the previous wave's gate passed
+    /// by luck.
+    ///
+    /// The luck, stated plainly. The correspondence scores a pair of
+    /// curves by the mean distance from each sample point of one to the
+    /// nearest SAMPLE POINT of the other, so its answer carries an error
+    /// of about half the other curve's sample spacing. On an annular
+    /// shell the outer and the inner loop of a level lie a few
+    /// millionths of a metre apart at the ridge, far inside that error,
+    /// so the mesh decided which loop corresponded to which. The quad
+    /// ring vault is the one annular mesh whose equal sampling makes the
+    /// tangential half of that error cancel, so it broke the tie
+    /// correctly and the gate was green. Measured against the build
+    /// before this wave, at S 0.6, courses cells kept:
+    ///
+    ///   CH 0.35: quad 312, triangulated 260, ridge turned 0.1 deg 312,
+    ///            ridge turned 11.25 deg 260, unequal densities 261
+    ///   CH 0.5:  quad 208, triangulated 156, ridge turned 0.1 deg 208,
+    ///            ridge turned 11.25 deg 156, unequal densities 156
+    ///   CH 1.9:  quad  52, triangulated   0, ridge turned 0.1 deg   0,
+    ///            ridge turned 11.25 deg   0, unequal densities   0
+    ///
+    /// Five meshings of one surface, five answers, and four of them
+    /// wrong, with a band or the whole shell refused and the diagnostics
+    /// stating that the level curves do not correspond when they
+    /// correspond perfectly, outer to outer and inner to inner. A
+    /// fixture that only passes on one meshing is not a fixture.
+    ///
+    /// The check is in three parts.
+    ///
+    /// 1. THE CLASSIFICATION ITSELF. On every one of the five meshings,
+    /// every mid-height level of the CH 0.35 course grid must trace TWO
+    /// CLOSED components, one of nesting depth 0 and one of depth 1, and
+    /// the depth-1 one must be the SHORTER. The six mid heights are
+    /// hand-derived: a 2 m rise at CH 0.35 is ceil(2 / 0.35) = 6 bands,
+    /// the top band's own rise 2 - 5 x 0.35 = 0.25 being above CH / 4 =
+    /// 0.0875 so nothing merges, and band r is set out on
+    /// (r CH + bandTop) / 2 with bandTop = (r + 1) CH except on the top
+    /// band where it is the crown: 0.175, 0.525, 0.875, 1.225, 1.575 and
+    /// 1.875. That the inner loop is the shorter is arithmetic and not
+    /// observation: the outer and inner radii SUM to 5.0 at every height
+    /// of this shell, so below the 2.5 m ridge the inner radius is under
+    /// 2.5 and the outer over it, and a loop of smaller radius is a
+    /// shorter loop. Asserting the depths directly is what makes the
+    /// rule legible; asserting them on all five meshings is what makes
+    /// it topological.
+    ///
+    /// 2. THE QUAD FIXTURE'S OWN COUNTS, pinned by hand. A regular
+    /// 16-gon of circumradius R has perimeter 32 R sin(pi / 16) =
+    /// 6.242890 R, and the two radii of a band sum to 5.0, so the two
+    /// loops of any band together measure 31.214452 m, which is 52.024
+    /// pieces at S 0.6; taken separately every band's pair rounds to 52.
+    ///   CH 0.35, six bands: (40, 12), (38, 14), (36, 16), (33, 19),
+    ///   (30, 22), (27, 25). 6 x 52 = 312.
+    ///   CH 0.5, four bands with mids 0.25, 0.75, 1.25 and 1.75:
+    ///   (40, 12), (36, 16), (33, 19), (28, 24). 4 x 52 = 208.
+    ///   CH 1.9, ONE band: ceil(2 / 1.9) = 2 bands, and the top band's
+    ///   own rise 2 - 1.9 = 0.1 is under CH / 4 = 0.475 so it merges
+    ///   into the one below; the single mid is the crown-to-base
+    ///   midpoint z 1.0, where the radii are 3.333333 and 1.666667 and
+    ///   the perimeters 20.80963 m and 10.40482 m, giving 35 and 17.
+    ///   1 x 52 = 52.
+    /// The honeycomb's counts have no such derivation, so they are
+    /// declared MEASUREMENTS and pinned as measurements: 252, 180 and
+    /// 108 cells BUILT at the three course heights.
+    ///
+    /// 3. THE FOUR OTHER MESHINGS GIVE THE QUAD FIXTURE'S ANSWER. At
+    /// each of the three course heights and on both engines: no band
+    /// refused, nothing said about transitions, cells emitted, the plans
+    /// disjoint and simple, and the number of cells BUILT, kept plus
+    /// dropped, equal to the quad fixture's.
+    ///
+    /// BUILT and not KEPT, and the reason is the same one the rotated
+    /// two-hump barrel gives. What a remeshing must not change is which
+    /// curves correspond and therefore how many cells the setout lays
+    /// down; WHICH of those cells the plan-validity filter then drops is
+    /// a property of the pre-existing absolute-arc-length defect, which
+    /// damages different cells on different meshes. The drops are pinned
+    /// per meshing below so that the inherited problem stays visible and
+    /// cannot grow unseen, and the courses engine is required to drop
+    /// NOTHING on any of the five.
+    ///
+    /// ONE count moves, and it is not a defect: the unequal-density
+    /// meshing's courses at CH 0.35 are 313 rather than 312, because a
+    /// 32-gon inscribed in a circle is longer than a 16-gon and the
+    /// third band's inner course crosses a rounding boundary. The
+    /// derivation is in SkinRingVaultUnequalNet.
+    /// </summary>
+    private static void ValidateSkinRingVaultMeshings(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        static T Reading<T>(object generated, string name) =>
+            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
+
+        var meshings =
+            new (string Label,
+                 (double[][] Vertices, int[][] Faces) Fixture)[]
+            {
+                ("quad, 16 a ring", SkinRingVaultNet()),
+                ("triangulated", SkinRingVaultTriangulatedNet()),
+                ("ridge turned 0.1 degrees",
+                    SkinRingVaultRidgeTurnedNet(0.1)),
+                ("ridge turned 11.25 degrees",
+                    SkinRingVaultRidgeTurnedNet(11.25)),
+                ("rings 16/16/16/32/32", SkinRingVaultUnequalNet())
+            };
+
+        // ---- 1. the nesting depths themselves, on every meshing.
+        double[] mids = { 0.175, 0.525, 0.875, 1.225, 1.575, 1.875 };
+        foreach ((string label,
+                  (double[][] Vertices, int[][] Faces) fixture) in meshings)
+        {
+            IList levels = (IList)traceAll.Invoke(
+                null, new object[] { Net(fixture), mids })!;
+            for (int at = 0; at < mids.Length; at++)
+            {
+                IList level = (IList)levels[at]!;
+                if (level.Count != 2)
+                {
+                    throw new InvalidOperationException(
+                        $"The ring vault meshed {label} cuts into two " +
+                        $"nested loops at every mid height; at z {mids[at]}" +
+                        $" it gave {level.Count} components.");
+                }
+                var depths = new List<int>();
+                var lengths = new List<double>();
+                foreach (object? item in level)
+                {
+                    object curve = item!;
+                    PropertyInfo? depth =
+                        curve.GetType().GetProperty("Depth");
+                    if (depth is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A traced level curve must carry the NESTING " +
+                            "DEPTH the correspondence classifies on: " +
+                            "without it the matching falls back to a " +
+                            "distance, and no distance can separate two " +
+                            "loops that coincide in plan at a ridge.");
+                    }
+                    if (!(bool)curve.GetType()
+                            .GetProperty("Closed")!.GetValue(curve)!)
+                    {
+                        throw new InvalidOperationException(
+                            "An annular shell's level components are " +
+                            "closed loops, not strips.");
+                    }
+                    depths.Add((int)depth.GetValue(curve)!);
+                    lengths.Add((double)curve.GetType()
+                        .GetProperty("Length")!.GetValue(curve)!);
+                }
+                int outer = depths.IndexOf(0);
+                int inner = depths.IndexOf(1);
+                if (outer < 0 || inner < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"The ring vault meshed {label} at z {mids[at]} " +
+                        "holds an OUTER loop of nesting depth 0 and an " +
+                        "INNER loop of depth 1, at every mesh density and " +
+                        "every angle, because containment is topological; " +
+                        $"got depths [{string.Join(",", depths)}].");
+                }
+                if (!(lengths[inner] < lengths[outer]))
+                {
+                    throw new InvalidOperationException(
+                        "The depth-1 loop is the one round the oculus, so " +
+                        "it is the SHORTER: the two radii of this shell " +
+                        "sum to 5.0 at every height, so below the 2.5 m " +
+                        $"ridge the inner is under 2.5. On {label} at z " +
+                        $"{mids[at]} the depth-1 loop measured " +
+                        $"{lengths[inner]} against {lengths[outer]}.");
+                }
+            }
+        }
+
+        // ---- 2 and 3. one answer across the five meshings.
+        double[] courseHeights = { 0.35, 0.5, 1.9 };
+        // The quad fixture's own counts, part 2 above. Courses derived,
+        // honeycomb declared measurements.
+        var pinnedBuilt = new Dictionary<(string, double), int>
+        {
+            { ("Courses", 0.35), 312 },
+            { ("Courses", 0.5), 208 },
+            { ("Courses", 1.9), 52 },
+            { ("Hexagonal", 0.35), 252 },
+            { ("Hexagonal", 0.5), 180 },
+            { ("Hexagonal", 1.9), 108 }
+        };
+        // The plan-validity drops, per meshing and per course height,
+        // MEASUREMENTS of the pre-existing absolute-arc-length defect
+        // and not derivations. The courses engine drops nothing on any
+        // of the five, which is asserted rather than tabled.
+        var pinnedDrops =
+            new Dictionary<(string, double), (int Degenerate, int Overlap)>
+            {
+                { ("quad, 16 a ring", 0.35), (0, 0) },
+                { ("quad, 16 a ring", 0.5), (4, 2) },
+                { ("quad, 16 a ring", 1.9), (12, 5) },
+                { ("triangulated", 0.35), (1, 0) },
+                { ("triangulated", 0.5), (5, 2) },
+                { ("triangulated", 1.9), (12, 6) },
+                { ("ridge turned 0.1 degrees", 0.35), (0, 0) },
+                { ("ridge turned 0.1 degrees", 0.5), (3, 1) },
+                { ("ridge turned 0.1 degrees", 1.9), (13, 5) },
+                { ("ridge turned 11.25 degrees", 0.35), (2, 2) },
+                { ("ridge turned 11.25 degrees", 0.5), (5, 2) },
+                { ("ridge turned 11.25 degrees", 1.9), (14, 3) },
+                { ("rings 16/16/16/32/32", 0.35), (0, 0) },
+                { ("rings 16/16/16/32/32", 0.5), (2, 2) },
+                { ("rings 16/16/16/32/32", 1.9), (12, 5) }
+            };
+
+        foreach ((string label,
+                  (double[][] Vertices, int[][] Faces) fixture) in meshings)
+        {
+            object subject = Net(fixture);
+            foreach (double courseHeight in courseHeights)
+            {
+                foreach (MethodInfo engine in new[] { courses, hexagonal })
+                {
+                    object generated = engine.Invoke(
+                        null, new object[] { subject, 0.6, courseHeight })!;
+                    var emitted = SkinCells(generated);
+                    string text = Reading<string>(generated, "Diagnostics");
+                    if (Reading<int>(generated, "TransitionBands") != 0 ||
+                        text.Contains(
+                            "Transition bands skipped",
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"The ring vault meshed {label} has no " +
+                            "transition anywhere: a remeshing moves no " +
+                            "level set, so " + engine.Name + " must " +
+                            $"refuse no band of it at CH {courseHeight}; " +
+                            "it reported " +
+                            $"{Reading<int>(generated, "TransitionBands")}.");
+                    }
+                    if (emitted.Length == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"{engine.Name} must propose a pattern on the " +
+                            $"ring vault meshed {label} at CH " +
+                            $"{courseHeight}; it proposed nothing.");
+                    }
+                    int degenerate =
+                        Reading<int>(generated, "PlanDegenerateDropped");
+                    int overlap = Reading<int>(generated, "PlanOverlapDropped");
+                    if (engine == courses && (degenerate != 0 || overlap != 0))
+                    {
+                        throw new InvalidOperationException(
+                            $"The courses engine is clean in plan on this " +
+                            $"shell at every meshing, so it must drop " +
+                            $"NOTHING on {label} at CH {courseHeight}; it " +
+                            $"dropped {degenerate} and {overlap}.");
+                    }
+                    if (engine == hexagonal)
+                    {
+                        (int Degenerate, int Overlap) expected =
+                            pinnedDrops[(label, courseHeight)];
+                        if (degenerate != expected.Degenerate ||
+                            overlap != expected.Overlap)
+                        {
+                            throw new InvalidOperationException(
+                                $"The honeycomb on {label} at CH " +
+                                $"{courseHeight} is pinned to drop " +
+                                $"{expected.Degenerate} self-crossing and " +
+                                $"{expected.Overlap} overlapping cells, a " +
+                                "MEASUREMENT of the absolute-arc-length " +
+                                "defect the next round inherits; it " +
+                                $"dropped {degenerate} and {overlap}.");
+                        }
+                    }
+                    int built = emitted.Length + degenerate + overlap;
+                    int pinned = pinnedBuilt[(engine.Name, courseHeight)];
+                    // The unequal-density meshing measures a LONGER inner
+                    // curve, and at CH 0.35 the third band's inner course
+                    // crosses a rounding boundary: 313 rather than 312,
+                    // derived in SkinRingVaultUnequalNet.
+                    if (label == "rings 16/16/16/32/32" &&
+                        engine == courses &&
+                        courseHeight == 0.35)
+                    {
+                        pinned = 313;
+                    }
+                    if (built != pinned)
+                    {
+                        throw new InvalidOperationException(
+                            "One surface, five meshings, one answer: " +
+                            $"{engine.Name} on the ring vault meshed " +
+                            $"{label} at CH {courseHeight} must BUILD " +
+                            $"{pinned} cells, kept plus dropped, as the " +
+                            $"quad fixture does; it built {built} " +
+                            $"({emitted.Length} kept, {degenerate} and " +
+                            $"{overlap} dropped).");
+                    }
+                    RequireDisjointSimplePlans(
+                        emitted.Select(cell => cell.Outline).ToArray(),
+                        $"{engine.Name}/ring vault {label} CH " +
+                        $"{courseHeight}");
                 }
             }
         }
