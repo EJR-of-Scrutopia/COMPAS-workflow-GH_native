@@ -21,7 +21,7 @@ script-backed prototype is preserved at Git tag
 
 ## Current scope
 
-The native v0.2 vertical slice contains twenty components:
+The native v0.2 vertical slice contains twenty-one components:
 
 ```text
 01 Model
@@ -56,12 +56,23 @@ The native v0.2 vertical slice contains twenty components:
                                                  Lines, Principal Nodes,
                                                  Anchor Nodes, Perimeter
                                                  Nodes, Perimeter Lines,
-                                                 Columns, Phase
-  Deconstruct  RES                            -> every geometry stream
-  Monitor      RES, EI, EA, Tol,
-               Cable/Column Capacity          -> RES + twenty number trees,
-                                                 branched as Deconstruct's
-                                                 and Frame's geometry
+                                                 Columns, Phase, Anchor
+                                                 Lines
+  Deconstruct  RES                            -> the statics and diagram
+                                                 streams: member, form and
+                                                 force lines, IDs, loads,
+                                                 reactions
+  Forces       RES, EA, Cable Capacity        -> RES + member force, density,
+                                                 horizontal, slack, spool,
+                                                 unstrained, residuals,
+                                                 utilisation trees
+  Fit          RES, EI, Tol                   -> RES + deviation, stats,
+                                                 reachable, unreachable,
+                                                 bar sag trees
+  Supports     RES, Column Capacity           -> RES + anchor along and
+                                                 across, tip reaction, column
+                                                 force, thrust, lean,
+                                                 utilisation trees
   Diagnose     RES                            -> Text, Source, Code,
                                                  Severity, Message, Value
   Style        Preset, Weight Scale,
@@ -119,7 +130,7 @@ Geometry -> Pattern -> Supports -> Loads = Problem
 Problem -> TNA Relax -> TNA Solve -> Result
 Problem -> FD Solve ------------------> Result (same type)
 Result -> Columns -> Animate -> Result (carrying its Mould block)
-Result -> Frame / Deconstruct / Monitor / Diagnose / Display / Skin / Export
+Result -> Frame / Deconstruct / Forces / Fit / Supports / Diagnose / Display / Skin / Export
 Style feeds Display.
 ```
 
@@ -174,8 +185,9 @@ mean those Grasshopper workflows have been implemented or structurally
 verified.
 
 FD, TNA, and graphic statics will remain distinct methods sharing neutral
-inputs, diagnostics, and one shared Frame/Deconstruct/Monitor/Diagnose/
-Display/Skin/Export surface. They will not be hidden behind one ambiguous solver.
+inputs, diagnostics, and one shared Frame/Deconstruct/Forces/Fit/Supports/
+Diagnose/Display/Skin/Export surface. They will not be hidden behind one
+ambiguous solver.
 
 The implemented RhinoVault-style authoring path groups its inspectable
 operations into the spine itself: `Pattern -> Supports -> Loads -> TNA Relax
