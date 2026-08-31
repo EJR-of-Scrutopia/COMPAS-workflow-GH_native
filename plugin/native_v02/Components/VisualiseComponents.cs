@@ -128,7 +128,7 @@ namespace Ananke.COMPAS.Native.Components
     /// The member, support and reaction tables of a Result in ONE fixed
     /// order, so every component that branches by member or by support
     /// strip reads the same rows. Deconstruct builds its geometry from
-    /// them and Monitor its numbers, which is what makes their trees align
+    /// them and Forces its numbers, which is what makes their trees align
     /// item for item without either matching coordinates.
     /// </summary>
     internal static class ResultTables
@@ -258,7 +258,7 @@ namespace Ananke.COMPAS.Native.Components
         /// <summary>
         /// The two node indices a member runs between, or (-1, -1) if the id
         /// does not name a real edge. The ONE ends lookup: Deconstruct's
-        /// Member Lines and Monitor's numbers both come through here, so they
+        /// Member Lines and Forces' numbers both come through here, so they
         /// cannot disagree about which two nodes a member joins.
         ///
         /// Out of range rather than throwing, because this decides which
@@ -282,7 +282,7 @@ namespace Ananke.COMPAS.Native.Components
     /// The GEOMETRY of a solved Result: lines, points, vectors and the ids
     /// that name them. Nothing else. The numbers each member and support
     /// carries (member force, force density, horizontal force, slack,
-    /// residuals) belong to Monitor, and the cells of the skin to Skin, so a
+    /// residuals) belong to Forces, and the cells of the skin to Skin, so a
     /// canvas that wants the shape does not drag the whole analysis behind
     /// it.
     ///
@@ -292,8 +292,8 @@ namespace Ananke.COMPAS.Native.Components
     /// graphs, edge states, mappings) or the flat FD path.
     ///
     /// Its member, support and reaction order comes from
-    /// <see cref="ResultTables"/>, which is the same table Monitor reads, so
-    /// Monitor's number trees line up with these geometry trees branch for
+    /// <see cref="ResultTables"/>, which is the same table Forces reads, so
+    /// Forces' number trees line up with these geometry trees branch for
     /// branch and item for item without either component matching
     /// coordinates.
     /// </summary>
@@ -303,11 +303,11 @@ namespace Ananke.COMPAS.Native.Components
             : base(
                 "Deconstruct",
                 "Deconstruct",
-                "Extract the geometry of one solved FD or TNA Result: " +
-                "thrust, form and force lines, supports, loads, reactions " +
-                "and columns. Monitor carries the numbers and Skin the " +
-                "cells. Reciprocal-only streams (Thrust Mesh, Form Lines, " +
-                "Force Lines) come out empty for FD.",
+                "Extract the statics geometry of one solved FD or TNA " +
+                "Result: member, form and force lines, supports, loads and " +
+                "reactions. Forces, Fit and Supports carry the numbers, " +
+                "Frame the built state and Skin the cells. Reciprocal-only " +
+                "streams (Form Lines, Force Lines) come out empty for FD.",
                 ComponentCategories.Read,
                 "result_breakdown")
         {
@@ -340,12 +340,6 @@ namespace Ananke.COMPAS.Native.Components
         protected override void RegisterOutputParams(
             GH_OutputParamManager parameters)
         {
-            parameters.AddMeshParameter(
-                "Thrust Mesh",
-                "TM",
-                "Resolved funicular mesh reconstructed from the active " +
-                "form faces. Empty for FD.",
-                GH_ParamAccess.item);
             parameters.AddLineParameter(
                 "Member Lines",
                 "M",
@@ -353,7 +347,7 @@ namespace Ananke.COMPAS.Native.Components
                 "principal line holding that bar's own members, and a LAST " +
                 "branch holding the infill, everything not on a bar. Every " +
                 "member-aligned output below is branched and ordered " +
-                "identically, and so are MONITOR's number trees (Member " +
+                "identically, and so are FORCES' number trees (Member " +
                 "Force, Force Density, Horizontal Force, Slack) for the " +
                 "same Result, so the alignment holds branch to branch and " +
                 "item to item across both components. " +
@@ -416,26 +410,6 @@ namespace Ananke.COMPAS.Native.Components
                 "Reaction Points and Support Points. Sum one branch to get " +
                 "what a single side of the vault puts into the ground.",
                 GH_ParamAccess.tree);
-            parameters.AddLineParameter(
-                "Columns",
-                "CO",
-                "The built column members from the Result's Mould block, as a "
-                    + "TREE with one branch per column tree (one foot on the "
-                    + "ground), each line running from its lower end to its "
-                    + "upper end. Empty until Columns has run upstream.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Heads",
-                "HD",
-                "The column heads, the notches each tree holds, branched "
-                    + "exactly as Columns.",
-                GH_ParamAccess.tree);
-            parameters.AddPointParameter(
-                "Feet",
-                "FT",
-                "The column feet on the ground, branched exactly as Columns; "
-                    + "a shared foot appears once in its tree.",
-                GH_ParamAccess.tree);
             // APPENDED, and it has to stay appended: every slot above is an
             // index some saved definition's wire already sits on, so a new
             // port anywhere but the end would move one of them silently.
@@ -471,7 +445,7 @@ namespace Ananke.COMPAS.Native.Components
                 bool isTna = ResultTables.IsTna(result);
 
                 // The one ordering every reader of this Result shares.
-                // Monitor builds its numbers from these same rows, which is
+                // Forces builds its numbers from these same rows, which is
                 // what makes its trees align with the geometry trees here
                 // without either component matching coordinates.
                 ResultTables.MemberRow[] members = ResultTables.Members(result);
@@ -488,9 +462,9 @@ namespace Ananke.COMPAS.Native.Components
                 // The support POINTS come off that same list rather than
                 // being read a second time from the Result, so a support id
                 // this net does not have is dropped in ONE place and both
-                // this component and Monitor drop the same one. Reading
+                // this component and Forces drop the same one. Reading
                 // Mappings.Supports again here is what let a bad id throw on
-                // this side while Monitor walked past it.
+                // this side while Forces walked past it.
                 Point3d[] supportPoints = nodeIds
                     .Select(id => Point(equilibrium.Vertices[id]))
                     .ToArray();
@@ -520,7 +494,6 @@ namespace Ananke.COMPAS.Native.Components
                             item.Vector))
                         .ToArray();
 
-                Mesh thrustMesh;
                 Line[] memberLines;
                 Line[] formLines;
                 (Point3d Point, Vector3d Vector)[] loads;
@@ -541,7 +514,6 @@ namespace Ananke.COMPAS.Native.Components
                             vertex => vertex.Id,
                             vertex => vertex.Point);
 
-                    thrustMesh = ThrustMesh(result);
                     memberLines = members
                         .Select(row => ThrustLine(
                             equilibrium, row.EquilibriumEdgeId))
@@ -560,7 +532,6 @@ namespace Ananke.COMPAS.Native.Components
                 }
                 else
                 {
-                    thrustMesh = new Mesh();
                     memberLines = MemberLines(equilibrium);
                     formLines = Array.Empty<Line>();
 
@@ -623,13 +594,12 @@ namespace Ananke.COMPAS.Native.Components
                 for (int i = 0; i < nodeIds.Length; i++)
                     nodeIdAt[nodeIds[i]] = i;
 
-                data.SetData(0, thrustMesh);
-                data.SetDataTree(1, OutputTree.Lines(ByBar(memberLines)));
-                data.SetDataTree(2, OutputTree.Lines(ByBar(formLines)));
-                data.SetDataTree(3, OutputTree.Integers(ByBar(memberIds)));
-                data.SetDataTree(4, OutputTree.Integers(
+                data.SetDataTree(0, OutputTree.Lines(ByBar(memberLines)));
+                data.SetDataTree(1, OutputTree.Lines(ByBar(formLines)));
+                data.SetDataTree(2, OutputTree.Integers(ByBar(memberIds)));
+                data.SetDataTree(3, OutputTree.Integers(
                     strips.Select(strip => strip.AsEnumerable())));
-                data.SetDataTree(5, OutputTree.Points(
+                data.SetDataTree(4, OutputTree.Points(
                     strips.Select(strip => strip
                         .Where(nodeIdAt.ContainsKey)
                         .Select(id => supportPoints[nodeIdAt[id]]))));
@@ -693,17 +663,11 @@ namespace Ananke.COMPAS.Native.Components
                     reactionVectorBranches.Add(strayVectors);
                 }
 
-                data.SetDataList(6, loads.Select(item => item.Point));
-                data.SetDataList(7, loads.Select(item => item.Vector));
-                data.SetDataTree(8, OutputTree.Points(reactionPointBranches));
-                data.SetDataTree(9, OutputTree.Vectors(reactionVectorBranches));
-                (List<List<Line>> columnTrees,
-                    List<List<Point3d>> headTrees,
-                    List<List<Point3d>> feetTrees) = ColumnTrees(result.Mould?.Columns);
-                data.SetDataTree(10, OutputTree.Lines(columnTrees));
-                data.SetDataTree(11, OutputTree.Points(headTrees));
-                data.SetDataTree(12, OutputTree.Points(feetTrees));
-                data.SetDataTree(13, OutputTree.Lines(ByBar(forceLines)));
+                data.SetDataList(5, loads.Select(item => item.Point));
+                data.SetDataList(6, loads.Select(item => item.Vector));
+                data.SetDataTree(7, OutputTree.Points(reactionPointBranches));
+                data.SetDataTree(8, OutputTree.Vectors(reactionVectorBranches));
+                data.SetDataTree(9, OutputTree.Lines(ByBar(forceLines)));
                 Message =
                     $"{result.Solver.ToUpperInvariant()} · " +
                     $"{memberLines.Length} members";
@@ -715,7 +679,10 @@ namespace Ananke.COMPAS.Native.Components
             }
         }
 
-        /// <summary>Copied from <c>TnaQueryGeometry.ThrustMesh</c>.</summary>
+        /// <summary>Copied from <c>TnaQueryGeometry.ThrustMesh</c>. The
+        /// Thrust Mesh OUTPUT left in the readers rework (Frame carries the
+        /// surface); the helper stays because Skin and Export build the
+        /// surface through it.</summary>
         internal static Mesh ThrustMesh(ResultDto result)
         {
             EquilibriumResultDto equilibrium = result.Equilibrium!;
@@ -813,15 +780,15 @@ namespace Ananke.COMPAS.Native.Components
         /// take the equilibrium edge id straight off a
         /// <see cref="ResultTables.MemberRow"/> and read its two ends from
         /// <see cref="ResultTables.Ends"/>, the same lookup the table itself
-        /// uses. That is what makes a Member Line and the row Monitor numbers
+        /// uses. That is what makes a Member Line and the row Forces numbers
         /// describe the same member: they are not two readings of the edge
         /// that happen to agree, they are one reading drawn twice.
         ///
         /// A member whose ends cannot be read keeps its SLOT as a default
         /// line rather than throwing, which is the contract
-        /// <see cref="ResultTables.Ends"/> states and the one Monitor
+        /// <see cref="ResultTables.Ends"/> states and the one Forces
         /// already honours. Indexing the vertex list with the (-1, -1) it
-        /// promises would take the whole component down and leave Monitor
+        /// promises would take the whole component down and leave Forces
         /// emitting a full set of trees against no geometry at all, on
         /// exactly the Result that contract was written for.
         /// </summary>

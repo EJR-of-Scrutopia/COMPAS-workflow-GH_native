@@ -77,7 +77,10 @@ internal static class Program
                     new[] { "Result" },
                     new[]
                     {
-                        "Thrust Mesh",
+                        // TEN outputs since the readers rework: Thrust Mesh,
+                        // Columns, Heads and Feet moved to Frame, every
+                        // remaining wire shifted, and the name-comparing
+                        // load warning is what tells a reopened definition.
                         "Member Lines",
                         "Form Lines",
                         "Member IDs",
@@ -87,15 +90,6 @@ internal static class Program
                         "Load Vectors",
                         "Reaction Points",
                         "Reaction Vectors",
-                        "Columns",
-                        "Heads",
-                        "Feet",
-                        // APPENDED, at 13, and the position is the point:
-                        // Display's Force Lines had no successor anywhere in
-                        // the plugin until this port, and it had to arrive
-                        // without moving one of the twelve slots above,
-                        // every one of which a saved definition's wire
-                        // already sits on.
                         "Force Lines"
                     }),
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
