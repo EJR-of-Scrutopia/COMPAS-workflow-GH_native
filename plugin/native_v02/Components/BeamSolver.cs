@@ -7,7 +7,7 @@ using System.Linq;
 namespace Ananke.COMPAS.Native.Components
 {
     /// <summary>
-    /// A bar on point supports, solved as an Euler-Bernoulli beam. Monitor
+    /// A bar on point supports, solved as an Euler-Bernoulli beam. Fit
     /// uses it to turn the notches a column holds into bar sag between them.
     /// It no longer chooses where columns stand: every notch is held.
     /// </summary>

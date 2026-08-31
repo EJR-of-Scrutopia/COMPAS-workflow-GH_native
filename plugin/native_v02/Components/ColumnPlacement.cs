@@ -1154,7 +1154,7 @@ namespace Ananke.COMPAS.Native.Components
                 // (MouldGeometry.ColumnsBlock), so such a notch is only ever
                 // a lower end and TreeFromPairs reads it as a FOOT, which
                 // puts a foot in mid-air in Deconstruct, drops the head out
-                // of Monitor's held set and makes Animate drive a held head
+                // of Fit's held set and makes Animate drive a held head
                 // down to ground level on the rail. Where the spec's height
                 // would sit at or above the tree's lowest notch the fork is
                 // therefore lowered to ForkFraction of THAT notch's height,
