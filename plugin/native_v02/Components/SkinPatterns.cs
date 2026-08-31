@@ -156,11 +156,12 @@ internal static class SkinPatterns
     // ---- level-curve tracing and seams (spec section 4) -----------------
 
     /// <summary>
-    /// Trace the net at every height, ascending, and assign every curve
-    /// its seam in one pass, because a closed loop's seam is propagated
-    /// from the level below it and the propagation only means something
-    /// bottom-up. The heights MUST arrive ascending; both engines build
-    /// them that way.
+    /// Trace the net at every height, ascending, NORMALISE every traced
+    /// curve's direction, and assign every curve its seam, in one pass:
+    /// a direction has to be settled before the seam that is measured
+    /// along it, and a closed loop's seam is propagated from the level
+    /// below it, so the propagation only means something bottom-up. The
+    /// heights MUST arrive ascending; both engines build them that way.
     /// </summary>
     public static IReadOnlyList<IReadOnlyList<SkinLevelCurve>> TraceAll(
         SkinNet net,
@@ -169,6 +170,7 @@ internal static class SkinPatterns
         var working = new List<List<SkinLevelCurve>>();
         foreach (double height in heights)
             working.Add(Trace(net, height));
+        NormaliseDirections(working);
         AssignSeams(working);
         return working;
     }
@@ -334,6 +336,121 @@ internal static class SkinPatterns
             Cumulative = cumulative,
             Length = length
         };
+    }
+
+    /// <summary>
+    /// Normalise every traced curve's DIRECTION, before any seam is
+    /// assigned against it.
+    ///
+    /// Trace fixes a direction from FACE-ARRAY ORDER alone: a closed loop
+    /// follows whichever neighbour happened to be linked first, an open
+    /// strip starts at the lowest-index degree-one crossing. Nothing in
+    /// the net's geometry says which that is, so the same surface handed
+    /// in with its faces in a different order can trace west to east at
+    /// one height and east to west at the next. Every consumer assumes
+    /// the matched curves of a band run the SAME way (BandCell maps one
+    /// joint onto the band's lower and upper curves; Hexagonal maps one
+    /// hexagon's vertices through three row curves), so a disagreement
+    /// turns every cell of that band into a bow tie in plan and breaks
+    /// the height-field guarantee spec section 4 argues from.
+    ///
+    /// The two rules, stated, because an arbitrary rule that is written
+    /// down is what makes the direction a property of the GEOMETRY
+    /// rather than of the face array:
+    ///
+    /// CLOSED: a loop runs COUNTER-CLOCKWISE in plan. It is reversed
+    /// when its signed plan area (the shoelace sum over the plan
+    /// projection, closing edge included) is negative.
+    ///
+    /// OPEN: a strip runs the same way as the strip matched below it in
+    /// the same chart, matched by MatchBelow, the same matching every
+    /// other consumer uses. Compare the chord from the strip's first
+    /// point to its last, in plan, against the matched strip's chord: a
+    /// negative dot product means the two disagree, so reverse. The
+    /// LOWEST strip of a chart has nothing below it (the bottom level,
+    /// or a strip whose match below is a closed loop rather than a
+    /// strip) and takes a stated GLOBAL rule instead: its chord must
+    /// bear a non-negative X component, and where that X is zero (a
+    /// strip running due north) a non-negative Y component. A chord of
+    /// zero length, which only a degenerate strip has, is left alone.
+    ///
+    /// Levels are walked bottom-up and reversed IN PLACE, so a strip is
+    /// always compared against an already-normalised strip below it.
+    /// </summary>
+    private static void NormaliseDirections(
+        IReadOnlyList<List<SkinLevelCurve>> byHeight)
+    {
+        IReadOnlyList<SkinLevelCurve> below = Array.Empty<SkinLevelCurve>();
+        foreach (List<SkinLevelCurve> level in byHeight)
+        {
+            foreach (SkinLevelCurve curve in level)
+            {
+                if (curve.Closed)
+                {
+                    if (SignedPlanArea(curve) < 0.0)
+                        Reverse(curve);
+                    continue;
+                }
+                (double X, double Y) chord = PlanChord(curve);
+                int matched = MatchBelow(curve, below);
+                if (matched >= 0 && !below[matched].Closed)
+                {
+                    (double X, double Y) under = PlanChord(below[matched]);
+                    if (chord.X * under.X + chord.Y * under.Y < 0.0)
+                        Reverse(curve);
+                    continue;
+                }
+                if (chord.X < -1.0e-12 ||
+                    (Math.Abs(chord.X) <= 1.0e-12 && chord.Y < -1.0e-12))
+                {
+                    Reverse(curve);
+                }
+            }
+            if (level.Count > 0)
+                below = level;
+        }
+    }
+
+    /// <summary>Twice the shoelace sum, halved: the signed area of the
+    /// curve's PLAN projection, positive counter-clockwise and negative
+    /// clockwise. The closing edge back to the first point is included,
+    /// which is the same edge a closed curve's Length carries.</summary>
+    private static double SignedPlanArea(SkinLevelCurve curve)
+    {
+        double twice = 0.0;
+        int count = curve.Points.Count;
+        for (int i = 0; i < count; i++)
+        {
+            double[] a = curve.Points[i];
+            double[] b = curve.Points[(i + 1) % count];
+            twice += a[0] * b[1] - b[0] * a[1];
+        }
+        return twice / 2.0;
+    }
+
+    /// <summary>The chord from an open strip's first point to its last,
+    /// in plan: the direction the strip runs, reduced to one vector.
+    /// </summary>
+    private static (double X, double Y) PlanChord(SkinLevelCurve curve) =>
+        (curve.Points[^1][0] - curve.Points[0][0],
+         curve.Points[^1][1] - curve.Points[0][1]);
+
+    /// <summary>
+    /// Reverse a curve IN PLACE, rebuilding Points, Cumulative and
+    /// Length together through the same Finish the trace uses, so the
+    /// three can never disagree. The edge set is unchanged, so the
+    /// length is unchanged too; only the direction and the arc-length
+    /// origin move. Seams are assigned AFTER this pass, so there is no
+    /// seam to carry over.
+    /// </summary>
+    private static void Reverse(SkinLevelCurve curve)
+    {
+        var points = new List<double[]>(curve.Points);
+        points.Reverse();
+        SkinLevelCurve rebuilt = Finish(points, curve.Height, curve.Closed);
+        curve.Points = rebuilt.Points;
+        curve.Cumulative = rebuilt.Cumulative;
+        curve.Length = rebuilt.Length;
     }
 
     /// <summary>

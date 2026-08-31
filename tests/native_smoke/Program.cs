@@ -657,6 +657,25 @@ internal static class Program
 
         try
         {
+            ValidateSkinOrientation(plugin);
+            Console.WriteLine(
+                "PASS  Skin curve orientation: a scrambled-face-order " +
+                "barrel whose lower rows trace east to west and whose " +
+                "upper rows trace west to east is normalised to one " +
+                "direction, closed dome loops are turned " +
+                "counter-clockwise to their pinned signed plan area, and " +
+                "the courses engine gives the ordered fixture's 84 cells " +
+                "back cell for cell with disjoint simple plans, the " +
+                "honeycomb its 68.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin curve orientation: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinHexagonal(plugin);
             Console.WriteLine(
                 "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
@@ -8253,6 +8272,63 @@ internal static class Program
     }
 
     /// <summary>
+    /// The barrel fixture again, vertex for vertex and face for face,
+    /// with the faces emitted in a deliberately SCRAMBLED order. It is
+    /// the fixture that measures Ruling A of the whole-branch review:
+    /// the cells must be a property of the geometry, not of the face
+    /// array.
+    ///
+    /// The derivation, so the scramble is chosen rather than stirred.
+    /// Around one quad face (j, i) of the barrel the two crossings are
+    /// met at column i + 1 first and column i second, so the crossing
+    /// INDICES, and with them the degree-one crossing Trace starts an
+    /// open walk from, follow the order that row's faces are emitted in.
+    /// A cut at a height in (0, 1) crosses rows 0 (front) and 3 (back);
+    /// a cut in (1, 2) crosses rows 1 (front) and 2 (back); the
+    /// half-open rule puts a cut at exactly z = 1 in rows 0 and 3.
+    ///
+    /// Rows 0 and 3 are emitted 5, 2, 0, 4, 1, 3. Face 5 comes first, so
+    /// the crossing at x = 6 takes index 0 and is the first degree-one
+    /// crossing found: the walk runs EAST TO WEST.
+    /// Rows 1 and 2 are emitted 0, 3, 1, 5, 2, 4. Face 0 comes first, so
+    /// the crossing at x = 1 takes index 0 and the one at x = 0 index 1,
+    /// which is the first degree-one crossing found: the walk runs WEST
+    /// TO EAST.
+    ///
+    /// So the lower half of the barrel traces one way and the upper half
+    /// the other, only the rows' END faces having moved, which is the
+    /// exact shape the review's verifier reproduced bow-tie cells with:
+    /// at S 0.6 and CH 0.5, course band 2 spans z 1.0 to 1.5 and takes
+    /// its LOWER boundary curve from row 0 and its mid and upper curves
+    /// from row 1, so without the normalisation its cells map one joint
+    /// onto two curves running opposite ways.
+    ///
+    /// The row BLOCKS stay in ascending j on purpose. A cut's front row
+    /// index is always below its back row index (0 below 3, 1 below 2),
+    /// so the front strip's crossings always take the lower indices and
+    /// the front strip is always component 0, exactly as in the ordered
+    /// fixture. Traced component ORDER follows the face array as well,
+    /// but that is ordering rather than orientation and it is outside
+    /// Ruling A; keeping it fixed is what lets this check compare the
+    /// two fixtures cell for cell.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinBarrelScrambledNet()
+    {
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        int[] lowerRows = { 5, 2, 0, 4, 1, 3 };
+        int[] upperRows = { 0, 3, 1, 5, 2, 4 };
+        var scrambled = new List<int[]>(faces.Length);
+        for (int j = 0; j < 4; j++)
+        {
+            int[] order = j == 0 || j == 3 ? lowerRows : upperRows;
+            foreach (int i in order)
+                scrambled.Add(faces[j * 6 + i]);
+        }
+        return (vertices, scrambled.ToArray());
+    }
+
+    /// <summary>
     /// The dome fixture: two octagonal rings and an apex. Ring 0 has
     /// radius 2 at z 0, ring 1 radius 1 at z 1, the apex (0, 0, 2);
     /// quads between the rings, triangles to the apex. The radius at
@@ -8937,6 +9013,193 @@ internal static class Program
         RequireDisjointSimplePlans(
             domeCells.Select(cell => cell.Outline).ToArray(),
             "courses/dome");
+    }
+
+    /// <summary>
+    /// Ruling A of the whole-branch review, measured: level-curve
+    /// orientation is NORMALISED after tracing and before seams, so the
+    /// pattern a net produces depends on the net's geometry and not on
+    /// the order its faces happen to arrive in.
+    ///
+    /// Three assertions, each pinning one half of the rule.
+    ///
+    /// 1. OPEN strips, direction. The scrambled barrel's rows are
+    /// emitted so the lower half walks east to west and the upper half
+    /// west to east (the derivation is in SkinBarrelScrambledNet). After
+    /// normalisation every traced strip must run WEST TO EAST: first
+    /// point at x = 0, last at x = 6, at BOTH 0.75 (rows 0 and 3) and
+    /// 1.25 (rows 1 and 2). Without the rule the 0.75 strips come back
+    /// x 6 to x 0 and the two heights disagree.
+    ///
+    /// 2. CLOSED loops, direction. The dome's loops are traced clockwise
+    /// from its ring-major face order, and the rule turns them
+    /// counter-clockwise, so the signed plan area must be POSITIVE. Its
+    /// value is pinned too: a regular n-gon of circumradius R has area
+    /// (1/2) n R^2 sin(2 pi / n), and the 0.25 cut of a dome whose
+    /// radius at height h is 2 - h is a regular octagon of circumradius
+    /// 1.75, so the area is 0.5 x 8 x 1.75^2 x sin(pi / 4) = 12.25
+    /// sin(pi / 4), about 8.6621 m2. Before the fix that number came
+    /// back with a minus sign.
+    ///
+    /// 3. The cells themselves. The courses engine on the scrambled
+    /// barrel must give the ORDERED barrel's cells back, cell for cell
+    /// within 1e-9: same count, same course, same clipped flag, same
+    /// setout span, same outline points in the same order. The count is
+    /// 84, hand-derived from the joint sets ValidateSkinCourses already
+    /// pins: per strip, courses 0 and 2 carry ten 0.6 pieces each and
+    /// courses 1 and 3 carry eleven each (nine 0.6 pieces plus two 0.3
+    /// end pieces), 42 per strip, two strips. The plans must be
+    /// disjoint and simple, and the hexagonal engine run over the same
+    /// scrambled net must give its pinned 68 cells with disjoint simple
+    /// plans as well: bow ties are exactly what
+    /// RequireDisjointSimplePlans catches, and against the shipped code
+    /// the review's verifier saw all ten cells of one band self-cross.
+    /// </summary>
+    private static void ValidateSkinOrientation(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        double[][] Points(object curve) =>
+            ((IList)curve.GetType().GetProperty("Points")!.GetValue(curve)!)
+            .Cast<double[]>().ToArray();
+        static double SignedPlanArea(double[][] points)
+        {
+            double twice = 0.0;
+            for (int i = 0; i < points.Length; i++)
+            {
+                double[] a = points[i];
+                double[] b = points[(i + 1) % points.Length];
+                twice += a[0] * b[1] - b[0] * a[1];
+            }
+            return twice / 2.0;
+        }
+
+        // ---- 1. open strips run one way, at every height.
+        object scrambled = Net(SkinBarrelScrambledNet());
+        IList levels = (IList)traceAll.Invoke(
+            null,
+            new object[] { scrambled, new[] { 0.75, 1.25 } })!;
+        foreach (double height in new[] { 0.75, 1.25 })
+        {
+            IList strips =
+                (IList)levels[height < 1.0 ? 0 : 1]!;
+            if (strips.Count != 2)
+            {
+                throw new InvalidOperationException(
+                    "The scrambled barrel is the SAME surface: a cut at " +
+                    $"{height} still gives two strips; got {strips.Count}.");
+            }
+            foreach (object? item in strips)
+            {
+                double[][] points = Points(item!);
+                if (Math.Abs(points[0][0]) > 1.0e-9 ||
+                    Math.Abs(points[^1][0] - 6.0) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "Every traced strip runs west to east once the " +
+                        "direction is normalised, whatever order the " +
+                        $"faces arrived in: the cut at {height} gives a " +
+                        $"strip from x {points[0][0]} to x " +
+                        $"{points[^1][0]}, not 0 to 6.");
+                }
+            }
+        }
+
+        // ---- 2. closed loops run counter-clockwise in plan.
+        object dome = Net(SkinDomeNet());
+        IList domeLevels = (IList)traceAll.Invoke(
+            null, new object[] { dome, new[] { 0.25, 0.75 } })!;
+        double expectedArea =
+            0.5 * 8.0 * 1.75 * 1.75 * Math.Sin(Math.PI / 4.0);
+        double area = SignedPlanArea(Points(((IList)domeLevels[0]!)[0]!));
+        if (Math.Abs(area - expectedArea) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A CLOSED loop runs counter-clockwise in plan, so its " +
+                "signed plan area is POSITIVE: the 0.25 cut is a regular " +
+                "octagon of circumradius 1.75 and area " +
+                $"{expectedArea:F6} m2; got {area:F6}.");
+        }
+        double upperArea =
+            SignedPlanArea(Points(((IList)domeLevels[1]!)[0]!));
+        if (!(upperArea > 0.0))
+        {
+            throw new InvalidOperationException(
+                "Every closed loop is turned counter-clockwise, not just " +
+                $"the lowest; the 0.75 loop's signed area is {upperArea}.");
+        }
+
+        // ---- 3. the cells are the ordered fixture's, cell for cell.
+        object ordered = Net(SkinBarrelNet());
+        var orderedCells = SkinCells(courses.Invoke(
+            null, new object[] { ordered, 0.6, 0.5 })!);
+        var scrambledCells = SkinCells(courses.Invoke(
+            null, new object[] { scrambled, 0.6, 0.5 })!);
+        if (orderedCells.Length != 84 ||
+            scrambledCells.Length != orderedCells.Length)
+        {
+            throw new InvalidOperationException(
+                "The barrel's courses carry 84 cells (per strip: ten 0.6 " +
+                "pieces on courses 0 and 2, eleven on courses 1 and 3; " +
+                "42 per strip, two strips), and the scrambled net must " +
+                $"carry the same; got {orderedCells.Length} ordered and " +
+                $"{scrambledCells.Length} scrambled.");
+        }
+        for (int at = 0; at < orderedCells.Length; at++)
+        {
+            var expected = orderedCells[at];
+            var actual = scrambledCells[at];
+            bool same =
+                expected.Course == actual.Course &&
+                expected.Clipped == actual.Clipped &&
+                Math.Abs(expected.U0 - actual.U0) <= 1.0e-9 &&
+                Math.Abs(expected.U1 - actual.U1) <= 1.0e-9 &&
+                expected.Outline.Length == actual.Outline.Length;
+            for (int p = 0; same && p < expected.Outline.Length; p++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    same &= Math.Abs(
+                        expected.Outline[p][c] - actual.Outline[p][c])
+                        <= 1.0e-9;
+                }
+            }
+            if (!same)
+            {
+                throw new InvalidOperationException(
+                    "Scrambling the face order must not move a single " +
+                    $"cell: cell {at} came back as course " +
+                    $"{actual.Course} spanning [{actual.U0:F4}, " +
+                    $"{actual.U1:F4}] with {actual.Outline.Length} " +
+                    $"points, against course {expected.Course} spanning " +
+                    $"[{expected.U0:F4}, {expected.U1:F4}] with " +
+                    $"{expected.Outline.Length} points on the ordered " +
+                    "net.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            scrambledCells.Select(cell => cell.Outline).ToArray(),
+            "courses/barrel scrambled");
+
+        var scrambledHexagons = SkinCells(hexagonal.Invoke(
+            null, new object[] { scrambled, 0.6, 0.5 })!);
+        if (scrambledHexagons.Length != 68)
+        {
+            throw new InvalidOperationException(
+                "The scrambled net grows the same honeycomb the ordered " +
+                "one does, 34 cells per chart and 68 in all; got " +
+                $"{scrambledHexagons.Length}.");
+        }
+        RequireDisjointSimplePlans(
+            scrambledHexagons.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/barrel scrambled");
     }
 
     /// <summary>
