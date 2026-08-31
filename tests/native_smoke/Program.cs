@@ -171,7 +171,10 @@ internal static class Program
                         "Perimeter Nodes",
                         "Perimeter Lines",
                         "Columns",
-                        "Phase"
+                        "Phase",
+                        // APPENDED at 9 by the readers rework, so no
+                        // existing wire moved.
+                        "Anchor Lines"
                     }),
                 // Export's ports are pinned because Format's removal moved
                 // every input after slot 0 up one: the order below IS the
@@ -260,14 +263,15 @@ internal static class Program
                     new[] { "RES", "B", "T" },
                     new[] { "RES" }),
                 // Frame is pinned nickname by nickname because it is the one
-                // component whose whole job is the ORDER of its ports: nine
-                // trees read by index downstream.
+                // component whose whole job is the ORDER of its ports: ten
+                // trees read by index downstream. AL is APPENDED so nothing
+                // above it moved.
                 ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
                     "Frame",
                     "FR",
                     "04 Read",
                     new[] { "RES" },
-                    new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH" }),
+                    new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH", "AL" }),
                 ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = (
                     "Import Pieces",
                     "Pieces",
@@ -1041,6 +1045,22 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"Reader chaining: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateFrameAnchorLines(plugin);
+            Console.WriteLine(
+                "PASS  FrameGeometry.AnchorLines: a strip of three nodes "
+                + "gives two lines joining node i to node i+1 in strip "
+                + "order, a single-node strip keeps an EMPTY branch, and "
+                + "the branch count equals the strips', so Anchor Lines "
+                + "reads against Anchor Nodes branch for branch.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"FrameGeometry.AnchorLines: {DescribeException(exception)}");
         }
 
         try
@@ -4596,6 +4616,76 @@ internal static class Program
                 "Re-running Forces must leave the other children's entries "
                 + $"untouched: {rows.Count} entries before, {reRun.Count} "
                 + "after.");
+        }
+    }
+
+    /// <summary>
+    /// <c>FrameGeometry.AnchorLines</c>: spec section 4's rule, measured on
+    /// hand-built strips. A strip of three nodes gives two lines, node i to
+    /// node i+1 in strip order; a single-node strip keeps an EMPTY branch;
+    /// and the branch count equals the strips', which is what lets Anchor
+    /// Lines be read against Anchor Nodes branch for branch.
+    /// </summary>
+    private static void ValidateFrameAnchorLines(Assembly plugin)
+    {
+        Type geometry = RequireComponentType(plugin, "FrameGeometry");
+        MethodInfo anchorLines = RequirePublicStatic(geometry, "AnchorLines");
+        Type outerList = anchorLines.GetParameters()[0].ParameterType;
+        Type innerList = outerList.GetGenericArguments()[0];
+        Type point3d = innerList.GetGenericArguments()[0];
+        MethodInfo outerAdd = outerList.GetMethod("Add")!;
+        MethodInfo innerAdd = innerList.GetMethod("Add")!;
+
+        object groups = Activator.CreateInstance(outerList)!;
+        void Strip(params (double X, double Y, double Z)[] nodes)
+        {
+            object strip = Activator.CreateInstance(innerList)!;
+            foreach ((double x, double y, double z) in nodes)
+            {
+                innerAdd.Invoke(strip, new[]
+                {
+                    Activator.CreateInstance(point3d, x, y, z)
+                });
+            }
+            outerAdd.Invoke(groups, new[] { strip });
+        }
+        Strip((0, 0, 0), (1, 0, 0), (1, 1, 0));
+        Strip((5, 5, 5));
+        Strip();
+
+        object[][] branches =
+            ((IEnumerable)anchorLines.Invoke(null, new[] { groups })!)
+                .Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>().ToArray())
+                .ToArray();
+        if (branches.Length != 3)
+        {
+            throw new InvalidOperationException(
+                "Three strips give three branches, empties kept, so AL and AN "
+                + $"stay branch for branch; got {branches.Length}.");
+        }
+        if (branches[0].Length != 2 || branches[1].Length != 0 ||
+            branches[2].Length != 0)
+        {
+            throw new InvalidOperationException(
+                "A strip of three nodes is two lines and a strip of one, or "
+                + "none, is an EMPTY branch; got lengths "
+                + $"{branches[0].Length}, {branches[1].Length}, "
+                + $"{branches[2].Length}.");
+        }
+        double At(object line, string end, string axis)
+        {
+            object point = line.GetType().GetProperty(end)!.GetValue(line)!;
+            return (double)point.GetType().GetProperty(axis)!.GetValue(point)!;
+        }
+        if (Math.Abs(At(branches[0][0], "From", "X")) > 1.0e-9 ||
+            Math.Abs(At(branches[0][0], "To", "X") - 1.0) > 1.0e-9 ||
+            Math.Abs(At(branches[0][1], "From", "X") - 1.0) > 1.0e-9 ||
+            Math.Abs(At(branches[0][1], "To", "Y") - 1.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Line i joins node i to node i+1 IN STRIP ORDER: (0,0,0) to "
+                + "(1,0,0), then (1,0,0) to (1,1,0).");
         }
     }
 
