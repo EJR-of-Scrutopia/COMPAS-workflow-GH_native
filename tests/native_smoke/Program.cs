@@ -666,7 +666,7 @@ internal static class Program
                 "counter-clockwise to their pinned signed plan area, and " +
                 "the courses engine gives the ordered fixture's 84 cells " +
                 "back cell for cell with disjoint simple plans, the " +
-                "honeycomb its 68.");
+                "honeycomb its 76.");
         }
         catch (Exception exception)
         {
@@ -699,7 +699,7 @@ internal static class Program
             ValidateSkinHexagonal(plugin);
             Console.WriteLine(
                 "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
-                "pinned at 68 cells with 28 clipped rim cells KEPT, an " +
+                "pinned at 76 cells with 36 clipped rim cells KEPT, an " +
                 "interior cell carries the stated six vertex offsets in " +
                 "order, lattice neighbours share mapped corners, course " +
                 "indices follow the centre bands on unclipped and " +
@@ -9295,7 +9295,7 @@ internal static class Program
     /// courses 1 and 3 carry eleven each (nine 0.6 pieces plus two 0.3
     /// end pieces), 42 per strip, two strips. The plans must be
     /// disjoint and simple, and the hexagonal engine run over the same
-    /// scrambled net must give its pinned 68 cells with disjoint simple
+    /// scrambled net must give its pinned 76 cells with disjoint simple
     /// plans as well: bow ties are exactly what
     /// RequireDisjointSimplePlans catches, and against the shipped code
     /// the review's verifier saw all ten cells of one band self-cross.
@@ -9435,11 +9435,11 @@ internal static class Program
 
         var scrambledHexagons = SkinCells(hexagonal.Invoke(
             null, new object[] { scrambled, 0.6, 0.5 })!);
-        if (scrambledHexagons.Length != 68)
+        if (scrambledHexagons.Length != 76)
         {
             throw new InvalidOperationException(
                 "The scrambled net grows the same honeycomb the ordered " +
-                "one does, 34 cells per chart and 68 in all; got " +
+                "one does, 38 cells per chart and 76 in all; got " +
                 $"{scrambledHexagons.Length}.");
         }
         RequireDisjointSimplePlans(
@@ -9450,20 +9450,48 @@ internal static class Program
     /// <summary>
     /// The hexagonal engine (spec section 6), measured on the barrel,
     /// where the front strip's setout maps to x = 3 + u and z = z, so
-    /// setout coordinates read straight off the geometry. The kept and
-    /// clipped counts are pinned at 68 and 28, hand-derived from the
-    /// lattice: per chart, even columns i in {0, +-2, +-4, +-6} carry 2
-    /// full-height cells each (14, none clipped), odd columns i in
-    /// {+-1, +-3, +-5} carry 3 each of which the top and bottom are
-    /// z-clipped (18 cells, 12 clipped), and the rim columns i = +-7
-    /// carry 1 u-clipped cell each; 34 cells and 14 clipped per chart,
-    /// two charts. Every lattice site with a vertex strictly inside the
-    /// chart appears: none dropped. Course indices are asserted on
-    /// UNCLIPPED and CLIPPED cells alike, under the engine's stated
-    /// centre rule (the Task 3 centre-for-centroid note): the clipped
-    /// population splits 12 bottom-clipped in course 0, 12 top-clipped
-    /// in course 3 and 4 u-clipped rim cells in course 2, classified
-    /// off each outline's own height range.
+    /// setout coordinates read straight off the geometry.
+    ///
+    /// The kept and clipped counts are pinned at 76 and 36, hand-derived
+    /// from the lattice under Ruling D's interval-overlap membership. A
+    /// candidate is a cell when its raw (u, z) extent meets the chart's
+    /// interior. Every level curve of a barrel chart is the whole 6 m
+    /// strip, so the chart's half-length is 3 at every height and the u
+    /// test admits column i while |0.75 S i| - S/2 is under 3, that is
+    /// |0.45 i| - 0.3 &lt; 3: i = 7 gives 2.85 and is admitted, i = 8
+    /// gives 3.3 and is refused, so 15 columns, i = -7 to 7. The z test
+    /// admits centre row c while CH(c + 1) is above zMin and CH(c - 1)
+    /// below zMax, that is 0.5(c + 1) &gt; 0 and 0.5(c - 1) &lt; 2, so c
+    /// runs 0 to 4. Since c = 1 + i + 2j, an even column carries the ODD
+    /// rows of that set and an odd column the EVEN ones: the 7 even
+    /// columns (0, +-2, +-4, +-6) carry rows 1 and 3, two cells each,
+    /// and the 8 odd columns (+-1, +-3, +-5, +-7) carry rows 0, 2 and 4,
+    /// three each. 14 + 24 = 38 per chart, 76 over the two charts.
+    ///
+    /// Clipped: an even column's two cells reach rows 0 and 4, whose
+    /// heights clamp by only the epsilon the extreme traces are pulled
+    /// in by (2e-6, under the 10-epsilon clip tolerance), and their u
+    /// never passes the half-length, so none of the 14 is flagged. In
+    /// the six odd columns +-1, +-3, +-5 the row-0 cell reaches row -1
+    /// and the row-4 cell reaches row 5, both a clear 0.5 outside the
+    /// surface, so 12 are flagged and the six row-2 cells are not. In
+    /// the two rim columns +-7 the hexagon's u reaches 3.45 against a
+    /// half-length of 3, so all 6 of their cells are flagged. 18 per
+    /// chart, 36 over both.
+    ///
+    /// Course indices are asserted on UNCLIPPED and CLIPPED cells alike,
+    /// under the engine's stated centre rule (the Task 3
+    /// centre-for-centroid note). The clipped population splits by each
+    /// outline's own height range: 16 bottom-clipped in course 0 (the
+    /// six odd columns' row-0 cells plus the two rim columns', per
+    /// chart), 16 top-clipped in course 3 (the row-4 cells the same
+    /// way), and 4 rim cells whose outlines span z 0.5 to 1.5 in course
+    /// 2 (the rim columns' row-2 cells).
+    ///
+    /// Ruling D's own case is pinned at the end: a CH at or above the
+    /// rise, which the shipped 0.35 default reaches on any shell rising
+    /// less than that, must give ONE clipped course of cells instead of
+    /// nothing.
     /// </summary>
     private static void ValidateSkinHexagonal(Assembly plugin)
     {
@@ -9478,19 +9506,21 @@ internal static class Program
             null, new object[] { barrelNet, 0.6, 0.5 })!;
         var cells = SkinCells(generated);
 
-        if (cells.Length != 68)
+        if (cells.Length != 76)
         {
             throw new InvalidOperationException(
-                "Every lattice site with a vertex strictly inside a " +
-                "chart is a cell, clipped rim cells KEPT: 34 per chart, " +
-                $"68 in all; got {cells.Length}.");
+                "Every lattice site whose raw (u, z) extent meets a " +
+                "chart is a cell, clipped rim cells KEPT: 14 from the " +
+                "seven even columns and 24 from the eight odd ones, 38 " +
+                $"per chart, 76 in all; got {cells.Length}.");
         }
         int clipped = cells.Count(cell => cell.Clipped);
-        if (clipped != 28)
+        if (clipped != 36)
         {
             throw new InvalidOperationException(
-                "The rim is clipped, not dropped: 14 clipped cells per " +
-                $"chart, 28 in all; got {clipped}.");
+                "The rim is clipped, not dropped: 12 from the six inner " +
+                "odd columns and 6 from the two rim columns, 18 per " +
+                $"chart, 36 in all; got {clipped}.");
         }
 
         // ---- one interior cell, corner by corner: column i = 1 of the
@@ -9596,7 +9626,7 @@ internal static class Program
         // bottom-clipped cells (centre row 0, outline never above z
         // 0.5) course 0; top-clipped (centre row 4, outline never below
         // z 1.5) course 3; the u-clipped rim cells (centre row 2)
-        // course 2. 12, 12 and 4 of them across both charts.
+        // course 2. 16, 16 and 4 of them across both charts.
         int bottomClipped = 0;
         int topClipped = 0;
         int rimClipped = 0;
@@ -9628,11 +9658,11 @@ internal static class Program
                     $"{cell.Course} (outline z {minZ:F3}..{maxZ:F3}).");
             }
         }
-        if (bottomClipped != 12 || topClipped != 12 || rimClipped != 4)
+        if (bottomClipped != 16 || topClipped != 16 || rimClipped != 4)
         {
             throw new InvalidOperationException(
-                "The clipped population splits 12 bottom (course 0), " +
-                "12 top (course 3) and 4 rim (course 2); got " +
+                "The clipped population splits 16 bottom (course 0), " +
+                "16 top (course 3) and 4 rim (course 2); got " +
                 $"{bottomClipped}, {topClipped} and {rimClipped}.");
         }
 
@@ -9643,7 +9673,7 @@ internal static class Program
             .GetProperty("Diagnostics")!.GetValue(generated)!;
         if (!diagnostics.Contains("Pattern: hexagonal",
                 StringComparison.Ordinal) ||
-            !diagnostics.Contains("Boundary-clipped cells: 28",
+            !diagnostics.Contains("Boundary-clipped cells: 36",
                 StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
@@ -9694,6 +9724,61 @@ internal static class Program
         RequireDisjointSimplePlans(
             domeCells.Select(cell => cell.Outline).ToArray(),
             "hexagonal/dome");
+
+        // ---- Ruling D: a SHALLOW shell, CH at or above the rise. The
+        // barrel rises 2 m, so CH 2.0 sits exactly on the rise and CH
+        // 2.5 above it; the shipped default 0.35 sits there for any
+        // shell rising less than 0.35, which is why this is not an
+        // exotic case. Both give a chart of just two levels, the
+        // epsilon-pulled base and crown, and the interval rule then
+        // admits exactly ONE centre row per column: a candidate's z
+        // extent is CH either side of its centre, so with CH at or
+        // above the rise row -1 lies wholly at or below the base and
+        // row 2 wholly at or above the crown, leaving row 1 for the
+        // even columns and row 0 for the odd ones (c = 1 + i + 2j fixes
+        // the parity). The u test is the barrel's own: the chart's
+        // half-length is 3 at both levels, so columns i = -7 to 7 are
+        // admitted, 15 of them. 15 cells per chart, 30 over the two.
+        // Every one reaches a lattice row a clear CH outside the
+        // surface, so every one is CLIPPED, and a 2 m rise at CH 2.0 or
+        // 2.5 is a single band, so every one carries course 0. Before
+        // the interval rule this case gave ZERO cells while the courses
+        // engine on the same shell built a band.
+        foreach (double shallowHeight in new[] { 2.0, 2.5 })
+        {
+            object shallow = hexagonal.Invoke(
+                null,
+                new object[] { barrelNet, 0.6, shallowHeight })!;
+            var shallowCells = SkinCells(shallow);
+            int shallowBands = (int)shallow.GetType()
+                .GetProperty("CourseCount")!.GetValue(shallow)!;
+            if (shallowCells.Length != 30)
+            {
+                throw new InvalidOperationException(
+                    $"At CH {shallowHeight}, at or above the barrel's " +
+                    "2 m rise, the honeycomb is one clipped course of " +
+                    "15 cells per chart, 30 in all, not nothing; got " +
+                    $"{shallowCells.Length}.");
+            }
+            if (shallowBands != 1 ||
+                shallowCells.Any(cell => cell.Course != 0))
+            {
+                throw new InvalidOperationException(
+                    "A rise no greater than one course height is ONE " +
+                    "band, so every cell carries course 0; got " +
+                    $"{shallowBands} bands.");
+            }
+            if (shallowCells.Any(cell => !cell.Clipped))
+            {
+                throw new InvalidOperationException(
+                    "Every shallow-shell cell reaches a lattice row a " +
+                    "clear course height outside the surface, so every " +
+                    "one is CLIPPED and kept.");
+            }
+            RequireDisjointSimplePlans(
+                shallowCells.Select(cell => cell.Outline).ToArray(),
+                $"hexagonal/shallow CH {shallowHeight}");
+        }
     }
 
     /// <summary>
