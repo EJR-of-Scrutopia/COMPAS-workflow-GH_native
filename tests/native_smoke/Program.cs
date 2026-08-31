@@ -733,8 +733,10 @@ internal static class Program
                 "PASS  Skin identity: the old Skin GUID kept, the " +
                 "Armadillo Dual class and GUID gone from every " +
                 "component, the Pattern value list pinned (input 1, " +
-                "default 0, courses/hexagonal/force aligned), and all " +
-                "four outputs VISIBLE, the proposer convention.");
+                "default 0, courses/hexagonal/force aligned), all " +
+                "four outputs VISIBLE, the proposer convention, and the " +
+                "task-capable base whose iteration-indexed TaskList is " +
+                "the premise of the placeholder rule read in the check.");
         }
         catch (Exception exception)
         {
@@ -9838,6 +9840,30 @@ internal static class Program
     /// Columns' Type does, defaulting to courses; and the outputs are
     /// VISIBLE, the proposer convention, because seeing the pattern the
     /// moment it computes is the point of the component.
+    ///
+    /// The last pin here is the PREMISE of Ruling C: Skin is a
+    /// GH_TaskCapableComponent, and that base indexes its TaskList BY
+    /// ITERATION. What follows from it cannot be measured in this
+    /// harness, and it is worth saying plainly WHICH parts are read
+    /// rather than run, the ValidateExportDefaultTessellation
+    /// convention:
+    ///
+    /// NOT MEASURED, read in SkinComponent.SolveInstance instead. In the
+    /// pre phase, EVERY iteration now adds to TaskList: the force-
+    /// aligned pattern adds the real dispatch, and both the paths that
+    /// dispatch nothing, the TryReadInputs failure and any Pattern other
+    /// than 2, add the completed null-carrying placeholder NoTask
+    /// returns, so an iteration's index into the list is its own. In the
+    /// post phase the guard before the synchronous recompute now reads
+    /// "!haveTaskResult || taskResult is null || taskResult.Error is
+    /// OperationCanceledException", so a placeholder retrieved for an
+    /// iteration whose Pattern changed to 2 between the phases is a MISS
+    /// and not an empty result. Both halves need an IGH_DataAccess with
+    /// a real iteration index and a running Grasshopper solution, which
+    /// this harness has no native core to build. A single-item pattern-2
+    /// solve is unchanged by either half: it dispatches at iteration 0
+    /// and retrieves a real, non-null result at iteration 0, exactly as
+    /// the retired ArmadilloDualComponent did at base 405ff14.
     /// </summary>
     private static void ValidateSkinIdentity(Assembly plugin)
     {
@@ -9968,6 +9994,23 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     $"Four outputs (C, CO, FL, D); got {outputCount}.");
+            }
+
+            // ---- Ruling C's premise. Everything the ruling turns on is
+            // that this base indexes TaskList by ITERATION; the two
+            // halves of the fix are read in the doc comment above.
+            bool taskCapable = false;
+            for (Type? at = skin; at is not null; at = at.BaseType)
+            {
+                taskCapable |= at.Name.StartsWith(
+                    "GH_TaskCapableComponent", StringComparison.Ordinal);
+            }
+            if (!taskCapable)
+            {
+                throw new InvalidOperationException(
+                    "Skin is a GH_TaskCapableComponent: its TaskList is " +
+                    "indexed by iteration, which is why every iteration " +
+                    "has to add to it, dispatching or not.");
             }
         }
         finally

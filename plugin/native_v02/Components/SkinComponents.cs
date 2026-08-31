@@ -183,12 +183,18 @@ public sealed class SkinComponent :
                     out double _,
                     report: false))
             {
+                TaskList.Add(NoTask());
                 return;
             }
             // Only the force-aligned pattern dispatches the worker; the
             // native patterns compute synchronously in the post phase.
+            // Both still leave a PLACEHOLDER, so the list keeps its
+            // iteration indices.
             if (pattern != 2)
+            {
+                TaskList.Add(NoTask());
                 return;
+            }
             TaskList.Add(Task.Run(
                 () => ComputeAsync(
                     CloneResult(result!),
@@ -219,6 +225,23 @@ public sealed class SkinComponent :
         SolveNative(
             data, postResult!, postPattern, postSize, postCourseHeight);
     }
+
+    /// <summary>
+    /// The placeholder an iteration that dispatches NOTHING still has to
+    /// leave in the list. <c>GH_TaskCapableComponent</c> indexes
+    /// <c>TaskList</c> BY ITERATION, so a list with a gap in it hands
+    /// iteration 3 whatever iteration 1 left behind: on a list mixing
+    /// Pattern values one branch would be shown another branch's
+    /// force-aligned cells, and in the ordinary case, a native pattern
+    /// sitting earlier in the list, the retrieval simply misses and the
+    /// post phase falls into the synchronous worker call on the solve
+    /// thread, blocking the canvas for the length of a solve. A
+    /// COMPLETED task carrying a null result keeps the indices lined up
+    /// and reads, in the post phase, as the miss it is; only the
+    /// force-aligned pattern ever leaves a real one.
+    /// </summary>
+    private static Task<ArmadilloDualTaskResult> NoTask() =>
+        Task.FromResult<ArmadilloDualTaskResult>(null!);
 
     private void SolveNative(
         IGH_DataAccess data,
@@ -321,8 +344,15 @@ public sealed class SkinComponent :
         ArmadilloDualTaskResult taskResult;
         bool haveTaskResult = GetSolveResults(data, out taskResult!);
         if (!haveTaskResult ||
+            taskResult is null ||
             taskResult.Error is OperationCanceledException)
         {
+            // A NULL retrieval is the placeholder an iteration that did
+            // not dispatch left behind (see NoTask), and it is a MISS,
+            // not a result: this iteration's Pattern was read as 2 in
+            // the post phase but not in the pre phase, which a change of
+            // inputs between the two phases can do. Recompute.
+            //
             // A cancelled background task is a scheduling race, not a
             // verdict on the current inputs; recompute synchronously so a
             // late cancellation cannot strand the canvas on "Cancelled"
