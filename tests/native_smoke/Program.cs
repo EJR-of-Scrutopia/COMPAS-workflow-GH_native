@@ -8387,6 +8387,27 @@ internal static class Program
     }
 
     /// <summary>
+    /// The dome fixture again, vertex for vertex and face for face, moved
+    /// in PLAN by (dx, dy). It is the fixture that measures the centred
+    /// shoelace: nothing about the surface changes, only where in the
+    /// world it is sited, which is the one thing a signed area must not
+    /// depend on.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinDomeSitedNet(
+        double dx,
+        double dy)
+    {
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        double[][] moved = vertices
+            .Select(vertex => new[]
+            {
+                vertex[0] + dx, vertex[1] + dy, vertex[2]
+            })
+            .ToArray();
+        return (moved, faces);
+    }
+
+    /// <summary>
     /// The two-peak fixture, whose level curves SPLIT. A height field on
     /// the barrel's own 7 by 5 grid of quads, row-major, with the rim at
     /// z 0, the whole interior ring at 0.9, and two peaks of 2.0 at
@@ -9301,6 +9322,37 @@ internal static class Program
     /// plans as well: bow ties are exactly what
     /// RequireDisjointSimplePlans catches, and against the shipped code
     /// the review's verifier saw all ten cells of one band self-cross.
+    ///
+    /// 4. The same closed-loop rule on a model SITED away from the world
+    /// origin, which is the case an uncentred shoelace breaks on. The
+    /// raw sum's terms are of order d squared for a model d metres out
+    /// while the answer it is asked for is the loop's own area, so the
+    /// cancellation error grows with the square of the distance and a
+    /// SMALL loop far out loses its sign. The dome's crown cut is that
+    /// small loop: the extreme trace is pulled inside the surface by
+    /// epsilon = (zMax - zMin) x 1e-6 = 2e-6 m, and the dome's radius at
+    /// height h is 2 - h, so the crown loop is a regular octagon of
+    /// circumradius 2e-6 m and area (1/2) x 8 x (2e-6)^2 x sin(pi / 4) =
+    /// 1.131371e-11 m2. Translated by (500, 300) the raw shoelace sums
+    /// terms of order 1.5e5 to reach that, which is 1e-16 of the terms
+    /// and below what a double can carry: measured against the build
+    /// before the fix it returned exactly 0.0, read as "not negative",
+    /// left the crown loop clockwise against every loop below it, and
+    /// the top band's cells came back with one self-crossing cell and
+    /// three properly crossing pairs. Measured at 0, 100 and 300 m the
+    /// same build was clean, so the case only appears once a studio
+    /// sites its model, which an OS-gridded site does by hundreds of
+    /// kilometres.
+    ///
+    /// The area is measured here in the CENTRED form too, because that
+    /// is the only form that can read a small loop 500 m out at all; the
+    /// tolerance is 1e-13 m2, hand-derived: subtracting a plan mean of
+    /// order 500 leaves each coordinate carrying about 500 x 2^-52 =
+    /// 1.1e-13 m of rounding, each shoelace term multiplies that by the
+    /// loop's own 2e-6 m reach, and eight terms sum to about 4e-18 m2,
+    /// five orders inside the tolerance. The 0.25 loop is asserted at
+    /// its origin value as well, unmoved by the siting: a translation
+    /// changes no area.
     /// </summary>
     private static void ValidateSkinOrientation(Assembly plugin)
     {
@@ -9324,6 +9376,27 @@ internal static class Program
                 double[] a = points[i];
                 double[] b = points[(i + 1) % points.Length];
                 twice += a[0] * b[1] - b[0] * a[1];
+            }
+            return twice / 2.0;
+        }
+        // The same area measured from the points' own plan mean. A loop
+        // sited hundreds of metres out cannot be read any other way: the
+        // raw sum above returns 0.0 for the dome's crown loop at 500 m,
+        // which is the defect this check exists for, so the MEASUREMENT
+        // has to be centred even where the engine's rule is what is
+        // under test.
+        static double CentredPlanArea(double[][] points)
+        {
+            double cx = points.Average(point => point[0]);
+            double cy = points.Average(point => point[1]);
+            double twice = 0.0;
+            for (int i = 0; i < points.Length; i++)
+            {
+                double[] a = points[i];
+                double[] b = points[(i + 1) % points.Length];
+                twice +=
+                    (a[0] - cx) * (b[1] - cy) -
+                    (b[0] - cx) * (a[1] - cy);
             }
             return twice / 2.0;
         }
@@ -9447,6 +9520,53 @@ internal static class Program
         RequireDisjointSimplePlans(
             scrambledHexagons.Select(cell => cell.Outline).ToArray(),
             "hexagonal/barrel scrambled");
+
+        // ---- 4. a model SITED away from the world origin keeps every
+        // loop counter-clockwise, crown loop included.
+        object sited = Net(SkinDomeSitedNet(500.0, 300.0));
+        IList sitedLevels = (IList)traceAll.Invoke(
+            null,
+            new object[] { sited, new[] { 0.25, 2.0 - 2.0e-6 } })!;
+        double sitedLowArea =
+            CentredPlanArea(Points(((IList)sitedLevels[0]!)[0]!));
+        if (Math.Abs(sitedLowArea - expectedArea) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Siting the dome 500 m east and 300 m north moves no " +
+                "area and turns no loop: the 0.25 cut is still the " +
+                $"counter-clockwise octagon of area {expectedArea:F6} " +
+                $"m2; got {sitedLowArea:F6}.");
+        }
+        double crownArea =
+            CentredPlanArea(Points(((IList)sitedLevels[1]!)[0]!));
+        double expectedCrown =
+            0.5 * 8.0 * 2.0e-6 * 2.0e-6 * Math.Sin(Math.PI / 4.0);
+        if (!(crownArea > 0.0) ||
+            Math.Abs(crownArea - expectedCrown) > 1.0e-13)
+        {
+            throw new InvalidOperationException(
+                "The CROWN loop of a sited dome runs counter-clockwise " +
+                "like every other: a regular octagon of circumradius " +
+                "2e-6 m (the epsilon the extreme trace is pulled in by) " +
+                $"and area {expectedCrown:E6} m2, POSITIVE; got " +
+                $"{crownArea:E6}. An uncentred shoelace returns 0.0 " +
+                "here, reads it as not negative, and leaves the crown " +
+                "loop running against every loop below it.");
+        }
+        var sitedCells = SkinCells(courses.Invoke(
+            null, new object[] { sited, 0.6, 0.5 })!);
+        if (sitedCells.Length != 42)
+        {
+            throw new InvalidOperationException(
+                "The sited dome carries the origin dome's courses: the " +
+                "mid-height loop of band r has round(L / S) pieces for " +
+                "L = 16 (2 - h) sin(pi / 8), so mids at 0.25, 0.75, " +
+                "1.25 and 1.75 give 18, 13, 8 and 3 pieces, 42 in all; " +
+                $"got {sitedCells.Length}.");
+        }
+        RequireDisjointSimplePlans(
+            sitedCells.Select(cell => cell.Outline).ToArray(),
+            "courses/dome sited 500 m out");
     }
 
     /// <summary>

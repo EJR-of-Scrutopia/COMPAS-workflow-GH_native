@@ -415,19 +415,41 @@ internal static class SkinPatterns
         }
     }
 
-    /// <summary>Twice the shoelace sum, halved: the signed area of the
-    /// curve's PLAN projection, positive counter-clockwise and negative
+    /// <summary>
+    /// Twice the shoelace sum, halved: the signed area of the curve's
+    /// PLAN projection, positive counter-clockwise and negative
     /// clockwise. The closing edge back to the first point is included,
-    /// which is the same edge a closed curve's Length carries.</summary>
+    /// which is the same edge a closed curve's Length carries.
+    ///
+    /// The sum is taken on coordinates measured FROM THE POINTS' PLAN
+    /// MEAN, the same centroid-relative form PlusXVertex uses, and a
+    /// model sited away from the world origin is why. The raw shoelace
+    /// sums terms of order d squared for a model d metres out while the
+    /// answer it is asked for is the loop's own area, so the
+    /// cancellation error grows with the square of the distance and a
+    /// small loop far from the origin loses its SIGN. Measured on the
+    /// dome fixture translated 1000 m in plan: the crown loop's
+    /// centred area is -1.131e-11 m2 while the raw sum returns exactly
+    /// 0.0, which reads as "not negative", leaves the crown loop
+    /// running clockwise against every loop below it, and turns the top
+    /// band's cells into bow ties in plan. Sited models are the ordinary
+    /// case in a studio, not an exotic one: an OS-gridded site is
+    /// hundreds of kilometres out. At the origin the centred and raw
+    /// sums agree to 1e-16, so no existing pin moves.
+    /// </summary>
     private static double SignedPlanArea(SkinLevelCurve curve)
     {
+        double cx = curve.Points.Average(point => point[0]);
+        double cy = curve.Points.Average(point => point[1]);
         double twice = 0.0;
         int count = curve.Points.Count;
         for (int i = 0; i < count; i++)
         {
             double[] a = curve.Points[i];
             double[] b = curve.Points[(i + 1) % count];
-            twice += a[0] * b[1] - b[0] * a[1];
+            twice +=
+                (a[0] - cx) * (b[1] - cy) -
+                (b[0] - cx) * (a[1] - cy);
         }
         return twice / 2.0;
     }
