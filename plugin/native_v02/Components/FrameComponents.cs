@@ -23,8 +23,9 @@ namespace Ananke.COMPAS.Native.Components
     /// never be had of the finished vault at all.
     ///
     /// No custom preview, and the geometry outputs start HIDDEN, the way
-    /// every other reader of a Result starts them (Deconstruct, Monitor,
-    /// Skin, Columns). Animate owns the drawing of the machine and this
+    /// every other reader of a Result starts them (Deconstruct, Forces,
+    /// Fit, Supports, Skin, Columns). Animate owns the drawing of the
+    /// machine and this
     /// component owns the data; left visible, Grasshopper's default red drew
     /// the same mesh, the same cables and the same columns a second time
     /// over Animate's own shaded preview, which is the very doubling having
@@ -152,6 +153,20 @@ namespace Ananke.COMPAS.Native.Components
                     + "a Result with no frame on it, which stands at its own "
                     + "solved shape.",
                 GH_ParamAccess.item);
+            // APPENDED, and it has to stay appended: every slot above is an
+            // index some saved definition's wire already sits on, the same
+            // rule Deconstruct's Force Lines followed.
+            parameters.AddLineParameter(
+                "Anchor Lines",
+                "AL",
+                "The anchor strips joined up: line i runs node i to node "
+                    + "i+1 of its strip, as a TREE branched EXACTLY as "
+                    + "Anchor Nodes, one branch per CONNECTED STRIP, so each "
+                    + "branch holds one line fewer than its Anchor Nodes "
+                    + "partner and a strip of a single node keeps an EMPTY "
+                    + "branch. Follows the frame positions when the Result "
+                    + "carries one.",
+                GH_ParamAccess.tree);
         }
 
         protected override void SolveInstance(IGH_DataAccess data)
@@ -184,6 +199,8 @@ namespace Ananke.COMPAS.Native.Components
                 data.SetDataTree(6, OutputTree.Curves(set.PerimeterLines));
                 data.SetDataTree(7, OutputTree.Lines(set.ColumnBranches));
                 data.SetData(8, set.Phase);
+                data.SetDataTree(9, OutputTree.Lines(
+                    FrameGeometry.AnchorLines(set.AnchorGroups)));
                 Message = set.Phase;
             }
             catch (Exception error)

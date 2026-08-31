@@ -278,8 +278,8 @@ namespace Ananke.COMPAS.Native.Components
                     + "into its Mould block: time, phase, the live net and the "
                     + "live column nodes. The built columns travel through "
                     + "untouched. Wire it to FRAME for the geometry at this "
-                    + "frame, to Monitor for the numbers and to Diagnose for "
-                    + "the words.",
+                    + "frame, to Forces, Fit and Supports for the numbers "
+                    + "and to Diagnose for the words.",
                 GH_ParamAccess.item);
         }
 
@@ -303,8 +303,8 @@ namespace Ananke.COMPAS.Native.Components
             // below are no guard at all. An Expression that divides by zero
             // upstream would put NaN straight into Frame.Time, and this
             // component validates the Result it is GIVEN and never the one it
-            // emits, so the NaN would first surface downstream, in Monitor's
-            // re-validation or as a serialiser failure in Export.
+            // emits, so the NaN would first surface downstream, in the
+            // readers' re-validation or as a serialiser failure in Export.
             var notFinite = new List<string>();
             if (!double.IsFinite(timePct))
             {
@@ -2672,6 +2672,29 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// The anchor strips joined up: one Line branch per strip, line i
+        /// running node i to node i+1, so each branch holds one line fewer
+        /// than its AnchorGroups partner, and a strip of a single node
+        /// keeps an EMPTY branch, which is what keeps the branch counts
+        /// aligned. Pure over the groups, so it follows the frame positions
+        /// exactly as AnchorGroups does and the harness can drive it
+        /// without a Rhino: Line is a managed struct.
+        /// </summary>
+        public static List<List<Line>> AnchorLines(
+            List<List<Point3d>> groups)
+        {
+            var lines = new List<List<Line>>();
+            foreach (List<Point3d> strip in groups)
+            {
+                var branch = new List<Line>();
+                for (int i = 0; i + 1 < strip.Count; i++)
+                    branch.Add(new Line(strip[i], strip[i + 1]));
+                lines.Add(branch);
+            }
+            return lines;
+        }
+
+        /// <summary>
         /// Which members stand together as one tree. The grouping the BLOCK
         /// carries is used when it accounts for every member exactly once,
         /// so Columns branch {i} here is Trees[{i}] there and no component
@@ -2682,6 +2705,13 @@ namespace Ananke.COMPAS.Native.Components
             MouldColumnsDto block,
             MouldGeometry.ColumnTree tree)
         {
+            // A memberless tree draws nothing in ColumnLines, which returns
+            // before ever reaching this call; answering no groups keeps
+            // Supports and Forces on that same nothing instead of letting a
+            // hand-built Trees of empty lists pass the coverage test
+            // vacuously and hand them phantom empty branches.
+            if (tree.Members.Count == 0)
+                return new List<List<int>>();
             var listed = new HashSet<int>(block.Trees.SelectMany(t => t));
             bool blockCovers =
                 block.Trees.Count > 0 &&

@@ -109,7 +109,10 @@ entries. The monitor.* prefix disappears from the plugin.
 ## 6. Deconstruct slims
 
 Deconstruct drops Thrust Mesh TM (slot 0), Columns CO (10), Heads HD (11) and Feet FT
-(12), all of which Frame carries. What remains, in this order: Member Lines M (0), Form
+(12). Erratum: this sentence first claimed Frame carries all four, and it does not.
+Thrust Mesh and Columns moved to Frame; Heads and Feet were retired, their content
+living on as Frame's Principal Nodes (each head stands on a notch) and the lower ends
+of Frame's Columns branches. What remains, in this order: Member Lines M (0), Form
 Lines FL (1), Member IDs MID (2), Node IDs NID (3), Support Points SP (4), Load Points LP
 (5), Load Vectors LV (6), Reaction Points RP (7), Reaction Vectors RV (8), Force Lines
 FCL (9). Ten outputs, the statics and diagram reader: the trees Monitor's children and

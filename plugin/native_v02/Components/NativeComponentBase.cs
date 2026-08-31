@@ -41,8 +41,9 @@ internal static class ComponentCategories
     // solved net into a machine. No backend.
     public const string Mould = "03 Mould";
 
-    // Everything that reads a Result: Deconstruct, Monitor, Skin, Diagnose,
-    // Frame, Style and Display. Geometry, numbers, words and the viewport.
+    // Everything that reads a Result: Deconstruct, Forces, Fit, Supports,
+    // Skin, Diagnose, Frame, Style and Display. Geometry, numbers, words
+    // and the viewport.
     // No backend.
     public const string Read = "04 Read";
 
@@ -299,6 +300,16 @@ internal static class ParameterIdentity
     /// So the NAMES are compared index by index as well, and the first
     /// difference is named in the warning.
     ///
+    /// Where the COUNTS differ the sentence also names what the change
+    /// was. The archived names registered nowhere any more are listed as
+    /// removed, which is Deconstruct's slim read back to its author; and
+    /// where nothing was removed, no shared slot renamed and neither side
+    /// shrank, the new names are reported as an append after which every
+    /// existing wire kept its port, which is Frame gaining Anchor Lines,
+    /// and the check-every-wire close softens to say so. A mid-list
+    /// insert is not an append: it surfaces as a rename on the shared
+    /// slots and keeps the harsher close.
+    ///
     /// A null archived name is an archive this cannot read a name out of,
     /// not a rename. It is skipped, so an archive shape that stops carrying
     /// names degrades to the count comparison rather than warning about
@@ -337,11 +348,60 @@ internal static class ParameterIdentity
                 "; the counts are unchanged, so every wire reattached by " +
                 "position: check each one";
         }
-        return
+        // What the count change actually did, by NAME, both sides pooled:
+        // an archived name registered nowhere any more is a removed port,
+        // and a registered name the archive never carried is an added one.
+        // A null archived name is an archive this cannot read, not a
+        // removal, and it is skipped on both sides of the comparison.
+        var registeredNames = new HashSet<string>(
+            registeredInputs.Concat(registeredOutputs),
+            StringComparer.Ordinal);
+        var archivedNames = new HashSet<string>(
+            archivedInputs.Concat(archivedOutputs).OfType<string>(),
+            StringComparer.Ordinal);
+        string[] removed = archivedInputs.Concat(archivedOutputs)
+            .OfType<string>()
+            .Where(name => !registeredNames.Contains(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        string[] added = registeredInputs.Concat(registeredOutputs)
+            .Where(name => !archivedNames.Contains(name))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        string counts =
             "this component's ports changed since the file was saved: " +
             $"{archivedInputs.Count} inputs and {archivedOutputs.Count} " +
             $"outputs archived, {registeredInputs.Count} and " +
-            $"{registeredOutputs.Count} registered" +
+            $"{registeredOutputs.Count} registered";
+        // The PURE APPEND: nothing removed, no shared slot renamed, and
+        // neither side shrank, so every archived wire reattached to the
+        // port it left and only new empty ports appeared. Frame gaining
+        // Anchor Lines is this case, and telling its author to check
+        // every wire would be telling them the append story is false.
+        // And only when every archived name was READABLE: an archive with
+        // no names would make every registered port look appended, and the
+        // contract above is to degrade to the count comparison on such an
+        // archive, not to invent an append story nothing supports.
+        bool pureAppend =
+            removed.Length == 0 &&
+            added.Length > 0 &&
+            renamed is null &&
+            archivedInputs.All(name => name is not null) &&
+            archivedOutputs.All(name => name is not null) &&
+            archivedInputs.Count <= registeredInputs.Count &&
+            archivedOutputs.Count <= registeredOutputs.Count;
+        if (pureAppend)
+        {
+            return counts +
+                "; " + string.Join(", ", added.Select(name => $"'{name}'")) +
+                (added.Length == 1 ? " was" : " were") +
+                " appended; existing wires kept their ports";
+        }
+        return counts +
+            (removed.Length == 0
+                ? string.Empty
+                : "; removed: " + string.Join(
+                    ", ", removed.Select(name => $"'{name}'"))) +
             (renamed is null ? string.Empty : "; " + renamed) +
             "; wires may now sit on the wrong port, check every one";
     }

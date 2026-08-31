@@ -77,7 +77,10 @@ internal static class Program
                     new[] { "Result" },
                     new[]
                     {
-                        "Thrust Mesh",
+                        // TEN outputs since the readers rework: Thrust Mesh,
+                        // Columns, Heads and Feet moved to Frame, every
+                        // remaining wire shifted, and the name-comparing
+                        // load warning is what tells a reopened definition.
                         "Member Lines",
                         "Form Lines",
                         "Member IDs",
@@ -87,15 +90,6 @@ internal static class Program
                         "Load Vectors",
                         "Reaction Points",
                         "Reaction Vectors",
-                        "Columns",
-                        "Heads",
-                        "Feet",
-                        // APPENDED, at 13, and the position is the point:
-                        // Display's Force Lines had no successor anywhere in
-                        // the plugin until this port, and it had to arrive
-                        // without moving one of the twelve slots above,
-                        // every one of which a saved definition's wire
-                        // already sits on.
                         "Force Lines"
                     }),
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
@@ -115,22 +109,40 @@ internal static class Program
                         "Vector Scale", "Gap"
                     },
                     Array.Empty<string>()),
-                // Monitor's ports are pinned for the same reason Deconstruct's
-                // are: every number tree here is READ AGAINST a Deconstruct
-                // geometry tree by slot, so a renamed or reordered output is a
-                // silently rewired canvas rather than a compile error.
-                ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = (
-                    new[] { "Result", "EI", "EA", "Tolerance", "Cable Capacity", "Column Capacity" },
+                // Fit owns the geometry-against-the-solved-state half of
+                // Monitor's old surface: deviation in vertex order, the sag
+                // per bar, pinned for the same reason the other children are.
+                ["Ananke.COMPAS.Native.Components.FitComponent"] = (
+                    new[] { "Result", "EI", "Tolerance" },
                     new[]
                     {
                         "Result",
-                        "Member Force", "Force Density", "Horizontal Force", "Slack",
-                        "Spool Length", "Unstrained Length",
-                        "Anchor Along", "Anchor Across",
-                        "Tip Reaction", "Column Force", "Thrust", "Lean",
-                        "Deviation", "Deviation Stats", "Reachable", "Unreachable",
-                        "Bar Sag", "Residuals",
-                        "Cable Utilisation", "Column Utilisation"
+                        "Deviation", "Deviation Stats", "Reachable",
+                        "Unreachable", "Bar Sag"
+                    }),
+                // Forces owns the member half of Monitor's old surface:
+                // every number tree here is READ AGAINST a Deconstruct
+                // geometry tree by slot, so the names and the order are the
+                // canvas contract.
+                ["Ananke.COMPAS.Native.Components.ForcesComponent"] = (
+                    new[] { "Result", "EA", "Cable Capacity" },
+                    new[]
+                    {
+                        "Result",
+                        "Member Force", "Force Density", "Horizontal Force",
+                        "Slack", "Spool Length", "Unstrained Length",
+                        "Residuals", "Cable Utilisation"
+                    }),
+                // Supports owns the ground half: anchors by strip, columns
+                // by tree, aligned with Deconstruct's Reaction Points and
+                // Frame's Columns.
+                ["Ananke.COMPAS.Native.Components.SupportsReaderComponent"] = (
+                    new[] { "Result", "Column Capacity" },
+                    new[]
+                    {
+                        "Result",
+                        "Anchor Along", "Anchor Across", "Tip Reaction",
+                        "Column Force", "Thrust", "Lean", "Column Utilisation"
                     }),
                 // Animate MAKES a frame and emits the Result carrying it.
                 // Its geometry is Frame's, below, so there is one port here
@@ -153,7 +165,10 @@ internal static class Program
                         "Perimeter Nodes",
                         "Perimeter Lines",
                         "Columns",
-                        "Phase"
+                        "Phase",
+                        // APPENDED at 9 by the readers rework, so no
+                        // existing wire moved.
+                        "Anchor Lines"
                     }),
                 // Export's ports are pinned because Format's removal moved
                 // every input after slot 0 up one: the order below IS the
@@ -242,14 +257,15 @@ internal static class Program
                     new[] { "RES", "B", "T" },
                     new[] { "RES" }),
                 // Frame is pinned nickname by nickname because it is the one
-                // component whose whole job is the ORDER of its ports: nine
-                // trees read by index downstream.
+                // component whose whole job is the ORDER of its ports: ten
+                // trees read by index downstream. AL is APPENDED so nothing
+                // above it moved.
                 ["Ananke.COMPAS.Native.Components.FrameComponent"] = (
                     "Frame",
                     "FR",
                     "04 Read",
                     new[] { "RES" },
-                    new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH" }),
+                    new[] { "M", "C", "PL", "PN", "AN", "PRN", "PRL", "CO", "PH", "AL" }),
                 ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = (
                     "Import Pieces",
                     "Pieces",
@@ -283,7 +299,9 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.ColumnsComponent"] = ("column_finder", "CO"),
             ["Ananke.COMPAS.Native.Components.MouldAnimateComponent"] = ("mould_animate", "AN"),
             ["Ananke.COMPAS.Native.Components.DeconstructComponent"] = ("result_breakdown", "DE"),
-            ["Ananke.COMPAS.Native.Components.StressAnalysisComponent"] = ("stress_analysis", "MO"),
+            ["Ananke.COMPAS.Native.Components.FitComponent"] = ("fit", "FI"),
+            ["Ananke.COMPAS.Native.Components.ForcesComponent"] = ("forces", "FO"),
+            ["Ananke.COMPAS.Native.Components.SupportsReaderComponent"] = ("supports", "SP"),
             ["Ananke.COMPAS.Native.Components.SkinComponent"] = ("skin", "SK"),
             ["Ananke.COMPAS.Native.Components.DiagnoseComponent"] = ("diagnose", "DG"),
             ["Ananke.COMPAS.Native.Components.FrameComponent"] = ("frame", "FR"),
@@ -467,14 +485,15 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 20)
+        if (componentTypes.Length != 22)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
-            // with nineteen components' worth of contract untested.
+            // with nineteen components' worth of contract untested. 22 is
+            // the settled readers surface: Monitor retired when Fit arrived.
             failures.Add(
-                $"Expected 20 concrete public components, found " +
+                $"Expected 22 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -737,7 +756,7 @@ internal static class Program
             ValidateStiffnessSeparation(plugin);
             Console.WriteLine(
                 "PASS  EI separation: bar sag scales exactly as one over EI, "
-                + "which is what lets Monitor's one number turn a bending "
+                + "which is what lets Fit's one number turn a bending "
                 + "shape into millimetres; lean from vertical is measured "
                 + "against hand-computed angles.");
         }
@@ -947,10 +966,123 @@ internal static class Program
 
         try
         {
+            ValidateForcesReadings(plugin);
+            Console.WriteLine(
+                "PASS  Forces readings: on a net of one bar and one infill "
+                + "the member, density and horizontal trees come back bar "
+                + "first and infill LAST with Monitor's old numbers, the "
+                + "slack flag sits on the pushing infill alone, a 2 m spool "
+                + "cuts to 1/1.1 + 1/1.2 with EA wired because 0.1 kN "
+                + "became 100 N, one residual per vertex holds its own "
+                + "node, utilisation converts kN to N against the capacity, "
+                + "and the RES leaves carrying forces.* entries alone, "
+                + "Forces as their source, no monitor.* anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Forces readings: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSupportsReadings(plugin);
+            Console.WriteLine(
+                "PASS  Supports readings: two anchors joined only through a "
+                + "free node come back as two strips, each reaction split "
+                + "SIGNED along its own tensioner axis and across it; a "
+                + "plumb post and a diagonal post hand back tip reactions "
+                + "along their members, thrusts of 0 and 0.4 over root two, "
+                + "leans of 0 and 45 degrees, and utilisations of 5 and 4 "
+                + "against 100 N because the kN forces were converted; and "
+                + "the RES leaves carrying supports.* entries alone with no "
+                + "monitor.* anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Supports readings: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSupportsSharedGrouping(plugin);
+            Console.WriteLine(
+                "PASS  Supports shared grouping: a columns block of three "
+                + "members whose Trees name only member 0 falls back, inside "
+                + "FrameGeometry.ColumnGroups, to TreesByFoot, and Supports "
+                + "branches by THAT: two branches, the count ColumnGroups "
+                + "itself returns, all three members measured as [0.5, 0.3] "
+                + "on foot 0 and [0.4] on foot 3, and no supports.no_columns; "
+                + "with Trees EMPTY beside the same members every member is "
+                + "still measured and no_columns still absent; and Forces "
+                + "counts the same 3 columns through the same call.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Supports shared grouping: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateFitReadings(plugin);
+            Console.WriteLine(
+                "PASS  Fit readings: a frame standing 1, 10 and -2 mm off "
+                + "the solved state reads those SIGNED deviations in vertex "
+                + "order, RMS root 35 with worst and 95th percentile 10 by "
+                + "absolute value, node 1 alone outside the 5 mm tolerance "
+                + "and reachability a warning naming the count; no principal "
+                + "runs means an empty Bar Sag and fit.bar_sag_absent; the "
+                + "intermediate frame is named; a run held at BOTH ends "
+                + "under a 0.3 kN hanger sags the hand-computed 50 mm at "
+                + "its middle notch and zero at the held ones, because "
+                + "0.3 kN became 300 N before it met EI 1000, with "
+                + "fit.bar_sag naming the worst; held at one notch the "
+                + "same run is a mechanism, three zeros and a "
+                + "fit.bar_unheld warning; and the RES leaves carrying "
+                + "fit.* entries alone with no monitor.* anywhere.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Fit readings: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateReaderChaining(plugin);
+            Console.WriteLine(
+                "PASS  Reader chaining: Forces then Supports then Fit "
+                + "accumulate all three prefixes on one RES, none clobbering "
+                + "another's entries, re-running Forces REPLACES its own "
+                + "rather than stacking them, and the monitor.* prefix is "
+                + "extinct.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Reader chaining: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateFrameAnchorLines(plugin);
+            Console.WriteLine(
+                "PASS  FrameGeometry.AnchorLines: a strip of three nodes "
+                + "gives two lines joining node i to node i+1 in strip "
+                + "order, a single-node strip keeps an EMPTY branch, and "
+                + "the branch count equals the strips', so Anchor Lines "
+                + "reads against Anchor Nodes branch for branch.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"FrameGeometry.AnchorLines: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateResultTablesOrder(plugin);
             Console.WriteLine(
                 "PASS  ResultTables order: the one table Deconstruct's geometry "
-                + "and Monitor's numbers are both branched from hands back the "
+                + "and Forces' numbers are both branched from hands back the "
                 + "members in edge order with their ends, forces and ids, no "
                 + "force density or horizontal force where an FD Result carries "
                 + "none, the support ids as the Result lists them, each "
@@ -980,7 +1112,12 @@ internal static class Program
                 + "archived chunk with no readable Name raises nothing by "
                 + "itself; and where only a name moved, the rename LEADS and "
                 + "the equal counts follow it as the reason every wire "
-                + "reattached. SideMoved, which Export's Live hold reads, "
+                + "reattached. A count change names WHAT changed: "
+                + "Deconstruct's slim lists 'Thrust Mesh', 'Columns', "
+                + "'Heads' and 'Feet' as removed, in archived order, and "
+                + "still closes check-every-wire; Frame's pure append names "
+                + "'Anchor Lines' and closes with existing wires keeping "
+                + "their ports instead. SideMoved, which Export's Live hold reads, "
                 + "answers for ONE side: an input move holds, by count or "
                 + "by name, and this branch's own output-only move does "
                 + "not.");
@@ -1107,7 +1244,7 @@ internal static class Program
         {
             ValidateIconMap(plugin, componentTypes, pluginPath);
             Console.WriteLine(
-                "PASS  Icon family: every one of the twenty components has "
+                "PASS  Icon family: every component has "
                 + "exactly one icon-map entry, keyed the way the loader reads "
                 + "the resource, labelled the two letters the spec gives, "
                 + "categorised as the panel the component actually registers "
@@ -2973,6 +3110,14 @@ internal static class Program
             throw new InvalidOperationException("Render must print the worker's Report.");
         if (!text.Contains("Columns", StringComparison.Ordinal))
             throw new InvalidOperationException("Render must say which mould components have not run.");
+        if (!text.Contains(
+                "not yet run on this Result: Columns, Animate, Forces, Fit, Supports",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Render's not-run line names each reader separately on a "
+                + "Result none of them has annotated.");
+        }
 
         // An FD Result with no report prints the standing FD line.
         string fdText = (string)render.Invoke(null, new object[] { Result(Array.Empty<int>(), null), none })!;
@@ -3614,7 +3759,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// <c>MonitorMath</c>: the four pure rules Monitor's new outputs rest on,
+    /// <c>MonitorMath</c>: the four pure rules the readers' outputs rest on,
     /// measured on hand-built inputs so a wrong sign or a wrong percentile
     /// rank cannot pass.
     /// </summary>
@@ -3771,8 +3916,993 @@ internal static class Program
     }
 
     /// <summary>
+    /// Every diagnostic on a Result as (Code, Severity, Source, Message)
+    /// rows, read through the plugin's own SourceOf, so the reader checks
+    /// assert prefixes and provenance without binding to DiagnosticDto.
+    /// </summary>
+    private static List<(string Code, string Severity, string Source, string Message)>
+        DiagnosticRows(Assembly plugin, object result)
+    {
+        Type helper = RequireComponentType(plugin, "ResultDiagnostics");
+        MethodInfo sourceOf = RequirePublicStatic(helper, "SourceOf");
+        var rows = new List<(string, string, string, string)>();
+        var list = (IEnumerable)result.GetType()
+            .GetProperty("Diagnostics")!.GetValue(result)!;
+        foreach (object entry in list)
+        {
+            Type type = entry.GetType();
+            rows.Add((
+                (string)type.GetProperty("Code")!.GetValue(entry)!,
+                (string)type.GetProperty("Severity")!.GetValue(entry)!,
+                (string)sourceOf.Invoke(null, new[] { entry })!,
+                (string)type.GetProperty("Message")!.GetValue(entry)!));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// The one fixture the reader checks share: an FD Result of four
+    /// vertices, one principal run 0-1-2 carrying members (0,1) and (1,2)
+    /// at 0.1 and 0.2 kN, one infill member (1,3) at -0.3 kN (slack under
+    /// positive_tension), one support at node 2 with a reaction (0,0,7)
+    /// and a residual (0,0,13). Small forces on purpose: 0.1 kN is 100 N,
+    /// so the EA and capacity conversions give clean hand numbers.
+    /// </summary>
+    private static object ReaderFixtureResult(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type nodalType = RequireContractType(plugin, "NodalVectorDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type equilibriumProblemType =
+            RequireContractType(plugin, "EquilibriumProblemDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 1, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 1, 3)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2, -0.3 });
+        SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            equilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 2 });
+        SetContractProperty(equilibrium, equilibriumType, "Reactions",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 7))!));
+        SetContractProperty(equilibrium, equilibriumType, "Residuals",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(0, 0, 13))!));
+        object topology = CreateInstance(topologyType);
+        SetContractProperty(topology, topologyType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 1, 0)));
+        SetContractProperty(topology, topologyType, "PrincipalRuns",
+            new int[][] { new[] { 0, 1, 2 } });
+        object problem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(problem, equilibriumProblemType, "Topology", topology);
+        SetContractProperty(equilibrium, equilibriumType, "Problem", problem);
+        return CreateResultDto(resultType, "fd", equilibrium, null, null);
+    }
+
+    /// <summary>
+    /// <c>ForcesComponent.Read</c>: the member half of what Monitor used to
+    /// compute, measured through the child on the shared fixture, port by
+    /// port against hand numbers, and the RES it emits carrying forces.*
+    /// entries alone with Forces as their source and no monitor.* anywhere.
+    /// </summary>
+    private static void ValidateForcesReadings(Assembly plugin)
+    {
+        Type forces = RequireComponentType(plugin, "ForcesComponent");
+        MethodInfo read = RequireStatic(forces, "Read");
+        object result = ReaderFixtureResult(plugin);
+
+        object readings = read.Invoke(
+            null, new object?[] { result, 1000.0, 50.0 })!;
+        object Prop(string name) =>
+            readings.GetType().GetProperty(name)!.GetValue(readings)!;
+        double[][] Branches(string name) =>
+            ((IEnumerable)Prop(name)).Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+        string Render(double[][] tree) => string.Join(" | ", tree.Select(
+            branch => string.Join(",", branch.Select(value =>
+                value.ToString("0.####",
+                    System.Globalization.CultureInfo.InvariantCulture)))));
+        void SameTree(string name, double[][] expected)
+        {
+            double[][] actual = Branches(name);
+            bool same = actual.Length == expected.Length;
+            for (int b = 0; same && b < expected.Length; b++)
+            {
+                same = actual[b].Length == expected[b].Length;
+                for (int i = 0; same && i < expected[b].Length; i++)
+                    same = Math.Abs(actual[b][i] - expected[b][i]) <= 1.0e-9;
+            }
+            if (!same)
+            {
+                throw new InvalidOperationException(
+                    $"{name} must be [{Render(expected)}], the bar's members "
+                    + "in branch 0 and the infill LAST; got "
+                    + $"[{Render(actual)}].");
+            }
+        }
+
+        SameTree("MemberForce", new[] { new[] { 0.1, 0.2 }, new[] { -0.3 } });
+        // This FD fixture carries no q and no H, so both are worked out at
+        // the geometry: unit lengths make them equal the force.
+        SameTree("ForceDensity", new[] { new[] { 0.1, 0.2 }, new[] { -0.3 } });
+        SameTree("Horizontal", new[] { new[] { 0.1, 0.2 }, new[] { -0.3 } });
+        SameTree("CableUtilisation", new[] { new[] { 2.0, 4.0 }, new[] { 6.0 } });
+        if ((bool)Prop("EmitCableUtilisation") is not true ||
+            (bool)Prop("EmitUnstrained") is not true)
+        {
+            throw new InvalidOperationException(
+                "With EA 1000 and Cable Capacity 50 both wired, Unstrained "
+                + "Length and Cable Utilisation are both emitted.");
+        }
+
+        bool[][] slack = ((IEnumerable)Prop("Slack")).Cast<IEnumerable>()
+            .Select(branch => branch.Cast<object>()
+                .Select(item => (bool)item).ToArray())
+            .ToArray();
+        if (slack.Length != 2 || slack[0].Length != 2 ||
+            slack[0][0] || slack[0][1] ||
+            slack[1].Length != 1 || !slack[1][0])
+        {
+            throw new InvalidOperationException(
+                "A bar member is never slack and the pushing infill (1,3) is: "
+                + "Slack must be [false,false | true].");
+        }
+
+        double[] spool = ((IEnumerable)Prop("Spool")).Cast<object>()
+            .Select(Convert.ToDouble).ToArray();
+        if (spool.Length != 1 || Math.Abs(spool[0] - 2.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "One bar of two unit segments spools 2 m; got "
+                + $"[{string.Join(",", spool)}].");
+        }
+        double[] unstrained = ((IEnumerable)Prop("Unstrained")).Cast<object>()
+            .Select(Convert.ToDouble).ToArray();
+        double expectedCut = (1.0 / 1.1) + (1.0 / 1.2);
+        if (unstrained.Length != 1 ||
+            Math.Abs(unstrained[0] - expectedCut) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "0.1 and 0.2 kN convert to 100 and 200 N against EA 1000, so "
+                + $"the bar cuts to 1/1.1 + 1/1.2 = {expectedCut:0.######}; "
+                + $"got [{string.Join(",", unstrained)}]. The wrong number "
+                + "here is the ForceUnit trap: an unconverted kN force cuts "
+                + "the bar to very nearly its tensioned length.");
+        }
+
+        Array residuals = (Array)Prop("Residuals");
+        if (residuals.Length != 4)
+        {
+            throw new InvalidOperationException(
+                "Residuals come back ONE PER VERTEX, four here; got "
+                + $"{residuals.Length}.");
+        }
+        double Rz(int at) => (double)residuals.GetValue(at)!.GetType()
+            .GetProperty("Z")!.GetValue(residuals.GetValue(at))!;
+        if (Math.Abs(Rz(2) - 13.0) > 1.0e-9 || Math.Abs(Rz(0)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Node 2's residual lands on node 2 and an absent one is a "
+                + $"zero; got item 0 = {Rz(0)}, item 2 = {Rz(2)}.");
+        }
+
+        var rows = DiagnosticRows(plugin, Prop("Result"));
+        foreach (string code in new[]
+        {
+            "forces.counts", "forces.cable_tension", "forces.slack_cables",
+            "forces.bar_force", "forces.spool", "forces.utilisation",
+            "forces.demand_only"
+        })
+        {
+            if (!rows.Any(row => row.Code == code))
+            {
+                throw new InvalidOperationException(
+                    $"The emitted RES must carry {code}; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+        if (rows.Where(row => row.Code.StartsWith("forces.", StringComparison.Ordinal))
+                .Any(row => row.Source != "Forces"))
+        {
+            throw new InvalidOperationException(
+                "Every forces.* entry names Forces as its source, or Replace "
+                + "cannot own them on the next solve.");
+        }
+        (string Code, string Severity, string Source, string Message) One(
+            string code) => rows.Single(row => row.Code == code);
+        if (!One("forces.counts").Message.Contains(
+                "1 infill cables, 2 bar members, 0 columns, 1 anchors",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "forces.counts keeps Monitor's full four-population sentence; "
+                + $"got '{One("forces.counts").Message}'.");
+        }
+        if (One("forces.slack_cables").Severity != "warning")
+            throw new InvalidOperationException("One slack cable is a warning.");
+        if (One("forces.utilisation").Severity != "warning" ||
+            !One("forces.utilisation").Message.Contains("up to 6", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The infill's 300 N over 50 N is 6, over one and a warning; "
+                + $"got '{One("forces.utilisation").Message}'.");
+        }
+    }
+
+    /// <summary>
+    /// <c>SupportsReaderComponent.Read</c>: the ground half of what Monitor
+    /// used to compute, measured through the child on a fixture with two
+    /// isolated anchors and two one-member column trees, port by port
+    /// against hand numbers, and the RES it emits carrying supports.*
+    /// entries alone with no monitor.* anywhere.
+    /// </summary>
+    private static void ValidateSupportsReadings(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type nodalType = RequireContractType(plugin, "NodalVectorDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type supports = RequireComponentType(plugin, "SupportsReaderComponent");
+        MethodInfo read = RequireStatic(supports, "Read");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2 });
+        SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            equilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+        // Node 0's tensioner axis points at node 1, along +X, so (2,0,5)
+        // splits into along 2 and across 5. Node 2's axis points back at
+        // node 1, along -X, so (1,0,1) splits into along -1 and across 1.
+        SetContractProperty(equilibrium, equilibriumType, "Reactions",
+            Of(nodalType,
+                Activator.CreateInstance(nodalType, 0, P(0, 0, 0), P(2, 0, 5))!,
+                Activator.CreateInstance(nodalType, 2, P(2, 0, 0), P(1, 0, 1))!));
+
+        // Two one-member trees: a plumb post of 0.5 kN two metres tall, and
+        // a diagonal post of 0.4 kN running one across and one up.
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes",
+            Of(point, P(1, 0, 0), P(1, 0, 2), P(3, 0, 0), P(4, 0, 1)));
+        SetContractProperty(block, columnsType, "Members",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 2, 3)!));
+        SetContractProperty(block, columnsType, "MemberForce", new[] { 0.5, 0.4 });
+        SetContractProperty(block, columnsType, "Trees",
+            new int[][] { new[] { 0 }, new[] { 1 } });
+        SetContractProperty(block, columnsType, "Heads", new[] { 1, 3 });
+        SetContractProperty(block, columnsType, "Feet", new[] { 0, 2 });
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 1, 1 });
+        SetContractProperty(block, columnsType, "Branching", 1);
+        SetContractProperty(block, columnsType, "ForkFraction", 0.65);
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Ground", 0.0);
+        SetContractProperty(mould, mouldType, "Columns", block);
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        object readings = read.Invoke(null, new object?[] { result, 100.0 })!;
+        object Prop(string name) =>
+            readings.GetType().GetProperty(name)!.GetValue(readings)!;
+        double[][] Branches(string name) =>
+            ((IEnumerable)Prop(name)).Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+        string Render(double[][] tree) => string.Join(" | ", tree.Select(
+            branch => string.Join(",", branch.Select(value =>
+                value.ToString("0.####",
+                    System.Globalization.CultureInfo.InvariantCulture)))));
+        void SameTree(string name, double[][] expected)
+        {
+            double[][] actual = Branches(name);
+            bool same = actual.Length == expected.Length;
+            for (int b = 0; same && b < expected.Length; b++)
+            {
+                same = actual[b].Length == expected[b].Length;
+                for (int i = 0; same && i < expected[b].Length; i++)
+                    same = Math.Abs(actual[b][i] - expected[b][i]) <= 1.0e-9;
+            }
+            if (!same)
+            {
+                throw new InvalidOperationException(
+                    $"{name} must be [{Render(expected)}]; got "
+                    + $"[{Render(actual)}].");
+            }
+        }
+
+        // Two supports joined only through the free node 1 are two strips.
+        SameTree("AnchorAlong", new[] { new[] { 2.0 }, new[] { -1.0 } });
+        SameTree("AnchorAcross", new[] { new[] { 5.0 }, new[] { 1.0 } });
+        SameTree("ColumnForce", new[] { new[] { 0.5 }, new[] { 0.4 } });
+        double diagonal = 0.4 / Math.Sqrt(2.0);
+        SameTree("Thrust", new[] { new[] { 0.0 }, new[] { diagonal } });
+        SameTree("Lean", new[] { new[] { 0.0 }, new[] { 45.0 } });
+        SameTree("ColumnUtilisation", new[] { new[] { 5.0 }, new[] { 4.0 } });
+        if ((bool)Prop("EmitColumnUtilisation") is not true)
+        {
+            throw new InvalidOperationException(
+                "With Column Capacity 100 wired, Column Utilisation is emitted.");
+        }
+
+        object[][] tips = ((IEnumerable)Prop("TipReaction")).Cast<IEnumerable>()
+            .Select(branch => branch.Cast<object>().ToArray())
+            .ToArray();
+        double Axis(object vector, string name) =>
+            (double)vector.GetType().GetProperty(name)!.GetValue(vector)!;
+        if (tips.Length != 2 || tips[0].Length != 1 || tips[1].Length != 1)
+        {
+            throw new InvalidOperationException(
+                "Two one-member trees give two tip branches of one head each; "
+                + $"got {tips.Length} branches.");
+        }
+        if (Math.Abs(Axis(tips[0][0], "X")) > 1.0e-9 ||
+            Math.Abs(Axis(tips[0][0], "Z") - 0.5) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The plumb post's tip reaction points straight up at 0.5; got "
+                + $"({Axis(tips[0][0], "X")}, {Axis(tips[0][0], "Z")}).");
+        }
+        if (Math.Abs(Axis(tips[1][0], "X") - diagonal) > 1.0e-9 ||
+            Math.Abs(Axis(tips[1][0], "Z") - diagonal) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The diagonal post's tip reaction runs along its member, 0.4 "
+                + $"over root two on X and Z; got ({Axis(tips[1][0], "X")}, "
+                + $"{Axis(tips[1][0], "Z")}).");
+        }
+
+        var rows = DiagnosticRows(plugin, Prop("Result"));
+        foreach (string code in new[]
+        {
+            "supports.column_force", "supports.thrust_into_ground",
+            "supports.anchor_horizontal", "supports.anchor_split",
+            "supports.utilisation", "supports.demand_only"
+        })
+        {
+            if (!rows.Any(row => row.Code == code))
+            {
+                throw new InvalidOperationException(
+                    $"The emitted RES must carry {code}; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code == "supports.no_columns"))
+        {
+            throw new InvalidOperationException(
+                "This Result carries columns, so supports.no_columns must not "
+                + "be raised.");
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+        if (rows.Where(row => row.Code.StartsWith("supports.", StringComparison.Ordinal))
+                .Any(row => row.Source != "Supports"))
+        {
+            throw new InvalidOperationException(
+                "Every supports.* entry names Supports as its source.");
+        }
+        (string Code, string Severity, string Source, string Message) One(
+            string code) => rows.Single(row => row.Code == code);
+        if (One("supports.utilisation").Severity != "warning" ||
+            !One("supports.utilisation").Message.Contains("up to 5", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "500 N over 100 N is 5, over one and a warning; got "
+                + $"'{One("supports.utilisation").Message}'.");
+        }
+    }
+
+    /// <summary>
+    /// <c>SupportsReaderComponent.Read</c> and <c>ForcesComponent.Read</c>
+    /// take their column groups from <c>FrameGeometry.ColumnGroups</c>, the
+    /// code path Frame's Columns output branches by, so the readers cannot
+    /// diverge from Frame on a block whose Trees do not cover its members.
+    ///
+    /// The fixture: a valid columns block of five nodes and THREE members,
+    /// m0 = (0,1), m1 = (1,2), m2 = (3,4) at 0.5, 0.3 and 0.4 kN, whose
+    /// Trees name [[0]] only. That UNDER-COVERS: the Trees sum to 1 member
+    /// against the block's 3, so ColumnGroups' coverage test fails and
+    /// TreesByFoot answers instead. Deriving that by hand: the members make
+    /// nodes 0, 1 and 3 lower ends and 1, 2 and 4 upper ends, so the feet,
+    /// lower and never upper, are 0 and 3, taken ascending. Climbing foot 0
+    /// reaches 0, 1, 2, so m0 and m1 (lower ends 0 and 1) stand on it;
+    /// climbing foot 3 reaches 3, 4, so m2 stands on it. TWO groups,
+    /// [0, 1] and [2]: two branches, three members in all, Column Force
+    /// [0.5, 0.3] and [0.4] in member order. Every member is one metre
+    /// long, none collapsed, so Frame would draw exactly those 3 lines.
+    /// The raw block.Trees walk this replaces would have given ONE branch
+    /// of one member, dropping m1 and m2 from every column port while
+    /// Frame drew them.
+    ///
+    /// The same block with Trees EMPTY is the harsher half of the defect:
+    /// the raw walk measured nothing and raised supports.no_columns while
+    /// Frame drew both trees. Through the shared call it reads identically
+    /// to the under-covering case, and supports.no_columns fires only when
+    /// the grouping itself yields no groups, which is when Frame hands
+    /// back no branches.
+    ///
+    /// Forces counts the same population through the same call: 3 columns
+    /// in forces.counts, the sum of the shared grouping's group sizes,
+    /// 2 + 1.
+    /// </summary>
+    private static void ValidateSupportsSharedGrouping(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type supports = RequireComponentType(plugin, "SupportsReaderComponent");
+        MethodInfo read = RequireStatic(supports, "Read");
+        Type forcesType = RequireComponentType(plugin, "ForcesComponent");
+        MethodInfo forcesRead = RequireStatic(forcesType, "Read");
+        Type frameGeometry = RequireComponentType(plugin, "FrameGeometry");
+        MethodInfo columnGroups = RequirePublicStatic(frameGeometry, "ColumnGroups");
+        Type mouldGeometry = RequireComponentType(plugin, "MouldGeometry");
+        MethodInfo treeFromBlock = RequirePublicStatic(mouldGeometry, "TreeFromBlock");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        (object Result, object Block) Build(int[][] trees)
+        {
+            object equilibrium = CreateInstance(equilibriumType);
+            SetContractProperty(equilibrium, equilibriumType, "Vertices",
+                Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+            SetContractProperty(equilibrium, equilibriumType, "Edges",
+                Of(edgeType,
+                    Activator.CreateInstance(edgeType, 0, 1)!,
+                    Activator.CreateInstance(edgeType, 1, 2)!));
+            SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+                new[] { 0.1, 0.2 });
+            SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+            SetContractProperty(
+                equilibrium, equilibriumType, "SignConvention", "positive_tension");
+            SetContractProperty(
+                equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+
+            object block = CreateInstance(columnsType);
+            SetContractProperty(block, columnsType, "Nodes",
+                Of(point, P(0, 0, 0), P(0, 0, 1), P(0, 0, 2), P(2, 0, 0), P(2, 0, 1)));
+            SetContractProperty(block, columnsType, "Members",
+                Of(edgeType,
+                    Activator.CreateInstance(edgeType, 0, 1)!,
+                    Activator.CreateInstance(edgeType, 1, 2)!,
+                    Activator.CreateInstance(edgeType, 3, 4)!));
+            SetContractProperty(block, columnsType, "MemberForce",
+                new[] { 0.5, 0.3, 0.4 });
+            SetContractProperty(block, columnsType, "Trees", trees);
+            SetContractProperty(block, columnsType, "Heads", new[] { 2, 4 });
+            SetContractProperty(block, columnsType, "Feet", new[] { 0, 3 });
+            SetContractProperty(block, columnsType, "HeadNode", new[] { 1, 1 });
+            SetContractProperty(block, columnsType, "Branching", 1);
+            SetContractProperty(block, columnsType, "ForkFraction", 0.65);
+            object mould = CreateInstance(mouldType);
+            SetContractProperty(mould, mouldType, "Ground", 0.0);
+            SetContractProperty(mould, mouldType, "Columns", block);
+            object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+            SetContractProperty(result, resultType, "Mould", mould);
+            return (result, block);
+        }
+
+        void CheckOne(int[][] trees, string label)
+        {
+            (object result, object block) = Build(trees);
+
+            // The count the shared code path itself returns for this block,
+            // asked through the same two calls Frame's Columns makes.
+            object tree = treeFromBlock.Invoke(null, new[] { block })!;
+            int[] groupSizes = ((IEnumerable)columnGroups
+                .Invoke(null, new[] { block, tree })!)
+                .Cast<IEnumerable>()
+                .Select(group => group.Cast<object>().Count())
+                .ToArray();
+            if (!groupSizes.SequenceEqual(new[] { 2, 1 }))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: TreesByFoot puts m0 and m1 on foot 0 and m2 on "
+                    + "foot 3, so ColumnGroups returns groups of [2, 1]; got "
+                    + $"[{string.Join(",", groupSizes)}].");
+            }
+
+            object readings = read.Invoke(null, new object?[] { result, 0.0 })!;
+            object Prop(string name) =>
+                readings.GetType().GetProperty(name)!.GetValue(readings)!;
+            double[][] force = ((IEnumerable)Prop("ColumnForce"))
+                .Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+            if (force.Length != groupSizes.Length)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Supports must branch by the {groupSizes.Length} "
+                    + "groups ColumnGroups returns, the same tree Frame draws; "
+                    + $"got {force.Length} branches.");
+            }
+            // All 3 members measured: Frame draws 3 lines here, every
+            // member a metre long and none collapsed, 2 + 1 across the
+            // groups.
+            int measured = force.Sum(branch => branch.Length);
+            if (measured != 3)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: every member is measured, 3 Column Force items "
+                    + $"over all branches; got {measured}.");
+            }
+            bool values =
+                force[0].Length == 2 &&
+                Math.Abs(force[0][0] - 0.5) <= 1.0e-9 &&
+                Math.Abs(force[0][1] - 0.3) <= 1.0e-9 &&
+                force[1].Length == 1 &&
+                Math.Abs(force[1][0] - 0.4) <= 1.0e-9;
+            if (!values)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Column Force reads [0.5, 0.3] on foot 0's tree "
+                    + "and [0.4] on foot 3's, in member order; got ["
+                    + string.Join(" | ", force.Select(branch =>
+                        string.Join(",", branch.Select(value =>
+                            value.ToString("0.####",
+                                System.Globalization.CultureInfo.InvariantCulture)))))
+                    + "].");
+            }
+            var rows = DiagnosticRows(plugin, Prop("Result"));
+            if (rows.Any(row => row.Code == "supports.no_columns"))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: the shared grouping yields two groups, so "
+                    + "supports.no_columns must be absent; Frame draws these "
+                    + "columns.");
+            }
+
+            // Forces counts the same population: 2 + 1 = 3 columns.
+            object counted = forcesRead.Invoke(
+                null, new object?[] { result, 0.0, 0.0 })!;
+            object countedResult = counted.GetType()
+                .GetProperty("Result")!.GetValue(counted)!;
+            var countRows = DiagnosticRows(plugin, countedResult);
+            (string Code, string Severity, string Source, string Message) counts =
+                countRows.Single(row => row.Code == "forces.counts");
+            if (!counts.Message.Contains("3 columns", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: forces.counts follows the shared grouping, 3 "
+                    + $"columns; got '{counts.Message}'.");
+            }
+        }
+
+        CheckOne(new int[][] { new[] { 0 } }, "under-covering Trees [[0]]");
+        CheckOne(Array.Empty<int[]>(), "empty Trees beside three members");
+    }
+
+    /// <summary>
+    /// <c>FitComponent.Read</c>: the solved-state half of what Monitor used
+    /// to compute, measured through the child on a framed fixture against
+    /// hand numbers, and the RES it emits carrying fit.* entries alone with
+    /// no monitor.* anywhere. Bar Sag is driven all three ways: no principal
+    /// runs is an empty tree, a run held at both ends sags a hand-computed
+    /// 50 mm through the moved BarBending (the kN-to-N conversion and the
+    /// metres-to-mm scale both load-bearing), and a run held at one notch
+    /// is a mechanism reported by fit.bar_unheld.
+    /// </summary>
+    private static void ValidateFitReadings(Assembly plugin)
+    {
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type frameType = RequireContractType(plugin, "MouldFrameDto");
+        Type fit = RequireComponentType(plugin, "FitComponent");
+        MethodInfo read = RequireStatic(fit, "Read");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2 });
+        SetContractProperty(equilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            equilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+
+        // The frame stands 1 mm high, 10 mm high and 2 mm LOW: a signed
+        // field whose one offender is node 1 against a 5 mm tolerance.
+        object frame = CreateInstance(frameType);
+        SetContractProperty(frame, frameType, "Time", 50.0);
+        SetContractProperty(frame, frameType, "Phase", "raise");
+        SetContractProperty(frame, frameType, "Lift", 0.5);
+        SetContractProperty(frame, frameType, "Sag", 0.5);
+        SetContractProperty(frame, frameType, "Vertices",
+            Of(point, P(0, 0, 0.001), P(1, 0, 0.010), P(2, 0, -0.002)));
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Ground", 0.0);
+        SetContractProperty(mould, mouldType, "Frame", frame);
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        object readings = read.Invoke(null, new object?[] { result, 0.0, 5.0 })!;
+        object Prop(string name) =>
+            readings.GetType().GetProperty(name)!.GetValue(readings)!;
+
+        double[] deviation = ((IEnumerable)Prop("Deviation")).Cast<object>()
+            .Select(Convert.ToDouble).ToArray();
+        var expected = new[] { 1.0, 10.0, -2.0 };
+        if (deviation.Length != 3 ||
+            deviation.Zip(expected, (a, b) => Math.Abs(a - b)).Any(gap => gap > 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "Deviation is SIGNED millimetres in vertex order, [1, 10, -2] "
+                + $"here; got [{string.Join(",", deviation)}].");
+        }
+        double rms = (double)Prop("Rms");
+        double max = (double)Prop("Max");
+        double p95 = (double)Prop("P95");
+        if (Math.Abs(rms - Math.Sqrt(35.0)) > 1.0e-9 ||
+            Math.Abs(max - 10.0) > 1.0e-9 ||
+            Math.Abs(p95 - 10.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The stats of (1, 10, -2) are RMS root 35 with worst and 95th "
+                + $"percentile 10, ABSOLUTE values throughout; got {rms:0.####}, "
+                + $"{max}, {p95}.");
+        }
+        if ((bool)Prop("Reachable") is not false)
+        {
+            throw new InvalidOperationException(
+                "Node 1 sits 10 mm off against a 5 mm tolerance, so Reachable "
+                + "is false.");
+        }
+        int[] unreachable = ((IEnumerable)Prop("Unreachable")).Cast<object>()
+            .Select(Convert.ToInt32).ToArray();
+        if (!unreachable.SequenceEqual(new[] { 1 }))
+        {
+            throw new InvalidOperationException(
+                "Node 1 alone is outside tolerance; got "
+                + $"[{string.Join(",", unreachable)}].");
+        }
+        if (((IEnumerable)Prop("BarSag")).Cast<object>().Any())
+        {
+            throw new InvalidOperationException(
+                "This Result carries no principal runs, so Bar Sag is EMPTY "
+                + "and fit.bar_sag_absent says why.");
+        }
+
+        var rows = DiagnosticRows(plugin, Prop("Result"));
+        foreach (string code in new[]
+        {
+            "fit.deviation", "fit.reachability", "fit.bar_sag_absent",
+            "fit.intermediate_frame"
+        })
+        {
+            if (!rows.Any(row => row.Code == code))
+            {
+                throw new InvalidOperationException(
+                    $"The emitted RES must carry {code}; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+        if (rows.Where(row => row.Code.StartsWith("fit.", StringComparison.Ordinal))
+                .Any(row => row.Source != "Fit"))
+        {
+            throw new InvalidOperationException(
+                "Every fit.* entry names Fit as its source.");
+        }
+        (string Code, string Severity, string Source, string Message) reach =
+            rows.Single(row => row.Code == "fit.reachability");
+        if (reach.Severity != "warning" ||
+            !reach.Message.Contains("1 of 3 nodes", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "One node out of three outside tolerance is a warning naming "
+                + $"the count; got '{reach.Message}'.");
+        }
+
+        // The positive Bar Sag path, through the moved BarBending: the same
+        // three-notch run held at BOTH ends, one 0.3 kN hanger pulling the
+        // middle notch straight down. 0.3 kN converts to 300 N before it
+        // meets EI, the span is 2 m of unit segments, so a simply supported
+        // beam with EI 1000 N.m2 sags P L^3 / 48 EI at the middle notch:
+        // 300 x 8 / 48000 = 0.05 m, which the port reports as 50 mm, zero
+        // at the two held notches (the Hermite beam elements are nodally
+        // exact for a point load at a notch).
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type problemType = RequireContractType(plugin, "EquilibriumProblemDto");
+        object sagEquilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(sagEquilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 0, -1)));
+        SetContractProperty(sagEquilibrium, equilibriumType, "Edges",
+            Of(edgeType,
+                Activator.CreateInstance(edgeType, 0, 1)!,
+                Activator.CreateInstance(edgeType, 1, 2)!,
+                Activator.CreateInstance(edgeType, 1, 3)!));
+        SetContractProperty(sagEquilibrium, equilibriumType, "MemberForces",
+            new[] { 0.1, 0.2, -0.3 });
+        SetContractProperty(sagEquilibrium, equilibriumType, "ForceUnit", "kN");
+        SetContractProperty(
+            sagEquilibrium, equilibriumType, "SignConvention", "positive_tension");
+        SetContractProperty(
+            sagEquilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+        object sagTopology = CreateInstance(topologyType);
+        SetContractProperty(sagTopology, topologyType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(2, 0, 0), P(1, 0, -1)));
+        SetContractProperty(sagTopology, topologyType, "PrincipalRuns",
+            new int[][] { new[] { 0, 1, 2 } });
+        object sagProblem = CreateInstance(problemType);
+        SetContractProperty(sagProblem, problemType, "Topology", sagTopology);
+        SetContractProperty(sagEquilibrium, equilibriumType, "Problem", sagProblem);
+        object sagResult = CreateResultDto(
+            resultType, "fd", sagEquilibrium, null, null);
+
+        object sagReadings = read.Invoke(
+            null, new object?[] { sagResult, 1000.0, 5.0 })!;
+        object SagProp(string name) =>
+            sagReadings.GetType().GetProperty(name)!.GetValue(sagReadings)!;
+        double[][] Tree(object value) =>
+            ((IEnumerable)value).Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>()
+                    .Select(Convert.ToDouble).ToArray())
+                .ToArray();
+        string Render(double[][] tree) => string.Join(" | ", tree.Select(
+            branch => string.Join(",", branch.Select(value =>
+                value.ToString("0.####",
+                    System.Globalization.CultureInfo.InvariantCulture)))));
+        double[][] sagTree = Tree(SagProp("BarSag"));
+        if (sagTree.Length != 1 || sagTree[0].Length != 3 ||
+            Math.Abs(sagTree[0][0]) > 1.0e-9 ||
+            Math.Abs(sagTree[0][1] - 50.0) > 1.0e-6 ||
+            Math.Abs(sagTree[0][2]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A 0.3 kN hanger on the middle notch of a 2 m run held at "
+                + "both ends sags P L^3 / 48 EI = 50 mm there and zero at "
+                + "the held notches, so Bar Sag is [0, 50, 0]; got "
+                + $"[{Render(sagTree)}]. 0.05 here is the missing "
+                + "metres-to-mm scale; 0.05 mm is the ForceUnit trap, the "
+                + "kN load meeting EI unconverted.");
+        }
+        var sagRows = DiagnosticRows(plugin, SagProp("Result"));
+        (string Code, string Severity, string Source, string Message) sagEntry =
+            sagRows.Single(row => row.Code == "fit.bar_sag");
+        if (sagEntry.Severity != "info" ||
+            !sagEntry.Message.Contains("up to 50 mm", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "fit.bar_sag is info and names the worst sag; got "
+                + $"'{sagEntry.Message}'.");
+        }
+        if (sagRows.Any(row => row.Code == "fit.bar_unheld"))
+        {
+            throw new InvalidOperationException(
+                "Both ends held solves every bar, so fit.bar_unheld does "
+                + "not appear.");
+        }
+
+        // A run held at ONE notch is a mechanism, not a beam: zeros for
+        // alignment and fit.bar_unheld saying why. The shared reader
+        // fixture holds node 2 alone, so with EI wired it is exactly this
+        // case.
+        object unheldReadings = read.Invoke(
+            null, new object?[] { ReaderFixtureResult(plugin), 1000.0, 5.0 })!;
+        object UnheldProp(string name) =>
+            unheldReadings.GetType().GetProperty(name)!.GetValue(unheldReadings)!;
+        double[][] unheldTree = Tree(UnheldProp("BarSag"));
+        if (unheldTree.Length != 1 || unheldTree[0].Length != 3 ||
+            unheldTree[0].Any(value => Math.Abs(value) > 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "One held notch is a mechanism, not a beam: its branch is "
+                + "three zeros for alignment, nothing solved; got "
+                + $"[{Render(unheldTree)}].");
+        }
+        var unheldRows = DiagnosticRows(plugin, UnheldProp("Result"));
+        if (!unheldRows.Any(row => row.Code == "fit.bar_unheld"
+                && row.Severity == "warning"))
+        {
+            throw new InvalidOperationException(
+                "A bar held at one notch raises fit.bar_unheld as a "
+                + "warning.");
+        }
+    }
+
+    /// <summary>
+    /// The chaining rule of spec section 5: each child REPLACES only its own
+    /// prefix, so Forces then Supports then Fit accumulate all three sets on
+    /// one RES, re-running a child does not stack its entries, and the
+    /// monitor.* prefix is extinct.
+    /// </summary>
+    private static void ValidateReaderChaining(Assembly plugin)
+    {
+        object result = ReaderFixtureResult(plugin);
+        object Step(string component, object input, params object[] rest)
+        {
+            Type type = RequireComponentType(plugin, component);
+            MethodInfo read = RequireStatic(type, "Read");
+            object[] arguments = new[] { input }.Concat(rest).ToArray();
+            object readings = read.Invoke(null, arguments)!;
+            return readings.GetType().GetProperty("Result")!.GetValue(readings)!;
+        }
+
+        object afterForces = Step("ForcesComponent", result, 1000.0, 50.0);
+        object afterSupports = Step("SupportsReaderComponent", afterForces, 100.0);
+        object afterFit = Step("FitComponent", afterSupports, 0.0, 5.0);
+        var rows = DiagnosticRows(plugin, afterFit);
+        foreach (string prefix in new[] { "forces.", "supports.", "fit." })
+        {
+            if (!rows.Any(row => row.Code.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    $"After chaining all three children the RES must carry "
+                    + $"{prefix}* entries; it does not.");
+            }
+        }
+        if (rows.Any(row => row.Code.StartsWith("monitor.", StringComparison.Ordinal)))
+            throw new InvalidOperationException("The monitor.* prefix must be extinct.");
+
+        int forcesEntries = rows.Count(
+            row => row.Code.StartsWith("forces.", StringComparison.Ordinal));
+        object again = Step("ForcesComponent", afterFit, 1000.0, 50.0);
+        var reRun = DiagnosticRows(plugin, again);
+        if (reRun.Count(row => row.Code.StartsWith("forces.", StringComparison.Ordinal))
+            != forcesEntries)
+        {
+            throw new InvalidOperationException(
+                "Re-running Forces must REPLACE its own entries, not stack "
+                + "them.");
+        }
+        if (reRun.Count != rows.Count)
+        {
+            throw new InvalidOperationException(
+                "Re-running Forces must leave the other children's entries "
+                + $"untouched: {rows.Count} entries before, {reRun.Count} "
+                + "after.");
+        }
+    }
+
+    /// <summary>
+    /// <c>FrameGeometry.AnchorLines</c>: spec section 4's rule, measured on
+    /// hand-built strips. A strip of three nodes gives two lines, node i to
+    /// node i+1 in strip order; a single-node strip keeps an EMPTY branch;
+    /// and the branch count equals the strips', which is what lets Anchor
+    /// Lines be read against Anchor Nodes branch for branch.
+    /// </summary>
+    private static void ValidateFrameAnchorLines(Assembly plugin)
+    {
+        Type geometry = RequireComponentType(plugin, "FrameGeometry");
+        MethodInfo anchorLines = RequirePublicStatic(geometry, "AnchorLines");
+        Type outerList = anchorLines.GetParameters()[0].ParameterType;
+        Type innerList = outerList.GetGenericArguments()[0];
+        Type point3d = innerList.GetGenericArguments()[0];
+        MethodInfo outerAdd = outerList.GetMethod("Add")!;
+        MethodInfo innerAdd = innerList.GetMethod("Add")!;
+
+        object groups = Activator.CreateInstance(outerList)!;
+        void Strip(params (double X, double Y, double Z)[] nodes)
+        {
+            object strip = Activator.CreateInstance(innerList)!;
+            foreach ((double x, double y, double z) in nodes)
+            {
+                innerAdd.Invoke(strip, new[]
+                {
+                    Activator.CreateInstance(point3d, x, y, z)
+                });
+            }
+            outerAdd.Invoke(groups, new[] { strip });
+        }
+        Strip((0, 0, 0), (1, 0, 0), (1, 1, 0));
+        Strip((5, 5, 5));
+        Strip();
+
+        object[][] branches =
+            ((IEnumerable)anchorLines.Invoke(null, new[] { groups })!)
+                .Cast<IEnumerable>()
+                .Select(branch => branch.Cast<object>().ToArray())
+                .ToArray();
+        if (branches.Length != 3)
+        {
+            throw new InvalidOperationException(
+                "Three strips give three branches, empties kept, so AL and AN "
+                + $"stay branch for branch; got {branches.Length}.");
+        }
+        if (branches[0].Length != 2 || branches[1].Length != 0 ||
+            branches[2].Length != 0)
+        {
+            throw new InvalidOperationException(
+                "A strip of three nodes is two lines and a strip of one, or "
+                + "none, is an EMPTY branch; got lengths "
+                + $"{branches[0].Length}, {branches[1].Length}, "
+                + $"{branches[2].Length}.");
+        }
+        double At(object line, string end, string axis)
+        {
+            object point = line.GetType().GetProperty(end)!.GetValue(line)!;
+            return (double)point.GetType().GetProperty(axis)!.GetValue(point)!;
+        }
+        if (Math.Abs(At(branches[0][0], "From", "X")) > 1.0e-9 ||
+            Math.Abs(At(branches[0][0], "To", "X") - 1.0) > 1.0e-9 ||
+            Math.Abs(At(branches[0][1], "From", "X") - 1.0) > 1.0e-9 ||
+            Math.Abs(At(branches[0][1], "To", "Y") - 1.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Line i joins node i to node i+1 IN STRIP ORDER: (0,0,0) to "
+                + "(1,0,0), then (1,0,0) to (1,1,0).");
+        }
+    }
+
+    /// <summary>
     /// <c>ResultTables</c> is the ONE order Deconstruct's geometry trees and
-    /// Monitor's number trees are both built from, and nothing measured it:
+    /// Forces' number trees are both built from, and nothing measured it:
     /// the two components agreed because they call the same method, not
     /// because anything said what that method hands back. A minimal FD Result
     /// of three vertices, two edges, one support and one reaction pins the
@@ -3992,7 +5122,7 @@ internal static class Program
                 + $"Result lists them in; got ids {TnaWhole(0, "Id")}, "
                 + $"{TnaWhole(1, "Id")}, {TnaWhole(2, "Id")}. This is the one "
                 + "ordering that decides whether Deconstruct's Member Lines and "
-                + "Monitor's forces describe the same member.");
+                + "Forces' member forces describe the same member.");
         }
         if (TnaWhole(0, "U") != 2 || TnaWhole(0, "V") != 0 ||
             TnaWhole(1, "U") != 0 || TnaWhole(1, "V") != 1 ||
@@ -4032,7 +5162,7 @@ internal static class Program
             throw new InvalidOperationException(
                 "A zero reaction is not a reaction: two went in and only the "
                 + $"non-zero one comes back; got {tnaReactions.Length}. Keeping the "
-                + "zero would give Deconstruct and Monitor different stray branches.");
+                + "zero would give Deconstruct and Supports different stray branches.");
         }
         object tnaPair = tnaReactions.GetValue(0)!;
         int tnaNode = (int)tnaPair.GetType().GetField("Item1")!.GetValue(tnaPair)!;
@@ -4206,6 +5336,86 @@ internal static class Program
                 + "output count came back to two by a different route and every "
                 + "input wire still moved; got "
                 + $"'{exportMoved}'.");
+        }
+
+        // THIS branch's Deconstruct slim, with the real port names: 14
+        // outputs archived against the 10 registered, the Result input
+        // untouched. The four archived names registered nowhere any more,
+        // Thrust Mesh (old slot 0), Columns (10), Heads (11) and Feet
+        // (12), must be NAMED as removed, in archived order, because every
+        // remaining wire reattached one or more slots off and the counts
+        // alone never say which quantities are simply gone. Spec section 8
+        // and the taxonomy's Deconstruct row both promise exactly this.
+        string?[] deconstructArchived =
+        {
+            "Thrust Mesh", "Member Lines", "Form Lines", "Member IDs",
+            "Node IDs", "Support Points", "Load Points", "Load Vectors",
+            "Reaction Points", "Reaction Vectors", "Columns", "Heads",
+            "Feet", "Force Lines"
+        };
+        string[] deconstructRegistered =
+        {
+            "Member Lines", "Form Lines", "Member IDs", "Node IDs",
+            "Support Points", "Load Points", "Load Vectors",
+            "Reaction Points", "Reaction Vectors", "Force Lines"
+        };
+        string? slimmed = Ask(
+            new string?[] { "Result" },
+            deconstructArchived,
+            new[] { "Result" },
+            deconstructRegistered);
+        if (slimmed is not string slimText ||
+            !slimText.Contains("14 outputs archived", StringComparison.Ordinal) ||
+            !slimText.Contains("1 and 10 registered", StringComparison.Ordinal) ||
+            !slimText.Contains(
+                "removed: 'Thrust Mesh', 'Columns', 'Heads', 'Feet'",
+                StringComparison.Ordinal) ||
+            !slimText.Contains("check every", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Deconstruct's slim, 14 outputs to 10, must name both counts "
+                + "and the four removed ports in archived order, so the "
+                + "author knows which quantities are GONE rather than moved, "
+                + "and must still send them to check every reattached wire; "
+                + $"got '{slimmed}'.");
+        }
+
+        // Frame's own append: nine outputs archived against the ten
+        // registered, Anchor Lines new at the END, every shared slot still
+        // holding its name and the Result input untouched (ten archived
+        // ports against eleven registered in all). Nothing moved, so the
+        // author is told WHAT was appended and that the wires kept their
+        // ports, not sent to check every one of them for a change that
+        // could not have moved any.
+        string?[] frameArchived =
+        {
+            "Mesh", "Cables", "Principal Lines", "Principal Nodes",
+            "Anchor Nodes", "Perimeter Nodes", "Perimeter Lines",
+            "Columns", "Phase"
+        };
+        string[] frameRegistered =
+        {
+            "Mesh", "Cables", "Principal Lines", "Principal Nodes",
+            "Anchor Nodes", "Perimeter Nodes", "Perimeter Lines",
+            "Columns", "Phase", "Anchor Lines"
+        };
+        string? appended = Ask(
+            new string?[] { "Result" },
+            frameArchived,
+            new[] { "Result" },
+            frameRegistered);
+        if (appended is not string appendText ||
+            !appendText.Contains(
+                "'Anchor Lines' was appended", StringComparison.Ordinal) ||
+            !appendText.Contains(
+                "existing wires kept their ports", StringComparison.Ordinal) ||
+            appendText.Contains("check every", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Frame's append, nine outputs to ten with Anchor Lines new "
+                + "at the end, must name the append and say the wires kept "
+                + "their ports; 'check every' has no business in a warning "
+                + $"about a change that moved nothing; got '{appended}'.");
         }
 
         // The INPUT SIDE alone, which is what Export's Live hold reads.
@@ -6378,7 +7588,7 @@ internal static class Program
     /// Nothing chooses where a column stands by stiffness any more: every
     /// notch is held, so there is no arrangement for EI to pick between and
     /// no way for it to tune a placement while claiming not to. EI is asked
-    /// for on Monitor and nowhere else, and it has one job left, which has
+    /// for on Fit and nowhere else, and it has one job left, which has
     /// to be exact: DEFLECTION SCALES AS ONE OVER EI. The beam knows the
     /// SHAPE of the sag between the notches a column holds, and that exact
     /// reciprocal is what turns the shape into millimetres, which is the

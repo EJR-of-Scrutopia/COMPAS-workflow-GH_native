@@ -14,7 +14,7 @@ namespace Ananke.COMPAS.Native.Components
     /// Diagnose: read every diagnostic the chain wrote into a Result and say,
     /// in words, what is wrong and which lever to pull.
     ///
-    /// It renders what Columns, Animate and Monitor appended, severity first
+    /// It renders what Columns, Animate, Forces, Fit and Supports appended, severity first
     /// and grouped by source, and adds the CROSS-CHECKS no single component
     /// can make: Columns ran on a Result with no principal runs; Animate ran
     /// with no Columns upstream; every anchor is in a strip of its own; more
@@ -22,7 +22,8 @@ namespace Ananke.COMPAS.Native.Components
     /// </summary>
     public sealed class DiagnoseComponent : NativeComponentBase
     {
-        private static readonly string[] NativeOrder = { "Columns", "Animate", "Monitor", "Diagnose" };
+        private static readonly string[] NativeOrder =
+            { "Columns", "Animate", "Forces", "Fit", "Supports", "Diagnose" };
 
         public DiagnoseComponent()
             : base(
@@ -240,8 +241,11 @@ namespace Ananke.COMPAS.Native.Components
                 notRun.Add("Columns");
             if (result.Mould?.Frame is null)
                 notRun.Add("Animate");
-            if (!all.Any(e => ResultDiagnostics.SourceOf(e) == "Monitor"))
-                notRun.Add("Monitor");
+            foreach (string reader in new[] { "Forces", "Fit", "Supports" })
+            {
+                if (!all.Any(e => ResultDiagnostics.SourceOf(e) == reader))
+                    notRun.Add(reader);
+            }
             if (notRun.Count > 0)
                 text.AppendLine($"not yet run on this Result: {string.Join(", ", notRun)}").AppendLine();
 
