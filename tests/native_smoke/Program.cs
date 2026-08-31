@@ -11273,6 +11273,35 @@ internal static class Program
     /// a defect rather than a policy, and it is the same discipline
     /// every other clean fixture in this file now keeps through
     /// RequireNothingDropped.
+    ///
+    /// NOT MEASURED, and the reason is the same one ValidateSkinIdentity
+    /// gives: the author-facing WARNING lives in SolveInstance and needs
+    /// an IGH_DataAccess this harness has no native core to build. What
+    /// is measured here is the two counts the warning is raised on and
+    /// the two diagnostics lines it points at. The warning's own
+    /// sentence is READ, not run, and it is recorded here so a reviewer
+    /// can read it beside what it claims. It is SCALED TO THE FRACTION
+    /// DROPPED, because the sentence it replaced promised "a small hole
+    /// where each one was" while handing back an empty tree. A
+    /// HELICOIDAL shell is the case, and it was reproduced outside this
+    /// harness against the built plugin: on a three-turn ramp of inner
+    /// radius 1 and outer radius 2 climbing 2 m, at S 0.6, the honeycomb
+    /// drops 11 of 11 at CH 0.35 and 8 of 8 at CH 0.5 and the pattern is
+    /// EMPTY, while the courses engine drops 10 of 15 and 3 of 10.
+    /// Dropping everything there is the right answer, a level curve that
+    /// wraps not being a height field's; only the sentence was wrong.
+    /// The three branches, in SkinComponent.SolveNative:
+    ///   nothing survives: "NOTHING survived, so this pattern is EMPTY
+    ///   and covers none of the surface."
+    ///   at most a tenth dropped: "The skin has a small hole where each
+    ///   one was, and the tessellation Export writes still imports."
+    ///   more than a tenth: "That is N per cent of this pattern, so the
+    ///   skin has a LARGE hole and it covers only part of the surface;
+    ///   the tessellation Export writes still imports."
+    /// and every branch is preceded by the count against the TOTAL the
+    /// pattern built, "D of the B cells this pattern built were DROPPED
+    /// to keep it valid in plan", so the fraction is legible whichever
+    /// branch fires.
     /// </summary>
     private static void ValidateSkinPlanFilter(Assembly plugin)
     {

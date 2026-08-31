@@ -314,20 +314,52 @@ public sealed class SkinComponent :
             // tessellation. The drop is never silent: the author is told
             // how many and of which kind, exactly as the force-aligned
             // pattern already tells him.
+            // The sentence is SCALED TO THE FRACTION DROPPED, because a
+            // warning that promises a small hole while handing back an
+            // empty tree is worse than no warning at all. A HELICOIDAL
+            // shell is the case: its level curves are radial segments at
+            // an angle that keeps turning, so a course two turns up lies
+            // over a course two turns down and every cell overlaps
+            // something already kept. Measured on a three-turn ramp of
+            // inner radius 1 and outer radius 2 climbing 2 m, at S 0.6:
+            // the honeycomb drops 11 of 11 at CH 0.35 and 8 of 8 at CH
+            // 0.5, so the pattern is EMPTY, and the courses engine drops
+            // 10 of 15 and 3 of 10. Dropping everything there is the
+            // right answer, since a level curve that wraps is not a
+            // height field's and the surface is outside the spec's
+            // domain; only the sentence was wrong. So the count is
+            // always given against the TOTAL the pattern built; "a small
+            // hole where each one was" is reserved for at most a TENTH
+            // of that total; and where nothing survives the author is
+            // told the pattern is EMPTY rather than holed.
             int dropped =
                 generated.PlanDegenerateDropped +
                 generated.PlanOverlapDropped;
             if (dropped > 0)
             {
+                int built = dropped + generated.Cells.Count;
+                int percent = (int)Math.Round(100.0 * dropped / built);
+                string scale =
+                    generated.Cells.Count == 0
+                        ? "NOTHING survived, so this pattern is EMPTY " +
+                          "and covers none of the surface."
+                        : dropped * 10 <= built
+                            ? "The skin has a small hole where each one " +
+                              "was, and the tessellation Export writes " +
+                              "still imports."
+                            : $"That is {percent} per cent of this " +
+                              "pattern, so the skin has a LARGE hole and " +
+                              "it covers only part of the surface; the " +
+                              "tessellation Export writes still imports.";
                 AddRuntimeMessage(
                     GH_RuntimeMessageLevel.Warning,
-                    $"{dropped} cell" + (dropped == 1 ? " was" : "s were") +
-                    " DROPPED to keep the pattern valid in plan: " +
+                    $"{dropped} of the {built} cell" +
+                    (built == 1 ? "" : "s") + " this pattern built " +
+                    (dropped == 1 ? "was" : "were") +
+                    " DROPPED to keep it valid in plan: " +
                     $"{generated.PlanDegenerateDropped} self-crossing " +
                     $"and {generated.PlanOverlapDropped} overlapping a " +
-                    "cell already kept. The skin has a small hole where " +
-                    "each one was, and the tessellation Export writes " +
-                    "still imports. Diagnostics counts them.");
+                    $"cell already kept. {scale} Diagnostics counts them.");
             }
 
             var cellBranches = new List<List<Curve>>();
