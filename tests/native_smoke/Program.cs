@@ -689,6 +689,22 @@ internal static class Program
 
         try
         {
+            ValidateSkinIdentity(plugin);
+            Console.WriteLine(
+                "PASS  Skin identity: the old Skin GUID kept, the " +
+                "Armadillo Dual class and GUID gone from every " +
+                "component, the Pattern value list pinned (input 1, " +
+                "default 0, courses/hexagonal/force aligned), and all " +
+                "four outputs VISIBLE, the proposer convention.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin identity: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -9218,6 +9234,154 @@ internal static class Program
             "S must be greater than 1 mm");
         MustRefuse(hexagonal, 0.6, double.NaN,
             "Course Height must be greater than 1 mm");
+    }
+
+    /// <summary>
+    /// The one-component identity (spec section 2): the old Skin GUID is
+    /// KEPT, so a saved definition's Skin placement becomes the new
+    /// component under the ports-moved warning rather than an orphan; the
+    /// Armadillo Dual GUID retires and no component may ever carry it;
+    /// the Pattern input offers the three-entry value list the way
+    /// Columns' Type does, defaulting to courses; and the outputs are
+    /// VISIBLE, the proposer convention, because seeing the pattern the
+    /// moment it computes is the point of the component.
+    /// </summary>
+    private static void ValidateSkinIdentity(Assembly plugin)
+    {
+        Type skin = RequireComponentType(plugin, "SkinComponent");
+        var keptGuid = new Guid("7c2e9a54-3b6d-4f18-9e27-a1c5d8b4e063");
+        var retiredGuid = new Guid("51f4ade8-f918-4455-9823-563afbf201f4");
+
+        if (plugin.GetType(
+                "Ananke.COMPAS.Native.Components.ArmadilloDualComponent")
+            is not null)
+        {
+            throw new InvalidOperationException(
+                "ArmadilloDualComponent is retired; its class must not " +
+                "exist.");
+        }
+
+        object instance = Activator.CreateInstance(skin)
+            ?? throw new InvalidOperationException(
+                "Could not construct SkinComponent.");
+        try
+        {
+            Guid guid = (Guid)skin.GetProperty("ComponentGuid")!
+                .GetValue(instance)!;
+            if (guid != keptGuid)
+            {
+                throw new InvalidOperationException(
+                    "Skin keeps the OLD Skin's GUID " +
+                    $"{keptGuid}, so saved placements load; got {guid}.");
+            }
+
+            foreach (Type componentType in GetLoadableTypes(plugin)
+                .Where(IsConcretePublicGrasshopperComponent))
+            {
+                object other = Activator.CreateInstance(componentType)!;
+                try
+                {
+                    Guid otherGuid = (Guid)componentType
+                        .GetProperty("ComponentGuid")!.GetValue(other)!;
+                    if (otherGuid == retiredGuid)
+                    {
+                        throw new InvalidOperationException(
+                            $"{componentType.Name} carries the RETIRED " +
+                            "Armadillo Dual GUID, which is never " +
+                            "reused.");
+                    }
+                }
+                finally
+                {
+                    if (other is IDisposable disposableOther)
+                        disposableOther.Dispose();
+                }
+            }
+
+            // ---- the Pattern value list, the Columns Type mechanism.
+            // DeclaredOnly on the component type itself: the pin is that
+            // SkinComponent OVERRIDES the base's empty list.
+            PropertyInfo listsProperty = skin.GetProperty(
+                "SuggestedValueLists",
+                BindingFlags.Instance | BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly)
+                ?? throw new InvalidOperationException(
+                    "SkinComponent must OVERRIDE SuggestedValueLists " +
+                    "with the Pattern list, the Columns Type mechanism.");
+            IList specs = (IList)listsProperty.GetValue(instance)!;
+            if (specs.Count != 1)
+            {
+                throw new InvalidOperationException(
+                    $"One suggested list, Pattern; got {specs.Count}.");
+            }
+            object spec = specs[0]!;
+            Type specType = spec.GetType();
+            int inputIndex =
+                (int)specType.GetProperty("InputIndex")!.GetValue(spec)!;
+            string name =
+                (string)specType.GetProperty("Name")!.GetValue(spec)!;
+            string fallback = (string)specType
+                .GetProperty("DefaultValue")!.GetValue(spec)!;
+            IList items =
+                (IList)specType.GetProperty("Items")!.GetValue(spec)!;
+            string[] labels = items.Cast<object>()
+                .Select(item => (string)item.GetType()
+                    .GetField("Item1")!.GetValue(item)!)
+                .ToArray();
+            string[] values = items.Cast<object>()
+                .Select(item => (string)item.GetType()
+                    .GetField("Item2")!.GetValue(item)!)
+                .ToArray();
+            string[] expectedLabels =
+            {
+                "0 · courses", "1 · hexagonal", "2 · force aligned"
+            };
+            if (inputIndex != 1 ||
+                !string.Equals(name, "Pattern", StringComparison.Ordinal) ||
+                !string.Equals(fallback, "0", StringComparison.Ordinal) ||
+                !labels.SequenceEqual(expectedLabels, StringComparer.Ordinal) ||
+                !values.SequenceEqual(
+                    new[] { "0", "1", "2" }, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Pattern list pins: input 1, named Pattern, " +
+                    "default 0, items '0 · courses', '1 · hexagonal', " +
+                    "'2 · force aligned' with values 0, 1, 2. Got " +
+                    $"index {inputIndex}, name '{name}', default " +
+                    $"'{fallback}', labels [{string.Join(", ", labels)}].");
+            }
+
+            // ---- VISIBLE outputs, the proposer convention.
+            object server =
+                skin.GetProperty("Params")!.GetValue(instance)!;
+            IEnumerable outputs = (IEnumerable)server.GetType()
+                .GetProperty("Output")!.GetValue(server)!;
+            int outputCount = 0;
+            foreach (object? output in outputs)
+            {
+                outputCount++;
+                PropertyInfo? hidden =
+                    output!.GetType().GetProperty("Hidden");
+                if (hidden is not null &&
+                    hidden.GetValue(output) is bool isHidden && isHidden)
+                {
+                    throw new InvalidOperationException(
+                        "Skin is a PROPOSER: no output starts Hidden; " +
+                        "seeing the pattern the moment it computes is " +
+                        "the point of the component.");
+                }
+            }
+            if (outputCount != 4)
+            {
+                throw new InvalidOperationException(
+                    $"Four outputs (C, CO, FL, D); got {outputCount}.");
+            }
+        }
+        finally
+        {
+            if (instance is IDisposable disposable)
+                disposable.Dispose();
+        }
     }
 
     private static Type RequireComponentType(Assembly plugin, string typeName)
