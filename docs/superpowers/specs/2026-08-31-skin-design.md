@@ -84,11 +84,33 @@ the output boundary, the FrameGeometry Read/Build split.
 - The map: (u, z) is the point at signed arc length u from the seam along the level curve
   at height z (curves interpolated between cut heights where a vertex falls between
   them). Where a height has several components, each component is set out independently,
-  matched to the component below it by plan overlap.
+  matched to the component below it by a symmetric DISTANCE between the two curves in
+  plan. Erratum: this said "by plan overlap", meaning the overlap area of axis-aligned
+  plan bounding boxes, and that rule was wrong twice over. It is not invariant under a
+  rotation of the model, so the same surface turned through an arbitrary angle answered
+  differently and a genuine topology change went undetected at all but five angles in a
+  180 degree sweep; and a bounding box cannot express nesting, so an oculus dome's inner
+  and outer loops both claimed the outer and every band was refused. Distance is
+  invariant under rotation and reads nesting correctly.
 
-Because a TNA thrust surface is a height field, any cells set out through this map
-project to plan without overlap; the plan-degeneracy losses that halved the Armadillo
-Dual pattern cannot occur on the native patterns, and the harness asserts it.
+Where a level's components do not correspond to the level below (one splits, one dies,
+two swap, or any combination, which a count comparison cannot see), the band is REFUSED:
+it emits no cells, the count and the heights are named in the diagnostics, and a warning
+is raised. A stated hole beats cells that overlap, because the studio rejects a whole
+tessellation for one bad cell.
+
+Erratum, and the more important one. This section claimed that because a TNA thrust
+surface is a height field, cells set out through this map cannot self-cross or overlap in
+plan, and that the harness asserts it. The claim was defended by argument, and three
+successive adversarial rounds each found a surface where the argument fails: a transition
+on a rotated model, a re-entrant plan, and the honeycomb over closed level curves whose
+length changes quickly against the cell size. The guarantee is therefore ENFORCED rather
+than argued. Both native engines run a plan-validity filter over the cells they build, in
+emission order: a cell whose plan projection self-crosses is dropped, then a cell whose
+plan projection overlaps a cell that has already survived is dropped, and both counts are
+reported in the diagnostics with a warning when either is non-zero. This is the standard
+the force-aligned worker already met. Every clean fixture asserts the dropped counts are
+zero, so the filter cannot become a place where a regression hides.
 
 ## 5. Pattern 0: courses
 
