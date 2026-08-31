@@ -385,6 +385,17 @@ internal static class Program
         LoadAssembly(ghIoPath);
         LoadAssembly(grasshopperPath);
         Assembly plugin = LoadAssembly(pluginPath);
+        // The engine's OWN plan-validity predicates, resolved once, so
+        // RequireDisjointSimplePlans measures with the same arithmetic
+        // the engines filter with. See its doc comment.
+        SkinPlanSelfCrosses =
+            RequirePublicStatic(
+                RequireComponentType(plugin, "SkinPatterns"),
+                "PlanSelfCrosses");
+        SkinPlansOverlap =
+            RequirePublicStatic(
+                RequireComponentType(plugin, "SkinPatterns"),
+                "PlansOverlap");
 
         Type[] componentTypes = GetLoadableTypes(plugin)
             .Where(IsConcretePublicGrasshopperComponent)
@@ -724,6 +735,32 @@ internal static class Program
         {
             failures.Add(
                 $"Skin hexagonal engine: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinPlanFilter(plugin);
+            Console.WriteLine(
+                "PASS  Skin plan filter: the guarantee spec section 4 " +
+                "argues for is ENFORCED. Both engines run the plan " +
+                "validity filter over the sorted cells before they are " +
+                "returned, dropping a cell whose plan projection " +
+                "self-crosses and then one that overlaps a cell already " +
+                "kept, counting each kind into its own diagnostics line " +
+                "and the component's Warning. A non-convex L-shaped " +
+                "shell at CH 0.5 builds one self-crossing courses cell " +
+                "out of 95, and 94 disjoint simple ones come back; the " +
+                "same shell at six other course heights drops nothing. " +
+                "The engine's own predicates are what this harness " +
+                "measures with, so the two cannot disagree, and they " +
+                "are themselves exercised on a bow tie, a square, and " +
+                "squares apart, sharing an edge, overlapping and " +
+                "nested.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin plan filter: {DescribeException(exception)}");
         }
 
         try
@@ -8662,6 +8699,44 @@ internal static class Program
         return SkinHeightField(field);
     }
 
+    /// <summary>
+    /// The L-SHAPED shell, a NON-CONVEX plan. A height field on a 9 by 9
+    /// grid of vertices whose support is the 7 by 7 interior with the
+    /// top-right 3 by 3 block (i and j both 5 or more) left at zero, so
+    /// the plan of every level set is an L with a re-entrant corner.
+    /// Inside the support the height is 0.5 min(a_i, a_j) with
+    /// a = 0, 1, 2, 3, 4, 3, 2, 1, 0 along each axis, a pyramid of ridges
+    /// that reaches 2.0 at (4, 4), so the rise is the barrel's own 2 m.
+    ///
+    /// It is the fixture for the plan guarantee itself. Spec section 4's
+    /// claim that a height-field setout cannot produce a self-crossing
+    /// cell is argued from a convex picture; a re-entrant corner breaks
+    /// the argument. At CH 0.5 the courses engine builds ONE cell whose
+    /// plan projection self-crosses, out of 95, and at CH 0.3, 0.4,
+    /// 0.45, 0.55, 0.6 and 0.7 it builds none: one bad cell out of six
+    /// clean course heights, which is exactly the kind of rare breach an
+    /// argued guarantee cannot see and a filter can. One bad cell is
+    /// enough, because Bench Studio rejects a whole tessellation for it.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinLShapedNet()
+    {
+        var field = new double[9][];
+        for (int j = 0; j < 9; j++)
+            field[j] = new double[9];
+        for (int j = 1; j <= 7; j++)
+        {
+            for (int i = 1; i <= 7; i++)
+            {
+                if (i >= 5 && j >= 5)
+                    continue;
+                double across = Math.Min(Math.Min(i, 8 - i), 4);
+                double along = Math.Min(Math.Min(j, 8 - j), 4);
+                field[j][i] = 0.5 * Math.Min(across, along);
+            }
+        }
+        return SkinHeightField(field);
+    }
+
     /// <summary>A height field on a unit grid of quads, row-major, the
     /// shape SkinTwoPeakNet builds by hand: vertex (i, j) sits at
     /// (i, j, field[j][i]) and face (j, i) is the quad below and left of
@@ -9001,6 +9076,14 @@ internal static class Program
     private static double PlanCentroidY(double[][] outline) =>
         outline.Average(point => point[1]);
 
+    /// <summary>The engine's own plan-validity predicates,
+    /// <c>SkinPatterns.PlanSelfCrosses</c> and
+    /// <c>SkinPatterns.PlansOverlap</c>, resolved once in
+    /// <see cref="Run"/>.</summary>
+    private static MethodInfo? SkinPlanSelfCrosses;
+
+    private static MethodInfo? SkinPlansOverlap;
+
     /// <summary>
     /// The height-field guarantee, asserted (spec section 4): cells set
     /// out through the map project to plan without overlap. Every
@@ -9009,107 +9092,99 @@ internal static class Program
     /// crossing between cells, and no cell's own interior centroid
     /// strictly inside another). Touching along a shared joint edge is
     /// not overlap, so every test is strict.
+    ///
+    /// The arithmetic is NOT this harness's own. Both tests call the
+    /// engine's public predicates, the same two methods the engines now
+    /// FILTER with before they emit, so the two cannot disagree about
+    /// what a bad cell is. A filter that dropped what this check would
+    /// have accepted, or kept what it would have refused, would be
+    /// worse than no filter at all, and a second copy of the arithmetic
+    /// here is exactly how the two would drift apart. The harness's
+    /// contribution is the message: WHICH cell, and against what claim.
     /// </summary>
     private static void RequireDisjointSimplePlans(
         IReadOnlyList<double[][]> outlines,
         string label)
     {
-        static double Side(double[] from, double[] to, double[] at) =>
-            (to[0] - from[0]) * (at[1] - from[1]) -
-            (to[1] - from[1]) * (at[0] - from[0]);
-        static bool Crosses(
-            double[] a, double[] b, double[] c, double[] d)
+        MethodInfo? crossesMethod = SkinPlanSelfCrosses;
+        MethodInfo? overlapMethod = SkinPlansOverlap;
+        if (crossesMethod is null || overlapMethod is null)
         {
-            double d1 = Side(a, b, c);
-            double d2 = Side(a, b, d);
-            double d3 = Side(c, d, a);
-            double d4 = Side(c, d, b);
-            return ((d1 > 1.0e-9 && d2 < -1.0e-9) ||
-                    (d1 < -1.0e-9 && d2 > 1.0e-9)) &&
-                   ((d3 > 1.0e-9 && d4 < -1.0e-9) ||
-                    (d3 < -1.0e-9 && d4 > 1.0e-9));
+            throw new InvalidOperationException(
+                "SkinPatterns must expose PlanSelfCrosses and " +
+                "PlansOverlap publicly: the engines filter on them and " +
+                "this check measures on them, and one copy of the " +
+                "arithmetic is the whole point.");
         }
-        static bool Inside(double x, double y, double[][] polygon)
-        {
-            bool inside = false;
-            for (int i = 0, j = polygon.Length - 1;
-                 i < polygon.Length;
-                 j = i++)
-            {
-                if ((polygon[i][1] > y) != (polygon[j][1] > y) &&
-                    x < (polygon[j][0] - polygon[i][0]) *
-                        (y - polygon[i][1]) /
-                        (polygon[j][1] - polygon[i][1]) + polygon[i][0])
-                {
-                    inside = !inside;
-                }
-            }
-            return inside;
-        }
-        static (double X, double Y) Mean(double[][] polygon) =>
-            (polygon.Average(p => p[0]), polygon.Average(p => p[1]));
+        bool SelfCrosses(double[][] outline) =>
+            (bool)crossesMethod.Invoke(
+                null, new object[] { outline })!;
+        bool Overlap(double[][] first, double[][] second) =>
+            (bool)overlapMethod.Invoke(
+                null, new object[] { first, second })!;
 
         for (int at = 0; at < outlines.Count; at++)
         {
-            double[][] cell = outlines[at];
-            int count = cell.Length;
-            for (int i = 0; i < count; i++)
+            if (SelfCrosses(outlines[at]))
             {
-                for (int j = i + 1; j < count; j++)
-                {
-                    // Adjacent edges share a vertex, the closing edge
-                    // included; a shared vertex is not a crossing.
-                    if (j == i + 1 || (i == 0 && j == count - 1))
-                        continue;
-                    if (Crosses(
-                            cell[i], cell[(i + 1) % count],
-                            cell[j], cell[(j + 1) % count]))
-                    {
-                        throw new InvalidOperationException(
-                            $"{label}: cell {at}'s plan projection " +
-                            "self-crosses, which the height-field " +
-                            "setout guarantees against.");
-                    }
-                }
+                throw new InvalidOperationException(
+                    $"{label}: cell {at}'s plan projection " +
+                    "self-crosses, which the height-field " +
+                    "setout guarantees against.");
             }
         }
         for (int a = 0; a < outlines.Count; a++)
         {
             for (int b = a + 1; b < outlines.Count; b++)
             {
-                double[][] first = outlines[a];
-                double[][] second = outlines[b];
-                for (int i = 0; i < first.Length; i++)
-                {
-                    for (int j = 0; j < second.Length; j++)
-                    {
-                        if (Crosses(
-                                first[i],
-                                first[(i + 1) % first.Length],
-                                second[j],
-                                second[(j + 1) % second.Length]))
-                        {
-                            throw new InvalidOperationException(
-                                $"{label}: cells {a} and {b} overlap " +
-                                "in plan (edges properly cross).");
-                        }
-                    }
-                }
-                (double x, double y) = Mean(first);
-                if (Inside(x, y, first) && Inside(x, y, second))
+                if (Overlap(outlines[a], outlines[b]))
                 {
                     throw new InvalidOperationException(
-                        $"{label}: cell {a}'s interior lies inside " +
-                        $"cell {b}: the plans are not disjoint.");
-                }
-                (x, y) = Mean(second);
-                if (Inside(x, y, second) && Inside(x, y, first))
-                {
-                    throw new InvalidOperationException(
-                        $"{label}: cell {b}'s interior lies inside " +
-                        $"cell {a}: the plans are not disjoint.");
+                        $"{label}: cells {a} and {b} overlap in plan, " +
+                        "which the height-field setout guarantees " +
+                        "against.");
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// The plan guarantee is enforced, and enforcement is NOT a licence
+    /// to stop caring: a fixture that was clean must go on being clean,
+    /// so every clean case asserts that the engine dropped NOTHING.
+    /// Without this the filter would quietly absorb a regression and
+    /// ship a smaller pattern with the gate still green.
+    /// </summary>
+    private static void RequireNothingDropped(object generated, string label)
+    {
+        Type type = generated.GetType();
+        int degenerate = (int)type
+            .GetProperty("PlanDegenerateDropped")!.GetValue(generated)!;
+        int overlap = (int)type
+            .GetProperty("PlanOverlapDropped")!.GetValue(generated)!;
+        if (degenerate != 0 || overlap != 0)
+        {
+            throw new InvalidOperationException(
+                $"{label}: this pattern is clean in plan by " +
+                "construction, so the plan-validity filter must drop " +
+                $"NOTHING; it dropped {degenerate} self-crossing and " +
+                $"{overlap} overlapping. The filter is a guarantee, not " +
+                "a licence to start producing bad cells.");
+        }
+        string diagnostics = (string)type
+            .GetProperty("Diagnostics")!.GetValue(generated)!;
+        if (!diagnostics.Contains(
+                "Plan-degenerate cells dropped: 0",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains(
+                "Plan-overlap cells dropped: 0",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{label}: both drop counts are reported in the " +
+                "diagnostics as their own lines, zero included, so the " +
+                "guarantee is legible rather than merely true; got " +
+                $"'{diagnostics}'.");
         }
     }
 
@@ -9274,6 +9349,7 @@ internal static class Program
         RequireDisjointSimplePlans(
             cells.Select(cell => cell.Outline).ToArray(),
             "courses/barrel");
+        RequireNothingDropped(generated, "courses/barrel");
         string diagnostics = (string)generated.GetType()
             .GetProperty("Diagnostics")!.GetValue(generated)!;
         if (!diagnostics.Contains("Pattern: courses",
@@ -9341,6 +9417,7 @@ internal static class Program
         RequireDisjointSimplePlans(
             domeCells.Select(cell => cell.Outline).ToArray(),
             "courses/dome");
+        RequireNothingDropped(domeGenerated, "courses/dome");
     }
 
     /// <summary>
@@ -9474,6 +9551,7 @@ internal static class Program
         RequireDisjointSimplePlans(
             cells.Select(cell => cell.Outline).ToArray(),
             "courses/two peaks");
+        RequireNothingDropped(built, "courses/two peaks");
 
         object hexBuilt = hexagonal.Invoke(
             null, new object[] { twoPeak, 0.6, 0.5 })!;
@@ -9520,6 +9598,7 @@ internal static class Program
         RequireDisjointSimplePlans(
             hexCells.Select(cell => cell.Outline).ToArray(),
             "hexagonal/two peaks");
+        RequireNothingDropped(hexBuilt, "hexagonal/two peaks");
 
         // ---- the refusal is a refusal, not a habit.
         foreach ((string label, (double[][], int[][]) fixture) in
@@ -9575,12 +9654,42 @@ internal static class Program
         // span of rows c = 1 and c = 2 and of no other: TWO rows refused,
         // their clamped centres at z 0.5 and z 1.0, which are courses 1
         // and 2.
-        (int Courses, int Hexagons) RefusesTheMiddleBand(
+        // The drops are given per fixture and per engine, and what comes
+        // back is what each engine BUILT, kept plus dropped, which is
+        // the quantity a rotation must leave alone.
+        (int CoursesBuilt, int HexagonsBuilt) RefusesTheMiddleBand(
             string label,
             (double[][] Vertices, int[][] Faces) fixture,
-            bool coursePlansMeasured,
-            bool honeycombPlansMeasured)
+            (int Degenerate, int Overlap) expectedCourseDrops,
+            (int Degenerate, int Overlap) expectedHexagonDrops)
         {
+            (int Degenerate, int Overlap) Drops(object generated)
+            {
+                Type type = generated.GetType();
+                return (
+                    (int)type.GetProperty("PlanDegenerateDropped")!
+                        .GetValue(generated)!,
+                    (int)type.GetProperty("PlanOverlapDropped")!
+                        .GetValue(generated)!);
+            }
+            void RequireDrops(
+                object generated,
+                string which,
+                (int Degenerate, int Overlap) expected)
+            {
+                (int degenerate, int overlap) = Drops(generated);
+                if (degenerate != expected.Degenerate ||
+                    overlap != expected.Overlap)
+                {
+                    throw new InvalidOperationException(
+                        $"{which}/{label}: the plan-validity filter is " +
+                        $"pinned at {expected.Degenerate} self-crossing " +
+                        $"and {expected.Overlap} overlapping cells " +
+                        $"dropped; it dropped {degenerate} and " +
+                        $"{overlap}.");
+                }
+            }
+
             object subject = Net(fixture);
 
             object byCourses = courses.Invoke(
@@ -9616,12 +9725,10 @@ internal static class Program
                         $"{course} of the {label} must still carry cells.");
                 }
             }
-            if (coursePlansMeasured)
-            {
-                RequireDisjointSimplePlans(
-                    courseCells.Select(cell => cell.Outline).ToArray(),
-                    $"courses/{label}");
-            }
+            RequireDisjointSimplePlans(
+                courseCells.Select(cell => cell.Outline).ToArray(),
+                $"courses/{label}");
+            RequireDrops(byCourses, "courses", expectedCourseDrops);
 
             object byHexagons = hexagonal.Invoke(
                 null, new object[] { subject, 0.6, 0.5 })!;
@@ -9655,30 +9762,33 @@ internal static class Program
                     "centres sit at z 0.5 and z 1.0, courses 1 and 2, so " +
                     $"no surviving {label} cell may carry either.");
             }
-            if (honeycombPlansMeasured)
-            {
-                RequireDisjointSimplePlans(
-                    hexagons.Select(cell => cell.Outline).ToArray(),
-                    $"hexagonal/{label}");
-            }
-            return (courseCells.Length, hexagons.Length);
+            RequireDisjointSimplePlans(
+                hexagons.Select(cell => cell.Outline).ToArray(),
+                $"hexagonal/{label}");
+            RequireDrops(byHexagons, "hexagonal", expectedHexagonDrops);
+            return (
+                courseCells.Length +
+                    expectedCourseDrops.Degenerate +
+                    expectedCourseDrops.Overlap,
+                hexagons.Length +
+                    expectedHexagonDrops.Degenerate +
+                    expectedHexagonDrops.Overlap);
         }
-        (int Courses, int Hexagons) upright = RefusesTheMiddleBand(
-            "two-hump barrel", SkinTwoHumpBarrelNet(), true, true);
-        // The split-and-death HONEYCOMB's plans are NOT asserted, and the
-        // assertion is left out rather than weakened. After items B2 and
-        // D2 it still comes back with 4 self-crossing cells and 8
-        // overlapping pairs, all of them in course 0 at the far ends of
-        // the u domain, where the anti-seam cut of a closed loop with a
-        // square plan folds the outline back on itself. That is the same
-        // family as the dome crown breach item D2 measures and does not
-        // fix: a pre-existing honeycomb defect on closed loops, not a
-        // transition defect, and it needs its own ruling. Everything else
-        // this fixture measures IS asserted, the courses plans included.
-        // The full numbers are in
-        // .superpowers/sdd/2026-08-31-skin/final-fix-report-2.md.
+        (int CoursesBuilt, int HexagonsBuilt) upright =
+            RefusesTheMiddleBand(
+                "two-hump barrel", SkinTwoHumpBarrelNet(), (0, 0), (0, 0));
+        // The split-and-death HONEYCOMB's plans were left UNASSERTED in
+        // the previous wave, because four of its cells self-crossed in
+        // plan at the far ends of a square loop's u domain, where the
+        // anti-seam cut folds the clipped outline back on itself. They
+        // are asserted now: the plan-validity filter drops those four
+        // before the pattern is emitted, and the four is pinned, so the
+        // defect underneath is measured rather than tolerated. It is a
+        // pre-existing honeycomb defect on closed level curves, not a
+        // transition defect, and it belongs to the next sub-project with
+        // the dome crown's.
         RefusesTheMiddleBand(
-            "split-and-death", SkinSplitAndDeathNet(), true, false);
+            "split-and-death", SkinSplitAndDeathNet(), (0, 0), (4, 0));
 
         // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
         // world Z leaves every z, every face and every traced component
@@ -9693,47 +9803,49 @@ internal static class Program
         // case (13 and 183) and is the angle pinned here; the upright
         // case above pins the other alignment, so both are measured.
         //
-        // The cell COUNTS are asserted equal between the two alignments,
-        // which is the invariance itself rather than a number: a
-        // rotation cannot add or remove a cell. They are NOT asserted
-        // cell for cell, and deliberately so. A closed loop's seam falls
-        // back to the trace vertex on the +X bearing from the loop's plan
-        // centroid, a stated GLOBAL rule that reads the world axes on
-        // purpose (as the lowest open strip's does), so turning the model
-        // moves the seam to a different vertex and with it every setout
-        // coordinate of the hump loops. That is the rule working, not a
-        // defect: the SET of cells is a property of the geometry, and
-        // where the setout starts along a closed loop is a convention.
+        // What is asserted equal between the two alignments is the
+        // number of cells BUILT, kept plus dropped, which is the
+        // invariance itself rather than a number: a rotation cannot add
+        // or remove a lattice site or a piece of a course. The cells are
+        // NOT asserted cell for cell, and deliberately so. A closed
+        // loop's seam falls back to the trace vertex on the +X bearing
+        // from the loop's plan centroid, a stated GLOBAL rule that reads
+        // the world axes on purpose (as the lowest open strip's does),
+        // so turning the model moves the seam to a different vertex and
+        // with it every setout coordinate of the hump loops. That is the
+        // rule working: the SET of cells is a property of the geometry,
+        // and where the setout starts along a closed loop is a stated
+        // convention.
         //
-        // NEITHER engine's PLANS are asserted on the turned fixture, and
-        // the assertion is left out rather than weakened. Moving the seam
-        // leaves the top course's two hump loops with two cells that
-        // self-cross in plan, and one overlapping pair each, at 30, 37,
-        // 45, 90 and 137 degrees alike (clean at 0 and 17). They are NOT
-        // correspondence damage: TransitionBands is 1 at every angle and
-        // the band that spans the change carries no cells at any of them.
-        // They are a CELL-SHAPE defect on a re-entrant closed loop, the
-        // same family as the L-shaped shell's one bad courses cell and
-        // the honeycomb's over the dome crown, and the plan-validity
-        // filter is what answers it. This assertion is turned ON in the
-        // commit that adds the filter, which is where it becomes a
-        // measurement of something rather than a hope.
-        (int Courses, int Hexagons) turned = RefusesTheMiddleBand(
-            "two-hump barrel rotated 37 degrees",
-            SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
-            false,
-            false);
-        if (turned.Courses != upright.Courses ||
-            turned.Hexagons != upright.Hexagons ||
-            upright.Courses == 0 ||
-            upright.Hexagons == 0)
+        // Moving the seam is also why the turned fixture DROPS where the
+        // upright one does not: the top course's two hump loops each end
+        // up with one piece whose plan projection self-crosses, and two
+        // honeycomb cells go the same way with two more overlapping. It
+        // happens at 30, 37, 45, 90 and 137 degrees alike and not at 0
+        // or 17. It is NOT correspondence damage: TransitionBands is 1
+        // at every angle and the refused band carries no cells at any of
+        // them. It is a cell-shape defect on a re-entrant closed loop,
+        // the same family as the L-shaped shell's, and the filter is
+        // what answers it: the plans that survive ARE asserted disjoint
+        // and simple, on both engines, at both alignments.
+        (int CoursesBuilt, int HexagonsBuilt) turned =
+            RefusesTheMiddleBand(
+                "two-hump barrel rotated 37 degrees",
+                SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
+                (2, 0),
+                (2, 2));
+        if (turned.CoursesBuilt != upright.CoursesBuilt ||
+            turned.HexagonsBuilt != upright.HexagonsBuilt ||
+            upright.CoursesBuilt == 0 ||
+            upright.HexagonsBuilt == 0)
         {
             throw new InvalidOperationException(
                 "Turning a model about world Z cannot add or remove a " +
-                "cell: the two-hump barrel gives " +
-                $"{upright.Courses} courses and {upright.Hexagons} " +
-                $"honeycomb cells upright and {turned.Courses} and " +
-                $"{turned.Hexagons} at 37 degrees.");
+                "cell: the two-hump barrel BUILDS " +
+                $"{upright.CoursesBuilt} courses and " +
+                $"{upright.HexagonsBuilt} honeycomb cells upright and " +
+                $"{turned.CoursesBuilt} and {turned.HexagonsBuilt} at " +
+                "37 degrees, kept plus dropped.");
         }
 
         // ---- the ANNULAR shell, whose every cut is two NESTED loops.
@@ -9801,22 +9913,46 @@ internal static class Program
                         "bands, each a pair of nested loops rounding to " +
                         $"52 pieces); got {ringCells.Length}.");
                 }
-                // The PLANS. Every courses case is asserted; the
-                // honeycomb is asserted at CH 0.2 and 0.35 and LEFT OUT,
-                // not weakened, at CH 0.5, 0.8 and 1.9, where it still
-                // comes back with 4, 6 and 12 self-crossing cells. Those
-                // are not a correspondence defect: they are the same
-                // pre-existing family the dome crown and the
-                // split-and-death honeycomb are in, the honeycomb laying
-                // a lattice in ABSOLUTE arc length across rows whose
-                // lengths differ, which is measured in
-                // .superpowers/sdd/2026-08-31-skin/final-fix-report-3.md
-                // and belongs to the next sub-project.
-                if (engine == courses || ringHeight <= 0.35)
+                // The PLANS, at every one of the ten cases. The courses
+                // engine drops nothing anywhere on this shell; the
+                // honeycomb drops 4 self-crossing and 2 overlapping
+                // cells at CH 0.5, 6 and 0 at CH 0.8 and 12 and 5 at CH
+                // 1.9, and nothing at CH 0.2 or 0.35. Those are not a
+                // correspondence defect: they are the same pre-existing
+                // family the dome crown and the split-and-death
+                // honeycomb are in, the honeycomb laying its lattice in
+                // ABSOLUTE arc length across rows whose lengths differ,
+                // and here the inner loop's length GROWS with height
+                // while the outer's shrinks, which is the sharpest case
+                // of it in the harness. Pinned as measurements, not
+                // derivations, so the size of the inherited problem is
+                // on the record and cannot grow unseen.
+                RequireDisjointSimplePlans(
+                    ringCells.Select(cell => cell.Outline).ToArray(),
+                    $"{engine.Name}/ring vault CH {ringHeight}");
+                (int Degenerate, int Overlap) expectedDrops =
+                    engine == courses
+                        ? (0, 0)
+                        : ringHeight switch
+                        {
+                            0.5 => (4, 2),
+                            0.8 => (6, 0),
+                            1.9 => (12, 5),
+                            _ => (0, 0)
+                        };
+                int ringDegenerate = Reading<int>(
+                    built2, "PlanDegenerateDropped");
+                int ringOverlap = Reading<int>(
+                    built2, "PlanOverlapDropped");
+                if (ringDegenerate != expectedDrops.Degenerate ||
+                    ringOverlap != expectedDrops.Overlap)
                 {
-                    RequireDisjointSimplePlans(
-                        ringCells.Select(cell => cell.Outline).ToArray(),
-                        $"{engine.Name}/ring vault CH {ringHeight}");
+                    throw new InvalidOperationException(
+                        $"{engine.Name} on the annular shell at CH " +
+                        $"{ringHeight} is pinned to drop " +
+                        $"{expectedDrops.Degenerate} self-crossing and " +
+                        $"{expectedDrops.Overlap} overlapping cells; it " +
+                        $"dropped {ringDegenerate} and {ringOverlap}.");
                 }
             }
         }
@@ -9997,10 +10133,14 @@ internal static class Program
 
         // ---- 3. the cells are the ordered fixture's, cell for cell.
         object ordered = Net(SkinBarrelNet());
-        var orderedCells = SkinCells(courses.Invoke(
-            null, new object[] { ordered, 0.6, 0.5 })!);
-        var scrambledCells = SkinCells(courses.Invoke(
-            null, new object[] { scrambled, 0.6, 0.5 })!);
+        object orderedBuilt = courses.Invoke(
+            null, new object[] { ordered, 0.6, 0.5 })!;
+        object scrambledBuilt = courses.Invoke(
+            null, new object[] { scrambled, 0.6, 0.5 })!;
+        var orderedCells = SkinCells(orderedBuilt);
+        var scrambledCells = SkinCells(scrambledBuilt);
+        RequireNothingDropped(orderedBuilt, "courses/barrel ordered");
+        RequireNothingDropped(scrambledBuilt, "courses/barrel scrambled");
         if (orderedCells.Length != 84 ||
             scrambledCells.Length != orderedCells.Length)
         {
@@ -10047,8 +10187,11 @@ internal static class Program
             scrambledCells.Select(cell => cell.Outline).ToArray(),
             "courses/barrel scrambled");
 
-        var scrambledHexagons = SkinCells(hexagonal.Invoke(
-            null, new object[] { scrambled, 0.6, 0.5 })!);
+        object scrambledHexBuilt = hexagonal.Invoke(
+            null, new object[] { scrambled, 0.6, 0.5 })!;
+        var scrambledHexagons = SkinCells(scrambledHexBuilt);
+        RequireNothingDropped(
+            scrambledHexBuilt, "hexagonal/barrel scrambled");
         if (scrambledHexagons.Length != 76)
         {
             throw new InvalidOperationException(
@@ -10092,8 +10235,10 @@ internal static class Program
                 "here, reads it as not negative, and leaves the crown " +
                 "loop running against every loop below it.");
         }
-        var sitedCells = SkinCells(courses.Invoke(
-            null, new object[] { sited, 0.6, 0.5 })!);
+        object sitedBuilt = courses.Invoke(
+            null, new object[] { sited, 0.6, 0.5 })!;
+        var sitedCells = SkinCells(sitedBuilt);
+        RequireNothingDropped(sitedBuilt, "courses/dome sited 500 m out");
         if (sitedCells.Length != 42)
         {
             throw new InvalidOperationException(
@@ -10343,6 +10488,7 @@ internal static class Program
         RequireDisjointSimplePlans(
             cells.Select(cell => cell.Outline).ToArray(),
             "hexagonal/barrel");
+        RequireNothingDropped(generated, "hexagonal/barrel");
         string diagnostics = (string)generated.GetType()
             .GetProperty("Diagnostics")!.GetValue(generated)!;
         if (!diagnostics.Contains("Pattern: hexagonal",
@@ -10369,31 +10515,39 @@ internal static class Program
         // from the widest-row membership it replaced; its derivation and
         // its dependence on the anti-seam cut are written out beside it.
         //
-        // Item D2 widens this from the single CH 0.5 case to a GRID of
+        // Item D2 widened this from the single CH 0.5 case to a GRID of
         // course heights, so the guarantee is measured where the shipped
         // default 0.35 actually lives rather than only where it happens
-        // to hold. Two of the four are NOT asserted disjoint, and the
-        // assertion is LEFT OUT rather than weakened: after D2 the dome
-        // honeycomb still comes back with 2 self-crossing cells and 2
-        // overlapping pairs at CH 0.35, and 6 and 16 at CH 0.8. That is a
-        // PRE-EXISTING crown defect, present on the base build before any
-        // of this wave (2 and 6 at CH 0.35, 6 and 26 at CH 0.8) and
-        // untouched by items A2 and B2, which is why D2 measured it and
-        // did not fix it: it is the honeycomb's clamping behaviour where
-        // a closed level curve shrinks towards nothing, it needs its own
-        // ruling, and that ruling is not in this wave. The measurements
-        // are tabled in
-        // .superpowers/sdd/2026-08-31-skin/final-fix-report-2.md.
+        // to hold, and left two of the four unasserted because the
+        // honeycomb still breached there. It no longer breaches
+        // ANYWHERE, because the plan-validity filter drops what breaches
+        // before it is emitted, so all four are asserted disjoint now.
+        //
+        // What is pinned instead is WHAT THE FILTER DROPS, which is the
+        // measure of the defect underneath it. The honeycomb lays its
+        // lattice in ABSOLUTE arc length across rows whose lengths
+        // differ, so equal u is a different fraction of each row and the
+        // cells shear until they overlap; the answer is a per-row cell
+        // count, a redesign belonging to the next sub-project. On this
+        // fixture the filter drops 2 self-crossing cells and no
+        // overlapping one at CH 0.35, and 6 and 2 at CH 0.8, and nothing
+        // at CH 0.2 or 0.5. Those four pairs are pinned as MEASUREMENTS,
+        // not derivations: they are the size of the inherited problem,
+        // and pinning them means it can neither grow nor be quietly
+        // reintroduced elsewhere, and that the next round will see them
+        // fall to zero. The measurements are tabled in
+        // .superpowers/sdd/2026-08-31-skin/final-fix-report-3.md.
         (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
         object domeNet = Activator.CreateInstance(
             netType, new object[] { domeVertices, domeFaces })!;
-        foreach ((double domeHeight, bool plansMeasured, int expected) in
+        foreach ((double domeHeight, int expected,
+                  int expectedDegenerate, int expectedOverlap) in
                  new[]
                  {
-                     (0.2, true, 0),
-                     (0.35, false, 0),
-                     (0.5, true, 38),
-                     (0.8, false, 0)
+                     (0.2, 0, 0, 0),
+                     (0.35, 0, 2, 0),
+                     (0.5, 38, 0, 0),
+                     (0.8, 0, 6, 2)
                  })
         {
             object domeGenerated = hexagonal.Invoke(
@@ -10470,11 +10624,26 @@ internal static class Program
                         $"course band, at CH {domeHeight} as anywhere.");
                 }
             }
-            if (plansMeasured)
+            RequireDisjointSimplePlans(
+                domeCells.Select(cell => cell.Outline).ToArray(),
+                $"hexagonal/dome CH {domeHeight}");
+            int droppedDegenerate = (int)domeGenerated.GetType()
+                .GetProperty("PlanDegenerateDropped")!
+                .GetValue(domeGenerated)!;
+            int droppedOverlap = (int)domeGenerated.GetType()
+                .GetProperty("PlanOverlapDropped")!
+                .GetValue(domeGenerated)!;
+            if (droppedDegenerate != expectedDegenerate ||
+                droppedOverlap != expectedOverlap)
             {
-                RequireDisjointSimplePlans(
-                    domeCells.Select(cell => cell.Outline).ToArray(),
-                    $"hexagonal/dome CH {domeHeight}");
+                throw new InvalidOperationException(
+                    "The plan-validity filter's drops on the dome " +
+                    $"honeycomb at CH {domeHeight} are pinned at " +
+                    $"{expectedDegenerate} self-crossing and " +
+                    $"{expectedOverlap} overlapping, the measured size " +
+                    "of the honeycomb's absolute-arc-length defect over " +
+                    $"closed level curves; got {droppedDegenerate} and " +
+                    $"{droppedOverlap}.");
             }
         }
 
@@ -10531,6 +10700,173 @@ internal static class Program
             RequireDisjointSimplePlans(
                 shallowCells.Select(cell => cell.Outline).ToArray(),
                 $"hexagonal/shallow CH {shallowHeight}");
+            RequireNothingDropped(
+                shallow, $"hexagonal/shallow CH {shallowHeight}");
+        }
+    }
+
+    /// <summary>
+    /// The plan guarantee ENFORCED (spec section 4), measured on the
+    /// surface that breaks the argument it used to rest on.
+    ///
+    /// Three parts, and the first is the one that makes the other two
+    /// mean anything.
+    ///
+    /// 1. THE PREDICATE ITSELF. Every plan assertion in this harness now
+    /// calls the engine's own PlanSelfCrosses and PlansOverlap, so the
+    /// filter and the check cannot drift apart; the price is that a
+    /// predicate that always answered "no" would make every plan
+    /// assertion in the file vacuous and drop nothing. So the predicate
+    /// is exercised on hand-built cases with hand-known answers. The bow
+    /// tie (0,0), (1,0), (0,1), (1,1) crosses itself: its second edge
+    /// runs along x + y = 1 and its closing edge along y = x, and those
+    /// meet at (0.5, 0.5), strictly inside both, while the unit square
+    /// (0,0), (1,0), (1,1), (0,1) does not. Two unit squares a clear gap
+    /// apart do not overlap; two that SHARE an edge do not either, which
+    /// is the whole reason the crossing test is strict, since every pair
+    /// of neighbours in a course shares its joint; two offset by
+    /// (0.5, 0.5) do, by a proper edge crossing; and a small square
+    /// wholly inside a large one does, by containment, which no edge
+    /// crossing can see.
+    ///
+    /// 2. THE L-SHAPED SHELL at CH 0.5, the case the argument misses
+    /// (the derivation is in SkinLShapedNet). The courses engine builds
+    /// 95 cells there and exactly ONE of them self-crosses in plan; the
+    /// filter drops it, reports it, and hands back 94 whose plans are
+    /// disjoint and simple. The 94 is 95 minus the one, and the 95 is
+    /// not pinned separately because it is the arithmetic of a
+    /// nine-column L nobody can read off in one line: what is pinned is
+    /// the DROP, one self-crossing and no overlapping, and the fact that
+    /// what remains is clean.
+    ///
+    /// 3. THE FILTER IS NOT A BLANKET. At CH 0.3, 0.4, 0.45, 0.55, 0.6
+    /// and 0.7 the same shell drops NOTHING, which is what makes CH 0.5
+    /// a defect rather than a policy, and it is the same discipline
+    /// every other clean fixture in this file now keeps through
+    /// RequireNothingDropped.
+    /// </summary>
+    private static void ValidateSkinPlanFilter(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo selfCrosses =
+            RequirePublicStatic(patterns, "PlanSelfCrosses");
+        MethodInfo overlap = RequirePublicStatic(patterns, "PlansOverlap");
+
+        // ---- 1. the predicate, on hand-built cases.
+        bool Crossing(double[][] outline) =>
+            (bool)selfCrosses.Invoke(null, new object[] { outline })!;
+        bool Overlapping(double[][] first, double[][] second) =>
+            (bool)overlap.Invoke(null, new object[] { first, second })!;
+        double[][] Square(double x, double y, double side) => new[]
+        {
+            new[] { x, y, 0.0 },
+            new[] { x + side, y, 0.0 },
+            new[] { x + side, y + side, 0.0 },
+            new[] { x, y + side, 0.0 }
+        };
+        double[][] bowTie =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 }
+        };
+        if (!Crossing(bowTie))
+        {
+            throw new InvalidOperationException(
+                "A bow tie self-crosses in plan: the engine's own " +
+                "PlanSelfCrosses must say so, or every plan assertion " +
+                "in this harness is vacuous and the filter drops " +
+                "nothing.");
+        }
+        if (Crossing(Square(0.0, 0.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "A unit square does not self-cross, and a predicate " +
+                "that says it does would empty every pattern.");
+        }
+        if (Overlapping(Square(0.0, 0.0, 1.0), Square(3.0, 3.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "Two squares a clear gap apart do not overlap.");
+        }
+        if (Overlapping(Square(0.0, 0.0, 1.0), Square(1.0, 0.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "Two squares SHARING an edge do not overlap: every " +
+                "pair of neighbours in a course shares its joint, which " +
+                "is why the crossing test is strict.");
+        }
+        if (!Overlapping(Square(0.0, 0.0, 1.0), Square(0.5, 0.5, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "Two squares offset by half their side overlap, by a " +
+                "proper edge crossing.");
+        }
+        if (!Overlapping(Square(0.0, 0.0, 4.0), Square(1.0, 1.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "A square wholly INSIDE another overlaps it, and no " +
+                "edge crossing can see that: containment is the case " +
+                "the interior-point test exists for.");
+        }
+
+        // ---- 2 and 3. the L-shaped shell.
+        (double[][] vertices, int[][] faces) = SkinLShapedNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        object built = courses.Invoke(
+            null, new object[] { net, 0.6, 0.5 })!;
+        var cells = SkinCells(built);
+        int degenerate = (int)built.GetType()
+            .GetProperty("PlanDegenerateDropped")!.GetValue(built)!;
+        int dropped = (int)built.GetType()
+            .GetProperty("PlanOverlapDropped")!.GetValue(built)!;
+        if (degenerate != 1 || dropped != 0)
+        {
+            throw new InvalidOperationException(
+                "A non-convex L-shaped shell at CH 0.5 builds exactly " +
+                "ONE courses cell whose plan projection self-crosses, " +
+                "and the filter drops it: 1 self-crossing and 0 " +
+                $"overlapping; got {degenerate} and {dropped}.");
+        }
+        if (cells.Length != 94)
+        {
+            throw new InvalidOperationException(
+                "95 cells built less the one dropped leaves 94; got " +
+                $"{cells.Length}.");
+        }
+        string diagnostics = (string)built.GetType()
+            .GetProperty("Diagnostics")!.GetValue(built)!;
+        if (!diagnostics.Contains(
+                "Plan-degenerate cells dropped: 1",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains(
+                "Plan-overlap cells dropped: 0",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains("Cells: 94", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A dropped cell is never silent: both counts are their " +
+                "own diagnostics lines and the cell count is the " +
+                $"SURVIVORS'; got '{diagnostics}'.");
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "courses/L-shaped shell CH 0.5");
+
+        foreach (double height in
+                 new[] { 0.3, 0.4, 0.45, 0.55, 0.6, 0.7 })
+        {
+            object clean = courses.Invoke(
+                null, new object[] { net, 0.6, height })!;
+            RequireNothingDropped(
+                clean, $"courses/L-shaped shell CH {height}");
+            RequireDisjointSimplePlans(
+                SkinCells(clean).Select(cell => cell.Outline).ToArray(),
+                $"courses/L-shaped shell CH {height}");
         }
     }
 

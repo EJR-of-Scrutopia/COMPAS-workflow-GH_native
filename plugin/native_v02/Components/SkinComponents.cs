@@ -170,11 +170,13 @@ public sealed class SkinComponent :
             "D",
             "Readable text. Native patterns: the pattern name, cell and "
                 + "course counts, mean/min/max piece length, the stagger, "
-                + "the count of boundary-clipped cells and, where bands "
-                + "were REFUSED because the level curves across them do "
-                + "not correspond, how many and the heights each "
-                + "refusal sits between. Force aligned: the worker's "
-                + "diagnostics verbatim.",
+                + "the count of boundary-clipped cells, how many cells "
+                + "were DROPPED to keep the pattern valid in plan (self-"
+                + "crossing, and overlapping a cell already kept) and, "
+                + "where bands were REFUSED because the level curves "
+                + "across them do not correspond, how many and the "
+                + "heights each refusal sits between. Force aligned: the "
+                + "worker's diagnostics verbatim.",
             GH_ParamAccess.item);
     }
 
@@ -302,6 +304,30 @@ public sealed class SkinComponent :
                     "has a HOLE at those heights and this pattern does " +
                     "not cover the surface. Diagnostics names the " +
                     "heights.");
+            }
+
+            // A cell the engine DROPPED because its plan projection
+            // self-crossed, or overlapped a cell already kept. Spec
+            // section 4 claims the native patterns cannot produce
+            // either, and the claim is now enforced rather than argued,
+            // because ONE bad cell makes Bench Studio reject the whole
+            // tessellation. The drop is never silent: the author is told
+            // how many and of which kind, exactly as the force-aligned
+            // pattern already tells him.
+            int dropped =
+                generated.PlanDegenerateDropped +
+                generated.PlanOverlapDropped;
+            if (dropped > 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{dropped} cell" + (dropped == 1 ? " was" : "s were") +
+                    " DROPPED to keep the pattern valid in plan: " +
+                    $"{generated.PlanDegenerateDropped} self-crossing " +
+                    $"and {generated.PlanOverlapDropped} overlapping a " +
+                    "cell already kept. The skin has a small hole where " +
+                    "each one was, and the tessellation Export writes " +
+                    "still imports. Diagnostics counts them.");
             }
 
             var cellBranches = new List<List<Curve>>();

@@ -60,15 +60,19 @@ internal sealed record SkinCell(
 
 /// <summary>One generated pattern: the cells sorted by course then
 /// position (the studio's build sequence), the band count, the readable
-/// diagnostics text the component's D output carries, and the count of
+/// diagnostics text the component's D output carries, the count of
 /// bands REFUSED because the level curves across them do not correspond
-/// one for one, which the component turns into a runtime Warning because
-/// a hole in the skin has to be said out loud.</summary>
+/// one for one, and the two counts of cells DROPPED by the plan-validity
+/// filter, self-crossing and overlapping. The component turns all three
+/// into runtime Warnings, because a hole in the skin has to be said out
+/// loud whether a band or a cell made it.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
     string Diagnostics,
-    int TransitionBands);
+    int TransitionBands,
+    int PlanDegenerateDropped,
+    int PlanOverlapDropped);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -828,6 +832,237 @@ internal static class SkinPatterns
         return run;
     }
 
+    // ---- the plan guarantee, enforced (spec section 4) ------------------
+
+    /// <summary>
+    /// Which side of the directed line from-to the point at lies on:
+    /// positive left, negative right, zero on the line. Plan only.
+    /// </summary>
+    private static double PlanSide(double[] from, double[] to, double[] at) =>
+        (to[0] - from[0]) * (at[1] - from[1]) -
+        (to[1] - from[1]) * (at[0] - from[0]);
+
+    /// <summary>
+    /// Do two plan segments cross PROPERLY: does each strictly separate
+    /// the other's ends? Touching at an endpoint and lying collinear are
+    /// both excluded, because two cells sharing a joint edge are bonded
+    /// neighbours and not an overlap. The 1e-9 floor on the side values
+    /// is what makes "strictly" survive arithmetic on coordinates of the
+    /// order of a vault.
+    /// </summary>
+    private static bool PlanSegmentsCross(
+        double[] a,
+        double[] b,
+        double[] c,
+        double[] d)
+    {
+        double d1 = PlanSide(a, b, c);
+        double d2 = PlanSide(a, b, d);
+        double d3 = PlanSide(c, d, a);
+        double d4 = PlanSide(c, d, b);
+        return ((d1 > 1.0e-9 && d2 < -1.0e-9) ||
+                (d1 < -1.0e-9 && d2 > 1.0e-9)) &&
+               ((d3 > 1.0e-9 && d4 < -1.0e-9) ||
+                (d3 < -1.0e-9 && d4 > 1.0e-9));
+    }
+
+    /// <summary>The even-odd ray cast: is the plan point (x, y) inside
+    /// the outline's plan projection?</summary>
+    private static bool PlanContains(
+        double x,
+        double y,
+        IReadOnlyList<double[]> outline)
+    {
+        bool inside = false;
+        for (int i = 0, j = outline.Count - 1; i < outline.Count; j = i++)
+        {
+            if ((outline[i][1] > y) != (outline[j][1] > y) &&
+                x < (outline[j][0] - outline[i][0]) *
+                    (y - outline[i][1]) /
+                    (outline[j][1] - outline[i][1]) + outline[i][0])
+            {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    /// <summary>
+    /// Does an outline's PLAN projection cross ITSELF? True when two
+    /// edges that do not share a vertex cross properly. The outline is
+    /// an open ring, so edge i runs from point i to point i + 1 modulo
+    /// the count and the closing edge is edge count - 1; edges i and
+    /// i + 1 are adjacent, and so are edge 0 and the closing edge.
+    ///
+    /// PUBLIC because the smoke harness calls this exact method rather
+    /// than keeping arithmetic of its own. The engine and the harness
+    /// must not be able to disagree about what a bad cell is: a filter
+    /// that dropped what the harness would have accepted, or kept what
+    /// it would have refused, would be worse than no filter at all.
+    /// </summary>
+    public static bool PlanSelfCrosses(IReadOnlyList<double[]> outline)
+    {
+        int count = outline.Count;
+        for (int i = 0; i < count; i++)
+        {
+            for (int j = i + 1; j < count; j++)
+            {
+                if (j == i + 1 || (i == 0 && j == count - 1))
+                    continue;
+                if (PlanSegmentsCross(
+                        outline[i], outline[(i + 1) % count],
+                        outline[j], outline[(j + 1) % count]))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Do two outlines OVERLAP in plan? True when any edge of one
+    /// properly crosses any edge of the other, and true when one's own
+    /// interior point lies inside the other, which is the containment
+    /// case no edge crossing can see. The interior point used is the
+    /// outline's plan mean, and it is required to lie inside the
+    /// outline itself before it is asked about the other, since a
+    /// non-convex outline's mean can fall outside it.
+    ///
+    /// Touching along a shared joint edge is NOT overlap: two cells of
+    /// the same course meet at their joint by construction and the
+    /// crossing test is strict.
+    ///
+    /// PUBLIC for the same reason PlanSelfCrosses is.
+    /// </summary>
+    public static bool PlansOverlap(
+        IReadOnlyList<double[]> first,
+        IReadOnlyList<double[]> second)
+    {
+        for (int i = 0; i < first.Count; i++)
+        {
+            for (int j = 0; j < second.Count; j++)
+            {
+                if (PlanSegmentsCross(
+                        first[i], first[(i + 1) % first.Count],
+                        second[j], second[(j + 1) % second.Count]))
+                {
+                    return true;
+                }
+            }
+        }
+        double x = 0.0;
+        double y = 0.0;
+        foreach (double[] point in first)
+        {
+            x += point[0];
+            y += point[1];
+        }
+        x /= first.Count;
+        y /= first.Count;
+        if (PlanContains(x, y, first) && PlanContains(x, y, second))
+            return true;
+        x = 0.0;
+        y = 0.0;
+        foreach (double[] point in second)
+        {
+            x += point[0];
+            y += point[1];
+        }
+        x /= second.Count;
+        y /= second.Count;
+        return PlanContains(x, y, second) && PlanContains(x, y, first);
+    }
+
+    /// <summary>
+    /// The plan guarantee ENFORCED rather than argued.
+    ///
+    /// Spec section 4 claims cells from the native patterns cannot
+    /// self-cross or overlap in plan, and that claim was carried by an
+    /// argument about the height-field setout. Three successive
+    /// adversarial rounds each found a surface where the argument
+    /// fails: a transition on a rotated model, a non-convex re-entrant
+    /// plan (an L-shaped shell gives one self-crossing courses cell at
+    /// CH 0.5 and is clean at six other course heights), and the
+    /// honeycomb over closed level curves whose length changes quickly.
+    /// ONE bad cell makes Bench Studio reject the entire tessellation,
+    /// so an argued guarantee is worth nothing at the sidecar.
+    ///
+    /// The rule, run in EMISSION ORDER over the sorted cells, which is
+    /// the order the component hands out and the studio builds in:
+    /// drop a cell whose plan projection self-crosses, then drop a cell
+    /// whose plan projection overlaps a cell that has ALREADY SURVIVED.
+    /// Each kind is counted, both counts reach the diagnostics as their
+    /// own lines, and the component raises a runtime Warning when
+    /// either is non-zero, so a dropped cell is never silent.
+    ///
+    /// This is exactly what the force-aligned worker already does (its
+    /// diagnostics carry plan_degenerate_dropped and
+    /// plan_overlap_dropped), so the native patterns are being brought
+    /// up to the standard the third pattern already meets rather than
+    /// given a new indulgence. The filter is a guarantee and NOT a
+    /// licence to stop caring: every clean fixture in the smoke harness
+    /// asserts that both counts are ZERO, so a regression that starts
+    /// dropping cells fails the gate loudly instead of quietly shipping
+    /// a smaller pattern.
+    ///
+    /// The plan bounding boxes are a pure speed-up over the pair walk
+    /// and change no answer: two outlines whose plan boxes are disjoint
+    /// can neither cross nor contain one another.
+    /// </summary>
+    private static List<SkinCell> KeepValidPlans(
+        IReadOnlyList<SkinCell> cells,
+        out int degenerateDropped,
+        out int overlapDropped)
+    {
+        degenerateDropped = 0;
+        overlapDropped = 0;
+        var kept = new List<SkinCell>(cells.Count);
+        var boxes = new List<(double MinX, double MinY,
+            double MaxX, double MaxY)>(cells.Count);
+        foreach (SkinCell cell in cells)
+        {
+            if (cell.Outline.Count < 3 || PlanSelfCrosses(cell.Outline))
+            {
+                degenerateDropped++;
+                continue;
+            }
+            double minX = double.PositiveInfinity;
+            double minY = double.PositiveInfinity;
+            double maxX = double.NegativeInfinity;
+            double maxY = double.NegativeInfinity;
+            foreach (double[] point in cell.Outline)
+            {
+                minX = Math.Min(minX, point[0]);
+                minY = Math.Min(minY, point[1]);
+                maxX = Math.Max(maxX, point[0]);
+                maxY = Math.Max(maxY, point[1]);
+            }
+            bool overlaps = false;
+            for (int at = 0; at < kept.Count && !overlaps; at++)
+            {
+                (double MinX, double MinY, double MaxX, double MaxY) box =
+                    boxes[at];
+                if (box.MinX > maxX + 1.0e-9 ||
+                    box.MaxX < minX - 1.0e-9 ||
+                    box.MinY > maxY + 1.0e-9 ||
+                    box.MaxY < minY - 1.0e-9)
+                {
+                    continue;
+                }
+                overlaps = PlansOverlap(cell.Outline, kept[at].Outline);
+            }
+            if (overlaps)
+            {
+                overlapDropped++;
+                continue;
+            }
+            kept.Add(cell);
+            boxes.Add((minX, minY, maxX, maxY));
+        }
+        return kept;
+    }
+
     // ---- small shared arithmetic ----------------------------------------
 
     private static double Distance(double[] a, double[] b)
@@ -918,10 +1153,8 @@ internal static class SkinPatterns
 
         var keyed =
             new List<(int Course, int Order, double U0, SkinCell Cell)>();
-        var pieceLengths = new List<double>();
         var transitions = new List<(double Low, double High)>();
         int transitionBands = 0;
-        int clipped = 0;
         for (int r = 0; r < bands; r++)
         {
             IReadOnlyList<SkinLevelCurve> mids = traced[2 * r + 1];
@@ -971,27 +1204,37 @@ internal static class SkinPatterns
                         r, lowerCurve, mid, upperCurve, u0, u1, endPiece);
                     if (cell.Outline.Count < 3)
                         continue;
-                    if (cell.Clipped)
-                        clipped++;
-                    pieceLengths.Add(u1 - u0);
                     keyed.Add((r, component, u0, cell));
                 }
             }
         }
-        List<SkinCell> cells = keyed
-            .OrderBy(item => item.Course)
-            .ThenBy(item => item.Order)
-            .ThenBy(item => item.U0)
-            .Select(item => item.Cell)
-            .ToList();
+        // The plan guarantee is ENFORCED here, on the sorted list, so
+        // the cells that leave are the cells that were measured. Every
+        // diagnostics number below is then taken off the SURVIVORS, so
+        // the text describes what the component actually hands over
+        // rather than what it built before the filter looked at it.
+        List<SkinCell> cells = KeepValidPlans(
+            keyed
+                .OrderBy(item => item.Course)
+                .ThenBy(item => item.Order)
+                .ThenBy(item => item.U0)
+                .Select(item => item.Cell)
+                .ToList(),
+            out int degenerateDropped,
+            out int overlapDropped);
         return new SkinPatternResult(
             cells,
             bands,
             PatternDiagnostics(
-                "courses", cells.Count, bands, pieceLengths,
-                "half a pitch on odd courses", clipped,
+                "courses", cells.Count, bands,
+                cells.Select(cell => cell.U1 - cell.U0).ToList(),
+                "half a pitch on odd courses",
+                cells.Count(cell => cell.Clipped),
+                degenerateDropped, overlapDropped,
                 TransitionLine("courses", transitionBands, transitions)),
-            transitionBands);
+            transitionBands,
+            degenerateDropped,
+            overlapDropped);
     }
 
     /// <summary>
@@ -1192,10 +1435,14 @@ internal static class SkinPatterns
 
     /// <summary>The D output's text for a native pattern: the pattern
     /// name, cell and course counts, mean/min/max piece length, the
-    /// stagger, the count of boundary-clipped cells and, where the level
-    /// curves changed component count, the refused transition bands.
-    /// The key of every line is capitalised, so the transition line
-    /// reads beside the rest rather than under it.</summary>
+    /// stagger, the count of boundary-clipped cells, the two
+    /// plan-validity drop counts and, where the level curves do not
+    /// correspond, the refused transition bands. The key of every line
+    /// is capitalised, so the transition line reads beside the rest
+    /// rather than under it. The two drop lines are worded exactly as
+    /// the force-aligned pattern words its own, because they mean the
+    /// same thing and an author reading D should not have to notice
+    /// which pattern produced it.</summary>
     private static string PatternDiagnostics(
         string name,
         int cellCount,
@@ -1203,6 +1450,8 @@ internal static class SkinPatterns
         IReadOnlyList<double> pieceLengths,
         string stagger,
         int clipped,
+        int planDegenerateDropped,
+        int planOverlapDropped,
         string? transitions = null)
     {
         static string F(double value) =>
@@ -1222,6 +1471,14 @@ internal static class SkinPatterns
         }
         lines.Add($"Stagger: {stagger}");
         lines.Add($"Boundary-clipped cells: {clipped}");
+        lines.Add(
+            $"Plan-degenerate cells dropped: {planDegenerateDropped} " +
+            "(self-crossing in plan; excluded automatically so the " +
+            "sidecar imports)");
+        lines.Add(
+            $"Plan-overlap cells dropped: {planOverlapDropped} " +
+            "(overlapped another surviving cell in plan; excluded " +
+            "automatically so the sidecar imports)");
         if (transitions is not null)
             lines.Add(transitions);
         return string.Join("\n", lines);
@@ -1236,7 +1493,9 @@ internal static class SkinPatterns
                 name == "courses"
                     ? "half a pitch on odd courses"
                     : "0.75 x S per course row",
-                0),
+                0, 0, 0),
+            0,
+            0,
             0);
 
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
@@ -1386,8 +1645,6 @@ internal static class SkinPatterns
 
         var keyed =
             new List<(int Course, int Chart, double U0, SkinCell Cell)>();
-        var pieceLengths = new List<double>();
-        int clippedCount = 0;
 
         for (int chartAt = 0; chartAt < charts.Count; chartAt++)
         {
@@ -1547,27 +1804,35 @@ internal static class SkinPatterns
                     var cell = new SkinCell(
                         course, cleaned, clipped,
                         mapped[5].U, mapped[2].U);
-                    if (clipped)
-                        clippedCount++;
-                    pieceLengths.Add(mapped[2].U - mapped[5].U);
                     keyed.Add((course, chartAt, mapped[5].U, cell));
                 }
             }
         }
-        List<SkinCell> cells = keyed
-            .OrderBy(item => item.Course)
-            .ThenBy(item => item.Chart)
-            .ThenBy(item => item.U0)
-            .Select(item => item.Cell)
-            .ToList();
+        // The plan guarantee, enforced on the sorted list exactly as the
+        // courses engine enforces it, and every diagnostics number below
+        // taken off the survivors.
+        List<SkinCell> cells = KeepValidPlans(
+            keyed
+                .OrderBy(item => item.Course)
+                .ThenBy(item => item.Chart)
+                .ThenBy(item => item.U0)
+                .Select(item => item.Cell)
+                .ToList(),
+            out int degenerateDropped,
+            out int overlapDropped);
         return new SkinPatternResult(
             cells,
             bands,
             PatternDiagnostics(
-                "hexagonal", cells.Count, bands, pieceLengths,
-                "0.75 x S per course row", clippedCount,
+                "hexagonal", cells.Count, bands,
+                cells.Select(cell => cell.U1 - cell.U0).ToList(),
+                "0.75 x S per course row",
+                cells.Count(cell => cell.Clipped),
+                degenerateDropped, overlapDropped,
                 TransitionLine(
                     "hexagonal", skippedRows.Count, transitions)),
-            skippedRows.Count);
+            skippedRows.Count,
+            degenerateDropped,
+            overlapDropped);
     }
 }
