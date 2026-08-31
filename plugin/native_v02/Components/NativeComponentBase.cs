@@ -42,12 +42,12 @@ internal static class ComponentCategories
     public const string Mould = "03 Mould";
 
     // Everything that reads a Result: Deconstruct, Forces, Fit, Supports,
-    // Skin, Diagnose, Frame, Style and Display. Geometry, numbers, words
-    // and the viewport.
+    // Diagnose, Frame, Style and Display. Geometry, numbers, words and the
+    // viewport.
     // No backend.
     public const string Read = "04 Read";
 
-    // Export, Import Pieces, Armadillo Dual.
+    // Export, Import Pieces, Skin.
     // compas_model, compas_ifc. Capability: model, ifc. Extras: model, ifc.
     public const string Deliver = "05 Deliver";
 

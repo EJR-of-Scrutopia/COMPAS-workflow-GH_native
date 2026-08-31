@@ -92,9 +92,14 @@ internal static class Program
                         "Reaction Vectors",
                         "Force Lines"
                     }),
+                // Skin is pinned because THIS rework reshaped it: input 1
+                // was "Course Height" and is now "Pattern", so a wired CH
+                // slider must move to slot 3, and the outputs renamed with
+                // their meanings kept. The names below are what the
+                // ports-moved warning compares a saved definition against.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
-                    new[] { "Result", "Course Height" },
-                    new[] { "Face Polylines", "Face Courses" }),
+                    new[] { "Result", "Pattern", "Size", "Course Height" },
+                    new[] { "Cells", "Courses", "Flowlines", "Diagnostics" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
                 // member and form lines, the load and reaction points and
                 // vectors) and to Diagnose (the report), which carry them
@@ -310,7 +315,6 @@ internal static class Program
                 ("graphic_diagram_display", "DI"),
             ["Ananke.COMPAS.Native.Components.ExportComponent"] = ("export", "EX"),
             ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = ("import_pieces", "IP"),
-            ["Ananke.COMPAS.Native.Components.ArmadilloDualComponent"] = ("armadillo_dual", "AD"),
             ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
         };
 
@@ -485,15 +489,16 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 22)
+        if (componentTypes.Length != 21)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
-            // with nineteen components' worth of contract untested. 22 is
-            // the settled readers surface: Monitor retired when Fit arrived.
+            // with nineteen components' worth of contract untested. 21 is
+            // the skin rework: Skin and Armadillo Dual became ONE Skin
+            // component in 05 Deliver, three patterns behind one flag.
             failures.Add(
-                $"Expected 22 concrete public components, found " +
+                $"Expected 21 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
