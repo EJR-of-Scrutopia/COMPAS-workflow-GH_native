@@ -6099,6 +6099,63 @@ internal static class Program
         double VY(object v) => (double)vector3d.GetProperty("Y")!.GetValue(v)!;
         double VZ(object v) => (double)vector3d.GetProperty("Z")!.GetValue(v)!;
 
+        // ---- MouldGeometry.NodeLoads (spec sections 10 and 16): the same
+        // sum BarLoads takes, over every incident edge WITH NO EXCLUSIONS at
+        // all. BarLoads leaves out the edges running ALONG the bar, on the
+        // ground that a beam does not load itself; NodeLoads takes the node's
+        // whole pull, which is what makes the head load at a shared node
+        // countable exactly once. A function BESIDE BarLoads, never a change
+        // to it.
+        {
+            MethodInfo nodeLoads = RequirePublicStatic(geometry, "NodeLoads");
+            MethodInfo barLoads = RequirePublicStatic(geometry, "BarLoads");
+            // Node 0 at the origin, a bar running 0-1 along +x, and two
+            // infill cables to 2 at +y and 3 at -z. Every edge unit length,
+            // every force 1, so each contributes a unit vector.
+            Array netNodes = Array.CreateInstance(point3d, 4);
+            netNodes.SetValue(P(0.0, 0.0, 0.0), 0);
+            netNodes.SetValue(P(1.0, 0.0, 0.0), 1);
+            netNodes.SetValue(P(0.0, 1.0, 0.0), 2);
+            netNodes.SetValue(P(0.0, 0.0, -1.0), 3);
+            Type pairType = typeof(ValueTuple<int, double>);
+            Type listType = typeof(List<>).MakeGenericType(pairType);
+            Array incident = Array.CreateInstance(listType, 4);
+            for (int i = 0; i < 4; i++)
+                incident.SetValue(Activator.CreateInstance(listType)!, i);
+            void Join(int a, int b, double force)
+            {
+                object left = incident.GetValue(a)!;
+                object right = incident.GetValue(b)!;
+                left.GetType().GetMethod("Add")!.Invoke(left, new[] { Activator.CreateInstance(pairType, b, force) });
+                right.GetType().GetMethod("Add")!.Invoke(right, new[] { Activator.CreateInstance(pairType, a, force) });
+            }
+            Join(0, 1, 1.0);
+            Join(0, 2, 1.0);
+            Join(0, 3, 1.0);
+            var bar = new List<int> { 0, 1 };
+            object whole = nodeLoads.Invoke(null, new object?[] { netNodes, incident })!;
+            object excluded = barLoads.Invoke(null, new object?[] { bar, netNodes, incident })!;
+            object wholeAtZero = ((Array)whole).GetValue(0)!;
+            object excludedAtZero = ((Array)excluded).GetValue(0)!;
+            if (((Array)whole).Length != 4)
+                throw new InvalidOperationException($"NodeLoads is indexed by NET NODE, one entry for every node whether or not a bar reaches it; it returned {((Array)whole).Length} entries against 4 nodes.");
+            if (Math.Abs(VX(wholeAtZero) - 1.0) > 1.0e-12 || Math.Abs(VY(wholeAtZero) - 1.0) > 1.0e-12 || Math.Abs(VZ(wholeAtZero) + 1.0) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"NodeLoads takes the node's WHOLE incident pull with no exclusions: three unit cables to +x, +y and -z sum to (1, 1, -1); it read "
+                    + $"({VX(wholeAtZero):0.#########}, {VY(wholeAtZero):0.#########}, {VZ(wholeAtZero):0.#########}).");
+            }
+            if (Math.Abs(VX(excludedAtZero)) > 1.0e-12 || Math.Abs(VY(excludedAtZero) - 1.0) > 1.0e-12 || Math.Abs(VZ(excludedAtZero) + 1.0) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"BarLoads is unchanged and still leaves out the edges running ALONG the bar, so it reads (0, 1, -1); it read "
+                    + $"({VX(excludedAtZero):0.#########}, {VY(excludedAtZero):0.#########}, {VZ(excludedAtZero):0.#########}). Spec section 19 keeps BarLoads out of scope.");
+            }
+            object isolated = ((Array)whole).GetValue(1)!;
+            if (Math.Abs(VX(isolated) + 1.0) > 1.0e-12)
+                throw new InvalidOperationException("Every node gets its own entry; node 1's single edge back to the origin pulls it (-1, 0, 0).");
+        }
+
         // A parabolic arch whose across pulls are mirrored in SHAPE, carrying
         // the two asymmetries a solved net always has. `bend` is the mirrored
         // part (positive leans the pulls outward from the midpoint), `skew` a

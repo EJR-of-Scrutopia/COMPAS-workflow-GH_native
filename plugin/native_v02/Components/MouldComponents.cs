@@ -1594,6 +1594,53 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
+        /// The node's WHOLE incident pull, taken once, with no exclusions at
+        /// all: the same sum <see cref="BarLoads"/> takes over the node's
+        /// incident edges, but over EVERY one of them, the edges running
+        /// along a bar included.
+        ///
+        /// This exists so that the head load at a node held by several bars
+        /// can be counted exactly once and in full. BarLoads excludes only
+        /// its OWN bar's along edges, so at a node shared by bars A and B the
+        /// two pulls each carry the infill plus the other bar's along edges,
+        /// and their naive sum counts the infill TWICE. Given this whole
+        /// pull, the head pull is the bars' pulls summed less (k - 1) times
+        /// it, which recovers the node's infill exactly once.
+        ///
+        /// A function BESIDE BarLoads, never a change to it: spec section 19
+        /// keeps BarLoads and BarTransverse out of scope.
+        /// </summary>
+        public static Vector3d[] NodeLoads(
+            Point3d[] nodes,
+            List<(int Other, double Force)>[] incident)
+        {
+            var pull = new Vector3d[nodes.Length];
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                var total = Vector3d.Zero;
+                if (i < incident.Length && incident[i] is not null)
+                {
+                    foreach ((int other, double force) in incident[i])
+                    {
+                        if (other < 0 || other >= nodes.Length)
+                            continue;
+                        Vector3d step = nodes[other] - nodes[i];
+                        double length = step.Length;
+                        if (length <= 1.0e-12)
+                            continue;
+                        // MAGNITUDE, for the reason recorded in BarLoads: a
+                        // Result's sign convention is not fixed and a TNA
+                        // thrust network is the compression mirror of the net
+                        // that will be built.
+                        total += (Math.Abs(force) / length) * step;
+                    }
+                }
+                pull[i] = total;
+            }
+            return pull;
+        }
+
+        /// <summary>
         /// How far off vertical a column member may stand, in degrees.
         ///
         /// Past this a column pushes sideways more than it holds up, and the
