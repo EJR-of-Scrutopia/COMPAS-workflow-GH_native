@@ -10098,8 +10098,12 @@ internal static class Program
         // was written on the lucky one. Exact level curves are longer
         // than the chords they replace, by different amounts on rows of
         // different shape, so the honeycomb's lattice in ABSOLUTE arc
-        // length shears differently and 5 of the 32 cells it builds here
-        // now land on top of one another. That is the defect already
+        // length shears differently and 7 of the 32 cells it builds here
+        // now fold or land on one another. Two of those seven the
+        // crossing predicate owns rather than the setout: measuring a
+        // fold as a perpendicular DISTANCE instead of as a cross product
+        // sees folds on short edges that an area floor was blind to.
+        // That is the defect already
         // parked for the setout redesign, at the magnitude it has
         // everywhere else on this fixture, and the filter keeps every
         // one of them out of the sidecar. Pinned as a MEASUREMENT so it
@@ -10107,11 +10111,11 @@ internal static class Program
         // still required to drop NOTHING, above.
         int peakDegenerate = Reading<int>(hexBuilt, "PlanDegenerateDropped");
         int peakOverlap = Reading<int>(hexBuilt, "PlanOverlapDropped");
-        if (peakDegenerate != 2 || peakOverlap != 3)
+        if (peakDegenerate != 4 || peakOverlap != 3)
         {
             throw new InvalidOperationException(
                 "The honeycomb on the two-peak net at CH 0.5 is pinned " +
-                "to drop 2 self-crossing and 3 overlapping cells, a " +
+                "to drop 4 self-crossing and 3 overlapping cells, a " +
                 "MEASUREMENT of the absolute-arc-length defect the next " +
                 $"round inherits; it dropped {peakDegenerate} and " +
                 $"{peakOverlap}.");
@@ -10293,7 +10297,7 @@ internal static class Program
         }
         (int CoursesBuilt, int HexagonsBuilt) upright =
             RefusesTheMiddleBand(
-                "two-hump barrel", SkinTwoHumpBarrelNet(), (0, 0), (0, 0));
+                "two-hump barrel", SkinTwoHumpBarrelNet(), (0, 0), (4, 0));
         // The split-and-death HONEYCOMB's plans were left UNASSERTED in
         // the previous wave, because four of its cells self-crossed in
         // plan at the far ends of a square loop's u domain, where the
@@ -10304,15 +10308,17 @@ internal static class Program
         // pre-existing honeycomb defect on closed level curves, not a
         // transition defect, and it belongs to the next sub-project with
         // the dome crown's.
-        // Four became four and TWO once the tracer began drawing exact
-        // level curves: the rows of this net are square loops whose exact
-        // level set turns the corner instead of chording it, so every row
-        // is a little longer and the honeycomb's absolute-arc-length
-        // lattice shears a little differently. Two more of its cells land
-        // on one already kept and the filter drops them. Same defect,
-        // same place, same order of magnitude, and still pinned.
+        // Four became SIX and TWO in this wave, four of them from the
+        // exact level curves and two from the crossing predicate. The
+        // rows of this net are square loops whose exact level set turns
+        // the corner instead of chording it, so every row is a little
+        // longer and the honeycomb's absolute-arc-length lattice shears
+        // a little differently; and a fold measured as a perpendicular
+        // distance is seen where a cross-product floor was blind to it
+        // on a short edge. Same defect, same place, same order of
+        // magnitude, and still pinned.
         RefusesTheMiddleBand(
-            "split-and-death", SkinSplitAndDeathNet(), (0, 0), (4, 2));
+            "split-and-death", SkinSplitAndDeathNet(), (0, 0), (6, 2));
 
         // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
         // world Z leaves every z, every face and every traced component
@@ -10343,13 +10349,15 @@ internal static class Program
         //
         // Moving the seam is also why the turned fixture DROPS where the
         // upright one does not: the top course's two hump loops each end
-        // up with one piece whose plan projection self-crosses, and two
-        // honeycomb cells go the same way. It happens at 30, 37, 45, 90
-        // and 137 degrees alike and not at 0 or 17. The two OVERLAPPING
-        // honeycomb cells this fixture used to drop are gone, because
-        // the exact level curve of a hump loop turns its corners instead
-        // of chording them and the two cells that used to land on a
-        // neighbour no longer reach it.
+        // up with one piece whose plan projection self-crosses, and five
+        // honeycomb cells go the same way against the upright fixture's
+        // four. It happens at 30, 37, 45, 90 and 137 degrees alike and
+        // not at 0 or 17. The two OVERLAPPING honeycomb cells this
+        // fixture used to drop are gone, because the exact level curve
+        // of a hump loop turns its corners instead of chording them and
+        // the two cells that used to land on a neighbour no longer reach
+        // it; the self-crossing count rose instead, because a fold is
+        // now measured as a perpendicular distance.
         // It is NOT correspondence damage: TransitionBands is 1
         // at every angle and the refused band carries no cells at any of
         // them. It is a cell-shape defect on a re-entrant closed loop,
@@ -10361,7 +10369,7 @@ internal static class Program
                 "two-hump barrel rotated 37 degrees",
                 SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
                 (2, 0),
-                (2, 0));
+                (5, 0));
         if (turned.CoursesBuilt != upright.CoursesBuilt ||
             turned.HexagonsBuilt != upright.HexagonsBuilt ||
             upright.CoursesBuilt == 0 ||
@@ -11686,8 +11694,8 @@ internal static class Program
                  {
                      (0.2, 0, 0, 0),
                      (0.35, 0, 2, 0),
-                     (0.5, 38, 0, 0),
-                     (0.8, 0, 6, 2)
+                     (0.5, 38, 1, 0),
+                     (0.8, 0, 7, 2)
                  })
         {
             object domeGenerated = hexagonal.Invoke(
@@ -11736,15 +11744,29 @@ internal static class Program
             // wrapping, which is the plan's Task 3 deviation and not yet
             // blessed by the spec review. If that rule moves, so does
             // this number.
-            if (expected > 0 && domeCells.Length != expected)
+            // The derivation counts the lattice sites the engine BUILDS,
+            // so it is the built count it pins, kept plus dropped, and
+            // not the survivors'. One of the 38 is dropped since the
+            // crossing predicate began measuring a fold as a
+            // perpendicular distance: at the crown the epsilon loop's
+            // edges are about 1.5 microns long, and a cross-product
+            // floor of 1e-9 on an edge that short is a tolerance of two
+            // thirds of a millimetre, which is a millimetre of slack
+            // inside a cell a micron across. The fold it was blind to is
+            // a real one and the cell is dropped for it.
+            if (expected > 0 &&
+                domeCells.Length + expectedDegenerate + expectedOverlap
+                    != expected)
             {
                 throw new InvalidOperationException(
-                    $"The dome honeycomb at CH {domeHeight} is " +
+                    $"The dome honeycomb at CH {domeHeight} BUILDS " +
                     $"{expected} cells by the derivation in this check " +
                     "(14 + 11 + 8 + 5 + 0 columns over centre rows 0 to " +
-                    $"4); got {domeCells.Length}. Measuring u against " +
-                    "the widest of the rows a candidate spans instead of " +
-                    "its own centre row gives 50.");
+                    $"4); got {domeCells.Length} kept plus " +
+                    $"{expectedDegenerate} and {expectedOverlap} dropped. " +
+                    "Measuring u against the widest of the rows a " +
+                    "candidate spans instead of its own centre row gives " +
+                    "50.");
             }
             if (!domeCells.Any(cell => cell.Clipped))
             {
@@ -11980,6 +12002,73 @@ internal static class Program
                 "A square wholly INSIDE another overlaps it, and no " +
                 "edge crossing can see that: containment is the case " +
                 "the interior-point test exists for.");
+        }
+
+        // ---- 1b. the crossing tolerance is a DISTANCE, not an area,
+        // and these two cases are what separate the one from the other.
+        // Both are hand-derived.
+        //
+        // A cross product is twice a triangle's area, which is the
+        // segment's own length times the perpendicular distance from the
+        // point to its line. Comparing it against a fixed floor
+        // therefore sets a tolerance that MOVES with the segment, and
+        // the two ends of the model are where it shows.
+        //
+        // SMALL. The crown of a dome is traced at zMax pulled inside by
+        // epsilon, so the crown loop's edges are of the order of a
+        // micron. A bow tie 1.5 microns across, corners (0,0), (s,0),
+        // (0,s), (s,s) with s = 1.5e-6, has its edges 1 and 3 crossing
+        // at the centre: edge 1 runs the line x + y = s and the far
+        // corner (s, s) stands s / sqrt(2) = 1.06e-6 m off it, a
+        // micron of genuine fold. The cross product is the edge's own
+        // length s sqrt(2) times that, which is s squared = 2.25e-12,
+        // four hundred times BELOW a floor of 1e-9, so an area test
+        // calls this bow tie clean and the filter would emit it.
+        //
+        // LARGE. Two segments 100 m long crossing at their midpoints
+        // with the second only 1e-10 m from end to end: the ends of the
+        // short one stand 1e-10 m either side of the long one's line,
+        // a tenth of a nanometre, which is a touch and not a fold. The
+        // cross product is 100 x 1e-10 = 1e-8, ten times ABOVE a floor
+        // of 1e-9, so an area test calls this a crossing and the filter
+        // would drop a cell for it.
+        double[][] longEdge =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 100.0, 0.0, 0.0 },
+            new[] { 100.0, 1.0, 0.0 }
+        };
+        double[][] shallowTouch =
+        {
+            new[] { 50.0, 1.0e-10, 0.0 },
+            new[] { 50.0, -1.0e-10, 0.0 },
+            new[] { 60.0, -1.0, 0.0 }
+        };
+        if (Overlapping(longEdge, shallowTouch))
+        {
+            throw new InvalidOperationException(
+                "A fold a tenth of a nanometre deep is not a fold: two " +
+                "cells whose edges pass within 1e-10 m of one another " +
+                "are two cells that touch at their joint. Only a " +
+                "tolerance measured as an AREA would call this a " +
+                "crossing (the cross product is 1e-8 on a 100 m edge, " +
+                "above the old 1e-9 floor).");
+        }
+        double[][] micronBowTie =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.5e-6, 0.0, 0.0 },
+            new[] { 0.0, 1.5e-6, 0.0 },
+            new[] { 1.5e-6, 1.5e-6, 0.0 }
+        };
+        if (!Crossing(micronBowTie))
+        {
+            throw new InvalidOperationException(
+                "A bow tie 1.5 microns across is a bow tie: its fold is " +
+                "1.06e-6 m deep, a thousand times the nanometre the " +
+                "predicate calls a fold, and only a tolerance measured " +
+                "as an AREA could miss it (the cross product is " +
+                "2.25e-12, below the old 1e-9 floor).");
         }
 
         // ---- 2 and 3. the L-shaped shell.
