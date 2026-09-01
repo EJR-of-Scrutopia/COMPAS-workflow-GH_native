@@ -88,6 +88,49 @@ but fix the real complaint, which is the DUPLICATION rather than the count: dedu
 delete the four he has named, and let one hold the geometry his work needs while the other holds the
 statics and diagram streams.
 
+## 5a. Diagnose reads the whole document, with no input
+
+> "also last thing the diagnostics component, I want it to have no input needed, to read every
+> component of our plugin read and will then reveal any problems. This goes for all other components
+> with a diagnostics output even the importer and exporter"
+
+He wants Diagnose to stop being a reader of one Result chain and become the plugin's problems panel:
+drop it on the canvas, wire nothing, and see every Ananke component's complaints in one place,
+Export's and Import Pieces' included.
+
+IT IS FEASIBLE. A component can reach its own document through OnPingDocument and walk its objects,
+select the ones belonging to this plugin, and read each one's runtime messages, which is where every
+error, warning and remark already lives, along with the Message line each component sets. Nothing new
+has to be recorded for this to work; the information is already there and merely unreachable from one
+place.
+
+ONE REAL TRAP, and it must be designed around rather than discovered. Grasshopper decides solution
+order from data dependencies, and a component with NO INPUTS has no dependency on anything, so it may
+compute BEFORE the components it is reporting on. Wired the usual way, Diagnose is guaranteed to run
+after the chain feeding it; unwired, it can quite legitimately show the previous solve's problems, or
+none at all on the first run. That is not a bug we would be introducing but a property of the host,
+and every document-scanning component in every plugin meets it. It has to be handled deliberately: by
+expiring on document change, or by scheduling a fresh solution once the current one finishes, which is
+the usual remedy and needs care not to loop.
+
+THE SUGGESTION, which gives him what he asked for and keeps what he had. Make the Result input
+OPTIONAL rather than removing it. Unwired, Diagnose scans the whole document, which is the behaviour
+he wants. Wired, it reports that chain alone, which is what it does today and is what an author wants
+when a definition holds two studies and only one is misbehaving. One port, two useful behaviours, and
+the staleness trap only applies to the unwired case, where it can be stated plainly in the component's
+own description.
+
+WHAT THIS MEANS FOR THE OTHER COMPONENTS. "This goes for all other components with a diagnostics
+output" is the same instinct that removed Skin's Diagnostics output: a component should raise its
+problems where the author already looks, not hand back a text output that must be wired to a panel to
+be read. So Export's Status, Import Pieces' equivalent, and any other component's diagnostics text
+become runtime messages and diagnostics entries, and Diagnose is where they are read. That is a
+consistent surface rather than a per-component habit, and it removes several ports.
+
+Note it does NOT retire the diagnostics carried in the Result. Those travel with the data, reach
+Export, and form part of the contract the studio receives; the document scan is for the author at the
+canvas. The two serve different readers and both should stay.
+
 ## 6. Sequence
 
 > "In reference to the columns we will make all of the fixes to columns todays problem"
