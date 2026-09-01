@@ -30,17 +30,33 @@ split across two components only makes the author remember which one holds which
 
 - MEMBER IDS and NODE IDS go. His reason is general and worth applying beyond these two: "if i have
   the tree structure I dont need the structure given again, that goes for all components". The trees
-  are already aligned branch for branch across every reader, so pairing needs no identifiers. Being
-  verified: whether anything else consumes them, above all the export payloads.
-- PHASE goes. "I again dont need that information."
+  are already aligned branch for branch across every reader, so pairing needs no identifiers.
+  VERIFIED: nothing in the plugin consumes either port. Loads' own Node IDs INPUT is unrelated, Forces
+  names Node IDs only to disclaim alignment with it, and Export builds its payloads from the ResultDto
+  contract and never from a reader's outputs. What is lost is the one exact non-coordinate bridge from
+  a point or a member line back to the Result's own index, which nothing shipped needs today.
+- PHASE goes. "I again dont need that information." VERIFIED unconsumed: it is a read-out of
+  Mould.Frame.Phase, and Fit, the only component that cares about an intermediate frame, reads that
+  field off its own Result input rather than off this port.
 - REACTION POINTS go. "Reaction points and support points are also the same", which the port's own
   description already concedes, since Reaction Points is documented as a tree "branched and ordered
-  EXACTLY as Support Points". Reaction VECTORS stay; they pair with Support Points.
-- ANCHOR NODES and SUPPORT POINTS are very probably the same points under two names, one on each
-  component, and if so only one survives the merge. Being verified, with one real risk named: Frame
-  follows the ANIMATION FRAME's positions when an Animate result is upstream while Deconstruct reads
-  the solved positions, so the two would differ mid-animation even though they agree at rest. If that
-  is confirmed, the merged component needs one output with a stated rule, not a silent choice.
+  EXACTLY as Support Points". VERIFIED, and more strongly than the description claims: where a node has
+  no reaction the code falls back to reading the Support Points array itself, so for every real support
+  they are the same Point3d by construction. ONE EXCEPTION, which the merged component must keep
+  somewhere: a reaction reported at a node that is not a support gets a branch of its own at the end,
+  so Reaction Points can carry one branch more than Support Points. That branch is a fault report and
+  should survive as a diagnostic entry rather than as a silently vanished branch. Reaction VECTORS stay;
+  they pair with Support Points.
+- ANCHOR NODES and SUPPORT POINTS carry the same NODES but not always the same POSITIONS, and this is
+  now measured rather than suspected. The node identity agrees in the shipped path. The positions do
+  not: Frame reads Mould.Frame's vertices when an Animate result is upstream, and Animate blends EVERY
+  node between the drawn pattern and the solved form, anchors included, so an anchor's plan position
+  only reaches its solved place when sag reaches 1. Deconstruct always reads the solved vertices. They
+  agree at rest and at "finish", and differ at every intermediate frame. So the merge cannot dedupe
+  these two silently. The rule to state: the merged ANCHOR NODES follows the frame, because a reader
+  fed an animation should show the animation, and Anchor Lines drawn through solved positions while the
+  mesh sits half-reeled would be worse than useless. Anyone wanting the solved positions has the
+  Result's own vertex list.
 
 ## 3. The Anchor Lines defect
 
@@ -58,9 +74,17 @@ the strip's nodes preserves a springing that curves in plan, which his vault's a
 to do, and needs the port retyped as a curve. The second is more faithful; the first is what he
 literally asked for. Put it to him with that trade named.
 
+ONE PIECE OF EVIDENCE FOR THE POLYLINE, from inside our own code. PERIMETER LINES is built from the
+same grouping machinery and is already a polyline through every node of its loop, precisely because a
+boundary walked around a doubly curved vault does not run straight. Anchor Lines was left as discrete
+segments. The two are siblings and only one of them was thought about; the anchor strips are walked
+around the same boundary, so the same reasoning applies to them.
+
 His "needs to go left to right in order" is a second requirement and a real one either way: the nodes
 within a strip must be ordered sequentially ALONG the strip, not by node id or by discovery order, or
-a line drawn end to end is meaningless. Being verified.
+a line drawn end to end is meaningless. VERIFIED ALREADY SATISFIED: the grouping walks each connected
+component from one of its graph ends, so a strip's nodes already arrive in order along it. That is one
+less thing to build, and it means a first-to-last chord is a real chord and not a random pair.
 
 His "I can make it myself if its hard to be perfect each time" is an offer, not a preference; if one
 line per strip is straightforward, which it is, he should not have to.
@@ -78,7 +102,8 @@ the moment the components merge and every wire moves anyway.
 With the deletions above the merged reader carries, in a sensible order: Mesh, Cables, Principal
 Lines, Principal Nodes, Anchor Nodes, Anchor Lines, Perimeter Nodes, Perimeter Lines, Columns, Member
 Lines, Form Lines, Force Lines, Load Points, Load Vectors, Reaction Vectors. Fifteen outputs on one
-Result input.
+Result input. VERIFIED from the two components' registrations: ten and ten today, four named deletions
+take it to sixteen, and deduping Anchor Nodes with Support Points takes it to fifteen.
 
 THAT COUNT NEEDS HIS EYE before it is built. Fifteen ports is a tall component on a canvas, and being
 tall is part of what he disliked about Monitor. The principle in section 1 says merge, and the port
