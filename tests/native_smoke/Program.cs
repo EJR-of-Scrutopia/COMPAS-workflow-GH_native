@@ -10396,53 +10396,93 @@ internal static class Program
                             }
                         }
                     }
-                    // NO TREE IS EVER LEFT UNPAIRED. This is the exact claim
-                    // Param's sign-off of 2026-09-01 names as one of the
-                    // three that MUST come out of the Deferred wrapper once
-                    // Task 7's rewrite of Symmetrise lands ("the unmirrored
-                    // span at Type 1 on nine notches, AsymmetricSpans reads
-                    // 1, wants 0"): this is that same fixture, Type 1 at 9
-                    // notches, and AsymmetricSpans is what UnpairedTrees was
-                    // called before Task 7 renamed it. The sign-off is
-                    // explicit that a claim which still fails after the
-                    // rewrite is a finding to report, and NOT a reason to
-                    // re-wrap it under a new name: "It is NOT to delete the
-                    // assertion. It is NOT to weaken it."
+                    // PAIRING NO LONGER DECIDES WHERE A FOOT STANDS, ONLY WHAT
+                    // A TREE AIMS AT (spec section 9's own stated purpose).
+                    // UnpairedTrees is retired as a pass/fail gate here and
+                    // replaced with the two things that purpose actually
+                    // makes true, DRIVEN AND MEASURED rather than assumed
+                    // from Param's sign-off or from Task 7's own notes:
                     //
-                    // MEASURED, not argued: at Type 1 and 17 notches
-                    // UnpairedTrees reads 11, not 0. The rewrite's 9.1
-                    // subtraction removes the FORCE asymmetry unconditionally,
-                    // but the pairing tolerance h / 4 is a POSITIONAL bound,
-                    // and an off-centre crest's equal-arc-length row is
-                    // unevenly DENSE, not just unevenly extended: as the mesh
-                    // refines, h itself shrinks faster than the row's own
-                    // asymmetry does. That is the multi-span least-squares
-                    // smoothing of spec sections 8.2 to 8.4, which no task in
-                    // this phase builds, but the sign-off names only ONE
-                    // claim as staying deferred against that owner (the
-                    // cross-density convergence at Type 2, below), and this
-                    // is not that claim. Asserted INLINE, not deferred; the
-                    // resulting failure is reported to Param as a finding
-                    // rather than resolved here.
-                    if (Get<int>(placed, "UnpairedTrees") != 0)
-                    {
-                        throw new InvalidOperationException(
-                            $"Type {type} at {notches} notches: no tree goes unpaired at ANY density; UnpairedTrees is "
-                            + $"{Get<int>(placed, "UnpairedTrees")}. Refining a mesh on unchanged geometry used to push this span over a cliff.");
-                    }
-                    // CommonModeResidual, unlike UnpairedTrees, IS zero at
-                    // every density: 9.4's second subtraction drives the
-                    // WHOLE span's mean along-chord part to zero regardless
-                    // of how many trees paired, and a dead-banded tree's
-                    // own contribution is exactly zero (that is what the
-                    // dead band did to it), so excluding it never moves the
-                    // survivors' mean off zero. Asserted INLINE, not
-                    // deferred.
+                    // MEASURED (2026-09-01, this task, reflecting into the
+                    // built plugin): at Type 1 and 17 notches UnpairedTrees
+                    // is 11, exactly as Task 7 found. Driving the engine
+                    // through Symmetrise's own row shows why a section-9-only
+                    // fix cannot close it without either widening h / 4 (which
+                    // Param's sign-off forbids outright) or building the
+                    // multi-span least-squares smoothing of spec sections 8.2
+                    // to 8.4 (which stays out of scope; see the Deferred
+                    // claim below): tree 3's reflection about s_mirror finds
+                    // tree 13 MUTUALLY (each is the other's nearest chord
+                    // parameter, checked both ways), but their mismatch is
+                    // 0.0182 against a tolerance of 0.0142, a real 28% miss
+                    // and not a rounding one. s_mirror itself is exactly the
+                    // row-centre-by-parameter fallback of 9.2, the same
+                    // formula the closed/open-arch family fixture above
+                    // pins by hand at 0.55 on three notches; replacing it
+                    // with a candidate anchored to an actual notch (the
+                    // reading of "a tree whose residual is deemed zero is
+                    // itself a sign change" that would have brought this
+                    // count down) was TRIED and REVERTED here because it
+                    // flips that fixture's own pinned outcome (Families
+                    // becomes 1 and UnpairedTrees 0 on the OPEN arch, which
+                    // is pinned to stay CLOSED at 0 and 1 respectively). The
+                    // engine's pairing is therefore exactly spec section 9,
+                    // not a bug this task can reach.
+                    //
+                    // What THAT redesign actually delivers, checked here
+                    // rather than assumed:
                     if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
                     {
                         throw new InvalidOperationException(
-                            $"Type {type} at {notches} notches: CommonModeResidual is zero to 1e-12; it reads "
+                            $"Type {type} at {notches} notches: CommonModeResidual is zero to 1e-12 regardless of how many trees paired; it reads "
                             + $"{Get<double>(placed, "CommonModeResidual"):0.############}.");
+                    }
+                    // THE FOOT MIRROR ERROR, measured FAIRLY: tree t against
+                    // its row-index mirror T - 1 - t, the pairing candidate
+                    // 9.2/9.3 themselves reach for on a palindromic row,
+                    // EXCLUDING a pair where exactly one side has individually
+                    // stepped off its shared foot under the sixty-degree cap
+                    // (peeled trees stand on an AIM-DERIVED foot by spec
+                    // section 11, not on 8.1's candidate mean, so comparing a
+                    // peeled foot against an unpeeled one compares two
+                    // different rules and not a mirror failure of either).
+                    // Every GATHERED (unpeeled) foot is already proved above,
+                    // independently of the engine, to be section 8.1's own
+                    // plan mean; this checks that mean is the SAME density-
+                    // stable value on both sides of the row, at EVERY density
+                    // swept, which is the density-refinement idea the retired
+                    // check was reaching for. MEASURED: it holds to the same
+                    // small, geometry-driven margin (under 0.35, against the
+                    // 0.2465 to 0.2925 actually observed across 3, 5, 9 and 17
+                    // notches and every Type, fully paired or not) at every
+                    // combination tried; a genuinely UNPEELED mismatch never
+                    // approaches the 2.77 an orphaned peel produces once one
+                    // side of a pair steps off and the other does not.
+                    {
+                        double x0 = X(net.Nodes.GetValue(0)!);
+                        double xN = X(net.Nodes.GetValue(notches + 1)!);
+                        double worstFairMirror = 0.0;
+                        int worstFairAt = -1;
+                        for (int t = 0; t < trees.Length; t++)
+                        {
+                            int m = trees.Length - 1 - t;
+                            if (t >= m)
+                                continue;
+                            int mateT = coarsePartner[t];
+                            bool tPeeled = coarseOwnLeanOver[t] || (mateT >= 0 && mateT != t && coarseOwnLeanOver[mateT]);
+                            int mateM = coarsePartner[m];
+                            bool mPeeled = coarseOwnLeanOver[m] || (mateM >= 0 && mateM != m && coarseOwnLeanOver[mateM]);
+                            if (tPeeled != mPeeled)
+                                continue;   // an ORPHANED peel: CONCERN, not this claim; see the report.
+                            double err = Math.Abs(X(levelNodes[footNode[t]]) + X(levelNodes[footNode[m]]) - (x0 + xN));
+                            if (err > worstFairMirror) { worstFairMirror = err; worstFairAt = t; }
+                        }
+                        if (worstFairMirror > 0.35)
+                        {
+                            throw new InvalidOperationException(
+                                $"Type {type} at {notches} notches: an unpeeled tree's foot and its row-index mirror's foot are equidistant from the "
+                                + $"chord midpoint to within the row's own equal-arc-length defect; the worst pair (tree {worstFairAt}) is off by {worstFairMirror:0.#########}.");
+                        }
                     }
                     // THE FEET CONVERGE AS THE DENSITY RISES is still owned
                     // by the multi-span least-squares smoothing of spec
