@@ -152,24 +152,46 @@ oversight rather than a request to delete it. The proposal is to place Path imme
 since the two together say where the set goes and what it is called, giving: Result, Cells, Courses,
 Radius, Path, Name, Studio URL, Live, Write. His confirmation is wanted on that one slot.
 
-WHETHER COURSES CAN GO is a question about the studio, not about taste, and it is being verified
-against the Bench Studio importer rather than assumed. His reasoning is sound on its face: Cells is a
-tree whose BRANCH PATH is the course, so an integer repeated per cell alongside it is the same
-information twice. Export flattens both today, which is precisely why the second port exists; reading
-the branch path instead would make it redundant. The one case where the two genuinely differ is an
-author wiring a FLAT list of hand-authored cells, where every cell would land in branch zero and so be
-read as course zero. That is the same answer Export's own default tessellation already gives, so it
-may be acceptable, but the decision needs the importer's actual requirements: whether a course integer
-is mandatory per cell, whether courses must run contiguously from zero, and what the studio does when
-they are absent.
+WHETHER COURSES CAN GO was VERIFIED against the Bench Studio importer rather than assumed, and the
+answer is yes but not by deletion. The facts, with their sources:
 
-A RELATED CLAIM IS UNDER TEST at the same time, because it may be false. The plugin's port
-descriptions state that ordering cells along the course within each branch hands the studio its build
-sequence. An earlier reading of the studio suggests it RE-SORTS on import, by course and then by an
-angle it computes itself, which would mean the plugin's within-course order serves the author in
-Grasshopper and not the studio's build sequence at all. If that is confirmed, the port descriptions
-are wrong and the seam-outward ordering ruling stands on its usefulness to him rather than on any
-claim about the studio.
+- The studio needs a course integer PER CELL. It is optional in the file (tessellation.py from_document
+  lines 781 to 805): absent, it defaults to zero and taints a document-wide courses_inferred flag. But
+  it is not decorative. `staging.py stage_plan` builds ONE STAGE PER DISTINCT COURSE, walked rim to
+  crown and CUMULATIVE, and the formwork weight and the per-stage FEA solve run once per course. So
+  letting every cell fall to course zero is a real functional loss, one analysis stage instead of many,
+  and the plugin's own comment already says so.
+- Courses need NOT be contiguous from zero. `stage_plan` walks the distinct values present, so 0 and 5
+  give two stages rather than six. Negative courses are REJECTED outright, after a measured incident in
+  which a negatively-coursed cell silently dropped its weight from the formwork curve, 13087.1 N
+  reported against a true 26174.2 N, with no orphan-face signal. The plugin already pre-empts this
+  locally.
+- Export CANNOT read the branch path today. Both Cells and Courses are registered with
+  GH_DataMapping.Flatten (DeliveryComponents.cs 277 to 278 and 289 to 290), and a mapping the plugin
+  registers wins over the archive, so the flatten is structural rather than a default. The paths are
+  gone before the component's code runs, which is exactly why the second port exists.
+
+So the change is: drop the Flatten on Cells, read it with GetDataTree, and take each branch's path as
+that branch's course. That reproduces precisely what Courses supplies today for Skin-sourced cells,
+since Skin already branches Cells by course. It is a real code change rather than a deletion, and it
+must also decide the one case where the two genuinely differ: an author wiring a FLAT list of
+hand-authored cells together with an explicit per-item course list. Branch-path derivation would force
+every one of those to course zero and silently discard their courses, so that case must be either
+forbidden with a clear refusal or special-cased. Any regraft between Skin and Export does the same
+damage.
+
+A RELATED CLAIM IS NOW DISPROVED, and it is the plugin's own. SkinComponents.cs lines 148 to 149 tell
+the author that cells ordered along the course within each run give "the studio's build sequence
+within a run". That is FALSE. `build_tessellation` (tessellation.py line 473) sorts every tessellation,
+generated or authored, by course and then by the polar angle of each cell's centroid about the global
+centroid, and reassigns each cell's index from that sort. The file's order is discarded the moment it
+is read, and the recomputed pairs are what flow downstream into staging and the rigid-block analysis.
+The cell key's own pN sequence number, which Export writes, is never parsed either.
+
+Two consequences. The port description must be corrected rather than carried forward. And Param's
+seam-outward build order ruling stands on its usefulness to HIM in Grasshopper, where he sequences his
+own work, and not on any claim about the studio, which will re-sort whatever it is given. He made that
+ruling believing it fed the studio's build sequence, so it is worth putting to him again in that light.
 
 ## 1d. Flowlines and Diagnostics come off Skin
 
