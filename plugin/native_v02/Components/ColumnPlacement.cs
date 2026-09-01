@@ -790,7 +790,16 @@ namespace Ananke.COMPAS.Native.Components
             // Each tree's resultant, read once in its own span's frame as
             // (along, across, down), and its MAIN notch's chord parameter:
             // the one place this method reads parameter order rather than
-            // bar order (9.2).
+            // bar order (9.2). The chord parameter is read from the tree's
+            // HEAD MAIN, Nodes[HeadMain], not Nodes[0]: HeadMainOf's own doc
+            // comment is explicit that Nodes[0] is the main notch only "on a
+            // net with no crossing", and this is the one place in Symmetrise
+            // that locates the mirror plane and pairs trees by that
+            // parameter, so reading the wrong node here moves the mirror off
+            // the structure on any crossed net. A tree with no owned notch
+            // has HeadMain -1 and carries no resultant either, so its
+            // fallback to Nodes[0] only ever sorts a zero-along tree that
+            // takes no part in the pairing search.
             var along = new double[count];
             var across = new double[count];
             var down = new double[count];
@@ -807,7 +816,8 @@ namespace Ananke.COMPAS.Native.Components
                     along[t] = (r.X * frame.C.X) + (r.Y * frame.C.Y);
                     across[t] = (r.X * frame.N.X) + (r.Y * frame.N.Y);
                     down[t] = r.Z;
-                    sParam[t] = ChordParameter(frame.P0, frame.P1, nodes[trees[t].Nodes[0]]);
+                    int headIndex = trees[t].HeadMain >= 0 ? trees[t].HeadMain : 0;
+                    sParam[t] = ChordParameter(frame.P0, frame.P1, nodes[trees[t].Nodes[headIndex]]);
                 }
             }
 

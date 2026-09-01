@@ -7190,21 +7190,38 @@ internal static class Program
         // one as well, because these notches span 0.1 to 0.9 whichever way it
         // is read; the check prints both.
         {
-            // CrestArch's OWN pulls are plain vertical (spec section 8's
-            // geometric defect, not a lean), so the along-chord part of
-            // every raw resultant is exactly zero and 9.2 has no sign to
-            // read: it would fall back to the row centre by parameter,
-            // never to the crest. The CENTRAL COLUMN fixture (spec 8.6,
-            // above) already exercises the plain, unleaning CrestArch; THIS
-            // fixture is the direct test of 9.2 itself, which needs the
-            // genuine along-chord lean a real relaxed net has, side-
-            // dependent about the CREST and SOLVED so that 9.1's mean
-            // subtraction lands the sign change exactly there (an equal-
-            // arc-length row this uneven splits its notches unevenly either
-            // side of any crest off 0.5, so a flat +/-bend alone would land
-            // the crossing at whatever ratio that split gives, not at the
-            // crest), matching the design input's own measurement that the
-            // crest is where the along-chord pull changes sign.
+            // MEASURED, not merely argued, and a SUBSTITUTION for the
+            // brief's own Step 2 literal, not a silent one.
+            //
+            // The brief's literal code builds this fixture on plain
+            // `CrestArch(11, 10.0, 2.5, crest: 0.584)`, whose pulls are
+            // vertical everywhere (spec section 8's geometric defect, not a
+            // lean). Run against that literal, the along-chord part of every
+            // raw resultant is exactly zero, so 9.2 has no sign change to
+            // read at all: LocateMirror's own AllZero() guard fires and
+            // s_mirror falls back to the row centre by parameter, 0.5, never
+            // to the crest at 0.584. The brief's own later assertions in this
+            // same Step 2 (the crest tree is self-paired, its along-chord aim
+            // is zero, the chord-midpoint tree is NOT self-paired) are a
+            // direct test of 9.2's sign-change rule, and the literal
+            // CrestArch fixture cannot exercise that rule at all: it would
+            // either fail those assertions outright (crest and midpoint
+            // coincide with the row-centre fallback whenever the row is
+            // uniform) or pass them by accident of where the fallback
+            // happens to sit, never by the sign change the section actually
+            // specifies.
+            //
+            // CrestMirrorArch and CrestArchBent (declared above, spec
+            // section 9.2 and 17) are substituted for that reason: the same
+            // equal-arc-length CrestArch geometry with a genuine, SOLVED
+            // along-chord lean, side-dependent about the crest, so 9.1's
+            // mean subtraction lands the sign change exactly at the crest
+            // and 9.2 has something real to find. Recorded as D8 in the SDD
+            // ledger, .superpowers/sdd/2026-09-01-mould-round-three-1-
+            // columns/progress.md, and awaiting Param's sign-off there: either
+            // the substitution is accepted as the brief's own text, corrected,
+            // or a way to give literal CrestArch a genuine along-chord lean
+            // without changing its name is wanted instead.
             var crest = CrestMirrorArch(11, 10.0, 2.5, crest: 0.584, bend: 0.2);
             const double oldTolerance = 0.25 / 10.0;
             const double newTolerance = 0.25 * (0.9 - 0.1) / 8.0;
@@ -10379,35 +10396,40 @@ internal static class Program
                             }
                         }
                     }
-                    // NO TREE IS EVER LEFT UNPAIRED, and THE FEET CONVERGE
-                    // AS THE DENSITY RISES. Task 7's subtraction (spec 9.1)
-                    // removes the FORCE asymmetry unconditionally, but the
-                    // pairing tolerance h / 4 is a POSITIONAL bound, and an
-                    // off-centre crest's equal-arc-length row is unevenly
-                    // DENSE, not just unevenly extended: as the mesh
-                    // refines, h itself shrinks, and MEASURED (not argued)
-                    // against this net, UnpairedTrees reads 11 of 17 at
-                    // Type 1, 9 notches. The subtraction fixes the cliff
-                    // this bullet's prose names (a whole span handed its
-                    // raw, common-mode-laden resultants); it does not, on
-                    // its own, give every notch of an unevenly spaced row a
-                    // mutual partner within a positional bound that shrinks
-                    // faster than the row's own asymmetry does. That is the
-                    // multi-span least-squares smoothing of spec sections
-                    // 8.2 to 8.4 again, so this claim STAYS DEFERRED beside
-                    // its sibling, CONCERN recorded for Param.
-                    Deferred(
-                        "Coarse net: no tree is ever left unpaired at ANY density (spec section 17)",
-                        "the multi-span least-squares smoothing of spec sections 8.2 to 8.4, which this task does not build; the pairing tolerance h / 4 is positional and shrinks with the mesh, while an off-centre crest's own asymmetry does not shrink with it",
-                        () =>
-                        {
-                            if (Get<int>(placed, "UnpairedTrees") != 0)
-                            {
-                                throw new InvalidOperationException(
-                                    $"Type {type} at {notches} notches: no tree goes unpaired at ANY density; UnpairedTrees is "
-                                    + $"{Get<int>(placed, "UnpairedTrees")}. Refining a mesh on unchanged geometry used to push this span over a cliff.");
-                            }
-                        });
+                    // NO TREE IS EVER LEFT UNPAIRED. This is the exact claim
+                    // Param's sign-off of 2026-09-01 names as one of the
+                    // three that MUST come out of the Deferred wrapper once
+                    // Task 7's rewrite of Symmetrise lands ("the unmirrored
+                    // span at Type 1 on nine notches, AsymmetricSpans reads
+                    // 1, wants 0"): this is that same fixture, Type 1 at 9
+                    // notches, and AsymmetricSpans is what UnpairedTrees was
+                    // called before Task 7 renamed it. The sign-off is
+                    // explicit that a claim which still fails after the
+                    // rewrite is a finding to report, and NOT a reason to
+                    // re-wrap it under a new name: "It is NOT to delete the
+                    // assertion. It is NOT to weaken it."
+                    //
+                    // MEASURED, not argued: at Type 1 and 17 notches
+                    // UnpairedTrees reads 11, not 0. The rewrite's 9.1
+                    // subtraction removes the FORCE asymmetry unconditionally,
+                    // but the pairing tolerance h / 4 is a POSITIONAL bound,
+                    // and an off-centre crest's equal-arc-length row is
+                    // unevenly DENSE, not just unevenly extended: as the mesh
+                    // refines, h itself shrinks faster than the row's own
+                    // asymmetry does. That is the multi-span least-squares
+                    // smoothing of spec sections 8.2 to 8.4, which no task in
+                    // this phase builds, but the sign-off names only ONE
+                    // claim as staying deferred against that owner (the
+                    // cross-density convergence at Type 2, below), and this
+                    // is not that claim. Asserted INLINE, not deferred; the
+                    // resulting failure is reported to Param as a finding
+                    // rather than resolved here.
+                    if (Get<int>(placed, "UnpairedTrees") != 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type} at {notches} notches: no tree goes unpaired at ANY density; UnpairedTrees is "
+                            + $"{Get<int>(placed, "UnpairedTrees")}. Refining a mesh on unchanged geometry used to push this span over a cliff.");
+                    }
                     // CommonModeResidual, unlike UnpairedTrees, IS zero at
                     // every density: 9.4's second subtraction drives the
                     // WHOLE span's mean along-chord part to zero regardless
