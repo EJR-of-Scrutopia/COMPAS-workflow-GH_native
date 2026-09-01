@@ -1889,8 +1889,51 @@ namespace Ananke.COMPAS.Native.Components
             // merge (spec section 11) can read it whichever branch ran.
             var stepped = new bool[trees.Count];
 
+            // THE SPAN'S OWN ROW, in bar order: every tree of the span, the
+            // ring tree apart, whatever it owns. Step 8 lays its foot groups
+            // out over THIS row, so the merge's mirror test and its candidate
+            // sets are taken from the same row and the same call, and never
+            // re-derived by clustering the feet that came out. The mirror index
+            // is N - 1 - j, so a row counted one way here and another way there
+            // moves every group's mirror partner: a three-group row that lost
+            // an end group would mirror its middle group onto the far group
+            // instead of onto itself, and a merge would be accepted or refused
+            // on the wrong evidence.
+            var rowOf = new List<int>[placement.Spans.Count];
+            for (int s = 0; s < rowOf.Length; s++)
+                rowOf[s] = new List<int>();
+            for (int t = 0; t < trees.Count; t++)
+            {
+                if (trees[t].FixedFoot is not null)
+                    continue;
+                if (trees[t].Span >= 0 && trees[t].Span < rowOf.Length)
+                    rowOf[trees[t].Span].Add(t);
+            }
+            var groupIndex = new int[trees.Count];
+            var groupCount = new int[trees.Count];
+            for (int t = 0; t < trees.Count; t++)
+            {
+                groupIndex[t] = -1;
+                groupCount[t] = -1;
+            }
+
             if (level == 0)
             {
+                // At Type 0 every tree stands on its own foot, so the row's
+                // groups ARE its trees in bar order. A CHORD-ZERO span keeps
+                // -1: it stands on the one span-wide foot at every Type and has
+                // no group structure to mirror by.
+                for (int s = 0; s < rowOf.Length; s++)
+                {
+                    if (placement.Frames[s].ChordZero)
+                        continue;
+                    for (int j = 0; j < rowOf[s].Count; j++)
+                    {
+                        groupIndex[rowOf[s][j]] = j;
+                        groupCount[rowOf[s][j]] = rowOf[s].Count;
+                    }
+                }
+
                 // Each tree stands on its own foot, on the line of the force
                 // it carries. AimFrom caps the lean, so this is never refused.
                 // A tree whose HeadMain is -1 is skipped here for the same
@@ -1920,24 +1963,15 @@ namespace Ananke.COMPAS.Native.Components
                 // foot stable under a solve change, and it is why the band
                 // rule that rebuilt a foot from its surviving trees is gone
                 // along with the bands.
-                var spanTrees = new List<int>[placement.Spans.Count];
-                for (int s = 0; s < spanTrees.Length; s++)
-                    spanTrees[s] = new List<int>();
                 for (int t = 0; t < trees.Count; t++)
                 {
-                    Tree tree = trees[t];
-                    if (tree.FixedFoot is Point3d ringFoot)
-                    {
+                    if (trees[t].FixedFoot is Point3d ringFoot)
                         foot[t] = ringFoot;
-                        continue;
-                    }
-                    if (tree.Span >= 0 && tree.Span < spanTrees.Length)
-                        spanTrees[tree.Span].Add(t);
                 }
 
-                for (int s = 0; s < spanTrees.Length; s++)
+                for (int s = 0; s < rowOf.Length; s++)
                 {
-                    List<int> row = spanTrees[s];
+                    List<int> row = rowOf[s];
                     if (row.Count == 0)
                         continue;
                     SpanFrame frame = placement.Frames[s];
@@ -1949,8 +1983,18 @@ namespace Ananke.COMPAS.Native.Components
                     var notchIndex = new Dictionary<int, int>();
                     for (int i = 0; i < frame.Nodes.Length; i++)
                         notchIndex[frame.Nodes[i]] = i;
-                    foreach (int[] group in groups)
+                    for (int gi = 0; gi < groups.Length; gi++)
                     {
+                        int[] group = groups[gi];
+                        // The group ORDINAL, section 7's own, carried forward
+                        // whatever this group turns out to hold: a group whose
+                        // trees own no notch places no foot, but it is still a
+                        // station of the row and the mirror index counts it.
+                        foreach (int j in group)
+                        {
+                            groupIndex[row[j]] = gi;
+                            groupCount[row[j]] = groups.Length;
+                        }
                         var indices = new List<int>();
                         foreach (int j in group)
                         {
@@ -2026,7 +2070,8 @@ namespace Ananke.COMPAS.Native.Components
                 spacing[t] = SpacingOf(placement, nodes, t);
             var footSpacing = new List<double>();
             int[] footIndex = MergeFeet(
-                placement, nodes, bars, edges, foot, spacing, result.Nodes, footSpacing,
+                placement, nodes, bars, edges, foot, spacing, groupIndex, groupCount,
+                result.Nodes, footSpacing,
                 out int merged, out int refused, out int fallbacks, out int close);
             result.FeetMerged = merged;
             result.MergeRefused = refused;
@@ -2375,75 +2420,10 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Every non-ring tree's GROUP within its own span, read off the
-        /// PLACED feet (<paramref name="placed"/>, step 8's own output,
-        /// before any rule of this method has moved anything): trees of one
-        /// span standing on the identical plan point are one FootGroups
-        /// group, in bar order, so <c>GroupIndex</c> runs 0 to
-        /// <c>GroupCount - 1</c> exactly as spec section 7 laid the row out,
-        /// whatever level built it and however a peeled tree came to stand
-        /// alone. A tree with no span, no owned notch, or a chord-zero span
-        /// (which stands on the one span-wide foot at every Type and so has
-        /// no group structure to mirror by) carries -1 in both.
-        /// </summary>
-        private static (int[] GroupIndex, int[] GroupCount) SpanGroupsOf(
-            Placement placement, Point3d[] nodes, Point3d[] placed)
-        {
-            int n = placement.Trees.Count;
-            var groupIndex = new int[n];
-            var groupCount = new int[n];
-            for (int t = 0; t < n; t++)
-            {
-                groupIndex[t] = -1;
-                groupCount[t] = -1;
-            }
-            var bySpan = new Dictionary<int, List<int>>();
-            for (int t = 0; t < n; t++)
-            {
-                Tree tree = placement.Trees[t];
-                if (tree.Ring || tree.Span < 0 || tree.Span >= placement.Frames.Count || tree.HeadMain < 0)
-                    continue;
-                if (placement.Frames[tree.Span].ChordZero)
-                    continue;
-                if (!bySpan.TryGetValue(tree.Span, out List<int>? row))
-                {
-                    row = new List<int>();
-                    bySpan[tree.Span] = row;
-                }
-                row.Add(t);
-            }
-            foreach (KeyValuePair<int, List<int>> entry in bySpan)
-            {
-                double tol = placement.Frames[entry.Key].TauWeld;
-                double tolSquared = tol * tol;
-                var clusters = new List<List<int>>();
-                foreach (int t in entry.Value)
-                {
-                    List<int>? home = clusters.FirstOrDefault(
-                        cluster => MouldGeometry.PlanDistanceSquared(placed[t], placed[cluster[0]]) <= tolSquared);
-                    if (home is null)
-                    {
-                        home = new List<int>();
-                        clusters.Add(home);
-                    }
-                    home.Add(t);
-                }
-                for (int g = 0; g < clusters.Count; g++)
-                {
-                    foreach (int t in clusters[g])
-                    {
-                        groupIndex[t] = g;
-                        groupCount[t] = clusters.Count;
-                    }
-                }
-            }
-            return (groupIndex, groupCount);
-        }
-
-        /// <summary>
         /// The notch indices (into the tree's own span frame) that GroupFoot
         /// took THIS tree's group's foot from: every free notch of every
-        /// tree sharing the tree's own group (<see cref="SpanGroupsOf"/>),
+        /// tree sharing the tree's own group, that group being the one
+        /// <see cref="FootGroups"/> laid out and step 8 built the foot from,
         /// filtered to those within <see cref="SpanFrame.TauSnap"/> of the
         /// nearest to the group's own centre, exactly GroupFoot's own rule.
         /// </summary>
@@ -2612,8 +2592,7 @@ namespace Ananke.COMPAS.Native.Components
 
         /// <summary>
         /// The least-squares system itself, factored out of <see cref="Converge"/>
-        /// so that a caller wanting the RAW intersection (the SNAP test below
-        /// needs it before any guard is applied) is not left re-deriving it:
+        /// so that the solve and the guard that bounds it can be read apart:
         ///
         ///     minimise, over x in plan, the sum over candidates of
         ///     |(I - d d^T) (x - p)|^2
@@ -2724,7 +2703,8 @@ namespace Ananke.COMPAS.Native.Components
         /// spans within 0.25 * min(g_A, g_B) are a MERGE CANDIDATE, collected
         /// against the STEP-8 feet and never a foot this pass has already
         /// moved. A candidate is accepted only if its MIRROR BY GROUP INDEX
-        /// is also a candidate (<see cref="SpanGroupsOf"/>), or where either
+        /// is also a candidate, the group index being the one
+        /// <see cref="FootGroups"/> gave the row at step 8, or where either
         /// span has no group at the mirrored index it is REFUSED; accepted
         /// candidates resolve as CONNECTED COMPONENTS, and the merged foot is
         /// the CONVERGENCE of every candidate notch of every merging group,
@@ -2748,6 +2728,8 @@ namespace Ananke.COMPAS.Native.Components
             (int, int)[] edges,
             Point3d[] foot,
             double[] spacing,
+            int[] groupIndex,
+            int[] groupCount,
             List<Point3d> levelNodes,
             List<double> footSpacing,
             out int merged,
@@ -2785,6 +2767,7 @@ namespace Ananke.COMPAS.Native.Components
             // merges within one span. An ODD row merges nothing, which is
             // what keeps a centre column and its two leaning neighbours three
             // columns rather than one.
+            var rule2Pairs = new List<(int Left, int Right)>();
             var spanTrees = new List<int>[placement.Spans.Count];
             for (int s = 0; s < spanTrees.Length; s++)
                 spanTrees[s] = new List<int>();
@@ -2814,14 +2797,21 @@ namespace Ananke.COMPAS.Native.Components
                     placed[left].Z);
                 foot[left] = mean;
                 foot[right] = mean;
-                // NOT Union(left, right): that union-find is Rule 3's own,
-                // over the CROSS-LINE candidates, and this pair is not one.
-                // Sharing it here would fold this pair into Rule 3's
-                // connected-component enumeration below and count it a
-                // second time, once for each rule. The two feet now stand at
-                // the identical point regardless, so the WELD pass folds
-                // them into one node whether or not any component tracks it.
-                merged++;
+                // UNIONED, so that the pair is ONE thing from here on. Rule 3
+                // re-reads the STEP-8 feet, not these, and without the union it
+                // would put the two into different connected components
+                // wherever a cross-line candidate catches one of them and not
+                // the other, tearing the pair apart again and leaving an even
+                // row with the two central columns section 12 says stand as
+                // one. The weld pass cannot save it either: the pair only
+                // coincides while nothing moves it.
+                //
+                // The double count that had the union taken out is answered
+                // where it belongs, in the COUNT: `merged` is incremented once
+                // per resolved node group, in the component loop below, and not
+                // once here and again there.
+                Union(left, right);
+                rule2Pairs.Add((left, right));
             }
 
             // ---- RULE 3, CROSS-LINE MERGING. Adjacency is by net EDGE or by
@@ -2832,7 +2822,6 @@ namespace Ananke.COMPAS.Native.Components
             // in sequence, so the answer does not depend on the order the
             // pairs were offered in.
             bool[,] adjacent = SpansAdjacent(placement, edges);
-            (int[] groupIndex, int[] groupCount) = SpanGroupsOf(placement, nodes, placed);
             var candidates = new List<(int A, int B)>();
             for (int a = 0; a < treeCount; a++)
             {
@@ -2847,15 +2836,20 @@ namespace Ananke.COMPAS.Native.Components
                     if (sa < 0 || sb < 0 || sa == sb || !adjacent[sa, sb])
                         continue;
                     double gap = Math.Sqrt(MouldGeometry.PlanDistanceSquared(placed[a], placed[b]));
-                    // Already coincident is RULE 1's, positional identity and
-                    // not a decision: two spans whose feet landed on a shared
-                    // crossing notch are not a cross-line MERGE to accept or
-                    // refuse, and the weld pass folds them into one node
-                    // regardless of anything decided here.
-                    if (gap <= WeldTolerance(a, b))
-                        continue;
                     if (gap > 0.25 * Math.Min(spacing[a], spacing[b]))
                         continue;
+                    // A CANDIDATE is defined by DISTANCE and by nothing else,
+                    // which is spec section 12's own definition, so a pair that
+                    // is already coincident is a candidate and STAYS in this
+                    // list. The MIRROR TEST searches this same list: dropping a
+                    // coincident pair here would leave its mirror partner at the
+                    // other end of the span with no mirror to find, and refusing
+                    // one of a mirrored pair of merges and not the other is
+                    // exactly how two matching columns stop matching. What a
+                    // coincident pair does NOT do is merge; that is rule 1's
+                    // positional identity, and the acceptance loop below leaves
+                    // it to the weld pass without accepting, refusing or
+                    // counting it.
                     candidates.Add((a, b));
                 }
             }
@@ -2891,6 +2885,13 @@ namespace Ananke.COMPAS.Native.Components
             var accepted = new List<(int A, int B)>();
             foreach ((int a, int b) in candidates)
             {
+                // RULE 1's and not this rule's: two feet at the same point are
+                // one node whatever put them there, which is a WELD and is
+                // neither a merge to accept nor a merge to refuse. The pair is
+                // left to the weld pass below, uncounted either way, having
+                // served the mirror test above.
+                if (Math.Sqrt(MouldGeometry.PlanDistanceSquared(placed[a], placed[b])) <= WeldTolerance(a, b))
+                    continue;
                 if (!MirrorAccepts(a, b))
                 {
                     refused++;
@@ -2910,6 +2911,19 @@ namespace Ananke.COMPAS.Native.Components
                 int[] members = component.ToArray();
                 if (members.Length < 2)
                     continue;
+                // Rule 2's own pairs, which the union above folded into this
+                // enumeration so that a cross-line component catching one of a
+                // central pair carries BOTH of them. A component holding
+                // nothing but such a pair is rule 2's answer entire: its foot
+                // is already the mean of the two step-8 feet, nothing of rule 3
+                // moves it, and it is ONE merge group counted once here.
+                int centralPairs = rule2Pairs.Count(p => Find(p.Left) == component.Key);
+                bool crossLine = accepted.Any(p => Find(p.A) == component.Key);
+                if (!crossLine)
+                {
+                    merged += centralPairs;
+                    continue;
+                }
                 var points = new List<(Point3d Point, Vector3d Tangent)>();
                 double guard = double.MaxValue;
                 foreach (int t in members)
@@ -2926,54 +2940,30 @@ namespace Ananke.COMPAS.Native.Components
                     continue;
                 double footZ = foot[members[0]].Z;
 
-                // THE SNAP, tested against the RAW intersection before any
-                // guard is applied. Where a rib's own candidate notch sits
-                // well off the crossing it is really aimed at (two whole
-                // spacings up the rib from the shared node, on the fixture
-                // that exercises this), the candidate points' own hull can
-                // sit nowhere near the true intersection even though the
-                // intersection is exact and lands on a real net vertex: a
-                // shared node within the merge clearance of that raw solution
-                // is stronger evidence than the hull, and is what the snap
-                // exists to catch. Failing that, the ORDINARY guarded
-                // convergence runs, and its own accepted point (or its mean
-                // fallback) is checked against the shared node in turn, which
-                // is what section 12 asks for on the ordinary case.
-                Point3d where;
-                bool fellBack;
-                int snapNode = -1;
-                if (SolveIntersection(points, out double rawX, out double rawY))
+                // THE CONVERGENCE FIRST, GUARD AND ALL, AND THE SNAP OFF IT.
+                // Spec 8.5 snaps a merged foot to a node in ONE case: the
+                // merging spans share a net node and the CONVERGENCE POINT lies
+                // within the merge clearance of it, the convergence point being
+                // section 8.4's guarded answer, its accepted point or its mean
+                // fallback, and never the raw solve.
+                //
+                // Testing the raw solve instead would let the foot leave the
+                // neighbourhood the guard defines altogether: the guard would
+                // bound only the distance from the shared node to that raw
+                // point, never the distance from the resulting foot to its own
+                // candidates, so on near-parallel tangents, where 8.4 says the
+                // solution is OUT OF REACH because a small change of tangent
+                // moves it a long way, the engine would take it anyway wherever
+                // a shared node happened to sit near it, and stand the column a
+                // hundred metres from the notches it serves with nothing
+                // counted in ConvergenceFallback to say so.
+                Point3d where = Converge(nodes, points, guard, footZ, out bool fellBack);
+                foreach (int shared in SharedNotchesOf(placement, members))
                 {
-                    foreach (int shared in SharedNotchesOf(placement, members))
+                    if (Math.Sqrt(MouldGeometry.PlanDistanceSquared(where, nodes[shared])) <= guard)
                     {
-                        double d = Math.Sqrt(
-                            ((nodes[shared].X - rawX) * (nodes[shared].X - rawX)) +
-                            ((nodes[shared].Y - rawY) * (nodes[shared].Y - rawY)));
-                        if (d <= guard)
-                        {
-                            snapNode = shared;
-                            break;
-                        }
-                    }
-                }
-                if (snapNode >= 0)
-                {
-                    where = new Point3d(nodes[snapNode].X, nodes[snapNode].Y, footZ);
-                    fellBack = false;
-                }
-                else
-                {
-                    where = Converge(nodes, points, guard, footZ, out fellBack);
-                    // THE SNAP, the ordinary case: the merging spans share a
-                    // net node and the ACCEPTED convergence (or its mean
-                    // fallback) lands within the merge clearance of it.
-                    foreach (int shared in SharedNotchesOf(placement, members))
-                    {
-                        if (Math.Sqrt(MouldGeometry.PlanDistanceSquared(where, nodes[shared])) <= guard)
-                        {
-                            where = new Point3d(nodes[shared].X, nodes[shared].Y, where.Z);
-                            break;
-                        }
+                        where = new Point3d(nodes[shared].X, nodes[shared].Y, where.Z);
+                        break;
                     }
                 }
                 if (fellBack)
@@ -2987,6 +2977,10 @@ namespace Ananke.COMPAS.Native.Components
                 if (overCap)
                 {
                     refused++;
+                    // The CROSS-LINE merge is refused; a central pair inside
+                    // this component still stands on the one foot rule 2 gave
+                    // it, and is still that one merge group.
+                    merged += centralPairs;
                     continue;
                 }
                 foreach (int t in members)
