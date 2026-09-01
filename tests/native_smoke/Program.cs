@@ -811,12 +811,34 @@ internal static class Program
                 "measures with, so the two cannot disagree, and they " +
                 "are themselves exercised on a bow tie, a square, and " +
                 "squares apart, sharing an edge, overlapping and " +
-                "nested.");
+                "nested. The pair test takes each outline's interior " +
+                "point from its CALLER and finds none of its own, which " +
+                "is pinned by lying to it.");
         }
         catch (Exception exception)
         {
             failures.Add(
                 $"Skin plan filter: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinPlanFilterCost(plugin);
+            Console.WriteLine(
+                "PASS  Skin plan filter cost: an annular vault of 96 a " +
+                "ring at S 3 and CH 0.35 lays its 63 derived cells, " +
+                "refusing no band and dropping nothing, in well under " +
+                "four seconds. It took 206 SECONDS before the interior " +
+                "point was found once per outline instead of once per " +
+                "pair and the triangulation behind it stopped being " +
+                "built whole to read one centroid off the front of it, " +
+                "and the engine runs on Grasshopper's canvas thread at " +
+                "every nudge of the Size slider.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin plan filter cost: {DescribeException(exception)}");
         }
 
         try
@@ -8923,6 +8945,63 @@ internal static class Program
         return (vertices.ToArray(), faces.ToArray());
     }
 
+    /// <summary>
+    /// The spiral vault's shell with NO phasing and the ring density
+    /// opened up: thirteen rings on the same profile
+    /// z = 2 (1 - ((r - 2.5) / 1.5)^2) at radius 4 - 0.25 j, quads
+    /// between consecutive rings, with as many vertices a ring as asked
+    /// for. Every cut strictly inside it is two nested closed loops, and
+    /// the outer and inner radius of a level sum to 5 at every height,
+    /// which is what makes the cell counts derivable.
+    ///
+    /// The DENSITY is the argument because it is what the plan filter's
+    /// cost is made of. A course cell's outline is a piece of the level
+    /// curve below it and a piece of the one above, so the finer the
+    /// mesh the more corners a cell has, and the interior-point rule the
+    /// containment test needs is not linear in them. This is the fixture
+    /// ValidateSkinPlanFilterCost drives, and the reason it is here
+    /// rather than a reuse of SkinSpiralVaultNet is that twelve to a ring
+    /// makes cells too coarse to measure anything.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinAnnularVaultNet(
+        int around)
+    {
+        const int rings = 13;
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < rings; ring++)
+        {
+            double radius = 4.0 - 3.0 * ring / (rings - 1);
+            double height =
+                2.0 * (1.0 - Math.Pow((radius - 2.5) / 1.5, 2.0));
+            for (int k = 0; k < around; k++)
+            {
+                double angle = Math.PI * 2.0 * k / around;
+                vertices.Add(new[]
+                {
+                    radius * Math.Cos(angle),
+                    radius * Math.Sin(angle),
+                    height
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < rings; ring++)
+        {
+            for (int k = 0; k < around; k++)
+            {
+                int next = (k + 1) % around;
+                faces.Add(new[]
+                {
+                    ring * around + k,
+                    ring * around + next,
+                    (ring + 1) * around + next,
+                    (ring + 1) * around + k
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
     /// <summary>The four phasings of the spiral vault this harness pins:
     /// the CONTROL with every ring square to the next, the SPIRAL of one
     /// full angular step a ring, the mildest remesh that breaks (rings 6
@@ -12103,6 +12182,78 @@ internal static class Program
                 "the plan guarantee has a hole in it.");
         }
 
+        // ---- 1d. THE INTERIOR POINT IS THE CALLER'S, and this is the
+        // structural half of the cost guard ValidateSkinPlanFilterCost
+        // times. Finding a point certainly inside an outline is not
+        // free, and it depends on that outline alone, so the pair test
+        // takes both points as arguments and finds NEITHER of its own:
+        // PlansOverlapWithInteriors is what KeepValidPlans calls, once
+        // per outline rather than once per pair.
+        //
+        // It is pinned by LYING to it. Two squares a clear gap apart,
+        // with a point offered for the first that is not inside the
+        // first at all and is inside the second. A test that believes
+        // the caller answers OVERLAP; one that quietly found its own
+        // point would answer no overlap, which is what the two-argument
+        // PlansOverlap says about the same two squares three lines
+        // above. So a regression that goes back to finding the point
+        // inside the pair test fails here, deterministically and
+        // without a clock, whatever the machine is doing.
+        //
+        // The honest calls are pinned beside it: the C shape and its
+        // holder, with each outline's real point handed in, must give
+        // the same answer both ways round as PlansOverlap does, and a
+        // pair of nulls, which is what an outline with no interior at
+        // all offers, must leave the crossing walk to answer alone.
+        MethodInfo interiorPoint =
+            RequirePublicStatic(patterns, "PlanInteriorPoint");
+        MethodInfo overlapWith =
+            RequirePublicStatic(patterns, "PlansOverlapWithInteriors");
+        double[]? Interior(double[][] outline) =>
+            (double[]?)interiorPoint.Invoke(null, new object[] { outline });
+        bool OverlappingWith(
+            double[][] first,
+            double[]? firstInside,
+            double[][] second,
+            double[]? secondInside) =>
+            (bool)overlapWith.Invoke(
+                null,
+                new object?[] { first, firstInside, second, secondInside })!;
+        double[][] here = Square(0.0, 0.0, 1.0);
+        double[][] faraway = Square(3.0, 3.0, 1.0);
+        if (!OverlappingWith(
+                here, new[] { 3.5, 3.5 }, faraway, Interior(faraway)))
+        {
+            throw new InvalidOperationException(
+                "PlansOverlapWithInteriors must USE the interior points " +
+                "it is given and find none of its own: told that the " +
+                "first square's interior point is (3.5, 3.5), which is " +
+                "inside the second square, it must answer overlap. That " +
+                "it does is what lets the filter find one point per " +
+                "outline instead of one per pair, which is the whole of " +
+                "the cost fix.");
+        }
+        if (OverlappingWith(here, null, faraway, null))
+        {
+            throw new InvalidOperationException(
+                "Two squares a clear gap apart do not overlap, and a " +
+                "pair of outlines with no interior point between them " +
+                "leaves the crossing walk to say so.");
+        }
+        if (!OverlappingWith(
+                cShape, Interior(cShape), holder, Interior(holder)) ||
+            !OverlappingWith(
+                holder, Interior(holder), cShape, Interior(cShape)))
+        {
+            throw new InvalidOperationException(
+                "Handed each outline's own interior point, the pair test " +
+                "must give what PlansOverlap gives: the C shape lying " +
+                "wholly inside its holder overlaps it both ways round. " +
+                "The convenience form is the same test with the points " +
+                "found for the caller, and the two cannot be allowed to " +
+                "disagree.");
+        }
+
         double[][] micronBowTie =
         {
             new[] { 0.0, 0.0, 0.0 },
@@ -12219,6 +12370,122 @@ internal static class Program
         RequireDisjointSimplePlans(
             SkinCells(atThreeTenths).Select(cell => cell.Outline).ToArray(),
             "courses/L-shaped shell CH 0.3");
+    }
+
+    /// <summary>
+    /// The plan filter's COST, pinned on the shape that made it hurt.
+    ///
+    /// The filter is right and was, for a while, unusably slow, which on
+    /// Grasshopper's single canvas thread is its own kind of wrong: the
+    /// component recomputes at every nudge of a slider, so a pattern that
+    /// takes ten seconds is a component that has stopped responding. The
+    /// containment half of the pair test needs a point certainly inside
+    /// an outline, and on a cell curved enough for its own plan mean to
+    /// fall outside it, finding one meant triangulating the outline. That
+    /// was done inside the pair test, so an O(k squared) walk asked for
+    /// O(k) points and paid for the whole triangulation each time.
+    ///
+    /// Measured on this fixture, against the build before the fix and
+    /// after it, courses at CH 0.35:
+    ///
+    ///   48 a ring, S 0.6:  26.8 ms  to   18.5 ms
+    ///   48 a ring, S 1.5:   772 ms  to     39 ms
+    ///   48 a ring, S 2.0:  2926 ms  to     79 ms
+    ///   48 a ring, S 3.0:  9005 ms  to    116 ms
+    ///   96 a ring, S 3.0:   206 s   to   0.65 s
+    ///
+    /// Two changes, and both leave every answer alone. The points are
+    /// found ONCE PER OUTLINE, in KeepValidPlans, and handed to
+    /// PlansOverlapWithInteriors, which ValidateSkinPlanFilter pins
+    /// structurally by lying to it. And the triangles come from
+    /// SplitPolygonInOrder one at a time, in the order the whole
+    /// triangulation would have written them, so the point is the point
+    /// the old rule gave and the outline is only split as far as the
+    /// first accepted centroid: 5321 outlines off this fixture at six
+    /// sizes, two course heights, both densities and both engines gave
+    /// interior points identical to the last digit on both builds.
+    ///
+    /// WHAT IS PINNED HERE is the wall clock, because the structural
+    /// pin cannot see the second change and neither can a count. The
+    /// case is the 96-a-ring shell at S 3.0, which took 206 SECONDS
+    /// before; measured in this harness it takes 0.86 s, and the bound
+    /// is FOUR SECONDS. That is 4.6 times the measured time, so an
+    /// ordinary machine having an ordinary bad afternoon cannot trip it,
+    /// and it is 50 times under the regression it exists to catch.
+    /// LOSING EITHER CHANGE ALONE STILL FAILS IT, which is why one
+    /// bound can guard both: measured on the same shell outside this
+    /// harness, the two together take 0.65 s, the points found per pair
+    /// again takes 13.7 s, the triangulation built whole again takes
+    /// 14.0, and neither change takes 206. Each is worth about fifteen
+    /// times on its own and they are worth three hundred together,
+    /// because the pair walk multiplies what a point costs.
+    ///
+    /// THE COUNT is pinned beside the clock so the fast answer is still
+    /// the right answer, and it is derived rather than measured. A 2 m
+    /// rise at CH 0.35 is six bands, mids 0.175, 0.525, 0.875, 1.225,
+    /// 1.575 and 1.875. The rings are 13 circles of radius 4 - 0.25 j
+    /// and the level radius interpolates linearly between them, so the
+    /// outer and inner radii at those mids are 3.928409/1.071591,
+    /// 3.785227/1.214773, 3.618056/1.381944, 3.426786/1.573214,
+    /// 3.1825/1.8175 and 2.854167/2.145833, the spiral vault fixture's
+    /// own table. A regular 96-gon of circumradius R has perimeter
+    /// 192 R sin(pi / 96) = 6.282064 R, so at S 3 the pieces are
+    /// 8.22617/2.24393, 7.92635/2.54376, 7.57629/2.89382,
+    /// 7.17576/3.29434, 6.66422/3.80588 and 5.97669/4.49342, which round
+    /// to (8, 2), (8, 3), (8, 3), (7, 3), (7, 4) and (6, 4): 10 + 11 +
+    /// 11 + 10 + 11 + 10 = 63. The tightest of those is 4.49342, two
+    /// thirds of a hundredth of a piece from the rounding boundary,
+    /// which is 20 mm of arc in a 13.48 m course: far above the
+    /// arithmetic's noise, and worth saying out loud because it is the
+    /// one number here a small change in the tracer could move.
+    /// </summary>
+    private static void ValidateSkinPlanFilterCost(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+
+        (double[][] vertices, int[][] faces) = SkinAnnularVaultNet(96);
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        object built = courses.Invoke(
+            null, new object[] { net, 3.0, 0.35 })!;
+        clock.Stop();
+        var cells = SkinCells(built);
+        if (cells.Length != 63)
+        {
+            throw new InvalidOperationException(
+                "An annular vault of 96 a ring at S 3 and CH 0.35 lays " +
+                "63 cells by the derivation in this check, six bands of " +
+                "two nested loops rounding to (8, 2), (8, 3), (8, 3), " +
+                $"(7, 3), (7, 4) and (6, 4); got {cells.Length}.");
+        }
+        int transitions = (int)built.GetType()
+            .GetProperty("TransitionBands")!.GetValue(built)!;
+        if (transitions != 0)
+        {
+            throw new InvalidOperationException(
+                "An annular shell's nested loops correspond at every " +
+                "level, outer to outer and inner to inner, so no band of " +
+                $"it is refused; {transitions} were.");
+        }
+        RequireNothingDropped(built, "courses/annular vault 96 a ring S 3");
+        const double Bound = 4.0;
+        if (clock.Elapsed.TotalSeconds > Bound)
+        {
+            throw new InvalidOperationException(
+                "The courses engine must lay this shell in well under " +
+                $"{Bound} seconds; it took " +
+                $"{clock.Elapsed.TotalSeconds:F2}. It took 206 seconds " +
+                "before the interior point was found once per outline " +
+                "and the triangulation stopped being built whole, and " +
+                "this runs on the canvas thread at every nudge of the " +
+                "Size slider. Read the comment on this check before " +
+                "widening the bound: it is six times the measured time " +
+                "already, so what has been lost is one of the two " +
+                "changes, not a machine having a bad afternoon.");
+        }
     }
 
     /// <summary>

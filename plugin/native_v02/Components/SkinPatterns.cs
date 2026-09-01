@@ -284,23 +284,99 @@ internal static class SkinPatterns
         return triangles;
     }
 
-    /// <summary>One step of Triangulate's rule: find the shortest valid
-    /// plan diagonal, cut the ring in two along it and recurse. The
-    /// comment on Triangulate carries the rule and the tie-break.
-    /// </summary>
+    /// <summary>Triangulate's rule applied to one ring, written into a
+    /// list. The comment on Triangulate carries the rule and the
+    /// tie-break; the splitting itself, and the order, are
+    /// SplitPolygonInOrder's.</summary>
     private static void SplitPolygon(
         IReadOnlyList<double[]> vertices,
         IReadOnlyList<int> ring,
         List<int[]> into)
     {
-        int count = ring.Count;
-        if (count < 3)
-            return;
-        if (count == 3)
+        foreach (int[] triangle in SplitPolygonInOrder(vertices, ring))
+            into.Add(triangle);
+    }
+
+    /// <summary>
+    /// One step of Triangulate's rule, and then the next: find the
+    /// shortest valid plan diagonal, cut the ring in two along it and go
+    /// on with the halves, giving up each triangle as it is found.
+    ///
+    /// The order is the order the recursion had, the NEAR half before the
+    /// far half all the way down, which is what makes this the same
+    /// triangulation written the same way round rather than a second
+    /// arithmetic. The halves waiting their turn sit on a stack, and
+    /// pushing the far half before the near one is what puts the near one
+    /// next.
+    ///
+    /// It gives them up ONE AT A TIME because PlanInteriorPoint wants the
+    /// FIRST triangle whose centroid is inside and almost never the rest,
+    /// and the rest is where the time goes: the diagonal search tests
+    /// about half of n squared candidates against the ring's own edges at
+    /// every level, and a split takes a level, so triangulating the whole
+    /// of a 192-corner outline to read one centroid off the front of it
+    /// cost 2.3 SECONDS. Triangulate itself wants every triangle and
+    /// takes them all.
+    /// </summary>
+    private static IEnumerable<int[]> SplitPolygonInOrder(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int> ring)
+    {
+        var waiting = new Stack<IReadOnlyList<int>>();
+        waiting.Push(ring);
+        while (waiting.Count > 0)
         {
-            into.Add(new[] { ring[0], ring[1], ring[2] });
-            return;
+            IReadOnlyList<int> current = waiting.Pop();
+            int count = current.Count;
+            if (count < 3)
+                continue;
+            if (count == 3)
+            {
+                yield return new[] { current[0], current[1], current[2] };
+                continue;
+            }
+            (int From, int To) cut = ShortestPlanDiagonal(vertices, current);
+            if (cut.From < 0)
+            {
+                // Degenerate in plan, outside the height-field domain: fan
+                // from the first corner so the answer is still deterministic.
+                for (int corner = 1; corner + 1 < count; corner++)
+                {
+                    yield return new[]
+                    {
+                        current[0], current[corner], current[corner + 1]
+                    };
+                }
+                continue;
+            }
+            // The two halves, each still wound the way the face was: the
+            // near side runs from the diagonal's first corner to its
+            // second, the far side leaves the first corner, jumps the
+            // diagonal and comes back round. Both start at the same
+            // corner, so a quad split on its 0-2 diagonal reads [0,1,2]
+            // and [0,2,3] rather than the same triangles written from
+            // somewhere else in their cycle.
+            var near = new List<int>();
+            for (int at = cut.From; at <= cut.To; at++)
+                near.Add(current[at]);
+            var far = new List<int> { current[cut.From] };
+            for (int at = cut.To; at != cut.From; at = (at + 1) % count)
+                far.Add(current[at]);
+            waiting.Push(far);
+            waiting.Push(near);
         }
+    }
+
+    /// <summary>The ring's SHORTEST VALID plan diagonal, as two positions
+    /// within the ring, or (-1, -1) where the ring has none. Validity is
+    /// tested before length and the tie in length goes to the mesh's own
+    /// numbering: the comment on Triangulate carries both rules and the
+    /// reason for each.</summary>
+    private static (int From, int To) ShortestPlanDiagonal(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int> ring)
+    {
+        int count = ring.Count;
         int bestFrom = -1;
         int bestTo = -1;
         double bestLength = double.PositiveInfinity;
@@ -332,33 +408,7 @@ internal static class SkinPatterns
                 bestTo = to;
             }
         }
-        if (bestFrom < 0)
-        {
-            // Degenerate in plan, outside the height-field domain: fan
-            // from the first corner so the answer is still deterministic.
-            for (int corner = 1; corner + 1 < count; corner++)
-            {
-                into.Add(new[]
-                {
-                    ring[0], ring[corner], ring[corner + 1]
-                });
-            }
-            return;
-        }
-        // The two halves, each still wound the way the face was: the near
-        // side runs from the diagonal's first corner to its second, the
-        // far side leaves the first corner, jumps the diagonal and comes
-        // back round. Both start at the same corner, so a quad split on
-        // its 0-2 diagonal reads [0,1,2] and [0,2,3] rather than the
-        // same triangles written from somewhere else in their cycle.
-        var near = new List<int>();
-        for (int at = bestFrom; at <= bestTo; at++)
-            near.Add(ring[at]);
-        var far = new List<int> { ring[bestFrom] };
-        for (int at = bestTo; at != bestFrom; at = (at + 1) % count)
-            far.Add(ring[at]);
-        SplitPolygon(vertices, near, into);
-        SplitPolygon(vertices, far, into);
+        return (bestFrom, bestTo);
     }
 
     /// <summary>Is the segment between two non-adjacent corners a DIAGONAL
@@ -1351,45 +1401,68 @@ internal static class SkinPatterns
     }
 
     /// <summary>
-    /// A point that is certainly INSIDE an outline in plan.
+    /// A point that is certainly INSIDE an outline in plan, as {x, y};
+    /// null when the outline has no interior to find one in.
     ///
-    /// The plan MEAN first, because on a convex cell it is inside and
-    /// costs four arithmetic operations a corner. Where the mean falls
-    /// outside, which a sufficiently non-convex outline's does, the
-    /// outline is triangulated by the same rule the net's faces are and
-    /// the CENTROID of a triangle is taken instead: a triangle of a
-    /// valid triangulation lies inside the polygon, and its centroid
-    /// lies in that triangle's own interior. The triangles are tried in
-    /// turn and the first centroid the point-in-polygon test accepts
-    /// wins, which steps over any triangle a degenerate corner made
-    /// flat. False, and no point, only for an outline of fewer than
-    /// three corners or one so degenerate that no triangle of it has an
+    /// PUBLIC, and meant to be computed ONCE PER OUTLINE by whatever
+    /// walks the pairs, which then hands it to
+    /// PlansOverlapWithInteriors. The point does not depend on the other
+    /// outline, so a pair walk that asks for it again in every pair pays
+    /// O(k squared) times for O(k) answers, and this is not a cheap
+    /// answer to buy.
+    ///
+    /// Two rules, tried in order, each candidate confirmed by the same
+    /// PlanContains that every other part of the filter judges
+    /// insideness with, so what counts as inside is ONE rule whichever
+    /// branch found the point:
+    ///
+    /// 1. The plan MEAN, because on a convex cell it is inside and costs
+    ///    four arithmetic operations a corner. Nearly every cell of a
+    ///    pattern is convex enough for it.
+    /// 2. Where the mean falls outside, which a sufficiently non-convex
+    ///    outline's does (a C shape's mean sits in its notch), the
+    ///    outline is TRIANGULATED by the same rule the net triangulates
+    ///    its faces and the CENTROID of a triangle is taken instead: a
+    ///    triangle of a valid triangulation lies inside the polygon, and
+    ///    its centroid lies in that triangle's own interior. The
+    ///    triangles are tried in SplitPolygon's own order and the first
+    ///    centroid PlanContains accepts wins, which steps over any
+    ///    triangle a degenerate corner made flat.
+    ///
+    /// The triangles come from SplitPolygonInOrder, which produces them
+    /// ONE AT A TIME in exactly the order SplitPolygon writes them, so
+    /// the point is the point the whole triangulation would have given
+    /// and the outline is only split as far as the first accepted
+    /// centroid. That is nearly always the first triangle, and building
+    /// the rest of the triangulation to reach it was most of the cost of
+    /// this method: measured on one PlansOverlap call against a square
+    /// host, a 192-corner outline took 2.3 SECONDS to triangulate whole.
+    ///
+    /// Null, and no point, only for an outline of fewer than three
+    /// corners or one so degenerate that no triangle of it has an
     /// interior at all.
     /// </summary>
-    private static bool PlanInteriorPoint(
-        IReadOnlyList<double[]> outline,
-        out double x,
-        out double y)
+    public static double[]? PlanInteriorPoint(
+        IReadOnlyList<double[]> outline)
     {
-        x = 0.0;
-        y = 0.0;
-        if (outline.Count < 3)
-            return false;
+        int count = outline.Count;
+        if (count < 3)
+            return null;
+        double x = 0.0;
+        double y = 0.0;
         foreach (double[] point in outline)
         {
             x += point[0];
             y += point[1];
         }
-        x /= outline.Count;
-        y /= outline.Count;
+        x /= count;
+        y /= count;
         if (PlanContains(x, y, outline))
-            return true;
-        var ring = new int[outline.Count];
-        for (int at = 0; at < ring.Length; at++)
+            return new[] { x, y };
+        var ring = new int[count];
+        for (int at = 0; at < count; at++)
             ring[at] = at;
-        var triangles = new List<int[]>();
-        SplitPolygon(outline, ring, triangles);
-        foreach (int[] triangle in triangles)
+        foreach (int[] triangle in SplitPolygonInOrder(outline, ring))
         {
             double cx =
                 (outline[triangle[0]][0] +
@@ -1400,13 +1473,9 @@ internal static class SkinPatterns
                  outline[triangle[1]][1] +
                  outline[triangle[2]][1]) / 3.0;
             if (PlanContains(cx, cy, outline))
-            {
-                x = cx;
-                y = cy;
-                return true;
-            }
+                return new[] { cx, cy };
         }
-        return false;
+        return null;
     }
 
     /// <summary>
@@ -1432,11 +1501,50 @@ internal static class SkinPatterns
     /// the same course meet at their joint by construction and the
     /// crossing test is strict.
     ///
-    /// PUBLIC for the same reason PlanSelfCrosses is.
+    /// PUBLIC for the same reason PlanSelfCrosses is. This is the
+    /// CONVENIENCE form, which finds both interior points itself; a
+    /// caller walking pairs should find each outline's point once and
+    /// call PlansOverlapWithInteriors instead.
     /// </summary>
     public static bool PlansOverlap(
         IReadOnlyList<double[]> first,
-        IReadOnlyList<double[]> second)
+        IReadOnlyList<double[]> second) =>
+        PlansOverlapWithInteriors(
+            first,
+            PlanInteriorPoint(first),
+            second,
+            PlanInteriorPoint(second));
+
+    /// <summary>
+    /// PlansOverlap with each outline's interior point ALREADY FOUND, as
+    /// PlanInteriorPoint returns it, or null where that outline has no
+    /// interior. The answer is PlansOverlap's exactly; what changes is
+    /// who pays for the points.
+    ///
+    /// This exists because an interior point is a property of ONE
+    /// outline and finding it is not free, while the pair walk that
+    /// needs it is quadratic. Finding it inside the pair test therefore
+    /// bought O(k) answers O(k squared) times, and on an outline whose
+    /// mean falls outside itself the cost of one answer runs to
+    /// milliseconds and beyond: measured on a square host, one pair test
+    /// on a 128-corner outline took 0.4 seconds and on a 192-corner
+    /// outline 2.3, against 0.05 milliseconds when the mean served. An
+    /// annular vault at a Size of 3 m has exactly that kind of cell, so
+    /// the courses engine on a 96-a-ring mesh took over three minutes on
+    /// the canvas thread, at every nudge of the slider. The interior
+    /// points are now found once each, where the outlines are walked,
+    /// and handed in here.
+    ///
+    /// The points are TRUSTED. Nothing is recomputed and nothing is
+    /// checked: PlanInteriorPoint has already tested its answer with the
+    /// same PlanContains this test judges containment with, and a second
+    /// test here would be the very cost this signature exists to avoid.
+    /// </summary>
+    public static bool PlansOverlapWithInteriors(
+        IReadOnlyList<double[]> first,
+        double[]? firstInside,
+        IReadOnlyList<double[]> second,
+        double[]? secondInside)
     {
         for (int i = 0; i < first.Count; i++)
         {
@@ -1450,13 +1558,13 @@ internal static class SkinPatterns
                 }
             }
         }
-        if (PlanInteriorPoint(first, out double x, out double y) &&
-            PlanContains(x, y, second))
+        if (firstInside is not null &&
+            PlanContains(firstInside[0], firstInside[1], second))
         {
             return true;
         }
-        return PlanInteriorPoint(second, out x, out y) &&
-               PlanContains(x, y, first);
+        return secondInside is not null &&
+               PlanContains(secondInside[0], secondInside[1], first);
     }
 
     /// <summary>
@@ -1494,6 +1602,18 @@ internal static class SkinPatterns
     /// The plan bounding boxes are a pure speed-up over the pair walk
     /// and change no answer: two outlines whose plan boxes are disjoint
     /// can neither cross nor contain one another.
+    ///
+    /// The INTERIOR POINTS are the other speed-up, and change no answer
+    /// either. Each outline's point is found ONCE, here, where the
+    /// outlines are walked anyway, and handed to every pair test that
+    /// outline takes part in. Found inside the pair test instead, as it
+    /// was, an outline's point was recomputed for every cell it was
+    /// measured against, and on a cell whose plan mean falls outside
+    /// itself, which is what an annular vault gives at a large Size,
+    /// finding it costs milliseconds: the courses engine spent nine
+    /// seconds on a 13 by 48 annular vault at Size 3 and over three
+    /// minutes at 96 a ring, on Grasshopper's canvas thread, for every
+    /// nudge of the slider.
     /// </summary>
     private static List<SkinCell> KeepValidPlans(
         IReadOnlyList<SkinCell> cells,
@@ -1505,6 +1625,7 @@ internal static class SkinPatterns
         var kept = new List<SkinCell>(cells.Count);
         var boxes = new List<(double MinX, double MinY,
             double MaxX, double MaxY)>(cells.Count);
+        var insides = new List<double[]?>(cells.Count);
         foreach (SkinCell cell in cells)
         {
             if (cell.Outline.Count < 3 || PlanSelfCrosses(cell.Outline))
@@ -1523,6 +1644,7 @@ internal static class SkinPatterns
                 maxX = Math.Max(maxX, point[0]);
                 maxY = Math.Max(maxY, point[1]);
             }
+            double[]? inside = PlanInteriorPoint(cell.Outline);
             bool overlaps = false;
             for (int at = 0; at < kept.Count && !overlaps; at++)
             {
@@ -1535,7 +1657,8 @@ internal static class SkinPatterns
                 {
                     continue;
                 }
-                overlaps = PlansOverlap(cell.Outline, kept[at].Outline);
+                overlaps = PlansOverlapWithInteriors(
+                    cell.Outline, inside, kept[at].Outline, insides[at]);
             }
             if (overlaps)
             {
@@ -1544,6 +1667,7 @@ internal static class SkinPatterns
             }
             kept.Add(cell);
             boxes.Add((minX, minY, maxX, maxY));
+            insides.Add(inside);
         }
         return kept;
     }
