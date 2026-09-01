@@ -421,7 +421,7 @@ namespace Ananke.COMPAS.Native.Components
                             + "the chain keeps running. Diagnose counts them and "
                             + "names the lever.");
                 }
-                bool nothingGathered = built.Banded > 0 && built.Peeled >= built.Banded;
+                bool nothingGathered = built.Gathered > 0 && built.Peeled >= built.Gathered;
                 if (built.Peeled > 0)
                 {
                     AddRuntimeMessage(
@@ -586,7 +586,7 @@ namespace Ananke.COMPAS.Native.Components
             // count takes no band and stands on its own foot, and the ring
             // tree never had one, so counting those made the state
             // unreachable on exactly the arch it was written for.
-            bool nothingGathered = built.Banded > 0 && built.Peeled >= built.Banded;
+            bool nothingGathered = built.Gathered > 0 && built.Peeled >= built.Gathered;
             string gathered = placement.GroundPlaced == 0
                 ? $"every tree stands on its own foot; {Count(built.Feet.Count, "foot", "feet")}"
                 : nothingGathered

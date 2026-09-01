@@ -6054,6 +6054,69 @@ internal static class Program
         }
         }
 
+        // ---- THE FOOT GROUP TABLE (spec section 7), pinned for every T from
+        // 1 to 13 against every N from 1 to 4. Pure counting, and what a
+        // future change to the rule will trip over. Sizes are read along the
+        // span; the CENTRAL column, the tree an ODD row at an EVEN Type
+        // leaves standing alone, is a group of one in its own place and
+        // Central names its tree index.
+        {
+            MethodInfo footGroups = RequirePublicStatic(engine, "FootGroups");
+            (int[] Sizes, int Central) Groups(int trees, int type)
+            {
+                object r = footGroups.Invoke(null, new object?[] { trees, type })!;
+                Type rt = r.GetType();
+                return (((int[][])rt.GetField("Item1")!.GetValue(r)!).Select(g => g.Length).ToArray(),
+                    (int)rt.GetField("Item2")!.GetValue(r)!);
+            }
+            (int T, int N, string Sizes, int Central)[] table =
+            {
+                (1, 1, "1", -1), (1, 2, "1", -1), (1, 3, "1", -1), (1, 4, "1", -1),
+                (2, 1, "2", -1), (2, 2, "1,1", -1), (2, 3, "1,1", -1), (2, 4, "1,1", -1),
+                (3, 1, "3", -1), (3, 2, "1,1,1", 1), (3, 3, "1,1,1", -1), (3, 4, "1,1,1", -1),
+                (4, 1, "4", -1), (4, 2, "2,2", -1), (4, 3, "1,2,1", -1), (4, 4, "1,1,1,1", -1),
+                (5, 1, "5", -1), (5, 2, "2,1,2", 2), (5, 3, "2,1,2", -1), (5, 4, "1,1,1,1,1", 2),
+                (6, 1, "6", -1), (6, 2, "3,3", -1), (6, 3, "2,2,2", -1), (6, 4, "2,1,1,2", -1),
+                (7, 1, "7", -1), (7, 2, "3,1,3", 3), (7, 3, "2,3,2", -1), (7, 4, "2,1,1,1,2", 3),
+                (8, 1, "8", -1), (8, 2, "4,4", -1), (8, 3, "3,2,3", -1), (8, 4, "2,2,2,2", -1),
+                (9, 1, "9", -1), (9, 2, "4,1,4", 4), (9, 3, "3,3,3", -1), (9, 4, "2,2,1,2,2", 4),
+                (10, 1, "10", -1), (10, 2, "5,5", -1), (10, 3, "3,4,3", -1), (10, 4, "3,2,2,3", -1),
+                (11, 1, "11", -1), (11, 2, "5,1,5", 5), (11, 3, "4,3,4", -1), (11, 4, "3,2,1,2,3", 5),
+                (12, 1, "12", -1), (12, 2, "6,6", -1), (12, 3, "4,4,4", -1), (12, 4, "3,3,3,3", -1),
+                (13, 1, "13", -1), (13, 2, "6,1,6", 6), (13, 3, "4,5,4", -1), (13, 4, "3,3,1,3,3", 6),
+            };
+            foreach ((int T, int N, string sizes, int central) in table)
+            {
+                (int[] got, int gotCentral) = Groups(T, N);
+                string gotText = string.Join(",", got);
+                if (gotText != sizes || gotCentral != central)
+                {
+                    throw new InvalidOperationException(
+                        $"T = {T} at Type {N}: spec section 7 cuts the row into [{sizes}] with the central column at tree {central}; "
+                        + $"the engine cut it into [{gotText}] with {gotCentral}. If T is at most N every tree is a group of one; if T is ODD and "
+                        + "N is EVEN the middle tree by index is taken out as a group of ONE; then q is T2 / N, s is T2 mod N, s = 1 puts the "
+                        + "extra on the CENTRE group and s = 2 puts one on each END group.");
+                }
+                if (got.Sum() != T)
+                    throw new InvalidOperationException($"T = {T} at Type {N}: every tree stands in exactly one group; [{gotText}] holds {got.Sum()}.");
+                if (!Enumerable.Reverse(got).SequenceEqual(got))
+                    throw new InvalidOperationException($"T = {T} at Type {N}: the group sizes are a PALINDROME, so group j and group N-1-j take mirror-image feet; [{gotText}] is not.");
+                _ = got.Where(x => x > 1).Sum();
+                if (central >= 0 && got.Count(x => x == 1) < 1)
+                    throw new InvalidOperationException($"T = {T} at Type {N}: the central column is a group of ONE in its own place; [{gotText}] holds none.");
+            }
+            for (int T = 1; T <= 13; T++)
+            {
+                for (int N = 1; N <= 4; N++)
+                {
+                    (int[] engineSizes, _) = Groups(T, N);
+                    int[] mineSizes = ExpectedFootGroups(T, N).Select(g => g.Length).ToArray();
+                    if (!engineSizes.SequenceEqual(mineSizes))
+                        throw new InvalidOperationException($"T = {T} at Type {N}: the check's own reimplementation of section 7 reads [{string.Join(",", mineSizes)}] against the engine's [{string.Join(",", engineSizes)}]. The two must agree, or every fixture built on the reimplementation is measuring nothing.");
+                }
+            }
+        }
+
         // ---- A hand-built arch.
         // count notches from x = 0 to x = width, z = rise * 4 * s * (1 - s),
         // anchored at both ends, every notch pulled straight down by `load`.
@@ -6229,6 +6292,82 @@ internal static class Program
             return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
         }
 
+        // CrestArch places its notches at equal ARC LENGTH along an arch
+        // whose crest sits at a stated chord parameter, which is what a
+        // relaxed cable net actually gives and what every evenly-spaced-in-x
+        // fixture in this file is blind to.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) CrestArch(
+            int count, double width, double rise, double crest)
+        {
+            double Height(double s) => s <= crest
+                ? rise * (1.0 - (((s / crest) - 1.0) * ((s / crest) - 1.0)))
+                : rise * (1.0 - ((((s - crest) / (1.0 - crest))) * (((s - crest) / (1.0 - crest)))));
+            const int fine = 20000;
+            var lengths = new double[fine + 1];
+            for (int i = 1; i <= fine; i++)
+            {
+                double s0 = (double)(i - 1) / fine;
+                double s1 = (double)i / fine;
+                double dx = width * (s1 - s0);
+                double dz = Height(s1) - Height(s0);
+                lengths[i] = lengths[i - 1] + Math.Sqrt((dx * dx) + (dz * dz));
+            }
+            double total = lengths[fine];
+            Array nodes = Array.CreateInstance(point3d, count);
+            Array acrossBar = Array.CreateInstance(vector3d, count);
+            var edges = new List<(int, int)>();
+            int at = 0;
+            for (int k = 0; k < count; k++)
+            {
+                double want = total * k / (count - 1);
+                while (at < fine && lengths[at + 1] < want)
+                    at++;
+                double s = (double)at / fine;
+                nodes.SetValue(P(width * s, 0.0, Height(s)), k);
+                acrossBar.SetValue(V(0.0, 0.0, -1.0), k);
+                if (k > 0)
+                    edges.Add((k - 1, k));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
+        }
+
+        // ---- THE CENTRAL COLUMN ON A LOPSIDED ROW (spec section 8.6). The
+        // notch row of an equal-arc arch whose crest sits at chord parameter
+        // 0.584 is NOT symmetric about the chord midpoint, so the central
+        // foot is NOT at x = 5 and must not be pushed there. What 8.6 claims
+        // is weaker and exact: the foot stands at its own group's central
+        // notch, and it is off the plane by however far that notch is.
+        foreach (int type in new[] { 2, 4 })
+        {
+            var crest = CrestArch(11, 10.0, 2.5, crest: 0.584);
+            object placed = Run(crest, Array.Empty<int[]>(), 1, type);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int[] footNode = FootOfTree(built, trees.Length);
+            if (Get<int>(built, "CentralColumns") != 1)
+                throw new InvalidOperationException($"Type {type}: nine trees is an ODD row at an EVEN Type on a lopsided arch too; CentralColumns is {Get<int>(built, "CentralColumns")}.");
+            object ownNotch = crest.Nodes.GetValue(Get<int[]>(trees[4], "Nodes")[0])!;
+            object placedFoot = levelNodes[footNode[4]];
+            if (Math.Abs(X(placedFoot) - X(ownNotch)) > 1.0e-9 || Math.Abs(Y(placedFoot) - Y(ownNotch)) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Type {type}: the central foot stands at its OWN group's central notch, ({X(ownNotch):0.#########}, {Y(ownNotch):0.#########}); "
+                    + $"it stands at ({X(placedFoot):0.#########}, {Y(placedFoot):0.#########}).");
+            }
+            double offPlane = Math.Abs(X(ownNotch) - 5.0);
+            if (offPlane < 1.0e-6)
+                throw new InvalidOperationException($"This fixture only measures anything while the central notch is measurably OFF the chord midpoint; it is {offPlane:0.#########} m from it.");
+            if (Math.Abs(Math.Abs(X(placedFoot) - 5.0) - offPlane) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Type {type}: the central foot is off the plane by exactly however far its own notch is, {offPlane:0.#########} m, and NO step projects it onto the "
+                    + $"plane; it stands {Math.Abs(X(placedFoot) - 5.0):0.#########} m off. Projecting would move a column nothing asked to move (spec section 8.6).");
+            }
+        }
+
         // A bar that curves IN PLAN, which is the case BarTransverse exists
         // for and the case every other fixture in this file is blind to.
         //
@@ -6266,6 +6405,45 @@ internal static class Program
                 double u = i - half;
                 double v = sag * (1.0 - ((u / half) * (u / half)));
                 double s = (double)i / (count - 1);
+                nodes.SetValue(
+                    P((u * cx) - (v * cy), (u * cy) + (v * cx), rise * 4.0 * s * (1.0 - s)), i);
+                double along = (i * 2) < count ? lean : -lean;
+                acrossBar.SetValue(V(along * cx, along * cy, -1.0), i);
+                if (i > 0)
+                    edges.Add((i - 1, i));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
+        }
+
+        // The same bar shape as PlanCurved (a chord-frame plan parabola,
+        // sagitta at the crown falling to zero at both ends) resampled at
+        // ELEVEN nodes rather than ten: NINE free notches, still symmetric
+        // about the crown (which now falls exactly on a node), so the one
+        // group at Type 1 has an ODD count and a single nearest-to-centre
+        // candidate rather than a tie. The rise is taller and the sagitta
+        // gentler than PlanCurved's so that even the outermost free notch,
+        // the lowest and farthest from the crown, leans under the cap to the
+        // one shared foot: this fixture's claim is about the ODD-count
+        // candidate rule, not about the peel, so nothing here may peel.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) PlanCurvedOdd()
+        {
+            const int count = 11;
+            const double half = 4.5;
+            const double sag = 1.0;
+            const double rise = 8.0;
+            const double lean = 0.15;
+            double cx = 1.0 / Math.Sqrt(5.0);
+            double cy = 2.0 / Math.Sqrt(5.0);
+            Array nodes = Array.CreateInstance(point3d, count);
+            Array acrossBar = Array.CreateInstance(vector3d, count);
+            var edges = new List<(int, int)>();
+            for (int i = 0; i < count; i++)
+            {
+                double s = (double)i / (count - 1);
+                double u = half * ((2.0 * s) - 1.0);
+                double v = sag * (1.0 - ((u / half) * (u / half)));
                 nodes.SetValue(
                     P((u * cx) - (v * cy), (u * cy) + (v * cx), rise * 4.0 * s * (1.0 - s)), i);
                 double along = (i * 2) < count ? lean : -lean;
@@ -6457,6 +6635,110 @@ internal static class Program
             return byTree;
         }
 
+        // Spec section 7's counting, reimplemented in the check. It must NOT
+        // call the engine's FootGroups: three separate fixtures compare their
+        // own expectation against the placed feet, and an expectation read
+        // off the engine would agree with any engine at all. The table pinned
+        // above is the third party both are measured against.
+        int[][] ExpectedFootGroups(int treeCount, int type)
+        {
+            if (treeCount <= 0)
+                return Array.Empty<int[]>();
+            int n = Math.Min(Math.Max(type, 1), 4);
+            if (treeCount <= n)
+                return Enumerable.Range(0, treeCount).Select(i => new[] { i }).ToArray();
+            int central = -1;
+            int t2 = treeCount;
+            if ((treeCount % 2) == 1 && (n % 2) == 0)
+            {
+                central = treeCount / 2;
+                t2 = treeCount - 1;
+            }
+            int q = t2 / n;
+            int s = t2 % n;
+            var sizes = Enumerable.Repeat(q, n).ToArray();
+            if (s == 1)
+            {
+                sizes[n / 2] += 1;
+            }
+            else if (s == 2)
+            {
+                sizes[0] += 1;
+                sizes[n - 1] += 1;
+            }
+            var groups = new List<int[]>();
+            int at = 0;
+            for (int j = 0; j < n; j++)
+            {
+                if (central >= 0 && j == n / 2)
+                    groups.Add(new[] { central });
+                var members = new List<int>();
+                while (members.Count < sizes[j])
+                {
+                    if (at == central)
+                        at++;
+                    members.Add(at);
+                    at++;
+                }
+                groups.Add(members.ToArray());
+            }
+            return groups.ToArray();
+        }
+
+        MethodInfo leanFromVertical = RequirePublicStatic(geometry, "LeanFromVertical");
+        double MouldLean(object foot, object notch) =>
+            (double)leanFromVertical.Invoke(null, new[] { foot, notch })!;
+
+        // Three one-line locals beside FootOfTree, for RequireFootIsCandidateMean
+        // below: the chord parameter and the raw plan X, Y of tree j's OWN main
+        // notch, read straight off the fixture that built the placement.
+        double ChordParameterOfTree(object placed, (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int j) =>
+            InSpanFrame(net.Nodes, net.Bars[0],
+                ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray()[Get<int>(((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray()[j], "Span")],
+                net.Nodes.GetValue(Get<int[]>(((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray()[j], "Nodes")[0])!).Along
+            / Get<double>(((IEnumerable)Get<object>(placed, "Frames")).Cast<object>().ToArray()[Get<int>(((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray()[j], "Span")], "L");
+        double PlanXOfTreeMain(object placed, (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int j) =>
+            X(net.Nodes.GetValue(Get<int[]>(((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray()[j], "Nodes")[0])!);
+        double PlanYOfTreeMain(object placed, (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int j) =>
+            Y(net.Nodes.GetValue(Get<int[]>(((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray()[j], "Nodes")[0])!);
+
+        // 8.3's rule, asserted and not described: the candidates come
+        // from ONE span, so the foot is their plan MEAN and no system is
+        // solved. On a bar curving in plan the two central notches'
+        // tangents are nearly parallel and meet hundreds of metres away
+        // toward the centre of curvature, so a version that intersected
+        // them would land nowhere near this number.
+        void RequireFootIsCandidateMean(
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net,
+            object placed, int type, int tree)
+        {
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int[] footNode = FootOfTree(built, trees.Length);
+            int[][] groups = ExpectedFootGroups(trees.Length, Math.Max(type, 1));
+            int[] group = groups.First(g => g.Contains(tree));
+            double[] sigma = group
+                .Select(j => ChordParameterOfTree(placed, net, j))
+                .ToArray();
+            double centre = 0.5 * (sigma.Min() + sigma.Max());
+            double nearest = sigma.Min(s => Math.Abs(s - centre));
+            int[] candidates = Enumerable.Range(0, group.Length)
+                .Where(k => Math.Abs(sigma[k] - centre) <= nearest + 1.0e-12)
+                .Select(k => group[k]).ToArray();
+            double meanX = candidates.Average(j => PlanXOfTreeMain(placed, net, j));
+            double meanY = candidates.Average(j => PlanYOfTreeMain(placed, net, j));
+            if (Math.Abs(X(levelNodes[footNode[tree]]) - meanX) > 1.0e-12 ||
+                Math.Abs(Y(levelNodes[footNode[tree]]) - meanY) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"Type {type}: the group foot is the plan MEAN of its candidates EXACTLY, ({meanX:0.############}, {meanY:0.############}); "
+                    + $"it stands at ({X(levelNodes[footNode[tree]]):0.############}, {Y(levelNodes[footNode[tree]]):0.############}). "
+                    + "A single line does not need to be intersected with itself to find its own middle, and a least-squares solve over this "
+                    + "bar's own tangents would miss by up to a notch spacing.");
+            }
+        }
+
         // ---- Mirrored feet (spec 6). Eleven notches, span ten, rise 2.5:
         // the across pulls mirrored in shape and leaning outward, the LEFT
         // flank scaled by 1.1, and every notch skewed one degree along the
@@ -6491,8 +6773,8 @@ internal static class Program
             double centre = X(nodes[footNode[m / 2]]);
             if (Math.Abs(centre - midpoint) > 1.0e-9)
                 throw new InvalidOperationException($"The centre tree stands outside the pairing and its foot is ON the midpoint; it is at {centre:0.#########}.");
-            if (Get<int>(built, "Banded") != 0)
-                throw new InvalidOperationException($"Type 0 cuts no bands at all, so no tree is handed one; Banded is {Get<int>(built, "Banded")}.");
+            if (Get<int>(built, "Gathered") != 0)
+                throw new InvalidOperationException($"Type 0 gathers no tree onto a shared foot at all; Gathered is {Get<int>(built, "Gathered")}.");
             int[] memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
             (int Lower, int Upper)[] members = MembersOf(built);
             for (int k = 0; k < members.Length; k++)
@@ -7205,16 +7487,45 @@ internal static class Program
             (double Along, double Across) low = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[0]]);
             (double Along, double Across) high = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[7]]);
             const double centroidAlong = 2.0;
-            const double centroidAcross = 40.0 / 27.0;
-            if (Math.Abs(low.Along + centroidAlong) > 1.0e-9 || Math.Abs(low.Across - centroidAcross) > 1.0e-9 ||
-                Math.Abs(high.Along - centroidAlong) > 1.0e-9 || Math.Abs(high.Across - centroidAcross) > 1.0e-9)
+            const double groupAcross = 128.0 / 81.0;
+            if (Math.Abs(low.Along + centroidAlong) > 1.0e-9 || Math.Abs(low.Across - groupAcross) > 1.0e-9 ||
+                Math.Abs(high.Along - centroidAlong) > 1.0e-9 || Math.Abs(high.Across - groupAcross) > 1.0e-9)
             {
                 throw new InvalidOperationException(
-                    $"A band's foot is the plan MEAN of its mains, so on this bar the two bands stand at chord (-2, {centroidAcross:0.#########}) and "
-                    + $"(2, {centroidAcross:0.#########}), exact mirror images; they stand at ({low.Along:0.#########}, {low.Across:0.#########}) and "
-                    + $"({high.Along:0.#########}, {high.Across:0.#########}). The centre of an axis-aligned bounding box does not commute with a mirror "
-                    + "about a chord that runs along neither axis.");
+                    $"A group's foot is the plan MEAN of its own TIED CENTRAL NOTCHES, so on this bar the two groups stand at chord (-2, {groupAcross:0.#########}) and "
+                    + $"(2, {groupAcross:0.#########}), exact mirror images; they stand at ({low.Along:0.#########}, {low.Across:0.#########}) and "
+                    + $"({high.Along:0.#########}, {high.Across:0.#########}). The old pin, {40.0 / 27.0:0.#########}, was the CENTROID OF FOUR MAINS; a group's "
+                    + "centre is not that.");
             }
+            RequireFootIsCandidateMean(curved, placed, 2, 0);
+        }
+
+        // ---- THE PLAN-CURVED BAR, ODD COUNT (spec section 17). Nine free
+        // notches, so the one group at Type 1 has an ODD count and exactly
+        // ONE candidate, the crown notch. Its foot is that notch's own plan
+        // position, which is the crown-notch assertion the even-count fixture
+        // cannot carry.
+        {
+            var odd = PlanCurvedOdd();
+            object placed = Run(odd, Array.Empty<int[]>(), 1, 1);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            if (trees.Length != 9)
+                throw new InvalidOperationException($"This fixture only carries the odd-count claim while it holds NINE free notches; it holds {trees.Length}.");
+            int[] footNode = FootOfTree(built, trees.Length);
+            int crownTree = 4;
+            object crownNotch = odd.Nodes.GetValue(Get<int[]>(trees[crownTree], "Nodes")[0])!;
+            object crownFoot = levelNodes[footNode[crownTree]];
+            if (Math.Abs(X(crownFoot) - X(crownNotch)) > 1.0e-12 ||
+                Math.Abs(Y(crownFoot) - Y(crownNotch)) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"At Type 1 an ODD group has ONE candidate, its crown notch, so the foot stands at that notch's own plan position "
+                    + $"({X(crownNotch):0.#########}, {Y(crownNotch):0.#########}); it stands at ({X(crownFoot):0.#########}, {Y(crownFoot):0.#########}).");
+            }
+            if (footNode.Distinct().Count() != 1)
+                throw new InvalidOperationException("At Type 1 all nine trees take the one group's one foot before any peel; they took several.");
         }
 
         // ---- A centre pair merges onto the MEAN of its two feet (spec 3.5,
@@ -7319,15 +7630,15 @@ internal static class Program
             }
         }
 
-        // ---- A band that loses trees to the peel rebuilds its foot from the
-        // survivors (spec 3.5, amended), on the same bar at Type 1. All eight
-        // trees take the one band, whose first foot is the centroid of all
-        // eight mains, chord (0, 40/27). The two outermost trunks lean 71.6
-        // degrees to it and peel onto their own feet; the six that stay would
-        // then be standing on a foot two of whose eight mains have walked
-        // away. Rebuilt from the six survivors it is chord (0, 832/486), a
-        // fifth of a unit further across, and their worst lean falls to 50.6
-        // degrees, so nothing else steps off.
+        // ---- A PEEL NEVER MOVES A FOOT (spec section 11), on the
+        // plan-curved bar at Type 1. All eight trees take the one group,
+        // whose foot is the plan mean of its two tied central candidates at
+        // chord u = -0.5 and 0.5, both across at v = 160/81: chord
+        // (0, 160/81). The outermost trunk on each flank leans past the cap
+        // to it and peels onto its own foot. The foot DOES NOT MOVE, because
+        // a foot's position is a function of the span's notches and not of
+        // the trees standing on it; the old rule rebuilt it from the six
+        // survivors and walked it to (0, 832/486).
         {
             var curved = PlanCurved(0.15);
             object placed = Run(curved, Array.Empty<int[]>(), 1, 1);
@@ -7336,20 +7647,21 @@ internal static class Program
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
             if (Get<int>(built, "Peeled") != 2)
-                throw new InvalidOperationException($"The outermost trunk on each flank leans 71.6 degrees to the shared foot and peels; {Get<int>(built, "Peeled")} peeled.");
+                throw new InvalidOperationException($"The outermost trunk on each flank leans past the cap to the group foot and peels; {Get<int>(built, "Peeled")} peeled.");
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 3)
-                throw new InvalidOperationException($"One band foot and two peeled feet is three; {feet.Length} built.");
+                throw new InvalidOperationException($"One group foot and two peeled feet is three; {feet.Length} built.");
             int[] footNode = FootOfTree(built, trees.Length);
-            (double Along, double Across) band = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[3]]);
-            const double survivorsAcross = 832.0 / 486.0;
-            if (Math.Abs(band.Along) > 1.0e-9 || Math.Abs(band.Across - survivorsAcross) > 1.0e-9)
+            (double Along, double Across) groupFrame = InSpanFrame(curved.Nodes, curved.Bars[0], spans[0], levelNodes[footNode[3]]);
+            const double groupAcross = 160.0 / 81.0;
+            if (Math.Abs(groupFrame.Along) > 1.0e-9 || Math.Abs(groupFrame.Across - groupAcross) > 1.0e-9)
             {
                 throw new InvalidOperationException(
-                    $"The band foot is the centroid of the trees still STANDING on it, chord (0, {survivorsAcross:0.#########}); it stands at "
-                    + $"({band.Along:0.#########}, {band.Across:0.#########}). Built once from all eight mains and left there it would read "
-                    + $"(0, {40.0 / 27.0:0.#########}), positioned in part by two trunks that have walked away.");
+                    $"The group foot is the plan mean of its own two central notches, chord (0, {groupAcross:0.#########}), and a peel does not move it; "
+                    + $"it stands at ({groupFrame.Along:0.#########}, {groupFrame.Across:0.#########}). Rebuilt from the six survivors it would read (0, {832.0 / 486.0:0.#########}), "
+                    + "a foot positioned in part by two trunks that have walked away.");
             }
+            RequireFootIsCandidateMean(curved, placed, 1, 3);
         }
 
         // ---- Type 1 is PLACED, not refused (spec 3.5 and 3.7). The wide
@@ -7375,13 +7687,13 @@ internal static class Program
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 5)
                 throw new InvalidOperationException($"One band foot and four peeled feet is five; {feet.Length} built.");
-            // Every one of the nine trees was HANDED a band here (Type 1 is
-            // odd, so even the centre tree takes the central one), and Banded
-            // counts them before the peel runs, which is what lets the
-            // component tell "four trunks stepped off" from "nothing gathered
-            // at all".
-            if (Get<int>(built, "Banded") != 9)
-                throw new InvalidOperationException($"At an odd Type every tree of the span takes a band, so all nine were banded before four of them peeled; Banded is {Get<int>(built, "Banded")}.");
+            // At Type 1 every one of the nine trees takes the span's ONE
+            // shared foot (Type 1 is odd, so even the centre tree takes it),
+            // and Gathered counts them before the peel runs, which is what
+            // lets the component tell "four trunks stepped off" from "nothing
+            // gathered at all".
+            if (Get<int>(built, "Gathered") != 9)
+                throw new InvalidOperationException($"At Type 1 every one of the nine trees takes the one shared foot, so Gathered is 9, counted before the peel; Gathered is {Get<int>(built, "Gathered")}.");
             foreach ((int lower, int upper) in MembersOf(built))
             {
                 if (!feet.Contains(lower))
@@ -7445,8 +7757,133 @@ internal static class Program
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (feet.Length != 3)
                 throw new InvalidOperationException($"Two band feet at 2.5 and 7.5 and the centre tree's own at 5 is three; {feet.Length} built.");
-            if (Get<int>(built, "Banded") != 8)
-                throw new InvalidOperationException($"At an EVEN Type the centre tree has no central band to take and stands on its own foot, so eight of the nine trees were banded; Banded is {Get<int>(built, "Banded")}.");
+            if (Get<int>(built, "Gathered") != 8)
+                throw new InvalidOperationException($"At an EVEN Type the centre tree takes no shared group and stands on its own foot, so eight of the nine trees were gathered; Gathered is {Get<int>(built, "Gathered")}.");
+            if (Get<int>(built, "CentralColumns") != 1)
+                throw new InvalidOperationException($"An ODD tree row at an EVEN Type leaves its middle tree standing alone and plumb, counted BY CONSTRUCTION; CentralColumns is {Get<int>(built, "CentralColumns")}.");
+        }
+
+        // ---- THE CONTROL NUMBERS (spec section 17). THE CONTROL ARCH IS
+        // ELEVEN NODES, TEN METRES WIDE, RISE 2.5, ANCHORED AT BOTH ENDS,
+        // UNIT DOWNWARD PULL AT EVERY NODE, BRANCHING 1: nine free notches
+        // one metre apart at chord parameters 0.1 to 0.9. These are the
+        // MEASURED numbers of the engine as it stands, so on a clean
+        // symmetric span the redesign does not move one column. Any deviation
+        // is a change to a clean span and must be argued before it is
+        // accepted. The two-peel answer belongs to an arch of RISE 5 and must
+        // not be written against this one.
+        {
+            (int Type, double[] Feet)[] control =
+            {
+                (0, new[] { -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0 }),
+                (1, new[] { -4.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 4.0 }),
+                (2, new[] { -2.5, -2.5, -2.5, -2.5, 0.0, 2.5, 2.5, 2.5, 2.5 }),
+                (3, new[] { -3.0, -3.0, -3.0, 0.0, 0.0, 0.0, 3.0, 3.0, 3.0 }),
+                (4, new[] { -3.5, -3.5, -1.5, -1.5, 0.0, 1.5, 1.5, 3.5, 3.5 }),
+            };
+            foreach ((int type, double[] expected) in control)
+            {
+                object placed = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, 9);
+                for (int t = 0; t < 9; t++)
+                {
+                    double got = X(levelNodes[footNode[t]]) - 5.0;
+                    if (Math.Abs(got - expected[t]) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"The control arch at Type {type} stands its feet at [{string.Join(" ", expected)}] metres from the plan midpoint; "
+                            + $"tree {t} stands at {got:0.#########} against {expected[t]:0.#}.");
+                    }
+                }
+                int distinct = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().Count();
+                int wanted = expected.Distinct().Count();
+                if (distinct != wanted)
+                    throw new InvalidOperationException($"The control arch at Type {type} builds {wanted} distinct feet; it built {distinct}.");
+            }
+        }
+
+        // ---- THE CENTRAL COLUMN STANDS STRAIGHT (spec sections 5, 7 and
+        // 18.1, Param's ruling of 2026-09-01). On a span of ODD tree count at
+        // Types 2 and 4 the middle tree by index is extracted as a group of
+        // ONE, CentralColumns counts it, its foot is its OWN group's central
+        // notch and not the nearer flank group's, and its trunk stands PLUMB
+        // within PlumbDegrees of vertical wherever the notch row is
+        // symmetric.
+        //
+        // The REJECTED ALTERNATIVE is computed here rather than described:
+        // the centre tree could have joined the flank group whose foot is
+        // nearer, ties to the lower chord parameter, and the middle column
+        // would then lean to a side. That is exactly the move he named, and
+        // the check asserts the engine does not take it.
+        foreach (int type in new[] { 2, 4 })
+        {
+            object placed = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1, type);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int[] footNode = FootOfTree(built, trees.Length);
+            if (Get<int>(built, "CentralColumns") != 1)
+                throw new InvalidOperationException($"Type {type}: nine trees is an ODD row at an EVEN Type, so ONE tree stands alone; CentralColumns is {Get<int>(built, "CentralColumns")}.");
+            object centreFoot = levelNodes[footNode[4]];
+            if (Math.Abs(X(centreFoot) - 5.0) > 1.0e-9)
+                throw new InvalidOperationException($"Type {type}: the centre tree's foot is its own group's central notch, x = 5; it stands at {X(centreFoot):0.#########}.");
+            if (footNode[4] == footNode[3] || footNode[4] == footNode[5])
+                throw new InvalidOperationException($"Type {type}: the centre tree stands on its OWN foot and joins NEITHER flank group. Joining the nearer flank is the move Param named and refused.");
+            double flankFoot = X(levelNodes[footNode[3]]);
+            if (Math.Abs(flankFoot - 5.0) < 1.0e-9)
+                throw new InvalidOperationException($"Type {type}: this check only measures anything while the nearer flank foot DIFFERS from the central one; it is at {flankFoot:0.#########}.");
+            // THE REJECTED ALTERNATIVE, COMPUTED. The centre tree could have
+            // joined the flank group whose foot is nearer, ties to the lower
+            // chord parameter. The check builds that group itself from the
+            // notch row, takes its nearest-to-centre candidates by the rule of
+            // 8.1, and asserts the placed foot is NOT that point and differs
+            // from it by the flank group's own offset from the centre notch.
+            // Describing the alternative would leave the reader to trust it;
+            // computing it makes the refusal a measurement.
+            int[][] flankGroups = ExpectedFootGroups(9, type);
+            int[] nearerFlank = flankGroups
+                .Where(g => !g.Contains(4))
+                .OrderBy(g => Math.Abs(g.Average(j => 1.0 + j) - 5.0))
+                .ThenBy(g => g.Min())
+                .First();
+            int[] joined = nearerFlank.Concat(new[] { 4 }).OrderBy(j => j).ToArray();
+            double joinedCentre = 0.5 * ((1.0 + joined.Min()) + (1.0 + joined.Max()));
+            double joinedNearest = joined.Min(j => Math.Abs(1.0 + j - joinedCentre));
+            double wouldBe = joined
+                .Where(j => Math.Abs(1.0 + j - joinedCentre) <= joinedNearest + 1.0e-12)
+                .Average(j => 1.0 + j);
+            double offset = Math.Abs(wouldBe - 5.0);
+            if (offset < 1.0e-9)
+                throw new InvalidOperationException($"Type {type}: this check only measures anything while joining the nearer flank would MOVE the centre column; the two answers coincide at x = {wouldBe:0.#########}.");
+            if (Math.Abs(X(centreFoot) - wouldBe) < 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Type {type}: the centre tree joined the nearer flank group and its column stands at x = {wouldBe:0.#########}, which is the move Param named "
+                    + "and refused: \"just moving the standing coloumn for symmetry reasons away from center when it shold obviously default to center\".");
+            }
+            if (Math.Abs(Math.Abs(X(centreFoot) - wouldBe) - offset) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Type {type}: the placed central foot differs from the joined-flank answer by the flank group's OWN offset, {offset:0.#########} m; "
+                    + $"it differs by {Math.Abs(X(centreFoot) - wouldBe):0.#########}.");
+            }
+            var members = MembersOf(built);
+            int[] memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
+            var feetSet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToHashSet();
+            for (int k = 0; k < members.Length; k++)
+            {
+                if (memberTree[k] != 4 || !feetSet.Contains(members[k].Lower))
+                    continue;
+                double lean = AngleDeg(
+                    X(levelNodes[members[k].Upper]) - X(levelNodes[members[k].Lower]),
+                    Y(levelNodes[members[k].Upper]) - Y(levelNodes[members[k].Lower]),
+                    Z(levelNodes[members[k].Upper]) - Z(levelNodes[members[k].Lower]),
+                    0.0, 0.0, 1.0);
+                if (lean > 2.0)
+                    throw new InvalidOperationException($"Type {type}: on a symmetric notch row the central column stands PLUMB within PlumbDegrees of vertical; it leans {lean:0.####} degrees.");
+            }
         }
 
         // ---- Neighbours stay apart (spec 3.5). A narrow bay, span four,
@@ -8043,6 +8480,292 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"Two spans set {crossOffset:0.###} apart in plan, against a cross-span clearance of 0.05 * min(g_A, g_B) = {0.05 * g:0.###}, "
                     + $"collide once per corresponding pair of Type 0 columns inside it, {expected} here; it reports {Get<int>(built, "Collisions")}.");
+            }
+        }
+
+        // ---- A COARSE NET WHOSE NODES ARE FAR APART (spec section 17). One
+        // geometry, a crest at chord parameter 0.60 at rise over span 0.25,
+        // sampled at 3, 5, 9 and 17 notches. The present engine passes its
+        // symmetry test at 3 and 5 and FAILS it at 9 and 17: the geometric
+        // defect barely moves from 0.0284 to 0.0300 while the tolerance falls
+        // from 0.0625 to 0.0139, so refining a mesh on unchanged geometry
+        // pushed the span over the cliff. Under this spec the layout is the
+        // table's row at every density, the feet are at the group centres,
+        // no span is ever placed unmirrored, and the foot positions CONVERGE
+        // as the density rises rather than jumping between them.
+        {
+            foreach (int notches in new[] { 3, 5, 9, 17 })
+            {
+                var net = CrestArch(notches + 2, 10.0, 2.5, crest: 0.60);
+                foreach (int type in new[] { 1, 2, 3, 4 })
+                {
+                    object placed = Run(net, Array.Empty<int[]>(), 1, type);
+                    object built = Get<object>(placed, "Built");
+                    var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                    var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    int[] footNode = FootOfTree(built, trees.Length);
+                    if (notches == 3 && type == 4)
+                    {
+                        int distinct = footNode.Distinct().Count();
+                        if (distinct != 3)
+                        {
+                            throw new InvalidOperationException(
+                                $"Three trees at Type 4: T is at most N, so every tree is a group of one and the span places THREE feet, not four. "
+                                + $"A foot with no tree is not built. It built {distinct}.");
+                        }
+                    }
+                    // THE LAYOUT IS THE TABLE'S ROW at every density. At
+                    // Branching 1 the ladder gives one tree per notch, so the
+                    // tree count IS the notch count and the foot groups are
+                    // section 7's row for that count and that Type. Asserted
+                    // rather than assumed, because the whole point of this
+                    // fixture is that refining the mesh used to change the
+                    // answer.
+                    int[][] wanted = ExpectedFootGroups(notches, type);
+                    if (trees.Length != notches)
+                        throw new InvalidOperationException($"Type {type} at {notches} notches: Branching 1 gives one tree per notch; it gave {trees.Length}.");
+                    if (wanted.Sum(g => g.Length) != notches)
+                        throw new InvalidOperationException($"Type {type} at {notches} notches: section 7's row is not a partition of the tree count.");
+                    for (int j = 0; j < wanted.Length; j++)
+                    {
+                        if (wanted[j].Length != wanted[wanted.Length - 1 - j].Length)
+                            throw new InvalidOperationException($"Type {type} at {notches} notches: group {j} and its mirror hold the same number of trees.");
+                    }
+                    // THE FEET ARE AT THE GROUP CENTRES, computed here from
+                    // the notch row by the nearest-to-centre rule of 8.1 and
+                    // not read off the engine, so the check is not comparing
+                    // the engine with itself. Peeled trees are skipped: a
+                    // peeled foot is aim-derived by section 11.
+                    double[] sigma = Enumerable.Range(1, notches)
+                        .Select(i => X(net.Nodes.GetValue(i)!) / 10.0).ToArray();
+                    foreach (int[] groupTrees in wanted)
+                    {
+                        double lo = groupTrees.Min(j => sigma[j]);
+                        double hi = groupTrees.Max(j => sigma[j]);
+                        double centre = 0.5 * (lo + hi);
+                        double nearest = groupTrees.Min(j => Math.Abs(sigma[j] - centre));
+                        double expected = groupTrees
+                            .Where(j => Math.Abs(sigma[j] - centre) <= nearest + 1.0e-12)
+                            .Average(j => X(net.Nodes.GetValue(j + 1)!));
+                        // A tree is skipped by testing the lean IT WOULD HAVE
+                        // HAD standing on the group's own candidate-mean foot
+                        // (a peeled tree's ACTUAL foot is always inside the
+                        // cap by construction, AimFrom having capped it
+                        // there, so re-testing the placed foot could never
+                        // detect one).
+                        object hypotheticalFoot = P(expected, 0.0, 0.0);
+                        foreach (int j in groupTrees)
+                        {
+                            if (MouldLean(hypotheticalFoot, net.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9)
+                                continue;
+                            if (Math.Abs(X(levelNodes[footNode[j]]) - expected) > 1.0e-9)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Type {type} at {notches} notches: the foot of the group holding trees [{string.Join(",", groupTrees)}] is the plan mean of its "
+                                    + $"nearest-to-centre candidates, x = {expected:0.#########}; tree {j} stands at {X(levelNodes[footNode[j]]):0.#########}.");
+                            }
+                        }
+                    }
+                    // NO SPAN IS EVER PLACED UNMIRRORED, and THE FEET
+                    // CONVERGE AS THE DENSITY RISES, are section 17's
+                    // eventual claims for the finished phase, but neither is
+                    // owned by this task's mechanism alone. Unmirrored-ness
+                    // is Symmetrise's own quarter-spacing tolerance on
+                    // AsymmetricSpans (soon UnpairedTrees), which Task 4 does
+                    // not touch. Convergence across density on a bar this
+                    // coarse and this off-centre (crest 0.60) is exactly what
+                    // the least-squares smoothing of 8.2 to 8.4 is FOR, and
+                    // this task builds only the single-span 8.1/8.3 mean: its
+                    // nearest-to-centre candidate set can legitimately swap
+                    // between two notches that are both plausible "nearest" a
+                    // resampling apart, which is a discrete rule and not a
+                    // continuous one. What THIS task owns, and what is
+                    // asserted above, is that the placed foot IS that rule's
+                    // own plan mean, independently recomputed, at every
+                    // density tried.
+                }
+            }
+        }
+
+        // ---- NOT PLAN-MONOTONE (spec sections 4, 6 and 7). A bar whose
+        // chord parameter does NOT rise with its node order, which the
+        // engine's own comment records as a real case. The layout, the trees,
+        // the mains and the foot groups follow BAR ORDER, so Branching still
+        // means NEIGHBOURING notches. The check computes both readings and
+        // asserts they DIFFER on this bar, so a version reading the parameter
+        // where the index is meant goes red rather than green.
+        {
+            // Bar positions 2 and 3 are swapped in X, straddling the ladder's
+            // own chunk boundary between the [1,2] and [3,4,5] trees at
+            // Branching 3: a swap confined WITHIN one chunk (say positions 3
+            // and 4) leaves every chunk's membership, sorted by either
+            // reading, identical, so the two readings would coincide and the
+            // fixture below would measure nothing.
+            double[] xs = { 0.0, 1.0, 3.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
+            Array nodes = Array.CreateInstance(point3d, xs.Length);
+            Array acrossBar = Array.CreateInstance(vector3d, xs.Length);
+            var edges = new List<(int, int)>();
+            for (int i = 0; i < xs.Length; i++)
+            {
+                double s = xs[i] / 8.0;
+                nodes.SetValue(P(xs[i], 0.0, 2.5 * 4.0 * s * (1.0 - s)), i);
+                acrossBar.SetValue(V(0.0, 0.0, -1.0), i);
+                if (i > 0)
+                    edges.Add((i - 1, i));
+            }
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            var bent = (nodes, new[] { Enumerable.Range(0, xs.Length).ToArray() }, new[] { 0, xs.Length - 1 }, across, edges.ToArray());
+            if (xs[2] <= xs[3])
+                throw new InvalidOperationException("This fixture only measures anything while its chord parameter falls between two consecutive bar positions.");
+            object placed = Run(bent, Array.Empty<int[]>(), 3, 0);
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int[] first = Get<int[]>(trees[0], "Nodes").OrderBy(n => n).ToArray();
+            if (!first.SequenceEqual(new[] { 1, 2 }))
+                throw new InvalidOperationException($"Seven free notches at Branching 3 lay out [2,3,2] BY BAR ORDER, so tree 0 holds bar positions 1 and 2; it holds [{string.Join(",", first)}].");
+            int[] middle = Get<int[]>(trees[1], "Nodes").OrderBy(n => n).ToArray();
+            if (!middle.SequenceEqual(new[] { 3, 4, 5 }))
+                throw new InvalidOperationException($"Branching means NEIGHBOURING notches along the bar, so the middle tree holds positions 3, 4 and 5 whatever their chord parameters; it holds [{string.Join(",", middle)}].");
+
+            // BOTH READINGS ARE COMPUTED AND ASSERTED TO DIFFER. Asserting
+            // the bar-order answer alone would go green against a version
+            // that read the parameter where the index is meant, because on
+            // nine notches out of ten fixtures in this file the two readings
+            // coincide. Here they do not: sorted by chord parameter the free
+            // notches run 1, 3, 2, 4, 5, 6, 7, so a parameter-ordered layout
+            // at Branching 3 puts 3 and 2 in different trees from the ones
+            // bar order gives.
+            int[] freeByBar = { 1, 2, 3, 4, 5, 6, 7 };
+            int[] freeByParameter = freeByBar.OrderBy(p => xs[p]).ToArray();
+            int[][] barLayout = { new[] { 1, 2 }, new[] { 3, 4, 5 }, new[] { 6, 7 } };
+            var parameterLayout = new[]
+            {
+                freeByParameter.Take(2).ToArray(),
+                freeByParameter.Skip(2).Take(3).ToArray(),
+                freeByParameter.Skip(5).Take(2).ToArray(),
+            };
+            bool same = barLayout.Length == parameterLayout.Length &&
+                Enumerable.Range(0, barLayout.Length).All(g =>
+                    barLayout[g].OrderBy(p => p).SequenceEqual(parameterLayout[g].OrderBy(p => p)));
+            if (same)
+                throw new InvalidOperationException("This fixture only measures anything while the BAR-ORDER layout and the PARAMETER-ORDER layout DIFFER; on this bar they agree, so nothing is being tested.");
+            for (int g = 0; g < barLayout.Length; g++)
+            {
+                int[] got = Get<int[]>(trees[g], "Nodes").OrderBy(n => n).ToArray();
+                if (got.SequenceEqual(parameterLayout[g].OrderBy(p => p)) &&
+                    !got.SequenceEqual(barLayout[g].OrderBy(p => p)))
+                {
+                    throw new InvalidOperationException(
+                        $"Tree {g} holds [{string.Join(",", got)}], which is the PARAMETER-ordered reading and not the BAR-ordered one, [{string.Join(",", barLayout[g])}]. "
+                        + "Section 6 reads the bar order and nothing else; a version reading the parameter where the index is meant goes red here rather than green.");
+                }
+            }
+
+            // THE TIE CASE. Two notches at ONE chord parameter, listed in
+            // both orders, giving the same layout and the same feet. A
+            // parameter-ordered reading has no answer here at all, because
+            // the sort is not defined between them, and a stable sort would
+            // hand back a different layout for a different listing order.
+            double[] tied = { 0.0, 1.0, 2.0, 3.0, 3.0, 5.0, 6.0, 7.0, 8.0 };
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Tie(bool swap)
+            {
+                Array nodesHere = Array.CreateInstance(point3d, tied.Length);
+                Array acrossHere = Array.CreateInstance(vector3d, tied.Length);
+                var edgesHere = new List<(int, int)>();
+                var order = Enumerable.Range(0, tied.Length).ToArray();
+                if (swap)
+                    (order[3], order[4]) = (order[4], order[3]);
+                for (int i = 0; i < tied.Length; i++)
+                {
+                    double x = tied[order[i]];
+                    double s = x / 8.0;
+                    // The two tied notches differ ACROSS the chord so they
+                    // are distinct points, and share the chord parameter
+                    // exactly, which is the case the rule has to answer.
+                    double y = order[i] == 3 ? -0.25 : order[i] == 4 ? 0.25 : 0.0;
+                    nodesHere.SetValue(P(x, y, 2.5 * 4.0 * s * (1.0 - s)), i);
+                    acrossHere.SetValue(V(0.0, 0.0, -1.0), i);
+                    if (i > 0)
+                        edgesHere.Add((i - 1, i));
+                }
+                Array acrossAll = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                acrossAll.SetValue(acrossHere, 0);
+                return (nodesHere, new[] { Enumerable.Range(0, tied.Length).ToArray() },
+                    new[] { 0, tied.Length - 1 }, acrossAll, edgesHere.ToArray());
+            }
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object one = Run(Tie(false), Array.Empty<int[]>(), 3, type);
+                object two = Run(Tie(true), Array.Empty<int[]>(), 3, type);
+                object builtOne = Get<object>(one, "Built");
+                object builtTwo = Get<object>(two, "Built");
+                var treesOne = ((IEnumerable)Get<object>(one, "Trees")).Cast<object>().ToArray();
+                var treesTwo = ((IEnumerable)Get<object>(two, "Trees")).Cast<object>().ToArray();
+                if (treesOne.Length != treesTwo.Length)
+                    throw new InvalidOperationException($"Type {type}: two notches at ONE chord parameter give the same LAYOUT in either listing order; {treesOne.Length} trees against {treesTwo.Length}.");
+                var nodesOne = ((IEnumerable)Get<object>(builtOne, "Nodes")).Cast<object>().ToArray();
+                var nodesTwo = ((IEnumerable)Get<object>(builtTwo, "Nodes")).Cast<object>().ToArray();
+                double[] feetOne = FootOfTree(builtOne, treesOne.Length).Select(f => X(nodesOne[f])).OrderBy(v => v).ToArray();
+                double[] feetTwo = FootOfTree(builtTwo, treesTwo.Length).Select(f => X(nodesTwo[f])).OrderBy(v => v).ToArray();
+                for (int t = 0; t < feetOne.Length; t++)
+                {
+                    if (Math.Abs(feetOne[t] - feetTwo[t]) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: the layout and the feet are UNCHANGED by the order the two tied notches are listed in; foot {t} stands at "
+                            + $"{feetOne[t]:0.#########} one way and {feetTwo[t]:0.#########} the other. A parameter-ordered reading has no answer here at all.");
+                    }
+                }
+            }
+        }
+
+        // ---- STABILITY UNDER NOISE (spec section 17). Place a symmetric
+        // arch, displace every node by a pseudo-random offset, place it
+        // again. Every tree keeps the same group, no foot moves by more than
+        // a small multiple of that offset, and no diagnostic count changes.
+        //
+        // The offset is kept WELL INSIDE TauSnap (1e-6 * H, Task 3's own
+        // formula, unchanged here): at an EVEN Type the two candidates
+        // nearest a group's own centre on a perfectly uniform arch are an
+        // EXACT tie, which GroupFoot's own doc names as "the single stated
+        // departure from the letter of his snap ruling" that "spec section
+        // 18.3 leaves open for him". Noise larger than TauSnap does not
+        // test STABILITY at all here, it tests which way an exact tie falls,
+        // which is the open question and not this task's to settle.
+        foreach (int type in new[] { 1, 2, 3, 4 })
+        {
+            var clean = Arch(11, 10.0, 2.5, 1.0);
+            var noisy = Arch(11, 10.0, 2.5, 1.0);
+            int seed = 1;
+            for (int i = 0; i < 11; i++)
+            {
+                seed = unchecked((seed * 1103515245) + 12345);
+                double a = (((seed >> 8) & 0xFFFF) / 65536.0) - 0.5;
+                seed = unchecked((seed * 1103515245) + 12345);
+                double b = (((seed >> 8) & 0xFFFF) / 65536.0) - 0.5;
+                object p = noisy.Nodes.GetValue(i)!;
+                noisy.Nodes.SetValue(P(X(p) + (1.0e-8 * a), Y(p) + (1.0e-8 * b), Z(p)), i);
+            }
+            object placedClean = Run(clean, Array.Empty<int[]>(), 1, type);
+            object placedNoisy = Run(noisy, Array.Empty<int[]>(), 1, type);
+            object builtClean = Get<object>(placedClean, "Built");
+            object builtNoisy = Get<object>(placedNoisy, "Built");
+            var nodesClean = ((IEnumerable)Get<object>(builtClean, "Nodes")).Cast<object>().ToArray();
+            var nodesNoisy = ((IEnumerable)Get<object>(builtNoisy, "Nodes")).Cast<object>().ToArray();
+            int[] footClean = FootOfTree(builtClean, 9);
+            int[] footNoisy = FootOfTree(builtNoisy, 9);
+            for (int t = 0; t < 9; t++)
+            {
+                double moved = Math.Sqrt(
+                    Math.Pow(X(nodesNoisy[footNoisy[t]]) - X(nodesClean[footClean[t]]), 2.0) +
+                    Math.Pow(Y(nodesNoisy[footNoisy[t]]) - Y(nodesClean[footClean[t]]), 2.0));
+                if (moved > 1.0e-6)
+                    throw new InvalidOperationException($"Type {type}: noise well inside TauSnap moved tree {t}'s foot by {moved:0.#########}, which is a boundary flip and not a solve.");
+            }
+            foreach (string field in new[] { "Peeled", "Gathered", "CentralColumns", "FeetMerged", "FeetClose" })
+            {
+                if (Get<int>(builtClean, field) != Get<int>(builtNoisy, field))
+                    throw new InvalidOperationException($"Type {type}: noise well inside TauSnap changed {field} from {Get<int>(builtClean, field)} to {Get<int>(builtNoisy, field)}.");
             }
         }
     }

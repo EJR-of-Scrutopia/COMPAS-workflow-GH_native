@@ -260,13 +260,12 @@ namespace Ananke.COMPAS.Native.Components
             /// <summary>Trunks that stepped off a shared foot onto their own.</summary>
             public int Peeled;
             /// <summary>
-            /// Trees that were handed a band to gather onto: every tree but
-            /// the ring tree and, at an even Type, the centre tree, which has
-            /// no central band and stands on its own foot. Peeled counts a
-            /// subset of these, so the two together say whether ANY trunk
-            /// reached the shared feet.
+            /// Trees the level ASSIGNED to a shared foot, BEFORE the peel
+            /// runs: every tree of a group whose size is more than one.
+            /// Peeled counts a subset of these, so the two together say
+            /// whether ANY trunk reached the shared feet.
             /// </summary>
-            public int Banded;
+            public int Gathered;
             /// <summary>Pairs of feet inside the clearance that stayed two.</summary>
             public int FeetClose;
             public double WorstLean;
@@ -282,6 +281,14 @@ namespace Ananke.COMPAS.Native.Components
             /// <c>ColumnsComponent</c> reads this as columns.plumb_fallback.
             /// </summary>
             public int PlumbTrees;
+            /// <summary>
+            /// Trees standing alone in the middle of an ODD row at an EVEN
+            /// Type, by the clause of spec section 7. Counted BY
+            /// CONSTRUCTION and never by testing a distance to a plane.
+            /// </summary>
+            public int CentralColumns;
+            /// <summary>The largest snap distance as a fraction of its own span's g.</summary>
+            public double SnapWorst;
         }
 
         public sealed class Placement
@@ -462,6 +469,171 @@ namespace Ananke.COMPAS.Native.Components
             for (int i = left.Count - 1; i >= 0; i--)
                 sizes.Add(left[i]);
             return sizes.ToArray();
+        }
+
+        /// <summary>
+        /// A span's T trees, IN BAR ORDER, cut into contiguous FOOT GROUPS by
+        /// the ladder. Every tree of a group stands on that group's one foot.
+        /// Nothing about a tree except its position in the row is read, and
+        /// the row is the row <see cref="Group"/> built, so on a bar that is
+        /// not plan-monotone the groups follow the bar and not the chord
+        /// parameter.
+        ///
+        /// A span with fewer trees than the Type asks for places one foot per
+        /// tree and no more; a foot with no tree is not built. A span of ODD
+        /// tree count at an EVEN Type takes its middle tree out as a group of
+        /// ONE, standing straight on its own foot, which is PARAM'S RULING of
+        /// 2026-09-01: he objected to "just moving the standing coloumn for
+        /// symmetry reasons away from center when it shold obviously default
+        /// to center". Type names the number of GATHERED feet per span, so
+        /// such a span shows N gathered feet and one further column.
+        ///
+        /// The returned Central is that tree's index, or -1 where the clause
+        /// did not fire. It is defined BY CONSTRUCTION, never by testing a
+        /// distance to a plane, because on an asymmetric notch row that foot
+        /// is not on the plane and a positional test would need a bound
+        /// nothing has given it.
+        /// </summary>
+        public static (int[][] Groups, int Central) FootGroups(int treeCount, int type)
+        {
+            if (treeCount <= 0)
+                return (Array.Empty<int[]>(), -1);
+            int n = Math.Min(Math.Max(type, 1), MaxGround);
+            if (treeCount <= n)
+                return (Enumerable.Range(0, treeCount).Select(i => new[] { i }).ToArray(), -1);
+
+            int central = -1;
+            int t2 = treeCount;
+            if ((treeCount % 2) == 1 && (n % 2) == 0)
+            {
+                central = treeCount / 2;
+                t2 = treeCount - 1;
+            }
+
+            int q = t2 / n;
+            int s = t2 % n;
+            var sizes = new int[n];
+            for (int j = 0; j < n; j++)
+                sizes[j] = q;
+            if (s == 1)
+            {
+                // Only reachable at an ODD N, where there IS a centre station.
+                sizes[n / 2] += 1;
+            }
+            else if (s == 2)
+            {
+                sizes[0] += 1;
+                sizes[n - 1] += 1;
+            }
+
+            // Lay the groups along the span, stepping over the central tree
+            // and inserting it as its own group at the middle of the row,
+            // which is the only station a single thing can occupy without
+            // choosing a side.
+            var groups = new List<int[]>();
+            int at = 0;
+            for (int j = 0; j < n; j++)
+            {
+                if (central >= 0 && j == n / 2)
+                    groups.Add(new[] { central });
+                var members = new List<int>();
+                while (members.Count < sizes[j])
+                {
+                    if (at == central)
+                        at++;
+                    members.Add(at);
+                    at++;
+                }
+                groups.Add(members.ToArray());
+            }
+            return (groups.ToArray(), central);
+        }
+
+        /// <summary>
+        /// Where a group's foot stands, on ONE span. Param's rule, quoted:
+        /// "best is to take the closest points to center from the principle
+        /// lines and then get them to all point inwards where they touch".
+        ///
+        /// THE GROUP'S CENTRE is (t_min + t_max) / 2, the midpoint of the
+        /// stretch of chord the group's own notches occupy. Not the mean of
+        /// all its parameters, not the middle index, and not any plane of the
+        /// span: the midpoint of the stretch is the centre of the group's own
+        /// piece of the principal line, which is what his phrase names, and
+        /// it commutes with the mirror.
+        ///
+        /// THE CANDIDATES are the notches nearest that centre: one notch
+        /// where it is nearer than every other by more than TauSnap, and
+        /// every notch within TauSnap of the nearest distance otherwise. The
+        /// foot is their plan MEAN. There is no further tie-break, because
+        /// the mean of any set of tied candidates is well defined, is
+        /// independent of the order they are listed in, and commutes with the
+        /// mirror. On an evenly spaced row this reduces to the familiar
+        /// answer: an ODD count gives one candidate, the middle notch; an
+        /// EVEN count gives two, tied to the last bit.
+        ///
+        /// The least-squares system of spec section 8.3 is NOT solved,
+        /// because the candidates come from one span. A single line does not
+        /// need to be intersected with itself to find its own middle, and on
+        /// a bar that curves gently in plan the two central notches' tangents
+        /// are nearly parallel and meet hundreds of metres away toward the
+        /// centre of curvature.
+        ///
+        /// A group with two tied candidates stands at their midpoint and is
+        /// NOT snapped to either: snapping would move the foot half a notch
+        /// spacing to a side chosen by nothing, and on the centre group it
+        /// would move the one column Param ruled must stand straight. That is
+        /// the single stated departure from the letter of his snap ruling and
+        /// spec section 18.3 leaves it open for him.
+        ///
+        /// Every notch of the group is listed, whether it is OWNED or
+        /// BORROWED at a shared node, because a borrowed notch is still a
+        /// point on this line.
+        /// </summary>
+        private static Point3d GroupFoot(
+            Point3d[] nodes,
+            SpanFrame frame,
+            IReadOnlyList<int> notchIndices,
+            double ground,
+            out double snapDistance)
+        {
+            double smallest = double.MaxValue;
+            double largest = double.MinValue;
+            foreach (int i in notchIndices)
+            {
+                smallest = Math.Min(smallest, frame.Sigma[i]);
+                largest = Math.Max(largest, frame.Sigma[i]);
+            }
+            double centre = 0.5 * (smallest + largest);
+
+            double nearest = double.MaxValue;
+            foreach (int i in notchIndices)
+                nearest = Math.Min(nearest, Math.Abs(frame.Sigma[i] - centre));
+
+            double sumX = 0.0;
+            double sumY = 0.0;
+            int taken = 0;
+            foreach (int i in notchIndices)
+            {
+                if (Math.Abs(frame.Sigma[i] - centre) > nearest + frame.TauSnap)
+                    continue;
+                sumX += nodes[frame.Nodes[i]].X;
+                sumY += nodes[frame.Nodes[i]].Y;
+                taken++;
+            }
+            var foot = new Point3d(sumX / taken, sumY / taken, ground);
+
+            // The SNAP DISTANCE: how far the foot stands from the nearest
+            // candidate notch, so that a coarse bar shows up as a coarse bar
+            // rather than as a surprise.
+            snapDistance = double.MaxValue;
+            foreach (int i in notchIndices)
+            {
+                if (Math.Abs(frame.Sigma[i] - centre) > nearest + frame.TauSnap)
+                    continue;
+                snapDistance = Math.Min(snapDistance,
+                    Math.Sqrt(MouldGeometry.PlanDistanceSquared(foot, nodes[frame.Nodes[i]])));
+            }
+            return foot;
         }
 
         // ------------------------------------------------------------------
@@ -1205,154 +1377,88 @@ namespace Ananke.COMPAS.Native.Components
             }
             else
             {
-                // N bands per span about its own midpoint. The band is
-                // decided PER MIRROR PAIR (spec 3.5): the pair member on the
-                // first half of the chord takes the band its main notch
-                // projects into, and its partner takes the MIRRORED band,
-                // level-1-band, so a pair lands in mirrored bands wherever
-                // the boundaries fall. Reading every tree's own projection
-                // put a main notch sitting exactly ON a boundary, which is
-                // where the centre notch of a uniform arch sits at an even
-                // Type, into the upper band: the two central bands then held
-                // different trees and their feet came out unmirrored on a
-                // symmetric arch. A centre tree is its own partner: at an ODD
-                // Type it takes the central band; at an EVEN Type the mirror
-                // plane IS a boundary and there is no central band to take,
-                // so it stands on its Type 0 foot, which is on that plane
-                // already.
-                var band = new int[trees.Count];
-                for (int t = 0; t < trees.Count; t++)
-                    band[t] = -1;
-                for (int t = 0; t < trees.Count; t++)
-                {
-                    if (trees[t].FixedFoot is not null || band[t] >= 0)
-                        continue;
-                    int partner = t < placement.Partner.Length ? placement.Partner[t] : -1;
-                    if (partner == t)
-                    {
-                        if ((level % 2) == 1)
-                            band[t] = level / 2;
-                        continue;
-                    }
-                    bool paired = partner >= 0 && partner < trees.Count;
-                    // The pair member with the SMALLER chord parameter is on
-                    // the first half of the span. Grouping order usually
-                    // agrees with this, but a bar that is not plan-monotone
-                    // (its parameter along the chord does not rise with its
-                    // node order) can disagree, so the chord parameter itself
-                    // decides, never the grouping index.
-                    int first = t;
-                    int mirrored = paired ? partner : -1;
-                    if (paired &&
-                        ChordParameter(nodes, placement, bars, trees[partner]) <
-                        ChordParameter(nodes, placement, bars, trees[t]))
-                    {
-                        first = partner;
-                        mirrored = t;
-                    }
-                    int chosen = BandIndex(nodes, placement, bars, trees[first], level);
-                    band[first] = chosen;
-                    if (mirrored >= 0)
-                        band[mirrored] = level - 1 - chosen;
-                }
-                result.Banded = band.Count(b => b >= 0);
-
-                // A band's foot is the plan CENTROID of the main notches it
-                // carries, at ground level: the plain mean of their plan
-                // positions. Not the centre of their axis-aligned bounding
-                // box, which is what stood here: a reflection about the span's
-                // mirror plane is affine but not axis aligned, so the bounding
-                // box does not commute with it unless the chord happens to run
-                // along an axis or the band's X and Y extremes happen to fall
-                // on the same two notches. Break either and two mirrored bands
-                // get feet that are not mirror images, which is the one thing
-                // this rule exists to prevent. The mean commutes with any
-                // reflection, whatever the chord's direction.
-                var bandMains = new Dictionary<(int Span, int Band), List<int>>();
+                // THE INVERSION (spec section 3, step 8). No tree's aim, load
+                // or resultant is consulted anywhere in here: a foot's
+                // position is a function of the span's own notch positions,
+                // the span's tree count and the Type. That is what makes a
+                // foot stable under a solve change, and it is why the band
+                // rule that rebuilt a foot from its surviving trees is gone
+                // along with the bands.
+                var spanTrees = new List<int>[placement.Spans.Count];
+                for (int s = 0; s < spanTrees.Length; s++)
+                    spanTrees[s] = new List<int>();
                 for (int t = 0; t < trees.Count; t++)
                 {
                     Tree tree = trees[t];
-                    if (tree.FixedFoot is Point3d fixedFoot)
+                    if (tree.FixedFoot is Point3d ringFoot)
                     {
-                        foot[t] = fixedFoot;
+                        foot[t] = ringFoot;
                         continue;
                     }
-                    if (band[t] < 0)
-                    {
-                        // The centre tree at an even Type: no band, its own
-                        // foot, which stands on the mirror plane.
-                        foot[t] = own[t];
-                        continue;
-                    }
-                    if (!bandMains.TryGetValue((tree.Span, band[t]), out List<int>? list))
-                    {
-                        list = new List<int>();
-                        bandMains[(tree.Span, band[t])] = list;
-                    }
-                    list.Add(t);
+                    if (tree.Span >= 0 && tree.Span < spanTrees.Length)
+                        spanTrees[tree.Span].Add(t);
                 }
-                // The band feet and the PEEL (spec 3.5), settled together.
-                //
-                // A trunk runs from its foot to a fork that lies on the
-                // segment to its main notch, so the trunk's lean IS that
-                // segment's lean and no fork can change it. Past the cap the
-                // TREE steps off the shared foot onto its own, rather than the
-                // level being refused: on any wide span the flank trunks
-                // always pass the cap, so Type 1 fell back to Type 0 whole and
-                // the slider looked dead.
-                //
-                // A band that loses trees to the peel then rebuilds its foot
-                // from the trees still standing on it, because a foot placed
-                // in part by trunks that have walked away is nobody's centre.
-                // Rebuilding moves the foot, so the cap is judged again; the
-                // peel only ever takes trees off a band, so this settles, and
-                // a band nothing stands on builds no foot at all.
-                var peeled = new bool[trees.Count];
-                while (true)
-                {
-                    foreach (List<int> members in bandMains.Values)
-                    {
-                        double sumX = 0.0;
-                        double sumY = 0.0;
-                        int standing = 0;
-                        foreach (int t in members)
-                        {
-                            if (peeled[t])
-                                continue;
-                            Point3d main = nodes[trees[t].Nodes[0]];
-                            sumX += main.X;
-                            sumY += main.Y;
-                            standing++;
-                        }
-                        if (standing == 0)
-                            continue;
-                        var centre = new Point3d(sumX / standing, sumY / standing, ground);
-                        foreach (int t in members)
-                        {
-                            if (!peeled[t])
-                                foot[t] = centre;
-                        }
-                    }
 
-                    bool stepped = false;
-                    for (int t = 0; t < trees.Count; t++)
+                for (int s = 0; s < spanTrees.Length; s++)
+                {
+                    List<int> row = spanTrees[s];
+                    if (row.Count == 0)
+                        continue;
+                    SpanFrame frame = placement.Frames[s];
+                    (int[][] groups, int central) = FootGroups(row.Count, level);
+                    if (central >= 0)
+                        result.CentralColumns++;
+                    var notchIndex = new Dictionary<int, int>();
+                    for (int i = 0; i < frame.Nodes.Length; i++)
+                        notchIndex[frame.Nodes[i]] = i;
+                    foreach (int[] group in groups)
                     {
-                        // A tree already on its own foot cannot step off it:
-                        // AimFrom caps the aim at the lean cap, so its trunk
-                        // is inside it by construction.
-                        if (peeled[t] || band[t] < 0 || trees[t].FixedFoot is not null)
+                        var indices = new List<int>();
+                        foreach (int j in group)
+                        {
+                            foreach (int node in trees[row[j]].Nodes)
+                            {
+                                if (notchIndex.TryGetValue(node, out int at))
+                                    indices.Add(at);
+                            }
+                        }
+                        if (indices.Count == 0)
                             continue;
-                        double lean = MouldGeometry.LeanFromVertical(
-                            foot[t], nodes[trees[t].Nodes[0]]);
-                        if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
-                            continue;
-                        peeled[t] = true;
-                        foot[t] = own[t];
-                        result.Peeled++;
-                        stepped = true;
+                        Point3d placedFoot = GroupFoot(nodes, frame, indices, ground, out double snap);
+                        foreach (int j in group)
+                        {
+                            foot[row[j]] = placedFoot;
+                            // Gathered counts the trees the level ASSIGNED to
+                            // a SHARED foot, BEFORE the peel runs, which is
+                            // exactly what Banded counted. The centre tree
+                            // standing alone takes no shared foot and is not
+                            // one of them, which is what lets the component
+                            // tell "some trunks stepped off" from "nothing
+                            // gathered at all".
+                            if (group.Length > 1)
+                                result.Gathered++;
+                        }
+                        if (frame.G > 1.0e-12)
+                            result.SnapWorst = Math.Max(result.SnapWorst, snap / frame.G);
                     }
-                    if (!stepped)
-                        break;
+                }
+
+                // THE PEEL (spec section 11). A tree whose trunk from its
+                // assigned foot to its main notch leans past the cap stands
+                // instead on its Type 0 foot. A peel NEVER MOVES A FOOT: a
+                // foot's position does not depend on the trees standing on
+                // it, so the rebuild-and-rejudge loop the band rule needed is
+                // gone with the bands, and a foot left with no trees is not
+                // built.
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    if (trees[t].FixedFoot is not null)
+                        continue;
+                    double lean = MouldGeometry.LeanFromVertical(foot[t], nodes[trees[t].Nodes[0]]);
+                    if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
+                        continue;
+                    foot[t] = own[t];
+                    result.Peeled++;
                 }
             }
 
@@ -1565,21 +1671,6 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// A main notch's parameter along its span's chord: 0 at the first
-        /// node, 1 at the last. Used both to pick a band and, in
-        /// <c>BuildLevel</c>, to decide which member of a mirror pair sits on
-        /// the first half of the chord.
-        /// </summary>
-        private static double ChordParameter(
-            Point3d[] nodes, Placement placement, int[][] bars, Tree tree)
-        {
-            Span span = placement.Spans[tree.Span];
-            int[] bar = bars[span.Bar];
-            return ChordParameter(
-                nodes[bar[span.First]], nodes[bar[span.Last]], nodes[tree.Nodes[0]]);
-        }
-
-        /// <summary>
         /// The same parameter for any plan point against any chord: how far
         /// along from <paramref name="a"/> to <paramref name="b"/> it
         /// projects. A chord of no length puts everything at its middle.
@@ -1592,21 +1683,6 @@ namespace Ananke.COMPAS.Native.Components
             return chord > 1.0e-18
                 ? (((point.X - a.X) * cx) + ((point.Y - a.Y) * cy)) / chord
                 : 0.5;
-        }
-
-        /// <summary>
-        /// The band a main notch projects into: the chord from the span's
-        /// first node to its last is cut into <paramref name="level"/> equal
-        /// bands and the notch's parameter along it says which. Only the
-        /// FIRST-HALF member of a mirror pair is read this way; its partner
-        /// takes the mirrored band, and a centre tree takes the central band
-        /// or none (spec 3.5).
-        /// </summary>
-        private static int BandIndex(
-            Point3d[] nodes, Placement placement, int[][] bars, Tree tree, int level)
-        {
-            double s = ChordParameter(nodes, placement, bars, tree);
-            return Math.Min(Math.Max((int)Math.Floor(s * level), 0), level - 1);
         }
 
         /// <summary>
