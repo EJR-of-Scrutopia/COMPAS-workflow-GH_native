@@ -27,9 +27,21 @@ rather than in height, with each bed running across the local direction of steep
 than lying horizontal. That is what a mason does, and CH then means the physical bed-to-bed distance
 of the masonry rather than a rise, which is the more useful meaning of the parameter.
 
-THE FORK, which needs his ruling before the round is specced:
+THE FORK IS RULED. He has chosen the PROPER form, the geodesic distance from the rim, and a CROWN
+CAP PIECE where the courses converge:
 
-- The CHEAP form. Keep the constant-Z cut but choose the cut heights so the AVERAGE along-surface
+> Course cut: "Distance from the rim (Recommended)"; Crown: "A crown cap piece (Recommended)"
+
+So the round replaces the scalar the tracer cuts, CH becomes the true bed-to-bed spacing of the
+masonry, and the last course closes with a single cap piece, the keystone or oculus a real vault has,
+rather than running the lattice into a converging point. That cap ruling also settles, in the same
+stroke, the crown behaviour that has been costing cells in the hexagonal pattern: the honeycomb stops
+being asked to tile a domain that shrinks to nothing.
+
+The two forms are recorded below as they were put to him, because the rejected one names what the
+chosen one must be measured against.
+
+- The CHEAP form, NOT CHOSEN. Keep the constant-Z cut but choose the cut heights so the AVERAGE along-surface
   spacing between consecutive courses is CH, solving one scalar per course instead of stepping the
   height uniformly. This keeps every part of the tracer, the nesting, the correspondence and the plan
   guarantee that six adversarial rounds hardened, and it removes the stretching at the crown. It
