@@ -6271,6 +6271,101 @@ internal static class Program
                 throw new InvalidOperationException("Every node gets its own entry; node 1's single edge back to the origin pulls it (-1, 0, 0).");
         }
 
+        // ---- THE LOAD AT A SHARED NODE (spec section 10, Param's ruling of
+        // 2026-09-01). Summing the bars' TRANSVERSE pulls at a shared node
+        // DOUBLE COUNTS: BarLoads sums every member incident on a node except
+        // the edges running ALONG that bar, so at a node shared by bars A and
+        // B, pull_A is the infill plus B's along-bar edges and pull_B is the
+        // infill plus A's, and their sum is the infill TWICE. On any real
+        // vault the infill dominates, so the naive fix comes out close to
+        // DOUBLE. The head pull is instead
+        //     headPull = (pull_1 + ... + pull_k) - (k - 1) * total
+        // with total the node's whole incident pull taken once, which is the
+        // node's infill pull exactly once.
+        {
+            MethodInfo headPull = RequirePublicStatic(engine, "HeadPull");
+            Type holderType = typeof(ValueTuple<int, int>);
+            Type holderList = typeof(List<>).MakeGenericType(holderType);
+            object Holders(params (int Bar, int Position)[] pairs)
+            {
+                object list = Activator.CreateInstance(holderList)!;
+                MethodInfo add = holderList.GetMethod("Add")!;
+                foreach ((int bar, int position) in pairs)
+                    add.Invoke(list, new[] { Activator.CreateInstance(holderType, bar, position) });
+                return list;
+            }
+            // One node at the origin. Bar 0 runs along x, bar 1 along y, bar
+            // 2 along z. Infill of (0, 0, -6) at the node; each bar's own
+            // along edges pull it (2, 0, 0), (0, 2, 0) and (0, 0, 2). The
+            // node's whole pull is the infill plus all three.
+            Array nodes = Array.CreateInstance(point3d, 7);
+            nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(-1.0, 0.0, 0.0), 1);
+            nodes.SetValue(P(1.0, 0.0, 0.0), 2);
+            nodes.SetValue(P(0.0, -1.0, 0.0), 3);
+            nodes.SetValue(P(0.0, 1.0, 0.0), 4);
+            nodes.SetValue(P(0.0, 0.0, -1.0), 5);
+            nodes.SetValue(P(0.0, 0.0, 1.0), 6);
+            var barsHere = new[] { new[] { 1, 0, 2 }, new[] { 3, 0, 4 }, new[] { 5, 0, 6 } };
+            Array pullArray = Array.CreateInstance(vector3d.MakeArrayType(), 3);
+            // BarLoads-shaped: the infill plus every OTHER bar's along edges.
+            (double X, double Y, double Z)[] barPull =
+            {
+                (0.0, 2.0, -4.0), (2.0, 0.0, -4.0), (2.0, 2.0, -6.0),
+            };
+            for (int b = 0; b < 3; b++)
+            {
+                Array bar = Array.CreateInstance(vector3d, 3);
+                bar.SetValue(V(0.0, 0.0, 0.0), 0);
+                bar.SetValue(V(barPull[b].X, barPull[b].Y, barPull[b].Z), 1);
+                bar.SetValue(V(0.0, 0.0, 0.0), 2);
+                pullArray.SetValue(bar, b);
+            }
+            Array wholeNode = Array.CreateInstance(vector3d, 7);
+            for (int i = 0; i < 7; i++)
+                wholeNode.SetValue(V(0.0, 0.0, 0.0), i);
+            wholeNode.SetValue(V(2.0, 2.0, -4.0), 0);
+
+            // k = 1: an ordinary unshared notch. The head pull is that bar's
+            // OWN untransversed pull unchanged, so the (k - 1) term is
+            // demonstrated to vanish rather than assumed to.
+            object single = headPull.Invoke(null, new object?[] { nodes, barsHere, pullArray, wholeNode, 0, Holders((0, 1)) })!;
+            if (Math.Abs(VX(single)) > 1.0e-12 || Math.Abs(VY(single) - 2.0) > 1.0e-12 || Math.Abs(VZ(single) + 4.0) > 1.0e-12)
+                throw new InvalidOperationException($"At k = 1 the head pull is that bar's own untransversed pull unchanged, (0, 2, -4); it read ({VX(single):0.#####}, {VY(single):0.#####}, {VZ(single):0.#####}).");
+
+            // k = 2: two pulls less one whole pull, which recovers the node's
+            // infill exactly once: (0,2,-4) + (2,0,-4) - (2,2,-4) = (0,0,-4).
+            object twoBars = headPull.Invoke(null, new object?[] { nodes, barsHere, pullArray, wholeNode, 0, Holders((0, 1), (1, 1)) })!;
+            if (Math.Abs(VX(twoBars)) > 1.0e-12 || Math.Abs(VY(twoBars)) > 1.0e-12 || Math.Abs(VZ(twoBars) + 4.0) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"At k = 2 the head pull is the two pulls less ONE whole pull, (0, 0, -4); it read ({VX(twoBars):0.#####}, {VY(twoBars):0.#####}, {VZ(twoBars):0.#####}). "
+                    + "The naive sum of the two would read (2, 2, -8), which counts the node's infill TWICE.");
+            }
+
+            // k = 3: three pulls less TWICE the node's whole pull is
+            // (0,2,-4)+(2,0,-4)+(2,2,-6) - 2*(2,2,-4) = (0,0,-6), which
+            // exercises the general form and not only the two-bar case. But
+            // these three bars run along x, y and z, so their three tangents
+            // span all three dimensions, and HeadPull's own Gram-Schmidt
+            // projection then removes every last component of (0,0,-6): this
+            // is the documented "honest answer for a node whose every
+            // direction is already carried to an anchor", plumb (0,0,0), not
+            // the pre-projection sum.
+            object threeBars = headPull.Invoke(null, new object?[] { nodes, barsHere, pullArray, wholeNode, 0, Holders((0, 1), (1, 1), (2, 1)) })!;
+            if (Math.Abs(VX(threeBars)) > 1.0e-12 || Math.Abs(VY(threeBars)) > 1.0e-12 || Math.Abs(VZ(threeBars)) > 1.0e-12)
+                throw new InvalidOperationException($"At k = 3 the three tangents span all three dimensions, so the projected head pull is (0, 0, 0) and not the pre-projection (0, 0, -6); it read ({VX(threeBars):0.#####}, {VY(threeBars):0.#####}, {VZ(threeBars):0.#####}).");
+
+            // A RUN TRACED TWICE counts once, which is what keeps
+            // columns.overlap true: two bars are the same run at a node when
+            // they reach it through the same two neighbouring net vertices,
+            // in either order.
+            var traced = new[] { new[] { 1, 0, 2 }, new[] { 2, 0, 1 }, new[] { 5, 0, 6 } };
+            object doubled = headPull.Invoke(null, new object?[] { nodes, traced, pullArray, wholeNode, 0, Holders((0, 1), (1, 1)) })!;
+            if (Math.Abs(VY(doubled) - 2.0) > 1.0e-12 || Math.Abs(VZ(doubled) + 4.0) > 1.0e-12)
+                throw new InvalidOperationException($"One bar traced twice is ONE distinct bar at the node, so k is 1 and the head pull is its own pull; it read ({VX(doubled):0.#####}, {VY(doubled):0.#####}, {VZ(doubled):0.#####}).");
+        }
+
         // A parabolic arch whose across pulls are mirrored in SHAPE, carrying
         // the two asymmetries a solved net always has. `bend` is the mirrored
         // part (positive leans the pulls outward from the midpoint), `skew` a
@@ -6477,6 +6572,17 @@ internal static class Program
             double ox = X(point) - (0.5 * (X(first) + X(last)));
             double oy = Y(point) - (0.5 * (Y(first) + Y(last)));
             return ((ox * dx) + (oy * dy), (ox * -dy) + (oy * dx));
+        }
+
+        // The bars of a net handed over in the other order, for the crossing
+        // fixture's swapped-order check: the owner rule must read only
+        // properties of the two spans, never which bar Pattern traced first.
+        Array SwapBars(Array across)
+        {
+            Array swapped = Array.CreateInstance(across.GetType().GetElementType()!, across.Length);
+            for (int i = 0; i < across.Length; i++)
+                swapped.SetValue(across.GetValue(across.Length - 1 - i)!, i);
+            return swapped;
         }
 
         // ---- THE SIGNATURE NO LONGER ACCEPTS A MEDIAN (spec section 4).
@@ -7378,89 +7484,491 @@ internal static class Program
             }
         }
 
-        // ---- A span whose free notches are not symmetric is placed
-        // UNMIRRORED (spec 3.4, amended). An eleven-notch arch crossed at its
-        // position 3 by a second bar, which holds that notch because it is
-        // the lower-indexed bar: the arch is left with free notches at chord
-        // parameters 0.1, 0.2, 0.4, 0.5, 0.6, 0.7, 0.8 and 0.9, where 0.7 has
-        // no partner at 0.3. Index i and index m-1-i of that list are not
-        // geometric mirrors, so pairing them would force equal and opposite
-        // along-chord pulls onto trees that do not straddle the mirror plane,
-        // and would merge a "pair" onto a midpoint that is not between them.
-        // The arch therefore keeps every raw resultant it came in with, its
-        // trees take Partner -1, and it is counted in AsymmetricSpans. The
-        // crossing bar's own span, one notch at parameter 0.5 exactly, IS
-        // symmetric and IS mirrored, which is why its along-chord pull of 0.3
-        // comes back zeroed.
+        // ---- A SPAN WHOSE NOTCH IS CLAIMED BY A CROSSING (spec sections 10
+        // and 17). A pillow surface ten metres square: an arch of eleven
+        // nodes along X at y = 5 and a rib of eleven nodes along Y at x = 3,
+        // both anchored at their ends, meeting at ONE shared node at the
+        // arch's position 3, which is off centre.
+        //
+        // Both spans therefore hold NINE free notches AND equal chords, which
+        // is deliberate: it drives the owner rule past both of its first two
+        // clauses onto the geometric keys, where the arch's endpoint pair
+        // begins at (0, 5) and the rib's at (3, 0), so the ARCH owns by the
+        // lower X. Every regularly ribbed vault, cross vault and dome of
+        // equal ribs and hoops reaches that tie, so this is the normal case
+        // and not a contrivance.
         {
-            Array nodes = Array.CreateInstance(point3d, 13);
-            for (int i = 0; i < 11; i++)
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Pillow(bool withRib)
             {
-                double s = i / 10.0;
-                nodes.SetValue(P(10.0 * s, 0.0, 2.5 * 4.0 * s * (1.0 - s)), i);
-            }
-            nodes.SetValue(P(3.0, -2.0, 0.0), 11);
-            nodes.SetValue(P(3.0, 2.0, 0.0), 12);
-            Array crossBar = Array.CreateInstance(vector3d, 3);
-            crossBar.SetValue(V(0.0, 0.0, 0.0), 0);
-            crossBar.SetValue(V(0.0, 0.3, -1.0), 1);
-            crossBar.SetValue(V(0.0, 0.0, 0.0), 2);
-            Array archBar = Array.CreateInstance(vector3d, 11);
-            for (int p = 0; p < 11; p++)
-                archBar.SetValue(V(0.1 * p, 0.0, -1.0), p);
-            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
-            across.SetValue(crossBar, 0);
-            across.SetValue(archBar, 1);
-            var crossed = (nodes, new[] { new[] { 11, 3, 12 }, Enumerable.Range(0, 11).ToArray() },
-                new[] { 0, 10, 11, 12 }, across, Array.Empty<(int, int)>());
-            object placed = Run(crossed, Array.Empty<int[]>(), 1, 2);
-            if (Get<int>(placed, "GroundPlaced") != 2)
-                throw new InvalidOperationException($"An unmirrored span is placed like any other, its bands read off each tree's own projection; it placed {Get<int>(placed, "GroundPlaced")}.");
-            // The deviation against the bound, by hand. Eight free notches
-            // remain on the arch, so the test allows a quarter of that span's
-            // own spacing, 0.25 / 9 = 0.027778 in chord parameter. The pair
-            // the crossing broke is (0.4, 0.7), which sums to 1.1: a deviation
-            // of 0.1, outside the bound by a factor of 3.6. The bound scales
-            // with the span and with nothing else, so this margin is the same
-            // on a span of three metres and on one of thirty.
-            const double crossedDeviation = 0.1;
-            const double crossedBound = 0.25 / 9.0;
-            if (crossedDeviation <= crossedBound)
-                throw new InvalidOperationException($"This fixture only measures anything while the removed notch's deviation, {crossedDeviation:0.######}, is outside the quarter-spacing bound of {crossedBound:0.######}.");
-            if (Get<int>(placed, "AsymmetricSpans") != 1)
-                throw new InvalidOperationException($"One of the two spans lost an interior notch to the crossing, so a pair of its free notches sums to 1.1 rather than 1, a deviation of {crossedDeviation:0.######} against a bound of {crossedBound:0.######}; AsymmetricSpans is {Get<int>(placed, "AsymmetricSpans")}.");
-            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
-            if (trees.Length != 9)
-                throw new InvalidOperationException($"One tree on the crossing bar and eight on the arch, whose ninth notch is the crossing itself; got {trees.Length}.");
-            int[] partner = Get<int[]>(placed, "Partner");
-            if (partner[0] != 0)
-                throw new InvalidOperationException($"The crossing bar's single notch sits at parameter 0.5, so that span IS symmetric and its one tree is its own partner; Partner[0] is {partner[0]}.");
-            object crossing = Get<object>(trees[0], "Resultant");
-            if (Math.Abs(VX(crossing)) > 1.0e-9 || Math.Abs(VY(crossing)) > 1.0e-9 || Math.Abs(VZ(crossing) + 1.0) > 1.0e-9)
-            {
-                throw new InvalidOperationException(
-                    $"A symmetric span IS still mirrored: the crossing tree is its own partner, so its along-chord pull of 0.3 goes and it is left with (0, 0, -1); it reads "
-                    + $"({VX(crossing):0.#########}, {VY(crossing):0.#########}, {VZ(crossing):0.#########}).");
-            }
-            for (int t = 1; t < trees.Length; t++)
-            {
-                if (partner[t] != -1)
-                    throw new InvalidOperationException($"No tree of an unmirrored span has a mirror partner; Partner[{t}] is {partner[t]}.");
-                object raw = Get<object>(trees[t], "RawResultant");
-                object now = Get<object>(trees[t], "Resultant");
-                if (Math.Abs(VX(now) - VX(raw)) > 1.0e-12 ||
-                    Math.Abs(VY(now) - VY(raw)) > 1.0e-12 ||
-                    Math.Abs(VZ(now) - VZ(raw)) > 1.0e-12)
+                int count = withRib ? 21 : 11;
+                Array nodes = Array.CreateInstance(point3d, count);
+                var edges = new List<(int, int)>();
+                Array archBar = Array.CreateInstance(vector3d, 11);
+                for (int i = 0; i < 11; i++)
                 {
-                    throw new InvalidOperationException(
-                        $"An unmirrored span keeps its own aims: tree {t}'s resultant moved from ({VX(raw):0.#########}, {VY(raw):0.#########}, {VZ(raw):0.#########}) "
-                        + $"to ({VX(now):0.#########}, {VY(now):0.#########}, {VZ(now):0.#########}). Its pulls ramp along the bar and are not mirrored in shape, so any pairing shows here.");
+                    double s = i / 10.0;
+                    nodes.SetValue(P(10.0 * s, 5.0, 2.5 * 4.0 * s * (1.0 - s)), i);
+                    archBar.SetValue(V(0.0, 0.0, -1.0), i);
+                    if (i > 0)
+                        edges.Add((i - 1, i));
+                }
+                if (!withRib)
+                {
+                    Array only = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                    only.SetValue(archBar, 0);
+                    return (nodes, new[] { Enumerable.Range(0, 11).ToArray() }, new[] { 0, 10 }, only, edges.ToArray());
+                }
+                // The rib runs along Y at x = 3 through the arch's node 3,
+                // which is the arch's bar position 3 and stands at x = 3
+                // exactly. Its own ten other nodes take ids 11 to 20.
+                var ribNodes = new List<int>();
+                Array ribBar = Array.CreateInstance(vector3d, 11);
+                for (int i = 0; i < 11; i++)
+                {
+                    double s = i / 10.0;
+                    ribBar.SetValue(V(0.0, 0.0, -1.0), i);
+                    if (i == 5)
+                    {
+                        ribNodes.Add(3);
+                        continue;
+                    }
+                    int id = 11 + (i < 5 ? i : i - 1);
+                    nodes.SetValue(P(3.0, 10.0 * s, 2.5 * 4.0 * s * (1.0 - s)), id);
+                    ribNodes.Add(id);
+                }
+                for (int i = 1; i < 11; i++)
+                    edges.Add((ribNodes[i - 1], ribNodes[i]));
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+                across.SetValue(archBar, 0);
+                across.SetValue(ribBar, 1);
+                return (nodes, new[] { Enumerable.Range(0, 11).ToArray(), ribNodes.ToArray() },
+                    new[] { 0, 10, ribNodes[0], ribNodes[10] }, across, edges.ToArray());
+            }
+
+            var crossed = Pillow(withRib: true);
+            var control = Pillow(withRib: false);
+            foreach (int type in new[] { 1, 2, 3, 4 })
+            {
+                object placedCrossed = Run(crossed, Array.Empty<int[]>(), 1, type);
+                object placedControl = Run(control, Array.Empty<int[]>(), 1, type);
+                object builtCrossed = Get<object>(placedCrossed, "Built");
+                object builtControl = Get<object>(placedControl, "Built");
+                var trees = ((IEnumerable)Get<object>(placedCrossed, "Trees")).Cast<object>().ToArray();
+                var archTrees = trees.Where(t => Get<int>(t, "Bar") == 0).ToArray();
+                int freeCount = archTrees.Sum(t => Get<int[]>(t, "Nodes").Length);
+                if (freeCount != 9)
+                    throw new InvalidOperationException($"BOTH lines hold a shared notch, so the arch's free notch count is 9 and NOT 8; it is {freeCount}. Neither span acquires a hole, so neither span's symmetry can be broken by a crossing.");
+                var crossedNodes = ((IEnumerable)Get<object>(builtCrossed, "Nodes")).Cast<object>().ToArray();
+                var controlNodes = ((IEnumerable)Get<object>(builtControl, "Nodes")).Cast<object>().ToArray();
+                int[] crossedFeet = FootOfTree(builtCrossed, trees.Length);
+                int[] controlFeet = FootOfTree(builtControl, 9);
+                for (int t = 0; t < 9; t++)
+                {
+                    if (Math.Abs(X(crossedNodes[crossedFeet[t]]) - X(controlNodes[controlFeet[t]])) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: the crossed arch places the same LAYOUT, the same groups and the same FEET as the uncrossed control, because none "
+                            + $"of that arithmetic reads a force; tree {t} stands at {X(crossedNodes[crossedFeet[t]]):0.#########} against the control's {X(controlNodes[controlFeet[t]]):0.#########}.");
+                    }
+                }
+                if (Get<int>(placedCrossed, "SharedNotches") != 1)
+                    throw new InvalidOperationException($"One notch is held by two spans at once; SharedNotches is {Get<int>(placedCrossed, "SharedNotches")}.");
+                // Count heads and members from the BUILT MEMBER SET and the
+                // block's heads, never from Tree.Nodes: under section 10 both
+                // spans' trees LIST the shared node and only one builds to it.
+                var members = MembersOf(builtCrossed);
+                var levelNodes = crossedNodes;
+                object shared = crossed.Nodes.GetValue(3)!;
+                int heads = members.Count(m =>
+                    Math.Abs(X(levelNodes[m.Upper]) - X(shared)) < 1.0e-9 &&
+                    Math.Abs(Y(levelNodes[m.Upper]) - Y(shared)) < 1.0e-9 &&
+                    Math.Abs(Z(levelNodes[m.Upper]) - Z(shared)) < 1.0e-9);
+                if (heads != 1)
+                    throw new InvalidOperationException($"The shared node is one point in space and carries EXACTLY ONE column head; {heads} members end at it.");
+                object owner = trees.First(t => Get<int[]>(t, "Nodes").Contains(3) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), 3)]);
+                if (Get<int>(owner, "Bar") != 0)
+                    throw new InvalidOperationException("The ARCH owns this head, by the lower X of its endpoint pair's first point, (0, 5) against the rib's (3, 0). Both spans tie on free notch count and on chord length, which is what every regularly ribbed vault gives.");
+            }
+            // And the answer is IDENTICAL with the bars handed over in the
+            // other order, which is the assertion the present engine fails
+            // most alarmingly and which a tie-break ending in the bar index
+            // could never satisfy on this net.
+            var swapped = (crossed.Nodes, new[] { crossed.Bars[1], crossed.Bars[0] }, crossed.Anchors,
+                SwapBars(crossed.Across), crossed.Edges);
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object a = Run(crossed, Array.Empty<int[]>(), 1, type);
+                object b = Run(swapped, Array.Empty<int[]>(), 1, type);
+                object builtA = Get<object>(a, "Built");
+                object builtB = Get<object>(b, "Built");
+                var feetA = ((IEnumerable)Get<object>(builtA, "Nodes")).Cast<object>()
+                    .Select(n => (X(n), Y(n), Z(n))).OrderBy(p => p.Item1).ThenBy(p => p.Item2).ThenBy(p => p.Item3).ToArray();
+                var feetB = ((IEnumerable)Get<object>(builtB, "Nodes")).Cast<object>()
+                    .Select(n => (X(n), Y(n), Z(n))).OrderBy(p => p.Item1).ThenBy(p => p.Item2).ThenBy(p => p.Item3).ToArray();
+                if (feetA.Length != feetB.Length)
+                    throw new InvalidOperationException($"Type {type}: the two bar orders build {feetA.Length} and {feetB.Length} nodes. The owner rule reads only properties of the SPAN, so every notch shared between the same two spans resolves the same way.");
+                for (int i = 0; i < feetA.Length; i++)
+                {
+                    if (Math.Abs(feetA[i].Item1 - feetB[i].Item1) > 1.0e-12 ||
+                        Math.Abs(feetA[i].Item2 - feetB[i].Item2) > 1.0e-12 ||
+                        Math.Abs(feetA[i].Item3 - feetB[i].Item3) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException($"Type {type}: the placement is identical to 1e-12 with the bars handed over in either order; node {i} differs.");
+                    }
+                }
+                foreach (string field in new[] { "SharedNotches", "SpansWithTrees", "Families" })
+                {
+                    if (Get<int>(a, field) != Get<int>(b, field))
+                        throw new InvalidOperationException($"Type {type}: {field} reads {Get<int>(a, field)} one way round and {Get<int>(b, field)} the other. Nothing in the model tells the author which order Pattern traced.");
                 }
             }
-            // The same arch with nothing taken out of it is symmetric.
-            object whole = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1, 2);
-            if (Get<int>(whole, "AsymmetricSpans") != 0)
-                throw new InvalidOperationException($"An arch anchored at both ends with every notch free IS symmetric; AsymmetricSpans is {Get<int>(whole, "AsymmetricSpans")}.");
+        }
+
+        // ---- THE EIGHTEEN UNITS COME BACK AS EIGHTEEN (spec sections 10, 17
+        // and 18.1). The investigation applied eighteen units of vertical
+        // pull to a net whose two bars share one node and measured SEVENTEEN
+        // counted, the missing unit being the other bar's share at the
+        // crossing. Under Param's ruling of 2026-09-01 this is an EQUALITY,
+        // not a bound, and the seventeen is printed beside it so the fix is a
+        // number in the record.
+        {
+            // THE NET THAT ACTUALLY APPLIES EIGHTEEN. Two bars of ELEVEN
+            // sharing one node: 22 bar positions less the four anchors is
+            // EIGHTEEN free bar positions, each declaring one unit of
+            // downward pull, over SEVENTEEN distinct free nodes. That is the
+            // investigation's own arithmetic and it is the reason the number
+            // is eighteen: the seventeenth node, the crossing, is declared by
+            // BOTH bars and carries two units, and the engine as it stands
+            // counts one of them.
+            //
+            // An earlier draft of this item built two bars of FIVE and then
+            // asserted eighteen against them. That net has ten bar positions,
+            // six free ones and five distinct free nodes, so its counted total
+            // can only ever be five or six and the check could never pass
+            // against any engine at all. The geometry is restated to the net
+            // the measurement was taken on.
+            const int span = 11;
+            Array nodes = Array.CreateInstance(point3d, (2 * span) - 1);
+            var archBar = new int[span];
+            var ribBar = new int[span];
+            Array acrossA = Array.CreateInstance(vector3d, span);
+            Array acrossB = Array.CreateInstance(vector3d, span);
+            var netEdges = new List<(int, int)>();
+            for (int i = 0; i < span; i++)
+            {
+                double s = i / (double)(span - 1);
+                nodes.SetValue(P(-5.0 + (10.0 * s), 0.0, 3.0 * 4.0 * s * (1.0 - s)), i);
+                archBar[i] = i;
+                acrossA.SetValue(V(0.0, 0.0, -1.0), i);
+                if (i > 0)
+                    netEdges.Add((i - 1, i));
+            }
+            int crossing = span / 2;   // the arch's own middle node, id 5
+            for (int i = 0; i < span; i++)
+            {
+                double s = i / (double)(span - 1);
+                acrossB.SetValue(V(0.0, 0.0, -1.0), i);
+                if (i == crossing)
+                {
+                    ribBar[i] = crossing;
+                    continue;
+                }
+                int id = span + (i < crossing ? i : i - 1);
+                nodes.SetValue(P(0.0, -5.0 + (10.0 * s), 3.0 * 4.0 * s * (1.0 - s)), id);
+                ribBar[i] = id;
+            }
+            for (int i = 1; i < span; i++)
+                netEdges.Add((ribBar[i - 1], ribBar[i]));
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            across.SetValue(acrossA, 0);
+            across.SetValue(acrossB, 1);
+            var anchorSet = new[] { archBar[0], archBar[span - 1], ribBar[0], ribBar[span - 1] };
+            var net = (nodes, new[] { archBar, ribBar }, anchorSet, across, netEdges.ToArray());
+
+            // APPLIED is COMPUTED from the fixture rather than written as a
+            // literal, so the check cannot drift away from its own geometry
+            // the way the earlier draft did: it is the sum of the declared
+            // vertical pull over every free bar position of both bars.
+            double applied = 0.0;
+            for (int b = 0; b < 2; b++)
+            {
+                Array barAcross = (Array)across.GetValue(b)!;
+                int[] bar = b == 0 ? archBar : ribBar;
+                for (int k = 0; k < span; k++)
+                {
+                    if (!anchorSet.Contains(bar[k]))
+                        applied += Math.Abs(VZ(barAcross.GetValue(k)!));
+                }
+            }
+            if (Math.Abs(applied - 18.0) > 1.0e-12)
+                throw new InvalidOperationException($"This fixture is the eighteen-unit net of the investigation; it applies {applied:0.###}.");
+
+            object placed = Run(net, Array.Empty<int[]>(), 1, 1);
+            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            double counted = trees.Sum(t => Get<double[]>(t, "Load").Sum());
+            if (Math.Abs(counted - applied) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"Eighteen units of vertical pull applied to this net come back as EIGHTEEN counted; head_load_total reads {counted:0.#########}. "
+                    + "The engine as it stands read 17: the other bar's share at the crossing was never counted, and the undercount propagated into "
+                    + "the aim, the axial force, the load path and Auto's choice. This is an EQUALITY and not a bound.");
+            }
+            Console.WriteLine($"      head_load_total {counted:0.###} applied {applied:0.###}; the engine as it stands read 17.");
+
+            // And the borrowed notch carries ZERO rather than a second copy:
+            // sixteen unshared notches at one unit each and the crossing at
+            // two is eighteen, and the crossing's two units sit on ONE tree.
+            object owner = trees.First(t => Get<int[]>(t, "Nodes").Contains(crossing) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), crossing)]);
+            double ownerHead = Get<double[]>(owner, "Load")[Array.IndexOf(Get<int[]>(owner, "Nodes"), crossing)];
+            if (Math.Abs(ownerHead - 2.0) > 1.0e-12)
+                throw new InvalidOperationException($"The shared node's head carries the node's WHOLE pull, both ribs' units, ONCE: two units. It carries {ownerHead:0.#########}.");
+            object borrower = trees.First(t => Get<int[]>(t, "Nodes").Contains(crossing) && !Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), crossing)]);
+            if (Math.Abs(Get<double[]>(borrower, "Load")[Array.IndexOf(Get<int[]>(borrower, "Nodes"), crossing)]) > 1.0e-12)
+                throw new InvalidOperationException("A BORROWED notch enters Load with a load of zero; its head is not that tree's to carry, and a second copy here would be the double count arriving by another road.");
+
+            // A rib carrying a deliberately large ALONG-BAR tension must not
+            // raise the head load, which is the check that catches the double
+            // count: the along-bar contribution belongs to the anchors. The
+            // bound is the PLAIN run's own head load rather than a literal, so
+            // the assertion says what it means whatever the fixture's units.
+            Array heavyB = Array.CreateInstance(vector3d, span);
+            for (int i = 0; i < span; i++)
+                heavyB.SetValue(V(0.0, 0.0, -1.0), i);
+            heavyB.SetValue(V(0.0, 50.0, -1.0), crossing);
+            Array heavy = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            heavy.SetValue(acrossA, 0);
+            heavy.SetValue(heavyB, 1);
+            object placedHeavy = Run((nodes, net.Item2, net.Item3, heavy, net.Item5), Array.Empty<int[]>(), 1, 1);
+            var heavyTrees = ((IEnumerable)Get<object>(placedHeavy, "Trees")).Cast<object>().ToArray();
+            object headTree = heavyTrees.First(t => Get<int[]>(t, "Nodes").Contains(crossing) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), crossing)]);
+            double headLoad = Get<double[]>(headTree, "Load")[Array.IndexOf(Get<int[]>(headTree, "Nodes"), crossing)];
+            if (Math.Abs(headLoad - ownerHead) > 1.0e-9)
+                throw new InvalidOperationException($"A large ALONG-BAR tension on the rib must NOT change the head load at the shared node; it read {headLoad:0.#####} against the plain run's {ownerHead:0.#####}. The along-bar contribution belongs to the anchors and the Gram-Schmidt projection is what removes it.");
+        }
+
+        // ---- TWO PRINCIPAL LINES THAT TOUCH (spec sections 10 and 17). The
+        // rib runs UP to the arch and stops on it, so the shared node is the
+        // rib's END and is neither an anchor nor a rim notch. The expected
+        // owner is computed FROM THE RULE and not assumed: with eleven rib
+        // nodes anchored at ONE end the rib holds TEN free notches against the
+        // arch's nine and THE RIB OWNS by the first clause, the greater free
+        // notch count. (The earlier draft of this item asserted the arch,
+        // which is the rule read backwards.)
+        {
+            // The arch, and one or more ribs. Each rib is given by the arch
+            // bar position it lands on and its own node count; it runs along
+            // Y at that arch node's x, from y = -5 up to the arch node, and
+            // is anchored at its first node only.
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Touching(
+                params (int At, int Count)[] ribs)
+            {
+                int total = 11 + ribs.Sum(r => r.Count - 1);
+                Array nodes = Array.CreateInstance(point3d, total);
+                Array archBar = Array.CreateInstance(vector3d, 11);
+                var edges = new List<(int, int)>();
+                var bars = new List<int[]>();
+                var anchors = new List<int> { 0, 10 };
+                for (int i = 0; i < 11; i++)
+                {
+                    double s = i / 10.0;
+                    nodes.SetValue(P(10.0 * s, 5.0, 2.5 * 4.0 * s * (1.0 - s)), i);
+                    archBar.SetValue(V(0.0, 0.0, -1.0), i);
+                    if (i > 0)
+                        edges.Add((i - 1, i));
+                }
+                bars.Add(Enumerable.Range(0, 11).ToArray());
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1 + ribs.Length);
+                across.SetValue(archBar, 0);
+                int next = 11;
+                for (int r = 0; r < ribs.Length; r++)
+                {
+                    (int landsAt, int count) = ribs[r];
+                    double x = X(nodes.GetValue(landsAt)!);
+                    double top = Z(nodes.GetValue(landsAt)!);
+                    var bar = new int[count];
+                    Array ribAcross = Array.CreateInstance(vector3d, count);
+                    for (int i = 0; i < count; i++)
+                    {
+                        double s = i / (double)(count - 1);
+                        ribAcross.SetValue(V(0.0, 0.0, -1.0), i);
+                        if (i == count - 1)
+                        {
+                            bar[i] = landsAt;
+                            continue;
+                        }
+                        nodes.SetValue(P(x, -5.0 + (10.0 * s), top * s), next);
+                        bar[i] = next;
+                        next++;
+                    }
+                    for (int i = 1; i < count; i++)
+                        edges.Add((bar[i - 1], bar[i]));
+                    // ANCHORED AT ITS FIRST NODE ONLY: its far end is the
+                    // shared node and its near end is the springing.
+                    anchors.Add(bar[0]);
+                    bars.Add(bar);
+                    across.SetValue(ribAcross, r + 1);
+                }
+                return (nodes, bars.ToArray(), anchors.ToArray(), across, edges.ToArray());
+            }
+
+            // The owner rule's own keys, recomputed in the check from the two
+            // spans' endpoint pairs, so the expected answer is derived rather
+            // than asserted. Free notch count first, then chord length, then
+            // the endpoint pair sorted lexicographically by X then Y.
+            int OwnerByRule(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net,
+                object placed, int barA, int barB)
+            {
+                var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int Count(int bar) => trees.Where(t => Get<int>(t, "Bar") == bar).Sum(t => Get<int[]>(t, "Nodes").Length);
+                (double X, double Y)[] Ends(int bar)
+                {
+                    object span = spans.First(s => Get<int>(s, "Bar") == bar);
+                    int[] barNodes = net.Bars[bar];
+                    object p0 = net.Nodes.GetValue(barNodes[Get<int>(span, "First")])!;
+                    object p1 = net.Nodes.GetValue(barNodes[Get<int>(span, "Last")])!;
+                    return new[] { (X(p0), Y(p0)), (X(p1), Y(p1)) }
+                        .OrderBy(p => p.Item1).ThenBy(p => p.Item2).ToArray();
+                }
+                double Chord(int bar)
+                {
+                    (double X, double Y)[] e = Ends(bar);
+                    double dx = e[1].X - e[0].X;
+                    double dy = e[1].Y - e[0].Y;
+                    return Math.Sqrt((dx * dx) + (dy * dy));
+                }
+                if (Count(barA) != Count(barB))
+                    return Count(barA) > Count(barB) ? barA : barB;
+                double tolerance = 1.0e-9 * Math.Min(Chord(barA), Chord(barB));
+                if (Math.Abs(Chord(barA) - Chord(barB)) > tolerance)
+                    return Chord(barA) > Chord(barB) ? barA : barB;
+                (double X, double Y)[] ea = Ends(barA);
+                (double X, double Y)[] eb = Ends(barB);
+                for (int k = 0; k < 2; k++)
+                {
+                    if (Math.Abs(ea[k].X - eb[k].X) > tolerance)
+                        return ea[k].X < eb[k].X ? barA : barB;
+                    if (Math.Abs(ea[k].Y - eb[k].Y) > tolerance)
+                        return ea[k].Y < eb[k].Y ? barA : barB;
+                }
+                return Math.Min(barA, barB);
+            }
+
+            void RequireOwner(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net,
+                int shared, int expectedBar, string why)
+            {
+                object placed = Run(net, Array.Empty<int[]>(), 1, 2);
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int derived = OwnerByRule(net, placed, 0, 1);
+                if (derived != expectedBar)
+                    throw new InvalidOperationException($"The check's own reading of the owner rule gives bar {derived} where the item states bar {expectedBar}: {why}. One of the two is wrong and it must be settled before the engine is judged.");
+                object ownerTree = trees.First(t =>
+                    Get<int[]>(t, "Nodes").Contains(shared) &&
+                    Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), shared)]);
+                if (Get<int>(ownerTree, "Bar") != expectedBar)
+                    throw new InvalidOperationException($"Bar {expectedBar} owns the head at node {shared}: {why}. Bar {Get<int>(ownerTree, "Bar")} built the member.");
+                foreach (object other in trees.Where(t => Get<int>(t, "Bar") != expectedBar && Get<int[]>(t, "Nodes").Contains(shared)))
+                {
+                    if (Get<bool[]>(other, "Owned")[Array.IndexOf(Get<int[]>(other, "Nodes"), shared)])
+                        throw new InvalidOperationException($"The other line HOLDS the notch for the layout and the pairing and builds NO member to it; bar {Get<int>(other, "Bar")} built one at node {shared}.");
+                }
+            }
+
+            // 1. THE RIB OWNS, by the greater free notch count: ten against
+            //    nine, because the rib is anchored at one end only and its
+            //    free end is a free notch of kind end.
+            RequireOwner(
+                Touching((At: 5, Count: 11)), 5, 1,
+                "the rib holds TEN free notches against the arch's nine, which is the FIRST clause");
+
+            // 2. THE ARCH OWNS, the counts deliberately unequal the other
+            //    way, so the count clause is exercised on its own.
+            RequireOwner(
+                Touching((At: 5, Count: 5)), 5, 0,
+                "a rib of five nodes anchored at one end holds FOUR free notches against the arch's nine");
+
+            // 3. COUNTS EQUAL AND CHORDS EQUAL, so the GEOMETRIC KEYS decide.
+            //    A rib of ten nodes anchored at one end holds nine free
+            //    notches, and its chord from (5, -5) to (5, 5) is ten, the
+            //    arch's own. The endpoint pairs then separate them: the
+            //    arch's begins at (0, 5) and the rib's at (5, -5), so the
+            //    ARCH owns by the lower X of the first point.
+            RequireOwner(
+                Touching((At: 5, Count: 10)), 5, 0,
+                "counts tie at nine and chords tie at ten, so the endpoint pairs decide and the arch's begins at (0, 5) against the rib's (5, -5)");
+
+            // 4. TWO RIBS AT MIRRORED POSITIONS. Both shared nodes resolve to
+            //    the SAME owner, because every key of the rule is a property
+            //    of the SPAN and not of the node, and the arch's feet come
+            //    back exactly mirrored. That is what keeps a regularly ribbed
+            //    vault symmetric, and it is what a rule reading the more
+            //    central notch could not promise.
+            {
+                var mirrored = Touching((At: 3, Count: 11), (At: 7, Count: 11));
+                object placed = Run(mirrored, Array.Empty<int[]>(), 1, 2);
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int OwnerOfNode(int shared) => Get<int>(
+                    trees.First(t =>
+                        Get<int[]>(t, "Nodes").Contains(shared) &&
+                        Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), shared)]),
+                    "Bar");
+                if (OwnerOfNode(3) == 0 || OwnerOfNode(7) == 0)
+                    throw new InvalidOperationException("Each rib holds ten free notches against the arch's nine, so each rib owns its own head.");
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                // The two arch trees BORROWING their ribs' shared notches
+                // build no foot at all (footNode -1) and are excluded: they
+                // are themselves a mirrored pair, so what remains is still
+                // exactly the arch's mirrored row.
+                var archTrees = Enumerable.Range(0, trees.Length)
+                    .Where(t => Get<int>(trees[t], "Bar") == 0 && footNode[t] >= 0).ToArray();
+                double[] archFeet = archTrees.Select(t => X(levelNodes[footNode[t]])).OrderBy(v => v).ToArray();
+                for (int i = 0; i < archFeet.Length / 2; i++)
+                {
+                    double sum = archFeet[i] + archFeet[archFeet.Length - 1 - i];
+                    if (Math.Abs(sum - 10.0) > 1.0e-9)
+                        throw new InvalidOperationException($"Two ribs touching at mirrored positions leave the arch's feet exactly mirrored; feet {i} and {archFeet.Length - 1 - i} sum to {sum:0.#########} rather than 10.");
+                }
+            }
+
+            // 5. THE BORROWING TREE'S OWN ANSWER. On the first fixture the
+            //    arch's tree holding node 5 borrows it. Where a borrowed
+            //    notch is a tree's MAIN, its trunk runs to its HEAD MAIN and
+            //    its fork lies on that segment; and a tree ALL of whose
+            //    notches are borrowed builds nothing, carries no load, is
+            //    unpaired, leaves its candidate partner unpaired, and is
+            //    still counted in its span's layout so the palindrome stands.
+            {
+                var one = Touching((At: 5, Count: 11));
+                object placed = Run(one, Array.Empty<int[]>(), 1, 0);
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                object borrower = trees.First(t => Get<int>(t, "Bar") == 0 && Get<int[]>(t, "Nodes").Contains(5));
+                int at = Array.IndexOf(Get<int[]>(borrower, "Nodes"), 5);
+                bool[] owned = Get<bool[]>(borrower, "Owned");
+                int headMain = Get<int>(borrower, "HeadMain");
+                if (owned.All(o => !o))
+                {
+                    if (headMain != -1)
+                        throw new InvalidOperationException("A tree with NO owned notch has no head main; HeadMain is -1.");
+                    if (Get<double[]>(borrower, "Load").Any(l => Math.Abs(l) > 1.0e-12))
+                        throw new InvalidOperationException("A tree with no owned notch carries no load.");
+                }
+                else
+                {
+                    if (headMain < 0 || !owned[headMain])
+                        throw new InvalidOperationException($"The head main is the tree's innermost OWNED notch; HeadMain is {headMain} and Owned there is {(headMain >= 0 ? owned[headMain] : false)}.");
+                    if (at == 0 && headMain == 0)
+                        throw new InvalidOperationException("The borrowed notch IS this tree's main, so the head main must be a different, owned notch.");
+                }
+                // The span's palindrome stands whatever is borrowed, because
+                // every notch enters the layout.
+                int[] sizes = trees.Where(t => Get<int>(t, "Bar") == 0).Select(t => Get<int[]>(t, "Nodes").Length).ToArray();
+                if (!Enumerable.Reverse(sizes).SequenceEqual(sizes))
+                    throw new InvalidOperationException($"A borrowed notch stays in Tree.Nodes, so the span's tree sizes are still a PALINDROME; they read [{string.Join(",", sizes)}].");
+            }
         }
 
         // ---- A band foot is the plan CENTROID of its mains (spec 3.5,
@@ -7572,23 +8080,14 @@ internal static class Program
             }
         }
 
-        // ---- The same plan-curved bar, crossed (spec 3.4). A second bar
-        // holds its position-3 notch, so seven free notches remain at chord
-        // parameters 1/9, 2/9, 4/9, 5/9, 6/9, 7/9, 8/9. Sorted and paired
-        // across the midpoint, the middle pair is (4/9, 6/9), which sums to
-        // 10/9: a deviation of 1/9 = 0.1111 against a bound of a quarter of
-        // that span's own spacing, 0.25 / 8 = 0.03125. Outside by 3.6, so the
-        // span is placed unmirrored, which is what a lost interior notch has
-        // to do.
-        //
-        // This is the case the NET's median plan edge could not judge. These
-        // fixtures run at a median of 4 on a chord of 9 whose notches are one
-        // unit apart, which is a perfectly ordinary net with widely spaced
-        // principal lines and fine notching along them; scaled by that, the
-        // bound came out at 0.25 x 4 / 9 = 1/9, exactly the deviation, so this
-        // removal sat on the boundary and its answer was decided by the last
-        // bit of a division. The span's own spacing knows nothing about how
-        // far apart the bars are.
+        // ---- The same plan-curved bar, crossed (spec sections 10 and 17).
+        // Node 3 is now held by BOTH bars: the crossing bar's own span (one
+        // free notch) and the plan-curved bar's own span, which therefore
+        // keeps every one of its EIGHT free notches rather than losing node 3
+        // to the crossing. Trees become nine (one on the crossing bar, eight
+        // on the curved one), the curved bar's span stays symmetric, and its
+        // layout and its feet at every Type equal the SAME bar placed with no
+        // crossing at all: none of that arithmetic reads a force.
         {
             var curved = PlanCurved(0.15);
             // Two anchors either side of the plan-curved bar's node 3, out
@@ -7611,29 +8110,37 @@ internal static class Program
             across.SetValue(((Array)curved.Across.GetValue(0)!), 1);
             var net = (nodes, new[] { new[] { 10, 3, 11 }, Enumerable.Range(0, 10).ToArray() },
                 new[] { 0, 9, 10, 11 }, across, Array.Empty<(int, int)>());
-            object placed = Run(net, Array.Empty<int[]>(), 1, 0);
-            const double removedDeviation = 1.0 / 9.0;
-            const double removedBound = 0.25 / 8.0;
-            if (removedDeviation <= removedBound)
-                throw new InvalidOperationException($"This fixture only measures anything while the deviation {removedDeviation:0.######} is outside the bound {removedBound:0.######}.");
-            if (Get<int>(placed, "AsymmetricSpans") != 1)
+            foreach (int type in new[] { 1, 2, 3, 4 })
             {
-                throw new InvalidOperationException(
-                    $"The plan-curved bar lost an interior notch, so its free notches no longer straddle its midpoint: the middle pair sums to 10/9, a "
-                    + $"deviation of {removedDeviation:0.######} against a bound of {removedBound:0.######}. AsymmetricSpans is "
-                    + $"{Get<int>(placed, "AsymmetricSpans")}. Scaled by the NET's median plan edge, 4 on a chord of 9, the bound was 1/9: the same "
-                    + "deviation exactly, so this span sat on the boundary.");
-            }
-            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
-            if (trees.Length != 8)
-                throw new InvalidOperationException($"One tree on the crossing bar and seven on what is left of the plan-curved one; got {trees.Length}.");
-            int[] partner = Get<int[]>(placed, "Partner");
-            if (partner[0] != 0)
-                throw new InvalidOperationException($"The crossing bar's one notch sits at parameter 0.5, so its span IS symmetric and its tree is its own partner; Partner[0] is {partner[0]}.");
-            for (int t = 1; t < trees.Length; t++)
-            {
-                if (partner[t] != -1)
-                    throw new InvalidOperationException($"No tree of an unmirrored span has a mirror partner; Partner[{t}] is {partner[t]}.");
+                object placedCrossed = Run(net, Array.Empty<int[]>(), 1, type);
+                object placedControl = Run(curved, Array.Empty<int[]>(), 1, type);
+                var trees = ((IEnumerable)Get<object>(placedCrossed, "Trees")).Cast<object>().ToArray();
+                if (trees.Length != 9)
+                    throw new InvalidOperationException($"Type {type}: BOTH lines hold node 3, so the curved bar keeps its EIGHT free notches and the crossing bar keeps its one; nine trees total, got {trees.Length}.");
+                var curvedTrees = Enumerable.Range(0, trees.Length).Where(t => Get<int>(trees[t], "Bar") == 1).ToArray();
+                if (curvedTrees.Length != 8)
+                    throw new InvalidOperationException($"Type {type}: the curved bar's own free notch count is unchanged by a crossing that takes nothing from it; it holds {curvedTrees.Length}.");
+                if (Get<int>(placedCrossed, "AsymmetricSpans") != 0)
+                    throw new InvalidOperationException($"Type {type}: no span loses a notch to a crossing any more, so the curved bar's span is symmetric; AsymmetricSpans is {Get<int>(placedCrossed, "AsymmetricSpans")}.");
+                object builtCrossed = Get<object>(placedCrossed, "Built");
+                object builtControl = Get<object>(placedControl, "Built");
+                var crossedNodes = ((IEnumerable)Get<object>(builtCrossed, "Nodes")).Cast<object>().ToArray();
+                var controlNodes = ((IEnumerable)Get<object>(builtControl, "Nodes")).Cast<object>().ToArray();
+                int[] crossedFeet = FootOfTree(builtCrossed, trees.Length);
+                var controlTrees = ((IEnumerable)Get<object>(placedControl, "Trees")).Cast<object>().ToArray();
+                int[] controlFeet = FootOfTree(builtControl, controlTrees.Length);
+                for (int t = 0; t < curvedTrees.Length; t++)
+                {
+                    int crossedIndex = curvedTrees[t];
+                    if (Math.Abs(X(crossedNodes[crossedFeet[crossedIndex]]) - X(controlNodes[controlFeet[t]])) > 1.0e-9 ||
+                        Math.Abs(Y(crossedNodes[crossedFeet[crossedIndex]]) - Y(controlNodes[controlFeet[t]])) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: the crossed curved bar places the same LAYOUT and the same FEET as the uncrossed control, because none of that "
+                            + $"arithmetic reads a force; tree {t} stands at ({X(crossedNodes[crossedFeet[crossedIndex]]):0.#########}, {Y(crossedNodes[crossedFeet[crossedIndex]]):0.#########}) "
+                            + $"against the control's ({X(controlNodes[controlFeet[t]]):0.#########}, {Y(controlNodes[controlFeet[t]]):0.#########}).");
+                    }
+                }
             }
         }
 
@@ -8161,7 +8668,13 @@ internal static class Program
                 throw new InvalidOperationException("Every span on these bars ends at the rim notch.");
         }
 
-        // ---- A crossing: the shared node is held once, by the lower bar.
+        // ---- A crossing: the shared node's HEAD is built once, by the
+        // ARCH, now by the GEOMETRIC KEYS (spec sections 10 and 17). Both
+        // spans list node 2: the trees go from five to six, three on each
+        // bar (bar 0's positions 1, 2, 3 and bar 1's positions 1, 2, 3). Free
+        // notch count ties at three and chord length ties at eight, so the
+        // endpoint pairs decide: the arch's begins at (-4, 0) against the
+        // rib's (0, -4), and the arch owns by the lower X.
         {
             Array nodes = Array.CreateInstance(point3d, 9);
             // Bar 0 along x through the crossing at index 2; bar 1 along y
@@ -8189,16 +8702,24 @@ internal static class Program
                 new[] { (0, 1), (1, 2), (2, 3), (3, 4), (5, 6), (6, 2), (2, 7), (7, 8) });
             object placed = Run(net, Array.Empty<int[]>(), 1, 1);
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
-            var heads = trees.SelectMany(t => (int[])Get<object>(t, "Nodes")).ToArray();
-            if (heads.Count(h => h == 2) != 1)
-                throw new InvalidOperationException($"The crossing node is held exactly once; it is held {heads.Count(h => h == 2)} times.");
-            object owner = trees.First(t => ((int[])Get<object>(t, "Nodes")).Contains(2));
+            if (trees.Length != 6)
+                throw new InvalidOperationException($"BOTH lines hold node 2, so each bar keeps all three of its own free notches; six trees, got {trees.Length}.");
+            object built = Get<object>(placed, "Built");
+            var members = MembersOf(built);
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            object shared = nodes.GetValue(2)!;
+            int heads = members.Count(m =>
+                Math.Abs(X(levelNodes[m.Upper]) - X(shared)) < 1.0e-9 &&
+                Math.Abs(Y(levelNodes[m.Upper]) - Y(shared)) < 1.0e-9 &&
+                Math.Abs(Z(levelNodes[m.Upper]) - Z(shared)) < 1.0e-9);
+            if (heads != 1)
+                throw new InvalidOperationException($"The crossing node is one point in space and carries EXACTLY ONE column head; {heads} members end at it.");
+            object owner = trees.First(t => Get<int[]>(t, "Nodes").Contains(2) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), 2)]);
             if (Get<int>(owner, "Bar") != 0)
-                throw new InvalidOperationException("The crossing belongs to the lower-indexed bar.");
+                throw new InvalidOperationException("The ARCH owns this head, by the lower X of its endpoint pair's first point, (-4, 0) against the rib's (0, -4): free notch count ties at three and chord length ties at eight, so the geometric keys decide.");
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
             if (spans.Length != 2)
                 throw new InvalidOperationException($"A crossing does not cut a span: two bars give two spans, got {spans.Length}.");
-            object built = Get<object>(placed, "Built");
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
             if (Get<int>(placed, "GroundPlaced") != 1)
                 throw new InvalidOperationException($"Ground 1 on this cross is feasible (rise three over a half-width of four leans the outer trunks 53 degrees, and the mirrored pairs sum vertical at the foot) and must be placed; placed {Get<int>(placed, "GroundPlaced")}.");

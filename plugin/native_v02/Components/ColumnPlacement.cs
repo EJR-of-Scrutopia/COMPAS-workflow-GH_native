@@ -232,6 +232,24 @@ namespace Ananke.COMPAS.Native.Components
             /// <summary>Fixed foot, ring tree only.</summary>
             public Point3d? FixedFoot;
             public bool Ring;
+            /// <summary>
+            /// Whether this tree builds a member to that notch, aligned with
+            /// <see cref="Nodes"/>. Spec section 10's three lists are not the
+            /// same list: ALL notches enter the layout, the pairing, the
+            /// group construction and the candidate set; only OWNED notches
+            /// enter Load and Resultant; only owned notches receive a member.
+            /// A borrowed notch enters Load with a load of zero because its
+            /// head is not this tree's to carry.
+            /// </summary>
+            public bool[] Owned = Array.Empty<bool>();
+            /// <summary>
+            /// The index into <see cref="Nodes"/> of the tree's innermost
+            /// OWNED notch, ties to the lower bar position. 0 on every tree
+            /// that owns its main, which is every tree on a net with no
+            /// crossing, and -1 on a tree with no owned notch, which builds
+            /// nothing at all.
+            /// </summary>
+            public int HeadMain;
         }
 
         /// <summary>One Type level, built and judged.</summary>
@@ -358,6 +376,8 @@ namespace Ananke.COMPAS.Native.Components
             /// nothing refuses the level.
             /// </summary>
             public int SpanDegenerate;
+            /// <summary>Notches held by two spans at once.</summary>
+            public int SharedNotches;
         }
 
         // ------------------------------------------------------------------
@@ -1008,6 +1028,204 @@ namespace Ananke.COMPAS.Native.Components
             return moved;
         }
 
+        /// <summary>
+        /// The pull the HEAD at a shared node actually carries, counted
+        /// exactly once and in full. PARAM RULED ON 2026-09-01 that this is
+        /// to be fixed properly, and the arithmetic is stated because the
+        /// obvious form is wrong.
+        ///
+        /// Summing the bars' transverse pulls DOUBLE COUNTS.
+        /// <c>MouldGeometry.BarLoads</c> sums every member incident on a node
+        /// except the edges running ALONG that bar, so at a node shared by
+        /// bars A and B, pull_A is the infill plus B's along-bar edges and
+        /// pull_B is the infill plus A's, and their sum is the infill TWICE.
+        /// On any real vault the infill dominates, so the head load at a
+        /// crossing would come out close to double, and with it the axial
+        /// force, the load path and Auto's choice.
+        ///
+        /// Let the node be held by k DISTINCT bars, two bars being the same
+        /// run at a node when they reach it through the same two neighbouring
+        /// net vertices in either order, so a run traced twice counts once.
+        /// Then headPull = (pull_1 + ... + pull_k) - (k - 1) * total, which
+        /// is the node's infill pull exactly once, since each pull_i is total
+        /// less that bar's own along-bar contribution. For k = 1 it is
+        /// pull_1 and nothing changes anywhere.
+        ///
+        /// The head pull is then projected off every distinct bar tangent at
+        /// the node in turn, by Gram-Schmidt, a tangent being dropped when
+        /// its residual norm falls to 1e-9 of its own length because it is
+        /// parallel to one already taken. For k = 1 that is BarTransverse
+        /// exactly, so every single-bar number in the harness is untouched.
+        /// Where the surviving tangents span all three dimensions the residue
+        /// is zero, AimFrom returns vertical, and the column stands plumb,
+        /// which is the honest answer for a node whose every direction is
+        /// already carried to an anchor.
+        /// </summary>
+        public static Vector3d HeadPull(
+            Point3d[] nodes,
+            int[][] bars,
+            Vector3d[][] pull,
+            Vector3d[] nodePull,
+            int node,
+            IReadOnlyList<(int Bar, int Position)> holders)
+        {
+            // Distinct runs, keyed on the two neighbouring net vertices in
+            // either order.
+            var seen = new HashSet<(int, int)>();
+            var distinct = new List<(int Bar, int Position)>();
+            foreach ((int b, int p) in holders)
+            {
+                int[] bar = bars[b];
+                int before = bar[Math.Max(p - 1, 0)];
+                int after = bar[Math.Min(p + 1, bar.Length - 1)];
+                (int, int) key = before <= after ? (before, after) : (after, before);
+                if (seen.Add(key))
+                    distinct.Add((b, p));
+            }
+
+            var summed = Vector3d.Zero;
+            foreach ((int b, int p) in distinct)
+                summed += pull[b][p];
+            int k = distinct.Count;
+            Vector3d head = summed - ((k - 1) * nodePull[node]);
+
+            // Project off every distinct bar tangent in turn.
+            var taken = new List<Vector3d>();
+            foreach ((int b, int p) in distinct)
+            {
+                int[] bar = bars[b];
+                Vector3d tangent = nodes[bar[Math.Min(p + 1, bar.Length - 1)]]
+                    - nodes[bar[Math.Max(p - 1, 0)]];
+                double length = tangent.Length;
+                if (length <= 1.0e-12)
+                    continue;
+                tangent = new Vector3d(tangent.X / length, tangent.Y / length, tangent.Z / length);
+                foreach (Vector3d already in taken)
+                {
+                    double dot = (tangent.X * already.X) + (tangent.Y * already.Y) + (tangent.Z * already.Z);
+                    tangent -= dot * already;
+                }
+                double residual = tangent.Length;
+                if (residual <= 1.0e-9)
+                    continue;
+                tangent = new Vector3d(tangent.X / residual, tangent.Y / residual, tangent.Z / residual);
+                taken.Add(tangent);
+                double along = (head.X * tangent.X) + (head.Y * tangent.Y) + (head.Z * tangent.Z);
+                head -= along * tangent;
+            }
+            return head;
+        }
+
+        /// <summary>
+        /// Which span builds the member to a shared notch. THE OWNER IS
+        /// DECIDED BY THE SPANS, NOT BY THE TRACE, and the rule must not end
+        /// in bar order: a regularly ribbed vault, a cross vault and a dome
+        /// of equal ribs and hoops all give two spans of equal notch count
+        /// and equal chord, and ending on the bar index would make the answer
+        /// depend on which curve Pattern traced first, which is the very
+        /// finding this rule answers.
+        ///
+        /// A span's ENDPOINT PAIR is its two cut nodes' plan positions sorted
+        /// lexicographically by X then Y, which is node-order invariant. The
+        /// owner is the first of these that separates the spans, each
+        /// compared within 1e-9 * min(L_A, L_B) except the last: the greater
+        /// FREE NOTCH COUNT; then the longer CHORD LENGTH; then the lower X
+        /// of the endpoint pair's first point, then its lower Y; then the
+        /// same for the second point; then the lower mean Z of the span's
+        /// free notches; then, and only then, the lower bar index and span
+        /// index, which is reached only when the two spans are the same
+        /// segment in space to within a billionth of their own length.
+        ///
+        /// Every key is a property of the SPAN and not of the node, so every
+        /// notch shared between the same two spans resolves the same way,
+        /// which is what keeps a symmetric pair of crossings symmetric. The
+        /// more central notch was considered and rejected for exactly that
+        /// reason: it reads the node, and it can hand two mirrored shared
+        /// notches to different owners.
+        /// </summary>
+        private static int OwnerOf(Placement placement, Point3d[] nodes, int a, int b)
+        {
+            if (a == b)
+                return a;
+            SpanFrame fa = placement.Frames[a];
+            SpanFrame fb = placement.Frames[b];
+            if (fa.Nodes.Length != fb.Nodes.Length)
+                return fa.Nodes.Length > fb.Nodes.Length ? a : b;
+
+            double tolerance = 1.0e-9 * Math.Min(fa.L, fb.L);
+            if (Math.Abs(fa.L - fb.L) > tolerance)
+                return fa.L > fb.L ? a : b;
+
+            static (double X, double Y)[] EndpointPair(SpanFrame frame) =>
+                new[] { (frame.P0.X, frame.P0.Y), (frame.P1.X, frame.P1.Y) }
+                    .OrderBy(p => p.Item1).ThenBy(p => p.Item2).ToArray();
+
+            (double X, double Y)[] ea = EndpointPair(fa);
+            (double X, double Y)[] eb = EndpointPair(fb);
+            for (int k = 0; k < 2; k++)
+            {
+                if (Math.Abs(ea[k].X - eb[k].X) > tolerance)
+                    return ea[k].X < eb[k].X ? a : b;
+                if (Math.Abs(ea[k].Y - eb[k].Y) > tolerance)
+                    return ea[k].Y < eb[k].Y ? a : b;
+            }
+
+            double meanZa = fa.Nodes.Length > 0 ? fa.Nodes.Average(n => nodes[n].Z) : 0.0;
+            double meanZb = fb.Nodes.Length > 0 ? fb.Nodes.Average(n => nodes[n].Z) : 0.0;
+            if (Math.Abs(meanZa - meanZb) > tolerance)
+                return meanZa < meanZb ? a : b;
+
+            int barA = placement.Spans[a].Bar;
+            int barB = placement.Spans[b].Bar;
+            if (barA != barB)
+                return barA < barB ? a : b;
+            return a < b ? a : b;
+        }
+
+        /// <summary>
+        /// The index into a tree's <see cref="Tree.Nodes"/> of its innermost
+        /// OWNED notch: the owned notch whose station (its index into the
+        /// span's own free list) sits nearest the row centre, ties to the
+        /// lower bar position, exactly the rule <see cref="Group"/> uses to
+        /// choose a group's main. -1 where the tree owns nothing at all.
+        /// Where the tree owns its main (Nodes[0], every tree on a net with
+        /// no crossing) this returns 0 by construction, since the main is
+        /// already the group's nearest-to-centre station.
+        /// </summary>
+        private static int HeadMainOf(Tree tree, SpanFrame? frame, int[][] bars)
+        {
+            double rowCentre = frame is not null && frame.Positions.Length > 0
+                ? (frame.Positions.Length - 1) / 2.0
+                : 0.0;
+            int best = -1;
+            double bestDistance = double.MaxValue;
+            int bestTie = int.MaxValue;
+            for (int k = 0; k < tree.Nodes.Length; k++)
+            {
+                if (!tree.Owned[k])
+                    continue;
+                int barPosition = tree.Bar >= 0 && tree.Bar < bars.Length
+                    ? Array.IndexOf(bars[tree.Bar], tree.Nodes[k])
+                    : -1;
+                double distance = k;
+                if (frame is not null && barPosition >= 0)
+                {
+                    int station = Array.IndexOf(frame.Positions, barPosition);
+                    if (station >= 0)
+                        distance = Math.Abs(station - rowCentre);
+                }
+                int tie = barPosition >= 0 ? barPosition : k;
+                if (best < 0 || distance < bestDistance - 1.0e-9 ||
+                    (Math.Abs(distance - bestDistance) <= 1.0e-9 && tie < bestTie))
+                {
+                    best = k;
+                    bestDistance = distance;
+                    bestTie = tie;
+                }
+            }
+            return best;
+        }
+
         // ------------------------------------------------------------------
         // Entry
 
@@ -1057,26 +1275,69 @@ namespace Ananke.COMPAS.Native.Components
             var anchorSet = new HashSet<int>(anchors);
             var placement = new Placement { GroundAsked = groundAsked };
 
-            var held = new HashSet<int>();
-            Tree? ring = RingTree(nodes, bars, anchorSet, across, perimeterLoops, ground, held);
+            var ringHeld = new HashSet<int>();
+            Tree? ring = RingTree(nodes, bars, anchorSet, across, perimeterLoops, ground, ringHeld);
             if (ring is not null)
             {
                 placement.RingTree = ring;
                 placement.Trees.Add(ring);
             }
 
-            placement.Spans = Spans(bars, anchorSet, held);
+            // Pass 1: every span's frame and free list, built in full BEFORE
+            // any tree, because the owner rule of spec section 10 compares
+            // SPANS (their free notch count, their chord, their endpoint
+            // pair) and needs every span's frame to exist first. A notch
+            // shared with another bar (a crossing) is NO LONGER skipped: both
+            // lines hold it, so neither span acquires a hole and the bar
+            // order cannot change any layout. ringHeld keeps its OTHER job
+            // unchanged, the ring tree's: a rim notch it holds still cuts the
+            // spans and is still no span's free notch.
+            placement.Spans = Spans(bars, anchorSet, ringHeld);
+            var freeOf = new int[placement.Spans.Count][];
+            var holderMap = new Dictionary<int, List<(int Bar, int Position, int Span)>>();
             for (int s = 0; s < placement.Spans.Count; s++)
             {
                 Span span = placement.Spans[s];
-                // Free notches: everything the span holds that nothing has
-                // taken yet. A notch shared with an earlier bar (a crossing)
-                // is already held and is skipped; it does not cut the span.
-                int[] free = span.Free.Where(p => !held.Contains(bars[span.Bar][p])).ToArray();
+                int[] free = span.Free.Where(p => !ringHeld.Contains(bars[span.Bar][p])).ToArray();
+                freeOf[s] = free;
                 SpanFrame frame = Frame(nodes, bars, span, free);
                 placement.Frames.Add(frame);
                 if (free.Length > 0 && (frame.ChordZero || frame.OneParameter))
                     placement.SpanDegenerate++;
+                foreach (int p in free)
+                {
+                    int node = bars[span.Bar][p];
+                    if (!holderMap.TryGetValue(node, out List<(int Bar, int Position, int Span)>? holders))
+                    {
+                        holders = new List<(int, int, int)>();
+                        holderMap[node] = holders;
+                    }
+                    holders.Add((span.Bar, p, s));
+                }
+            }
+
+            // The owner of every shared notch, decided by the SPANS and not
+            // by the trace (spec section 10). Folded pairwise over OwnerOf so
+            // a notch held by more than two spans still resolves to one.
+            var ownerOfNode = new Dictionary<int, int>();
+            foreach (KeyValuePair<int, List<(int Bar, int Position, int Span)>> entry in holderMap)
+            {
+                if (entry.Value.Count < 2)
+                    continue;
+                placement.SharedNotches++;
+                int owner = entry.Value[0].Span;
+                for (int i = 1; i < entry.Value.Count; i++)
+                    owner = OwnerOf(placement, nodes, owner, entry.Value[i].Span);
+                ownerOfNode[entry.Key] = owner;
+            }
+
+            // Pass 2: the trees, span by span, over the same free lists and
+            // frames Pass 1 built.
+            for (int s = 0; s < placement.Spans.Count; s++)
+            {
+                Span span = placement.Spans[s];
+                int[] free = freeOf[s];
+                SpanFrame frame = placement.Frames[s];
                 (int[][] groups, int[] mains) = Group(free.Length, branching);
                 for (int g = 0; g < groups.Length; g++)
                 {
@@ -1084,19 +1345,53 @@ namespace Ananke.COMPAS.Native.Components
                     int mainPosition = free[mains[g]];
                     var ordered = new List<int> { mainPosition };
                     ordered.AddRange(positions.Where(p => p != mainPosition));
+                    int[] treeNodes = ordered.Select(p => bars[span.Bar][p]).ToArray();
+                    var owned = new bool[treeNodes.Length];
+                    var load = new double[treeNodes.Length];
+                    Vector3d sum = Vector3d.Zero;
+                    for (int k = 0; k < treeNodes.Length; k++)
+                    {
+                        int p = ordered[k];
+                        int node = treeNodes[k];
+                        List<(int Bar, int Position, int Span)> holders = holderMap[node];
+                        if (holders.Count <= 1)
+                        {
+                            // Held by ONE bar: the head pull is that bar's own
+                            // untransversed pull unchanged, so every existing
+                            // harness number is untouched.
+                            owned[k] = true;
+                            load[k] = Math.Abs(across[span.Bar][p].Z);
+                            sum += across[span.Bar][p];
+                        }
+                        else
+                        {
+                            bool isOwner = ownerOfNode[node] == s;
+                            owned[k] = isOwner;
+                            if (isOwner)
+                            {
+                                var holderPairs = holders.Select(h => (h.Bar, h.Position)).ToList();
+                                Vector3d headPull = HeadPull(nodes, bars, pull, nodePull, node, holderPairs);
+                                load[k] = Math.Abs(headPull.Z);
+                                sum += headPull;
+                            }
+                            else
+                            {
+                                // A borrowed notch enters Load with a load of
+                                // zero: its head is not this tree's to carry.
+                                load[k] = 0.0;
+                            }
+                        }
+                    }
                     var tree = new Tree
                     {
                         Bar = span.Bar,
                         Span = s,
-                        Nodes = ordered.Select(p => bars[span.Bar][p]).ToArray(),
-                        Load = ordered.Select(p => Math.Abs(across[span.Bar][p].Z)).ToArray(),
+                        Nodes = treeNodes,
+                        Load = load,
+                        Owned = owned,
+                        Resultant = sum,
                     };
-                    Vector3d sum = Vector3d.Zero;
-                    foreach (int p in ordered)
-                        sum += across[span.Bar][p];
-                    tree.Resultant = sum;
-                    foreach (int node in tree.Nodes)
-                        held.Add(node);
+                    tree.HeadMain = HeadMainOf(tree, frame, bars);
                     placement.Trees.Add(tree);
                 }
             }
@@ -1304,6 +1599,11 @@ namespace Ananke.COMPAS.Native.Components
             foreach ((int b, int p) in ordered)
                 sum += across[b][p];
             tree.Resultant = sum;
+            // The ring tree is the sole holder of every one of its own rim
+            // notches: spec section 10's shared-node ownership never touches
+            // it, so it owns everything and its main is its head main.
+            tree.Owned = Enumerable.Repeat(true, tree.Nodes.Length).ToArray();
+            tree.HeadMain = tree.Nodes.Length > 0 ? 0 : -1;
             foreach (int node in tree.Nodes)
                 held.Add(node);
             return tree;
@@ -1373,7 +1673,11 @@ namespace Ananke.COMPAS.Native.Components
                     own[t] = fixedFoot;
                     continue;
                 }
-                Point3d ownMain = nodes[trees[t].Nodes[0]];
+                // A tree whose HeadMain is -1 owns no notch at all: it builds
+                // no member and no foot, so it needs none computed here.
+                if (trees[t].HeadMain < 0)
+                    continue;
+                Point3d ownMain = nodes[trees[t].Nodes[trees[t].HeadMain]];
                 double ownRise = Math.Max(ownMain.Z - ground, 0.0);
                 double ownAlong = ownRise / Math.Max(aim[t].Z, 1.0e-9);
                 own[t] = new Point3d(
@@ -1512,9 +1816,9 @@ namespace Ananke.COMPAS.Native.Components
                 var stepped = new bool[trees.Count];
                 for (int t = 0; t < trees.Count; t++)
                 {
-                    if (trees[t].FixedFoot is not null || stepped[t])
+                    if (trees[t].FixedFoot is not null || stepped[t] || trees[t].HeadMain < 0)
                         continue;
-                    double lean = MouldGeometry.LeanFromVertical(foot[t], nodes[trees[t].Nodes[0]]);
+                    double lean = MouldGeometry.LeanFromVertical(foot[t], nodes[trees[t].Nodes[trees[t].HeadMain]]);
                     if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
                         continue;
                     stepped[t] = true;
@@ -1547,15 +1851,22 @@ namespace Ananke.COMPAS.Native.Components
             for (int i = 0; i < result.Nodes.Count; i++)
                 result.Feet.Add(i);
 
-            // Members. Trunk foot to fork, main branch fork to main notch,
-            // branches fork to the other notches; a single notch is one member
-            // foot to notch. Every member lower end first.
+            // Members. Trunk foot to fork, main branch fork to the HEAD MAIN
+            // (the tree's innermost OWNED notch, Nodes[0] on every tree that
+            // owns its main), branches fork to the other OWNED notches; a
+            // single owned notch is one member foot to notch. A tree whose
+            // HeadMain is -1 owns nothing at all: it builds no member and no
+            // foot, carries no load, and has a zero resultant, but is still
+            // counted in its span's layout so the palindrome stands. Every
+            // member lower end first.
             for (int t = 0; t < trees.Count; t++)
             {
                 Tree tree = trees[t];
+                if (tree.HeadMain < 0)
+                    continue;
                 int footNode = footIndex[t];
                 Point3d footPoint = result.Nodes[footNode];
-                Point3d main = nodes[tree.Nodes[0]];
+                Point3d main = nodes[tree.Nodes[tree.HeadMain]];
                 double total = tree.Load.Sum();
                 int mainNode = AddNode(result.Nodes, main);
                 if (tree.Nodes.Length == 1)
@@ -1563,30 +1874,35 @@ namespace Ananke.COMPAS.Native.Components
                     AddMember(result, footNode, mainNode, total, t);
                     continue;
                 }
-                // The fork lies on the segment from the foot to the main
-                // notch, at ForkFraction of the main notch's height (spec
-                // 3.6). The main notch is the tree's INNERMOST, which on an
-                // arch is also its HIGHEST, so at Branching 3 an anchor-end
-                // tree can hold a notch BELOW that height and the branch to
-                // it would run down from the fork. A fork above one of its
-                // own heads is not a tree: the block sorts every member by Z
+                // The fork lies on the segment from the foot to the head
+                // main, at ForkFraction of its height (spec 3.6). The head
+                // main is the tree's innermost OWNED notch, which on an arch
+                // is also its HIGHEST, so at Branching 3 an anchor-end tree
+                // can hold a notch BELOW that height and the branch to it
+                // would run down from the fork. A fork above one of its own
+                // heads is not a tree: the block sorts every member by Z
                 // (MouldGeometry.ColumnsBlock), so such a notch is only ever
                 // a lower end and TreeFromPairs reads it as a FOOT, which
                 // puts a foot in mid-air in Frame's Columns, drops the head
                 // out of Fit's held set and makes Animate drive a held head
                 // down to ground level on the rail. Where the spec's height
-                // would sit at or above the tree's lowest notch the fork is
-                // therefore lowered to ForkFraction of THAT notch's height,
-                // on the same segment. Every ordinary tree, main notch
+                // would sit at or above the tree's lowest OWNED notch the
+                // fork is therefore lowered to ForkFraction of THAT notch's
+                // height, on the same segment. Every ordinary tree, head main
                 // lowest or the branches above the fork already, is
-                // untouched.
+                // untouched. A borrowed notch is not this tree's to build to
+                // at all, so it plays no part in this measure.
                 double fraction = ForkFraction;
                 double rise = main.Z - footPoint.Z;
                 if (rise > 1.0e-9)
                 {
                     double lowest = main.Z;
-                    for (int k = 1; k < tree.Nodes.Length; k++)
+                    for (int k = 0; k < tree.Nodes.Length; k++)
+                    {
+                        if (k == tree.HeadMain || !tree.Owned[k])
+                            continue;
                         lowest = Math.Min(lowest, nodes[tree.Nodes[k]].Z);
+                    }
                     if (lowest > footPoint.Z &&
                         footPoint.Z + (ForkFraction * rise) >= lowest)
                     {
@@ -1599,9 +1915,11 @@ namespace Ananke.COMPAS.Native.Components
                     footPoint.Z + ((main.Z - footPoint.Z) * fraction));
                 int forkNode = AddNode(result.Nodes, fork);
                 AddMember(result, footNode, forkNode, total, t);
-                AddMember(result, forkNode, mainNode, tree.Load[0], t);
-                for (int k = 1; k < tree.Nodes.Length; k++)
+                AddMember(result, forkNode, mainNode, tree.Load[tree.HeadMain], t);
+                for (int k = 0; k < tree.Nodes.Length; k++)
                 {
+                    if (k == tree.HeadMain || !tree.Owned[k])
+                        continue;
                     int notch = AddNode(result.Nodes, nodes[tree.Nodes[k]]);
                     AddMember(result, forkNode, notch, tree.Load[k], t);
                 }
@@ -1827,6 +2145,10 @@ namespace Ananke.COMPAS.Native.Components
                 if (placement.Trees[t].FixedFoot is not null ||
                     placement.Trees[partner].FixedFoot is not null)
                     continue;
+                // A tree with no owned notch builds no foot at all, so it
+                // never enters a merge.
+                if (placement.Trees[t].HeadMain < 0 || placement.Trees[partner].HeadMain < 0)
+                    continue;
                 double gap = MouldGeometry.PlanDistanceSquared(foot[t], foot[partner]);
                 double weldSquared = TauWeldSquared(t, partner);
                 double mergeClearance = 0.25 * Math.Min(spacing[t], spacing[partner]);
@@ -1845,8 +2167,14 @@ namespace Ananke.COMPAS.Native.Components
             for (int t = 0; t < n; t++)
             {
                 footIndex[t] = -1;
+                // A tree with no owned notch builds no member and no foot at
+                // all: it never enters the level's node list.
+                if (placement.Trees[t].HeadMain < 0)
+                    continue;
                 for (int u = 0; u < t; u++)
                 {
+                    if (placement.Trees[u].HeadMain < 0)
+                        continue;
                     if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= TauWeldSquared(t, u) &&
                         Math.Abs(foot[t].Z - foot[u].Z) <= 1.0e-9)
                     {
