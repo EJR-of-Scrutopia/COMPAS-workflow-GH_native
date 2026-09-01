@@ -100,6 +100,39 @@ the form. Both are buildable and they look completely different. The engine's ow
 claims the Voronoi makes "every joint run across the thrust instead of along it", so the existing
 intent is the masonry one, but it is achieved by a construction he has rejected.
 
+## 1b. The hexagonal pattern at the crown, which his own rulings largely settle
+
+> "also get some issues with the hexagons, but i dont know how to solve this one"
+
+His screenshot shows the honeycomb squashed into slivers over the crown, piling up where the rows
+converge, with a hole where the pattern gives out. Three known causes compound there and two are
+already ruled:
+
+1. The constant-Z cut, section 1. A crown row covers many times the surface distance of a flank row,
+   so the cells over the crown are stretched before the lattice is even laid. RULED: distance from
+   the rim.
+2. The converging crown. A lattice of fixed cell size cannot tile a domain that shrinks to a point,
+   which is why real vaults have a keystone or an oculus. RULED: a crown cap piece.
+3. The lattice laid in ABSOLUTE arc length across rows of differing length, so the same distance is a
+   different fraction of each row, the cells shear, and eventually they overlap. NOT yet ruled beyond
+   the standing decision that a per-row redesign is this round's work. The measured cost is large: the
+   plan filter withholds 26 to 49 per cent of honeycomb cells on the two-oculus fixture and 38 to 62
+   per cent on the serpentine.
+
+The hole he can see is the filter working as designed, not a second bug: cells that would overlap are
+dropped, counted and warned about, because one overlapping cell makes the studio reject the entire
+tessellation. The visible gap is the honest form of the defect.
+
+THE REMAINING WORK, and a geometric truth that must be stated in the spec rather than discovered
+late: give every row its own cell count from its own length, as the courses engine already does. A
+consequence follows that is not a defect and must not be treated as one. A surface with Gaussian
+curvature cannot be tiled by hexagons alone; accommodating curvature REQUIRES pentagons where the
+curvature is positive and heptagons where it is negative, which is why a sphere needs exactly twelve
+pentagons and why a football is built the way it is. So the reworked pattern will contain a small
+number of five and seven sided cells at the places where the row counts change, and the spec should
+name them, count them in the diagnostics, and place them deliberately where they do least harm rather
+than letting them fall wherever the arithmetic happens to put them.
+
 ## 2. Skin outputs a surface as well as a polyline
 
 > "one thing worth adding to the skin component is that it outputs a surface too, it actually can be
