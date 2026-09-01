@@ -9331,6 +9331,12 @@ internal static class Program
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+            // Task 8 restates the central-pair clearance from
+            // 0.05 * medianPlanEdge to 0.25 * g (spec section 12); this
+            // fixture's own gap of 1/9 sits inside either number, so it
+            // stays green under both and only the clearance printed changes.
+            const double curvedG = 1.0;   // eight notches from 1/9 to 8/9 on a chord of 9
+            Console.WriteLine($"      central-pair clearance 0.25 * g = {0.25 * curvedG:0.###} against 0.05 * median = {0.05 * 4.0:0.###} before; gap {1.0 / 9.0:0.###}.");
             if (Get<int>(built, "FeetMerged") != 1)
                 throw new InvalidOperationException($"Exactly one mirrored pair lies inside the clearance here; {Get<int>(built, "FeetMerged")} merges reported.");
             int[] footNode = FootOfTree(built, trees.Length);
@@ -10925,6 +10931,517 @@ internal static class Program
                 throw new InvalidOperationException($"Every notch at one chord parameter raises span_degenerate; SpanDegenerate is {Get<int>(placed, "SpanDegenerate")}.");
             if (feet.Length != 1 || Math.Abs(X(levelNodes[feet[0]]) - 5.0) > 1.0e-9 || Math.Abs(Y(levelNodes[feet[0]]) - 1.0) > 1.0e-9)
                 throw new InvalidOperationException($"At Type 1 the one group's centre is that one parameter, so every notch is a tied candidate and the foot is their plan mean, (5, 1); it built {feet.Length} feet, the first at ({X(levelNodes[feet[0]]):0.###}, {Y(levelNodes[feet[0]]):0.###}).");
+        }
+
+        // ================================================================
+        // TASK 8: welding, the central pair, cross-line merging, the
+        // convergence, and the second peel pass (spec sections 8.2 to 8.5,
+        // 11 and 12).
+        // ================================================================
+        {
+            // Three straight ribs in plan, five nodes each, anchored at both
+            // ends, so each holds THREE free notches and at Branching 1 three
+            // trees. At Type 1 the one group of three has an ODD count, so its
+            // single nearest-to-centre candidate is its middle notch and the
+            // rib's step 8 foot IS that notch. The three middle notches stand
+            // `spread` apart in plan and the three plan tangents are fanned by
+            // `fan` degrees, which is what makes the convergence a real
+            // intersection at 30 degrees and a singular system at 1e-7.
+            //
+            // The ribs are joined by NET EDGES between their middle notches, and
+            // by nothing else, so the spans are adjacent under section 12's rule
+            // and the adjacency is exact rather than a distance.
+            //
+            // The chord of each rib is 4, so its four notch gaps are 1 apart in
+            // chord parameter terms: h is (3/4 - 1/4) / 2 and g is h * 4 = 1.
+            // The merge clearance is therefore 0.25 and a spread of 0.1 is
+            // comfortably inside it, while the FEET-CLOSE clearance is the same
+            // number, so the moved-apart case of Step 2 needs a spread above 0.25.
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) DomeRibs(
+                double spread, double fan)
+            {
+                const int perRib = 5;
+                Array nodes = Array.CreateInstance(point3d, 3 * perRib);
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 3);
+                var bars = new int[3][];
+                var anchors = new List<int>();
+                var edges = new List<(int, int)>();
+                for (int r = 0; r < 3; r++)
+                {
+                    double turn = (r - 1) * fan * Math.PI / 180.0;
+                    double ux = Math.Sin(turn);
+                    double uy = Math.Cos(turn);
+                    double cx = (r - 1) * spread;
+                    Array ribAcross = Array.CreateInstance(vector3d, perRib);
+                    var bar = new int[perRib];
+                    for (int i = 0; i < perRib; i++)
+                    {
+                        double along = i - 2.0;                    // -2 .. 2
+                        double s = (i / (double)(perRib - 1));
+                        int id = (r * perRib) + i;
+                        nodes.SetValue(
+                            P(cx + (ux * along), uy * along, 2.5 * 4.0 * s * (1.0 - s)), id);
+                        ribAcross.SetValue(V(0.0, 0.0, -1.0), i);
+                        bar[i] = id;
+                        if (i > 0)
+                            edges.Add((id - 1, id));
+                    }
+                    anchors.Add(bar[0]);
+                    anchors.Add(bar[perRib - 1]);
+                    bars[r] = bar;
+                    across.SetValue(ribAcross, r);
+                }
+                // Adjacency, and only adjacency: middle notch to middle notch.
+                edges.Add(((0 * perRib) + 2, (1 * perRib) + 2));
+                edges.Add(((1 * perRib) + 2, (2 * perRib) + 2));
+                return (nodes, bars, anchors.ToArray(), across, edges.ToArray());
+            }
+
+            // Each rib's own candidate point and its plan tangent, read straight
+            // off the fixture. The tangent is the rule's own: the unit plan
+            // vector from the bar position BEFORE the candidate to the one
+            // AFTER it. `at` is the bar position of the candidate itself: 2 on
+            // DomeRibs' five-node ribs, 3 on DomeRibsSharingANode's seven-node
+            // ones.
+            (double PX, double PY, double DX, double DY)[] DomeCandidateLines(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int at)
+            {
+                var lines = new List<(double, double, double, double)>();
+                foreach (int[] bar in net.Bars)
+                {
+                    object atNode = net.Nodes.GetValue(bar[at])!;
+                    object before = net.Nodes.GetValue(bar[at - 1])!;
+                    object after = net.Nodes.GetValue(bar[at + 1])!;
+                    lines.Add((X(atNode), Y(atNode), X(after) - X(before), Y(after) - Y(before)));
+                }
+                return lines.ToArray();
+            }
+
+            (double X, double Y) DomeCandidateMean(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net) =>
+                (net.Bars.Average(bar => X(net.Nodes.GetValue(bar[2])!)),
+                 net.Bars.Average(bar => Y(net.Nodes.GetValue(bar[2])!)));
+
+            // Two ribs of SEVEN nodes that genuinely SHARE a net node. Both are
+            // straight in plan and both pass through one point S, fanned by two
+            // degrees either side of +y, and S is bar position 1 of each, so S is
+            // a free notch of BOTH spans and neither an anchor nor a rim notch.
+            //
+            // Each rib holds five free notches, positions 1 to 5, so at Type 1
+            // its one group of five is odd and its foot is its own position 3
+            // notch, two spacings up the rib from S. The two feet are therefore
+            // 4a sin(2 degrees), about 0.14 of a spacing, apart: inside the merge
+            // clearance of 0.25 g and well outside the weld tolerance of 1e-9 L,
+            // so this fixture exercises the MERGE and not the weld. And because
+            // both ribs are straight lines through S, the two candidates' plan
+            // tangent lines meet AT S exactly, so the convergence lands on the
+            // shared node and the snap of section 12 is what is being measured.
+            const int SharedNodeId = 1;
+            // `rise` is exposed because the same shape carries TWO of this
+            // task's fixtures: at rise 6 the far notch, position 5, four
+            // spacings from S, leans under sixty degrees off a foot standing
+            // AT S, which is what lets the SNAP fixture measure the snap and
+            // nothing else; at the file's usual rise 2.5 that same notch
+            // leans 70.9 degrees off S, which is Step 2's case 6,
+            // LEAN-REFUSED, on the identical geometry.
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) DomeRibsSharingANode(double rise)
+            {
+                const int perRib = 7;
+                const double a = 1.0;
+                Array nodes = Array.CreateInstance(point3d, (2 * perRib) - 1);
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+                var bars = new int[2][];
+                var anchors = new List<int>();
+                var edges = new List<(int, int)>();
+                int next = 2;
+                for (int r = 0; r < 2; r++)
+                {
+                    double turn = (r == 0 ? -2.0 : 2.0) * Math.PI / 180.0;
+                    double ux = Math.Sin(turn);
+                    double uy = Math.Cos(turn);
+                    Array ribAcross = Array.CreateInstance(vector3d, perRib);
+                    var bar = new int[perRib];
+                    for (int i = 0; i < perRib; i++)
+                    {
+                        double along = a * (i - 1.0);      // S sits at i = 1
+                        double s = i / (double)(perRib - 1);
+                        ribAcross.SetValue(V(0.0, 0.0, -1.0), i);
+                        if (i == 1)
+                        {
+                            bar[i] = SharedNodeId;
+                            if (r == 0)
+                                nodes.SetValue(P(0.0, 0.0, rise * 4.0 * s * (1.0 - s)), SharedNodeId);
+                            continue;
+                        }
+                        int id = i == 0 ? (r == 0 ? 0 : next++) : next++;
+                        nodes.SetValue(P(ux * along, uy * along, rise * 4.0 * s * (1.0 - s)), id);
+                        bar[i] = id;
+                    }
+                    for (int i = 1; i < perRib; i++)
+                        edges.Add((bar[i - 1], bar[i]));
+                    anchors.Add(bar[0]);
+                    anchors.Add(bar[perRib - 1]);
+                    bars[r] = bar;
+                    across.SetValue(ribAcross, r);
+                }
+                return (nodes, bars, anchors.ToArray(), across, edges.ToArray());
+            }
+
+            // ---- THE CONVERGENCE ITSELF (spec sections 8.2 to 8.4 and 17).
+            // Param's rule, quoted: "best is to take the closest points to center
+            // from the principle lines and then get them to all point inwards
+            // where they touch, maybe this will give the exact placement for that
+            // all branching from center point."
+            //
+            // POINTING INWARD IS THE GUARD, AND NOTHING ELSE. A line has no
+            // direction and the least-squares form is built from the projector
+            // (I - d d^T), which is identical for d and for -d, so orienting each
+            // tangent toward the company would be a step no later step reads.
+            // Inwardness is expressed once, as a stated proximity rule: the
+            // converged point must lie within the CONVERGENCE GUARD of the CONVEX
+            // HULL of the candidate points, and otherwise the plan mean is used.
+            {
+                // Three ribs of a dome, joined by net edges, whose central
+                // notches are distinct points and whose plan tangents genuinely
+                // meet. The merged foot must be the LEAST-SQUARES point, which
+                // the check solves independently: A is the sum of (I - d d^T) and
+                // b the sum of (I - d d^T) p, accepted when
+                // |det A| > 1e-9 * max(trace(A)^2, 1e-12), which is the ring
+                // tree's own scale-free conditioning test reused verbatim.
+                (double X, double Y) LeastSquares((double PX, double PY, double DX, double DY)[] lines)
+                {
+                    double a11 = 0.0, a12 = 0.0, a22 = 0.0, b1 = 0.0, b2 = 0.0;
+                    foreach ((double px, double py, double dx, double dy) in lines)
+                    {
+                        double length = Math.Sqrt((dx * dx) + (dy * dy));
+                        double ux = dx / length;
+                        double uy = dy / length;
+                        double m11 = 1.0 - (ux * ux);
+                        double m12 = -ux * uy;
+                        double m22 = 1.0 - (uy * uy);
+                        a11 += m11;
+                        a12 += m12;
+                        a22 += m22;
+                        b1 += (m11 * px) + (m12 * py);
+                        b2 += (m12 * px) + (m22 * py);
+                    }
+                    double det = (a11 * a22) - (a12 * a12);
+                    double trace = a11 + a22;
+                    if (Math.Abs(det) <= 1.0e-9 * Math.Max(trace * trace, 1.0e-12))
+                        throw new InvalidOperationException("This fixture wants a system the determinant test ACCEPTS; its tangents are parallel.");
+                    return (((a22 * b1) - (a12 * b2)) / det, ((a11 * b2) - (a12 * b1)) / det);
+                }
+
+                // The three ribs, their central notches within a quarter of the
+                // tighter spacing of one another, their plan tangents fanning
+                // inward at 30 degrees to each other.
+                var dome = DomeRibs(spread: 0.1, fan: 30.0);
+                object placed = Run(dome, Array.Empty<int[]>(), 1, 1);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                if (feet.Length != 1)
+                    throw new InvalidOperationException($"Three adjacent ribs whose feet fall inside a quarter of the tighter spacing become ONE column at the convergence of all three, taken once as a CONNECTED COMPONENT and not pairwise; {feet.Length} feet built.");
+                if (Get<int>(built, "FeetMerged") != 1)
+                    throw new InvalidOperationException($"One accepted merge GROUP, not three pairwise merges; FeetMerged is {Get<int>(built, "FeetMerged")}.");
+                (double X, double Y) expected = LeastSquares(DomeCandidateLines(dome, 2));
+                if (Math.Abs(X(levelNodes[feet[0]]) - expected.X) > 1.0e-9 ||
+                    Math.Abs(Y(levelNodes[feet[0]]) - expected.Y) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The merged foot is the least-squares point of the candidates' own plan tangent lines, ({expected.X:0.#########}, {expected.Y:0.#########}); "
+                        + $"it stands at ({X(levelNodes[feet[0]]):0.#########}, {Y(levelNodes[feet[0]]):0.#########}).");
+                }
+                if (Get<int>(built, "ConvergenceFallback") != 0)
+                    throw new InvalidOperationException("This convergence lies within the guard of the hull and is ACCEPTED, not fallen back.");
+
+                // Flatten the ribs until the tangents are parallel to 1e-7. The
+                // foot falls back to the plan MEAN and ConvergenceFallback counts
+                // it, rather than flying off to the far intersection: a small
+                // change of tangent moves that intersection a long way, and
+                // taking it would be following noise a hundred metres out.
+                var flat = DomeRibs(spread: 0.1, fan: 0.01);
+                object placedFlat = Run(flat, Array.Empty<int[]>(), 1, 1);
+                object builtFlat = Get<object>(placedFlat, "Built");
+                var flatNodes = ((IEnumerable)Get<object>(builtFlat, "Nodes")).Cast<object>().ToArray();
+                var flatFeet = ((IEnumerable)Get<object>(builtFlat, "Feet")).Cast<int>().ToArray();
+                if (Get<int>(builtFlat, "ConvergenceFallback") < 1)
+                    throw new InvalidOperationException("Near-parallel tangents fall back to the plan MEAN, counted in ConvergenceFallback; none was counted.");
+                (double X, double Y) mean = DomeCandidateMean(flat);
+                if (Math.Abs(X(flatNodes[flatFeet[0]]) - mean.X) > 1.0e-9 || Math.Abs(Y(flatNodes[flatFeet[0]]) - mean.Y) > 1.0e-9)
+                    throw new InvalidOperationException($"The fallback is the plan MEAN of the candidate points, ({mean.X:0.#########}, {mean.Y:0.#########}); it stands at ({X(flatNodes[flatFeet[0]]):0.#########}, {Y(flatNodes[flatFeet[0]]):0.#########}). The mean commutes with any reflection, which the centre of an axis-aligned bounding box does not.");
+
+                // Two ribs crossing at a shared node: the merged foot snaps to
+                // that node EXACTLY. Standing the column on the shared node is
+                // both tidier and what the author drew.
+                var sharing = DomeRibsSharingANode(rise: 6.0);
+                (double PX, double PY, double DX, double DY)[] sharedLines = DomeCandidateLines(sharing, 3);
+                (double X, double Y) sharedMeet = LeastSquares(sharedLines);
+                object sharedNode = sharing.Nodes.GetValue(SharedNodeId)!;
+                if (Math.Abs(sharedMeet.X - X(sharedNode)) > 1.0e-9 || Math.Abs(sharedMeet.Y - Y(sharedNode)) > 1.0e-9)
+                    throw new InvalidOperationException("This fixture only measures the SNAP while the two candidates' tangent lines meet at the shared node itself; move the ribs back onto it.");
+                object placedShared = Run(sharing, Array.Empty<int[]>(), 1, 1);
+                object builtShared = Get<object>(placedShared, "Built");
+                var sharedNodes = ((IEnumerable)Get<object>(builtShared, "Nodes")).Cast<object>().ToArray();
+                var sharedFeet = ((IEnumerable)Get<object>(builtShared, "Feet")).Cast<int>().ToArray();
+                object crossingNode = sharing.Nodes.GetValue(SharedNodeId)!;
+                if (Math.Abs(X(sharedNodes[sharedFeet[0]]) - X(crossingNode)) > 1.0e-12 ||
+                    Math.Abs(Y(sharedNodes[sharedFeet[0]]) - Y(crossingNode)) > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        $"Where the merging spans share a net node and the convergence lands within the merge clearance of it, the merged foot snaps to that node exactly; "
+                        + $"S is at ({X(crossingNode):0.#########}, {Y(crossingNode):0.#########}), feet.Length={sharedFeet.Length}, foot stands at ({X(sharedNodes[sharedFeet[0]]):0.#########}, {Y(sharedNodes[sharedFeet[0]]):0.#########}), FeetMerged={Get<int>(builtShared, "FeetMerged")}, MergeRefused={Get<int>(builtShared, "MergeRefused")}, ConvergenceFallback={Get<int>(builtShared, "ConvergenceFallback")}.");
+                }
+            }
+
+            // ---- STEP 2: CROSS-LINE SHARING (spec section 17's item of that
+            // name), one rule of section 12 per case.
+            {
+                // Case 1: three parallel ribs joined by net edges, the feet
+                // falling inside a quarter of the tighter spacing: ONE column
+                // at the convergence of all three, taken once as a CONNECTED
+                // COMPONENT, FeetMerged 1. The same claim Step 1 measured
+                // exactly; restated here as case 1 of the six.
+                {
+                    var dome = DomeRibs(spread: 0.1, fan: 30.0);
+                    object placed = Run(dome, Array.Empty<int[]>(), 1, 1);
+                    object built = Get<object>(placed, "Built");
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    if (feet.Length != 1 || Get<int>(built, "FeetMerged") != 1)
+                        throw new InvalidOperationException($"Case 1: three ribs whose feet fall inside a quarter of the tighter spacing become one column as a CONNECTED COMPONENT; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                }
+
+                // Case 2: the same three ribs moved apart, spread 0.4 against
+                // the 0.25 clearance. Nothing is within any span's own
+                // clearance any more, so nothing merges and nothing stands
+                // close either; three columns.
+                {
+                    var apart = DomeRibs(spread: 0.4, fan: 30.0);
+                    object placed = Run(apart, Array.Empty<int[]>(), 1, 1);
+                    object built = Get<object>(placed, "Built");
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    Console.WriteLine($"      case 2, moved apart: {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}, FeetClose {Get<int>(built, "FeetClose")}.");
+                    if (feet.Length != 3 || Get<int>(built, "FeetMerged") != 0)
+                        throw new InvalidOperationException($"Case 2: ribs moved outside the merge clearance stand as three separate columns; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                }
+
+                // Case 3: the same net as case 1, with the two joining edges
+                // DELETED. Adjacency is by net EDGE and nothing else, so with
+                // no edge between them the three ribs' feet, which still fall
+                // inside the same clearance, must NOT merge.
+                {
+                    var noEdges = DomeRibs(spread: 0.1, fan: 30.0);
+                    (int, int)[] withoutJoins = noEdges.Edges
+                        .Where(e => !((e.Item1 == 2 && e.Item2 == 7) || (e.Item1 == 7 && e.Item2 == 12)))
+                        .ToArray();
+                    if (withoutJoins.Length != noEdges.Edges.Length - 2)
+                        throw new InvalidOperationException("Case 3's own premise failed: the two joining edges (2,7) and (7,12) were not both found to delete.");
+                    var cut = (noEdges.Nodes, noEdges.Bars, noEdges.Anchors, noEdges.Across, withoutJoins);
+                    object placed = Run(cut, Array.Empty<int[]>(), 1, 1);
+                    object built = Get<object>(placed, "Built");
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    if (feet.Length != 3 || Get<int>(built, "FeetMerged") != 0)
+                        throw new InvalidOperationException($"Case 3: feet inside the clearance with NO net edge between their spans must not merge; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                }
+
+                // Case 4, MIRROR-REFUSED: two straight ribs, five notches
+                // each (three free, Branching 1), placed at Type 3 so T is at
+                // most N and each notch is its own group (three groups per
+                // span, in bar order). Rib A stands plumb at x = 0; rib B
+                // tilts, standing 0.5375 off A at its own position 1 (group
+                // 0) and 1.5125 off at position 3 (group 2, position 1's
+                // mirror by group index): one candidate lies inside the
+                // clearance and its mirror does not, so the candidate is
+                // refused rather than merged.
+                {
+                    const int perRib = 5;
+                    Array nodes = Array.CreateInstance(point3d, 2 * perRib);
+                    Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+                    var bars = new int[2][];
+                    var anchors = new List<int>();
+                    var edges = new List<(int, int)>();
+                    for (int r = 0; r < 2; r++)
+                    {
+                        Array ribAcross = Array.CreateInstance(vector3d, perRib);
+                        var bar = new int[perRib];
+                        for (int i = 0; i < perRib; i++)
+                        {
+                            double y = i * 2.5;                 // 0, 2.5, 5, 7.5, 10
+                            double s = i / (double)(perRib - 1);
+                            double x = r == 0 ? 0.0 : 0.05 + (0.195 * y);
+                            int id = (r * perRib) + i;
+                            nodes.SetValue(P(x, y, 4.0 * 4.0 * s * (1.0 - s)), id);
+                            ribAcross.SetValue(V(0.0, 0.0, -1.0), i);
+                            bar[i] = id;
+                            if (i > 0)
+                                edges.Add((id - 1, id));
+                        }
+                        anchors.Add(bar[0]);
+                        anchors.Add(bar[perRib - 1]);
+                        bars[r] = bar;
+                        across.SetValue(ribAcross, r);
+                    }
+                    // Adjacency, marked by ONE edge between free notches;
+                    // section 12 reads adjacency at the SPAN, not the notch
+                    // the edge happens to touch.
+                    edges.Add(((0 * perRib) + 2, (1 * perRib) + 2));
+                    var mirrorRefused = (nodes, bars, anchors.ToArray(), across, edges.ToArray());
+                    object placed = Run(mirrorRefused, Array.Empty<int[]>(), 1, 3);
+                    object built = Get<object>(placed, "Built");
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    if (Get<int>(built, "FeetMerged") != 0 || Get<int>(built, "MergeRefused") < 1)
+                        throw new InvalidOperationException($"Case 4, MIRROR-REFUSED: one candidate inside the clearance whose mirror is not must refuse and count, not merge; FeetMerged {Get<int>(built, "FeetMerged")}, MergeRefused {Get<int>(built, "MergeRefused")}, {feet.Length} feet.");
+                }
+
+                // Case 5, MIXED: a rib meeting an arch at the crown. Span A
+                // stands plumb, five free notches at Type 2, whose central
+                // group (spec section 7) is its own middle tree, at (0, 5).
+                // Span B bends back on itself so its FIRST and THIRD free
+                // notches (groups 0 and 2, three free notches, Type 3, so
+                // each is its own group) both stand within 0.06 of that same
+                // point, while its middle notch (group 1) stands well away:
+                // the mirror of (A's central, B's group 0) is (A's central,
+                // B's group 2), which is ALSO a candidate, so both accept.
+                {
+                    Array nodesA = Array.CreateInstance(point3d, 7);
+                    double[] ys = { -1.0, 1.0, 3.0, 5.0, 7.0, 9.0, 11.0 };
+                    for (int i = 0; i < 7; i++)
+                    {
+                        double s = (ys[i] + 1.0) / 12.0;
+                        nodesA.SetValue(P(0.0, ys[i], 6.0 * 4.0 * s * (1.0 - s)), i);
+                    }
+                    Array acrossA = Array.CreateInstance(vector3d, 7);
+                    for (int i = 0; i < 7; i++)
+                        acrossA.SetValue(V(0.0, 0.0, i == 0 || i == 6 ? 0.0 : -1.0), i);
+                    var edgesBoth = new List<(int, int)>();
+                    for (int i = 1; i < 7; i++)
+                        edgesBoth.Add((i - 1, i));
+
+                    Array nodesB = Array.CreateInstance(point3d, 5);
+                    nodesB.SetValue(P(-3.0, -2.0, 0.0), 0);
+                    nodesB.SetValue(P(-0.05, 5.02, 6.0), 1);
+                    nodesB.SetValue(P(2.0, 8.0, 5.0), 2);
+                    nodesB.SetValue(P(0.05, 4.98, 6.0), 3);
+                    nodesB.SetValue(P(3.0, 12.0, 0.0), 4);
+                    Array acrossB = Array.CreateInstance(vector3d, 5);
+                    for (int i = 0; i < 5; i++)
+                        acrossB.SetValue(V(0.0, 0.0, i == 0 || i == 4 ? 0.0 : -1.0), i);
+                    for (int i = 8; i <= 11; i++)
+                        edgesBoth.Add((i - 1, i));
+                    edgesBoth.Add((3, 8));   // adjacency: A's central to B's own first free notch
+
+                    Array allNodes = Array.CreateInstance(point3d, 12);
+                    for (int i = 0; i < 7; i++)
+                        allNodes.SetValue(nodesA.GetValue(i)!, i);
+                    for (int i = 7; i < 12; i++)
+                        allNodes.SetValue(nodesB.GetValue(i - 7)!, i);
+                    Array allAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+                    allAcross.SetValue(acrossA, 0);
+                    allAcross.SetValue(acrossB, 1);
+                    var mixed = (allNodes, new[] { new[] { 0, 1, 2, 3, 4, 5, 6 }, new[] { 7, 8, 9, 10, 11 } },
+                        new[] { 0, 6, 7, 11 }, allAcross, edgesBoth.ToArray());
+                    object placed = Run(mixed, Array.Empty<int[]>(), 1, 2);
+                    object built = Get<object>(placed, "Built");
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    if (Get<int>(built, "FeetMerged") != 1)
+                        throw new InvalidOperationException($"Case 5, MIXED: the central foot and both flanking candidates of the bent rib accept as ONE merge GROUP; FeetMerged {Get<int>(built, "FeetMerged")}, MergeRefused {Get<int>(built, "MergeRefused")}, {feet.Length} feet.");
+                }
+
+                // Case 6, LEAN-REFUSED: the SAME two ribs sharing a node as
+                // Step 1's SNAP fixture, at the file's usual rise of 2.5
+                // rather than the 6 the snap fixture needs. Position 5, four
+                // spacings from S, would lean 70.9 degrees off a foot
+                // standing AT S: the merge that would put it there is
+                // refused and counted, because a merge that hands a tree a
+                // foot it cannot reach has bought tidiness with a peel and
+                // the peel would then undo the merge.
+                {
+                    var lowRise = DomeRibsSharingANode(rise: 2.5);
+                    object placed = Run(lowRise, Array.Empty<int[]>(), 1, 1);
+                    object built = Get<object>(placed, "Built");
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    if (Get<int>(built, "FeetMerged") != 0 || Get<int>(built, "MergeRefused") < 1)
+                        throw new InvalidOperationException($"Case 6, LEAN-REFUSED: a merge whose converged foot pushes a participating trunk past the cap must refuse and count, not merge; FeetMerged {Get<int>(built, "FeetMerged")}, MergeRefused {Get<int>(built, "MergeRefused")}, {feet.Length} feet, WorstLean {Get<double>(built, "WorstLean"):0.##}.");
+                }
+
+                // Case 7, ORDER: case 1's own net, its three bars offered to
+                // Place in three different orders. Tree indices follow bar
+                // order, so this changes the order candidate PAIRS are built
+                // and tested in without changing the geometry at all; the
+                // merged set (the level's own distinct plan feet, sorted)
+                // must come out IDENTICAL every time, which is what reading
+                // the step 8 feet rather than already-merged ones buys.
+                {
+                    var dome = DomeRibs(spread: 0.1, fan: 30.0);
+                    (double X, double Y)[] FeetOf(int[] order)
+                    {
+                        Array reNodes = dome.Nodes;
+                        var reBars = order.Select(r => dome.Bars[r]).ToArray();
+                        Array reAcross = Array.CreateInstance(vector3d.MakeArrayType(), 3);
+                        for (int k = 0; k < 3; k++)
+                            reAcross.SetValue(dome.Across.GetValue(order[k])!, k);
+                        var reAnchors = order.SelectMany(r => new[] { dome.Bars[r][0], dome.Bars[r][^1] }).ToArray();
+                        object placed = Run((reNodes, reBars, reAnchors, reAcross, dome.Edges), Array.Empty<int[]>(), 1, 1);
+                        object built = Get<object>(placed, "Built");
+                        var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                        var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                        return feet.Select(f => (X(levelNodes[f]), Y(levelNodes[f])))
+                            .OrderBy(p => p.Item1).ThenBy(p => p.Item2).ToArray();
+                    }
+                    (double X, double Y)[] a = FeetOf(new[] { 0, 1, 2 });
+                    (double X, double Y)[] b = FeetOf(new[] { 2, 1, 0 });
+                    (double X, double Y)[] c = FeetOf(new[] { 1, 0, 2 });
+                    if (a.Length != b.Length || a.Length != c.Length)
+                        throw new InvalidOperationException($"Case 7, ORDER: three orderings of the same net gave {a.Length}, {b.Length} and {c.Length} feet; the merged set must be identical.");
+                    for (int i = 0; i < a.Length; i++)
+                    {
+                        if (Math.Abs(a[i].X - b[i].X) > 1.0e-9 || Math.Abs(a[i].Y - b[i].Y) > 1.0e-9 ||
+                            Math.Abs(a[i].X - c[i].X) > 1.0e-9 || Math.Abs(a[i].Y - c[i].Y) > 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"Case 7, ORDER: foot {i} reads ({a[i].X:0.#########}, {a[i].Y:0.#########}) in bar order [0,1,2] against "
+                                + $"({b[i].X:0.#########}, {b[i].Y:0.#########}) in [2,1,0] and ({c[i].X:0.#########}, {c[i].Y:0.#########}) in [1,0,2]; "
+                                + "connected components resolved as a set must not depend on the order the candidate pairs were offered in.");
+                        }
+                    }
+                }
+            }
+
+            // ---- STEP 4: THE SECOND PEEL PASS (spec section 11). The
+            // MERGE-THEN-PEEL fixture: the same two ribs sharing a node,
+            // built so that one of the trunks a cross-line merge would carry
+            // stands just inside sixty degrees before the merge (its OWN
+            // notch, five spacings up its own rib from S, leans 55.2 degrees
+            // off its rib's own per-span foot two spacings up) and 70.9
+            // degrees, outside the cap, once the merge stands it AT S.
+            // Section 12's own lean-cap test on the CANDIDATE convergence
+            // already catches this before it is ever accepted, which is
+            // EXACTLY what "in practice the second pass finds nothing"
+            // means: the check asserts the disjunction the brief states
+            // (refused and counted, OR peeled a second time) rather than
+            // assuming which, and then asserts the level that comes back is
+            // STABLE, so that a hypothetical third pass would find nothing
+            // either.
+            {
+                var mergeThenPeel = DomeRibsSharingANode(rise: 2.5);
+                object placed = Run(mergeThenPeel, Array.Empty<int[]>(), 1, 1);
+                object built = Get<object>(placed, "Built");
+                int refusedCount = Get<int>(built, "MergeRefused");
+                int peeledCount = Get<int>(built, "Peeled");
+                if (refusedCount < 1 && peeledCount < 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4: a trunk standing just inside sixty degrees before a cross-line merge and outside it after must EITHER see the merge "
+                        + $"refused and counted in MergeRefused, or be caught by the second peel pass and counted in Peeled; MergeRefused {refusedCount}, Peeled {peeledCount}.");
+                }
+                double worstLean = Get<double>(built, "WorstLean");
+                if (worstLean > maxLean + 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4: the level the engine actually returns must be STABLE under the cap, which is what \"a third pass changes nothing\" "
+                        + $"means in practice; WorstLean is {worstLean:0.###} against a cap of {maxLean:0.###}.");
+                }
+            }
         }
     }
 

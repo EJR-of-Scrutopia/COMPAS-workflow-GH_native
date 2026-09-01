@@ -274,7 +274,23 @@ namespace Ananke.COMPAS.Native.Components
             public List<int> MemberTree = new();
             /// <summary>Node indices that are feet.</summary>
             public List<int> Feet = new();
+            /// <summary>
+            /// Accepted merge GROUPS of BOTH kinds: the same-span central
+            /// pair of an even tree row, and the cross-line CONNECTED
+            /// COMPONENT of two or more adjacent spans' feet. A weld (two
+            /// feet at the same point, positional identity rather than a
+            /// decision) is never counted here.
+            /// </summary>
             public int FeetMerged;
+            /// <summary>
+            /// Merge candidates refused, by the mirror-by-group-index rule
+            /// or by the lean cap. Reported rather than silent: accepting
+            /// one of a mirrored pair of merges and not the other is exactly
+            /// how two matching columns stop matching.
+            /// </summary>
+            public int MergeRefused;
+            /// <summary>Convergences that fell back to the plan mean.</summary>
+            public int ConvergenceFallback;
             /// <summary>Trunks that stepped off a shared foot onto their own.</summary>
             public int Peeled;
             /// <summary>
@@ -1557,7 +1573,7 @@ namespace Ananke.COMPAS.Native.Components
                 // more, so there is nothing to fall back to and GroundPlaced
                 // always equals GroundAsked.
                 int level = Math.Min(groundAsked, MaxGround);
-                Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level);
+                Level built = BuildLevel(nodes, placement, bars, edges, anchorSet, ground, level);
                 placement.Tried.Add(built);
                 placement.Built = built;
                 placement.GroundPlaced = level;
@@ -1573,7 +1589,7 @@ namespace Ananke.COMPAS.Native.Components
                 Level? bestAny = null;
                 for (int level = MaxGround; level >= 0; level--)
                 {
-                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level);
+                    Level built = BuildLevel(nodes, placement, bars, edges, anchorSet, ground, level);
                     placement.Tried.Add(built);
                     if (bestAny is null || built.LoadPath < bestAny.LoadPath)
                         bestAny = built;
@@ -1789,6 +1805,7 @@ namespace Ananke.COMPAS.Native.Components
             Point3d[] nodes,
             Placement placement,
             int[][] bars,
+            (int, int)[] edges,
             HashSet<int> anchors,
             double ground,
             int level)
@@ -1865,6 +1882,12 @@ namespace Ananke.COMPAS.Native.Components
                     chordZeroTree[t] = true;
                 }
             }
+
+            // Populated only at Type N (below); stays all-false at Type 0,
+            // where AimFrom already caps the lean and nothing peels. Declared
+            // here, outside the split, so the SECOND PEEL PASS after the
+            // merge (spec section 11) can read it whichever branch ran.
+            var stepped = new bool[trees.Count];
 
             if (level == 0)
             {
@@ -1973,7 +1996,6 @@ namespace Ananke.COMPAS.Native.Components
                 // The loop cannot cascade: peeling is one-way, a peeled tree
                 // never rejoins a shared foot, and no foot moves on account
                 // of a peel.
-                var stepped = new bool[trees.Count];
                 for (int t = 0; t < trees.Count; t++)
                 {
                     if (trees[t].FixedFoot is not null || stepped[t] || trees[t].HeadMain < 0)
@@ -2004,10 +2026,67 @@ namespace Ananke.COMPAS.Native.Components
                 spacing[t] = SpacingOf(placement, nodes, t);
             var footSpacing = new List<double>();
             int[] footIndex = MergeFeet(
-                placement, nodes, foot, spacing, result.Nodes, footSpacing,
-                out int merged, out int close);
+                placement, nodes, bars, edges, foot, spacing, result.Nodes, footSpacing,
+                out int merged, out int refused, out int fallbacks, out int close);
             result.FeetMerged = merged;
+            result.MergeRefused = refused;
+            result.ConvergenceFallback = fallbacks;
             result.FeetClose = close;
+
+            // ---- THE SECOND PEEL PASS (spec section 11). A merged foot is a
+            // fresh convergence and it MOVES, so a trunk sitting just inside
+            // sixty degrees before the merge can stand past it afterwards.
+            // Run over every standing tree rather than only the merged ones:
+            // an unmerged tree's foot is identical to what the first pass
+            // already judged, so re-judging it is harmless and needs no
+            // extra bookkeeping of which trees a merge actually touched.
+            // Cannot cascade: a tree already peeled in the first pass is
+            // skipped, a second-pass peel takes its mirror partner exactly as
+            // the first does, and no foot moves on account of a peel, so
+            // nothing here can feed a third pass anything to catch. In
+            // practice this finds nothing at all, because section 12 already
+            // refuses a merge whose converged foot would put a participating
+            // trunk over the cap; the harness demonstrates that rather than
+            // assumes it.
+            var steppedAgain = new bool[trees.Count];
+            for (int t = 0; t < trees.Count; t++)
+            {
+                if (trees[t].FixedFoot is not null || stepped[t] || trees[t].HeadMain < 0)
+                    continue;
+                Point3d standing = result.Nodes[footIndex[t]];
+                double lean = MouldGeometry.LeanFromVertical(standing, nodes[trees[t].Nodes[trees[t].HeadMain]]);
+                if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
+                    continue;
+                steppedAgain[t] = true;
+                int mate = t < placement.Partner.Length ? placement.Partner[t] : -1;
+                if (mate >= 0 && mate < trees.Count && mate != t && trees[mate].FixedFoot is null)
+                    steppedAgain[mate] = true;
+            }
+            for (int t = 0; t < trees.Count; t++)
+            {
+                if (!steppedAgain[t])
+                    continue;
+                Point3d target = own[t];
+                double tol = ToleranceOf(placement, nodes, t);
+                int match = -1;
+                for (int u = 0; u < result.Nodes.Count; u++)
+                {
+                    if (MouldGeometry.PlanDistanceSquared(result.Nodes[u], target) <= tol * tol &&
+                        Math.Abs(result.Nodes[u].Z - target.Z) <= tol)
+                    {
+                        match = u;
+                        break;
+                    }
+                }
+                if (match < 0)
+                {
+                    result.Nodes.Add(target);
+                    footSpacing.Add(spacing[t]);
+                    match = result.Nodes.Count - 1;
+                }
+                footIndex[t] = match;
+                result.Peeled++;
+            }
             for (int i = 0; i < result.Nodes.Count; i++)
                 result.Feet.Add(i);
 
@@ -2233,100 +2312,696 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         /// <summary>
-        /// Where the feet become NODES, and the one case in which two of them
-        /// become one.
+        /// The tree's own weld tolerance: <see cref="SpanFrame.TauWeld"/> on
+        /// a span tree, or <c>1e-9 * R</c> on the ring tree, R its own
+        /// smallest rim spacing (<see cref="SpacingOf"/>'s answer for a tree
+        /// with no span). Two feet's weld bound is the smaller of their two.
+        /// </summary>
+        private static double ToleranceOf(Placement placement, Point3d[] nodes, int tree)
+        {
+            Tree t = placement.Trees[tree];
+            if (!t.Ring && t.Span >= 0 && t.Span < placement.Frames.Count)
+                return placement.Frames[t.Span].TauWeld;
+            return 1.0e-9 * SpacingOf(placement, nodes, tree);
+        }
+
+        /// <summary>
+        /// Span-by-span adjacency (spec section 12): A and B are adjacent
+        /// when a free notch of one is joined by a net EDGE to a free notch
+        /// of the other, or when the two spans share a notch outright. Built
+        /// once from the net's own edge list and the free-notch holder map,
+        /// exact and invariant under a rotation of the model or a remesh
+        /// that leaves the topology alone.
+        /// </summary>
+        private static bool[,] SpansAdjacent(Placement placement, (int, int)[] edges)
+        {
+            int n = placement.Spans.Count;
+            var adjacent = new bool[n, n];
+            var holder = new Dictionary<int, List<int>>();
+            for (int s = 0; s < n; s++)
+            {
+                foreach (int node in placement.Frames[s].Nodes)
+                {
+                    if (!holder.TryGetValue(node, out List<int>? list))
+                    {
+                        list = new List<int>();
+                        holder[node] = list;
+                    }
+                    list.Add(s);
+                }
+            }
+            void Mark(int a, int b)
+            {
+                if (a == b)
+                    return;
+                adjacent[a, b] = true;
+                adjacent[b, a] = true;
+            }
+            foreach ((int u, int v) in edges)
+            {
+                if (!holder.TryGetValue(u, out List<int>? su) || !holder.TryGetValue(v, out List<int>? sv))
+                    continue;
+                foreach (int a in su)
+                    foreach (int b in sv)
+                        Mark(a, b);
+            }
+            foreach (List<int> spans in holder.Values)
+            {
+                for (int i = 0; i < spans.Count; i++)
+                    for (int j = i + 1; j < spans.Count; j++)
+                        Mark(spans[i], spans[j]);
+            }
+            return adjacent;
+        }
+
+        /// <summary>
+        /// Every non-ring tree's GROUP within its own span, read off the
+        /// PLACED feet (<paramref name="placed"/>, step 8's own output,
+        /// before any rule of this method has moved anything): trees of one
+        /// span standing on the identical plan point are one FootGroups
+        /// group, in bar order, so <c>GroupIndex</c> runs 0 to
+        /// <c>GroupCount - 1</c> exactly as spec section 7 laid the row out,
+        /// whatever level built it and however a peeled tree came to stand
+        /// alone. A tree with no span, no owned notch, or a chord-zero span
+        /// (which stands on the one span-wide foot at every Type and so has
+        /// no group structure to mirror by) carries -1 in both.
+        /// </summary>
+        private static (int[] GroupIndex, int[] GroupCount) SpanGroupsOf(
+            Placement placement, Point3d[] nodes, Point3d[] placed)
+        {
+            int n = placement.Trees.Count;
+            var groupIndex = new int[n];
+            var groupCount = new int[n];
+            for (int t = 0; t < n; t++)
+            {
+                groupIndex[t] = -1;
+                groupCount[t] = -1;
+            }
+            var bySpan = new Dictionary<int, List<int>>();
+            for (int t = 0; t < n; t++)
+            {
+                Tree tree = placement.Trees[t];
+                if (tree.Ring || tree.Span < 0 || tree.Span >= placement.Frames.Count || tree.HeadMain < 0)
+                    continue;
+                if (placement.Frames[tree.Span].ChordZero)
+                    continue;
+                if (!bySpan.TryGetValue(tree.Span, out List<int>? row))
+                {
+                    row = new List<int>();
+                    bySpan[tree.Span] = row;
+                }
+                row.Add(t);
+            }
+            foreach (KeyValuePair<int, List<int>> entry in bySpan)
+            {
+                double tol = placement.Frames[entry.Key].TauWeld;
+                double tolSquared = tol * tol;
+                var clusters = new List<List<int>>();
+                foreach (int t in entry.Value)
+                {
+                    List<int>? home = clusters.FirstOrDefault(
+                        cluster => MouldGeometry.PlanDistanceSquared(placed[t], placed[cluster[0]]) <= tolSquared);
+                    if (home is null)
+                    {
+                        home = new List<int>();
+                        clusters.Add(home);
+                    }
+                    home.Add(t);
+                }
+                for (int g = 0; g < clusters.Count; g++)
+                {
+                    foreach (int t in clusters[g])
+                    {
+                        groupIndex[t] = g;
+                        groupCount[t] = clusters.Count;
+                    }
+                }
+            }
+            return (groupIndex, groupCount);
+        }
+
+        /// <summary>
+        /// The notch indices (into the tree's own span frame) that GroupFoot
+        /// took THIS tree's group's foot from: every free notch of every
+        /// tree sharing the tree's own group (<see cref="SpanGroupsOf"/>),
+        /// filtered to those within <see cref="SpanFrame.TauSnap"/> of the
+        /// nearest to the group's own centre, exactly GroupFoot's own rule.
+        /// </summary>
+        private static int[] CandidateNotchesOf(
+            Placement placement, int[] groupIndex, int tree)
+        {
+            Tree t = placement.Trees[tree];
+            if (t.Span < 0 || t.Span >= placement.Frames.Count || groupIndex[tree] < 0)
+                return Array.Empty<int>();
+            SpanFrame frame = placement.Frames[t.Span];
+            var notchIndex = new Dictionary<int, int>();
+            for (int i = 0; i < frame.Nodes.Length; i++)
+                notchIndex[frame.Nodes[i]] = i;
+            var indices = new List<int>();
+            for (int u = 0; u < placement.Trees.Count; u++)
+            {
+                if (placement.Trees[u].Span != t.Span || groupIndex[u] != groupIndex[tree])
+                    continue;
+                foreach (int node in placement.Trees[u].Nodes)
+                {
+                    if (notchIndex.TryGetValue(node, out int at))
+                        indices.Add(at);
+                }
+            }
+            if (indices.Count == 0)
+                return Array.Empty<int>();
+            double smallest = indices.Min(i => frame.Sigma[i]);
+            double largest = indices.Max(i => frame.Sigma[i]);
+            double centre = 0.5 * (smallest + largest);
+            double nearest = indices.Min(i => Math.Abs(frame.Sigma[i] - centre));
+            return indices.Distinct()
+                .Where(i => Math.Abs(frame.Sigma[i] - centre) <= nearest + frame.TauSnap)
+                .ToArray();
+        }
+
+        /// <summary>A notch's own plan point, read straight off its frame.</summary>
+        private static Point3d PlanOf(Point3d[] nodes, SpanFrame frame, int notchIndex) =>
+            nodes[frame.Nodes[notchIndex]];
+
+        /// <summary>
+        /// The net nodes held by two or more of a merging component's own
+        /// spans at once: a free notch listed in more than one of those
+        /// spans' own frames. What the SNAP of spec section 12 tests a
+        /// converged foot against.
+        /// </summary>
+        private static IEnumerable<int> SharedNotchesOf(Placement placement, IReadOnlyList<int> members)
+        {
+            int[] spans = members
+                .Select(t => placement.Trees[t].Span)
+                .Where(s => s >= 0 && s < placement.Frames.Count)
+                .Distinct().ToArray();
+            var seen = new HashSet<int>();
+            for (int i = 0; i < spans.Length; i++)
+            {
+                var nodesOfA = new HashSet<int>(placement.Frames[spans[i]].Nodes);
+                for (int j = i + 1; j < spans.Length; j++)
+                {
+                    foreach (int node in placement.Frames[spans[j]].Nodes)
+                    {
+                        if (nodesOfA.Contains(node) && seen.Add(node))
+                            yield return node;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// The plan tangent at one of a span's free notches: the unit plan
+        /// vector from the bar position BEFORE it to the one AFTER it, or the
+        /// single one-sided segment at a bar end, falling back to the span's
+        /// own chord direction where the two points it is taken between are
+        /// within 1e-9 of its own scale.
+        /// </summary>
+        private static Vector3d TangentAt(
+            Point3d[] nodes, int[][] bars, Span span, SpanFrame frame, int notchIndex)
+        {
+            int[] bar = bars[span.Bar];
+            int position = frame.Positions[notchIndex];
+            int before = bar[Math.Max(position - 1, 0)];
+            int after = bar[Math.Min(position + 1, bar.Length - 1)];
+            double dx = nodes[after].X - nodes[before].X;
+            double dy = nodes[after].Y - nodes[before].Y;
+            double length = Math.Sqrt((dx * dx) + (dy * dy));
+            double scale = frame.ChordZero ? frame.D : frame.L;
+            if (length <= 1.0e-9 * Math.Max(scale, 1.0e-12))
+                return frame.C;
+            return new Vector3d(dx / length, dy / length, 0.0);
+        }
+
+        /// <summary>
+        /// An ordinary convex hull of the candidate points in plan (monotone
+        /// chain), returning 0 where (x, y) lies inside or on it and
+        /// otherwise the smallest point-to-segment distance over the hull's
+        /// own edges. With one candidate point this is the plan distance to
+        /// it and with two the distance to their segment.
+        /// </summary>
+        private static double PlanDistanceToHull(Point3d[] points, double x, double y)
+        {
+            (double X, double Y)[] pts = points
+                .Select(p => (p.X, p.Y)).Distinct()
+                .OrderBy(p => p.X).ThenBy(p => p.Y).ToArray();
+            if (pts.Length == 0)
+                return 0.0;
+            if (pts.Length == 1)
+                return SegmentPointDistance(pts[0], pts[0], x, y);
+
+            static double Cross((double X, double Y) o, (double X, double Y) a, (double X, double Y) b) =>
+                ((a.X - o.X) * (b.Y - o.Y)) - ((a.Y - o.Y) * (b.X - o.X));
+
+            var lower = new List<(double X, double Y)>();
+            foreach ((double X, double Y) p in pts)
+            {
+                while (lower.Count >= 2 && Cross(lower[^2], lower[^1], p) <= 0.0)
+                    lower.RemoveAt(lower.Count - 1);
+                lower.Add(p);
+            }
+            var upper = new List<(double X, double Y)>();
+            for (int i = pts.Length - 1; i >= 0; i--)
+            {
+                (double X, double Y) p = pts[i];
+                while (upper.Count >= 2 && Cross(upper[^2], upper[^1], p) <= 0.0)
+                    upper.RemoveAt(upper.Count - 1);
+                upper.Add(p);
+            }
+            lower.RemoveAt(lower.Count - 1);
+            upper.RemoveAt(upper.Count - 1);
+            (double X, double Y)[] hull = lower.Concat(upper).ToArray();
+            if (hull.Length == 1)
+                return SegmentPointDistance(hull[0], hull[0], x, y);
+            if (hull.Length == 2)
+                return SegmentPointDistance(hull[0], hull[1], x, y);
+
+            bool inside = true;
+            for (int i = 0; i < hull.Length; i++)
+            {
+                (double X, double Y) a = hull[i];
+                (double X, double Y) b = hull[(i + 1) % hull.Length];
+                double cross = ((b.X - a.X) * (y - a.Y)) - ((b.Y - a.Y) * (x - a.X));
+                if (cross < -1.0e-12)
+                {
+                    inside = false;
+                    break;
+                }
+            }
+            if (inside)
+                return 0.0;
+            double best = double.MaxValue;
+            for (int i = 0; i < hull.Length; i++)
+                best = Math.Min(best, SegmentPointDistance(hull[i], hull[(i + 1) % hull.Length], x, y));
+            return best;
+        }
+
+        private static double SegmentPointDistance((double X, double Y) a, (double X, double Y) b, double x, double y)
+        {
+            double dx = b.X - a.X;
+            double dy = b.Y - a.Y;
+            double lengthSquared = (dx * dx) + (dy * dy);
+            if (lengthSquared <= 1.0e-18)
+                return Math.Sqrt(((a.X - x) * (a.X - x)) + ((a.Y - y) * (a.Y - y)));
+            double along = (((x - a.X) * dx) + ((y - a.Y) * dy)) / lengthSquared;
+            along = Math.Max(0.0, Math.Min(1.0, along));
+            double px = a.X + (along * dx);
+            double py = a.Y + (along * dy);
+            return Math.Sqrt(((px - x) * (px - x)) + ((py - y) * (py - y)));
+        }
+
+        /// <summary>
+        /// The least-squares system itself, factored out of <see cref="Converge"/>
+        /// so that a caller wanting the RAW intersection (the SNAP test below
+        /// needs it before any guard is applied) is not left re-deriving it:
         ///
-        /// Feet at the SAME point are one node whatever put them there: two
-        /// trees in one band, every tree of a span at Type 1, or two spans
-        /// whose bands meet at a crossing. That is WELDING, and it is not a
-        /// merge and is not counted. The weld tolerance is now the SPAN's
-        /// own, off <see cref="SpanFrame.TauWeld"/>: one span's for two feet
-        /// of that span, the smaller of two spans' for feet of two spans, and
-        /// a tiny flat fallback for a foot with no span at all (the ring
-        /// tree), which stands where the flat weld epsilon always did.
+        ///     minimise, over x in plan, the sum over candidates of
+        ///     |(I - d d^T) (x - p)|^2
         ///
-        /// Beyond that only a MIRRORED PAIR merges (spec 3.5): when its two
-        /// feet lie within 0.25 of the SMALLER of the two trees' own span
-        /// spacings (<c>SpacingOf</c>) the pair stands on one foot at the
-        /// MEAN of the two, which on symmetric geometry is on the mirror
-        /// plane, where its own symmetry says it belongs. Not the span's
-        /// chord midpoint, which is where this stood: a pair's two feet
-        /// differ only in their along-chord part, so the clearance test says
-        /// nothing at all about how far off the chord they sit, and on a bar
-        /// that curves in plan the innermost notches sit off it by the plan
-        /// sagitta. Merging onto the chord midpoint moved such a pair sideways
-        /// by that sagitta, out from under its own bar, with nothing measuring
-        /// the move. Any other two feet inside the same 0.25 * spacing stay
-        /// two and are counted in FeetClose, against the SMALLER of the two
-        /// BUILT feet's own recorded spacings. Merging those was what turned
-        /// leaning neighbours into accidental V's and X's on Param's review
-        /// arch: two trees that lean toward one another are not one tree, and
-        /// the ring tree's foot, fixed by 3.2, never merges at all.
+        /// The sign of d is immaterial, since it enters only through the
+        /// projector. Returns false, unsolved, where the system is SINGULAR
+        /// by the ring tree's own scale-free test:
+        /// |det A| > 1e-9 * max(trace(A)^2, 1e-12).
+        /// </summary>
+        private static bool SolveIntersection(
+            IReadOnlyList<(Point3d Point, Vector3d Tangent)> candidates, out double x, out double y)
+        {
+            x = 0.0;
+            y = 0.0;
+            double a11 = 0.0, a12 = 0.0, a22 = 0.0, b1 = 0.0, b2 = 0.0;
+            foreach ((Point3d point, Vector3d tangent) in candidates)
+            {
+                double length = Math.Sqrt((tangent.X * tangent.X) + (tangent.Y * tangent.Y));
+                if (length <= 1.0e-12)
+                    continue;
+                double ux = tangent.X / length;
+                double uy = tangent.Y / length;
+                double m11 = 1.0 - (ux * ux);
+                double m12 = -ux * uy;
+                double m22 = 1.0 - (uy * uy);
+                a11 += m11;
+                a12 += m12;
+                a22 += m22;
+                b1 += (m11 * point.X) + (m12 * point.Y);
+                b2 += (m12 * point.X) + (m22 * point.Y);
+            }
+            double det = (a11 * a22) - (a12 * a12);
+            double trace = a11 + a22;
+            if (Math.Abs(det) <= 1.0e-9 * Math.Max(trace * trace, 1.0e-12))
+                return false;
+            x = ((a22 * b1) - (a12 * b2)) / det;
+            y = ((a11 * b2) - (a12 * b1)) / det;
+            return true;
+        }
+
+        /// <summary>
+        /// The plan point nearest every candidate's own plan tangent line at
+        /// once: the same least-squares intersection the ring tree already
+        /// uses for the bars' end tangents.
         ///
-        /// The merge and weld RULES are Task 8's; only their SCALE is span-
-        /// local here, the shape unchanged: a mirrored pair merges, nothing
-        /// else does, and welding stays exact coincidence.
+        /// SINGULAR, which is what parallel tangents give on a planar arch or
+        /// two parallel ribs, falls back to the plan MEAN; OUT OF REACH,
+        /// where the solution lies further than the guard from the convex
+        /// hull of the candidate points, falls back to the plan mean and is
+        /// counted in ConvergenceFallback; ACCEPTED takes the point. The mean
+        /// is the fallback everywhere because the mean commutes with any
+        /// reflection, whatever the chords' directions, which the centre of
+        /// an axis-aligned bounding box does not.
+        /// </summary>
+        private static Point3d Converge(
+            Point3d[] nodes,
+            IReadOnlyList<(Point3d Point, Vector3d Tangent)> candidates,
+            double guard,
+            double ground,
+            out bool fellBack)
+        {
+            fellBack = false;
+            double meanX = candidates.Average(c => c.Point.X);
+            double meanY = candidates.Average(c => c.Point.Y);
+            var mean = new Point3d(meanX, meanY, ground);
+            if (candidates.Count == 0)
+                return mean;
+
+            if (!SolveIntersection(candidates, out double x, out double y))
+            {
+                // SINGULAR. Parallel tangents on a planar arch or two
+                // parallel ribs. Not counted as a fallback of the guard's
+                // kind, because nothing was out of reach; there was simply no
+                // intersection to take.
+                return mean;
+            }
+
+            // OUT OF REACH. The distance from the solution to the CONVEX HULL
+            // of the candidate points, which for the two-point case is the
+            // segment and for one point is that point.
+            double reach = PlanDistanceToHull(candidates.Select(c => c.Point).ToArray(), x, y);
+            if (reach > guard)
+            {
+                fellBack = true;
+                return mean;
+            }
+            return new Point3d(x, y, ground);
+        }
+
+        /// <summary>
+        /// Where the feet become NODES, in the four rules of spec section 12,
+        /// each in its own clearance:
+        ///
+        /// RULE 1, WELDING. Positional identity, not a decision: two feet
+        /// within TAU_weld in plan and in height are one node, whatever put
+        /// them there, and never counted as a merge. Applied LAST, after
+        /// rules 2 and 3 have settled every foot's final position, because
+        /// welding does not care WHY two feet ended at the same point.
+        ///
+        /// RULE 2, THE CENTRAL PAIR OF AN EVEN TREE ROW. Only a span whose
+        /// tree count is EVEN has a central pair, its two innermost trees; an
+        /// ODD row has a centre tree instead and merges nothing here. Within
+        /// 0.25 * g of that span the pair stands on the MEAN of its two
+        /// STEP-8 feet, never the span's chord midpoint.
+        ///
+        /// RULE 3, CROSS-LINE MERGING. Two spans are ADJACENT by net edge or
+        /// shared notch (<see cref="SpansAdjacent"/>); two feet of adjacent
+        /// spans within 0.25 * min(g_A, g_B) are a MERGE CANDIDATE, collected
+        /// against the STEP-8 feet and never a foot this pass has already
+        /// moved. A candidate is accepted only if its MIRROR BY GROUP INDEX
+        /// is also a candidate (<see cref="SpanGroupsOf"/>), or where either
+        /// span has no group at the mirrored index it is REFUSED; accepted
+        /// candidates resolve as CONNECTED COMPONENTS, and the merged foot is
+        /// the CONVERGENCE of every candidate notch of every merging group,
+        /// its guard 0.25 * min(g) over the spans taking part, snapped to a
+        /// net node the merging spans SHARE when the convergence lands within
+        /// that same clearance of it. A merge whose foot would put a
+        /// participating trunk past MaxLeanDegrees is REFUSED and counted:
+        /// tidiness bought with a peel is undone by the peel. The ring tree's
+        /// foot never merges.
+        ///
+        /// RULE 4, STANDING CLOSE BUT APART. Any two BUILT feet within the
+        /// feet-close clearance (0.25 * min(g) between spans, 0.25 * g within
+        /// one) that did not become one node, whatever the reason, are
+        /// counted in FeetClose against the SMALLER of their own recorded
+        /// spacings.
         /// </summary>
         private static int[] MergeFeet(
             Placement placement,
             Point3d[] nodes,
+            int[][] bars,
+            (int, int)[] edges,
             Point3d[] foot,
             double[] spacing,
             List<Point3d> levelNodes,
             List<double> footSpacing,
             out int merged,
+            out int refused,
+            out int fallbacks,
             out int close)
         {
-            int n = foot.Length;
             merged = 0;
-
-            // The weld tolerance for a pair of feet: the span each foot's
-            // tree stands on decides it, the smaller of two when the trees
-            // disagree, and a flat fallback (matching the old weld epsilon
-            // exactly) where a tree carries no span at all.
-            double TauWeldSquared(int a, int b)
+            refused = 0;
+            fallbacks = 0;
+            close = 0;
+            int treeCount = placement.Trees.Count;
+            var group = new int[treeCount];
+            for (int t = 0; t < treeCount; t++)
+                group[t] = t;
+            int Find(int t) => group[t] == t ? t : group[t] = Find(group[t]);
+            void Union(int a, int b)
             {
-                int spanA = placement.Trees[a].Span;
-                int spanB = placement.Trees[b].Span;
-                double tauA = spanA >= 0 && spanA < placement.Frames.Count ? placement.Frames[spanA].TauWeld : 1.0e-9;
-                double tauB = spanB >= 0 && spanB < placement.Frames.Count ? placement.Frames[spanB].TauWeld : 1.0e-9;
-                double tau = spanA == spanB ? tauA : Math.Min(tauA, tauB);
-                return tau * tau;
+                int ra = Find(a);
+                int rb = Find(b);
+                if (ra != rb)
+                    group[Math.Max(ra, rb)] = Math.Min(ra, rb);
             }
 
-            for (int t = 0; t < n; t++)
+            // The feet AS STEP 8 PLACED THEM, kept apart from the working
+            // copy, because every mirror test below reads the placed feet and
+            // never a foot another merge in this same pass has moved.
+            var placed = (Point3d[])foot.Clone();
+
+            double WeldTolerance(int a, int b) =>
+                Math.Min(ToleranceOf(placement, nodes, a), ToleranceOf(placement, nodes, b));
+
+            // ---- RULE 2, THE CENTRAL PAIR OF AN EVEN TREE ROW. Only a span
+            // whose TREE COUNT is even has a central pair, and only that pair
+            // merges within one span. An ODD row merges nothing, which is
+            // what keeps a centre column and its two leaning neighbours three
+            // columns rather than one.
+            var spanTrees = new List<int>[placement.Spans.Count];
+            for (int s = 0; s < spanTrees.Length; s++)
+                spanTrees[s] = new List<int>();
+            for (int t = 0; t < treeCount; t++)
             {
-                int partner = t < placement.Partner.Length ? placement.Partner[t] : -1;
-                // -1 is the ring tree or a tree on an unmirrored span, t is a
-                // centre tree standing alone, and anything below t was handled
-                // when its partner came round.
-                if (partner <= t || partner >= n)
+                if (!placement.Trees[t].Ring && placement.Trees[t].Span >= 0)
+                    spanTrees[placement.Trees[t].Span].Add(t);
+            }
+            for (int s = 0; s < spanTrees.Length; s++)
+            {
+                List<int> row = spanTrees[s];
+                if (row.Count == 0 || (row.Count % 2) != 0)
                     continue;
-                if (placement.Trees[t].FixedFoot is not null ||
-                    placement.Trees[partner].FixedFoot is not null)
+                int left = row[(row.Count / 2) - 1];
+                int right = row[row.Count / 2];
+                double gap = Math.Sqrt(MouldGeometry.PlanDistanceSquared(placed[left], placed[right]));
+                // Already coincident is RULE 1's, positional identity and not
+                // a decision: nothing here to merge, and the weld pass below
+                // folds them into one node regardless.
+                if (gap <= WeldTolerance(left, right))
                     continue;
-                // A tree with no owned notch builds no foot at all, so it
-                // never enters a merge.
-                if (placement.Trees[t].HeadMain < 0 || placement.Trees[partner].HeadMain < 0)
+                if (gap > 0.25 * Math.Min(spacing[left], spacing[right]))
                     continue;
-                double gap = MouldGeometry.PlanDistanceSquared(foot[t], foot[partner]);
-                double weldSquared = TauWeldSquared(t, partner);
-                double mergeClearance = 0.25 * Math.Min(spacing[t], spacing[partner]);
-                if (gap <= weldSquared || gap > mergeClearance * mergeClearance)
-                    continue;
-                var middle = new Point3d(
-                    0.5 * (foot[t].X + foot[partner].X),
-                    0.5 * (foot[t].Y + foot[partner].Y),
-                    foot[t].Z);
-                foot[t] = middle;
-                foot[partner] = middle;
+                var mean = new Point3d(
+                    0.5 * (placed[left].X + placed[right].X),
+                    0.5 * (placed[left].Y + placed[right].Y),
+                    placed[left].Z);
+                foot[left] = mean;
+                foot[right] = mean;
+                // NOT Union(left, right): that union-find is Rule 3's own,
+                // over the CROSS-LINE candidates, and this pair is not one.
+                // Sharing it here would fold this pair into Rule 3's
+                // connected-component enumeration below and count it a
+                // second time, once for each rule. The two feet now stand at
+                // the identical point regardless, so the WELD pass folds
+                // them into one node whether or not any component tracks it.
                 merged++;
             }
 
-            var footIndex = new int[n];
-            for (int t = 0; t < n; t++)
+            // ---- RULE 3, CROSS-LINE MERGING. Adjacency is by net EDGE or by
+            // a shared notch, both exact and both invariant under a rotation
+            // of the model. Candidates are collected against the PLACED
+            // feet, the mirror test is taken BY GROUP INDEX, and the accepted
+            // ones are resolved as CONNECTED COMPONENTS rather than pairwise
+            // in sequence, so the answer does not depend on the order the
+            // pairs were offered in.
+            bool[,] adjacent = SpansAdjacent(placement, edges);
+            (int[] groupIndex, int[] groupCount) = SpanGroupsOf(placement, nodes, placed);
+            var candidates = new List<(int A, int B)>();
+            for (int a = 0; a < treeCount; a++)
             {
-                footIndex[t] = -1;
+                for (int b = a + 1; b < treeCount; b++)
+                {
+                    if (placement.Trees[a].Ring || placement.Trees[b].Ring)
+                        continue;                                  // the ring tree never merges
+                    if (placement.Trees[a].HeadMain < 0 || placement.Trees[b].HeadMain < 0)
+                        continue;                                  // no owned notch, no foot, no merge
+                    int sa = placement.Trees[a].Span;
+                    int sb = placement.Trees[b].Span;
+                    if (sa < 0 || sb < 0 || sa == sb || !adjacent[sa, sb])
+                        continue;
+                    double gap = Math.Sqrt(MouldGeometry.PlanDistanceSquared(placed[a], placed[b]));
+                    // Already coincident is RULE 1's, positional identity and
+                    // not a decision: two spans whose feet landed on a shared
+                    // crossing notch are not a cross-line MERGE to accept or
+                    // refuse, and the weld pass folds them into one node
+                    // regardless of anything decided here.
+                    if (gap <= WeldTolerance(a, b))
+                        continue;
+                    if (gap > 0.25 * Math.Min(spacing[a], spacing[b]))
+                        continue;
+                    candidates.Add((a, b));
+                }
+            }
+
+            // MIRROR BY GROUP INDEX (spec section 12's third bullet): a
+            // candidate (a, b) is accepted only if some candidate joins span
+            // A's group N_A - 1 - groupIndex[a] to span B's group
+            // N_B - 1 - groupIndex[b] (unordered, since a candidate pair may
+            // list either span first). A tree with no group at all (no span,
+            // no owned notch, or a chord-zero span) refuses on the spot.
+            bool MirrorAccepts(int a, int b)
+            {
+                int sa = placement.Trees[a].Span;
+                int sb = placement.Trees[b].Span;
+                int ga = groupIndex[a];
+                int gb = groupIndex[b];
+                if (ga < 0 || gb < 0)
+                    return false;
+                int mirrorA = groupCount[a] - 1 - ga;
+                int mirrorB = groupCount[b] - 1 - gb;
+                foreach ((int x, int y) in candidates)
+                {
+                    int sx = placement.Trees[x].Span;
+                    int sy = placement.Trees[y].Span;
+                    bool direct = sx == sa && groupIndex[x] == mirrorA && sy == sb && groupIndex[y] == mirrorB;
+                    bool swapped = sy == sa && groupIndex[y] == mirrorA && sx == sb && groupIndex[x] == mirrorB;
+                    if (direct || swapped)
+                        return true;
+                }
+                return false;
+            }
+
+            var accepted = new List<(int A, int B)>();
+            foreach ((int a, int b) in candidates)
+            {
+                if (!MirrorAccepts(a, b))
+                {
+                    refused++;
+                    continue;
+                }
+                accepted.Add((a, b));
+            }
+            foreach ((int a, int b) in accepted)
+                Union(a, b);
+
+            // The converged foot per component, over ALL the candidate
+            // notches of ALL the merging groups, with their own tangents.
+            foreach (IGrouping<int, int> component in Enumerable.Range(0, treeCount)
+                .Where(t => !placement.Trees[t].Ring)
+                .GroupBy(Find))
+            {
+                int[] members = component.ToArray();
+                if (members.Length < 2)
+                    continue;
+                var points = new List<(Point3d Point, Vector3d Tangent)>();
+                double guard = double.MaxValue;
+                foreach (int t in members)
+                {
+                    int s = placement.Trees[t].Span;
+                    if (s < 0)
+                        continue;
+                    SpanFrame frame = placement.Frames[s];
+                    guard = Math.Min(guard, 0.25 * spacing[t]);
+                    foreach (int index in CandidateNotchesOf(placement, groupIndex, t))
+                        points.Add((PlanOf(nodes, frame, index), TangentAt(nodes, bars, placement.Spans[s], frame, index)));
+                }
+                if (points.Count == 0)
+                    continue;
+                double footZ = foot[members[0]].Z;
+
+                // THE SNAP, tested against the RAW intersection before any
+                // guard is applied. Where a rib's own candidate notch sits
+                // well off the crossing it is really aimed at (two whole
+                // spacings up the rib from the shared node, on the fixture
+                // that exercises this), the candidate points' own hull can
+                // sit nowhere near the true intersection even though the
+                // intersection is exact and lands on a real net vertex: a
+                // shared node within the merge clearance of that raw solution
+                // is stronger evidence than the hull, and is what the snap
+                // exists to catch. Failing that, the ORDINARY guarded
+                // convergence runs, and its own accepted point (or its mean
+                // fallback) is checked against the shared node in turn, which
+                // is what section 12 asks for on the ordinary case.
+                Point3d where;
+                bool fellBack;
+                int snapNode = -1;
+                if (SolveIntersection(points, out double rawX, out double rawY))
+                {
+                    foreach (int shared in SharedNotchesOf(placement, members))
+                    {
+                        double d = Math.Sqrt(
+                            ((nodes[shared].X - rawX) * (nodes[shared].X - rawX)) +
+                            ((nodes[shared].Y - rawY) * (nodes[shared].Y - rawY)));
+                        if (d <= guard)
+                        {
+                            snapNode = shared;
+                            break;
+                        }
+                    }
+                }
+                if (snapNode >= 0)
+                {
+                    where = new Point3d(nodes[snapNode].X, nodes[snapNode].Y, footZ);
+                    fellBack = false;
+                }
+                else
+                {
+                    where = Converge(nodes, points, guard, footZ, out fellBack);
+                    // THE SNAP, the ordinary case: the merging spans share a
+                    // net node and the ACCEPTED convergence (or its mean
+                    // fallback) lands within the merge clearance of it.
+                    foreach (int shared in SharedNotchesOf(placement, members))
+                    {
+                        if (Math.Sqrt(MouldGeometry.PlanDistanceSquared(where, nodes[shared])) <= guard)
+                        {
+                            where = new Point3d(nodes[shared].X, nodes[shared].Y, where.Z);
+                            break;
+                        }
+                    }
+                }
+                if (fellBack)
+                    fallbacks++;
+                // A merge whose converged foot would put a participating
+                // trunk past the cap is REFUSED and counted: it has bought
+                // tidiness with a peel, and the peel would then undo it.
+                bool overCap = members.Any(t =>
+                    MouldGeometry.LeanFromVertical(where, nodes[placement.Trees[t].Nodes[Math.Max(placement.Trees[t].HeadMain, 0)]])
+                        > MouldGeometry.MaxLeanDegrees + 1.0e-9);
+                if (overCap)
+                {
+                    refused++;
+                    continue;
+                }
+                foreach (int t in members)
+                    foot[t] = where;
+                merged++;
+            }
+
+            // ---- RULE 1, WELDING, applied here to the FINAL foot positions:
+            // positional identity, not a decision, and never counted as a
+            // merge. Two feet within TAU_weld in plan and in height are one
+            // node, whatever rule (or no rule at all) put them there.
+            var node = new int[treeCount];
+            for (int t = 0; t < treeCount; t++)
+            {
+                node[t] = -1;
                 // A tree with no owned notch builds no member and no foot at
                 // all: it never enters the level's node list.
                 if (placement.Trees[t].HeadMain < 0)
@@ -2335,37 +3010,40 @@ namespace Ananke.COMPAS.Native.Components
                 {
                     if (placement.Trees[u].HeadMain < 0)
                         continue;
-                    if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= TauWeldSquared(t, u) &&
-                        Math.Abs(foot[t].Z - foot[u].Z) <= 1.0e-9)
+                    double tol = WeldTolerance(t, u);
+                    if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= tol * tol &&
+                        Math.Abs(foot[t].Z - foot[u].Z) <= tol)
                     {
-                        footIndex[t] = footIndex[u];
+                        node[t] = node[u];
                         break;
                     }
                 }
-                if (footIndex[t] < 0)
+                if (node[t] < 0)
                 {
                     levelNodes.Add(foot[t]);
                     footSpacing.Add(spacing[t]);
-                    footIndex[t] = levelNodes.Count - 1;
+                    node[t] = levelNodes.Count - 1;
                 }
             }
 
-            // What stands close but apart, counted once per pair of feet,
-            // each pair judged against 0.25 of the SMALLER of the two BUILT
-            // feet's own recorded spacings. The feet are the only nodes in
-            // the level so far, which is why this runs here and not after
-            // the members are built.
-            close = 0;
-            for (int i = 0; i < levelNodes.Count; i++)
+            // ---- RULE 4, STANDING CLOSE BUT APART. Any two BUILT feet within
+            // the feet-close clearance that did NOT become one node, whatever
+            // the reason: not adjacent, refused by the mirror, refused by the
+            // cap, or two feet of one span that are not its central pair.
+            for (int a = 0; a < treeCount; a++)
             {
-                for (int j = i + 1; j < levelNodes.Count; j++)
+                for (int b = a + 1; b < treeCount; b++)
                 {
-                    double closeClearance = 0.25 * Math.Min(footSpacing[i], footSpacing[j]);
-                    if (MouldGeometry.PlanDistanceSquared(levelNodes[i], levelNodes[j]) <= closeClearance * closeClearance)
+                    if (node[a] < 0 || node[b] < 0)
+                        continue;
+                    if (node[a] == node[b])
+                        continue;
+                    double gap = Math.Sqrt(MouldGeometry.PlanDistanceSquared(foot[a], foot[b]));
+                    if (gap <= 0.25 * Math.Min(spacing[a], spacing[b]))
                         close++;
                 }
             }
-            return footIndex;
+            return node;
         }
 
         // ------------------------------------------------------------------
