@@ -1,12 +1,42 @@
 # Columns: one ladder of symmetry, and the feet decided first
 
-Date: 2026-09-01. Status: approved design, awaiting Param's spec review. Written from
-docs/superpowers/specs/2026-09-01-columns-design-input.md, which quotes his rulings verbatim.
-That document governs this one wherever the two disagree. This spec replaces the draft that
-stood at this path earlier on 2026-09-01, whose foot targets at k / (N + 1) are superseded by
-section 5 below. That draft's central foot at an even Type is NOT superseded: it is what the
-engine builds today, it is what the harness pins, and section 7 keeps it, with section 18 putting
-it to Param for his ruling rather than asserting it. It amends
+Date: 2026-09-01. Status: approved design, RULED ON BY PARAM ON 2026-09-01 and amended to his
+rulings. He answered the three questions section 18 put to him, and the answers are now rules in
+the body of this spec rather than annotations against it.
+
+    ONE. The central column at an even Type STANDS STRAIGHT. A span with an odd number of tree
+    groups at an even Type shows N gathered feet plus one further column standing alone and plumb
+    on the mirror plane. Sections 5, 7 and 8.6 keep it, and the ground is now a quotation of his
+    and no longer the engine's present behaviour.
+
+    TWO. The Branching 3 layout criterion is FEWEST STRAYS, not fewest remainder trees. Section 6
+    is re-derived to it and its tables are re-pinned.
+
+    THREE. The load at a shared node is FIXED PROPERLY. The untransversed per-bar pull and the
+    per-node whole pull are threaded through to the engine, and the head load is counted exactly
+    once and in full. Sections 10, 16 and 17 carry it.
+
+The controller ruled on the four questions Param left untouched, and those rulings are marked as
+the controller's in section 18: the cross-line merge mirror gate is kept, the collision clearance
+and the feet-close scale change as proposed, the shared-node ownership rule stands as written, and
+section 13's account of the forces at Types 1 to 4 is accepted and closed. Two items remain open
+for Param in section 18, the Type value list's item text and the even group's foot standing
+between two notches rather than on one, and the rest of that section is now a record of the costs
+this design accepts.
+
+One consequence of his second ruling must be read before the plan is written, because it
+contradicts the expectation the ruling arrived with. Fewest strays changes FOUR layouts at
+Branching 3, m = 3, m = 7, m = 9 and m = 13, and not the two that were expected. m = 5 and m = 11
+are preserved as expected; m = 7 is not, and m = 13 moves with it. Section 6 derives it in full
+and section 18.1 records it. Every one of the four LOWERS the stray count, so the ruling's own
+purpose is served; the arithmetic was not bent to fit the expectation.
+
+Written from docs/superpowers/specs/2026-09-01-columns-design-input.md, which quotes his rulings
+verbatim. That document governs this one wherever the two disagree, save where his rulings of
+2026-09-01 above are later than it. This spec replaces the draft that stood at this path earlier
+on 2026-09-01, whose foot targets at k / (N + 1) are superseded by section 5 below. That draft's
+central foot at an even Type is NOT superseded: it is what the engine builds today, it is what the
+harness pins, section 7 keeps it, and Param has now ruled for it. It amends
 docs/superpowers/specs/2026-08-30-columns-symmetric-type-design.md (sections 3.3, 3.4, 3.5 and
 3.7) and, through it, docs/superpowers/specs/2026-08-28-columns-two-sliders-design.md (sections
 3.5 and 3.7). Everything in those two specs not amended here stands, and section 2 lists what
@@ -24,7 +54,10 @@ Param's review of the installed plugin, on a single-span vault, reported three t
 columns are not symmetrical or uniform, the middle one should be straight and is not, and the
 off-centre ones look randomly placed, with branching making it worse. That sentence is a
 PARAPHRASE of the review conversation and appears nowhere in the design input, so no rule below
-rests on its wording; where this spec would otherwise lean on it, section 18 asks him instead.
+rests on its wording. What the central column now rests on instead is a quotation, given in
+section 7 and recorded in section 18: he objected to "just moving the standing coloumn for
+symmetry reasons away from center when it shold obviously default to center". That is a ruling of
+his, the paraphrase is still only a paraphrase, and the two are kept apart throughout.
 His quoted rulings, which do bind, are that the stray columns must be placed by a stated
 priority of symmetry, that a column branching from one point must be centred by converging the
 principal lines inward rather than by taking anyone's centre, and that two principal lines
@@ -85,8 +118,9 @@ Four causes therefore have to be answered, and each has a numbered rule below.
   leaves stand at the two ends, or at the centre, or at both, which is exactly what his ladder
   asks for. Sections 5 and 6 therefore make the rule TOTAL and EXPLICIT rather than repairing a
   defect, and the ladder must not be cited to him as the cure for the columns he complained
-  about. What does move a column at Branching 3 is this spec's own choice of CENTRE TREE SIZE,
-  which is not his ruling and is put to him in section 18. The symptom he reported is answered
+  about. What does move a column at Branching 3 is the choice of CENTRE TREE SIZE, on which he
+  has now ruled: the admissible centre size leaving the FEWEST STRAY TREES wins, and section 6 is
+  derived to that rule and re-pinned to it. The symptom he reported is answered
   by the feet being decided first, by the common mode being removed, by the structural mirror
   and by the shared-node rule.
 - The centre. N equal bands have a boundary on the mirror plane whenever N is even, so no foot
@@ -398,8 +432,9 @@ in the center" therefore does not forbid it. The ladder counts the GATHERED feet
 which several trees are drawn; a tree that is not gathered at all, because there is no side it
 could join without a coin toss, stands on its own column exactly as it does at Type 0. That is
 what section 7 builds, it is what the engine builds today, and the harness pins it at three feet
-on a nine tree span at Type 2. It is nonetheless a reading and not a ruling, and section 18 puts
-it to Param with the alternative spelled out.
+on a nine tree span at Type 2. PARAM RULED FOR IT ON 2026-09-01, so it is no longer a reading
+offered for his decision: the centre column stands straight, and section 18 records the rejected
+alternative rather than deleting it.
 
 ## 6. Notches into trees: the layout, and where the strays sit
 
@@ -424,30 +459,64 @@ The layout is then decided by counting, with no geometry read at all.
 
     Let m be the free notch count and B the Branching, clamped to 1 through 3.
 
-    If B == 1 every notch is a tree of one and there is no remainder.
+    If B == 1 every notch is a tree of one, there is no remainder and no notch is a stray, since
+    a stray is a REMAINDER tree of one notch and not merely a tree of one notch.
 
     Otherwise, consider each admissible CENTRE TREE size k: k = 0 when m is even, k = 1 when m
     is odd, and k = 3 when m is odd, B >= 3 and m >= 3. For each, the half length is
     hlf = (m - k) / 2 and the half remainder is rem = hlf mod B. Each half is tiled from the
     CENTRE OUTWARD with trees of size B, and the leftover rem notches at the ANCHOR END form one
     tree of size rem, which is a STRAY when rem is 1. The REMAINDER TREE COUNT of that choice is
-    one for a centre tree smaller than B, plus two when rem is not zero.
+    one when a centre tree EXISTS and is smaller than B, that is when 0 < k < B, plus two when
+    rem is not zero. A choice with k = 0 has no centre tree at all and contributes nothing on
+    that count, so an even count carries two remainder trees when rem is not zero and none when
+    it is.
 
-    Take the k with the fewest REMAINDER TREES. Where two k tie, take the larger, which prefers
-    a real tree at the centre to a stray; the tie does not arise for B up to 3, and the clause is
-    stated so that the rule is total.
+    The STRAY COUNT of a choice is therefore
 
-FEWEST REMAINDER TREES IS THIS SPEC'S OWN CRITERION AND NOT PARAM'S RULING, and it must not be
-presented as the content of his ladder. The ladder says WHERE strays sit, not how many there
-should be, and the engine's present layout already satisfies it at every count: a stray at each
-anchor end, a stray at the centre when the count is odd, both when there are three. Every row of
-the tables below at Branching 1 and 2 is what the engine places today. Four rows at Branching 3
-change, and they change only because of the criterion above, which is a preference of this spec
-for whole trees over remainder trees. Section 18 states its cost in his own currency: at m = 5
-and at m = 11 it RAISES the stray count from one to two, which is the opposite direction to "only
-1 or two columns get left stranded", and the alternative criterion, fewest STRAYS, would keep the
-present layout at m = 5, m = 11 and m = 7 and change m = 3 and m = 9 alone. He rules; the plan
-follows his ruling and re-pins the tables.
+        strays(k) = (1 if k == 1 else 0) + (2 if rem == 1 else 0)
+
+    the centre tree being a stray exactly when it holds one notch, and the two anchor-end trees
+    being strays exactly when the half remainder is one. TAKE THE k WITH THE FEWEST STRAYS.
+
+    Where two admissible k leave EQUALLY FEW strays, take the SMALLER k. That tie-break is the
+    AUTHOR'S and not Param's, it is chosen because the smaller k is always what the shipped
+    engine picks, so on a tie no column moves at all, and it reverses the earlier draft's
+    "take the larger", which belonged to the retired criterion. The tie is unreachable for B up
+    to 3, and the derivation below proves it rather than asserting it; the clause is stated so
+    that the rule is total.
+
+FEWEST STRAYS IS PARAM'S RULING OF 2026-09-01, and it replaces this spec's own earlier criterion
+of fewest REMAINDER TREES. His reason is his own currency. He wrote "only 1 or two columns get
+left stranded", and fewest remainder trees RAISED the stray count from one to two at m = 5 and at
+m = 11, which is movement in the wrong direction on a definition he had already given. The
+retired criterion, its layout at every odd count, and the two rows where it raised the stray
+count, are recorded in section 18 rather than deleted.
+
+The ladder itself says WHERE strays sit, not how many there should be, and the engine's present
+layout already satisfies it at every count: a stray at each anchor end, a stray at the centre
+when the count is odd, both when there are three. So the criterion and the ladder answer two
+different questions, and neither is evidence for the other.
+
+THE DERIVATION, in full, so that a checker reproduces it without guessing. At B = 1 there is no
+remainder and no choice, so the criterion never runs and no notch is ever a stray: a tree of one
+notch at Branching 1 is the whole meaning of Branching 1 and not a leftover. At B = 2 exactly one
+k is admissible at every m, k = 0 for even m and k = 1 for odd, so again the criterion never
+chooses and the layout is forced. Only at B = 3 with m ODD AND AT LEAST THREE are there two
+admissible k, k = 1 and k = 3; at B = 3 with m = 1 only k = 1 is admissible and the layout is
+[1], forced. Where both are admissible the two differ by exactly one in half length:
+hlf(k = 3) = hlf(k = 1) - 1. Write r for hlf(k = 1) mod 3, so that hlf(k = 3) mod 3 is
+(r - 1) mod 3. The three cases are exhaustive.
+
+    r = 0:  k = 1 gives rem 0, one stray, the centre.   k = 3 gives rem 2, no stray.  k = 3 WINS.
+    r = 1:  k = 1 gives rem 1, three strays.            k = 3 gives rem 0, no stray.  k = 3 WINS.
+    r = 2:  k = 1 gives rem 2, one stray, the centre.   k = 3 gives rem 1, two strays. k = 1 WINS.
+
+The stray counts differ in every case, by one, three and one respectively, so NO TIE EVER ARISES
+AT B UP TO 3 and the tie-break above is unreachable. That is the proof the earlier draft asserted
+without giving. Reading the three cases back as counts, and setting m = 1 aside as forced, k = 3
+wins at m = 7, 13, 19 and so on (r = 0) and at m = 3, 9, 15 and so on (r = 1); k = 1 wins at
+m = 5, 11, 17 and so on (r = 2).
 
 The remainder trees land on the ladder's stations by construction: the centre tree when k is 1,
 and the two anchor-end trees when rem is not zero. There are at most three of them, one per half
@@ -459,10 +528,12 @@ mains. Where that notch is BORROWED at a shared node the tree still HOLDS it, st
 parameter and still counts it in the layout, and the member it does not build runs instead to
 the tree's head main, by section 10.
 
-The layout for every count a definition is likely to reach, which the harness pins verbatim.
-Sizes are read along the span from one anchor to the other, and a size of 1 is a stray.
+THE PINNED TABLES, re-derived under fewest strays, which the harness pins verbatim for B = 1, 2
+and 3 and m = 1 to 13. Sizes are read along the span from one anchor to the other. A size of 1 is
+a stray at B = 2 and B = 3, where it is a remainder; at B = 1 it is the whole tree the slider
+asked for and is not counted as one.
 
-    B = 1:  m = 1 to 12    every layout is 1 repeated m times, no remainder ever.
+    B = 1:  m = 1 to 13    every layout is 1 repeated m times, no remainder and no stray ever.
 
     B = 2:  m = 1   [1]                    one stray, at the centre
             m = 2   [1,1]                  two strays, at the ends
@@ -476,38 +547,80 @@ Sizes are read along the span from one anchor to the other, and a size of 1 is a
             m = 10  [1,2,2,2,2,1]          two strays, at the ends
             m = 11  [1,2,2,1,2,2,1]        three strays, ends and centre
             m = 12  [2,2,2,2,2,2]          none
+            m = 13  [2,2,2,1,2,2,2]        one stray, at the centre
 
-    B = 3:  m = 1   [1]                    one stray, at the centre
-            m = 2   [1,1]                  two strays, at the ends
-            m = 3   [3]                    none
-            m = 4   [2,2]                  no stray; two remainder trees of two, at the ends
-            m = 5   [1,3,1]                two strays, at the ends
-            m = 6   [3,3]                  none
-            m = 7   [3,1,3]                one stray, at the centre
-            m = 8   [1,3,3,1]              two strays, at the ends
-            m = 9   [3,3,3]                none
-            m = 10  [2,3,3,2]              no stray; two remainder trees of two, at the ends
-            m = 11  [1,3,3,3,1]            two strays, at the ends
-            m = 12  [3,3,3,3]              none
-            m = 13  [3,3,1,3,3]            one stray, at the centre
+    B = 3:  m = 1   [1]              k=1  hlf 0  rem 0   one stray, at the centre
+            m = 2   [1,1]            k=0  hlf 1  rem 1   two strays, at the ends
+            m = 3   [3]              k=3  hlf 0  rem 0   none
+            m = 4   [2,2]            k=0  hlf 2  rem 2   no stray; two remainder trees of two
+            m = 5   [2,1,2]          k=1  hlf 2  rem 2   one stray, at the centre
+            m = 6   [3,3]            k=0  hlf 3  rem 0   none
+            m = 7   [2,3,2]          k=3  hlf 2  rem 2   no stray; two remainder trees of two
+            m = 8   [1,3,3,1]        k=0  hlf 4  rem 1   two strays, at the ends
+            m = 9   [3,3,3]          k=3  hlf 3  rem 0   none
+            m = 10  [2,3,3,2]        k=0  hlf 5  rem 2   no stray; two remainder trees of two
+            m = 11  [2,3,1,3,2]      k=1  hlf 5  rem 2   one stray, at the centre
+            m = 12  [3,3,3,3]        k=0  hlf 6  rem 0   none
+            m = 13  [2,3,3,3,2]      k=3  hlf 5  rem 2   no stray; two remainder trees of two
 
-Every B = 1 and B = 2 row above is what the engine places today, so Branching 1 and Branching 2
-move no column at all. Four B = 3 rows change, and every one of them changes because of the
-centre-tree criterion and not because of the ladder, since the present answer satisfies the
-ladder too:
+THE CLAIM THAT ONLY TWO CELLS MOVE DID NOT HOLD, AND THE SPEC SAYS SO PLAINLY RATHER THAN BENDING
+THE ARITHMETIC. The ruling was passed down with the expectation that fewest strays would change
+the layout at m = 3 and m = 9 alone, leaving m = 5, m = 7 and m = 11 as the shipped engine lays
+them out. Two of those three hold: m = 5 and m = 11 are preserved exactly. m = 7 is NOT. At m = 7
+the engine builds [3,1,3], which leaves one stray at the centre, while k = 3 builds [2,3,2],
+which leaves none, so fewest strays takes k = 3 and the row moves. The same arithmetic moves
+m = 13 for the same reason, r = 0 in the derivation above. FOUR cells change at Branching 3, not
+two: m = 3, m = 7, m = 9 and m = 13.
 
-    m = 3   engine [1,1,1], three strays at the ends and the centre; spec [3], none.
-    m = 5   engine [2,1,2], ONE stray at the centre;   spec [1,3,1],   TWO strays at the ends.
-    m = 9   engine [1,3,1,3,1], three strays;          spec [3,3,3],   none.
-    m = 11  engine [2,3,1,3,2], ONE stray at the centre; spec [1,3,3,3,1], TWO at the ends.
+The compensation is that the direction of every one of them is the direction his currency asks
+for. The retired criterion moved a DIFFERENT four rows against the engine, m = 3, m = 5, m = 9
+and m = 11, and two of those RAISED the stray count from one to two: m = 5, where the engine's
+[2,1,2] became [1,3,1], and m = 11, where [2,3,1,3,2] became [1,3,3,3,1]. At m = 7 and m = 13 it
+kept the engine's own [3,1,3] and [3,3,1,3,3] and moved nothing at all. Of the four rows his
+ruling moves, not one raises the count.
 
-Two of those four raise the stray count. The investigation recorded the present answers for
-m = 8 and m = 9 at B = 3 and for m = 6 and m = 7 at B = 2, and three of those four are unchanged
-here, which is the check that the new rule has not quietly reorganised the ordinary cases.
+    m       engine layout      strays   new layout      strays   verdict
+    B = 1   every m            0        unchanged       0        PRESERVED, all thirteen rows
+    B = 2   every m            as above unchanged       as above PRESERVED, all thirteen rows
+    B = 3, m = 1   [1]                 1   [1]                 1   preserved
+    B = 3, m = 2   [1,1]               2   [1,1]               2   preserved
+    B = 3, m = 3   [1,1,1]             3   [3]                 0   CHANGED, strays 3 to 0
+    B = 3, m = 4   [2,2]               0   [2,2]               0   preserved
+    B = 3, m = 5   [2,1,2]             1   [2,1,2]             1   preserved
+    B = 3, m = 6   [3,3]               0   [3,3]               0   preserved
+    B = 3, m = 7   [3,1,3]             1   [2,3,2]             0   CHANGED, strays 1 to 0
+    B = 3, m = 8   [1,3,3,1]           2   [1,3,3,1]           2   preserved
+    B = 3, m = 9   [1,3,1,3,1]         3   [3,3,3]             0   CHANGED, strays 3 to 0
+    B = 3, m = 10  [2,3,3,2]           0   [2,3,3,2]           0   preserved
+    B = 3, m = 11  [2,3,1,3,2]         1   [2,3,1,3,2]         1   preserved
+    B = 3, m = 12  [3,3,3,3]           0   [3,3,3,3]           0   preserved
+    B = 3, m = 13  [3,3,1,3,3]         1   [2,3,3,3,2]         0   CHANGED, strays 1 to 0
 
-The change moves columns on saved definitions at Branching 3. That is stated plainly in section
-18 for Param's ruling, together with the fact that it follows from this spec's criterion and not
-from his words.
+That table is the engine's actual behaviour and not a reading of its comment. It was taken from
+plugin/native_v02/Components/ColumnPlacement.cs, whose Group tiles each half from the centre
+outward at size min(B, notches left) and always makes the odd count's centre notch a singleton
+tree, so the shipped engine never builds a centre tree of three at all: in the terms of this
+section it is the rule "always take the smallest admissible k". Every preserved row above is a
+row where fewest strays picks that same k.
+
+WHAT MOVES INSIDE THE FOUR CHANGED ROWS, since a changed layout is not the same as a changed
+column count. At m = 3 the tree count falls from three to one and the three separate columns
+become one tree of three branches. At m = 9 it falls from five to three. At m = 7 and m = 13 the
+TREE COUNT IS UNCHANGED, three and five, and what moves is which notches belong to which tree and
+therefore where the mains stand: at m = 7 the mains go from 2, 3, 4 to 1, 3, 5, and at m = 13
+from 2, 5, 6, 7, 10 to 1, 4, 6, 8, 11. Those are real column moves on a saved definition and the
+harness records them count by count.
+
+THE COST, stated in the same currency as the benefit. At m = 7 and m = 13 the number of REMAINDER
+trees rises from one to two: a single lone column at the centre is traded for two trees of two at
+the anchor ends. Fewest strays says that trade is right, because a tree of two is a tree and a
+tree of one is a stranded column, and it is strays he counted. At m = 3 and m = 9 both counts
+fall to zero and there is no trade at all.
+
+The change therefore moves columns on saved definitions at Branching 3, at four counts and not
+two. It moves none at Branching 1 or Branching 2. That is his ruling's doing and not the ladder's,
+since the present answer satisfies the ladder too, and section 18 records both the ruling and the
+criterion it retired.
 
 ## 7. Trees into foot groups: what Type means now
 
@@ -538,17 +651,27 @@ construction, so group j and group N - 1 - j hold the same number of trees and, 
 take mirror-image feet.
 
 The centre tree of an odd row at an even Type is the one place where the two readings of the
-ladder touch, and it is worth being exact about it. The Type places N mirrored shared feet and
-NOTHING at the centre, which is the ladder's own rule for an even count, and the centre tree's
-own column is not one of them, as section 5 states. It cannot join either flank group without
-choosing a side that nothing decides, which is the defect this wave exists to remove, so it
-stands alone on its own foot. That foot is its own group's central notch, which lies on the
+ladder touch, and it is worth being exact about it. PARAM RULED ON IT ON 2026-09-01: THE CENTRAL
+COLUMN STANDS STRAIGHT. His words in the review that opened this round were that the fault was
+"just moving the standing coloumn for symmetry reasons away from center when it shold obviously
+default to center", so the column that stands alone belongs at the centre, plumb, and is not to
+be folded into a flank.
+
+The construction that delivers it is the one already written. The Type places N mirrored shared
+feet and NOTHING at the centre, which is the ladder's own rule for an even count, and the centre
+tree's own column is not one of them, as section 5 states. It cannot join either flank group
+without choosing a side that nothing decides, which is the defect this wave exists to remove, so
+it stands alone on its own foot. That foot is its own group's central notch, which lies on the
 span's plane of symmetry exactly when the span's notch row is symmetric about it and otherwise
 stands where its own notch stands, as section 8.6 says; the spec does not claim more, and no
 step projects the foot onto any plane. A span of odd tree count at Type 2 therefore shows two
 shared feet and one central column, three feet in all, which is what the engine builds today and
 what the harness pins. Type still names the number of GATHERED feet per span, and the
 diagnostics report the central column separately so that the count is never a surprise.
+
+The rejected alternative is recorded rather than deleted, in section 18: the centre tree could
+have joined the flank group whose foot is nearer, ties going to the lower chord parameter, and
+the middle column would then lean to a side. That is exactly the move he named and refused.
 
 Worked against the fixture the investigation measured, and the fixture is named in full because
 its numbers are quoted as a control: a ten metre arch of ELEVEN nodes, rise 2.5, anchored at
@@ -1030,7 +1153,12 @@ The rule, in four parts.
   symmetric. The more central notch was considered and rejected for exactly that reason: it
   reads the node, and it can hand two mirrored shared notches to different owners.
 - THE LOAD IS COUNTED ONCE, IN FULL, AND THE ARITHMETIC IS STATED BECAUSE THE OBVIOUS FORM IS
-  WRONG. Summing the bars' transverse pulls at a shared node DOUBLE COUNTS. MouldGeometry.
+  WRONG. PARAM RULED ON 2026-09-01 THAT THIS IS TO BE FIXED PROPERLY: the two new arguments are
+  threaded through and the head load at a shared node is counted exactly once and in full. The
+  alternative of leaving it undercounted, which is what the engine does today, is rejected and is
+  recorded as rejected in section 18. The naive sum of both bars' transverse pulls remains off
+  the table for the reason immediately below. Summing the bars' transverse pulls at a shared node
+  DOUBLE COUNTS. MouldGeometry.
   BarLoads sums every member incident on a node except the edges running ALONG that bar, on the
   ground that a beam does not load itself; so at a node shared by bars A and B, pull_A is the
   infill plus B's along-bar edges and pull_B is the infill plus A's along-bar edges, and their
@@ -1056,11 +1184,58 @@ The rule, in four parts.
       already carried to an anchor.
       Tree.Load at the notch is the magnitude of the vertical component of that projected head
       pull, and Tree.Resultant sums it with the tree's other owned notches'.
-  This needs data the engine does not receive today, so section 16 adds it: the untransversed
-  per-bar pull and the per-node total. Section 18 records the alternative, which is to leave the
-  owner's own transverse pull alone and accept that a crossing's other bar contributes nothing.
+  THE TWO NEW ARGUMENTS, CONCRETELY, because this is where an implementer would otherwise guess.
 
-Three measured consequences follow, and section 17 requires all three.
+      WHERE THEY COME FROM. Both are already computable inside ColumnsComponent from the incident
+      lists it builds at
+      plugin/native_v02/Components/ColumnsComponent.cs, which walk the valid edges and carry each
+      edge's member force. The first is the UNTRANSVERSED PULL, which is exactly what
+      MouldGeometry.BarLoads returns today, per bar and per bar position: the sum over the node's
+      incident edges, EXCLUDING the edges running along that bar, of the edge's absolute force
+      divided by its length times the step to the far node. The component already calls it, at
+      the line that reads MouldGeometry.BarLoads(bars[b], nodes, incident), and then throws it
+      away after passing it to BarTransverse. It is now kept and passed on. The second is the
+      PER-NODE WHOLE PULL, a new MouldGeometry.NodeLoads over the same incident lists with NO
+      exclusions at all: the same sum, over every incident edge without exception. It is a
+      function beside BarLoads and not a change to it, which is what keeps BarLoads out of scope
+      by section 19.
+
+      WHAT CARRIES THEM. The untransversed pull is a Vector3d[][], indexed by bar and then by bar
+      position, the same shape as the transverse array the engine already takes. The per-node
+      whole pull is a Vector3d[], indexed by net node, one entry for every node whether or not any
+      bar reaches it. Neither is optional and neither has a default: a null or short array is a
+      programming error and not a fallback, because the arithmetic below has no answer without
+      them.
+
+      WHAT THE SIGNATURE BECOMES. ColumnPlacement.Place today reads
+
+          Place(Point3d[] nodes, int[][] bars, int[] anchors, Vector3d[][] across,
+                int[][] perimeterLoops, double ground, double medianPlanEdge,
+                int branching, int groundAsked)
+
+      and becomes
+
+          Place(Point3d[] nodes, int[][] bars, (int, int)[] edges, int[] anchors,
+                Vector3d[][] across, Vector3d[][] pull, Vector3d[] nodePull,
+                int[][] perimeterLoops, double ground,
+                int branching, int groundAsked)
+
+      with medianPlanEdge GONE by section 4, edges placed after bars so the call reads net first
+      by section 12, and pull and nodePull placed immediately after across because they are the
+      same measurement at three levels of exclusion. ColumnsComponent passes ValidEdges' output,
+      keeps the BarLoads array it already computes rather than discarding it, calls the new
+      NodeLoads, and stops calling MouldGeometry.MedianEdgeLength for this component. Nothing else
+      in the signature changes and no other caller exists.
+
+  Section 16 restates the same three additions from the diagnostics' side.
+
+Four measured consequences follow, and section 17 requires all four.
+
+- THE EIGHTEEN UNITS COME BACK AS EIGHTEEN. The investigation applied eighteen units of vertical
+  pull to a net whose two bars share one node and measured seventeen counted, the missing unit
+  being the other bar's share at the crossing. Under the rule above head_load_total reads
+  EIGHTEEN on that fixture, and it is the measured case that must now come out right. It is not
+  an approximate improvement and the harness asserts equality, not a bound.
 
 - The crossed arch places the same LAYOUT, the same groups, the same pairing and the same feet
   at Types 1 to 4 as the uncrossed control, because none of that arithmetic reads a force. It
@@ -1252,7 +1427,15 @@ and the spec would rather state the limit than claim more.
 If Param wants force back into the lean at Types 1 to 4 there are only two levers, and both are
 worse than what they buy: letting the fork leave the foot-to-notch segment, which reintroduces
 the kinked trunk that section 2 preserves against, or letting the force move the foot, which is
-the position. Section 18 records it for his ruling.
+the position.
+
+THIS ACCOUNT IS SETTLED AND NOT OPEN. It was listed for Param's confirmation on the suspicion
+that it departed from his ruling, and section 18.2 records the controller's ruling that it does
+not: his ruling is that the forces inform the lean and no longer decide the position, and with
+the foot fixed by the ladder and the fork bound to the foot-to-notch segment there is no free
+variable left for a force to set. So the honest statement, which is the one above, is the
+consequence of his ruling rather than a departure from it, and the plan may be written against
+it.
 
 ## 14. Type 0 and Auto
 
@@ -1283,8 +1466,9 @@ fixture in section 17.
 - A span with NO free notch holds no tree. It places no group and no foot, it is not counted in
   SpansWithTrees, and no symmetry rule touches it. Under section 10 this can now only happen
   where the ring tree took every notch, since a crossing no longer takes any.
-- A span with ONE free notch holds one tree, whose layout is [1] by section 6, a stray at the
-  centre station because one is odd. Its h is the fallback 1 / (m + 1) = 0.5. Two things now
+- A span with ONE free notch holds one tree, whose layout is [1] by section 6, at the centre
+  station because one is odd, and a stray there at Branching 2 and 3 but not at Branching 1,
+  where a tree of one notch is what the slider asked for. Its h is the fallback 1 / (m + 1) = 0.5. Two things now
   happen to it that did not before, and they make its old boundary case vanish. Its common mode
   is its own along part, since the mean of one number is that number, so 9.1 zeroes it
   unconditionally: a lone notch off centre no longer leans down the chord at all. And its
@@ -1338,10 +1522,12 @@ ColumnPlacement.Place LOSES the medianPlanEdge argument and GAINS three things: 
 list as (int, int)[], placed after bars so that the call reads net first; the UNTRANSVERSED pull
 per bar and bar position, the array MouldGeometry.BarLoads already returns; and the whole
 incident pull per NODE, which is a new MouldGeometry.NodeLoads over the same incident lists with
-no exclusions at all. Nothing else in the signature changes. The last two are what make section
-10's load rule arithmetic rather than a wish, and they add a function beside BarLoads rather than
-changing it, which section 19 keeps out of scope. ColumnsComponent passes ValidEdges' output and
-stops computing MouldGeometry.MedianEdgeLength for this component.
+no exclusions at all. Nothing else in the signature changes, and section 10 writes the old and
+new signatures out in full so that the plan copies rather than reconstructs them. The last two
+are Param's ruling of 2026-09-01 made arithmetic, and they add a function beside BarLoads rather
+than changing it, which section 19 keeps out of scope. ColumnsComponent passes ValidEdges'
+output, keeps the BarLoads array it already computes instead of discarding it after BarTransverse,
+calls NodeLoads, and stops computing MouldGeometry.MedianEdgeLength for this component.
 
 On Placement: Partner, CentreTrees, Families, SpansWithTrees, AsymmetryRemoved, Symmetrised and
 SymmetrisedTrees keep their names and meanings, with CentreTrees now counting self-paired trees.
@@ -1509,6 +1695,16 @@ present cliff and each must now be quiet.
       equals the applied total, both with and without the rib. A second fixture drives the same
       node with a rib carrying a deliberately large along-bar tension and asserts the head load
       does NOT rise with it, which is the check that catches the double count.
+      THE MEASURED CASE MUST NOW COME OUT RIGHT, and it is the one the investigation recorded:
+      eighteen units of vertical pull applied to a net whose two bars share one node came back as
+      SEVENTEEN counted. Under Param's ruling of 2026-09-01 and the arithmetic of section 10 the
+      check asserts EIGHTEEN APPLIED, EIGHTEEN COUNTED, as an equality to 1e-12 and not as a
+      bound, and it prints the seventeen beside it so the fix is a number in the record. The check
+      also drives the arithmetic at k = 1, an ordinary unshared notch, and asserts the head pull is
+      that bar's own untransversed pull unchanged, so that the (k - 1) term is demonstrated to
+      vanish rather than assumed to; and at k = 3, three bars through one node, where the head
+      pull is the three pulls summed less twice the node's whole pull, so that the general form is
+      exercised and not only the two-bar case.
       Then run the SAME net with the two bars handed over in the other order and assert the two
       placements are identical to 1e-12 in every foot, every member and every diagnostic count.
       That assertion is the one the present engine fails most alarmingly, giving AsymmetricSpans
@@ -1617,16 +1813,38 @@ Then the rest, each of which catches a rule this spec states.
   layout by layout, and the foot group table of section 7 pinned for every T from 1 to 13 against
   every N from 1 to 4, sizes and centre column by centre column. These are pure counting and cost
   nothing to check, and they are what a future change to either rule will trip over. The B = 3
-  rows are pinned to whichever centre-tree criterion Param rules for in section 18, and the check
-  must print the ENGINE's present row beside the spec's row for every count, so that the four
-  that move are four numbers in the record and not a claim.
+  rows are pinned to FEWEST STRAYS, which is Param's ruling of 2026-09-01, and the check must
+  print the ENGINE's present row beside the spec's row for every count, so that the rows that
+  move are numbers in the record and not a claim. FOUR rows move at Branching 3, m = 3, m = 7,
+  m = 9 and m = 13, and NONE moves at Branching 1 or Branching 2; the check asserts that count
+  as well as the rows, so that a future criterion change cannot quietly move a fifth. Assert also
+  the stray count of every row, and assert that no changed row's stray count RISES, which is the
+  property his ruling was chosen for and which the retired criterion failed at m = 5 and m = 11.
+  Pin the MAINS as well as the sizes at m = 7 and m = 13 at Branching 3, 1, 3, 5 and 1, 4, 6, 8,
+  11 against the engine's 2, 3, 4 and 2, 5, 6, 7, 10, because at those two counts the tree count
+  does not change and the mains are the whole of what moves.
 - HIS THREE CASES BY NAME. Three checks named for the ruling: a span whose layout leaves ONE
   stray asserts it at the centre notch and nowhere else; a span whose layout leaves TWO asserts
   them at the two end notches and asserts that nothing sits at the centre; a span whose layout
   leaves THREE asserts the two ends and the centre. Concretely, at Branching 2 those are m = 5,
-  m = 6 and m = 7, and at Branching 3 they are m = 7, m = 5 and, since the layout rule never
-  produces three at Branching 3, a check asserting that the ladder's three-stray case is
-  unreachable there and saying why.
+  m = 6 and m = 7. At Branching 3, under fewest strays, they are m = 5 for one stray, which is
+  [2,1,2] with the stray at the centre, and m = 8 for two, which is [1,3,3,1] with the strays at
+  the ends and nothing at the centre; the three-stray case remains UNREACHABLE at Branching 3 and
+  the check asserts that and says why, which is that three strays needs k = 1 with a half
+  remainder of one, and at every such count k = 3 leaves none and wins. Note for the implementer
+  that the m values at Branching 3 have MOVED with the criterion: m = 7 no longer leaves one
+  stray, it leaves none, and m = 5 leaves one and not two.
+- THE CENTRAL COLUMN STANDS STRAIGHT, which is his ruling of 2026-09-01 and needs a check of its
+  own rather than riding on the control arch's foot list. On a span of ODD tree count at Types 2
+  and 4, assert that the middle tree by index is extracted as a group of one, that CentralColumns
+  counts it, that its foot is its own group's central notch and not the nearer flank group's
+  foot, and that its trunk stands PLUMB, within PlumbDegrees of vertical, wherever the notch row
+  is symmetric. Then assert the rejected alternative is not what the engine does: compute, in the
+  check, the foot the centre tree would take if it joined the nearer flank group, assert it
+  differs from the placed foot by the flank group's own offset, and assert the placed foot is the
+  central one. On the off-centre-crest fixture assert instead the honest weaker claim of 8.6,
+  that the central foot stands at its own notch and is off the plane by exactly however far that
+  notch is, and that no step projects it onto the plane.
 - A FREE BAR END. A bar anchored at one end only, eleven nodes, so the span is of kind end to
   anchor, its first notch sits at chord parameter 0 and it holds TEN free notches. The present
   engine reports AsymmetricSpans 1, a defect of 0.1 against a tolerance of 0.0227, and Families
@@ -1805,121 +2023,206 @@ unchanged, and the plan must say so case by case rather than discovering it at t
   6813, 6814, 6941, 6945, 6946 and 7146, must be re-pinned or deleted with its case, because the
   field is gone.
 
-## 18. Where this design may be wrong, for Param's ruling
+## 18. What was ruled, and what is still open
 
-Stated plainly, since the spec is the authority a plan will be argued from. Nothing below is
-departed from silently; each is either his ruling read one way rather than another, or a cost
-this design accepts.
+This section was a list of questions. Param answered three of them on 2026-09-01 and the
+controller answered four more, so it is now a record of decisions with a short list of open items
+at the end. Nothing is departed from silently, and no rejected alternative is deleted: a later
+reader is entitled to know what was considered and why it lost.
 
-- THE CENTRAL COLUMN AT AN EVEN TYPE, WHICH IS THE ONE QUESTION THIS SPEC MOST WANTS ANSWERED. A
-  span with an odd number of trees at an even Type shows N shared feet and one further straight
-  column standing alone in the middle of the row, and a span with fewer trees than the Type asks
-  for shows one foot per tree. The spec's reading is that the ladder governs the GATHERED feet
-  and that the centre tree's own column is not one of them, so the ladder's "nothing in the
-  center" is not contradicted. THE GROUND FOR KEEPING IT IS THAT THE ENGINE ALREADY DOES IT and
-  the harness already pins three feet at Type 2 on a nine tree span, not a quotation: the
-  sentence "the middle one should be straight" is a paraphrase of the review conversation and
-  appears in no ruling of his, so it is not offered here as an argument, and the earlier draft of
-  this entry was wrong to lean on it. The alternative is that the centre tree joins the flank
-  group whose foot is nearer, ties going to the lower chord parameter, and the middle column
-  leans to a side. He rules.
-- BRANCHING 3 MOVES COLUMNS ON SAVED DEFINITIONS, AND IT IS THIS SPEC'S DOING AND NOT HIS. Four
-  layouts change, and every one of them changes because of a criterion this spec invented, "take
-  the k with the fewest REMAINDER TREES", which appears in no ruling of his. It must be said in
-  his own currency: he wrote "only 1 or two columns get left stranded", and at m = 5 and at
-  m = 11 this criterion RAISES the stray count from one to two, [2,1,2] becoming [1,3,1] and
-  [2,3,1,3,2] becoming [1,3,3,3,1]. At m = 3 and m = 9 it lowers it, to zero. The engine's
-  present layout is already ladder compliant at every count, so the ladder alone would move no
-  column at all. Three answers are open: keep this spec's criterion and accept two strays where
-  there was one; take FEWEST STRAYS instead, which keeps the present layout at m = 5, m = 7 and
-  m = 11 and changes m = 3 and m = 9 alone; or move nothing at Branching 3 and let the ladder
-  stand as a statement of a rule already satisfied. Whichever he picks, section 6's tables are
-  re-pinned to it before the plan is written.
-- THE EVEN GROUP'S FOOT IS NOT ON A NODE. A group with an even notch count stands at the midpoint
-  of its two central notches, not at either of them, so the letter of the snap ruling is not
-  kept in that case. The reason is in 8.5 and the alternative moves the column half a spacing to
-  a side chosen by nothing. This is the design's one knowing departure from a carried ruling.
-- THE COLLISION CLEARANCE CHANGES WITHOUT HIS ASKING. The brief forbids a net-median tolerance and
-  the investigation found the median still live in the collision test; restating it in span terms
-  changes collision counts and can change what Auto picks, and it destroys one green fixture
-  outright, the Auto collision case, which section 17 replaces with stated geometry. The argument
-  for leaving it alone is that member thickness is a property of the machine rather than of a
-  span. The argument for changing it is the one the brief makes, and this spec follows the brief.
-- THE FEET-CLOSE WARNING CHANGES SCALE BY FIVE. Until now FeetClose and the collision test shared
-  one number, 0.05 * medianPlanEdge. They no longer can: collisions want a member's own thickness
-  and the warning wants "these two columns have effectively landed together", which is the merge
-  clearance. So FeetClose now fires at 0.25 * g where it fired at 0.05 of a median, and an author
-  comparing a saved definition's warnings before and after this wave will see more of them. The
-  diagnostic says so on its face and section 17 records the counts.
-- OWNERSHIP AT A SHARED NODE IS A CHOICE, NOT A DERIVATION. The longer, denser line takes the
-  head. It is deterministic, it is trace-order free and it keeps mirrored crossings mirrored,
-  which is more than the present rule manages, but on a fan of ribs of unequal length it will
-  look arbitrary in a screenshot, and a rib whose notches are all borrowed builds nothing at all.
-  The alternative rules considered were the more central notch, which reads the node rather than
-  the span and can split a mirrored pair of shared nodes between two owners, and the lower bar
-  index, which is the present trace-order rule under another name and is why section 10's
-  tie-break runs on to the spans' own coordinates: an equally ribbed vault ties on both count and
-  chord, so a rule ending in the bar index would not be trace-order free at all on exactly the
-  geometry he builds.
-- THE LOAD AT A SHARED NODE NEEDS TWO NEW ARGUMENTS, OR IT STAYS UNDERCOUNTED. Section 10 states
-  the head pull as the node's own infill taken once, recovered as the sum of the bars' pulls less
-  (k - 1) times the node's whole pull, and that needs the untransversed per-bar pull and a new
-  per-node total which the engine does not receive today. The alternative is to leave the owner's
-  own transverse pull alone, which needs nothing new, is what the engine does now, and simply
-  accepts that the other bar's contribution at a crossing is never counted; the naive fix,
-  summing the two bars' transverse pulls, is not on the table, because BarLoads excludes only its
-  own bar's along edges and the sum therefore counts the infill twice, close to doubling the head
-  load at every crossing on a real vault and with it the axial force, the load path and Auto's
-  choice. He rules on whether the plumbing is worth the correctness.
-- CROSS-LINE MERGING HAS A MIRROR GATE HE DID NOT GIVE. His ruling is that feet on adjacent lines
-  merge where they already fall within a clearance of each other, never always and never not at
-  all. This spec adds a condition: a candidate is refused unless its mirror by group index is
-  also a candidate. That is an addition, not a reading, and it is recorded here rather than
-  slipped in. The reason is that accepting one of a mirrored pair of merges and not the other is
-  exactly how two matching columns stop matching, and the refusal is reported rather than silent.
-  The cost is that two feet satisfying his stated condition can be refused because of the state
-  of a different pair elsewhere on the span. The alternative is to drop the gate and let the
-  clearance alone decide, with the resulting asymmetry bounded by the clearance, a quarter of the
-  tighter span's spacing, and reported in FeetClose. He rules.
-- THE SAME-SPAN CENTRAL PAIR IS KEPT, AND ITS CLEARANCE HAS CHANGED SCALE. The engine merges a
-  mirror pair whose two feet fall inside the clearance; this spec keeps that but confines it to
-  the innermost pair of an EVEN tree row, which is where it gives an even row the single central
-  column an odd row gets for free, and restates its clearance from 0.05 * medianPlanEdge to
-  0.25 * g. Confining it is what keeps the narrow-bay fixture honest: on an ODD row the pair
-  either side of the centre tree would otherwise merge onto the centre tree's own foot, and
-  welding leaning neighbours into one column is a defect this file has already fixed once.
+### 18.1 Ruled by Param, on 2026-09-01
+
+- THE CENTRAL COLUMN AT AN EVEN TYPE: IT STANDS STRAIGHT. A span with an odd number of tree
+  groups at an even Type shows N gathered feet plus one further column standing alone and plumb
+  on the mirror plane, and a span with fewer trees than the Type asks for shows one foot per
+  tree. The spec's reading, that the ladder governs the GATHERED feet and that the centre tree's
+  own column is not one of them, is confirmed.
+      THE GROUND IS NOW A QUOTATION AND NO LONGER THE ENGINE'S HABIT. The earlier entry rested
+      the case on the fact that the engine already does it and the harness already pins three
+      feet at Type 2 on a nine tree span, and it was careful to say that the sentence "the middle
+      one should be straight" is a paraphrase of the review conversation and appears in no ruling
+      of his. That correction stands and is still true of THAT sentence. What replaces it as the
+      ground is a real quotation from the review that opened this round, in which he objected to
+      "just moving the standing coloumn for symmetry reasons away from center when it shold
+      obviously default to center". That is his own wording, it names the fault exactly, and it
+      settles the question in favour of a plumb central column.
+      The quotation reached this spec through the ruling relayed on 2026-09-01 and is not in
+      docs/superpowers/specs/2026-09-01-columns-design-input.md, which predates it. Anyone
+      auditing the provenance should look there and expect not to find it.
+      THE REJECTED ALTERNATIVE, kept rather than deleted: the centre tree could have joined the
+      flank group whose foot is nearer, ties going to the lower chord parameter, and the middle
+      column would then lean to a side. It was rejected because it is precisely the move he
+      named. Sections 5, 7 and 8.6 carry the ruling, and section 17 has a check of its own for
+      it, which computes the flank foot the alternative would have given and asserts the engine
+      does not take it.
+      What the ruling does NOT buy, and 8.6 is careful about this: on a span whose notch row is
+      lopsided the central foot stands at its own central notch, which is off the plane by
+      however far that notch is. No step projects it onto the plane, because projecting would
+      move a column nothing asked to move.
+
+- BRANCHING 3: TAKE FEWEST STRAYS, NOT FEWEST REMAINDER TREES. Where several candidate centre
+  tree sizes k are admissible, the one leaving the FEWEST STRAY TREES wins. His reason is his own
+  currency: he wrote "only 1 or two columns get left stranded", and the retired criterion RAISED
+  the stray count from one to two at m = 5 and at m = 11, which is movement in the wrong
+  direction on a definition he had already saved.
+      THE RETIRED CRITERION, recorded rather than deleted: "take the k with the fewest REMAINDER
+      TREES", which was this spec's own invention and appeared in no ruling of his. Under it the
+      layouts at Branching 3 would have been [3] at m = 3, [1,3,1] at m = 5, [3,1,3] at m = 7,
+      [3,3,3] at m = 9, [1,3,3,3,1] at m = 11 and [3,3,1,3,3] at m = 13. The two rows in bold
+      against it are m = 5 and m = 11, where it turned one stray into two.
+      THE TIE-BREAK IS THE AUTHOR'S AND NOT HIS. He ruled on the criterion and not on what to do
+      when two k leave equally few strays. The rule stated in section 6 is to take the SMALLER k,
+      chosen on the instruction to prefer whichever answer moves the fewest columns against the
+      shipped engine: the engine always takes the smallest admissible k, so on a tie nothing
+      moves. It reverses the earlier draft's "take the larger", which belonged to the retired
+      criterion and would now move a column for no reason. Section 6 proves the tie is
+      UNREACHABLE for Branching 1 to 3, so the clause is there for totality and not for use, and
+      anyone raising Branching past three must revisit it along with the rest of section 6.
+      THE TWO-CELL EXPECTATION DID NOT HOLD, and section 6 says so in its own words. The ruling
+      was passed down expecting m = 3 and m = 9 to move and m = 5, m = 7 and m = 11 to be
+      preserved. m = 5 and m = 11 are preserved. m = 7 is not: the engine's [3,1,3] leaves one
+      stray at the centre and [2,3,2] leaves none, so fewest strays takes the latter. m = 13
+      moves for the same reason. FOUR cells move at Branching 3, m = 3, m = 7, m = 9 and m = 13,
+      and none at Branching 1 or Branching 2.
+      That is not an argument against the ruling and the spec does not present it as one. Every
+      one of the four LOWERS the stray count, three to zero at m = 3 and m = 9 and one to zero at
+      m = 7 and m = 13, which is the direction his currency asks for and which the retired
+      criterion could not deliver. The cost is that at m = 7 and m = 13 the remainder tree count
+      rises from one to two, a lone central column traded for two trees of two at the anchor
+      ends. His ruling says that trade is right, since a tree of two is a tree and a tree of one
+      is a stranded column.
+
+- THE LOAD AT A SHARED NODE: FIX IT PROPERLY. The two new arguments are threaded through, the
+  untransversed pull per bar and bar position and the whole incident pull per node, and the head
+  load at a node held by k distinct bars is the sum of their pulls less (k - 1) times the node's
+  whole pull, which recovers the node's own infill exactly once. Section 10 states where they
+  come from, what carries them and what the engine signature becomes; section 16 restates the
+  same three additions from the diagnostics' side.
+      THE REJECTED ALTERNATIVE, kept: leave the owner's own transverse pull alone, accept that a
+      crossing's other bar contributes nothing, and add no plumbing at all. That is what the
+      engine does today and it is what produced seventeen counted where eighteen were applied. It
+      was rejected because the undercount propagates into the aim, the axial force, the load path
+      and Auto's choice, and because a diagnostic that reports a total is worth nothing if the
+      total is wrong.
+      THE NAIVE FIX REMAINS OFF THE TABLE, for the reason section 10 already gives and not
+      because anyone ruled against it: BarLoads excludes only its own bar's along edges, so
+      summing two bars' transverse pulls counts the node's infill twice, which on a real vault
+      is close to doubling the head load at every crossing. The measurement that seventeen came
+      back from eighteen was taken on hand-built transverse arrays, where each bar declares its
+      own pull independently, and it does not license that sum on production data.
+      THE MEASURED CASE THAT MUST NOW COME OUT RIGHT is eighteen units applied and eighteen
+      counted, asserted as an equality in section 17, with the seventeen printed beside it.
+
+### 18.2 Ruled by the controller, not by Param
+
+These four were open when the wave was reviewed and Param did not rule on them. They are settled
+here on the controller's authority so that the plan is not blocked, and they are marked as the
+controller's so that he can overturn any of them without unpicking his own.
+
+- THE CROSS-LINE MERGE MIRROR GATE IS KEPT. A merge candidate is refused unless its mirror by
+  group index is also a candidate. That is an addition to his ruling and not a reading of it, and
+  it is kept because accepting one of a mirrored pair of merges and not the other is exactly how
+  two matching columns stop matching, and symmetry is the whole complaint this wave answers. The
+  refusal is reported rather than silent, in Level.MergeRefused and in columns.feet_close. The
+  cost is real and stated: two feet satisfying his stated condition can be refused because of the
+  state of a different pair elsewhere on the span. The alternative, dropping the gate and letting
+  the clearance alone decide with the resulting asymmetry bounded by a quarter of the tighter
+  span's spacing, is rejected on the ground above.
+
+- THE COLLISION CLEARANCE AND THE FEET-CLOSE SCALE CHANGE AS THE SPEC PROPOSES. The brief forbids
+  a net-median tolerance, the investigation found the median still live in two places, and a
+  median over every edge in both mesh directions stands in no fixed ratio to the notch spacing
+  along any one bar. Span-local is right. The collision clearance becomes 0.05 * g and the
+  feet-close clearance becomes the merge clearance of the pair concerned, which parts it from the
+  collision number it used to share by a factor of five. Both changes will move counts, the
+  collision change can move Auto's choice, and it destroys one green fixture outright, for which
+  section 17 states the replacement geometry rather than leaving it to the implementer. The
+  harness records the counts before and after, as section 17 already requires. The argument for
+  leaving the collision clearance alone, that member thickness is a property of the machine
+  rather than of a span, is noted and rejected: the brief governs, and a bound that becomes
+  several whole notch spacings on one mesh and exact coincidence on another is not measuring
+  thickness either.
+
+- THE SHARED-NODE OWNERSHIP RULE STANDS AS WRITTEN, which is the greater free notch count, then
+  the longer chord, then the spans' own sorted endpoint coordinates, then the lower mean Z, and
+  only then the bar and span indices. It stands because it is the only candidate that is
+  trace-order free on an EQUALLY RIBBED VAULT, which is the geometry Param actually builds: a
+  cross vault, a dome of equal ribs and hoops and a regularly ribbed barrel all tie on both count
+  and chord, so any rule ending at the bar index answers differently depending on which curve
+  Pattern traced first, which is the very finding section 10 exists to answer. The alternatives
+  are recorded. The more central notch reads the node rather than the span and can hand two
+  mirrored shared nodes to different owners, which breaks the symmetry it was meant to protect.
+  The lower bar index is the present trace-order rule under another name. The honest cost of the
+  rule that stands is that on a fan of ribs of unequal length it will look arbitrary in a
+  screenshot, and a rib whose notches are all borrowed builds nothing at all.
+
+- FORCES AND THE LEAN AT TYPES 1 TO 4: SECTION 13'S ACCOUNT IS ACCEPTED AND THE ITEM IS CLOSED.
+  It was listed as needing his explicit confirmation on the suspicion that it departed from his
+  ruling. It does not. His ruling is that the forces inform the lean and no longer decide the
+  position, and section 13 honours it exactly: with the foot fixed by the ladder and the fork
+  bound to the foot-to-notch segment there is no free variable left for a force to set, so there
+  is nothing left for the forces to inform at those levels beyond the measurement. The honest
+  statement, which section 13 makes, is that the forces make the AIM, the aim decides the
+  POSITION at Type 0, it chooses the peel and the family everywhere, and elsewhere it is what the
+  built column is MEASURED against, in the per-foot alignment measure and the branch off-thrust
+  measure. That is not a departure from his ruling but its consequence, so it is settled rather
+  than open. The two levers that would put force back into the lean are recorded and both are
+  worse than what they buy: letting the fork leave the foot-to-notch segment, which reintroduces
+  the kinked trunk section 2 preserves against, or letting the force move the foot, which is the
+  position he took away from it.
+
+### 18.3 Still open, for Param
+
+- THE TYPE VALUE LIST NOW LIES, KNOWINGLY. The brief preserves the list, so the canvas still
+  reads "2 two feet" on a span that will show three, or one. The tooltip carries the truth and
+  the diagnostics report both counts. The wording that would fix it is "2 two gathered feet", and
+  a change to the item text is his to authorise. Until he does, section 17 pins the item text
+  unchanged and names the inaccuracy in the check, so that nobody later reads the green as
+  agreement.
+
+- THE EVEN GROUP'S FOOT IS NOT ON A NODE, which is the design's one knowing departure from a
+  carried ruling of his. A group with an even notch count stands at the midpoint of its two
+  central notches and is not snapped to either. The reason is in 8.5: snapping would move the
+  foot half a notch spacing to a side chosen by nothing, and on the centre group it would move
+  the one column he has now ruled must stand straight. That last point strengthens the case since
+  he ruled, so the departure is more defensible than it was, but it is still a departure and it
+  is still his to accept or refuse.
+
+### 18.4 Costs this design accepts, recorded and not open
+
+None of these is a question. They are the prices of rules already settled, written down so that
+they are found here rather than on the canvas.
+
 - CROSS-LINE MERGING CANNOT BE EXACT. Where two spans' mirror planes disagree, a merged foot
   cannot lie on both, and each span's own symmetry is disturbed by up to a quarter of the tighter
-  span's notch spacing. On a fan of ribs whose chords are not parallel that will be visible.
-- FORCES NO LONGER INFORM THE LEAN AT TYPES 1 TO 4, in any sense stronger than measuring the
-  built column against the aim. Section 13 says so rather than dressing the alignment measure up
-  as an influence. This is his ruling read at its word and it deserves his explicit confirmation
-  before the plan is written.
+  span's notch spacing, which is inside the tolerance that declared the feet to be together in
+  the first place. On a fan of ribs whose chords are not parallel that will be visible.
+- THE SAME-SPAN CENTRAL PAIR IS KEPT AND ITS CLEARANCE HAS CHANGED SCALE, from 0.05 of a net
+  median to 0.25 * g, and it is confined to the innermost pair of an EVEN tree row. Confining it
+  is what keeps the narrow-bay fixture honest: on an ODD row the pair either side of the centre
+  tree would otherwise merge onto the centre tree's own foot, and welding leaning neighbours into
+  one column is a defect this file has already fixed once. It is also what Param's ruling of
+  18.1 now requires, since that merge would swallow the column he ruled must stand alone.
 - ONE WHOLE-SPAN GATE SURVIVES, on the family average of the aim, for the node-order reason in
   section 9. The cliff is gone from the layout, from the feet, from the common mode and from the
   merging, which is what shows on the canvas, but a span with one unpaired tree still keeps its
   own aims. That is not the defect the input measured: the common mode goes from that span too,
   unconditionally, before any pairing runs.
 - THE AIM MIRROR IS TAKEN FROM THE PULL, WHICH IS A FORCE. The design input's second numbered
-  change binds and this spec follows it, but the tension with "forces inform the LEAN and no
-  longer decide the POSITION" should be visible rather than buried. It is resolved by scope: no
-  foot reads s_mirror, because the layout, the groups, the candidates and the merge mirror are
-  all taken by index, so at Types 1 to 4 no force moves a foot. At Type 0 the aim decides the
-  position by definition and there the change is the point. Two costs are real and stated. Where
-  a span's along profile has several sign changes, s_mirror can jump between them as the solve
-  moves; it costs only which trees share an across and a down with which, and the common mode is
-  gone either way. And where a span's aim is plumb everywhere, there is no sign change at all and
-  the plane falls back to the notch row's own centre, which does NOT correct an unequal anchor
-  cluster; it does not need to, because a plumb aim has no lean to get wrong.
-- THE TYPE VALUE LIST NOW LIES, KNOWINGLY. The brief preserves the list, so the canvas still
-  reads "2 two feet" on a span that will show three, or one. The tooltip carries the truth and
-  the diagnostics report both counts. The wording that would fix it is "2 two gathered feet", and
-  a change to the item text is his to authorise.
+  change binds and this spec follows it, and the tension with "forces inform the lean and no
+  longer decide the position" is resolved by scope: no foot reads s_mirror, because the layout,
+  the groups, the candidates and the merge mirror are all taken by index, so at Types 1 to 4 no
+  force moves a foot. At Type 0 the aim decides the position by definition and there the change
+  is the point. Two costs are real. Where a span's along profile has several sign changes,
+  s_mirror can jump between them as the solve moves, which costs only which trees share an across
+  and a down with which. And where a span's aim is plumb everywhere there is no sign change at
+  all and the plane falls back to the notch row's own centre, which does not correct an unequal
+  anchor cluster and does not need to, because a plumb aim has no lean to get wrong.
 - THE MERGED FOOT'S GUARD WAS A WHOLE SPACING AND IS NOW A QUARTER. Feet declared to have already
   landed together within a quarter of the tighter span's spacing were then allowed to converge up
-  to a whole spacing away from them, which is the same measurement contradicting itself. The
-  guard for a merged foot is tightened to the merge clearance. That will send more merged feet to
-  the plan mean, counted in ConvergenceFallback, which is the safe direction.
+  to a whole spacing away from them, which is the same measurement contradicting itself. That
+  will send more merged feet to the plan mean, counted in ConvergenceFallback, which is the safe
+  direction.
 - THE FEET FOLLOW THE MESH. A group's foot stands on its own central notch or between its two
   central notches, so remeshing a bar moves its feet, and on a span whose notch row is lopsided
   the feet are lopsided with it. That is deliberate, since a column standing under a notch is
@@ -1928,6 +2231,10 @@ this design accepts.
   centre to an anchor-end notch leans past sixty degrees and peels. That is the measured control
   behaviour today and this spec does not change it. The honest levers are a higher Type, a lower
   Branching or a taller span, not a placement rule.
+- BRANCHING 3 MOVES COLUMNS ON SAVED DEFINITIONS, at four counts, by his own ruling. An author
+  reopening a definition at Branching 3 with three, seven, nine or thirteen free notches on a
+  span will see the columns rearrange. The diagnostics say what the layout is and the harness
+  pins every row against the engine's old one, so the change is legible rather than mysterious.
 
 ## 19. Out of scope
 

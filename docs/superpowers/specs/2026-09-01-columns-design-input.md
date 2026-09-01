@@ -40,6 +40,20 @@ all three of his cases exactly.
 This REPLACES the present rule, which puts the remainder at the anchor ends in every case regardless
 of how many there are, and which is a large part of why the placement looks arbitrary to him.
 
+## 2a. The standing column defaults to the centre
+
+From the review that opened this round, and filed here because the spec leans on it:
+
+> "Some are obvious, just moving the standing coloumn for symmetry reasons away from center when it
+> shold obviously default to center"
+
+This is the ground for keeping a plumb central column at an even Type on a span with an odd number
+of tree groups, which he confirmed on 2026-09-01. A span of that shape shows N gathered feet plus
+one further column standing alone on the mirror plane, so an odd tree row at Type 2 shows three
+feet and not two. The alternative considered and rejected was folding the centre tree into whichever
+flank group's foot is nearer, which makes Type N always mean exactly N feet at the price of the
+middle column leaning to a side chosen by nothing.
+
 ## 3. Why a column that branches from one point is never quite central
 
 > "the columns if branching from one point, seriously struggle to ever be centered correctly. this i
