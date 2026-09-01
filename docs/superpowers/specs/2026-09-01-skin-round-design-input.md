@@ -133,6 +133,44 @@ number of five and seven sided cells at the places where the row counts change, 
 name them, count them in the diagnostics, and place them deliberately where they do least harm rather
 than letting them fall wherever the arithmetic happens to put them.
 
+## 1c. Export's inputs are reordered, and Courses may go
+
+> "also lastly with the export component can we re order inputs. Res at top as it is, then C and Co if
+> both of those are still needed again we are putting things into the correct tree structure now, just
+> need to confirm that its the corrrect order that the ui web app likes. We also can remove CO
+> completely from skin if thats the case too. Then Radius, Name, studio URL, Live toggle, and finally
+> write button"
+
+The order he wants, reading his sentence: Result, Cells, Courses if it survives, Radius, Name, Studio
+URL, Live, Write. That groups the geometry first, then the one shaping number, then the delivery
+block in the order a person actually uses it, ending on the button that does the thing. It is a
+better arrangement than the present RES, Path, Write, Name, Cells, Courses, Live, Studio, Radius,
+which has the button third and the geometry buried in the middle.
+
+HE OMITTED PATH. Export cannot write without it, and his screenshot has it wired, so this reads as an
+oversight rather than a request to delete it. The proposal is to place Path immediately before Name,
+since the two together say where the set goes and what it is called, giving: Result, Cells, Courses,
+Radius, Path, Name, Studio URL, Live, Write. His confirmation is wanted on that one slot.
+
+WHETHER COURSES CAN GO is a question about the studio, not about taste, and it is being verified
+against the Bench Studio importer rather than assumed. His reasoning is sound on its face: Cells is a
+tree whose BRANCH PATH is the course, so an integer repeated per cell alongside it is the same
+information twice. Export flattens both today, which is precisely why the second port exists; reading
+the branch path instead would make it redundant. The one case where the two genuinely differ is an
+author wiring a FLAT list of hand-authored cells, where every cell would land in branch zero and so be
+read as course zero. That is the same answer Export's own default tessellation already gives, so it
+may be acceptable, but the decision needs the importer's actual requirements: whether a course integer
+is mandatory per cell, whether courses must run contiguously from zero, and what the studio does when
+they are absent.
+
+A RELATED CLAIM IS UNDER TEST at the same time, because it may be false. The plugin's port
+descriptions state that ordering cells along the course within each branch hands the studio its build
+sequence. An earlier reading of the studio suggests it RE-SORTS on import, by course and then by an
+angle it computes itself, which would mean the plugin's within-course order serves the author in
+Grasshopper and not the studio's build sequence at all. If that is confirmed, the port descriptions
+are wrong and the seam-outward ordering ruling stands on its usefulness to him rather than on any
+claim about the studio.
+
 ## 2. Skin outputs a surface as well as a polyline
 
 > "one thing worth adding to the skin component is that it outputs a surface too, it actually can be
