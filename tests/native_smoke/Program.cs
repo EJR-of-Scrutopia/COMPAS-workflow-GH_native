@@ -6343,18 +6343,38 @@ internal static class Program
                     + "The naive sum of the two would read (2, 2, -8), which counts the node's infill TWICE.");
             }
 
-            // k = 3: three pulls less TWICE the node's whole pull is
-            // (0,2,-4)+(2,0,-4)+(2,2,-6) - 2*(2,2,-4) = (0,0,-6), which
-            // exercises the general form and not only the two-bar case. But
-            // these three bars run along x, y and z, so their three tangents
-            // span all three dimensions, and HeadPull's own Gram-Schmidt
-            // projection then removes every last component of (0,0,-6): this
-            // is the documented "honest answer for a node whose every
-            // direction is already carried to an anchor", plumb (0,0,0), not
-            // the pre-projection sum.
+            // k = 3: MEASURED, not merely argued, and a CORRECTION to the
+            // brief's own Step 1 text, not a silent substitution.
+            //
+            // Task 6's brief asserts (0, 0, -6) here, from its own arithmetic
+            // note: (0,2,-4)+(2,0,-4)+(2,2,-6) - 2*(2,2,-4) = (0,0,-6). That
+            // sum is correct as far as it goes, but it is the PRE-PROJECTION
+            // sum, and the brief's own Step 2 (copied verbatim below as
+            // HeadPull) does not stop there: it projects the head pull off
+            // every distinct bar tangent at the node by Gram-Schmidt. These
+            // three bars run along x, y and z, mutually orthogonal, so their
+            // three tangents span all of R^3, and projecting (0,0,-6) off
+            // all three in turn removes every last component of it. Run
+            // against the brief's own HeadPull exactly as written, this
+            // fixture returns (0, 0, 0), not (0, 0, -6): confirmed by hand
+            // and by running the reference implementation itself.
+            //
+            // The brief is therefore self-contradictory at this one case:
+            // Step 1's fixture assumes the pre-projection sum is what
+            // HeadPull returns, but Step 2's own algorithm, which Step 1
+            // exists to test, always projects it further. Recorded as D5 in
+            // the SDD ledger,
+            // .superpowers/sdd/2026-09-01-mould-round-three-1-columns/progress.md,
+            // and awaiting Param's sign-off there: either this literal is
+            // corrected to (0, 0, 0) as the post-projection answer, or a
+            // fixture that does not span all three tangent directions is
+            // wanted instead, or HeadPull needs a way to expose the
+            // pre-projection value if that intermediate is what was actually
+            // meant to be tested. Nothing here is settled by this comment
+            // alone.
             object threeBars = headPull.Invoke(null, new object?[] { nodes, barsHere, pullArray, wholeNode, 0, Holders((0, 1), (1, 1), (2, 1)) })!;
             if (Math.Abs(VX(threeBars)) > 1.0e-12 || Math.Abs(VY(threeBars)) > 1.0e-12 || Math.Abs(VZ(threeBars)) > 1.0e-12)
-                throw new InvalidOperationException($"At k = 3 the three tangents span all three dimensions, so the projected head pull is (0, 0, 0) and not the pre-projection (0, 0, -6); it read ({VX(threeBars):0.#####}, {VY(threeBars):0.#####}, {VZ(threeBars):0.#####}).");
+                throw new InvalidOperationException($"At k = 3 the three tangents span all three dimensions, so the projected head pull is (0, 0, 0) and not the brief's pre-projection (0, 0, -6); it read ({VX(threeBars):0.#####}, {VY(threeBars):0.#####}, {VZ(threeBars):0.#####}).");
 
             // A RUN TRACED TWICE counts once, which is what keeps
             // columns.overlap true: two bars are the same run at a node when
@@ -7919,10 +7939,23 @@ internal static class Program
                 object built = Get<object>(placed, "Built");
                 var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
                 int[] footNode = FootOfTree(built, trees.Length);
-                // The two arch trees BORROWING their ribs' shared notches
-                // build no foot at all (footNode -1) and are excluded: they
+                // The brief's literal code here selects archTrees by Bar == 0
+                // alone and indexes levelNodes[footNode[t]] with no existence
+                // check. MEASURED, not merely argued, and a CORRECTION to the
+                // brief, not a silent substitution: on this exact fixture the
+                // two ribs at positions 3 and 7 each borrow their only notch
+                // from the arch (an arch tree whose sole node is a rib's
+                // shared notch has HeadMain == -1 under Step 7, since it owns
+                // nothing), and Step 7 states plainly that such a tree
+                // "builds no member and no foot at all" — so footNode[t] is
+                // -1 for both, and levelNodes[-1] throws
+                // IndexOutOfRangeException if the brief's code runs as
+                // written. The two arch trees BORROWING their ribs' shared
+                // notches are excluded here with "&& footNode[t] >= 0": they
                 // are themselves a mirrored pair, so what remains is still
-                // exactly the arch's mirrored row.
+                // exactly the arch's mirrored row. Recorded as D6 in the SDD
+                // ledger,
+                // .superpowers/sdd/2026-09-01-mould-round-three-1-columns/progress.md.
                 var archTrees = Enumerable.Range(0, trees.Length)
                     .Where(t => Get<int>(trees[t], "Bar") == 0 && footNode[t] >= 0).ToArray();
                 double[] archFeet = archTrees.Select(t => X(levelNodes[footNode[t]])).OrderBy(v => v).ToArray();
