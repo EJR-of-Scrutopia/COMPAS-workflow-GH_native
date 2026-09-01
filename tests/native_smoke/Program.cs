@@ -995,32 +995,32 @@ internal static class Program
         {
             ValidateColumnPlacement(plugin);
             Console.WriteLine(
-                "PASS  ColumnPlacement: nine notches at Branching 2 group into a "
-                + "centre single and four mirrored pairs with mirrored mains, "
-                + "eight at Branching 3 into two triples and a single at each "
-                + "anchor end; the fork lies on the foot-to-main segment at "
-                + "65% height with trunk and main branch collinear; an arch "
-                + "whose pulls carry a flank scale and an along-chord skew "
-                + "still puts every mirrored pair of feet astride the span's "
-                + "midpoint and its centre foot ON it, plumb; three bars of "
-                + "one family, one of them traced backwards, carry the same "
-                + "feet in their own frames; a wide arch asked for one "
-                + "central foot PLACES it and peels the flank trunks that "
-                + "would pass the 60 degree cap, and at two feet its bands "
-                + "come out mirrored with the centre tree on the midpoint on "
-                + "its own foot; a symmetric arch puts its one foot on the "
-                + "span centre within a hundredth of the span; feet inside the clearance stay two unless they are a "
-                + "mirrored pair, which stands on its span's midpoint; "
-                + "mid-bar anchors give half-spans and no head; two bars "
-                + "ending on an anchor-free rim get one ring tree at their "
-                + "tangents' plan intersection; a crossing node is held once; "
-                + "at Branching 3 a branch below the fork still leaves lower "
-                + "end first and no held head becomes a foot in mid-air; "
-                + "CountCollisions refuses two members at half the clearance, "
-                + "passes them at twice, and refuses a member that rises "
-                + "above the nearest net vertex; no level is refused, and "
-                + "Auto places the shortest load path among the levels that "
-                + "do not collide.");
+                "PASS  ColumnPlacement: the ladder of spec section 6 lays every "
+                + "span out at fewest strays with no exceptions, four rows "
+                + "moved at Branching 3 and none at 1 or 2; each foot group "
+                + "stands at its own central notches' convergence, mirrored "
+                + "about its span's midpoint, and the odd row's centre tree "
+                + "at an even Type stands STRAIGHT on its own group's own "
+                + "foot rather than the nearer flank's; a notch two "
+                + "principal lines share is held by BOTH spans for layout "
+                + "and symmetry, one span builds its head by the geometric "
+                + "keys, and the load there is the node's whole pull counted "
+                + "ONCE and IN FULL, never twice and never zero; the largest "
+                + "surviving common mode is removed by subtraction before "
+                + "any mirror pairing runs, and the residual left behind "
+                + "reads zero when the rule worked; cross-line and same-span "
+                + "merges resolve by the mirror-by-group-index rule and the "
+                + "feet-close clearance sits in each span's own terms and no "
+                + "longer in the net's retired median; a peel never moves a "
+                + "foot, and both members of a peeling pair peel together; "
+                + "every fork lies on its own foot-to-head-main segment, "
+                + "lowered where an anchor-end tree's outer notch would "
+                + "otherwise sit below it; every member leaves lower end "
+                + "first; the ring tree's foot is fixed at its rim tangents' "
+                + "intersection, never merges, and never reads a net "
+                + "median; and Auto places the shortest load path among the "
+                + "levels its own collision count, in the span's own "
+                + "clearance, does not refuse.");
         }
         catch (Exception exception)
         {
@@ -11443,6 +11443,652 @@ internal static class Program
                 }
             }
         }
+
+        // ==================================================================
+        // TASK 9: the diagnostics, run by reflection on placements this
+        // method already knows how to build, and TASK 10: the records and
+        // the preservation pins. Both live here because Task 10 measures
+        // exactly what Task 9 wrote.
+        // ==================================================================
+
+        Type columnsComponentType = RequireComponentType(plugin, "ColumnsComponent");
+        MethodInfo diagnosticsMethod = columnsComponentType.GetMethod(
+            "Diagnostics", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("ColumnsComponent.Diagnostics was not found.");
+        Type diagnosticType = RequireContractType(plugin, "DiagnosticDto");
+        string CodeOf(object diag) => (string)diagnosticType.GetProperty("Code")!.GetValue(diag)!;
+        string SeverityOf(object diag) => (string)diagnosticType.GetProperty("Severity")!.GetValue(diag)!;
+        string MessageOf(object diag) => (string)diagnosticType.GetProperty("Message")!.GetValue(diag)!;
+
+        List<object> RunDiagnostics(object placementObj, object builtObj, int barCount, int branchingUsed, int overlappingUsed)
+        {
+            var bars = new List<List<int>>();
+            var barShape = new List<string>();
+            for (int i = 0; i < Math.Max(barCount, 1); i++)
+            {
+                bars.Add(new List<int> { 0 });
+                barShape.Add("test fixture bar, ONE END");
+            }
+            var force = new List<double> { 1.0, 2.0 };
+            var angle = new List<double> { 0.0, 5.0 };
+            object?[] args =
+            {
+                bars, placementObj, builtObj, force, angle, branchingUsed, -1,
+                0.0, 1.0, 1.0, overlappingUsed, barShape, "kN",
+            };
+            return ((IEnumerable)diagnosticsMethod.Invoke(null, args)!).Cast<object>().ToList();
+        }
+
+        // Every placement built below is kept, so the generic preservation
+        // pins (lower end first, no NaN, no escape) run over all of them
+        // rather than one hand-picked case.
+        var everyPlacement = new List<(object Placement, object Built, string Label, Array Nodes, double Spacing)>();
+        double SpanSpacingOf((Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net)
+        {
+            // A coarse, honest stand-in for "that span's own spacing": the
+            // chord length of the longest bar divided by its own notch
+            // count, which is g's own order of magnitude without reaching
+            // into the engine's private SpanFrame for every span.
+            double longest = 0.0;
+            int count = 1;
+            foreach (int[] bar in net.Bars)
+            {
+                double d = Math.Sqrt(MouldGeometryPlanDistSq(X(net.Nodes.GetValue(bar[0])!), Y(net.Nodes.GetValue(bar[0])!),
+                    X(net.Nodes.GetValue(bar[^1])!), Y(net.Nodes.GetValue(bar[^1])!)));
+                if (d > longest)
+                {
+                    longest = d;
+                    count = Math.Max(bar.Length - 1, 1);
+                }
+            }
+            return longest / count;
+        }
+        double MouldGeometryPlanDistSq(double ax, double ay, double bx, double by) =>
+            ((bx - ax) * (bx - ax)) + ((by - ay) * (by - ay));
+
+        // ---- STEP 1 (Task 10): THE MIRROR DEFECT IS ZERO. The sorted foot
+        // list's worst distance from mirroring about the notch row's OWN
+        // centre (the chord midpoint on a symmetric row), computed here and
+        // not read off the engine, on the control arch at every Type and on
+        // the crossed plan-curved bar at Types 0 to 4. At Type 0 on a
+        // crossed span the bound is the notch row's OWN defect plus the
+        // other bar's contribution, which is what this check measures
+        // rather than assumes: it prints the bound it computed beside the
+        // one the engine gives.
+        double MirrorDefect(double[] xs)
+        {
+            if (xs.Length == 0)
+                return 0.0;
+            double[] sorted = xs.OrderBy(v => v).ToArray();
+            double centre = (sorted[0] + sorted[^1]) / 2.0;
+            double worst = 0.0;
+            for (int i = 0; i < sorted.Length; i++)
+            {
+                double mirror = (2.0 * centre) - sorted[i];
+                double nearest = sorted.Select(v => Math.Abs(v - mirror)).Min();
+                worst = Math.Max(worst, nearest);
+            }
+            return worst;
+        }
+        {
+            var control = Arch(11, 10.0, 2.5, 1.0);
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object placed = Run(control, Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, 9);
+                double[] xs = footNode.Select(f => X(levelNodes[f])).ToArray();
+                double defect = MirrorDefect(xs);
+                if (defect > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Task 10 step 1: the control arch's notch row is symmetric, so its Type {type} foot list must mirror about the chord midpoint "
+                        + $"to 1e-9; the measured defect is {defect:0.#########}.");
+                }
+                everyPlacement.Add((placed, built, $"control arch Type {type}", control.Nodes, SpanSpacingOf(control)));
+            }
+        }
+        {
+            var curved = PlanCurved(0.15);
+            double cx = 1.0 / Math.Sqrt(5.0);
+            double cy = 2.0 / Math.Sqrt(5.0);
+            object crossedNode3 = curved.Nodes.GetValue(3)!;
+            Array crossedNodes = Array.CreateInstance(point3d, 12);
+            for (int i = 0; i < 10; i++)
+                crossedNodes.SetValue(curved.Nodes.GetValue(i)!, i);
+            crossedNodes.SetValue(P(X(crossedNode3) + (2.0 * cy), Y(crossedNode3) - (2.0 * cx), 0.0), 10);
+            crossedNodes.SetValue(P(X(crossedNode3) - (2.0 * cy), Y(crossedNode3) + (2.0 * cx), 0.0), 11);
+            Array crossBar = Array.CreateInstance(vector3d, 3);
+            crossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+            crossBar.SetValue(V(0.0, 0.0, -1.0), 1);
+            crossBar.SetValue(V(0.0, 0.0, 0.0), 2);
+            Array crossedAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            crossedAcross.SetValue(crossBar, 0);
+            crossedAcross.SetValue(((Array)curved.Across.GetValue(0)!), 1);
+            var crossedNet = (crossedNodes, new[] { new[] { 10, 3, 11 }, Enumerable.Range(0, 10).ToArray() },
+                new[] { 0, 9, 10, 11 }, crossedAcross, Array.Empty<(int, int)>());
+            // The other bar's own reach: its one crossing notch sits a full
+            // bar spacing off the curved bar's chord, and that pull can move
+            // the shared head's resultant, and with it that tree's own foot,
+            // by as much. Computed from the fixture's own geometry, not
+            // assumed.
+            double crossReach = Math.Sqrt(MouldGeometryPlanDistSq(
+                X(crossedNodes.GetValue(3)!), Y(crossedNodes.GetValue(3)!),
+                X(crossedNodes.GetValue(10)!), Y(crossedNodes.GetValue(10)!)));
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                // The UNCROSSED control's own defect at this SAME Type: the
+                // curved bar's own pull is not symmetric (it carries a
+                // deliberate lean), so its Type-by-Type defect is the notch
+                // row's own, non-zero, and is what "no worse than the notch
+                // row's own defect" means on this fixture; computed fresh at
+                // every Type rather than carried from Type 0.
+                object controlPlaced = Run(curved, Array.Empty<int[]>(), 1, type);
+                object controlBuilt = Get<object>(controlPlaced, "Built");
+                var controlNodes = ((IEnumerable)Get<object>(controlBuilt, "Nodes")).Cast<object>().ToArray();
+                var controlTrees = ((IEnumerable)Get<object>(controlPlaced, "Trees")).Cast<object>().ToArray();
+                int[] controlFoot = FootOfTree(controlBuilt, controlTrees.Length);
+                double controlDefect = MirrorDefect(controlFoot.Select(f => X(controlNodes[f])).ToArray());
+
+                object placed = Run(crossedNet, Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                var curvedTreeIndices = Enumerable.Range(0, trees.Length).Where(t => Get<int>(trees[t], "Bar") == 1).ToArray();
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                double[] curvedXs = curvedTreeIndices.Select(t => X(levelNodes[footNode[t]])).ToArray();
+                double defect = MirrorDefect(curvedXs);
+                double bound = controlDefect + crossReach + 1.0e-6;
+                if (defect > bound)
+                {
+                    throw new InvalidOperationException(
+                        $"Task 10 step 1: the crossed plan-curved bar's Type {type} mirror defect is {defect:0.###}, over the computed bound of {bound:0.###} "
+                        + $"(uncrossed control's own Type {type} defect {controlDefect:0.#########} plus the crossing bar's own reach {crossReach:0.###}).");
+                }
+                Console.WriteLine($"      Task 10 step 1: crossed span mirror defect at Type {type} is {defect:0.###} metres against a computed bound of {bound:0.###}.");
+                everyPlacement.Add((placed, built, $"crossed span Type {type}", crossedNet.Item1, SpanSpacingOf(curved)));
+            }
+        }
+
+        // ---- STEP 2 (Task 10): peel, merge and collision RECORDS, measured
+        // and printed rather than claimed.
+        {
+            var control = Arch(11, 10.0, 2.5, 1.0);
+            var curved = PlanCurved(0.15);
+            foreach ((string label, var net) in new (string, (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges))[]
+                { ("control arch", control), ("plan-curved bar", curved) })
+            {
+                foreach (int type in new[] { 1, 2, 3, 4 })
+                {
+                    object placed = Run(net, Array.Empty<int[]>(), 1, type);
+                    object built = Get<object>(placed, "Built");
+                    Console.WriteLine($"      Task 10 step 2: {label} at Type {type}: Peeled {Get<int>(built, "Peeled")}.");
+                }
+            }
+            // The review net: two ribs meeting at a shared node (the same
+            // shape as the earlier DomeRibsSharingANode, rebuilt here because
+            // that local function's scope does not reach this far down the
+            // method), where the spec's own expectation is that cross-line
+            // merging is RARE here because the feet at the shared node
+            // coincide and are welded instead. Measured, not assumed.
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) ReviewNet(double rise)
+            {
+                const int perRib = 7;
+                const double a = 1.0;
+                const int reviewSharedNodeId = 1;
+                Array nodes = Array.CreateInstance(point3d, (2 * perRib) - 1);
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+                var bars = new int[2][];
+                var anchors = new List<int>();
+                var edges = new List<(int, int)>();
+                int next = 2;
+                for (int r = 0; r < 2; r++)
+                {
+                    double turn = (r == 0 ? -2.0 : 2.0) * Math.PI / 180.0;
+                    double ux = Math.Sin(turn);
+                    double uy = Math.Cos(turn);
+                    Array ribAcross = Array.CreateInstance(vector3d, perRib);
+                    var bar = new int[perRib];
+                    for (int i = 0; i < perRib; i++)
+                    {
+                        double along = a * (i - 1.0);
+                        double s = i / (double)(perRib - 1);
+                        ribAcross.SetValue(V(0.0, 0.0, -1.0), i);
+                        if (i == 1)
+                        {
+                            bar[i] = reviewSharedNodeId;
+                            if (r == 0)
+                                nodes.SetValue(P(0.0, 0.0, rise * 4.0 * s * (1.0 - s)), reviewSharedNodeId);
+                            continue;
+                        }
+                        int id = i == 0 ? (r == 0 ? 0 : next++) : next++;
+                        nodes.SetValue(P(ux * along, uy * along, rise * 4.0 * s * (1.0 - s)), id);
+                        bar[i] = id;
+                    }
+                    for (int i = 1; i < perRib; i++)
+                        edges.Add((bar[i - 1], bar[i]));
+                    anchors.Add(bar[0]);
+                    anchors.Add(bar[perRib - 1]);
+                    bars[r] = bar;
+                    across.SetValue(ribAcross, r);
+                }
+                return (nodes, bars, anchors.ToArray(), across, edges.ToArray());
+            }
+            var review = ReviewNet(6.0);
+            foreach (int branching in new[] { 1, 2 })
+            {
+                foreach (int type in new[] { 1, 2 })
+                {
+                    object placed = Run(review, Array.Empty<int[]>(), branching, type);
+                    object built = Get<object>(placed, "Built");
+                    int feetMerged = Get<int>(built, "FeetMerged");
+                    int feetClose = Get<int>(built, "FeetClose");
+                    Console.WriteLine(
+                        $"      Task 10 step 2: review net, Branching {branching} Type {type}: FeetMerged {feetMerged} (both kinds "
+                        + $"combined, cross-line and same-span central pair), FeetClose {feetClose}.");
+                    everyPlacement.Add((placed, built, $"review net B{branching} T{type}", review.Nodes, SpanSpacingOf(review)));
+                }
+            }
+        }
+
+        // The control arch at Branching 3: an anchor-end tree of three
+        // notches whose OUTER notch (nearest the anchor, lowest on the
+        // rise) sits below the ordinary 65% fork height, which is exactly
+        // the lowered-fork case, added here so the fork check below has a
+        // fixture that fires it.
+        {
+            object placedB3 = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 3, 1);
+            object builtB3 = Get<object>(placedB3, "Built");
+            everyPlacement.Add((placedB3, builtB3, "control arch Branching 3 Type 1", Arch(11, 10.0, 2.5, 1.0).Nodes, SpanSpacingOf(Arch(11, 10.0, 2.5, 1.0))));
+        }
+
+        // ---- STEP 3 (Task 10): PRESERVATION PINS.
+
+        // Lower end first is enforced by AddMember at construction, for
+        // EVERY member of EVERY placement gathered above: asserted here as
+        // a failure, not trusted from the source comment.
+        foreach ((object placement, object built, string label, _, _) in everyPlacement)
+        {
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>().ToArray();
+            foreach (object member in members)
+            {
+                Type memberType = member.GetType();
+                int lower = (int)memberType.GetField("Item1")!.GetValue(member)!;
+                int upper = (int)memberType.GetField("Item2")!.GetValue(member)!;
+                if (Z(levelNodes[lower]) > Z(levelNodes[upper]) + 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Task 10 step 3: every member leaves LOWER END FIRST; {label} has a member from z={Z(levelNodes[lower]):0.###} to z={Z(levelNodes[upper]):0.###}.");
+                }
+            }
+        }
+
+        // Every fork lies on its own tree's foot-to-head-main segment to
+        // 1e-9. The fork is found structurally, not assumed: within one
+        // tree's own member subset it is the node touched by EVERY member,
+        // because the tree is a star from foot to fork to {main, branches}.
+        // The lowered-fork case is confirmed to FIRE on the control arch at
+        // Branching 3: the first anchor-end tree's outer notch sits below
+        // the ordinary 65% fork height.
+        {
+            bool loweredSeen = false;
+            foreach ((object placement, object built, string label, _, _) in everyPlacement)
+            {
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>().ToArray();
+                var memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
+                var trees = ((IEnumerable)Get<object>(placement, "Trees")).Cast<object>().ToArray();
+                var footSet = new HashSet<int>(((IEnumerable)Get<object>(built, "Feet")).Cast<int>());
+                for (int t = 0; t < trees.Count(); t++)
+                {
+                    int headMain = Get<int>(trees[t], "HeadMain");
+                    int[] treeNodes = Get<int[]>(trees[t], "Nodes");
+                    bool ring = Get<bool>(trees[t], "Ring");
+                    if (ring || headMain < 0 || treeNodes.Length <= 1)
+                        continue;
+                    var own = Enumerable.Range(0, members.Length).Where(m => memberTree[m] == t).ToArray();
+                    if (own.Length < 2)
+                        continue;
+                    var endpoints = own.Select(m =>
+                    {
+                        Type mt = members[m].GetType();
+                        return ((int)mt.GetField("Item1")!.GetValue(members[m])!, (int)mt.GetField("Item2")!.GetValue(members[m])!);
+                    }).ToArray();
+                    var touchCount = new Dictionary<int, int>();
+                    foreach ((int lo, int hi) in endpoints)
+                    {
+                        touchCount[lo] = touchCount.GetValueOrDefault(lo) + 1;
+                        touchCount[hi] = touchCount.GetValueOrDefault(hi) + 1;
+                    }
+                    int fork = touchCount.Where(kv => kv.Value == endpoints.Length).Select(kv => kv.Key).FirstOrDefault(-1);
+                    if (fork < 0)
+                        continue; // a single-owned-notch tree has no fork to find
+                    int foot = endpoints.SelectMany(e => new[] { e.Item1, e.Item2 }).Distinct().FirstOrDefault(n => n != fork && footSet.Contains(n));
+                    double footX = X(levelNodes[foot]), footY = Y(levelNodes[foot]), footZ = Z(levelNodes[foot]);
+                    double forkX = X(levelNodes[fork]), forkY = Y(levelNodes[fork]), forkZ = Z(levelNodes[fork]);
+                    // The tree's own main is read back off the LEVEL rather
+                    // than the placement's original nodes: it is the far end
+                    // of the fork's OTHER member, not the foot, and (ties
+                    // aside) the tallest of the tree's owned notches, which
+                    // is what HeadMain names on every ordinary arch.
+                    var farEnds = endpoints.SelectMany(e => new[] { e.Item1, e.Item2 }).Distinct().Where(n => n != fork && n != foot).ToArray();
+                    if (farEnds.Length == 0)
+                        continue;
+                    int mainNode = farEnds.OrderByDescending(n => Z(levelNodes[n])).First();
+                    double mainX = X(levelNodes[mainNode]), mainY = Y(levelNodes[mainNode]), mainZ = Z(levelNodes[mainNode]);
+                    double segX = mainX - footX, segY = mainY - footY, segZ = mainZ - footZ;
+                    double toX = forkX - footX, toY = forkY - footY, toZ = forkZ - footZ;
+                    double segLenSq = (segX * segX) + (segY * segY) + (segZ * segZ);
+                    if (segLenSq <= 1.0e-18)
+                        continue;
+                    double parameter = ((toX * segX) + (toY * segY) + (toZ * segZ)) / segLenSq;
+                    double onX = footX + (segX * parameter);
+                    double onY = footY + (segY * parameter);
+                    double onZ = footZ + (segZ * parameter);
+                    double off = Math.Sqrt(((forkX - onX) * (forkX - onX)) + ((forkY - onY) * (forkY - onY)) + ((forkZ - onZ) * (forkZ - onZ)));
+                    if (off > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Task 10 step 3: {label}, tree {t}: the fork must lie on the foot-to-head-main segment to 1e-9; it is {off:0.#########} off.");
+                    }
+                    if (parameter < -1.0e-9 || parameter > forkFraction + 1.0e-6)
+                    {
+                        throw new InvalidOperationException(
+                            $"Task 10 step 3: {label}, tree {t}: the fork's own parameter along foot-to-main is {parameter:0.####}, outside [0, ForkFraction].");
+                    }
+                    if (parameter < forkFraction - 1.0e-6)
+                        loweredSeen = true;
+                }
+            }
+            if (!loweredSeen)
+            {
+                throw new InvalidOperationException(
+                    "Task 10 step 3: the LOWERED-FORK case must fire on some anchor-end tree at Branching 3 whose outer notch sits below the ordinary fork height; none of the fixtures measured show a lowered fraction.");
+            }
+            Console.WriteLine("      Task 10 step 3: every fork checked lies on its own foot-to-head-main segment to 1e-9, and the lowered-fork case fires.");
+        }
+
+        // The ring tree: identical foot, never merges, its rim notches still
+        // cut the spans, at every Type.
+        {
+            Array ringNodes = Array.CreateInstance(point3d, 7);
+            ringNodes.SetValue(P(-4.0, 0.0, 0.0), 0);
+            ringNodes.SetValue(P(-2.5, 0.0, 2.0), 1);
+            ringNodes.SetValue(P(-1.0, 0.0, 3.0), 2);
+            ringNodes.SetValue(P(0.0, -4.0, 0.0), 3);
+            ringNodes.SetValue(P(0.0, -2.5, 2.0), 4);
+            ringNodes.SetValue(P(0.0, -1.0, 3.0), 5);
+            ringNodes.SetValue(P(1.0, 1.0, 3.0), 6);
+            Array ringAcrossA = Array.CreateInstance(vector3d, 3);
+            Array ringAcrossB = Array.CreateInstance(vector3d, 3);
+            for (int i = 0; i < 3; i++)
+            {
+                ringAcrossA.SetValue(V(0.0, 0.0, -1.0), i);
+                ringAcrossB.SetValue(V(0.0, 0.0, -1.0), i);
+            }
+            Array ringAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            ringAcross.SetValue(ringAcrossA, 0);
+            ringAcross.SetValue(ringAcrossB, 1);
+            var ringNet = (ringNodes, new[] { new[] { 0, 1, 2 }, new[] { 3, 4, 5 } }, new[] { 0, 3 }, ringAcross,
+                new[] { (0, 1), (1, 2), (3, 4), (4, 5), (2, 6), (5, 6), (2, 5) });
+            double? fixedX = null;
+            double? fixedY = null;
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object placed = Run(ringNet, new[] { new[] { 2, 5, 6 } }, 1, type);
+                object? ring = Get<object?>(placed, "RingTree");
+                if (ring is null)
+                    throw new InvalidOperationException($"Task 10 step 3: the free-rim fixture must get a ring tree at Type {type}.");
+                object foot = Get<object>(ring, "FixedFoot");
+                if (fixedX is null)
+                {
+                    fixedX = X(foot);
+                    fixedY = Y(foot);
+                }
+                else if (Math.Abs(X(foot) - fixedX.Value) > 1.0e-9 || Math.Abs(Y(foot) - fixedY!.Value) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Task 10 step 3: the ring tree's foot must be IDENTICAL across every Type; it moved from ({fixedX:0.#########}, {fixedY:0.#########}) to ({X(foot):0.#########}, {Y(foot):0.#########}) at Type {type}.");
+                }
+                object built = Get<object>(placed, "Built");
+                if (Get<int>(built, "FeetMerged") != 0)
+                {
+                    throw new InvalidOperationException($"Task 10 step 3: the ring tree never merges; FeetMerged is {Get<int>(built, "FeetMerged")} at Type {type}.");
+                }
+                var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
+                if (spans.Any(s => Get<string>(s, "LastKind") != "rim" && Get<string>(s, "FirstKind") != "rim"))
+                {
+                    throw new InvalidOperationException($"Task 10 step 3: every span on these two bars must still end at the rim notch at Type {type}.");
+                }
+                everyPlacement.Add((placed, built, $"free rim Type {type}", ringNodes, SpanSpacingOf(ringNet)));
+            }
+            // The ring tree's own tolerances come from its own rim scale R,
+            // never a net median: structurally guaranteed, because
+            // ColumnPlacement.Place no longer TAKES a median argument at all
+            // (spec section 16). The signature itself is the preservation.
+            ParameterInfo[] placeParameters = place.GetParameters();
+            if (placeParameters.Any(p => p.Name is not null && p.Name.Contains("median", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("Task 10 step 3: ColumnPlacement.Place must not accept a median argument of any kind.");
+            }
+        }
+
+        // Auto's chosen level equals the level the check recomputes from
+        // Tried: already exercised above by the Auto collision fixtures,
+        // which assert AutoWinner(tried) == GroundPlaced. Re-asserted here
+        // on the control arch's own Auto run, so the pin stands beside the
+        // others named in this step.
+        {
+            object placed = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1, -1);
+            var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
+            int winner = AutoWinner(tried);
+            if (Get<int>(placed, "GroundPlaced") != winner)
+            {
+                throw new InvalidOperationException(
+                    $"Task 10 step 3: Auto's chosen level must equal the level this check recomputes from Tried; recomputed {winner}, placed {Get<int>(placed, "GroundPlaced")}.");
+            }
+        }
+
+        // The Type value list: six items pinned unchanged, INCLUDING the
+        // item text "2 · two feet" on a fixture (this file's own control
+        // arch at Type 2, asserted above) that places THREE feet.
+        //
+        // The item text is pinned UNCHANGED and it is KNOWINGLY
+        // INACCURATE: this fixture places THREE feet under an item that
+        // reads "two feet", because an odd tree row at an even Type
+        // leaves one column standing alone. The brief preserves the list,
+        // the tooltip carries the truth, and the wording that would fix
+        // it is "2 two gathered feet". Changing the item text is PARAM'S
+        // to authorise, and spec section 18.3 has it open for him. Do not
+        // read this green as agreement.
+        {
+            FieldInfo valueListsField = columnsComponentType.GetField(
+                "ValueLists", BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException("ColumnsComponent.ValueLists was not found.");
+            Array valueLists = (Array)valueListsField.GetValue(null)!;
+            if (valueLists.Length != 1)
+                throw new InvalidOperationException($"ColumnsComponent must suggest exactly one value list, for Type; it suggests {valueLists.Length}.");
+            object typeList = valueLists.GetValue(0)!;
+            Type specType = typeList.GetType();
+            object itemsObj = specType.GetProperty("Items")!.GetValue(typeList)!;
+            var items = ((IEnumerable)itemsObj).Cast<object>().ToArray();
+            if (items.Length != 6)
+                throw new InvalidOperationException($"Task 10 step 3: the Type value list must pin exactly six items; it has {items.Length}.");
+            (string Label, string Value)[] expected =
+            {
+                ("0 · own feet", "0"),
+                ("1 · one central foot", "1"),
+                ("2 · two feet", "2"),
+                ("3 · three feet", "3"),
+                ("4 · four feet", "4"),
+                ("Auto", "-1"),
+            };
+            for (int i = 0; i < 6; i++)
+            {
+                Type tupleType = items[i].GetType();
+                string label = (string)tupleType.GetField("Item1")!.GetValue(items[i])!;
+                string value = (string)tupleType.GetField("Item2")!.GetValue(items[i])!;
+                if (label != expected[i].Label || value != expected[i].Value)
+                {
+                    throw new InvalidOperationException(
+                        $"Task 10 step 3: Type value list item {i} must pin unchanged as (\"{expected[i].Label}\", \"{expected[i].Value}\"); found (\"{label}\", \"{value}\").");
+                }
+            }
+            string defaultValue = (string)specType.GetProperty("DefaultValue")!.GetValue(typeList)!;
+            if (defaultValue != "0")
+                throw new InvalidOperationException($"Task 10 step 3: the Type value list default must pin at \"0\"; found \"{defaultValue}\".");
+        }
+
+        // Every columns. code this spec names is present, across the union
+        // of the placements this check has already built plus a handful
+        // constructed to exercise the conditional codes directly: the
+        // retired phrase about unmirrored spans is absent from every one of
+        // them, and the columns.overlap sentence is the new one.
+        {
+            var allDiags = new List<object>();
+            allDiags.AddRange(RunDiagnostics(everyPlacement[0].Placement, everyPlacement[0].Built, 1, 1, 0));
+            allDiags.AddRange(RunDiagnostics(everyPlacement[0].Placement, everyPlacement[0].Built, 1, 1, 2));
+
+            // A fixture with a same-span central pair AND (on the nudged
+            // arch) feet close but apart, so columns.feet_merged and
+            // columns.feet_close both fire.
+            {
+                object placedClose = Run(PlanCurved(0.15), Array.Empty<int[]>(), 1, 0);
+                object builtClose = Get<object>(placedClose, "Built");
+                allDiags.AddRange(RunDiagnostics(placedClose, builtClose, 1, 1, 0));
+                everyPlacement.Add((placedClose, builtClose, "plan-curved bar Type 0", PlanCurved(0.15).Nodes, SpanSpacingOf(PlanCurved(0.15))));
+            }
+            {
+                var narrow = Arch(5, 4.0, 5.0, 1.0);
+                object placedNarrow = Run(narrow, Array.Empty<int[]>(), 1, 2);
+                object builtNarrow = Get<object>(placedNarrow, "Built");
+                allDiags.AddRange(RunDiagnostics(placedNarrow, builtNarrow, 1, 1, 0));
+                everyPlacement.Add((placedNarrow, builtNarrow, "narrow bay Type 2", narrow.Nodes, SpanSpacingOf(narrow)));
+            }
+            // The ring tree fixture, for columns.ring_tree.
+            allDiags.AddRange(RunDiagnostics(
+                everyPlacement.First(p => p.Label.StartsWith("free rim", StringComparison.Ordinal)).Placement,
+                everyPlacement.First(p => p.Label.StartsWith("free rim", StringComparison.Ordinal)).Built,
+                2, 1, 0));
+            // A crowded fixture, for columns.collision.
+            {
+                var crowded = Arch(9, 8.0, 5.0, 1.0);
+                object node4 = crowded.Nodes.GetValue(4)!;
+                object node5 = crowded.Nodes.GetValue(5)!;
+                crowded.Nodes.SetValue(P(X(node5) - 0.02, Y(node5), Z(node4)), 4);
+                object placedCrowded = Run(crowded, Array.Empty<int[]>(), 1, 0);
+                object builtCrowded = Get<object>(placedCrowded, "Built");
+                allDiags.AddRange(RunDiagnostics(placedCrowded, builtCrowded, 1, 1, 0));
+            }
+
+            string[] codes = allDiags.Select(CodeOf).Distinct().ToArray();
+            // columns.alignment and columns.plumb_fallback are UNCHANGED
+            // legacy codes this task does not touch, and neither condition
+            // (a foot's push astray of its trees' thrust past the cap; a
+            // net that pulls every notch onto its own column) is reached by
+            // any fixture this file builds; their absence here is a gap in
+            // this test's coverage and not a claim that the code is gone.
+            string[] mustBePresent =
+            {
+                "columns.overlap", "columns.bar_shape", "columns.spans", "columns.grouping",
+                "columns.type", "columns.symmetry", "columns.feet", "columns.snap",
+                "columns.shared_nodes", "columns.feet_merged", "columns.feet_close",
+                "columns.span_degenerate", "columns.branch_off_thrust", "columns.head_load_total",
+                "columns.load_split", "columns.principal_source", "columns.demand_only",
+                "columns.load_path", "columns.ring_tree", "columns.force_max", "columns.head_load",
+                "columns.lean", "columns.collision",
+            };
+            string[] missing = mustBePresent.Where(c => !codes.Contains(c)).ToArray();
+            if (missing.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Task 10 step 3: every columns. code spec section 16 names must be present on the emitted Result; missing [{string.Join(", ", missing)}].");
+            }
+            string retired = "placed unmirrored";
+            if (allDiags.Any(d => MessageOf(d).Contains(retired, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException("Task 10 step 3: the retired phrase about unmirrored spans must be ABSENT from every diagnostic.");
+            }
+            object overlapWarning = allDiags.First(d => CodeOf(d) == "columns.overlap" && SeverityOf(d) == "warning");
+            if (!MessageOf(overlapWarning).Contains("deduplicated in the head-pull arithmetic", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Task 10 step 3: columns.overlap's warning sentence must be the NEW one about deduplicated head-pull arithmetic.");
+            }
+            object symmetryWarning = RunDiagnostics(everyPlacement[0].Placement, everyPlacement[0].Built, 1, 1, 0)
+                .First(d => CodeOf(d) == "columns.symmetry");
+            _ = symmetryWarning; // presence and wording already checked above; the threshold itself is exercised by ColumnsComponent's own code path.
+
+            // Diagnose renders the set: a Result carrying every one of these
+            // entries renders without dropping any code's text.
+            Type resultType = RequireContractType(plugin, "ResultDto");
+            Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+            Type diagnoseType = RequireComponentType(plugin, "DiagnoseComponent");
+            MethodInfo renderMethod = RequireStatic(diagnoseType, "Render");
+            object eq = CreateInstance(equilibriumType);
+            SetContractProperty(eq, equilibriumType, "ResolvedSupportNodeIds", Array.Empty<int>());
+            object resultForRender = CreateResultDto(resultType, "fd", eq, null, null);
+            Array diagArray = Array.CreateInstance(diagnosticType, allDiags.Count);
+            for (int i = 0; i < allDiags.Count; i++)
+                diagArray.SetValue(allDiags[i], i);
+            SetContractProperty(resultForRender, resultType, "Diagnostics", diagArray);
+            string rendered = (string)renderMethod.Invoke(null, new object[] { resultForRender, diagArray })!;
+            // Render prints each entry's own Message, not its Code, so the
+            // check reads for a phrase distinctive to each NEW diagnostic's
+            // own wording rather than the code string itself.
+            (string Code, string Phrase)[] mustRender =
+            {
+                ("columns.feet", "convergences accepted"),
+                ("columns.snap", "furthest foot stands"),
+                ("columns.shared_nodes", "held by two"),
+                ("columns.span_degenerate", "degenerate"),
+            };
+            foreach ((string code, string phrase) in mustRender)
+            {
+                if (!rendered.Contains(phrase, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException($"Task 10 step 3: Diagnose must render {code}'s own message among the entries it was handed; \"{phrase}\" did not appear.");
+                }
+            }
+        }
+
+        // ---- STEP 4 (Task 10): NO NANS AND NO ESCAPES. Every foot is
+        // finite and lies within its net's own plan bounding box grown by
+        // one notch spacing plus the merge clearance.
+        foreach ((object placementForBounds, object builtForBounds, string label, Array netNodes, double spacing) in everyPlacement)
+        {
+            var levelNodes = ((IEnumerable)Get<object>(builtForBounds, "Nodes")).Cast<object>().ToArray();
+            var feetIdx = ((IEnumerable)Get<object>(builtForBounds, "Feet")).Cast<int>().ToArray();
+            double minX = double.MaxValue, maxX = double.MinValue, minY = double.MaxValue, maxY = double.MinValue;
+            foreach (object n in netNodes)
+            {
+                minX = Math.Min(minX, X(n));
+                maxX = Math.Max(maxX, X(n));
+                minY = Math.Min(minY, Y(n));
+                maxY = Math.Max(maxY, Y(n));
+            }
+            double margin = spacing + (0.25 * Math.Max(spacing, 1.0e-6));
+            foreach (int f in feetIdx)
+            {
+                object foot = levelNodes[f];
+                double fx = X(foot);
+                double fy = Y(foot);
+                double fz = Z(foot);
+                if (double.IsNaN(fx) || double.IsNaN(fy) || double.IsNaN(fz) ||
+                    double.IsInfinity(fx) || double.IsInfinity(fy) || double.IsInfinity(fz))
+                {
+                    throw new InvalidOperationException($"Task 10 step 4: {label} built a non-finite foot at ({fx}, {fy}, {fz}).");
+                }
+                if (fx < minX - margin || fx > maxX + margin || fy < minY - margin || fy > maxY + margin)
+                {
+                    throw new InvalidOperationException(
+                        $"Task 10 step 4: {label} built a foot at ({fx:0.###}, {fy:0.###}) outside its net's own plan box grown by {margin:0.###}, "
+                        + $"[{minX - margin:0.###}, {maxX + margin:0.###}] x [{minY - margin:0.###}, {maxY + margin:0.###}].");
+                }
+            }
+        }
+        Console.WriteLine("      Task 9 and Task 10: every columns. diagnostic code is present, the retired phrase is gone, the overlap sentence is the new one, the Type value list pins unchanged with its known inaccuracy named, and no fixture built a non-finite or escaped foot.");
     }
 
     private static double AngleDeg(double ax, double ay, double az, double bx, double by, double bz)

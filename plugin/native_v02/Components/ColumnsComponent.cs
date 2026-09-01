@@ -156,10 +156,13 @@ namespace Ananke.COMPAS.Native.Components
             parameters.AddIntegerParameter(
                 "Branching",
                 "B",
-                "Notches per tree: 1 stands a column under every notch, 2 and "
-                    + "3 group neighbouring notches into trees of that size, "
-                    + "mirrored about the middle of each span with the "
-                    + "remainder at the anchors. Every notch is held.",
+                "Notches per tree, by the ladder of spec section 6: trees of "
+                    + "Branching neighbouring notches, mirrored about the "
+                    + "middle of each span. Fewest strays wins with no "
+                    + "exceptions: one stray defers to the centre notch, two "
+                    + "stand at the ends with nothing at the centre, and "
+                    + "three stand at the ends and the centre. Every notch is "
+                    + "held.",
                 GH_ParamAccess.item,
                 1);
             parameters.AddIntegerParameter(
@@ -167,19 +170,21 @@ namespace Ananke.COMPAS.Native.Components
                 "T",
                 "How the trees meet the ground. 0 stands each tree on its own "
                     + "foot on the line of the force it carries; 1 to 4 gather "
-                    + "each span's trees onto that many mirrored feet in bands "
-                    + "about the span's midpoint, and a trunk that would lean "
-                    + "past 60 degrees to its shared foot steps back onto its "
-                    + "own foot instead of the level being refused; -1 is "
-                    + "Auto, which builds every level and places the shortest "
-                    + "load path among those whose members do not collide. "
-                    + "The feet are mirrored about each span's midpoint and "
-                    + "shared across every span that holds the same NUMBER of "
-                    + "notches and whose chord is within a tenth of its length, "
-                    + "so the principal lines agree with one another. A span "
-                    + "whose free notches are not symmetric about its midpoint, "
-                    + "which is what a crossing or a free bar end leaves behind, "
-                    + "is placed unmirrored.",
+                    + "each span's trees onto that many MIRRORED feet, a foot "
+                    + "standing where its group's own central notches "
+                    + "converge, and a tree standing alone in the middle of "
+                    + "an odd row at an even Type keeps its own STRAIGHT "
+                    + "column, so the foot count can be one more than the "
+                    + "Type, or on a span of fewer trees, fewer. A trunk that "
+                    + "would lean past 60 degrees to its shared foot steps "
+                    + "back onto its own foot instead of the level being "
+                    + "refused; -1 is Auto, which builds every level and "
+                    + "places the shortest load path among those whose "
+                    + "members do not collide. The feet are mirrored about "
+                    + "each span's midpoint and shared across every span "
+                    + "that holds the same NUMBER of notches and whose chord "
+                    + "is within a tenth of its length, so the principal "
+                    + "lines agree with one another.",
                 GH_ParamAccess.item,
                 0);
             parameters[1].Optional = true;
@@ -440,10 +445,9 @@ namespace Ananke.COMPAS.Native.Components
                 // slider's answer belongs on the component.
                 Message = (type < 0 ? "Auto: " : string.Empty)
                     + $"Type {placement.GroundPlaced}, {Count(built.Feet.Count, "foot", "feet")}"
+                    + (built.CentralColumns > 0 ? $", {built.CentralColumns} central" : string.Empty)
                     + (built.Peeled > 0 ? $", {built.Peeled} peeled" : string.Empty)
-                    + (placement.UnpairedTrees > 0
-                        ? $", unpaired {placement.UnpairedTrees}"
-                        : string.Empty);
+                    + (placement.UnpairedTrees > 0 ? $", {placement.UnpairedTrees} unpaired" : string.Empty);
 
                 Point3d[] netNodes = nodes.ToArray();
                 double weld = 1.0e-6 * Math.Max(
@@ -523,7 +527,10 @@ namespace Ananke.COMPAS.Native.Components
                             + "notches already held and builds nothing of its own, "
                             + "so the columns are right, but its spans are counted "
                             + "and its bar is reported: check the curves drawn into "
-                            + "Pattern.",
+                            + "Pattern. Both traces hold the notch; the owner rule "
+                            + "decides which one builds; and the doubly traced run "
+                            + "is deduplicated in the head-pull arithmetic, so its "
+                            + "along-bar contribution is not subtracted twice.",
                         overlapping, unit: "notches")
                     : ResultDiagnostics.Entry(S, "columns.overlap", "ok",
                         "each principal line is distinct", 0.0, unit: "notches"),
@@ -551,17 +558,28 @@ namespace Ananke.COMPAS.Native.Components
                     context: ResultDiagnostics.Context(("bar", b.ToString(CultureInfo.InvariantCulture)))));
             }
 
-            int singles = placement.Trees.Count(t => t.Nodes.Length == 1);
+            // A STRAY is the ladder's own word (spec section 6): a group of
+            // one notch at Branching above 1, standing at the centre, at the
+            // ends, or at both, by fewest strays. At Branching 1 a group of
+            // one is the whole tree the slider asked for and is never a
+            // stray.
+            int strays = branching > 1
+                ? placement.Trees.Count(t => !t.Ring && t.Nodes.Length == 1)
+                : 0;
             int smaller = placement.Trees.Count(t => !t.Ring && t.Nodes.Length > 1 && t.Nodes.Length < branching);
             d.Add(ResultDiagnostics.Entry(S, "columns.grouping", "info",
                 $"Branching {branching}: {placement.Trees.Count} trees hold "
-                    + $"{placement.Trees.Sum(t => t.Nodes.Length)} notches, "
-                    + $"{singles} single columns, {smaller} remainder trees "
-                    + "smaller than Branching at the anchors; every notch is held.",
+                    + $"{placement.Trees.Sum(t => t.Nodes.Length)} notches; the "
+                    + $"ladder of spec section 6 leaves {Count(strays, "stray", "strays")} of "
+                    + "a single notch each, at the centre, at the ends, or at "
+                    + "both, by fewest strays, and "
+                    + $"{Count(smaller, "remainder tree", "remainder trees")} smaller than "
+                    + "Branching where the ladder's own count runs out; every "
+                    + "notch is held.",
                 placement.Trees.Count, unit: "trees",
                 context: ResultDiagnostics.Context(
                     ("branching", branching.ToString(CultureInfo.InvariantCulture)),
-                    ("singles", singles.ToString(CultureInfo.InvariantCulture)),
+                    ("strays", strays.ToString(CultureInfo.InvariantCulture)),
                     ("remainder", smaller.ToString(CultureInfo.InvariantCulture)))));
 
             if (placement.RingTree is ColumnPlacement.Tree ring && ring.FixedFoot is Point3d rf)
@@ -601,6 +619,11 @@ namespace Ananke.COMPAS.Native.Components
             // own, which is what the refusal used to prevent.
             d.Add(ResultDiagnostics.Entry(S, "columns.type", "info",
                 $"Type asked {asked}, placed {placement.GroundPlaced}: {gathered}"
+                    + (built.CentralColumns > 0
+                        ? $"; {Count(built.CentralColumns, "central column", "central columns")} "
+                            + "standing alone and plumb, an odd tree row's own middle "
+                            + "tree at an even Type"
+                        : string.Empty)
                     + (built.Peeled > 0 && !nothingGathered
                         ? $"; {built.Peeled} trunk(s) stand on their own feet because "
                             + $"a trunk to the shared foot would lean past {cap:0} degrees"
@@ -610,6 +633,8 @@ namespace Ananke.COMPAS.Native.Components
                 context: ResultDiagnostics.Context(
                     ("asked", groundAsked.ToString(CultureInfo.InvariantCulture)),
                     ("placed", placement.GroundPlaced.ToString(CultureInfo.InvariantCulture)),
+                    ("groups", placement.Trees.Count(t => !t.Ring).ToString(CultureInfo.InvariantCulture)),
+                    ("central", built.CentralColumns.ToString(CultureInfo.InvariantCulture)),
                     ("peeled", built.Peeled.ToString(CultureInfo.InvariantCulture)),
                     ("feet", built.Feet.Count.ToString(CultureInfo.InvariantCulture)))));
 
@@ -620,29 +645,91 @@ namespace Ananke.COMPAS.Native.Components
             // at all. The engine counts them as it walks the spans, so this
             // reads that count rather than deriving it a second way.
             int spansWithTrees = placement.SpansWithTrees;
-            d.Add(ResultDiagnostics.Entry(S, "columns.symmetry", "info",
-                $"{Count(spansWithTrees, "span", "spans")} with trees in "
-                    + $"{Count(placement.Families, "family", "families")}; "
-                    + "feet mirrored about each span's midpoint, the along-chord "
-                    + "and vertical pulls shared across each family and each line "
-                    + "keeping its own across-chord pull; the largest aim moved "
-                    + $"{placement.AsymmetryRemoved:0.##} degrees; "
-                    + $"{placement.CentreTrees} centre tree(s) standing in the "
-                    + "mirror plane"
+            int pairedTrees = placement.Partner.Count(p => p >= 0);
+            bool residualWarns = placement.CommonModeResidual > 1.0e-9;
+            d.Add(ResultDiagnostics.Entry(S, "columns.symmetry",
+                residualWarns ? "warning" : "info",
+                $"{Count(pairedTrees, "tree", "trees")} paired across "
+                    + $"{Count(spansWithTrees, "span", "spans")} with trees in "
+                    + $"{Count(placement.Families, "family", "families")}, "
+                    + $"{Count(placement.CentreTrees, "self-paired tree", "self-paired trees")} "
+                    + "standing in the mirror plane"
                     + (placement.UnpairedTrees > 0
-                        ? $"; {Count(placement.UnpairedTrees, "tree", "trees")} unpaired: "
+                        ? $", {Count(placement.UnpairedTrees, "unpaired tree", "unpaired trees")}: "
                             + "no mirror partner within a quarter of the span's own spacing"
                         : string.Empty)
-                    + $"; the largest surviving common mode is "
-                    + $"{placement.CommonModeResidual:0.####} of its span's own mean pull.",
-                placement.AsymmetryRemoved, unit: "degrees",
+                    + $", {Count(placement.ClosedSpans, "closed span", "closed spans")} every "
+                    + "tree of which is paired or self-paired; the largest aim "
+                    + $"moved {placement.AsymmetryRemoved:0.##} degrees. The COMMON MODE "
+                    + $"RESIDUAL, {placement.CommonModeResidual:0.####} of its span's own "
+                    + "mean pull, is the number that reads ZERO when the mirror rule "
+                    + "worked and rises when it did not; it is what to read beside the "
+                    + "angle moved, not the angle in its place.",
+                placement.CommonModeResidual, 1.0e-9, "of mean pull",
                 context: ResultDiagnostics.Context(
+                    ("paired", pairedTrees.ToString(CultureInfo.InvariantCulture)),
                     ("spans", spansWithTrees.ToString(CultureInfo.InvariantCulture)),
                     ("families", placement.Families.ToString(CultureInfo.InvariantCulture)),
                     ("moved", Inv(placement.AsymmetryRemoved, "0.##")),
-                    ("centres", placement.CentreTrees.ToString(CultureInfo.InvariantCulture)),
+                    ("selfPaired", placement.CentreTrees.ToString(CultureInfo.InvariantCulture)),
                     ("unpaired", placement.UnpairedTrees.ToString(CultureInfo.InvariantCulture)),
+                    ("closedSpans", placement.ClosedSpans.ToString(CultureInfo.InvariantCulture)),
                     ("residual", Inv(placement.CommonModeResidual, "0.####")))));
+
+            int ownedTrees = placement.Trees.Count(t => !t.Ring && t.HeadMain >= 0);
+            int distinctFeet = built.Feet.Count;
+            int folded = Math.Max(0, ownedTrees - distinctFeet);
+            int welds = Math.Max(0, folded - built.FeetMerged);
+            int convergencesAccepted = Math.Max(0, built.FeetMerged - built.ConvergenceFallback);
+            d.Add(ResultDiagnostics.Entry(S, "columns.feet", "info",
+                $"{Count(built.FeetMerged, "merge group", "merge groups")} of both "
+                    + "kinds, the same-span central pair and the cross-line "
+                    + $"component, stood on their own converged foot: "
+                    + $"{Count(convergencesAccepted, "convergence", "convergences")} "
+                    + $"accepted and {Count(built.ConvergenceFallback, "convergence", "convergences")} "
+                    + "falling back to the plan mean where the candidates' "
+                    + $"tangents gave no usable intersection; {Count(welds, "further foot", "further feet")} "
+                    + "coincide by WELD, positional identity rather than a "
+                    + $"decision; {Count(distinctFeet, "distinct foot", "distinct feet")} built in all.",
+                distinctFeet, unit: "feet",
+                context: ResultDiagnostics.Context(
+                    ("groups", built.FeetMerged.ToString(CultureInfo.InvariantCulture)),
+                    ("accepted", convergencesAccepted.ToString(CultureInfo.InvariantCulture)),
+                    ("fallback", built.ConvergenceFallback.ToString(CultureInfo.InvariantCulture)),
+                    ("welds", welds.ToString(CultureInfo.InvariantCulture)),
+                    ("feet", distinctFeet.ToString(CultureInfo.InvariantCulture)))));
+
+            double meanSpacing = placement.Frames.Count > 0 ? placement.Frames.Average(f => f.G) : 0.0;
+            double snapLength = built.SnapWorst * meanSpacing;
+            bool snapWarns = built.SnapWorst > 0.5;
+            d.Add(ResultDiagnostics.Entry(S, "columns.snap",
+                snapWarns ? "warning" : "info",
+                $"the furthest foot stands {built.SnapWorst:0.###} of its own "
+                    + "span's spacing from the notch it snapped to, about "
+                    + $"{snapLength:0.###} model units on this level's own mean "
+                    + "spacing, so a coarse bar is visible as a coarse bar.",
+                built.SnapWorst, 0.5, "of span spacing",
+                context: ResultDiagnostics.Context(("length", Inv(snapLength, "0.###")))));
+
+            d.Add(ResultDiagnostics.Entry(S, "columns.shared_nodes", "info",
+                $"{Count(placement.SharedNotches, "notch", "notches")} held by two "
+                    + "principal lines at once; both spans hold them for layout "
+                    + "and symmetry, the owner rule of spec section 10 decides "
+                    + "which span's tree builds the head, and the load there is "
+                    + "the node's own whole pull, counted once and in full.",
+                placement.SharedNotches, unit: "notches"));
+
+            d.Add(ResultDiagnostics.Entry(S, "columns.span_degenerate",
+                placement.SpanDegenerate > 0 ? "warning" : "ok",
+                placement.SpanDegenerate > 0
+                    ? $"{Count(placement.SpanDegenerate, "span", "spans")} of the two "
+                        + "degenerate kinds of spec section 15, a chord of no "
+                        + "length or a notch row that falls at one chord "
+                        + "parameter, read one foot at the plan mean of their "
+                        + "free notches whatever the Type."
+                    : "no span is degenerate: every chord has length and its "
+                        + "notch row spans more than one chord parameter.",
+                placement.SpanDegenerate, unit: "spans"));
 
             var scored = placement.Tried
                 .OrderByDescending(t => t.Ground)
@@ -661,19 +748,24 @@ namespace Ananke.COMPAS.Native.Components
             if (built.FeetMerged > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.feet_merged", "info",
-                    $"{Count(built.FeetMerged, "MIRRORED PAIR", "MIRRORED PAIRS")} of "
-                        + "feet lay within the clearance of each other and stand on "
-                        + "one foot at the mean of the two, in their span's mirror "
-                        + "plane. Only a mirrored pair merges; any other two feet "
-                        + "stay two, however close.",
-                    built.FeetMerged, unit: "feet"));
+                    $"{Count(built.FeetMerged, "GROUP", "GROUPS")} of feet merged onto "
+                        + "one foot within the clearance, in each span's own terms: "
+                        + "the SAME-SPAN CENTRAL PAIR of an even tree row, mean of its "
+                        + "own two feet in the mirror plane, and the CROSS-LINE "
+                        + "component, adjacent by net edge or by a shared notch, its "
+                        + "foot the convergence of every candidate the group holds.",
+                    built.FeetMerged, unit: "groups"));
             }
             if (built.FeetClose > 0)
             {
                 d.Add(ResultDiagnostics.Entry(S, "columns.feet_close", "warning",
                     $"{Count(built.FeetClose, "pair", "pairs")} of feet closer than "
-                        + "the clearance stand separately; raise Type to gather them, "
-                        + "or space the principal lines.",
+                        + "the FEET-CLOSE CLEARANCE stand separately, a merge refused "
+                        + "either by the MIRROR RULE or by the LEAN CAP; raise Type to "
+                        + "gather them, or space the principal lines. This clearance "
+                        + "HAS CHANGED SCALE, from the net's own median edge to each "
+                        + "span's own spacing, so a saved definition's warning here "
+                        + "before this wave is not the same number after it.",
                     built.FeetClose, unit: "pairs"));
             }
             if (built.WorstAlignment > ColumnPlacement.AlignmentDegrees)
