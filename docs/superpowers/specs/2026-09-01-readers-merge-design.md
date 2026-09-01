@@ -1,8 +1,16 @@
 # Readers merge: Deconstruct and Frame become one reader, and Diagnose reads the document
 
-Date: 2026-09-01. Status: design, awaiting Param's spec review.
+Date: 2026-09-01. Status: design, AMENDED the same day to Param's rulings on the name and on the port
+count. What he has now settled is gathered in section 12A; what is still his to answer is section 12B.
 
-Design input: docs/superpowers/specs/2026-09-01-readers-round-design-input.md, whose rulings govern.
+Design input: docs/superpowers/specs/2026-09-01-readers-round-design-input.md, whose rulings govern, as
+amended by his rulings of 2026-09-01 recorded in section 0 and section 12A. THREE FURTHER RULINGS WERE
+TAKEN BY THE CONTROLLER OF THIS ROUND RATHER THAN BY PARAM, and each is marked as the controller's where
+it lands: Backend Health's Report is left alone (rule 8.6(d)), Export's written-file paths stay wireable
+data (rule 8.6(b)), and the Remark question is a prerequisite check with a mechanical fallback rather than
+an assumption (rules 6.6(f), 8.5 and 10.3(k)). All three narrow a sentence Param wrote in general terms,
+so all three are his to overturn.
+
 Predecessor: docs/superpowers/specs/2026-08-31-readers-design.md, the shipped design that produced the
 current split, whose surface rules this spec inherits: RES at input 0; trees aligned so branch {i} of
 one output pairs with branch {i} of its partner; the load-protection warning that compares archived
@@ -12,32 +20,37 @@ Every statement below about how the code behaves today names the file and the li
 Where a claim could not be checked against the code it is marked as unchecked in the sentence that
 makes it.
 
-## 0. The open question that must be answered before this is built
+## 0. The decision this spec rested on, now taken
 
-The merged reader carries FIFTEEN outputs. That is Monitor-sized, and being tall is part of what Param
-disliked about Monitor, which is why the previous round split it into Forces, Fit and Supports.
+0.1 THE MERGE STANDS AND THE COUNT IS ACCEPTED. Param ruled on 2026-09-01 that the merged reader is
+called DECONSTRUCT and that it carries FIFTEEN ports with no Result passing through it. Both rulings
+presuppose the merge, since a name and a port count are properties of a component that exists, and the
+second settles the count directly: he was offered a sixteenth port and declined it, which is rule 1.9A
+and its consequence in section 4. An earlier draft of this section put the merge to him as the open
+question the whole spec rested on. That was right at the time and is now closed.
 
-HE HAS NOT APPROVED THE MERGE, and an earlier draft of this section said he had. What the record holds
-is a musing: "last thing, part of me thinks these two components can conjoin" (design input :6-13). That
-is a proposal and not a ruling. The design input then reserves the decision to him in terms, at :108-114:
-"THAT COUNT NEEDS HIS EYE before it is built. Fifteen ports is a tall component on a canvas, and being
-tall is part of what he disliked about Monitor. The principle in section 1 says merge, and the port count
-says a merged component is large; those pull opposite ways and only he can say which matters more in the
-way he actually works." I searched the design input and the predecessor spec for approval language and
-found none beyond "part of me thinks". The whole shape of this spec rests on an answer he has not given,
-so it is put to him as question 12(a) and none of section 1 should be built before he answers it.
+0.2 THE FALLBACK IS WITHDRAWN. The design input named one at :110-114, keeping two components and
+applying the four deletions and the Anchor Lines fix to them, and this spec carried it while the question
+was open. It is recorded as history rather than as a live option. Sections 2 to 5 stand either way, as
+they always did; sections 1, 9 and part of 10 now stand because he ruled, not on sufferance.
 
-The arithmetic is not in doubt: ten registered on Deconstruct at
+0.3 WHAT HE ACCEPTED WITH THE COUNT, said once so nobody reopens it later. Fifteen is Monitor-sized, and
+being tall is part of what he disliked about Monitor, which is why the previous round split Monitor into
+Forces, Fit and Supports. He had the count and the comparison in front of him and took the merge anyway.
+The height of the component on his canvas is therefore a settled cost, not an outstanding risk. If it
+proves wrong in use that is a new round with its own evidence, not a question this spec leaves open.
+
+0.4 THE ARITHMETIC, which is the evidence for fifteen and is unchanged: ten registered on Deconstruct at
 C:\Users\Param\OneDrive - Ananke-eidos\Documents\Ananke Eidos Studio\VS code\COMPAS Workflow\plugin\native_v02\Components\VisualiseComponents.cs:343-427
 and ten on Frame at
 C:\Users\Param\OneDrive - Ananke-eidos\Documents\Ananke Eidos Studio\VS code\COMPAS Workflow\plugin\native_v02\Components\FrameComponents.cs:76-169,
 less Member IDs (VisualiseComponents.cs:363), Node IDs (:369), Reaction Points (:396) and Phase
 (FrameComponents.cs:148) gives sixteen, and deduping Anchor Nodes against Support Points gives fifteen.
 
-If fifteen proves too tall on the canvas the fallback is the one the design input already names at
-docs/superpowers/specs/2026-09-01-readers-round-design-input.md:110-114: keep two components, apply the
-four deletions and the Anchor Lines fix to them, and let one hold the geometry and the other the
-statics. Nothing in sections 2 to 5 below depends on the merge; only sections 1, 9 and part of 10 do.
+0.5 HOW THE FIFTEEN DIVIDE, because the name ruling turns on it. NINE come from Frame and six from the
+old Deconstruct: slots 0 to 8 of table 1.9, Mesh through Columns, are Frame's, and slots 9 to 14 are
+Deconstruct's. The surviving name therefore describes the smaller half. Rule 1.2 says what he accepted
+with that and rules 1.4, 3.6, 9.1 and 10.2 say where it lands in the work.
 
 ## 1. The merge
 
@@ -45,12 +58,21 @@ statics. Nothing in sections 2 to 5 below depends on the merge; only sections 1,
 configures nothing, targets nothing and has no second input, which is the property that made it a
 candidate for merging in the first place (design input section 1).
 
-1.2 NAME. "Deconstruct", nickname "DE", panel 04 Read, icon key result_breakdown, badge DE. The name
-should say what the component does, which is take one Result apart into everything it holds; the
-frame-relative rule of section 3 is a property of the outputs and belongs in their descriptions, not in
-the component's title. The alternative is "Frame", nickname "FR", on the argument that after section 3
-the whole reading is frame-relative; it is recorded here because Param named neither and either is
-defensible. Whichever is chosen, the other's icon entry is deleted (section 10).
+1.2 NAME, RULED. "DECONSTRUCT", nickname "DE", panel 04 Read, icon key result_breakdown, badge DE. Param
+chose it on 2026-09-01 over the two alternatives put to him, "Frame" (nickname FR) and "Read". The case
+for it is that the name says what the component does, which is take one Result apart into everything it
+holds; the frame-relative rule of section 3 is a property of the outputs and belongs in their
+descriptions rather than in the component's title. Frame's icon entry is deleted (rule 10.2(d)).
+
+THE CONSEQUENCE HE ACCEPTED WITH IT, written here rather than left for someone to notice on the canvas.
+NINE OF THE FIFTEEN OUTPUTS COME FROM FRAME and six from the old Deconstruct (rule 0.5), so the surviving
+name describes the SMALLER HALF, and the half an author looks at first, the drawing of the machine, is
+the half whose name is gone. He was shown the split and chose the name anyway. What follows from it is
+practical rather than cosmetic and is written where it lands: rule 1.4 on the GUID and on what reusing
+the name does and does not buy, rule 1.4A on the class name, rule 3.6 on the sentences elsewhere in the
+plugin that name Deconstruct, rule 9.1 on what a saved definition holding the old Frame sees, and rules
+10.2(a), (b), (d) and (g) in the harness, where keeping the name saves two of the four edits an earlier
+draft expected.
 
 1.3 DESCRIPTION. "Take one solved FD or TNA Result apart: the formwork surface and its cables, the
 notched bars, the anchors and the boundary, the columns, and the statics streams. On a Result from
@@ -58,11 +80,18 @@ Animate the FRAME GEOMETRY, Mesh down to Columns, is read at that frame; the STA
 Member Lines down to Reaction Vectors, are read at the solved shape, because there is no frame-time force
 answer to draw them at. A Result from a solver or from Columns is read at the solved shape throughout.
 Forces, Fit and Supports carry the numbers and Skin the cells. Reciprocal-only streams (Form Lines,
-Force Lines) come out empty for FD."
+Force Lines) come out empty for FD. This reader is a LEAF: it hands back no Result, so nothing wires
+downstream of it."
 
 The second sentence is not decoration. An earlier draft said flatly that a Result from Animate "is read
-AT THAT FRAME", which is false of nine of the fifteen slots as this spec builds them; rule 3.0 states the
-split and this description now carries it.
+AT THAT FRAME", which is false of six of the fifteen slots as this spec builds them, the statics streams
+of rule 3.0; rule 3.0 states the split and this description now carries it. An earlier draft of this
+paragraph said nine rather than six, which is the count of the ports that DO follow the frame, and the
+correction is made here.
+
+The last sentence is rule 1.9A's ruling said in the tooltip. An author who wants any of this reading to
+travel to the studio must take it from a component that emits a Result, and the description should say so
+before he tries to wire and finds there is nothing to wire.
 
 1.4 GUID POLICY. A NEW GUID. Both existing classes are deleted and neither of their GUIDs is reused:
 Deconstruct's 68d0b4f2-9a3e-4c17-85d6-f2b8a0c4e961 (VisualiseComponents.cs:326-327) and Frame's
@@ -70,6 +99,32 @@ Deconstruct's 68d0b4f2-9a3e-4c17-85d6-f2b8a0c4e961 (VisualiseComponents.cs:326-3
 precedent set at docs/superpowers/specs/2026-08-31-readers-design.md:68-75, and the reason is the same
 one: wires cannot be redistributed mechanically across a shape this different. Section 9 sets out what
 reusing a GUID would do instead, and why it is worse rather than kinder.
+
+THE NAME IS REUSED AND THE GUID IS NOT, and the two are independent. Grasshopper resolves a saved
+component by the ComponentGuid its archive carries and not by the name it displays, which is the whole
+mechanism section 9 rests on: an object whose GUID no assembly claims loads as an orphan (rule 9.1),
+and an object whose GUID IS claimed has its wires relanded by port index (rule 9.3,
+NativeComponentBase.cs:620-627). So keeping the word Deconstruct costs nothing at load time and buys
+nothing either. It rebinds no wire, it silences no warning, and it does not make the old ten-port
+Deconstruct load into the new fifteen-port one. What it buys is entirely on the human side, and it is
+worth having: the palette entry an author already knows keeps its place, the three sentences elsewhere in
+the plugin that name Deconstruct stay half true (rule 3.6), and the two harness type lookups keep
+resolving (rule 10.2(g)). What it costs is the confusion rule 9.1 names, one orphan whose name has
+vanished from the plugin and one whose name is now taken by a component with a different shape.
+
+1.4A THE CLASS NAME IS DeconstructComponent, and this is the spec's own decision rather than a ruling of
+his, taken because the harness pins class names as strings and leaving it open would make rules 10.2(a),
+(b) and (g) unwritable. The merged component REPLACES the existing DeconstructComponent class under that
+name, with the new GUID of rule 1.4 and the fifteen ports of table 1.9; FrameComponent is deleted
+outright. Three consequences, each checked against the harness today. The VisualiseContracts key
+"Ananke.COMPAS.Native.Components.DeconstructComponent" at tests/native_smoke/Program.cs:76 survives and
+is rewritten in place rather than deleted. The two reflection lookups RequireComponentType(plugin,
+"DeconstructComponent") at Program.cs:2896 and :3145 resolve unchanged, which makes it a REQUIREMENT that
+the ColumnTrees and ForceLines statics they drive are carried onto the merged class under their present
+names. And the icon row at Program.cs:306, already ("result_breakdown", "DE"), needs no edit at all,
+where the FrameComponent row at :312 goes. Which FILE the class lives in is left to the implementer;
+FrameGeometry stays where it is in MouldComponents.cs and is unaffected, because Animate's viewport draws
+from it (rule 3.6).
 
 1.5 THE INPUT. Result, RES, ResultParam, GH_ParamAccess.item, at slot 0, NOT optional. A reader with no
 Result has nothing to read. This is the registration Deconstruct has at VisualiseComponents.cs:332-337
@@ -130,6 +185,20 @@ input requires at :94-98:
 | 12 | Load Points | LP | Point | LIST | Deconstruct 5 |
 | 13 | Load Vectors | LV | Vector | LIST | Deconstruct 6 |
 | 14 | Reaction Vectors | RV | Vector | tree | Deconstruct 8, REBRANCHED (section 3.5) |
+
+1.9A FIFTEEN, AND NO SIXTEENTH. RULED. There is no Result output and no other port beyond the fifteen
+above. Param was offered a sixteenth at output 0 carrying the Result through with diagnostics appended,
+which would have let the stray reaction of section 4 and the retired diagnostics content of section 8
+travel down a wire into Export and on to the studio, and he declined it on 2026-09-01.
+
+THE MERGED DECONSTRUCT IS THEREFORE A LEAF. Nothing can be wired downstream of it. Everything it has to
+say beyond geometry is said on the canvas as a runtime message, and read either off its own balloon or
+out of Diagnose's document scan (section 6). Two consequences follow and are written where they belong:
+rule 4.4, where the stray reaction does not reach the studio and the cost of that is stated out loud, and
+rule 10.3(b), which measures the count and the absence of a Result output together, so that a later edit
+cannot quietly put one back. Note what this does NOT touch: the diagnostics carried INSIDE a Result by
+the components that do emit one are untouched by this round and still travel to Export and the studio
+(rule 8.7(a)). The leaf rule is about this reader, not about the contract.
 
 1.10 THE NICKNAME COLLISION, and the rule that settles it. Frame's Mesh is "M"
 (FrameComponents.cs:76-82) and Deconstruct's Member Lines is "M" (VisualiseComponents.cs:343-356).
@@ -378,6 +447,13 @@ ForcesComponent.cs:198; with the port gone the disclaimer has nothing left to di
 clause comes out rather than being repointed. Loads' own Node IDs INPUT at SpineComponents.cs:626 and
 :634 is a different port on a different component and is untouched, as rule 2.2 already says.
 
+THE NAME RULING MAKES THREE OF THE FIVE CHEAPER. Because the merged component is still called Deconstruct
+(rule 1.2), the word Deconstruct in Supports' class comment, component description and Anchor Along port
+text stays true and only the PORT name inside those sentences changes, from Deconstruct's Reaction Points
+to Deconstruct's Anchor Nodes. The two disclaimers at FitComponent.cs:121 and ForcesComponent.cs:198 come
+out whole either way, because the port they disclaim against no longer exists. The harness's own prose at
+tests/native_smoke/Program.cs:141-143 is a sixth sentence of the same kind and rule 10.2 carries it.
+
 THE RULING, and it is the narrow one. Supports is NOT re-seeded in this round. Re-seeding it from
 ResolvedSupportNodeIds would change what Supports reports on a TNA Result without any complaint of his
 asking for it, and Supports is a numbers component whose readings he has already walked. So the
@@ -419,6 +495,11 @@ written against.
 WARNING on the component naming how many strays there are and which nodes they sit on. It must not
 vanish silently.
 
+THE WARNING HAS TWO READERS AND NO THIRD. It is on the component's own balloon, and it is one entry in
+Diagnose's document scan, arriving there with source DE, code runtime.warning and severity warning by
+rule 6.8. Those two surfaces are the whole of its reach, which is rule 4.4 and is now a ruling rather
+than a proposal.
+
 THE DETECTION IS AN INTERNAL STATIC, and this is what makes the rule measurable rather than merely
 stated. An earlier draft said "Both halves are asserted by the harness", which cannot be done as written:
 the harness never calls SolveInstance on anything, only constructors and static contract methods, in its
@@ -434,16 +515,23 @@ report off the ids it returns. SolveInstance does nothing but raise a Warning bu
 Rule 10.3(e) asserts over the static rather than over the Warning, and the sentence in the Warning
 itself is READ rather than run, as the harness's own convention has it.
 
-4.4 A CORRECTION TO THE BRIEF, and it matters. The design input says at :46-48 that the stray "should
-survive as a diagnostic entry". A diagnostics entry in this plugin is written INTO a Result and read
-back by Diagnose through a RES input; that is what ResultDiagnostics exists for
+4.4 THE STRAY DOES NOT REACH THE STUDIO, AND THAT IS RULED. The design input says at :46-48 that the
+stray "should survive as a diagnostic entry". A diagnostics entry in this plugin is written INTO a Result
+and read back by Diagnose through a RES input; that is what ResultDiagnostics exists for
 (C:\Users\Param\OneDrive - Ananke-eidos\Documents\Ananke Eidos Studio\VS code\COMPAS Workflow\plugin\native_v02\Components\ResultDiagnostics.cs:10-18
-and :72-82). NEITHER Deconstruct NOR Frame emits a Result, and the fifteen-port list has no RES output
-either, so the merged reader has nowhere to put a diagnostics entry. The runtime warning is therefore
-the whole of the report, and it is enough, because section 6 makes Diagnose read exactly that. If Param
-wants the stray to travel to the studio instead, the merged reader needs a RES passthrough at output 0
-and the component becomes SIXTEEN ports. That is a decision for him and it is named here rather than
-assumed away.
+and :72-82). NEITHER Deconstruct NOR Frame emits a Result, and rule 1.9A's fifteen-port list has no RES
+output either, so there is nowhere on this component to put one. The sixteenth port that would have made
+it possible was put to Param on 2026-09-01 and he DECLINED IT. So the correction stands as a correction:
+the half of the brief that asks for a diagnostics entry cannot be met by a component that emits no
+Result, and he has confirmed that reading rather than paid the port for it.
+
+THE CONSEQUENCE, SAID OUT LOUD. A stray reaction is reported on the canvas and NOWHERE ELSE. It is not
+written into the Result, so it is not in what Export writes, so the studio receives a study carrying no
+record that a reaction was reported at a node on no anchor strip. An author can export a vault whose
+supports do not account for one of its reactions and nothing downstream of the canvas will say so. The
+Warning and its line in Diagnose are the whole of the report, and they work only while somebody is
+looking at the canvas. That is the price of the leaf, he has seen it and taken it, and it is written here
+so that nobody rediscovers it later as a defect and quietly adds a port to fix it.
 
 4.5 A REACTION AT A SUPPORT THAT CARRIES NONE still holds its slot as a zero vector, as it does today
 (VisualiseComponents.cs:634-640). That is what keeps Reaction Vectors item-aligned with Anchor Nodes and
@@ -462,7 +550,8 @@ simplest and is what the present Line-typed port can carry. A POLYLINE through t
 preserves a springing that curves in plan, which his vault's anchor clusters appear to do, and needs the
 port retyped as a curve. The second is more faithful; the first is what he literally asked for. Put it to
 him with that trade named." That instruction was skipped while the sentences either side of it, :63-65
-and :77-81, were cited. It is question 12(f) now.
+and :77-81, were cited. It is question 12B(a) now, and it is the one question left in this spec that
+still stops work: nothing in section 5 can be built until he answers it.
 
 WHAT IS SETTLED EITHER WAY. One line per strip, running the length of it. Two strips give two items, not
 twenty. That is his complaint and it is not in doubt.
@@ -605,7 +694,7 @@ rule 7.3(b)'s handler must read the same answer this test gives and not a second
       through GH_Cluster.Document(System.String password) (Grasshopper.xml:10429), and
       GH_Document.ObjectCount at :24045 counts the same top-level set. So descending means calling a
       password-taking method, and what it should do with a cluster that has a password is a question
-      nobody has answered. That is why it is proposed as deferred, and it is question 12(g) rather than
+      nobody has answered. That is why it is proposed as deferred, and it is question 12B(b) rather than
       a ruling. It is also the one exclusion an author discovers by wondering why a component he can see
       reports nothing, so rule 7.4's description sentence carries it either way: "Components inside a
       cluster are not read."
@@ -644,8 +733,10 @@ measure it without a document (section 10).
   (c) Remark MUST be read. The plugin deliberately places content there: Display raises "FD result: no
       reciprocal diagram." and "Metric H unavailable for FD result; used F magnitude." as Remarks at
       VisualiseComponents.cs:1285-1297, under a comment at :1277-1284 explaining that these are Display's
-      own readings which no other component can say. Section 8 then moves several retired ports' content
-      onto Remarks, so a Warning-and-Error-only scan would lose most of what this round is building.
+      own readings which no other component can say. Section 8 then moves Import Pieces' roll-up and
+      Export's live lines onto Remarks, so a Warning-and-Error-only scan would lose most of what this
+      round is building. That is why rule 6.6(f) makes the Remark question a prerequisite and rule 8.5
+      writes out a fallback for it.
   (d) GH_Document offers no per-object message enumeration at all. A search of
       C:\Program Files\Rhino 8\Plug-ins\Grasshopper\Grasshopper.xml for a GH_Document member matching
       *Message returns nothing; the nearest members are the events ObjectsAdded (:24479), ObjectsDeleted
@@ -653,14 +744,21 @@ measure it without a document (section 10).
   (e) The chin line is GH_Component.Message (Grasshopper.xml:13352), so reading it needs a cast to
       GH_Component, not to IGH_ActiveObject or IGH_DocumentObject. Both plugin base classes derive from
       GH_Component, directly at NativeComponentBase.cs:539 and through GH_TaskCapableComponent at :696-697.
-  (f) ONE ITEM TO CONFIRM AT IMPLEMENTATION. The shipped documentation for AddRuntimeMessage says "Valid
-      message type flags are Warning and Error" and "Only Warnings and Errors are recorded"
-      (Grasshopper.xml:8909-8915 for the interface, :9021-9028 for GH_ActiveObject). The plugin
-      nevertheless adds Remarks (VisualiseComponents.cs:1287-1296) and its comment assumes an author sees
-      them. I could not resolve this from the code: it needs one manual check in Rhino that
-      RuntimeMessages(Remark) returns what AddRuntimeMessage(Remark, ...) put there. If it does not, rule
-      6.6(c) fails and section 8's retired content must move to Warnings instead, which changes what the
-      balloon looks like. Check this before building section 8.
+  (f) THE REMARK QUESTION IS A PREREQUISITE, NOT AN ASSUMPTION. THIS IS THE CONTROLLER'S RULING rather
+      than Param's, and it changes the status of what an earlier draft called an item to confirm at
+      implementation. The shipped documentation for AddRuntimeMessage says "Valid message type flags are
+      Warning and Error" and "Only Warnings and Errors are recorded" (Grasshopper.xml:8909-8915 for the
+      interface, :9021-9028 for GH_ActiveObject). The plugin nevertheless adds Remarks
+      (VisualiseComponents.cs:1287-1296) and its comment assumes an author sees them. The documentation
+      and the shipped code disagree, and nothing in either settles which is right, so this cannot be
+      resolved by reading.
+
+      SO IT IS A CHECK RUN IN RHINO BEFORE SECTION 8 IS BUILT, not a risk noted while building it:
+      confirm that RuntimeMessages(GH_RuntimeMessageLevel.Remark) returns what AddRuntimeMessage(Remark,
+      ...) placed there. Rule 10.3(k) carries it as a check and names it a prerequisite there too. IF IT
+      COMES BACK EMPTY, rule 6.6(c) fails, and the fallback is already written: every retired content line
+      goes to WARNING level instead, and the end of rule 8.5 names those lines one by one, so taking the
+      fallback is mechanical rather than a redesign. Nothing else in sections 6, 7 or 8 changes with it.
 
 6.7 NAMING A COMPONENT IN THE REPORT. Name and NickName come off IGH_InstanceDescription, which every
 document object implements; InstanceGuid off IGH_DocumentObject. Two of the same component on one canvas
@@ -708,7 +806,7 @@ VolatileData as "the instance of the volatile data tree stored in this parameter
 component's output parameters holding ResultGoo are reachable from exactly the walk rule 6.4(b) already
 performs, and harvesting the Results on them is possible.
 
-IT IS A CHOICE, and it is mine rather than his, so it goes to him as question 12(h). Three reasons for
+IT IS A CHOICE, and it is mine rather than his, so it goes to him as question 12B(c). Three reasons for
 it. First, a scan reads volatile data left by the PREVIOUS solution, so the entries reported would be
 one solution old in general and stale in particular, and section 7 exists precisely because Diagnose has
 no data dependency to make them fresh. Second, a wired Diagnose already reads them EXACTLY, through the
@@ -813,23 +911,41 @@ want a guaranteed reading of one chain. Components inside a cluster are not read
 
 8.1 THE RULING. "This goes for all other components with a diagnostics output even the importer and
 exporter" (design input :118-120, :148-153). A component should raise its problems where the author
-already looks rather than hand back a text output that must be wired to a panel to be read.
+already looks rather than hand back a text output that must be wired to a panel to be read. Param's
+ruling of 2026-09-01 settles the form it takes: the retired content becomes RUNTIME MESSAGES ONLY,
+because none of these components emits a Result to carry a diagnostics entry, which is rule 8.4 and is
+now confirmed rather than proposed.
+
+TWO NARROWINGS OF HIS SENTENCE ARE TAKEN HERE AND BOTH ARE THE CONTROLLER'S, not his. Backend Health's
+Report is left alone (rule 8.6(d)), and Export's written-file paths stay wireable data (rule 8.6(b)).
+Each is argued where it lands. Both narrow a sentence he wrote in general terms, so both are his to
+overturn, and they are listed as the controller's in section 12A rather than folded in with his own.
 
 8.2 THE COMPLETE LIST, verified by searching the whole of plugin/native_v02 for text ports named
-Diagnostics, Status, Report, Notes or Log. Four such ports exist; THIS ROUND RETIRES THREE:
-  (a) EXPORT, "Status" (ST, text, item), DeliveryComponents.cs:343-353.
-  (b) IMPORT PIECES, "Diagnostics" (D, text, item), PiecesComponents.cs:155-164.
-  (c) BACKEND HEALTH, "Report" (Out, text, item), FormFindingComponents.cs:61-65, subject to 8.6(d).
+Diagnostics, Status, Report, Notes or Log. Four such ports exist, and this round does four different
+things to them:
+  (a) IMPORT PIECES, "Diagnostics" (D, text, item), PiecesComponents.cs:155-164. REMOVED OUTRIGHT. Its
+      content becomes runtime messages by rule 8.5, and it is the only port this round deletes.
+  (b) EXPORT, "Status" (ST, text, item), DeliveryComponents.cs:343-353. NARROWED, NOT REMOVED. The port
+      stays and carries the written-file paths as data; the diagnostics text it also carries today, the
+      duplicated warning block and the per-kind live lines, comes off it by rules 8.5 and 8.6(c). This is
+      the controller's ruling, argued at 8.6(b).
+  (c) BACKEND HEALTH, "Report" (Out, text, item), FormFindingComponents.cs:61-65. LEFT ALONE. Nothing
+      about this component changes in this round. This is the controller's ruling, argued at 8.6(d).
+  (d) SKIN, "Diagnostics" (D, text, item, SkinComponents.cs:168-180). NOT THIS ROUND'S PORT TO TOUCH.
+      docs/superpowers/specs/2026-09-01-skin-buildability-design.md, dated the same day and running in
+      the same wave, owns that removal at its rule 9.2.2, gives Skin a RES output at index 0 at its rule
+      9.4.1, and routes Skin's diagnostics into RESULT DIAGNOSTICS ENTRIES through
+      ResultDiagnostics.Replace at its rule 9.3.3, with a full code list. That is a different destination
+      from the one rule 8.5 sets, and its rule 12.10(a) rewrites the very harness pin rule 10.2(j) names.
+      This round touches neither Skin's registration nor its harness pin at
+      tests/native_smoke/Program.cs:100-102. An implementer working from this spec alone would otherwise
+      remove the port a second time, send its content to the balloon instead of into the Result, and
+      write a pin the other spec overwrites.
 
-SKIN IS NOT RETIRED HERE, although its Diagnostics port (D, text, item, SkinComponents.cs:168-180) is the
-fourth. docs/superpowers/specs/2026-09-01-skin-buildability-design.md, dated the same day and running in
-the same wave, owns that removal at its rule 9.2.2, gives Skin a RES output at index 0 at its rule 9.4.1,
-and routes Skin's diagnostics into RESULT DIAGNOSTICS ENTRIES through ResultDiagnostics.Replace at its
-rule 9.3.3, with a full code list. That is a different destination from the one rule 8.5 sets, and its
-rule 12.10(a) rewrites the very harness pin rule 10.2(j) names. This round touches neither Skin's
-registration nor its harness pin at tests/native_smoke/Program.cs:100-102. An implementer working from
-this spec alone would otherwise remove the port a second time, send its content to the balloon instead of
-into the Result, and write a pin the other spec overwrites.
+SO ONE PORT IS REMOVED AND ONE IS NARROWED. An earlier draft retired three, and the two rulings above
+took two of those back. Every count downstream of this changes with it: rule 9.6 on the wires, rule
+10.2(j) on the pins and rule 10.3(l) on the harness check.
 
 8.3 A CORRECTION, now narrowed. Skin's Diagnostics has NOT already been removed, as the design input
 implies in the past tense at :149-151; the port is live at SkinComponents.cs:168-180 and pinned by the
@@ -838,22 +954,28 @@ the removal now has an owner: the skin-buildability spec's rule 9.2.2 rather tha
 input's proposal at docs/superpowers/specs/2026-09-01-skin-round-design-input.md:207-215. The record is
 corrected here and the work stays there.
 
-8.4 THE SECOND HALF OF THE RULING IS NOT POSSIBLE AS WRITTEN FOR THESE THREE, and this is the most
-important finding in this section. "Runtime messages and diagnostics entries" (design input :148-153)
-requires somewhere to put a diagnostics entry, and a diagnostics entry in this plugin lives inside a
-ResultDto (ResultDiagnostics.cs:10-18). NONE of the three components this round retires emits a Result:
+8.4 THE SECOND HALF OF THE RULING IS NOT POSSIBLE AS WRITTEN, AND PARAM HAS CONFIRMED THAT READING. It
+was the most important finding in this section when it was a correction; it is now the rule. "Runtime
+messages and diagnostics entries" (design input :148-153) requires somewhere to put a diagnostics entry,
+and a diagnostics entry in this plugin lives inside a ResultDto (ResultDiagnostics.cs:10-18). NEITHER
+component this round touches emits a Result:
   - Export's only outputs are JSON and Status (DeliveryComponents.cs:325-354).
   - Import Pieces' are Meshes, Keys, Supports, Base Mesh, Diagnostics (pinned at Program.cs:274-282), and
     its ONLY input is a Path (PiecesComponents.cs:105-114), so there is no Result anywhere in its chain
     to write into even in principle.
-  - Backend Health has no inputs at all (FormFindingComponents.cs:33-36).
+Backend Health is no longer at issue by rule 8.6(d), and has no inputs at all in any case
+(FormFindingComponents.cs:33-36).
+
+SO THE RULE IS: for a component with no Result, RUNTIME MESSAGES ARE THE WHOLE OF THE REPORT. He ruled
+the same thing on the merged reader on the same day, which is rule 1.9A, and the two are one principle:
+a leaf says what it has to say on the canvas.
 
 Skin is the counter-example and the reason the two rounds differ: the skin spec's rule 9.4.1 GIVES it a
 Result to write into, so the second half of the ruling is possible there and is taken there. Where a
 component has a Result, the entries are the better home; where it has none, the balloon is the whole of
-what is available.
+what is available. That division is also what rule 8.7(a) protects.
 
-8.5 THE RULE THAT FOLLOWS, with the arithmetic. Every retired port's content becomes RUNTIME MESSAGES
+8.5 THE RULE THAT FOLLOWS, with the arithmetic. Every retired diagnostics line becomes a RUNTIME MESSAGE
 ONLY, at the level its content deserves: a real fault is a Warning or an Error, everything else is a
 Remark. ONE MESSAGE PER FACT, NOT ONE PER PORT, because Diagnose's document scan emits one tree item per
 message (rule 6.8), so a single Remark holding a nine-line block and nine Remarks look completely
@@ -861,55 +983,105 @@ different on the canvas and the spec must not leave the choice open. Per compone
   - IMPORT PIECES raises one Remark per line of what its D output carried (schema, units, piece count,
     courses, thickness, the degenerate_dropped keys, the metres factor, whether base_mesh was present,
     the branch-path note: PiecesComponents.cs:155-164), and one WARNING per piece that failed to build.
-  - EXPORT raises one Remark per written path, one Remark per live line, and keeps its existing Warnings
-    unduplicated. See 8.6(c) for why the live lines cannot simply go.
-  - BACKEND HEALTH, subject to 8.6(d), raises one Remark per roll-up line.
-Diagnose's document scan is where they are read, which is the entire point of section 6 and the reason
-rule 6.6(c) insists on reading Remark. The Result-diagnostics half is a separate decision, per component,
-and of the three retired here only Export has a Result it could pass through; adding a RES output to
-Export would also let Diagnose sit AFTER it in a chain, which it cannot today. That is put to Param
-rather than decided here.
+  - EXPORT raises one Remark per live line, one per kind (DeliveryComponents.cs:627-632), and keeps its
+    existing Warnings unduplicated. It raises NO Remark for a written path: by rule 8.6(b) the paths stay
+    on the port as data, and putting them on the balloon as well would be the same fact in two places,
+    which is the habit 8.6(c) is retiring. See 8.6(c) for why the live lines cannot simply go.
+  - BACKEND HEALTH raises nothing new, its Report being untouched by rule 8.6(d).
+Diagnose's document scan is where the Remarks are read, which is the entire point of section 6 and the
+reason rule 6.6(c) insists on reading Remark.
 
-8.6 WHAT IS GENUINELY LOST, named honestly rather than minimised.
-  (a) A Remark cannot be wired. It cannot reach a panel, a File Path component or a text join.
-  (b) Export's LATCHED written-file paths are the one piece of retired content an author plausibly wires
-      onward. They are latched on the component precisely so a one-shot Button write stays visible after
-      the button releases (DeliveryComponents.cs:96-98, the emit at :617-632). If Status goes, the paths
-      go to the balloon and stop being data. This is the real trade in this section and Param should see
-      it stated before it is built.
-  (c) EXPORT'S STATUS CARRIES THREE THINGS, NOT TWO, and an earlier draft counted two. Its WARNING BLOCK
-      is already a verbatim copy of the runtime messages, by design (DeliveryComponents.cs:633-637, under
-      the comment at :611-616 "the warnings are repeated here because a bubble is not a value and the
-      chin holds one line"), so retiring that third is a pure deletion of a duplicate. Its WRITTEN PATHS
-      are the latched half of (b). Its LIVE LINES are the third, one per kind, at
-      DeliveryComponents.cs:627-632, and they are not duplicated anywhere: only the FIRST reaches the
-      chin, through FirstLine(uploaded) at :641-643, and a live outcome becomes a Warning only when it
+THE RESULT-DIAGNOSTICS HALF IS SETTLED FOR BOTH. Neither has a Result to write into (rule 8.4), so there
+is nothing left to decide for them. Adding a RES output to Export would also let Diagnose sit AFTER it in
+a chain, which it cannot today; that is a change to Export's shape rather than a diagnostics decision, it
+is not required by this round, and it is question 12B(d) rather than a rule here.
+
+THE FALLBACK IF REMARKS TURN OUT NOT TO BE READABLE, written out so that taking it is mechanical. THIS IS
+THE CONTROLLER'S RULING, not Param's, and it pairs with rule 6.6(f): the Rhino check of rule 10.3(k) is a
+PREREQUISITE run before this section is built. If RuntimeMessages(GH_RuntimeMessageLevel.Remark) does not
+return what AddRuntimeMessage put there, every line named above at Remark level is raised at WARNING level
+instead and nothing else in this section changes. The lines are exactly these and there are no others:
+  (i) IMPORT PIECES' nine roll-up lines: schema, units, piece count, courses, thickness, the
+      degenerate_dropped keys, the metres factor, whether base_mesh was present, the branch-path note.
+  (ii) EXPORT'S live lines, one per kind (DeliveryComponents.cs:627-632).
+Import Pieces' per-piece failure Warnings and Export's existing Warnings are already Warnings and do not
+move. WHAT THE FALLBACK COSTS, named now rather than discovered on the canvas: a successful import and a
+successful push each turn their component's balloon yellow, and Diagnose's chin, which counts warnings by
+rule 6.8, reads "<n> warnings" on a document where nothing is wrong. TWO THINGS THE FALLBACK DOES NOT
+COVER. Display's own two Remarks at VisualiseComponents.cs:1285-1297 are not retired content, so they stay
+Remarks and the document scan stops seeing them; that is a loss this round did not create and does not
+repair, and whether to promote them too is question 12B(f), contingent on the check. And rule 7.3(h)'s
+Remark, which Diagnose adds to ITSELF when the document will not settle, is for the balloon rather than
+for the scan, which skips its own instance by rule 6.4(c), so it is unaffected either way.
+
+8.6 WHAT IS LOST, WHAT IS KEPT, AND WHY.
+  (a) A REMARK CANNOT BE WIRED. It cannot reach a panel, a File Path component or a text join. That is
+      the whole of the objection to sending anything to the balloon, and it is why (b) exists.
+  (b) EXPORT'S WRITTEN-FILE PATHS STAY WIREABLE DATA. THIS IS THE CONTROLLER'S RULING, not Param's, and
+      it narrows his sentence deliberately. The paths are latched on the component precisely so a
+      one-shot Button write stays visible after the button releases (DeliveryComponents.cs:96-98, the
+      emit at :617-632). An author needs the path of the file he has just written AS DATA, to open it, to
+      copy it, to feed a File Path or a downstream write, and a message cannot be wired into anything.
+      They are also not a diagnostic: they are the product of the run, in the same way rule 8.6(d) says
+      Backend Health's roll-up is that component's product. So the port stays, and only the diagnostics
+      TEXT comes off it.
+
+      WHAT THAT MEANS FOR THE REGISTRATION, and this part is the spec's own decision rather than a ruling.
+      The port keeps its slot, its type and its registration, "Status" (ST, text, item) at
+      DeliveryComponents.cs:343-353, and its DESCRIPTION is rewritten to say that it now carries the
+      written paths and nothing else. Keeping the registration is what makes the migration silent: no
+      index moves, the harness pin at Program.cs:183-189 stands unedited, and ParameterIdentity.Mismatch
+      has nothing to report (rule 9.6). Renaming it to something truer, "Written" or "Files", costs a
+      removed-and-added pair in Mismatch and the harsh close that goes with it, for a word. It is question
+      12B(e) and it is small.
+  (c) EXPORT'S STATUS CARRIES THREE THINGS, NOT TWO, and an earlier draft counted two. Each now goes its
+      own way. Its WARNING BLOCK is already a verbatim copy of the runtime messages, by design
+      (DeliveryComponents.cs:633-637, under the comment at :611-616 "the warnings are repeated here
+      because a bubble is not a value and the chin holds one line"), so that third is DELETED as a pure
+      duplicate. Its WRITTEN PATHS are KEPT on the port by (b). Its LIVE LINES are the third, one per
+      kind, at DeliveryComponents.cs:627-632, and they are not duplicated anywhere: only the FIRST reaches
+      the chin, through FirstLine(uploaded) at :641-643, and a live outcome becomes a Warning only when it
       both failed AND reached Done (:594-600). So a two-kind push whose second kind fails while the first
-      succeeds loses the second outcome entirely when Status goes, unless the live lines move to Remarks
-      as rule 8.5 requires.
-  (d) BACKEND HEALTH IS A DIFFERENT CASE and needs Param's word. Its Report is not a diagnostics
-      side-channel; it is the component's product. The other four outputs are Ready, Python, Packages and
-      Capabilities (FormFindingComponents.cs:41-65), and Report is the readable roll-up of the same facts
-      plus the launch error, which is already raised as an Error at :92 when the worker fails. Retiring
-      Report leaves a component whose whole purpose is inspection with no readable summary. His sentence
-      named "the importer and exporter" and not this one. Recommendation: retire the FAILURE half, which
-      is already duplicated on the balloon, and keep the port for the success roll-up. Flagged, not
-      decided.
+      succeeds would lose the second outcome entirely, which is why rule 8.5 moves the live lines to
+      Remarks rather than deleting them with the warning block.
+  (d) BACKEND HEALTH'S REPORT IS LEFT ALONE. THIS IS THE CONTROLLER'S RULING, not Param's, and it is the
+      second narrowing. His sentence named "the importer and exporter" and did not name this component.
+      Report is not a diagnostics side-channel; it is the component's product. The other four outputs are
+      Ready, Python, Packages and Capabilities (FormFindingComponents.cs:41-65), and Report is the
+      readable roll-up of the same facts plus the launch error, which is ALREADY duplicated as an Error at
+      :92 when the worker fails. So the failure half reaches the balloon whatever this round does, and
+      retiring the port would take away the readable summary that is the whole reason a component called
+      Backend Health exists. Nothing about it changes here: not its registration, not its content, not its
+      harness entries. An earlier draft recommended retiring the failure half and keeping the success
+      roll-up; that split is not taken, because the failure half is what the Error already carries and
+      cutting it out of the roll-up would leave a report that reads as clean when the worker is down.
 
 8.7 WHAT IS NOT RETIRED, and must be said plainly.
-  (a) THE DIAGNOSTICS CARRIED INSIDE THE RESULT STAY. They travel with the data, reach Export, and form
-      part of the contract the studio receives (design input :155-157). The document scan is for the
-      author at the canvas; the Result's entries are for the data. Two readers, two surfaces, both stay.
+  (a) THE DIAGNOSTICS CARRIED INSIDE THE RESULT STAY, RULED. Param settled it on 2026-09-01 alongside the
+      leaf ruling: what the components that DO emit a Result carry inside it is untouched by this round.
+      They travel with the data, reach Export, and form part of the contract the studio receives (design
+      input :155-157). The document scan is for the author at the canvas; the Result's entries are for the
+      data. Two readers, two surfaces, both stay. Skin is the live example in this wave, its own spec
+      routing its diagnostics INTO the Result rather than onto the balloon (rule 8.2(d)).
   (b) DIAGNOSE'S OWN TEXT OUTPUT STAYS. It is the panel itself, not a per-component diagnostics
       side-channel (DiagnoseComponents.cs:57-62).
 
 ## 9. Migration
 
-9.1 WHAT A SAVED DEFINITION SEES. With a new GUID (rule 1.4), both Deconstruct and Frame load as
-ORPHANED OBJECTS. Grasshopper shows its own placeholder for a component whose GUID no assembly claims,
-the wires stay attached to the placeholder, and the author deletes both and places one merged reader.
-This is the Monitor outcome and it was chosen for the same reason
+9.1 WHAT A SAVED DEFINITION SEES. With a new GUID (rule 1.4), BOTH the old Deconstruct and the old Frame
+load as ORPHANED OBJECTS. Grasshopper shows its own placeholder for a component whose GUID no assembly
+claims, the wires stay attached to the placeholder, and the author deletes both and places one merged
+reader. This is the Monitor outcome and it was chosen for the same reason
 (docs/superpowers/specs/2026-08-31-readers-design.md:68-75).
+
+THE OLD FRAME IS THE HARDER HALF, and the name ruling of rule 1.2 is why. After this round there is no
+component called Frame in the palette at all, while there IS one called Deconstruct which is not the one
+the file remembers and does not hold the ports it held. So an author opening a saved definition meets two
+orphans: one whose name has vanished from the plugin, and one whose name is taken by a component of a
+different shape. Nothing in the plugin can tell him that Frame's nine outputs are now slots 0 to 8 of
+Deconstruct, because rule 9.2 shows the load warning cannot speak for an orphan at all. That sentence has
+to be carried by the release note, in words, and it is the one part of this migration with no machinery
+behind it. It is a cost of the name he chose rather than an argument against the name.
 
 9.2 THE LOAD WARNING DOES NOT COVER THIS CASE, and the spec should not pretend it does.
 ParameterIdentity.Mismatch compares an ARCHIVED port list against a REGISTERED one
@@ -942,13 +1114,22 @@ travel together.
 Mismatch says nothing (NativeComponentBase.cs:333-334, both sides agreeing is silent). A saved definition
 with a Result wired into Diagnose keeps working identically, in chain mode.
 
-9.6 THE THREE RETIRED TEXT PORTS DO MOVE WIRES. Each is the LAST output on its component (Export's Status
-at slot 1 of 2, Import Pieces' Diagnostics at slot 4 of 5, Backend Health's Report at slot 4 of 5), so
-removing it is a pure truncation: no surviving port changes index,
-and Mismatch reports a count change naming the removed port and closing "wires may now sit on the wrong
-port" (:400-406). That close is harsher than the truth here, because nothing above the removed port
-moved, but the pure-append branch at :385-392 only softens the message for ADDITIONS. A pure-truncation
-branch would be the honest counterpart. Recorded as an optional improvement, not required by this round.
+9.6 ONE RETIRED TEXT PORT MOVES WIRES, NOT THREE. Rules 8.6(b) and 8.6(d) leave Import Pieces'
+Diagnostics as the only removal (rule 8.2). It is the LAST output on its component, slot 4 of 5, so
+removing it is a pure truncation: no surviving port changes index, and Mismatch reports a count change
+naming the removed port and closing "wires may now sit on the wrong port" (:400-406). That close is
+harsher than the truth here, because nothing above the removed port moved, but the pure-append branch at
+:385-392 only softens the message for ADDITIONS. A pure-truncation branch would be the honest
+counterpart. Recorded as an optional improvement, not required by this round.
+
+EXPORT AND BACKEND HEALTH MIGRATE IN SILENCE, which is the quiet benefit of those two rulings. Export's
+Status keeps its name, nickname, type and index and changes only its content and its description, and
+Backend Health is untouched, so Mismatch has nothing to compare on either and says nothing
+(NativeComponentBase.cs:333-334, both sides agreeing is silent). A saved definition with Export's Status
+wired to a panel keeps working: the panel simply shows the written paths and no longer shows the warning
+block or the live lines. If the rename of question 12B(e) is taken, this paragraph stops being true for
+Export and it joins Import Pieces in the paragraph above, with a removed-and-added pair rather than a
+truncation.
 
 ## 10. Verification
 
@@ -963,20 +1144,33 @@ run taken over a stale binary proves less than it looks. Delete the artefact and
 trusting any result in this section.
 
 10.2 EXISTING CHECKS THAT MUST CHANGE.
-  (a) VisualiseContracts, the DeconstructComponent entry at Program.cs:76-94, is deleted, and the
-      FrameComponent entry at :161-177 is replaced by ONE entry for the merged component pinning the
-      fifteen output NAMES in the order of table 1.9.
-  (b) SpineComponentContracts, the FrameComponent entry at Program.cs:264-273, is replaced by the merged
-      component's Name, NickName, tab "04 Read", input nicknames { "RES" } and the fifteen output
-      NICKNAMES in order. Its comment at :264-267 says Frame is pinned nickname by nickname "because it
-      is the one component whose whole job is the ORDER of its ports"; that is now doubly true.
+  (a) VisualiseContracts. Rule 1.4A keeps the class name, so the DeconstructComponent entry at
+      Program.cs:76-94 is REWRITTEN IN PLACE rather than deleted: its key survives and its ten output
+      names become the fifteen of table 1.9, in that order. The FrameComponent entry at :161-177 is
+      DELETED outright. Two comments in the same table are prose that this round falsifies and both must
+      be rewritten with the entries: the one at :80-83 narrating the ten outputs "since the readers
+      rework", and the Supports comment at :141-143, "aligned with Deconstruct's Reaction Points and
+      Frame's Columns", which names one port this round deletes and one component that will not exist.
+      That comment is the sixth of the five sentences rule 3.6 counts, the harness's own copy of the
+      promise, and it is repointed to Deconstruct's Anchor Nodes and Columns.
+  (b) SpineComponentContracts. There is no Deconstruct entry in this table today, so the FrameComponent
+      entry at Program.cs:268-273 is REKEYED to
+      "Ananke.COMPAS.Native.Components.DeconstructComponent" and refilled: Name "Deconstruct", NickName
+      "DE", tab "04 Read", input nicknames { "RES" }, and the fifteen output NICKNAMES in the order of
+      table 1.9, which is { "M", "C", "PL", "PN", "AN", "AL", "PRN", "PRL", "CO", "ML", "FL", "FCL",
+      "LP", "LV", "RV" }. Note what changed in that list beyond the additions: "PH" is gone with Phase
+      (rule 2.3), "AL" has moved up to index 5 (rule 1.9), and "M" now means Mesh alone (rule 1.10). Its
+      comment at :264-267 says Frame is pinned nickname by nickname "because it is the one component
+      whose whole job is the ORDER of its ports"; that is now doubly true, and the comment's closing
+      claim that "AL is APPENDED so nothing above it moved" is false after this round and comes out.
   (c) The component-count pin at Program.cs:503-514. Two components become one, so 21 becomes 20 for this
       sub-project alone. This number is shared with the columns and skin rounds running in the same wave
       and must be reconciled against whatever they do; it is named here as a dependency rather than
       asserted as final.
   (d) NativeIconEntries at Program.cs:292-319: the DeconstructComponent row at :306 and the FrameComponent
-      row at :312 become ONE row. With the name of rule 1.2 that is ("result_breakdown", "DE") and the
-      "frame" key is retired.
+      row at :312 become ONE row. The name ruling makes this the cheapest edit in the section, because the
+      surviving row already reads ("result_breakdown", "DE"), verified in the file today, so it needs no
+      edit at all; the FrameComponent row is deleted and the "frame" icon key is retired.
   (e) plugin/icons/icon-map.json. Its native_components array holds 21 entries today, verified by reading
       the file; it becomes 20, and the harness enforces one entry per component at Program.cs:13940-13966.
       Icons regenerate through plugin/icons/generate_icons.py and --check stays byte-green
@@ -991,34 +1185,54 @@ trusting any result in this section.
       over, and rule 10.3(c) names the one way to narrow it. If he takes the chord of 5.2(a) this check
       keeps its reflection and only its expected counts change, and the gap does not open at all.
   (g) ValidateDeconstructColumnTrees at Program.cs:2891-2896 and ValidateDeconstructForceLines at
-      :3133-3145 both call RequireComponentType(plugin, "DeconstructComponent") and must be re-pointed at
-      the merged type.
+      :3133-3145 both call RequireComponentType(plugin, "DeconstructComponent"), verified at :2896 and
+      :3145 today. Rule 1.4A keeps that class name, so NEITHER LOOKUP MOVES. What follows from that is a
+      requirement rather than a relief: the ColumnTrees and ForceLines statics these two drive by
+      reflection must be carried onto the merged class UNDER THE SAME NAMES, or the checks break at the
+      reflection rather than at an assertion, which is the failure mode 10.2(f) describes for Anchor
+      Lines. The three new statics this spec asks for, the rebranching and stray detection of rules 3.5
+      and 4.3 and the divergence comparison of rule 3.7, belong on the same class beside them, for the
+      same reason and driven the same way.
   (h) The ParameterIdentity.Mismatch PASS MESSAGE at Program.cs:1379-1399 narrates the last reshape by
       name: "Deconstruct's slim lists 'Thrust Mesh', 'Columns', 'Heads' and 'Feet' as removed... Frame's
       pure append names 'Anchor Lines'" (:1392-1396). Its fixtures are hand-built name arrays rather than
       live components (the Deconstruct-slim fixture is at :5617-5652), so the fixtures may stay and only
-      the prose needs correcting; but the prose is a claim about components that will no longer exist and
-      must not be left standing.
-  (i) The ResultTables order pass message at Program.cs:1360 and the stray-branch sentence at :5441 both
-      name Deconstruct; prose only, but they are claims and should be true.
-  (j) Retiring the three text ports touches two pinned places: Export's outputs at Program.cs:183-189 and
-      Import Pieces' output nicknames at :274-282. SKIN'S PIN AT Program.cs:100-102 IS NOT TOUCHED HERE:
-      rule 8.2 leaves Skin to its own spec, whose rule 12.10(a) rewrites that same pin to inputs {Result,
-      Pattern, Size, Course Height, Min Piece} and outputs {Result, Cells, Surface}. EXPORT'S PIN IS
-      WRITTEN BY BOTH ROUNDS: this one drops Status from its outputs, and skin rule 12.10(b) reorders its
-      inputs to the nine {Result, Cells, Courses, Column Radius, Path, Name, Studio, Live, Write}. The two
-      edits do not conflict, one being the output half and the other the input half, but whichever lands
-      second must be written against the first rather than against the shipped file, and this is the one
-      place in the two specs where the same line is claimed twice. Backend Health appears in
-      NativeIconEntries at :318 and in neither contract table, so retiring its Report breaks no port pin,
-      which is itself worth noting as a gap.
+      the prose needs correcting. The name ruling makes the correction MORE necessary rather than less:
+      the Frame half names a component that will not exist, which is obvious, and the Deconstruct half
+      names one that will exist with a different shape, which is the quieter falsehood of the two and the
+      one a later reader is likelier to trust.
+  (i) The ResultTables order pass message at Program.cs:1360 and the stray sentence at :5441 both name
+      Deconstruct, and the name survives, so only their content is at issue. The second needs more than a
+      word: it reads "Keeping the zero would give Deconstruct and Supports different stray branches"
+      (:5439-5441, read today), and after rule 4.3 the merged reader has no stray BRANCH to differ in. The
+      check itself still holds, since a zero reaction that became a stray would now raise a Warning naming
+      a node that is not stray at all; the sentence is repointed from the branch to that warning.
+  (j) THE TEXT-PORT RETIREMENT NOW TOUCHES ONE PINNED PLACE, NOT TWO, and this is where rulings 8.6(b)
+      and 8.6(d) pay for themselves in the harness. Import Pieces' output nicknames at Program.cs:274-282
+      lose "D" and become { "M", "K", "S", "B" }. EXPORT'S PIN IS NOT TOUCHED BY THIS ROUND AT ALL: its
+      outputs at :183-189 are pinned as { "JSON", "Status" }, read today, and rule 8.6(b) keeps both ports
+      registered under those names. So the one place in the two specs where the same line was claimed
+      twice is no longer claimed twice: skin rule 12.10(b) reorders Export's INPUTS to the nine {Result,
+      Cells, Courses, Column Radius, Path, Name, Studio, Live, Write} and this round writes nothing in
+      that entry, which removes an ordering hazard between the two rounds rather than merely managing it.
+      If question 12B(e) is answered with a rename, the hazard comes back and this round then edits the
+      output half after all. SKIN'S PIN AT Program.cs:100-102 IS NOT TOUCHED HERE either: rule 8.2(d)
+      leaves Skin to its own spec, whose rule 12.10(a) rewrites that same pin to inputs {Result, Pattern,
+      Size, Course Height, Min Piece} and outputs {Result, Cells, Surface}. Backend Health appears in
+      NativeIconEntries at :318 and in neither contract table, so it has no port pin to break; that was
+      worth noting as a gap when its Report was being retired, and it stays a gap now that the port is
+      kept, because nothing in the harness would notice if a later round removed it.
 
 10.3 NEW CHECKS NEEDED.
   (a) NO TWO OUTPUTS OF ANY ONE COMPONENT SHARE A NICKNAME, and no two inputs do. Run it over every
       component, not just the merged one. This is the check that would have caught Mesh M against Member
       Lines M, and Grasshopper will not catch it for us.
   (b) The merged reader's fifteen outputs by NAME and by NICKNAME in order, with Anchor Nodes at index 4
-      and Anchor Lines at index 5, and its one input at index 0.
+      and Anchor Lines at index 5, and its one input at index 0. ASSERT THE COUNT AND THE LEAF PROPERTY
+      TOGETHER: exactly fifteen outputs, and none of them a ResultParam. That second half is what rule
+      1.9A asks the harness to hold. He declined the sixteenth port deliberately, and a later hand adding
+      a Result passthrough back would look like a small kindness to whoever wanted to wire something
+      downstream; this is the assertion that makes it a decision rather than an edit.
   (c) ANCHOR LINES, split into what is measured and what is not, because the driver named here cannot
       make every assertion an earlier draft asked of it. FrameGeometry.Read returns a Net record whose
       members are listed at MouldComponents.cs:2411-2421 and which carries no curve of any kind; the
@@ -1079,15 +1293,25 @@ trusting any result in this section.
       Also manual, and also in Rhino: the divergence Warning of rule 3.7 and the stray Warning of rule
       4.3 are seen on the balloon here, since 10.3(e) and (f) measure the statics behind them and not the
       raising of them.
-  (k) RULE 6.6(f), the Remark question, also a manual check in Rhino and a PREREQUISITE for section 8:
+  (k) RULE 6.6(f), THE REMARK QUESTION. A manual check in Rhino, and a PREREQUISITE rather than a
+      verification: it is RUN BEFORE SECTION 8 IS BUILT, and the controller's ruling makes that ordering
+      binding rather than advisory. Place a component that raises a Remark, scan the document, and
       confirm that RuntimeMessages(GH_RuntimeMessageLevel.Remark) returns what AddRuntimeMessage placed
-      there, against the documentation's claim that only Warnings and Errors are recorded.
-  (l) EACH RETIRED PORT'S CONTENT STILL EXISTS. For Export and Import Pieces, drive the message-building
-      code and assert the strings now raised are non-empty, one per fact by rule 8.5, and at the intended
-      level. Export's per-kind live lines are the case worth naming, because 8.6(c) shows they are the
-      half that has no duplicate. Skin is not in this list: rule 8.2 leaves it to its own spec, whose
-      rule 12.10(d) writes the equivalent check there. Without this, "it moves to the balloon" is a plan
-      rather than a fact.
+      there, against the documentation's claim at Grasshopper.xml:8909-8915 and :9021-9028 that only
+      Warnings and Errors are recorded. IF IT COMES BACK EMPTY, take the fallback written at the end of
+      rule 8.5 exactly as it stands, which is Import Pieces' nine roll-up lines and Export's per-kind live
+      lines raised at Warning instead of Remark, and nothing else. Record the answer in this spec when it
+      is known, because everything in section 8 that a later round reads depends on which way it went.
+  (l) EACH RETIRED PORT'S CONTENT STILL EXISTS, in the place rulings 8.6(b) and 8.6(d) put it. Two
+      assertions, not one. FIRST, for Import Pieces and for Export's live lines, drive the message
+      building code and assert the strings now raised are non-empty, one per fact by rule 8.5, and at the
+      intended level, which is the level the check of (k) settles. Export's per-kind live lines are the
+      case worth naming, because 8.6(c) shows they are the half that has no duplicate anywhere. SECOND,
+      EXPORT'S WRITTEN PATHS ARE STILL EMITTED AS DATA on the Status port after the narrowing, and are NOT
+      duplicated as Remarks: that is the whole content of ruling 8.6(b) and without an assertion it is a
+      sentence in a spec. Backend Health is not in this list, its Report being untouched (rule 8.6(d)),
+      and neither is Skin: rule 8.2(d) leaves it to its own spec, whose rule 12.10(d) writes the
+      equivalent check there. Without this check, "it moves to the balloon" is a plan rather than a fact.
   (m) FAILURE PARTITIONING of rule 1.6A, as far as the harness reaches. The two halves are separate
       methods with separate catches, so assert that the frame half's entry point and the statics half's
       entry point are distinct statics and that each returns its own empty answer rather than throwing
@@ -1100,44 +1324,99 @@ The columns priority ladder (its own spec,
 docs/superpowers/specs/2026-09-01-columns-priority-design.md); the skin round
 (docs/superpowers/specs/2026-09-01-skin-round-design-input.md and the spec that now owns it,
 docs/superpowers/specs/2026-09-01-skin-buildability-design.md), INCLUDING Skin's Diagnostics port, which
-rules 8.2 and 8.3 hand back to that spec rather than retiring here; descending into clusters (rule
-6.4(d), and question 12(g)); harvesting the diagnostics inside a Result during a document scan (rule 6.9,
-and question 12(h)); RE-SEEDING SUPPORTS from ResolvedSupportNodeIds, or re-seeding the merged reader from
-Mappings.Supports, so that the two agree by construction rather than by warning (rule 3.6); THE GENERAL
-IDENTIFIER RULE APPLIED BEYOND THE MERGED READER, which rule 2.6 sweeps and finds one live target, Skin's
-Courses, already owned by the skin spec's rule 9.2.3, so nothing is left open but the sweep's own reach;
-changing Load Points and Load Vectors from lists to trees (rule 1.11); adding a pure-truncation branch to
-the load warning (rule 9.6); any change to what a measure computes.
+rules 8.2(d) and 8.3 hand back to that spec rather than retiring here; descending into clusters (rule
+6.4(d), and question 12B(b)); harvesting the diagnostics inside a Result during a document scan (rule 6.9,
+and question 12B(c)); giving EXPORT a Result output of its own, which would also let Diagnose sit after it
+in a chain (rule 8.5, and question 12B(d)); RE-SEEDING SUPPORTS from ResolvedSupportNodeIds, or re-seeding
+the merged reader from Mappings.Supports, so that the two agree by construction rather than by warning
+(rule 3.6); THE GENERAL IDENTIFIER RULE APPLIED BEYOND THE MERGED READER, which rule 2.6 sweeps and finds
+one live target, Skin's Courses, already owned by the skin spec's rule 9.2.3, so nothing is left open but
+the sweep's own reach; changing Load Points and Load Vectors from lists to trees (rule 1.11); adding a
+pure-truncation branch to the load warning (rule 9.6); any change to what a measure computes.
 
-## 12. Questions for Param
+TWO THINGS ARE NOT MERELY OUT OF SCOPE BUT REFUSED, and the difference matters to whoever reads this next.
+A sixteenth port on the merged reader carrying the Result through with diagnostics appended was PUT TO
+PARAM AND DECLINED (rules 1.9A and 4.4); it is not waiting for a quiet round to pick it up. Retiring
+Backend Health's Report was proposed and REFUSED by the controller (rule 8.6(d)). Both may be revisited on
+his word, and neither is a gap for an implementer to close on his own judgment.
 
-  (a) WHETHER TO MERGE AT ALL, and this is the question the whole spec rests on. He wrote "part of me
-      thinks these two components can conjoin" (design input :6-13), which is a proposal, and the design
-      input reserves the decision to him at :108-114. Nothing here is approved. Two parts to it. First,
-      merge or keep two components. Second, if merged, is FIFTEEN PORTS on one component worse in the way
-      he works than two components holding ten each? Fifteen is Monitor-sized and being tall is part of
-      what he disliked about Monitor. Section 0 names the fallback if it is: keep two components, apply
-      the four deletions and the Anchor Lines fix to them, and let one hold the geometry and the other
-      the statics. Sections 2 to 5 stand either way; only sections 1, 9 and part of 10 depend on this.
-  (b) THE NAME. "Deconstruct" or "Frame" (rule 1.2). He named neither.
-  (c) THE STRAY REACTION'S HOME. Runtime warning only, or a RES passthrough at output 0 taking the
-      component to sixteen ports so the stray travels to the studio (rule 4.4).
-  (d) EXPORT'S WRITTEN-FILE PATHS. They stop being wireable data when Status goes (rule 8.6(b)). Accepted?
-  (e) BACKEND HEALTH'S REPORT. Not named in his sentence, and it is the component's product rather than a
-      diagnostics side-channel (rule 8.6(d)). Retire, or keep the success roll-up?
-  (f) ANCHOR LINES: A CHORD OR A POLYLINE (rule 5.2). One line per strip either way, which is what he
-      asked for. A straight LINE from the strip's first node to its last is what he literally said,
+## 12A. What has been ruled
+
+PARAM'S RULINGS, 2026-09-01. These are settled and the spec is written to them. Each is recorded here in
+the form he gave it and in the form the spec took it, so that a later reader can see which is which.
+
+  (a) THE MERGE STANDS, AND THE COMPONENT CARRIES FIFTEEN PORTS. Both follow from his other two rulings,
+      which name the merged component and settle its port count, and section 0 records the reasoning
+      rather than assuming it. The height of a fifteen-port component on his canvas is an accepted cost
+      (rule 0.3). The two-component fallback the earlier draft held in reserve is withdrawn (rule 0.2).
+  (b) THE NAME IS DECONSTRUCT, nickname DE, chosen over "Frame" and over "Read" (rule 1.2). He accepted
+      with it that nine of the fifteen outputs come from Frame, so the surviving name describes the
+      smaller half (rule 0.5). The GUID is NOT reused with the name (rule 1.4), the class keeps the name
+      DeconstructComponent (rule 1.4A), and a saved definition holding the old Frame orphans with no
+      component of that name left in the palette to replace it (rule 9.1).
+  (c) NO RES PASSTHROUGH, AND THE READER IS A LEAF (rule 1.9A). The sixteenth port was offered and
+      declined. Nothing wires downstream of the merged Deconstruct. A stray reaction becomes a runtime
+      Warning on the canvas and one line in Diagnose's document scan, and does NOT reach Export or the
+      studio; rule 4.4 states that consequence out loud rather than leaving it implied.
+  (d) EVERY RETIRED DIAGNOSTICS TEXT PORT BECOMES RUNTIME MESSAGES ONLY (rules 8.4 and 8.5). The spec's
+      own correction, that the "diagnostics entry" half of the original ruling is impossible for these
+      components because they emit no Result, is confirmed and is now the rule. The diagnostics carried
+      INSIDE a Result by the components that DO emit one are untouched: they still travel to Export and
+      to the studio (rule 8.7(a)), and Skin's own spec routes its diagnostics into them rather than onto
+      the balloon (rule 8.2(d)).
+
+THE CONTROLLER'S RULINGS, and they are the controller's rather than Param's. All three narrow a sentence
+he wrote in general terms, so all three are his to overturn on a word. They are settled only in the sense
+that the spec is written to them and no one need ask again before building.
+
+  (e) BACKEND HEALTH'S REPORT IS LEFT ALONE (rule 8.6(d)). He named "the importer and exporter" and not
+      this component. Report is the component's product rather than a diagnostics side-channel, its
+      failure half is already duplicated as an Error at FormFindingComponents.cs:92, and removing it would
+      remove the component's reason to exist. Nothing about Backend Health changes in this round.
+  (f) EXPORT'S WRITTEN-FILE PATHS STAY WIREABLE DATA (rule 8.6(b)). Only the diagnostics TEXT is retired,
+      the duplicated warning block being deleted and the per-kind live lines becoming Remarks. An author
+      needs the paths of what was just written as data, and a message cannot be wired into anything. The
+      Status port therefore stays registered and only its content and description change, which is also
+      what keeps Export's migration and its harness pin silent (rules 9.6 and 10.2(j)).
+  (g) THE REMARK QUESTION IS A PREREQUISITE, NOT AN ASSUMPTION (rules 6.6(f) and 10.3(k)). Grasshopper's
+      own documentation says only Warnings and Errors are recorded, while the plugin adds Remarks and its
+      comments assume an author sees them. That is checked IN RHINO BEFORE section 8 is built. If the scan
+      cannot retrieve Remarks, the fallback is mechanical and is written out line by line at the end of
+      rule 8.5: Import Pieces' nine roll-up lines and Export's per-kind live lines go to Warning level
+      instead, and nothing else changes.
+
+## 12B. What is still open, and is his to answer
+
+  (a) ANCHOR LINES: A CHORD OR A POLYLINE (rule 5.2). THIS IS THE ONE QUESTION THAT STILL STOPS WORK;
+      nothing in section 5 can be built until he answers it. One line per strip either way, which is what
+      he asked for. A straight LINE from the strip's first node to its last is what he literally said,
       "should just be 2 lines", and it keeps the port typed as a Line, keeps the Rhino-free helper and
       keeps the smoke check that drives it. A POLYLINE through the strip's nodes follows a springing that
       curves in plan, as Perimeter Lines already follows a boundary that does, and it costs the port
       retype to Curve, the deletion of the helper, the move of the work into Build and the loss of the
       measurable path. My recommendation is the polyline; his vault is the reason and his canvas is the
       test.
-  (g) CLUSTERS (rule 6.4(d)). He asked for "every component of our plugin"; the rule as written reads
+  (b) CLUSTERS (rule 6.4(d)). He asked for "every component of our plugin"; the rule as written reads
       only the top level, because descending needs GH_Cluster.Document(password) and what to do with a
       password nobody has answered. Does he cluster parts of a definition, and must the scan descend?
-  (h) THE DIAGNOSTICS INSIDE A RESULT, during a document scan (rule 6.9). They are reachable through each
+  (c) THE DIAGNOSTICS INSIDE A RESULT, during a document scan (rule 6.9). They are reachable through each
       scanned component's output parameters' volatile data, and the rule chooses not to read them, for
       staleness, duplication and because a wired Diagnose already reads them exactly. That choice removes
-      from "reveal any problems" the whole class of problem the Result's own entries carry. Accepted, or
-      is the harvest wanted with its staleness stated on the face of the report?
+      from "reveal any problems" the whole class of problem the Result's own entries carry. Note that this
+      is a different question from 12A(d), which is about where a component with NO Result reports; this
+      one is about whether an unwired Diagnose should go looking inside the Results lying on the canvas.
+      Accepted, or is the harvest wanted with its staleness stated on the face of the report?
+  (d) EXPORT'S OWN RES OUTPUT (rule 8.5). Not required by this round, and named here because the text
+      addressed it to him and no earlier list carried it. Giving Export a Result output would let Diagnose
+      sit AFTER it in a chain, which it cannot today, and would give Export somewhere to write diagnostics
+      entries as Skin now has. It is a change to Export's shape rather than a diagnostics decision.
+  (e) EXPORT'S STATUS PORT NAME (rule 8.6(b)). Once the port carries only the written paths, "Status" is
+      no longer what it holds. Keeping the name costs nothing and says something slightly false; renaming
+      it to "Written" or "Files" costs a removed-and-added pair in the load warning, the harsh close that
+      goes with it, and an edit to Export's harness pin that this round otherwise avoids. Small either
+      way, and his to settle when he next looks at Export.
+  (f) CONTINGENT, AND ONLY IF THE CHECK OF 12A(g) FAILS: DISPLAY'S TWO REMARKS. The fallback promotes the
+      retired content to Warnings, but Display's own two Remarks at VisualiseComponents.cs:1285-1297 are
+      not retired content, so they would stay Remarks and drop out of the document scan. Promote them
+      with the rest, or accept that Display speaks only to its own balloon? Do not put this to him unless
+      the check comes back empty.

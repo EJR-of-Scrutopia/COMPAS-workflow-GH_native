@@ -1,6 +1,7 @@
 # Skin buildability and pattern rework
 
-Date: 2026-09-01. Status: design, awaiting Param's review.
+Date: 2026-09-01. Status: design, AMENDED to Param's rulings of 2026-09-01. Section 13 now separates
+what is settled from the four items still genuinely open for him.
 
 Governed by his rulings in
 C:\Users\Param\OneDrive - Ananke-eidos\Documents\Ananke Eidos Studio\VS code\COMPAS Workflow\docs\superpowers\specs\2026-09-01-skin-round-design-input.md,
@@ -11,6 +12,14 @@ whose three errata about the correspondence rules are carried forward intact in 
 Every claim below about how the code behaves today was checked against the code and is cited by
 file and line. Where a claim could not be checked, the text says so in the sentence that makes it.
 Where a ruling is mine rather than Param's, the rule says so.
+
+Param ruled on two points on 2026-09-01 and this text is amended to them rather than annotated with
+them. THE SEAM-OUTWARD BUILD ORDER STANDS, on the corrected understanding of what it serves, which
+is section 7. THE CROWN CAP SPLITS when it is oversized, into a ring of wedges about a smaller centre
+disc, which is section 2.6. Four further rulings in this round are MINE, the controller's, and each
+says so where it stands: the masonry reading of the continuous joint family (rules 3.3.4 and 3.3.4a),
+the half-pitch stagger (rule 5.4.3), the minimum piece size as a port that fixes the maximum with it
+(rules 6.0 and 9.5), and Path's slot in Export (section 10.1).
 
 ## 0. Files, paths and citation convention
 
@@ -72,7 +81,11 @@ Six places, named here rather than resolved quietly.
    sequence within a run" (SkinComponents.cs:149). It is false.
    tessellation.py:473 sorts every tessellation, authored or generated, by course and then by the
    polar angle of each cell's centroid about the cut's own centroid, and reassigns each cell's index
-   from that sort at tessellation.py:474-477. Section 7 corrects the sentence.
+   from that sort at tessellation.py:474-477. The order is not idle for being discarded there: it is
+   EMISSION order, and emission order is what decides which cell survives an overlap
+   (SkinPatterns.cs:1584-1590). So the order serves the Grasshopper author and the overlap filter and
+   not the studio, and that is the basis on which Param kept it on 2026-09-01. Section 7 corrects the
+   sentence and section 13.1 records the ruling.
 6. "It should be not too hard of a problem to fix" is true of the cheap form he rejected and false of
    the proper one he chose. The proper form replaces the scalar the whole engine is built on. It is a
    foundation change. It is the right one, and it reuses rather than replaces the hardened tracer,
@@ -338,9 +351,9 @@ the force line field, which is what the design input means by "the same construc
 fields". The march is short, of order CH divided by the mesh edge length, so of order two faces, and
 it reuses section 3's own face-exit walk (rule 3.2.10) on a different vector.
 
-RULE 1.8.4. RULING (mine, and it is a DEFERRAL against his "both must be addressed", so section 13
-puts it to him in his own words). Cause 1 is NOT fixed in this round. The proportional mapping of
-rule 1.8.1 stays. Three reasons, stated so he can weigh them: rule 1.8.3 is a second advection engine
+RULE 1.8.4. RULING (mine, the controller's, and it is a DEFERRAL against his "both must be
+addressed", so section 13.2 puts it to him in his own words). Cause 1 is NOT fixed in this round.
+The proportional mapping of rule 1.8.1 stays. Three reasons, stated so he can weigh them: rule 1.8.3 is a second advection engine
 stacked on top of the one section 3 introduces in the same wave, and section 3 has to be proved
 first; a gradient-marched head joint carries intermediate points, so a courses cell's outline gains
 corners and rule 5.2.3(a)'s two-section loft no longer has the cell's own outline as its boundary,
@@ -395,7 +408,8 @@ its upper boundary. That is today's behaviour, kept deliberately as the fallback
 say which of the three tests refused it.
 
 RULE 2.2.3. Exactly one cap per qualifying component, never more. A cap is a keystone and a keystone
-is one stone.
+is one stone, unless it is too big to be one stone, in which case it is one ROSETTE: rule 2.6 splits
+it into a ring of wedges about a smaller centre disc, and one rosette is still exactly one cap.
 
 ### 2.3 What shape it is
 
@@ -408,30 +422,38 @@ RULE 2.3.2. Its course is n - 1, its Clipped flag is false, and it carries a new
 SkinCell so the diagnostics and the Surface output can treat it as the one cell of its kind. U0 and
 U1 are -c.Length / 2 and +c.Length / 2, so its span is its whole girth.
 
-RULE 2.3.2a. A CAP IS EXCLUDED FROM THE PIECE-LENGTH STATISTICS, and this matters more than it
-sounds. Piece lengths are taken as `cell.U1 - cell.U0` over the surviving cells
-(SkinPatterns.cs:1839), and that list feeds the message chin of rule 9.3.1 and the uniformity bar of
-check 12.3(d). On a dome the cap's girth is metres against ordinary pieces of order S, so a cap left
-in the list dominates the maximum and the max-over-min ratio single-handedly, and the one number this
-round exists to restore stops measuring the thing it was restored for. Each cap's girth is reported
-in `skin.crown_caps`' Context instead, which rule 9.3.3 already provides for, and it is reported per
-cap rather than pooled.
+RULE 2.3.2a. A CAP IS EXCLUDED FROM THE PIECE-LENGTH STATISTICS, and so is every WEDGE of a cap that
+rule 2.6 has split, and this matters more than it sounds. Piece lengths are taken as
+`cell.U1 - cell.U0` over the surviving cells (SkinPatterns.cs:1839), and that list feeds the message
+chin of rule 9.3.1 and the uniformity bar of check 12.3(d). On a dome the cap's girth is metres
+against ordinary pieces of order S, so a cap left in the list dominates the maximum and the
+max-over-min ratio single-handedly, and the one number this round exists to restore stops measuring
+the thing it was restored for. A wedge is excluded for the same reason at a smaller scale: rule 2.6.2
+sizes it just under the maximum piece size, which is 3 S at the default MP, so a ring of wedges left
+in the list would carry the ratio past check 12.3(d)'s bar of 2.5 on any dome by itself. Every cap
+piece's span is reported in `skin.crown_caps`' Context instead, which rule 9.3.3 provides for, and it
+is reported per piece rather than pooled.
 
 RULE 2.3.3. Its plan projection is a level curve of a plan-injective surface, hence simple, so it
 passes `PlanSelfCrosses`; and it lies above every other cell's band, so it overlaps none. It is not
 exempted from `KeepValidPlans` (SkinPatterns.cs:1618-1673) and must not be. If it ever fails, that is
 a defect and the filter is where it should show.
 
-RULE 2.3.4. There is no upper bound on a cap's size. A shallow dome at a large CH gives a large
-keystone, and the answer is a smaller CH, which moves L_top up. The cap's girth is reported so the
-author can see that for himself. OPEN QUESTION for Param at section 13.
+RULE 2.3.4. A CAP'S SIZE IS BOUNDED, and Param ruled on 2026-09-01 how. Above the maximum piece size
+of rule 6.0(b) the cap becomes a ring of wedges about a smaller centre disc, which is section 2.6.
+What stands from the earlier draft is the author's own remedy and the reason it cannot be the whole
+answer: a shallow dome at a large CH gives a large keystone and a smaller CH moves L_top up, but a
+rule that leaves the whole answer to the author leaves a stone nobody can lift sitting on the model
+until he happens to notice it. The cap's girth is reported either way, and section 2.6 now acts on
+it.
 
 ### 2.4 The band the cap sits in
 
 RULE 2.4.1. The cap replaces the TILING of band n - 1, not band n. Bands 0 to n - 2 are tiled
-normally; band n - 1 is the cap. The tree therefore still has exactly `CourseCount` branches, the
-convention at SkinComponents.cs:365-379 is untouched, and the studio still gets one stage per
-distinct course (staging.py:162-207).
+normally; band n - 1 is the cap, or, where rule 2.6 splits an oversized one, the cap's ring of wedges
+and its centre disc together. The tree therefore still has exactly `CourseCount` branches whether the
+cap is split or not, the convention at SkinComponents.cs:365-379 is untouched, and the studio still
+gets one stage per distinct course (staging.py:162-207).
 
 RULE 2.4.2. `BandCount`'s sliver merge (SkinPatterns.cs:1863-1868) MUST be kept and must run before
 the cap decision, and what it guarantees must be stated accurately, because a cap-girth bound or a
@@ -470,6 +492,105 @@ as a failure.
 RULE 2.5.3. A dome with one springing rim gets a cap; a barrel with two gets a ridge; a groin vault
 gets a ridge along each groin and no cap. These are three readings of one rule and no case is
 special-cased.
+
+### 2.6 The cap that is too big
+
+Param ruled on 2026-09-01: above the maximum piece size the cap becomes a ring of wedge pieces around
+a smaller centre disc, with the wedge count chosen so that each wedge falls under the maximum; and
+ONE threshold governs both ends of the size question, too small merging into a neighbour and too
+large splitting into a ring. So the maximum is not a new number and gets no port of its own. It is
+the Min Piece port read from the other end, `Mx = S / MP` by rule 6.0(b), which is 3 S at the default
+MP of 1/3 and 2 S at the cap of rule 6.4.
+
+RULE 2.6.1. WHEN THE SPLIT FIRES. Let G be the cap's girth, the length of its outline c, which is
+also its span `U1 - U0` by rule 2.3.2. The cap is SPLIT where G is strictly above Mx by more than
+1e-9 and is emitted WHOLE otherwise. That test is the exact mirror of rule 6.1's "at or under
+MP * S": the two ends of the one threshold can never both fire on one piece, and no span anywhere is
+left undecided at the boundary. Where MP is zero the minimum is zero and Mx is unbounded, so merging
+and splitting go off together, which is the only coherent reading of a single threshold turned off.
+
+RULE 2.6.2. THE WEDGE COUNT. `W = max(2, ceil(G / Mx))`, the FEWEST wedges that put every one of
+them under the maximum, and each wedge's outer arc is exactly `G / W`. Fewest, and not the pattern's
+own pitch: a keystone region is one stone where it can be one and as few stones as it can be where it
+cannot, and tiling the ring at the ordinary pitch would put a course of ordinary stones where a
+rosette belongs and would answer a question nobody asked.
+
+The lower end needs no rule of its own, and the arithmetic is worth writing down because it is what
+lets rule 6.5 go on saying that no cap piece is ever merged. With `W = ceil(G / Mx)` and G above Mx,
+the outer arc `G / W` is above `Mx / 2`; and `Mx / 2 = S / (2 MP)` is at or above `MP * S` for every
+MP at or under 0.707, which rule 6.4's cap of 0.5 guarantees with room to spare. A wedge therefore
+can never fall under the minimum piece size, and the two ends of the one threshold cannot fight each
+other.
+
+RULE 2.6.3. THE INNER BOUNDARY IS A TRACED LEVEL CURVE, like every other boundary in this engine. The
+centre disc is the region above a level Li and the ring is the band between L_top and Li. Li is found
+by BISECTION on [L_top, dTop], dTop being the top cut at dMax minus the epsilon of rule 1.5.2,
+keeping a bracket [lo, hi] whose upper end always satisfies the test:
+  (a) hi starts at dTop. Where the curve inside c at dTop has girth ABOVE Mx, no level qualifies at
+      all and rule 2.6.6's base case fires immediately;
+  (b) otherwise lo starts at L_top and each step traces the midpoint m of [lo, hi]: hi becomes m
+      where the component of level m lying inside c has girth at or under Mx, and lo becomes m where
+      it does not. Where MORE THAN ONE component of level m lies inside c, the crown holds two
+      summits above m, and rule 2.6.6's base case fires;
+  (c) SIX steps, the depth of rule 8.2.3 and for the same reason, and Li is then hi.
+The bracket invariant and not the shape of the surface is what guarantees the disc is under the
+maximum. Girth need NOT fall monotonically as the level rises, because a wiggly curve inside a smooth
+one can be longer than it, so the bisection here is a search for a large ALLOWED disc and not for a
+crossing, and taking hi at the end is correct whatever the girth does in between.
+
+RULE 2.6.4. WHAT THE TWO PIECES ARE, and the whole of it reuses machinery this spec already has.
+  (a) THE RING is the band [L_top, Li] tiled by the pattern's own band construction with the piece
+      count FORCED to W and the spans equal: `U0 = -G / 2 + w * G / W` and `U1 = U0 + G / W` for
+      w = 0 to W - 1, taken about c's own seam so that rule 7.1's seam-outward order applies to them
+      with no special case. A wedge is therefore an ordinary `BandCell` between the outer curve, the
+      ring's own mid curve and the inner curve, and it inherits every guarantee and every defect that
+      construction carries, including the proportional arc mapping of rule 1.8.1 which rule 1.8.4
+      defers out of this round. Say so here rather than leave it to be found, exactly as rule 3.3.6
+      says it for the force-aligned pattern.
+  (b) THE CENTRE DISC is a cap by rules 2.2.3, 2.3.1 and 2.3.2 unchanged, with the inner curve as its
+      outline and its own girth as its span.
+  (c) BOTH NEW LEVELS ENTER THE ONE ASCENDING LIST of rule 8.2.9 and the whole list is traced again.
+      The ring needs its own MID at (L_top + Li) / 2 as well as Li itself, so a split cap costs two
+      levels beyond the ones its bisection has already spent, every one of them counts against the
+      total cap of rule 8.2.3b, and inserting them re-propagates the seams above them exactly as rule
+      8.2.9 says a band split does.
+  (d) THE RING IS A BAND AND IS TESTED LIKE ONE, by the correspondence test of rule 8.2.1. Where it
+      FAILS the split is abandoned and rule 2.6.6's base case fires. The ring is NOT bisected
+      further: section 8's bisection exists to find a level at which the topology is simple, and here
+      the level is already being chosen, by rule 2.6.3.
+
+RULE 2.6.5. THE TREE CONSEQUENCE, which has to be stated because a cap that was one item becomes
+several. All W + 1 pieces sit in branch n - 1, the course the cap already had. The tree keeps exactly
+`CourseCount` branches, rule 2.4.1 is untouched, and rule 8.2.4's prohibition holds for a split cap
+as it holds for a split band: it may not invent a course, because the studio builds one stage per
+distinct course (staging.py:162-207) and a rosette is laid in one stage. Within the branch the pieces
+sort by rule 7.1 like everything else, and one consequence follows from that which the author should
+not have to discover: the disc's mid-span is 0, so it is emitted FIRST and therefore WINS any overlap
+against its own wedges under the first-emitted-wins filter of rule 7.3. That is the right way round,
+since the keystone is the piece least worth dropping. Where W is ODD the middle wedge straddles the
+seam and its mid-span is 0 as well, and rule 7.1's own tie-break, the negative side first, cannot
+separate two spans both centred on the seam; so the tie is broken here explicitly and in the disc's
+favour, for the same reason. Every piece carries the `Cap` flag of rule
+2.3.2 and all W + 1 of them are excluded from the piece-length statistics by rule 2.3.2a.
+
+RULE 2.6.6. THE BASE CASE. Param asked what happens when even the centre disc is oversized, and
+whether it recurses or refuses. IT DOES NEITHER, and both halves of that have a reason.
+
+It does not RECURSE, because rule 2.6.3's bracket puts the centre disc under the maximum in ONE step
+wherever a qualifying level exists at all, so there is nothing left for a second round to improve. It
+does not REFUSE, because a refusal at the crown is a hole at the crown, and this engine already has
+one bounded hole in it that section 13.2 has to put to him. So where rule 2.6.3(a) finds no
+qualifying level, where rule 2.6.3(b) finds two summits, or where rule 2.6.4(d)'s correspondence
+fails, the cap is emitted WHOLE and OVERSIZED, its girth and the maximum are named in a runtime
+Warning and in `skin.crown_caps`' Context, and the author's remedy is the one rule 2.3.4 gives him: a
+smaller CH, or a larger MP if he wants bigger stones. A stone he can see and measure beats a hole he
+cannot fill, and the Warning is what makes the difference between the two visible on the canvas.
+
+The case is not exotic and this spec should not pretend it is. A dome whose plan is not a circle has
+a cut locus that is a SEGMENT rather than a point; the level curves inside its crown shrink onto that
+segment rather than onto an apex; and the girth at the top cut is therefore bounded below by roughly
+twice the segment's length, however fine CH is made. Check 12.2(g) builds exactly that fixture rather
+than hoping the case never arrives.
 
 ## 3. The force-aligned rework
 
@@ -623,9 +744,10 @@ and advect it upward from there. Where two consecutive crossings are less than 0
 TERMINATE the later of the two at bed k and merge its two pieces. Both events are counted, both are
 reported, and both are what a mason does when he adds or drops a course.
 
-RULE 3.3.4. Bond. RULING (mine, and it is the answer to the tension in the design input's own open
-question; see section 13). Because the half-pitch family is generated at S / 2, a course can take
-every OTHER line. PARITY IS ANCHORED ON THE STREAMLINE AND NEVER ON A BED'S CROSSING INDEX. Every
+RULE 3.3.4. Bond. RULING (mine, the controller's and not Param's, and it SETTLES the tension in the
+design input's own open question rather than leaving it open; section 13.1 records it and rule 3.3.4a
+records the reading it rejects). Because the half-pitch family is generated at S / 2, a course can
+take every OTHER line. PARITY IS ANCHORED ON THE STREAMLINE AND NEVER ON A BED'S CROSSING INDEX. Every
 line seeded by rule 3.3.1 carries a parity fixed at seeding, alternating along bed 0 seam-outward; a
 line INSERTED by rule 3.3.3 takes the parity opposite to both of its neighbours at the bed it is
 inserted on, which is always well defined because the two crossings bracketing a gap of more than
@@ -645,6 +767,20 @@ and check 12.3(b) exist for; and the parity flip would run from the event to the
 rather than staying at the event. Anchoring on the line confines the disturbance to the place it
 happened, and the parity needs no re-synchronisation anywhere, because it was never a function of a
 count.
+
+RULE 3.3.4a. WHICH FAMILY CARRIES THE CONTINUOUS JOINT, and the alternative is REJECTED and recorded
+rather than dropped. RULING (mine, the controller's and not Param's). The design input's own sentence
+reads as pieces sitting BETWEEN adjacent flow lines, in strips running rim to crown, which would make
+the flow lines the continuous joints and every piece a segment of one strip. That reading is refused.
+A joint continuous from rim to crown is a crack line up the form: nothing crosses it, so nothing
+closes it, and the shell loses the one property that makes a masonry surface work. The MASONRY
+reading stands instead, and it is what section 3 is built on: the BEDS are the continuous family and
+they are the section 1 level curves, running across the thrust so the thrust closes them; the HEAD
+joints are the native streamlines, generated at S / 2 by rule 3.3.1 with alternate parity per course
+by rule 3.3.4. Every joint therefore still lies on a streamline, so the pattern still reads as the
+sinusoidal curves running up his form, while the bond stays a running bond. The two readings look
+completely different and both are buildable, which is why the rejected one is written down here with
+its reason rather than left out.
 
 RULE 3.3.5. A cell gains or loses a side ONLY where a line begins or ends within the cell's own band,
 which is what anchoring the parity on the line rather than on an index buys. An insertion inside a
@@ -789,8 +925,8 @@ set identical on every row, with a single global bound (SkinPatterns.cs:2263-226
 mapping is the courses engine's, `lowerRatio` and `upperRatio` in `BandCell`
 (SkinPatterns.cs:1963-1969), it belongs to pattern 0 rather than to the honeycomb, and section 1.8
 states it, states what would replace it and rules that it is DEFERRED out of this round, with section
-13 putting the deferral to him. Nothing in section 4 addresses it and section 4 should not be read as
-though it did.
+13.2 putting the deferral to him. Nothing in section 4 addresses it and section 4 should not be read
+as though it did.
 
 The measured cost of defect 1 is separately large: the plan filter withholds 26 to 49 per cent of
 honeycomb cells on the two-oculus fixture and 38 to 62 per cent on the serpentine. Those two figures
@@ -998,7 +1134,10 @@ RULE 5.2.3. Per pattern:
       segment of the loop, joined. Say plainly on the port that the cap is a Brep of many faces
       while every other cell is one, rather than pretending otherwise. `Brep.CreatePatch` is not
       used: it is a fitting solver, its output is not the surface the cell describes, and a
-      deterministic fan is worth more here than a smooth guess;
+      deterministic fan is worth more here than a smooth guess. A WEDGE of a cap that rule 2.6 has
+      split is NOT a cap for this purpose: by rule 2.6.4(a) it is an ordinary band cell between two
+      level curves, so it takes route (a) and is a single face. Only the centre disc takes this
+      route;
   (e) ANY OTHER CORNER COUNT takes the same deterministic fan, and this route is not optional
       tidying. Rule 3.3.5 requires three- and five-sided force-aligned cells and rule 4.3 requires
       five- and seven-sided honeycomb cells. Route (b) is written for a cell with exactly two side
@@ -1044,7 +1183,10 @@ true of both engines and is being made a stated rule rather than an accident: a 
 point is `Run(lowerCurve, u0 * lowerRatio, ...)`'s first element, which is `PointAt(curve, uStart)`
 (SkinPatterns.cs:1966-1967, :1227); a hexagon's first point is setout vertex 0, the bottom-left
 corner at (uc - S/4, centreRow - 1) (SkinPatterns.cs:2290-2294, :2392-2394). The cap's first point is
-its own seam. The `lowerRatio` in that citation is the proportional arc mapping of rule 1.8.1, which
+its own seam, and a WEDGE of a split cap takes the ordinary rule rather than the cap's, since by rule
+2.6.4(a) it is a band cell: its first point is its low-U corner on the OUTER curve, which is the
+lower of its two boundaries. The `lowerRatio` in that citation is the proportional arc mapping of
+rule 1.8.1, which
 is his first cause of the setout distortion and is DEFERRED by rule 1.8.4; it is cited here for the
 corner convention alone and this sentence does not ratify it.
 
@@ -1052,21 +1194,54 @@ RULE 5.4.3. His analogy is exact and so is its limit. Setting a circle's seam to
 because the seam is the same on every circle. Here the seam is a property of each level curve, and
 two things move it between courses today: it is quantised to a trace vertex (defect 5 of section
 4.1), and odd courses are additionally phase-shifted half a pitch by the running bond
-(SkinPatterns.cs:1804). Rule 4.2.6 removes the first, which is drift and is a defect. The second
-stays, because it is BOND and not drift: a running bond exists precisely so that cell 0 of course
-r + 1 does not begin above cell 0 of course r. So the promise the port can honestly make is "every
-cell begins at the same corner of itself, and courses are deliberately offset half a piece". He
-should know that before he builds a mapping on it. OPEN QUESTION at section 13 if he wants the
-stagger suppressible.
+(SkinPatterns.cs:1804). Rule 4.2.6 removes the first, which is drift and is a defect. THE SECOND
+STAYS. RULING (mine, the controller's and not Param's): the half-pitch stagger is KEPT, because it is
+BOND and not drift. A running bond exists precisely so that cell 0 of course r + 1 does not begin
+above cell 0 of course r, and the bond is not sacrificed to the convenience of a tree mapping.
 
-## 6. Minimum piece size
+The consequence for the Surface output's tree must be stated plainly here and again on the port,
+because it is the one thing an author building a mapping will assume the other way. The Surface tree
+is aligned with the Cells tree branch for branch and item for item by rule 5.3.1, so item k of branch
+r IS the surface of cell k of course r; what it is NOT is the surface sitting directly above item k
+of branch r - 1. Rows do not stack. Item 0 of each course begins half a piece round from item 0 of
+the course below it, deliberately, and on a closed course the count itself may differ between courses
+as the girth changes. An author who wants the piece above a given piece must find it geometrically,
+by its span overlapping in signed arc, and not by taking the same index in the next branch. So the
+promise the port can honestly make is "every cell begins at the same corner of itself, and courses
+are deliberately offset half a piece". The alternative is recorded rather than adopted: a
+suppressible stagger is a one-line option, it would make the mapping index against index, and it
+would cost the bond, which is why it is not taken here. Section 13.1 records the ruling and section
+13.2 does not carry it as a question.
 
-Param ruled: merge into the neighbour, default a third of the target size, adjustable.
+## 6. Piece size: one threshold, both ends
+
+Param ruled: merge into the neighbour, default a third of the target size, adjustable. He ruled
+separately, on 2026-09-01, that a crown cap above the MAXIMUM piece size splits into a ring of
+wedges, and that one threshold governs both ends of the size question. So the threshold is named
+here once and used twice, by this section at the bottom end and by section 2.6 at the top.
+
+RULE 6.0. THE THRESHOLD, NAMED ONCE. `MP` is the Min Piece port of rule 9.5: a pure fraction of Size,
+default 1/3, floored at 0 and capped at 0.5 by rule 6.4. From that one number:
+  (a) the MINIMUM PIECE SIZE is `MP * S`, in the model's own length unit, which is metres because S
+      is, and this section merges anything at or under it;
+  (b) the MAXIMUM PIECE SIZE is `Mx = S / MP`, in the same unit, which is 3 S at the default and 2 S
+      at the cap, and rule 2.6 splits a crown cap strictly above it.
+Reciprocal, and not a second port. The two ends are one question asked twice, and a second number
+would let an author set a minimum above his own maximum and leave the engine with nothing sensible to
+do. At MP = 0 the minimum is 0 and Mx is unbounded, so both ends go off together, which is the only
+coherent reading of a single threshold turned off.
+
+The default's arithmetic is worth seeing. At MP = 1/3 a piece may run from S / 3 to 3 S, and 3 S is
+exactly the upper bound rules 3.3.3 and 3.3.4 already impose on an ordinary force-aligned piece,
+which check 12.3(d) reads. The maximum therefore introduces no new bound on ordinary pieces at the
+default. What it does is put the crown cap, which is the one cell that escapes every other size rule
+in this engine, under the same bound as everything else.
 
 RULE 6.1. Threshold. A cell whose along-course span is AT OR UNDER `MP * S`, compared with a 1e-9
-tolerance, is merged, with MP a new component input defaulting to 1/3. Against S rather than against
-the course's own pitch, because that is what he said. What a merged cell IS is rule 6.7, and naming a
-merge without naming its outline would leave the engine undefined.
+tolerance, is merged, MP being the port of rule 9.5 and `MP * S` the minimum piece size of rule
+6.0(a). Against S rather than against the course's own pitch, because that is what he said. What a
+merged cell IS is rule 6.7, and naming a merge without naming its outline would leave the engine
+undefined.
 
 The comparison is "at or under" and not "under", deliberately. The barrel's odd-course end pieces are
 exactly half a pitch, 0.3 m at S 0.6 and CH 0.5, which the harness pins in those words
@@ -1091,14 +1266,19 @@ span that has already absorbed a merge is not itself tested again. Each span can
 most once per side and the pass terminates in a single sweep. There is no iteration to convergence
 and no recursion.
 
-RULE 6.4. Bounds. MP is floored at 0, where merging is disabled, and capped at 0.5, above which
-merging two pieces makes a piece longer than the target and the rule would oscillate. A value
-outside the range is clamped with a Warning, the discipline the CH floor already keeps
-(SkinComponents.cs:603-611).
+RULE 6.4. Bounds. MP is floored at 0, where merging is disabled and, by rule 6.0(b), the maximum is
+unbounded with it, so the crown cap never splits either; and capped at 0.5, above which merging two
+pieces makes a piece longer than the target and the rule would oscillate. A value outside the range,
+a negative one included, is clamped to the nearer bound with a Warning naming the clamped value, the
+discipline the CH floor already keeps (SkinComponents.cs:603-611). The cap at 0.5 does a second job
+beside its own: it is what makes rule 2.6.2's proof hold, that a wedge of a split cap can never come
+out under the minimum piece size.
 
 RULE 6.5. What it never does. It never merges across a course boundary, never across two traced
 components, and never leaves a course empty: a course whose ONLY piece is under the threshold keeps
-that piece as it is. A cap is never merged; it is one stone by rule 2.3.3.
+that piece as it is. No cap piece is ever merged, the wedges of a split cap included: a cap is one
+stone or one rosette by rules 2.2.3 and 2.6, and rule 2.6.2 proves that no wedge can fall under the
+minimum in the first place, so the case never arises rather than being suppressed.
 
 RULE 6.6. The merge runs BEFORE `KeepValidPlans`, so the filter sees and judges the cells the author
 is actually handed. Merged pieces are counted as `skin.merged_pieces`.
@@ -1187,28 +1367,47 @@ and seam-outward then biases survival towards the cells nearest the seam, which 
 and the right ones to keep. Every pinned drop count in the harness must be re-measured against the
 new order, and a moved number is not by itself a regression.
 
-RULE 7.4. THE HONEST NOTE, and it must be in the port description in these terms. This order does not
-reach the studio. `build_tessellation` sorts every tessellation, authored or generated, by course and
-then by the polar angle of each cell's centroid about the cut's own centroid (tessellation.py:473)
-and reassigns each cell's index from that sort (tessellation.py:474-477). The sidecar's own
-`c<course>p<n>` key, which Export writes as a plain per-course running counter
+RULE 7.4. WHAT THE ORDER ACTUALLY SERVES, and it must be in the port description in these terms.
+This order does not reach the studio. `build_tessellation` sorts every tessellation, authored or
+generated, by course and then by the polar angle of each cell's centroid about the cut's own centroid
+(tessellation.py:473) and reassigns each cell's index from that sort (tessellation.py:474-477). The
+sidecar's own `c<course>p<n>` key, which Export writes as a plain per-course running counter
 (DeliveryComponents.cs:1566-1578), is kept as an opaque string and never parsed. So the file's order
-is discarded the moment it is read, and this ordering serves the GRASSHOPPER AUTHOR, who sequences
-his own work on the canvas, and nobody else. Param made this ruling believing it fed the studio's
-build sequence; it does not, and section 13 puts that back to him.
+is discarded the moment it is read.
 
-RULE 7.5. The port description is CORRECTED. The present text at SkinComponents.cs:145-153 contains
-the false clause "each run ordered along the course, the studio's build sequence within a run". The
+Param made this ruling believing it fed the studio's build sequence. He was shown that it does not,
+and on 2026-09-01 he KEPT IT ANYWAY, on the two grounds that are true. It serves the GRASSHOPPER
+AUTHOR, who sequences his own work on the canvas. And it serves the OVERLAP FILTER, which is not
+cosmetic at all: `KeepValidPlans` runs in emission order and the FIRST cell emitted wins an overlap
+(SkinPatterns.cs:1584-1590), so emitting seam-outward makes the SEAM STABLE, the cells nearest the
+setout seam being the ones that survive, and pushes the losses out to the edges of each course,
+symmetrically on both sides because the order alternates. The order therefore serves the author and
+the filter and NOT the studio, and section 13.1 records the ruling on that basis. What does not
+survive is the sentence on the port claiming the order is the studio's build sequence, which is rule
+7.5.
+
+RULE 7.5. The port description is CORRECTED, and correcting it is the operative half of Param's
+ruling: the order stands, the claim made about it on the port does not. The present text at
+SkinComponents.cs:145-153 contains the false clause "each run ordered along the course, the studio's
+build sequence within a run". It is false for the reason rule 7.4 gives and it must go. The
 replacement, exactly:
 
   "One closed polyline per cell, on the thrust surface, as a TREE branched by COURSE (path = course,
   0 up from the bottom), which is now the ONLY carrier of the course: Export reads the branch path.
-  Within a branch cells run FROM THE SEAM OUTWARD, alternating either side of it, which is a
-  convenience for sequencing work on this canvas and nothing more: the studio re-sorts every
-  tessellation by course and then by each cell's angle about the cut's own centre and reassigns its
-  own index, so the order in the file is discarded on import. Wire into Export's Cells. Do NOT graft,
-  flatten or regraft the wire: the branch path is the course, and a flatten sends every cell to
-  course 0 and every build stage with it."
+  Within a branch cells run FROM THE SEAM OUTWARD, alternating either side of it. That order is for
+  sequencing work on this canvas, and for one thing more: where two cells overlap in plan the FIRST
+  one emitted is the one kept, so the cells nearest the seam survive and the losses fall out at the
+  edges of the course. It is NOT the studio's build sequence. The studio re-sorts every tessellation
+  by course and then by each cell's angle about the cut's own centre and reassigns its own index, so
+  the order in the file is discarded on import. Courses are a RUNNING BOND, so cell 0 of one course
+  does not sit above cell 0 of the course below it and the two courses may not even hold the same
+  number of cells; do not map item k of one branch against item k of the next. Wire into Export's
+  Cells. Do NOT graft, flatten or regraft the wire: the branch path is the course, and a flatten
+  sends every cell to course 0 and every build stage with it."
+
+The stagger clause in that text is rule 5.4.3's ruling stated where an author will meet it, and the
+Surface port's own description carries the same clause, since the Surface tree is aligned item for
+item with this one by rule 5.3.1 and inherits the offset with it.
 
 ## 8. Band splitting at topology transitions
 
@@ -1282,7 +1481,7 @@ of uncovered surface along the transition, and at CH 0.5 is 7.8 mm. The argument
 that the critical set is measure zero on the surface, so the refused area shrinks geometrically and
 the hole goes to nothing; the alternative he was promised, an explicit critical-point solve, would be
 exact and would need a saddle classifier the engine does not have and this wave cannot afford beside
-everything else in it. Section 13 puts the choice to him rather than settling it here.
+everything else in it. Section 13.2 puts the choice to him rather than settling it here.
 
 RULE 8.2.7. The honeycomb gets the same treatment at the CELL level, not the row level. A candidate
 hexagon is refused when the three rows it maps through do not correspond as a chain WITHIN ITS OWN
@@ -1318,9 +1517,12 @@ seam pin there is not by itself a regression.
 
 ### 9.1 Skin's ports after this wave
 
-Inputs, in order: 0 Result RES, 1 Pattern P, 2 Size S, 3 Course Height CH, 4 Min Piece MP.
+Inputs, in order: 0 Result RES, 1 Pattern P, 2 Size S, 3 Course Height CH, 4 Min Piece MP. MP is a
+fraction of S and no length of its own, and it sets BOTH ends of the size question by rule 6.0: the
+merge threshold below and the crown cap's split threshold above. Rule 9.5 states its type, default,
+units and bounds in full.
 
-Outputs, and the list is CONDITIONAL on his answer to section 13 item 7, because rule 9.4.1 is my
+Outputs, and the list is CONDITIONAL on his answer to section 13.2 item 1, because rule 9.4.1 is my
 ruling and not his:
   if he takes the RES output: 0 Result RES, 1 Cells C, 2 Surface SRF;
   if he declines it: 0 Cells C, 1 Surface SRF, which is literally what his own sentence asked for,
@@ -1360,6 +1562,8 @@ The present chin is at SkinComponents.cs:385-388.
 RULE 9.3.2. RUNTIME MESSAGES keep everything that is a hole: the scaled plan-drop Warning
 (SkinComponents.cs:335-363), the transition Warning (SkinComponents.cs:297-307), the field fallback
 of rule 1.7.4, the unreachable-vertex Warning of rule 1.7.3, and the surface failure of rule 5.3.2.
+They gain one more, which is not a hole but a stone nobody can lift and belongs at the same volume:
+the oversized-cap Warning of rule 2.6.6, naming the cap's girth against the maximum.
 
 RULE 9.3.3. RESULT DIAGNOSTICS ENTRIES carry every number, written with
 `ResultDiagnostics.Replace(result, "Skin", entries)` (ResultDiagnostics.cs:72-82) so they travel
@@ -1374,7 +1578,10 @@ of ok, info, warning, error (ContractDtos.cs:635-637). The entries, with their c
   skin.clipped (info, Value): boundary-clipped cells.
   skin.plan_degenerate_dropped and skin.plan_overlap_dropped (Value; warning above zero, ok at zero).
   skin.transition_bands (Value; warning above zero, ok at zero; Context carries the intervals).
-  skin.crown_caps (info, Value; Context carries each cap's girth).
+  skin.crown_caps (info, Value; Context carries each cap's girth, its wedge count where rule 2.6
+    split it and zero where it did not, the maximum piece size the split was measured against, and
+    the count of caps rule 2.6.6 emitted whole and oversized, which is the count the Warning of rule
+    9.3.2 is raised on).
   skin.odd_cells (info, Value; Context carries the five- and seven-sided counts and the rows).
   skin.merged_pieces (info, Value; Context carries the count of courses whose only piece was kept
     short by rule 6.5 and the count of merged pairs still under the threshold by rule 6.3, which is
@@ -1398,8 +1605,9 @@ bubble that pops up as enough". Rules 9.3.1 to 9.3.3 name three replacements and
 Remark: 9.3.1 is the chin, 9.3.2 keeps only what is a hole, and 9.3.3 is the Result entries, which
 are the reserved option of rule 9.4 and may not survive his answer. So the residual D content that is
 not a hole and does not fit the chin, namely mean piece length, the boundary-clipped count, each
-cap's girth, the odd-cell counts and their rows, and the merged-piece count, reaches him nowhere at
-all unless it is stated here.
+cap's girth and its wedge count where rule 2.6 split it, the odd-cell counts and their rows, and the
+merged-piece count, reaches him nowhere at all unless it is stated here. An OVERSIZED cap is not in
+that list, because rule 9.3.2 makes it a Warning: it is the one cap number loud enough to need one.
 
 RULE: the component raises ONE runtime Remark per solve carrying that residual content, in the D
 output's own reading order, so that the balloon alone remains sufficient exactly as he said,
@@ -1428,14 +1636,23 @@ string, TransitionBands, PlanDegenerateDropped and PlanOverlapDropped and nothin
         int UnreachableVertices,
         int ClippedCells,
         IReadOnlyList<double> CapGirths,
+        IReadOnlyList<int> CapWedgeCounts,
+        int CapsOversized,
         int FiveSidedCells,
         int SevenSidedCells,
         IReadOnlyList<int> CountChangeRows,
         int MergedPieces,
         int DegenerateCentroidsSkipped);
 
+The three cap members are read together and each is per CAP, not per cell: `CapGirths` carries the
+girth of each emitted cap, meaning the CENTRE DISC's girth where rule 2.6 split it and the whole
+cap's girth where it did not; `CapWedgeCounts` carries that cap's W, zero where it was not split; and
+`CapsOversized` counts the caps rule 2.6.6 emitted whole above the maximum, which is what check
+12.2(g) reads and what the Warning of rule 9.3.2 is raised on.
+
 The three piece lengths are DERIVED from the surviving cells and need no member, excluding Cap cells
-by rule 2.3.2a. `skin.surface_failed` is deliberately NOT on this record: the Brep build happens on
+by rule 2.3.2a, which since that rule was amended means excluding the wedges of a split cap as well
+as its disc. `skin.surface_failed` is deliberately NOT on this record: the Brep build happens on
 the solve thread beside `ClosedOutlineCurve` and never in SkinPatterns.cs, which is rule 5.2.4, so
 that count belongs to the component and check 12.5(b) reads it there.
 
@@ -1456,7 +1673,7 @@ OPTION IS AVAILABLE and is put to him, because it fits the plugin's own architec
 working around it ... That removes two ports and adds one, leaves Skin with Cells and Surface as its
 only geometry outputs". An earlier draft of this spec turned that reserved option into settled rules
 with no marker on them and pinned it into the port list and the verification, which left him no
-branch on which to say no. Section 13 item 7 puts it back to him, rule 9.1 states both port lists,
+branch on which to say no. Section 13.2 item 1 puts it back to him, rule 9.1 states both port lists,
 and checks 12.10(a) and 12.10(d) are conditional on the answer.
 
 The case FOR it, so he can weigh it: Result RES would be output 0, the house convention that puts it
@@ -1483,10 +1700,25 @@ changes, which is the test of whether the option was properly reserved.
 
 ### 9.5 Min Piece MP as an input
 
-RULING (mine, from his word "adjustable"). MP is a number input at slot 4, default 1/3, optional,
-read as a fraction of Size, bounded by rule 6.4. It is a fifth port on a component that is already
-paying the ports-moved warning for its outputs, so it costs nothing extra this wave and it costs a
-second warning if it is added later.
+RULING (mine, the controller's and not Param's, drawn from his word "adjustable"). MP is a PORT and
+not a fixed constant, and it is stated here once in full because rule 6.0 uses it twice.
+
+  TYPE. A number input, `Param_Number`, `GH_ParamAccess.item`, at input slot 4, optional, so a
+  definition that never touches it goes on behaving as the design input's "a third of the target
+  size".
+  DEFAULT. 1/3, which gives a minimum piece of S / 3 and a maximum of 3 S.
+  UNITS. NONE. MP is a pure FRACTION of Size and carries no length of its own, which is exactly what
+  lets one number set a minimum of `MP * S` and a maximum of `S / MP` in whatever unit S is already
+  in. The two derived lengths are in metres because S is in metres, and neither is a second input.
+  ZERO. Both ends off, by rule 6.0: no merging and no crown-cap split. It is a legal value and not an
+  error, and it is the value an author uses to see the engine's raw output.
+  NEGATIVE, OR ABOVE 0.5. Out of range and clamped to the nearer bound by rule 6.4, with a Warning
+  naming the clamped value. A negative therefore means "off" rather than meaning a failed solve,
+  because refusing the whole output over a number he can see and fix on the canvas would cost him
+  more than the mistake did.
+
+It is a fifth port on a component that is already paying the ports-moved warning for its outputs, so
+it costs nothing extra this wave and it costs a second warning if it is added later.
 
 ## 10. Export's input reorder
 
@@ -1495,17 +1727,24 @@ second warning if it is added later.
 Param's sentence gives: Result, Cells, Courses if it survives, Radius, Name, Studio URL, Live, Write.
 He OMITTED PATH.
 
-RULING, AND IT IS MINE AND NOT HIS. Path sits immediately before Name, since the two together say
-where the set goes and what it is called. The order becomes:
+RULING, AND IT IS MINE, THE CONTROLLER'S, AND NOT HIS. Path sits IMMEDIATELY AFTER Name, because the
+name and the folder together decide the file and neither means anything without the other. The order
+becomes:
 
-  0 Result RES, 1 Cells C, 2 Courses CO, 3 Column Radius R, 4 Path P, 5 Name N, 6 Studio S,
+  0 Result RES, 1 Cells C, 2 Courses CO, 3 Column Radius R, 4 Name N, 5 Path P, 6 Studio S,
   7 Live L, 8 Write W.
 
-He did not name that slot and his confirmation is wanted on it; section 13 puts it to him. Path is
-not optional in effect: Write with a blank Path writes nothing and says so as a Warning rather than
-an Error, deliberately, so the solve survives (DeliveryComponents.cs:794-803); a path that is not
-rooted is refused, and a drive root is refused (DeliveryComponents.cs:704-742). Dropping it or
-burying it changes what the component can do.
+Putting Path after Name rather than before it has a second merit worth stating: it leaves every port
+Param DID name in exactly the relative order he named it in, so the ruling inserts the omitted port
+and disturbs nothing he decided. An earlier draft of this spec put Path immediately before Name,
+which reads just as well as prose and moves Name one slot from where his own sentence had it; the
+ruling above supersedes it.
+
+He did not name that slot and this stays marked as my ruling until he says otherwise; section 13.1
+records it. Path is not optional in effect: Write with a blank Path writes nothing and says so as a
+Warning rather than an Error, deliberately, so the solve survives (DeliveryComponents.cs:794-803); a
+path that is not rooted is refused, and a drive root is refused (DeliveryComponents.cs:704-742).
+Dropping it or burying it changes what the component can do.
 
 ### 10.2 Courses survives on Export and dies on Skin
 
@@ -1633,7 +1872,8 @@ untouched; these two are changes to shipped behaviour and each is permitted for 
       hide a defect. Check 12.6(f) measures it.
 
 His third carried ruling, the arc-length ratio mapping, is NOT an exception here, because it is not
-being changed: rule 1.8.4 defers it out of this round and section 13 item 8 puts the deferral to him.
+being changed: rule 1.8.4 defers it out of this round and section 13.2 item 2 puts the deferral to
+him.
 Saying so plainly is the point of this rule. A reader who counts the exceptions and finds the ratio
 missing should find the deferral rather than an omission.
 
@@ -1651,11 +1891,11 @@ beside the existing ones (SkinBarrelNet at Program.cs:8404, SkinDomeNet at :8490
 SkinTwoHumpBarrelNet at :9102, SkinSplitAndDeathNet at :9137, SkinLShapedNet at :9189). They have
 been prose reconstructions differing between rounds, and the honeycomb's measured losses of 26 to 49
 and 38 to 62 per cent are quoted against fixtures nothing in this repository can rebuild. Add
-`SkinTwoOculusNet` and `SkinSerpentineNet`, and add a rim and a force-edge list to every fixture as
-further constructor arguments so each has both a bare Z-fallback form and a rim-bearing,
-force-bearing one.
+`SkinTwoOculusNet`, `SkinSerpentineNet` and `SkinEllipticalDomeNet`, and add a rim and a force-edge
+list to every fixture as further constructor arguments so each has both a bare Z-fallback form and a
+rim-bearing, force-bearing one.
 
-The two new fixtures are DESCRIBED HERE, at the level of detail SkinDomeNet's own comment gives
+The three new fixtures are DESCRIBED HERE, at the level of detail SkinDomeNet's own comment gives
 (Program.cs:8482-8489: two octagonal rings and an apex, radius 2 - h at height h, a level curve of
 perimeter 16 (2 - h) sin(pi / 8) with a vertex on the +X axis). Without that, two implementers build
 two different nets, get two different numbers, and the rule fails at the thing it exists for.
@@ -1678,6 +1918,17 @@ two different nets, get two different numbers, and the rule fails at the thing i
   rim. The crest meanders between 0.8 m and 2.0 m along the strip, so a constant-Z level curve above
   0.8 m breaks into SEVERAL components of differing length, which is what makes this fixture hard for
   the honeycomb's per-row count of rule 4.2.2 and for section 8's transitions at the same time.
+
+  `SkinEllipticalDomeNet`, which exists for rule 2.6.6's base case and for nothing else. It is
+  SkinDomeNet's own construction with the plan circle replaced by an ellipse: rings at parameter h
+  from 0 to 1 in 24 steps and 96 vertices a ring, the vertex at ring h and angle theta sitting at
+  (3 (1 - h) cos theta, 1.5 (1 - h) sin theta, 2 h), with quad faces between adjacent rings and the
+  last ring collapsed to the apex (0, 0, 2). The base ring at h = 0 is the rim. Because the plan is
+  not a circle, the rim-distance field's cut locus inside the crown is a SEGMENT along the major axis
+  rather than a point; the level curves near the top shrink onto that segment instead of onto an
+  apex; and the girth at the top cut therefore stays of the order of twice the segment's length
+  however fine CH is made. That is the one shape on which rule 2.6.3 can find no qualifying level, so
+  it is the only fixture that reaches rule 2.6.6.
 
 12.1 THE FIELD (section 1).
   (a) On a fixture whose rim is its whole base ring, every rim vertex reads 0 and no vertex reads
@@ -1739,6 +1990,25 @@ two different nets, get two different numbers, and the rule fails at the thing i
       free edge, and the diagnostics naming which test refused.
   (e) SLIVER: a dome whose field extent is a near multiple of CH plus a twentieth still puts the cap
       at course CourseCount - 1, which pins rule 2.4.2 against the "cap one band low" failure.
+  (f) THE SPLIT (section 2.6). On the dome at a CH large enough that the cap's girth G exceeds
+      `Mx = S / MP`, assert the whole of rule 2.6 at once: the cap is emitted as W + 1 cells with
+      `W = max(2, ceil(G / Mx))`; every wedge's span is at or under Mx and strictly above `MP * S`,
+      which is rule 2.6.2's proof measured rather than trusted; the centre disc's girth is at or
+      under Mx; all W + 1 cells carry the Cap flag, sit in branch CourseCount - 1 and appear in no
+      other branch; the branch COUNT is unchanged from the same fixture at a CH that gives no split,
+      which pins rule 2.6.5 against inventing a course; the disc is the FIRST item in its branch,
+      which pins the overlap consequence of rule 2.6.5; and the piece-length statistics of rule 9.3.1
+      contain none of the W + 1 spans, which pins the amended rule 2.3.2a. Take the same fixture at
+      MP = 0 and assert no split at all, which pins rule 2.6.1's reading of a threshold turned off.
+  (g) THE BASE CASE, on `SkinEllipticalDomeNet` and at the default MP. Assert that no qualifying
+      inner level is found, that the cap is emitted WHOLE with one cell and not refused, that
+      `CapsOversized` is 1, that the Warning of rule 9.3.2 is raised naming the girth and the
+      maximum, and that the cap's girth is pinned as a MEASUREMENT rather than as a bar, since it is
+      a property of the fixture's own proportions. The check that matters most here is the negative
+      one: no hole. Assert the plan area covered by cells still differs from the net's own plan area
+      by less than one per cent, as (b) does for the ordinary dome.
+  (h) THE COST of the split is counted with band splitting's, at check 12.9(c), because rule
+      2.6.4(c) puts its levels into the same ascending list and under the same cap of 128.
 
 12.3 THE FORCE-ALIGNED PATTERN (section 3).
   (a) The native line field on a BARREL, where the thrust runs one way everywhere, gives streamlines
@@ -1830,14 +2100,17 @@ two different nets, get two different numbers, and the rule fails at the thing i
       own surface and not something else.
   (d) TREE ALIGNMENT: branch count, branch paths and per-branch item counts are identical between
       Cells and Surface on every fixture, including a fixture with an empty course, which pins rule
-      5.3.3.
+      5.3.3, and including the split-cap fixture of check 12.2(f), whose top branch holds W + 1 items
+      in both trees. On that fixture assert further that each WEDGE came back as a single-face Brep,
+      which is route 5.2.3(a), and that only the centre disc is a multi-face fan, which is route
+      5.2.3(d). A wedge silently taking the cap's fan route would pass every other check here.
   (e) A deliberately degenerate cell, injected, produces a NULL in the Surface slot rather than a
       missing item, and the counts still align.
   (f) SEAM DRIFT: on the dome at 96 a ring, the plan distance between consecutive courses' seams is
       under 1e-6 m, against the up to 0.098 m the quantised seam gives. That is the direct
       measurement of section 4.1 defect 5 and of rule 4.2.6.
 
-12.6 MINIMUM PIECE SIZE (section 6).
+12.6 PIECE SIZE, BOTH ENDS (section 6).
   (a) On the barrel, whose open strips have end pieces of exactly half a pitch on odd courses, that
       is 0.3 m at S 0.6 and CH 0.5, which the harness pins in those words (Program.cs:9762-9771): MP
       at 0.5 merges those end pieces and MP at 0.3 does not. The values are 0.5 and 0.3 and NOT the
@@ -1857,7 +2130,10 @@ two different nets, get two different numbers, and the rule fails at the thing i
   (d) A course holding exactly ONE piece in total keeps it however short, which pins rule 6.5 in rule
       6.5's own words. Not "a course with exactly one short piece", which would wrongly protect a
       single short piece sitting among many long ones and is the opposite of what the rule says.
-  (e) MP at 0 changes nothing; MP at 0.9 clamps to 0.5 with the Warning.
+  (e) MP at 0 changes nothing, at either end: no piece is merged and no crown cap is split, which
+      pins rule 6.0's reading of a single threshold turned off. MP at 0.9 clamps to 0.5 with the
+      Warning, and MP at -1 clamps to 0 with the Warning and behaves exactly as MP at 0, which pins
+      rule 9.5's answer for a negative value.
   (f) THE ZERO-AREA CENTROID of rule 6.8: on a fixture where two courses share a joint, so that three
       trace corners lie collinear exactly ON it, no cell is dropped as degenerate. Take the same
       fixture with the guard removed and assert the drop count is non-zero, so the check measures the
@@ -1868,6 +2144,11 @@ two different nets, get two different numbers, and the rule fails at the thing i
       non-adjacent edge of its own ring (tessellation.py:648-654). A three-dimensional distance check
       here would pass while the studio rejected the file, which is the gap the rule was written to
       close.
+  (h) ONE PORT, BOTH ENDS, which is the measurement rule 6.0 exists for. On the split-cap fixture of
+      check 12.2(f), vary MP alone and assert the wedge count moves as `ceil(G / (S / MP))` does: a
+      smaller MP gives a larger maximum and fewer wedges, and MP at the cap of 0.5 gives the most.
+      That is the direct measurement that the maximum is the same number read from the other end and
+      not a second constant hidden in the cap code, which is the failure this check exists to catch.
 
 12.7 BUILD ORDER (section 7).
   (a) Within every branch, |mid-span| is non-decreasing, and the first two cells lie on OPPOSITE
@@ -1880,8 +2161,14 @@ two different nets, get two different numbers, and the rule fails at the thing i
       are what changes in the sidecar.
   (b) The order pins are taken in ARRIVAL order and never re-sorted, the discipline the existing
       course checks already keep (Program.cs:9774-9776).
-  (c) The false port sentence is gone: a string check that
-      "the studio's build sequence within a run" appears nowhere in SkinComponents.cs.
+  (c) THE FALSE PORT SENTENCE IS GONE, which is the operative half of Param's ruling of 2026-09-01
+      and therefore a check and not a nicety: a string check that "the studio's build sequence within
+      a run" appears nowhere in SkinComponents.cs, read and not run by the
+      `ValidateExportDefaultTessellation` convention. On the same read, assert the replacement text
+      of rule 7.5 carries its two load-bearing clauses, the one saying the studio re-sorts on import
+      and the one saying the courses are a running bond so item k of one branch is not above item k
+      of the next, since a text that dropped either would leave the author with a different false
+      belief in place of the old one.
 
 12.8 BAND SPLITTING (section 8).
   (a) TWO-HUMP BARREL and SPLIT-AND-DEATH, the two nets a count test cannot see
@@ -1906,17 +2193,21 @@ two different nets, get two different numbers, and the rule fails at the thing i
   (c) BAND SPLITTING'S OWN COST, which rule 8.2.3a states as up to 2^depth - 1 new levels per refused
       band. On the two-hump barrel and split-and-death nets, count the levels the split actually
       introduces and the number of `TraceAll` passes it costs, and assert both against rule 8.2.3b's
-      cap of 128 levels. A pathological net that reaches the cap must return with the diagnostics
+      cap of 128 levels. Count the CROWN CAP's levels in the same total on the split-cap fixture of
+      check 12.2(f), since rule 2.6.4(c) puts them into the same ascending list and under the same
+      cap: up to six from the bisection of rule 2.6.3 plus the ring's mid and its inner curve. A pathological net that reaches the cap must return with the diagnostics
       saying so and must not run long, which is the behaviour under test rather than the timing.
 
 12.10 PORTS AND IDENTITY.
   (a) The pin at Program.cs:100-102 becomes inputs
       {Result, Pattern, Size, Course Height, Min Piece} and outputs {Result, Cells, Surface} IF he
-      takes the RES output of rule 9.4, or {Cells, Surface} if he declines it. The check is written
-      once his answer is in and not before; writing it either way now would pin a decision that is
-      his to make.
+      takes the RES output of rule 9.4, or {Cells, Surface} if he declines it. The input half is
+      settled and may be written now, since rule 9.5's port is ruled; only the output half waits on
+      section 13.2 item 1, and writing that half either way now would pin a decision that is his to
+      make.
   (b) Export's pin becomes inputs
-      {Result, Cells, Courses, Column Radius, Path, Name, Studio, Live, Write}.
+      {Result, Cells, Courses, Column Radius, Name, Path, Studio, Live, Write}, with Path
+      immediately AFTER Name by the ruling of section 10.1.
   (c) The Skin GUID pin, the dead Armadillo Dual GUID, the Pattern value list, the component count
       and the icon map all stay as they are (Program.cs:310, :860-873).
   (d) IF HE TAKES THE RES OUTPUT: a check that Skin's RES output is a ResultParam at index 0, and
@@ -1928,45 +2219,81 @@ two different nets, get two different numbers, and the rule fails at the thing i
       0, 0, 1, 1, 2, 2 in the sidecar; a flat list with a Courses list produces that list; both
       together produce the Error of rule 10.2.3 and no file.
 
-## 13. What genuinely needs Param
+## 13. What is settled, and what still needs Param
 
-1. WHICH FAMILY CARRIES THE CONTINUOUS JOINT in the force-aligned pattern. The design input already
-   flags this as his and it is still open. His sentence reads as pieces sitting BETWEEN adjacent
-   flow lines in strips running up the form, which makes the flow lines the continuous joints;
-   masonry says the continuous joints should be the beds, running across the thrust so the thrust
-   closes them. Section 3 takes the masonry reading and reconciles the two with rule 3.3.4: the
-   joints all lie on streamlines, so the pattern reads as his sinusoidal curves, but each course
-   takes every other one so the head joints stagger and no joint runs up through two courses. If he
-   wants literal uninterrupted strips running rim to crown, rule 3.3.4 comes out and the pattern
-   loses its bond. The two look completely different and both are buildable.
-2. PATH'S SLOT IN EXPORT. Section 10.1 puts it fourth from the geometry, immediately before Name.
-   That is my ruling and not his; he omitted the port entirely and Export cannot write a file
-   without it.
-3. THE SEAM-OUTWARD BUILD ORDER, now that it is known the studio re-sorts. He made the ruling
-   believing it fed the studio's build sequence. It does not (tessellation.py:473). It is still
-   worth having for sequencing his own work on the canvas, and it is what decides which cell survives
-   an overlap by rule 7.3, so it is not merely cosmetic. Does it stand on that basis?
-4. MIN PIECE AS A PORT. He said "adjustable"; section 9.5 makes it a fifth input. If he would rather
-   keep the component at four inputs, it becomes a fixed third with no port and the word
-   "adjustable" is not honoured.
-5. A LARGE CROWN CAP. Rule 2.3.4 puts no upper bound on a keystone. A shallow dome at CH 0.35 can
-   produce a cap several metres across, which is one stone nobody can lift. The alternatives are a
-   bound that subdivides the cap into a rosette, or leaving it to him to lower CH. Section 12.2
-   reports the girth either way.
-6. THE HALF-PITCH STAGGER AGAINST HIS MAPPING. Rule 5.4.3: the running bond deliberately offsets
-   cell 0 of odd courses by half a piece, so the surfaces of course r and course r + 1 do not begin
-   above one another. That is correct masonry and it may be inconvenient for the mapping he intends.
-   A suppressible stagger is a one-line option if he wants one.
-7. THREE OUTPUTS OR TWO. The design input put an option to him and he has not answered it, so rule
+### 13.1 Settled, and by whom
+
+Six of the nine questions the last draft carried are answered. Each entry says who answered it, what
+the answer is, where it now lives in the spec, and what alternative was rejected, because a rejected
+alternative and its reason are worth more later than the ruling itself.
+
+1. THE BUILD ORDER STANDS. PARAM'S RULING, 2026-09-01. He made the original ruling believing the
+   seam-outward order fed the studio's build sequence. He was shown that tessellation.py:473 re-sorts
+   every tessellation by course and by each cell's angle on import, so the order never reaches the
+   studio, and that it does still decide which cell survives an overlap. He kept it on that basis.
+   What the order serves is therefore the GRASSHOPPER AUTHOR and the OVERLAP FILTER, and the filter's
+   rule is first-emitted-wins, which with seam-outward emission makes the seam stable and pushes the
+   losses out to the edges of each course, symmetrically. Rule 7.4 states it and rule 7.5 corrects
+   the port sentence that claimed otherwise, which is the operative half of the ruling; check 12.7(c)
+   pins the correction. REJECTED: reverting to today's order along the course, which would move the
+   survivors away from the seam for no gain.
+2. THE CROWN CAP SPLITS WHEN OVERSIZED. PARAM'S RULING, 2026-09-01. Above the maximum piece size the
+   cap becomes a ring of wedges about a smaller centre disc, the wedge count chosen so each wedge
+   falls under the maximum, and ONE threshold governs both ends of the size question. Section 2.6
+   states the whole of it: rule 2.6.2 gives the count as `W = max(2, ceil(G / Mx))` and proves no
+   wedge can fall under the minimum; rule 2.6.3 finds the inner boundary by bracketed bisection;
+   rule 2.6.5 states the tree consequence, that the cap's one item becomes W + 1 items in the SAME
+   branch and the branch count does not move; and rule 2.6.6 answers the residual case, that the
+   construction neither recurses, since one bracketed step already bounds the disc, nor refuses,
+   since a refusal at the crown is a hole at the crown. REJECTED: leaving the cap unbounded and the
+   remedy to the author, which is rule 2.3.4's earlier text, kept there as the author's remedy but no
+   longer as the whole answer. STILL OPEN under it: the base case, at 13.2 item 4.
+3. WHICH FAMILY CARRIES THE CONTINUOUS JOINT. MINE, the controller's, at rule 3.3.4a. The masonry
+   reading stands: the BEDS are the continuous family and they are the section 1 level curves, and
+   the head joints are the native streamlines generated at S / 2 with alternate parity per course, so
+   every joint lies on a streamline, the pattern still reads as his sinusoidal curves, and the bond
+   stays a running bond. REJECTED: literal uninterrupted strips running rim to crown, which is the
+   other reading of his own sentence, because a joint continuous from rim to crown is a crack line up
+   the form. Nothing crosses it, so nothing closes it. The two look completely different and both are
+   buildable, which is why the rejected one is recorded rather than dropped.
+4. THE HALF-PITCH STAGGER IS KEPT. MINE, the controller's, at rule 5.4.3. The running bond
+   deliberately offsets cell 0 of odd courses, and the bond is not sacrificed to the convenience of a
+   tree mapping. What the spec owes him instead is the consequence stated plainly, and rule 5.4.3 and
+   the port text of rule 7.5 now carry it: the Surface tree is aligned with Cells item for item, but
+   item k of one branch does NOT sit above item k of the branch below, and on a closed course the two
+   branches may not even hold the same number of items. An author who wants the piece above a given
+   piece finds it by overlapping signed arc, not by index. REJECTED, and recorded: a suppressible
+   stagger, which is a one-line option and would make the mapping index against index at the cost of
+   the bond.
+5. MIN PIECE IS A PORT, AND IT SETS THE MAXIMUM TOO. MINE, the controller's, from his word
+   "adjustable", at rules 6.0 and 9.5. It is a number input at slot 4, a pure fraction of Size with
+   no unit of its own, default 1/3, floored at 0 and capped at 0.5; zero turns BOTH ends off and a
+   negative clamps to zero with a Warning rather than failing the solve. The minimum piece is
+   `MP * S` and the maximum is `S / MP`, which is the same number read from the other end, so the
+   threshold is named once and used twice exactly as his crown-cap ruling requires. REJECTED: a
+   second port for the maximum, which would let an author set a minimum above his own maximum; and a
+   fixed constant with no port, which would not honour "adjustable".
+6. PATH'S SLOT IN EXPORT. MINE, the controller's, at section 10.1, and it stays marked as mine. Path
+   sits IMMEDIATELY AFTER Name, because the name and the folder together decide the file, and because
+   putting it there leaves every port he did name in the relative order he named it in. The order is
+   {Result, Cells, Courses, Column Radius, Name, Path, Studio, Live, Write} and check 12.10(b) pins
+   it. REJECTED: Path immediately BEFORE Name, which an earlier draft carried and which moves Name
+   one slot from where his own sentence had it; and dropping Path, which he did not intend, since
+   Export cannot write a file without it.
+
+### 13.2 Still open, and each one is genuinely his
+
+1. THREE OUTPUTS OR TWO. The design input put an option to him and he has not answered it, so rule
    9.4.1 marks it as mine and rule 9.1 carries both port lists. The choice: THREE outputs, Result
-   RES first with the twelve skin.* diagnostic entries of rule 9.3.3 written into it, so the numbers
-   live where every other component's numbers live and Diagnose reads them with the rest; or TWO
-   outputs, Cells and Surface, with the numbers living only on the message chin of rule 9.3.1 and in
-   the Remark of rule 9.3.5, which is literally what his own sentence asked for, "Remove Diagnositcs
-   too, leave the info bubble that pops up as enough". The Remark of rule 9.3.5 exists either way, so
+   RES first with the skin.* diagnostic entries of rule 9.3.3 written into it, so the numbers live
+   where every other component's numbers live and Diagnose reads them with the rest; or TWO outputs,
+   Cells and Surface, with the numbers living only on the message chin of rule 9.3.1 and in the
+   Remark of rule 9.3.5, which is literally what his own sentence asked for, "Remove Diagnositcs too,
+   leave the info bubble that pops up as enough". The Remark of rule 9.3.5 exists either way, so
    declining the output loses him nothing he can read and loses him the ability to wire the numbers
-   into a panel, which rule 9.3.4 states.
-8. HIS FIRST CAUSE OF THE SETOUT DISTORTION IS BEING DEFERRED, and he should see that plainly rather
+   into a panel, which rule 9.3.4 states. Only rule 9.4, the port pin at 12.10(a) and the RES checks
+   at 12.10(d) turn on the answer.
+2. HIS FIRST CAUSE OF THE SETOUT DISTORTION IS BEING DEFERRED, and he should see that plainly rather
    than infer it. His ruling reads "The setout distortion has TWO causes and both must be addressed:
    the arc-length RATIO mapping, and SEPARATELY the seam quantised to a trace vertex". This round
    answers the SECOND, by rule 4.2.6, and defers the FIRST, by rule 1.8.4. The reason is in rule
@@ -1978,10 +2305,20 @@ two different nets, get two different numbers, and the rule fails at the thing i
    1.8.5 measures the size of the residual on every fixture so the deferral is quantified rather than
    asserted. If he wants both causes closed in this round, section 3 or section 5 has to come out of
    it to pay for it, and he should say which.
-9. A BOUNDED RESIDUAL HOLE AT A TOPOLOGY TRANSITION, OR AN EXACT SOLVE. His carried ruling asks for
+3. A BOUNDED RESIDUAL HOLE AT A TOPOLOGY TRANSITION, OR AN EXACT SOLVE. His carried ruling asks for
    "the full band-splitting answer, REPLACING the present refusal", and rule 8.2.6 does not replace
    the refusal; it keeps it as the base case at depth six. That leaves a hole of up to CH / 64 along
    a transition, which is 5.5 mm at the shipped CH of 0.35 m and 7.8 mm at CH 0.5. The alternative is
    an explicit critical-point solve, which is exact and needs a saddle classifier the engine does not
    have and this wave cannot carry beside everything else in it. A bounded 5.5 mm hole or a later
    wave for the exact answer: his call, and rule 8.2.6 marks the departure as mine until he makes it.
+4. THE CAP THAT CANNOT BE SPLIT, which is the honest residue of his own crown-cap ruling and not a
+   reopening of it. The split of section 2.6 needs an inner level whose curve is under the maximum,
+   and on a dome whose plan is not a circle there may be none: the cut locus is a segment rather than
+   a point, so the level curves near the top shrink onto that segment and the girth at the top cut
+   stays of the order of twice its length however fine CH is made. Rule 2.6.6 EMITS such a cap whole
+   and oversized with a Warning naming its girth against the maximum, on the ground that a stone he
+   can see and measure beats a hole he cannot fill. The alternative is to REFUSE it, which leaves the
+   crown uncovered and is what section 8's own base case does at a transition, so refusing here would
+   at least be consistent with that. His call; check 12.2(g) measures the case either way on
+   `SkinEllipticalDomeNet`.
