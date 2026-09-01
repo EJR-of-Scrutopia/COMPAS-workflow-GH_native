@@ -187,7 +187,7 @@
     {
       "key": "skin",
       "label": "SK",
-      "category": "04 Read",
+      "category": "05 Deliver",
       "filename": "skin.png"
     },
     {
@@ -225,12 +225,6 @@
       "label": "IP",
       "category": "05 Deliver",
       "filename": "import_pieces.png"
-    },
-    {
-      "key": "armadillo_dual",
-      "label": "AD",
-      "category": "05 Deliver",
-      "filename": "armadillo_dual.png"
     },
     {
       "key": "backend_health",

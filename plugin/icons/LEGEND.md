@@ -18,11 +18,11 @@ category's fill.
 | 01 Model | `#126E82` teal | Pattern, Supports, Loads |
 | 02 Solve | `#A9462E` orange | TNA Relax, TNA Solve, TNA Solve Algebraic, FD Solve |
 | 03 Mould | `#2855AF` blue | Columns, Animate |
-| 04 Read | `#2F7D6D` green | Deconstruct, Monitor, Skin, Diagnose, Frame, Style, Display |
-| 05 Deliver | `#765300` ochre | Export, Import Pieces, Armadillo Dual |
+| 04 Read | `#2F7D6D` green | Deconstruct, Forces, Fit, Supports, Diagnose, Frame, Style, Display |
+| 05 Deliver | `#765300` ochre | Export, Import Pieces, Skin |
 | 90 System | `#4E5968` slate | Backend Health |
 
-## The twenty components
+## The twenty-one components
 
 | Label | Component key | Component | Panel |
 | --- | --- | --- | --- |
@@ -36,15 +36,16 @@ category's fill.
 | CO | `column_finder` | Columns | 03 Mould |
 | AN | `mould_animate` | Animate | 03 Mould |
 | DE | `result_breakdown` | Deconstruct | 04 Read |
-| MO | `stress_analysis` | Monitor | 04 Read |
-| SK | `skin` | Skin | 04 Read |
+| FO | `forces` | Forces | 04 Read |
+| FI | `fit` | Fit | 04 Read |
+| SP | `supports` | Supports | 04 Read |
 | DG | `diagnose` | Diagnose | 04 Read |
 | FR | `frame` | Frame | 04 Read |
 | ST | `diagram_style` | Style | 04 Read |
 | DI | `graphic_diagram_display` | Display | 04 Read |
 | EX | `export` | Export | 05 Deliver |
 | IP | `import_pieces` | Import Pieces | 05 Deliver |
-| AD | `armadillo_dual` | Armadillo Dual | 05 Deliver |
+| SK | `skin` | Skin | 05 Deliver |
 | BH | `backend_health` | Backend Health | 90 System |
 
 Four keys (`load_case`, `tna_solve`, `fd_solve`, `diagram_style`) are also in

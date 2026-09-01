@@ -76,6 +76,19 @@ the output boundary, the FrameGeometry Read/Build split.
 - Level curves: the thrust surface is cut at heights z_min + r*CH. Each cut is traced
   across the mesh faces into one or more polyline components. A component is OPEN (a
   strip ending on the boundary, the barrel case) or CLOSED (a loop, the dome case).
+  Every face the tracer sees is a TRIANGLE: the net triangulates its faces once, when it
+  is read, on each polygon's shortest VALID plan diagonal with ties to the lower vertex
+  index. A quad whose four corners are not coplanar defines no surface until something
+  says how to fill it, and every filling has a level set that bends where the tracer
+  draws a chord, so a quad mesh gives APPROXIMATE level curves. Exactness is not a
+  nicety. Two components of one level set cannot cross in plan on a height field, since
+  a crossing point would lie on both and they would be one component, and the nesting
+  rule below rests on that; two approximations of one level set can cross, and do.
+  Reproduced on an annular vault meshed as a spiral, a remesh that moves no vertex and
+  only changes which corners each quad joins: at the top cut the two loops lie 1.6e-5 m
+  apart in radius while the chord misses the level set by up to 2.6e-5 m, so they
+  interleave, neither contains the other, both read depth 0, and a shell with no
+  transition anywhere was refused whole.
 - The seam: every level curve needs a u origin. An open strip's seam is its arc-length
   MIDPOINT, so setout is centre-outward and mirror-symmetric geometry gets
   mirror-symmetric joints by construction. A closed loop's seam is propagated from the
@@ -84,11 +97,58 @@ the output boundary, the FrameGeometry Read/Build split.
 - The map: (u, z) is the point at signed arc length u from the seam along the level curve
   at height z (curves interpolated between cut heights where a vertex falls between
   them). Where a height has several components, each component is set out independently,
-  matched to the component below it by plan overlap.
+  matched to the component below it first by NESTING DEPTH and then, within a depth
+  class, by a symmetric DISTANCE between the two curves in plan. Erratum: this said "by
+  plan overlap", meaning the overlap area of axis-aligned plan bounding boxes, and that
+  rule was wrong twice over. It is not invariant under a rotation of the model, so the
+  same surface turned through an arbitrary angle answered differently and a genuine
+  topology change went undetected at all but five angles in a 180 degree sweep; and a
+  bounding box cannot express nesting, so an oculus dome's inner and outer loops both
+  claimed the outer and every band was refused. Distance is invariant under rotation.
+  Second erratum, on the same sentence: distance ALONE does not read nesting correctly,
+  and the claim that it did held on one fixture by luck. The score runs from each sample
+  point of one curve to the nearest SAMPLE POINT of the other, so it carries an error of
+  about half the other curve's sample spacing, and where two components genuinely lie
+  close together in plan that error, and with it the MESH, decides the answer. Turning
+  one ring of an annular shell by a tenth of a degree, triangulating the same shell, and
+  giving its rings unequal densities each turned a whole pattern into nothing while
+  changing no level set. No finer distance answers it: at a ridge the two loops coincide
+  in plan, and nothing measured between them can tell them apart. The rule is therefore
+  CLASSIFY BEFORE MEASURING. Every closed component of a level carries its nesting
+  depth, the number of other closed components of that level containing it in plan,
+  judged by the engine's own point-in-polygon test; an open strip carries depth 0. A
+  component may be matched only to a component of EQUAL depth, and within a depth class
+  the symmetric distance decides. Depth is topological, so it survives rotation,
+  translation and remeshing alike; a depth class of a different size on the two levels
+  is a genuine correspondence failure and refuses the band exactly as an unmatched
+  component does. Third erratum, one classification short: depth alone is not the whole
+  of it, and a component may be matched only to a component of the same KIND as well, a
+  strip to a strip and a loop to a loop. A strip has two ends on the surface boundary
+  and a loop has none, so the two are never the same piece of surface; a two-hump barrel
+  cuts into two STRIPS at z 0.75 and into two hump LOOPS at z 1.00, both levels holding
+  two components of depth 0, and no distance can refuse that band because it is a
+  near-tie between one long strip and two short loops. The tie broke the right way while
+  the tracer chorded across quads and the wrong way once it drew the exact level curves
+  with twice as many points, which is how the gap was found.
 
-Because a TNA thrust surface is a height field, any cells set out through this map
-project to plan without overlap; the plan-degeneracy losses that halved the Armadillo
-Dual pattern cannot occur on the native patterns, and the harness asserts it.
+Where a level's components do not correspond to the level below (one splits, one dies,
+two swap, or any combination, which a count comparison cannot see), the band is REFUSED:
+it emits no cells, the count and the heights are named in the diagnostics, and a warning
+is raised. A stated hole beats cells that overlap, because the studio rejects a whole
+tessellation for one bad cell.
+
+Erratum, and the more important one. This section claimed that because a TNA thrust
+surface is a height field, cells set out through this map cannot self-cross or overlap in
+plan, and that the harness asserts it. The claim was defended by argument, and three
+successive adversarial rounds each found a surface where the argument fails: a transition
+on a rotated model, a re-entrant plan, and the honeycomb over closed level curves whose
+length changes quickly against the cell size. The guarantee is therefore ENFORCED rather
+than argued. Both native engines run a plan-validity filter over the cells they build, in
+emission order: a cell whose plan projection self-crosses is dropped, then a cell whose
+plan projection overlaps a cell that has already survived is dropped, and both counts are
+reported in the diagnostics with a warning when either is non-zero. This is the standard
+the force-aligned worker already met. Every clean fixture asserts the dropped counts are
+zero, so the filter cannot become a place where a regression hides.
 
 ## 5. Pattern 0: courses
 

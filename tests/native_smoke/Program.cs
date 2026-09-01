@@ -92,9 +92,14 @@ internal static class Program
                         "Reaction Vectors",
                         "Force Lines"
                     }),
+                // Skin is pinned because THIS rework reshaped it: input 1
+                // was "Course Height" and is now "Pattern", so a wired CH
+                // slider must move to slot 3, and the outputs renamed with
+                // their meanings kept. The names below are what the
+                // ports-moved warning compares a saved definition against.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
-                    new[] { "Result", "Course Height" },
-                    new[] { "Face Polylines", "Face Courses" }),
+                    new[] { "Result", "Pattern", "Size", "Course Height" },
+                    new[] { "Cells", "Courses", "Flowlines", "Diagnostics" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
                 // member and form lines, the load and reaction points and
                 // vectors) and to Diagnose (the report), which carry them
@@ -310,7 +315,6 @@ internal static class Program
                 ("graphic_diagram_display", "DI"),
             ["Ananke.COMPAS.Native.Components.ExportComponent"] = ("export", "EX"),
             ["Ananke.COMPAS.Native.Components.ImportPiecesComponent"] = ("import_pieces", "IP"),
-            ["Ananke.COMPAS.Native.Components.ArmadilloDualComponent"] = ("armadillo_dual", "AD"),
             ["Ananke.COMPAS.Native.Components.BackendHealthComponent"] = ("backend_health", "BH"),
         };
 
@@ -381,6 +385,17 @@ internal static class Program
         LoadAssembly(ghIoPath);
         LoadAssembly(grasshopperPath);
         Assembly plugin = LoadAssembly(pluginPath);
+        // The engine's OWN plan-validity predicates, resolved once, so
+        // RequireDisjointSimplePlans measures with the same arithmetic
+        // the engines filter with. See its doc comment.
+        SkinPlanSelfCrosses =
+            RequirePublicStatic(
+                RequireComponentType(plugin, "SkinPatterns"),
+                "PlanSelfCrosses");
+        SkinPlansOverlap =
+            RequirePublicStatic(
+                RequireComponentType(plugin, "SkinPatterns"),
+                "PlansOverlap");
 
         Type[] componentTypes = GetLoadableTypes(plugin)
             .Where(IsConcretePublicGrasshopperComponent)
@@ -485,15 +500,16 @@ internal static class Program
                     disposable.Dispose();
             }
         }
-        if (componentTypes.Length != 22)
+        if (componentTypes.Length != 21)
         {
             // Spec 6 pins three counts and only two were enforced. A
             // component quietly dropped from the assembly, by a failed
             // registration or a merge, would have left the whole suite green
-            // with nineteen components' worth of contract untested. 22 is
-            // the settled readers surface: Monitor retired when Fit arrived.
+            // with nineteen components' worth of contract untested. 21 is
+            // the skin rework: Skin and Armadillo Dual became ONE Skin
+            // component in 05 Deliver, three patterns behind one flag.
             failures.Add(
-                $"Expected 22 concrete public components, found " +
+                $"Expected 21 concrete public components, found " +
                 $"{componentTypes.Length}.");
         }
         if (parameterTypes.Length != 12)
@@ -595,6 +611,266 @@ internal static class Program
             failures.Add(
                 $"ImportPiecesComponent.ParseDocument: " +
                 $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinNet(plugin);
+            Console.WriteLine(
+                "PASS  SkinPatterns.ReadNet: a TNA Result's form faces " +
+                "come back as plain vertex/face arrays mapped through " +
+                "SourceVertexToFormVertex onto equilibrium positions " +
+                "(form ids deliberately offset from equilibrium ids); an " +
+                "FD Result gives null, not empty.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"SkinPatterns.ReadNet: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinSetout(plugin);
+            Console.WriteLine(
+                "PASS  Skin setout map: the barrel cut gives two OPEN " +
+                "length-6 strips seamed at their arc midpoints with " +
+                "PointAt walking signed offsets and Run keeping trace " +
+                "vertices; the dome cuts give CLOSED loops, the lowest " +
+                "seamed at the +X vertex, the next propagated nearest in " +
+                "plan, and u wraps.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin setout map: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinCourses(plugin);
+            Console.WriteLine(
+                "PASS  Skin courses engine: the barrel's joint sets are " +
+                "pinned exactly (even courses ten 0.6 pieces with a " +
+                "joint at the seam, odd courses staggered half a pitch " +
+                "with 0.3 end pieces, mirror-symmetric about the seam); " +
+                "the dome's closed courses are round(L/S) equal pieces " +
+                "rotated half a pitch on odd courses; cells arrive in " +
+                "build order (course, then position along it), engine " +
+                "outlines are open rings, the sliver-merge rule holds, " +
+                "and every plan projection is disjoint and simple.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin courses engine: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinOrientation(plugin);
+            Console.WriteLine(
+                "PASS  Skin curve orientation: a scrambled-face-order " +
+                "barrel whose lower rows trace east to west and whose " +
+                "upper rows trace west to east is normalised to one " +
+                "direction, closed dome loops are turned " +
+                "counter-clockwise to their pinned signed plan area, and " +
+                "the courses engine gives the ordered fixture's 84 cells " +
+                "back cell for cell with disjoint simple plans, the " +
+                "honeycomb its 76.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin curve orientation: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinTransitions(plugin);
+            Console.WriteLine(
+                "PASS  Skin topology transitions: refused on the " +
+                "CORRESPONDENCE, not the count. A two-peak net whose one " +
+                "level loop splits into two above z 0.9, a two-hump " +
+                "barrel whose strips become hump loops, and a net where " +
+                "one island splits as another dies, all three holding " +
+                "their component count across the change, each have the " +
+                "one courses band and the two lattice rows that reach " +
+                "across it REFUSED whole, named in the diagnostics with " +
+                "their heights and counted for the component's Warning, " +
+                "every other band still built and every emitted plan " +
+                "disjoint and simple bar the ones named in the check; " +
+                "the same two-hump barrel TURNED 37 degrees in plan is " +
+                "refused identically, cell count for cell count, because " +
+                "a rotation about world Z cannot change which curves " +
+                "correspond; the barrel and the dome refuse nothing; and " +
+                "an ANNULAR shell, whose every cut is two nested loops, " +
+                "is refused NOWHERE and proposed on by both engines at " +
+                "five course heights.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin topology transitions: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinRingVaultMeshings(plugin);
+            Console.WriteLine(
+                "PASS  Skin correspondence is the GEOMETRY's, not the " +
+                "mesh's: one annular shell meshed five ways, quad, " +
+                "triangulated, its ridge ring turned by a tenth of a " +
+                "degree and by half its own spacing, and with unequal " +
+                "ring densities, traces two nested loops of nesting " +
+                "depth 0 and 1 at every mid height of every meshing, " +
+                "refuses no band on any of them, and BUILDS the quad " +
+                "fixture's own 312, 208 and 52 courses cells and 252, " +
+                "180 and 108 honeycomb cells at CH 0.35, 0.5 and 1.9, " +
+                "every survivor disjoint and simple. The one count that " +
+                "moves is derived, not tolerated: a 32-gon is longer " +
+                "than a 16-gon, so the unequal meshing's third band " +
+                "rounds to one more piece and its CH 0.35 courses are " +
+                "313.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin correspondence is the geometry's: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinSpiralMeshings(plugin);
+            Console.WriteLine(
+                "PASS  Skin level curves are EXACT, not approximate: a " +
+                "net holds triangles, because a quad whose corners are " +
+                "not coplanar has a level set that bends where the " +
+                "tracer draws a chord, and two such approximations can " +
+                "interleave in plan where two components of one level " +
+                "set cannot. An annular vault of thirteen rings, phased " +
+                "four ways (square, a SPIRAL of one full angular step a " +
+                "ring, ONE band sheared, and an 11 degree alternating " +
+                "JITTER), traces two loops of nesting depth 0 and 1 at " +
+                "six mid heights and at the top cut of every one, " +
+                "refuses no band, and BUILDS the same 310, 205 and 52 " +
+                "courses cells and 252, 180 and 108 honeycomb cells, " +
+                "every survivor disjoint and simple. The courses counts " +
+                "are DERIVED: on a triangulated ring strip a level's " +
+                "length is the linear interpolation of the two ring " +
+                "perimeters whatever the phase. The spiral and the one " +
+                "sheared band gave ZERO cells with a band refused " +
+                "before this.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin level curves are exact: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinHexagonal(plugin);
+            Console.WriteLine(
+                "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
+                "pinned at 76 cells with 36 clipped rim cells KEPT, an " +
+                "interior cell carries the stated six vertex offsets in " +
+                "order, lattice neighbours share mapped corners, course " +
+                "indices follow the centre bands on unclipped and " +
+                "clipped cells alike, membership measures u against the " +
+                "candidate's OWN centre-row curve, and the plans are " +
+                "disjoint and simple on the barrel, on the shallow " +
+                "shell and on the dome at CH 0.2 and 0.5, the dome's " +
+                "0.35 and 0.8 being a pre-existing crown breach the " +
+                "check names rather than asserts.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin hexagonal engine: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinPlanFilter(plugin);
+            Console.WriteLine(
+                "PASS  Skin plan filter: the guarantee spec section 4 " +
+                "argues for is ENFORCED. Both engines run the plan " +
+                "validity filter over the sorted cells before they are " +
+                "returned, dropping a cell whose plan projection " +
+                "self-crosses and then one that overlaps a cell already " +
+                "kept, counting each kind into its own diagnostics line " +
+                "and the component's Warning. A non-convex L-shaped " +
+                "shell at CH 0.5 builds one self-crossing courses cell " +
+                "out of 95, and 94 disjoint simple ones come back; the " +
+                "same shell at six other course heights drops nothing. " +
+                "The engine's own predicates are what this harness " +
+                "measures with, so the two cannot disagree, and they " +
+                "are themselves exercised on a bow tie, a square, and " +
+                "squares apart, sharing an edge, overlapping and " +
+                "nested. The pair test takes each outline's interior " +
+                "point from its CALLER and finds none of its own, which " +
+                "is pinned by lying to it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin plan filter: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinPlanFilterCost(plugin);
+            Console.WriteLine(
+                "PASS  Skin plan filter cost: an annular vault of 96 a " +
+                "ring at S 3 and CH 0.35 lays its 63 derived cells, " +
+                "refusing no band and dropping nothing, in well under " +
+                "four seconds. It took 206 SECONDS before the interior " +
+                "point was found once per outline instead of once per " +
+                "pair and the triangulation behind it stopped being " +
+                "built whole to read one centroid off the front of it, " +
+                "and the engine runs on Grasshopper's canvas thread at " +
+                "every nudge of the Size slider.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin plan filter cost: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinGuards(plugin);
+            Console.WriteLine(
+                "PASS  Skin floors: S and Course Height below 1 mm, NaN " +
+                "included, are refused by the negated-comparison guard " +
+                "in both engines.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin floors: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinIdentity(plugin);
+            Console.WriteLine(
+                "PASS  Skin identity: the old Skin GUID kept, the " +
+                "Armadillo Dual class and GUID gone from every " +
+                "component, the Pattern value list pinned (input 1, " +
+                "default 0, courses/hexagonal/force aligned), all " +
+                "four outputs VISIBLE, the proposer convention, and the " +
+                "task-capable base whose iteration-indexed TaskList is " +
+                "the premise of the placeholder rule read in the check.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin identity: {DescribeException(exception)}");
         }
 
         try
@@ -8113,6 +8389,4339 @@ internal static class Program
             throw new InvalidOperationException(
                 "Only Pattern previews principal runs; these still hold a "
                 + $"principal preview field: {string.Join(", ", others)}.");
+        }
+    }
+
+    /// <summary>
+    /// The barrel fixture: x 0..6 along the barrel (7 columns), a tent
+    /// profile in y: z = 2 - |y - 2| over y 0..4, so both eaves sit at
+    /// z 0 and the crest at z 2. Every level cut is a PAIR of OPEN
+    /// strips, each a straight line of length 6, mirror-symmetric about
+    /// x = 3; on the front strip (y below 2) a mapped point's y and z
+    /// are EQUAL, which is what lets the checks read setout coordinates
+    /// straight off the geometry.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinBarrelNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 4; j++)
+        {
+            double z = 2.0 - Math.Abs(j - 2.0);
+            for (int i = 0; i <= 6; i++)
+                vertices.Add(new double[] { i, j, z });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 4; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = j * 7 + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The barrel fixture again, vertex for vertex and face for face,
+    /// with the faces emitted in a deliberately SCRAMBLED order. It is
+    /// the fixture that measures Ruling A of the whole-branch review:
+    /// the cells must be a property of the geometry, not of the face
+    /// array.
+    ///
+    /// The derivation, so the scramble is chosen rather than stirred.
+    /// Around one quad face (j, i) of the barrel the two crossings are
+    /// met at column i + 1 first and column i second, so the crossing
+    /// INDICES, and with them the degree-one crossing Trace starts an
+    /// open walk from, follow the order that row's faces are emitted in.
+    /// A cut at a height in (0, 1) crosses rows 0 (front) and 3 (back);
+    /// a cut in (1, 2) crosses rows 1 (front) and 2 (back); the
+    /// half-open rule puts a cut at exactly z = 1 in rows 0 and 3.
+    ///
+    /// Rows 0 and 3 are emitted 5, 2, 0, 4, 1, 3. Face 5 comes first, so
+    /// the crossing at x = 6 takes index 0 and is the first degree-one
+    /// crossing found: the walk runs EAST TO WEST.
+    /// Rows 1 and 2 are emitted 0, 3, 1, 5, 2, 4. Face 0 comes first, so
+    /// the crossing at x = 1 takes index 0 and the one at x = 0 index 1,
+    /// which is the first degree-one crossing found: the walk runs WEST
+    /// TO EAST.
+    ///
+    /// So the lower half of the barrel traces one way and the upper half
+    /// the other, only the rows' END faces having moved, which is the
+    /// exact shape the review's verifier reproduced bow-tie cells with:
+    /// at S 0.6 and CH 0.5, course band 2 spans z 1.0 to 1.5 and takes
+    /// its LOWER boundary curve from row 0 and its mid and upper curves
+    /// from row 1, so without the normalisation its cells map one joint
+    /// onto two curves running opposite ways.
+    ///
+    /// The row BLOCKS stay in ascending j on purpose. A cut's front row
+    /// index is always below its back row index (0 below 3, 1 below 2),
+    /// so the front strip's crossings always take the lower indices and
+    /// the front strip is always component 0, exactly as in the ordered
+    /// fixture. Traced component ORDER follows the face array as well,
+    /// but that is ordering rather than orientation and it is outside
+    /// Ruling A; keeping it fixed is what lets this check compare the
+    /// two fixtures cell for cell.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinBarrelScrambledNet()
+    {
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        int[] lowerRows = { 5, 2, 0, 4, 1, 3 };
+        int[] upperRows = { 0, 3, 1, 5, 2, 4 };
+        var scrambled = new List<int[]>(faces.Length);
+        for (int j = 0; j < 4; j++)
+        {
+            int[] order = j == 0 || j == 3 ? lowerRows : upperRows;
+            foreach (int i in order)
+                scrambled.Add(faces[j * 6 + i]);
+        }
+        return (vertices, scrambled.ToArray());
+    }
+
+    /// <summary>
+    /// The dome fixture: two octagonal rings and an apex. Ring 0 has
+    /// radius 2 at z 0, ring 1 radius 1 at z 1, the apex (0, 0, 2);
+    /// quads between the rings, triangles to the apex. The radius at
+    /// height h is 2 - h throughout, so a level curve at h is a CLOSED
+    /// octagon of perimeter 16 (2 - h) sin(pi/8), with a vertex on the
+    /// +X axis.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinDomeNet()
+    {
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < 2; ring++)
+        {
+            double radius = 2.0 - ring;
+            for (int k = 0; k < 8; k++)
+            {
+                double angle = Math.PI * 2.0 * k / 8.0;
+                vertices.Add(new[]
+                {
+                    radius * Math.Cos(angle),
+                    radius * Math.Sin(angle),
+                    (double)ring
+                });
+            }
+        }
+        vertices.Add(new double[] { 0.0, 0.0, 2.0 });
+        var faces = new List<int[]>();
+        for (int k = 0; k < 8; k++)
+        {
+            int next = (k + 1) % 8;
+            faces.Add(new[] { k, next, 8 + next, 8 + k });
+            faces.Add(new[] { 8 + k, 8 + next, 16 });
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The dome fixture again, vertex for vertex and face for face, moved
+    /// in PLAN by (dx, dy). It is the fixture that measures the centred
+    /// shoelace: nothing about the surface changes, only where in the
+    /// world it is sited, which is the one thing a signed area must not
+    /// depend on.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinDomeSitedNet(
+        double dx,
+        double dy)
+    {
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        double[][] moved = vertices
+            .Select(vertex => new[]
+            {
+                vertex[0] + dx, vertex[1] + dy, vertex[2]
+            })
+            .ToArray();
+        return (moved, faces);
+    }
+
+    /// <summary>
+    /// Any fixture, turned about the world Z axis by the given angle in
+    /// PLAN: (x, y) becomes (x cos a - y sin a, x sin a + y cos a) with z
+    /// untouched, vertex for vertex and face for face.
+    ///
+    /// It is the fixture that measures the ROTATION INVARIANCE of the
+    /// correspondence. A rotation about world Z moves no z, no face and
+    /// no traced component: the cut at a height is the same cut, made of
+    /// the same crossings, in the same order, and the count of
+    /// components at every height is identical at every angle. Nothing
+    /// about which curve corresponds to which can therefore depend on
+    /// the angle, and a rule whose answer does is reading the world axes
+    /// rather than the surface. The rule it caught was the overlap area
+    /// of AXIS-ALIGNED plan bounding boxes: a long thin strip lying at
+    /// an angle has a box inflated by roughly its own length times the
+    /// sine of that angle, which manufactures an overlap where the
+    /// strips are nowhere near one another.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinRotatedInPlan(
+        (double[][] Vertices, int[][] Faces) fixture,
+        double degrees)
+    {
+        double angle = degrees * Math.PI / 180.0;
+        double cos = Math.Cos(angle);
+        double sin = Math.Sin(angle);
+        double[][] turned = fixture.Vertices
+            .Select(vertex => new[]
+            {
+                vertex[0] * cos - vertex[1] * sin,
+                vertex[0] * sin + vertex[1] * cos,
+                vertex[2]
+            })
+            .ToArray();
+        return (turned, fixture.Faces);
+    }
+
+    /// <summary>
+    /// The ANNULAR shell, an oculus dome: five rings of sixteen vertices
+    /// at radii 4, 3.2, 2.5, 1.8 and 1.0 and heights 0, 1.2, 2.0, 1.2
+    /// and 0, quads between consecutive rings. The outer skirt climbs
+    /// from the rim at radius 4 to the ridge circle at radius 2.5 and
+    /// the inner skirt falls back to the oculus rim at radius 1, so
+    /// every cut strictly between the rims and the ridge is TWO NESTED
+    /// closed loops, an outer and an inner. That is what a level curve
+    /// of a surface with a hole in it is, and an oculus dome is an
+    /// ordinary funicular form.
+    ///
+    /// It is the fixture that measures what a bounding box cannot say.
+    /// The outer loop's plan box CONTAINS the inner loop's at every
+    /// height, and here the inner loop's arc length GROWS with height
+    /// while the outer's shrinks, so the inner loop's box overlap with
+    /// the outer loop below exceeded its overlap with the inner loop
+    /// below: both loops claimed the outer, no bijection existed
+    /// anywhere, and both engines refused the WHOLE surface at every
+    /// course height tried, zero cells, while the diagnostics asserted
+    /// that the level curves do not correspond when they correspond
+    /// perfectly, outer to outer and inner to inner. Box area cannot
+    /// express nesting; a distance can, because the inner loop lies
+    /// close to the inner loop and far from the outer.
+    ///
+    /// One arithmetic convenience of these radii, used by the check: the
+    /// outer and inner radii SUM to 5.0 at every height, since both
+    /// skirts are linear in z and 4 + 1 = 3.2 + 1.8 = 2.5 + 2.5 = 5.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinRingVaultNet()
+    {
+        double[] radii = { 4.0, 3.2, 2.5, 1.8, 1.0 };
+        double[] heights = { 0.0, 1.2, 2.0, 1.2, 0.0 };
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < radii.Length; ring++)
+        {
+            for (int k = 0; k < 16; k++)
+            {
+                double angle = Math.PI * 2.0 * k / 16.0;
+                vertices.Add(new[]
+                {
+                    radii[ring] * Math.Cos(angle),
+                    radii[ring] * Math.Sin(angle),
+                    heights[ring]
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < radii.Length; ring++)
+        {
+            for (int k = 0; k < 16; k++)
+            {
+                int next = (k + 1) % 16;
+                faces.Add(new[]
+                {
+                    ring * 16 + k,
+                    ring * 16 + next,
+                    (ring + 1) * 16 + next,
+                    (ring + 1) * 16 + k
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The ring vault TRIANGULATED: the same vertices and the same
+    /// surface, with every quad split on the diagonal that joins its
+    /// lower-ring corner k to its upper-ring corner k + 1, so the net
+    /// holds triangles alone.
+    ///
+    /// It is one of the four meshings that must give ONE answer, and it
+    /// is the one whose answer can be derived rather than measured. Each
+    /// quad of this shell is PLANAR: its two chords, one on each ring,
+    /// are parallel, because the rings are concentric regular 16-gons
+    /// sharing their angular offsets, and two parallel lines lie in a
+    /// plane. Height restricted to that plane is affine, so the level set
+    /// at any height is a straight LINE within it, and the diagonal's
+    /// crossing therefore lies exactly ON the segment the two edge
+    /// crossings already gave. Writing u for the lower chord, v for the
+    /// left edge and lambda = (r1 - r0) / r0, the quad's corners are A0,
+    /// A0 + u, A0 + v and A0 + (1 + lambda) u + v, and the three
+    /// crossings at parameter t come out A0 + t v, A0 + (1 + t lambda) u
+    /// + t v and A0 + t (1 + lambda) u + t v: the same v coefficient, so
+    /// the same line.
+    ///
+    /// So triangulating adds a collinear vertex to every traced
+    /// component and changes NOTHING else: measured, every mid-level
+    /// curve of the CH 0.35 grid comes back at the quad fixture's own
+    /// length to five decimals (24.24322 and 6.97123 at the first mid,
+    /// and so on down the six), and every course therefore carries the
+    /// same round(L / S) pieces. Against the build before this wave the
+    /// courses engine gave 260 cells here against the quad fixture's
+    /// 312 at CH 0.35 and 156 against 208 at CH 0.5, with a band refused
+    /// on a shell that has no transition anywhere, because the
+    /// correspondence was scored point to point and the extra sample
+    /// points moved the score.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinRingVaultTriangulatedNet()
+    {
+        (double[][] vertices, int[][] quads) = SkinRingVaultNet();
+        var faces = new List<int[]>(quads.Length * 2);
+        foreach (int[] quad in quads)
+        {
+            faces.Add(new[] { quad[0], quad[1], quad[2] });
+            faces.Add(new[] { quad[0], quad[2], quad[3] });
+        }
+        return (vertices, faces.ToArray());
+    }
+
+    /// <summary>
+    /// The ring vault with its RIDGE RING alone turned about world Z:
+    /// ring 2, the sixteen vertices of radius 2.5 at z 2.0, rotated by
+    /// the given angle while every other ring stays where it was.
+    ///
+    /// It is the fixture that reproduces this wave's defect, and it was
+    /// chosen because it is so nearly nothing. Turning one ring moves no
+    /// height, no face and no level set: every cut between the rims and
+    /// the ridge is still two nested loops, the outer still contains the
+    /// inner, and the component count at every height is what it was.
+    /// Measured against the build before this wave, driving the courses
+    /// engine at S 0.6 and CH 1.9: 0.00 degrees gave 52 cells and
+    /// refused nothing, 0.05 degrees the same, and 0.10 degrees, which
+    /// is 4.4 mm of arc on a 2.5 m circle, gave ZERO cells with one band
+    /// refused and the diagnostics stating that the level curves do not
+    /// correspond. 0.25 degrees the same. A tenth of a degree turned a
+    /// whole pattern into nothing.
+    ///
+    /// The two angles pinned are 0.1, the smallest measured that broke
+    /// it, and 11.25, which is HALF the ring's own 22.5 degree spacing
+    /// and so the furthest a ring can be turned from its neighbours: the
+    /// two ends of the range rather than two samples from the middle of
+    /// it. At 11.25 degrees the traced lengths do move a little, because
+    /// the faces either side of the ridge are genuinely differently
+    /// shaped (19.84069 m becomes 19.83154 m on the fourth mid), but a
+    /// nine millimetre change in a 19.8 m course is 0.015 of a piece and
+    /// nowhere near the half-piece that would move round(L / S), so
+    /// every course carries the same count.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinRingVaultRidgeTurnedNet(double degrees)
+    {
+        (double[][] vertices, int[][] faces) = SkinRingVaultNet();
+        double angle = degrees * Math.PI / 180.0;
+        double cos = Math.Cos(angle);
+        double sin = Math.Sin(angle);
+        double[][] turned = vertices
+            .Select((vertex, index) => index / 16 == 2
+                ? new[]
+                {
+                    vertex[0] * cos - vertex[1] * sin,
+                    vertex[0] * sin + vertex[1] * cos,
+                    vertex[2]
+                }
+                : vertex)
+            .ToArray();
+        return (turned, faces);
+    }
+
+    /// <summary>
+    /// The ring vault with UNEQUAL ring densities, 16, 16, 16, 32, 32:
+    /// the outer rim, the outer skirt and the ridge keep their sixteen
+    /// vertices and the two inner rings carry thirty-two, so the mesh is
+    /// fine on the oculus side and coarse on the rim side. Between the
+    /// 16-ring and the 32-ring, vertex A[k] sits over B[2k] and the gap
+    /// is filled by the quad A[k], A[k+1], B[2k+2], B[2k+1] and the
+    /// triangle A[k], B[2k+1], B[2k].
+    ///
+    /// It is the meshing that separates a real answer from a lucky one.
+    /// The quad fixture is the ONE annular mesh whose equal sampling
+    /// makes the tangential error of a point-to-point score cancel, so
+    /// it broke the tie correctly by luck; give the rings different
+    /// densities and the luck goes. Against the build before this wave
+    /// the courses engine gave 261 cells here at CH 0.35 against the
+    /// quad fixture's 312, with a band refused on a shell that has no
+    /// transition.
+    ///
+    /// One count genuinely MOVES on this meshing and it is not a defect:
+    /// its courses at CH 0.35 are 313, not 312. Spec section 5 sets a
+    /// course's piece count from round(L / S) on its own mid curve, and
+    /// L is the length of the polygon the mesh actually traces. A
+    /// regular 32-gon inscribed in a circle is LONGER than a 16-gon
+    /// inscribed in the same circle: 64 R sin(pi / 32) = 6.273100 R
+    /// against 32 R sin(pi / 16) = 6.242890 R. At the third mid, z
+    /// 0.875, the inner radius is 1 + 0.8 (0.875 / 1.2) = 1.583333, so
+    /// the 32-gon measures 9.93240 m and the 16-gon 9.88458 m; divided
+    /// by S 0.6 that is 16.554 pieces against 16.474, and the first
+    /// rounds to 17 while the second rounds to 16. That one course is
+    /// the whole difference: the six bands read (40, 12), (38, 14),
+    /// (36, 17), (33, 19), (30, 22) and (27, 25), which is 52, 52, 53,
+    /// 52, 52, 52 = 313 against the quad fixture's 312. At CH 0.5 and
+    /// CH 1.9 no course crosses a rounding boundary and the counts
+    /// agree exactly.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinRingVaultUnequalNet()
+    {
+        double[] radii = { 4.0, 3.2, 2.5, 1.8, 1.0 };
+        double[] heights = { 0.0, 1.2, 2.0, 1.2, 0.0 };
+        int[] counts = { 16, 16, 16, 32, 32 };
+        var starts = new int[radii.Length];
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < radii.Length; ring++)
+        {
+            starts[ring] = vertices.Count;
+            for (int k = 0; k < counts[ring]; k++)
+            {
+                double angle = Math.PI * 2.0 * k / counts[ring];
+                vertices.Add(new[]
+                {
+                    radii[ring] * Math.Cos(angle),
+                    radii[ring] * Math.Sin(angle),
+                    heights[ring]
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < radii.Length; ring++)
+        {
+            int lower = starts[ring];
+            int upper = starts[ring + 1];
+            int here = counts[ring];
+            int there = counts[ring + 1];
+            for (int k = 0; k < here; k++)
+            {
+                int next = (k + 1) % here;
+                if (here == there)
+                {
+                    faces.Add(new[]
+                    {
+                        lower + k, lower + next,
+                        upper + next, upper + k
+                    });
+                    continue;
+                }
+                faces.Add(new[]
+                {
+                    lower + k, lower + next,
+                    upper + (2 * k + 2) % there,
+                    upper + (2 * k + 1) % there
+                });
+                faces.Add(new[]
+                {
+                    lower + k,
+                    upper + (2 * k + 1) % there,
+                    upper + 2 * k % there
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The SPIRAL VAULT, an annular shell of thirteen rings of twelve on
+    /// the profile z = 2 (1 - ((r - 2.5) / 1.5)^2), ring j turned in plan
+    /// by phaseDegrees[j], quads between consecutive rings. Ring j has
+    /// radius 4 - 0.25 j, so the rim radii are 4 and 1, the ridge circle
+    /// is radius 2.5 at the crown z 2, and every cut strictly inside is
+    /// two nested closed loops. The rings and their heights:
+    ///
+    ///   j:  0     1        2        3     4        5        6
+    ///   r:  4.00  3.75     3.50     3.25  3.00     2.75     2.50
+    ///   z:  0     0.611111 1.111111 1.5   1.777778 1.944444 2
+    ///
+    /// and back down symmetrically, j 7 to 12 repeating z at radii 2.25
+    /// down to 1. Because the profile is symmetric in r about 2.5, the
+    /// outer and inner radius of a level SUM to 5 at every height, which
+    /// is the same arithmetic convenience the ring vault has.
+    ///
+    /// THE PHASES ARE THE POINT. Turning ring j by a whole angular step,
+    /// 30 degrees on a twelve-sided ring, moves NO vertex: the ring lands
+    /// on itself. What it changes is which corners a quad joins, and so
+    /// whether that quad's four corners are coplanar. A spiral remesh of
+    /// one full step a ring leaves the surface, the vertices and the
+    /// height field exactly as they were and makes every quad twisted.
+    ///
+    /// THE COUNTS ARE DERIVED, and the derivation is what makes these
+    /// fixtures worth having. On a triangulated strip between two closed
+    /// rings every quad is split into one triangle with two corners on
+    /// the LOWER ring and one with two corners on the UPPER, whichever
+    /// diagonal the rule picks. Writing s for the height fraction
+    /// (h - z_lower) / (z_upper - z_lower), the level segment inside the
+    /// first is (1 - s) times that quad's lower chord and inside the
+    /// second is s times its upper chord, because a plane cutting a
+    /// triangle cuts a segment similar to the edge it does not meet.
+    /// Summing round the ring:
+    ///
+    ///     L(h) = (1 - s) x perimeter(lower ring)
+    ///          + s x perimeter(upper ring)
+    ///
+    /// whatever the two rings' relative PHASE. A course's traced length
+    /// on this shell is therefore the linear interpolation of the two
+    /// ring perimeters and cannot depend on the twist at all, so every
+    /// phasing of this net must give the SAME round(L / S) and the same
+    /// cell count. A regular 12-gon of circumradius R has perimeter
+    /// 24 R sin(pi / 12) = 6.211657 R, and r(h) interpolates linearly
+    /// between the two rings, so L(h) = 6.211657 r(h) exactly.
+    ///
+    /// The counts that follow, at S 0.6, with the mid heights taken from
+    /// spec section 5's banding and the radii read off the table above:
+    ///
+    /// CH 1.9: ceil(2 / 1.9) = 2 bands and the top band's own rise 0.1 is
+    /// under CH / 4 = 0.475, so ONE band, mid z 1.0. That sits between
+    /// ring 1 and ring 2 at s = (1 - 0.611111) / 0.5 = 0.777778, so
+    /// r_outer = 3.75 - 0.777778 x 0.25 = 3.555556 and r_inner = 1.444444.
+    /// The perimeters are 22.08589 m and 8.97239 m, which is 36.8098 and
+    /// 14.9540 pieces, so 37 and 15. TOTAL 52.
+    ///
+    /// CH 0.5: four bands, mids 0.25, 0.75, 1.25 and 1.75, radii
+    /// 3.897727/1.102273, 3.680556/1.319444, 3.410714/1.589286 and
+    /// 3.025/1.975. The perimeters are 24.21135/6.84694,
+    /// 22.86235/8.19594, 21.18619/9.87210 and 18.79026/12.26802 m, which
+    /// are 40.3522/11.4116, 38.1039/13.6599, 35.3103/16.4535 and
+    /// 31.3171/20.4467 pieces: (40, 11), (38, 14), (35, 16) and (31, 20).
+    /// TOTAL 51 + 52 + 51 + 51 = 205.
+    ///
+    /// CH 0.35: six bands, mids 0.175, 0.525, 0.875, 1.225, 1.575 and
+    /// 1.875, radii 3.928409/1.071591, 3.785227/1.214773,
+    /// 3.618056/1.381944, 3.426786/1.573214, 3.1825/1.8175 and
+    /// 2.854167/2.145833. In pieces: 40.6699/11.0939, 39.1876/12.5763,
+    /// 37.4569/14.3069, 35.4767/16.2871, 32.9477/18.8161 and
+    /// 29.5485/22.2153, so (41, 11), (39, 13), (37, 14), (35, 16),
+    /// (33, 19) and (30, 22). TOTAL 52 + 52 + 51 + 51 + 52 + 52 = 310.
+    ///
+    /// Every one of those lengths was read back off the engine's own
+    /// traced curves and agrees to five decimals. The tightest rounding
+    /// margin among the twenty-two courses is 35.4767, which is 0.0233 of
+    /// a piece from the boundary, 14 mm of arc in a 21.3 m course; the
+    /// next tightest are 37.4569 and 16.4535. Nothing here is near enough
+    /// to a boundary for a remeshing to move it, which is why the same
+    /// three totals are asserted of every phasing.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinSpiralVaultNet(
+        double[] phaseDegrees)
+    {
+        const int rings = 13;
+        const int around = 12;
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < rings; ring++)
+        {
+            double radius = 4.0 - 3.0 * ring / (rings - 1);
+            double height =
+                2.0 * (1.0 - Math.Pow((radius - 2.5) / 1.5, 2.0));
+            double phase = phaseDegrees[ring] * Math.PI / 180.0;
+            for (int k = 0; k < around; k++)
+            {
+                double angle = Math.PI * 2.0 * k / around + phase;
+                vertices.Add(new[]
+                {
+                    radius * Math.Cos(angle),
+                    radius * Math.Sin(angle),
+                    height
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < rings; ring++)
+        {
+            for (int k = 0; k < around; k++)
+            {
+                int next = (k + 1) % around;
+                faces.Add(new[]
+                {
+                    ring * around + k,
+                    ring * around + next,
+                    (ring + 1) * around + next,
+                    (ring + 1) * around + k
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The spiral vault's shell with NO phasing and the ring density
+    /// opened up: thirteen rings on the same profile
+    /// z = 2 (1 - ((r - 2.5) / 1.5)^2) at radius 4 - 0.25 j, quads
+    /// between consecutive rings, with as many vertices a ring as asked
+    /// for. Every cut strictly inside it is two nested closed loops, and
+    /// the outer and inner radius of a level sum to 5 at every height,
+    /// which is what makes the cell counts derivable.
+    ///
+    /// The DENSITY is the argument because it is what the plan filter's
+    /// cost is made of. A course cell's outline is a piece of the level
+    /// curve below it and a piece of the one above, so the finer the
+    /// mesh the more corners a cell has, and the interior-point rule the
+    /// containment test needs is not linear in them. This is the fixture
+    /// ValidateSkinPlanFilterCost drives, and the reason it is here
+    /// rather than a reuse of SkinSpiralVaultNet is that twelve to a ring
+    /// makes cells too coarse to measure anything.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinAnnularVaultNet(
+        int around)
+    {
+        const int rings = 13;
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < rings; ring++)
+        {
+            double radius = 4.0 - 3.0 * ring / (rings - 1);
+            double height =
+                2.0 * (1.0 - Math.Pow((radius - 2.5) / 1.5, 2.0));
+            for (int k = 0; k < around; k++)
+            {
+                double angle = Math.PI * 2.0 * k / around;
+                vertices.Add(new[]
+                {
+                    radius * Math.Cos(angle),
+                    radius * Math.Sin(angle),
+                    height
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < rings; ring++)
+        {
+            for (int k = 0; k < around; k++)
+            {
+                int next = (k + 1) % around;
+                faces.Add(new[]
+                {
+                    ring * around + k,
+                    ring * around + next,
+                    (ring + 1) * around + next,
+                    (ring + 1) * around + k
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>The four phasings of the spiral vault this harness pins:
+    /// the CONTROL with every ring square to the next, the SPIRAL of one
+    /// full angular step a ring, the mildest remesh that breaks (rings 6
+    /// and above turned one full step, so exactly the twelve quads
+    /// between ring 5 and ring 6 are sheared and every other quad is the
+    /// control's own), and a phase JITTER of a third of a step,
+    /// alternating, which unlike the other two genuinely MOVES every
+    /// vertex.</summary>
+    private static double[] SkinSpiralPhases(string which)
+    {
+        var phases = new double[13];
+        for (int ring = 0; ring < phases.Length; ring++)
+        {
+            phases[ring] = which switch
+            {
+                "control" => 0.0,
+                "spiral" => 30.0 * ring,
+                "sheared band" => ring >= 6 ? 30.0 : 0.0,
+                _ => ring % 2 == 0 ? 11.0 : -11.0
+            };
+        }
+        return phases;
+    }
+
+    /// <summary>
+    /// The two-peak fixture, whose level curves SPLIT. A height field on
+    /// the barrel's own 7 by 5 grid of quads, row-major, with the rim at
+    /// z 0, the whole interior ring at 0.9, and two peaks of 2.0 at
+    /// (2, 2) and (4, 2) with the saddle between them left at 0.9:
+    ///
+    ///   j = 4:   0    0    0    0    0    0    0
+    ///   j = 3:   0   0.9  0.9  0.9  0.9  0.9   0
+    ///   j = 2:   0   0.9  2.0  0.9  2.0  0.9   0
+    ///   j = 1:   0   0.9  0.9  0.9  0.9  0.9   0
+    ///   j = 0:   0    0    0    0    0    0    0
+    ///
+    /// The superlevel set {z at or above h} is the whole 5 by 3 interior
+    /// block for every h in (0, 0.9], which is connected, so each of
+    /// those cuts is ONE closed loop; for h in (0.9, 2) it is the two
+    /// peak vertices alone, so each of those cuts is TWO. The split
+    /// height is 0.9, and no vertex sits at 0.25, 0.5, 0.75, 1.0, 1.25,
+    /// 1.5 or 1.75, so no cut of the CH 0.5 course grid passes through a
+    /// vertex and every crossing is a clean interior point.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinTwoPeakNet()
+    {
+        double[][] field =
+        {
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            new[] { 0.0, 0.9, 0.9, 0.9, 0.9, 0.9, 0.0 },
+            new[] { 0.0, 0.9, 2.0, 0.9, 2.0, 0.9, 0.0 },
+            new[] { 0.0, 0.9, 0.9, 0.9, 0.9, 0.9, 0.0 },
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }
+        };
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 4; j++)
+        {
+            for (int i = 0; i <= 6; i++)
+                vertices.Add(new[] { (double)i, (double)j, field[j][i] });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 4; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = j * 7 + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// The TWO-HUMP BARREL, whose level curves keep their COUNT and change
+    /// their components. A height field on the barrel's own 7 by 5 grid of
+    /// quads, row-major: the ridge along j = 2 runs the whole length of
+    /// the vault and reaches both x ends, but it dips to 0.9 at x = 0,
+    /// x = 3 and x = 6, leaving two humps of 2.0 between the dips:
+    ///
+    ///   j = 4:   0    0    0    0    0    0    0
+    ///   j = 3:  0.4  0.5  0.5  0.5  0.5  0.5  0.4
+    ///   j = 2:  0.9  2.0  2.0  0.9  2.0  2.0  0.9
+    ///   j = 1:  0.4  0.5  0.5  0.5  0.5  0.5  0.4
+    ///   j = 0:   0    0    0    0    0    0    0
+    ///
+    /// For h in (0.5, 0.9] the superlevel set {z at or above h} is the
+    /// whole j = 2 ridge, which reaches the x = 0 and x = 6 boundary
+    /// edges, so a cut at 0.75 gives the front and back open STRIPS. For
+    /// h in (0.9, 2) it is the four hump vertices alone, in two groups
+    /// strictly inside the mesh either side of the middle dip, so a cut
+    /// at 1.0 gives two closed LOOPS, one round each hump. TWO components
+    /// at both heights and not the same two, which is exactly what a
+    /// count test cannot see. No vertex sits at 0.25, 0.5, 0.75, 1.0,
+    /// 1.25, 1.5 or 1.75, so no cut of the CH 0.5 course grid passes
+    /// through a vertex.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinTwoHumpBarrelNet()
+    {
+        double[][] field =
+        {
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+            new[] { 0.4, 0.5, 0.5, 0.5, 0.5, 0.5, 0.4 },
+            new[] { 0.9, 2.0, 2.0, 0.9, 2.0, 2.0, 0.9 },
+            new[] { 0.4, 0.5, 0.5, 0.5, 0.5, 0.5, 0.4 },
+            new[] { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 }
+        };
+        return SkinHeightField(field);
+    }
+
+    /// <summary>
+    /// The SPLIT-AND-DEATH net: one island SPLITS in the same band where
+    /// another island DIES, so the count is preserved while nothing above
+    /// corresponds to anything below. A height field on a 13 by 5 grid of
+    /// quads, row-major, two 5-wide interior blocks either side of a zero
+    /// column at i = 6:
+    ///
+    ///   j = 4:  0   0    0    0    0    0   0   0    0    0    0    0   0
+    ///   j = 3:  0  0.6  0.6  0.6  0.6  0.6  0  0.6  0.6  0.6  0.6  0.6  0
+    ///   j = 2:  0  0.6  0.6  0.6  0.6  0.6  0  0.6  2.0  0.6  2.0  0.6  0
+    ///   j = 1:  0  0.6  0.6  0.6  0.6  0.6  0  0.6  0.6  0.6  0.6  0.6  0
+    ///   j = 0:  0   0    0    0    0    0   0   0    0    0    0    0   0
+    ///
+    /// For h in (0, 0.6] the superlevel set is the two interior blocks,
+    /// both strictly inside the mesh, so each of those cuts is TWO closed
+    /// loops. For h in (0.6, 2) it is the two peak vertices of the RIGHT
+    /// block alone: the left island has died and the right one has split
+    /// in the same interval, so each of those cuts is TWO closed loops
+    /// again. The counts read 2 at every one of the nine course heights,
+    /// and 0.6 is not one of them.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinSplitAndDeathNet()
+    {
+        double[][] field =
+        {
+            new[]
+            {
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            },
+            new[]
+            {
+                0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.0,
+                0.6, 0.6, 0.6, 0.6, 0.6, 0.0
+            },
+            new[]
+            {
+                0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.0,
+                0.6, 2.0, 0.6, 2.0, 0.6, 0.0
+            },
+            new[]
+            {
+                0.0, 0.6, 0.6, 0.6, 0.6, 0.6, 0.0,
+                0.6, 0.6, 0.6, 0.6, 0.6, 0.0
+            },
+            new[]
+            {
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+            }
+        };
+        return SkinHeightField(field);
+    }
+
+    /// <summary>
+    /// The L-SHAPED shell, a NON-CONVEX plan. A height field on a 9 by 9
+    /// grid of vertices whose support is the 7 by 7 interior with the
+    /// top-right 3 by 3 block (i and j both 5 or more) left at zero, so
+    /// the plan of every level set is an L with a re-entrant corner.
+    /// Inside the support the height is 0.5 min(a_i, a_j) with
+    /// a = 0, 1, 2, 3, 4, 3, 2, 1, 0 along each axis, a pyramid of ridges
+    /// that reaches 2.0 at (4, 4), so the rise is the barrel's own 2 m.
+    ///
+    /// It is the fixture for the plan guarantee itself. Spec section 4's
+    /// claim that a height-field setout cannot produce a self-crossing
+    /// cell is argued from a convex picture; a re-entrant corner breaks
+    /// the argument. At CH 0.5 the courses engine builds ONE cell whose
+    /// plan projection self-crosses, out of 95, and at CH 0.3, 0.4,
+    /// 0.45, 0.55, 0.6 and 0.7 it builds none: one bad cell out of six
+    /// clean course heights, which is exactly the kind of rare breach an
+    /// argued guarantee cannot see and a filter can. One bad cell is
+    /// enough, because Bench Studio rejects a whole tessellation for it.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinLShapedNet()
+    {
+        var field = new double[9][];
+        for (int j = 0; j < 9; j++)
+            field[j] = new double[9];
+        for (int j = 1; j <= 7; j++)
+        {
+            for (int i = 1; i <= 7; i++)
+            {
+                if (i >= 5 && j >= 5)
+                    continue;
+                double across = Math.Min(Math.Min(i, 8 - i), 4);
+                double along = Math.Min(Math.Min(j, 8 - j), 4);
+                field[j][i] = 0.5 * Math.Min(across, along);
+            }
+        }
+        return SkinHeightField(field);
+    }
+
+    /// <summary>A height field on a unit grid of quads, row-major, the
+    /// shape SkinTwoPeakNet builds by hand: vertex (i, j) sits at
+    /// (i, j, field[j][i]) and face (j, i) is the quad below and left of
+    /// (j + 1, i + 1), wound the same way.</summary>
+    private static (double[][] Vertices, int[][] Faces) SkinHeightField(
+        double[][] field)
+    {
+        int rows = field.Length;
+        int columns = field[0].Length;
+        var vertices = new List<double[]>();
+        for (int j = 0; j < rows; j++)
+        {
+            for (int i = 0; i < columns; i++)
+                vertices.Add(new[] { (double)i, (double)j, field[j][i] });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j + 1 < rows; j++)
+        {
+            for (int i = 0; i + 1 < columns; i++)
+            {
+                int a = j * columns + i;
+                faces.Add(new[]
+                {
+                    a, a + 1, a + columns + 1, a + columns
+                });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
+    /// SkinPatterns.ReadNet: the pure half of the ThrustMesh walk. A TNA
+    /// Result's form faces come back as plain vertex and face arrays
+    /// mapped through Mappings.SourceVertexToFormVertex onto the
+    /// equilibrium positions, ordered by form vertex id and re-indexed
+    /// into net positions; an FD Result, which carries no reciprocal
+    /// block, comes back null rather than empty, so the component can say
+    /// WHY there are no cells. The form ids are 10..13 ON PURPOSE,
+    /// distinct from the equilibrium ids, so an engine that reads a form
+    /// id as an index fails loudly here.
+    ///
+    /// The other half of spec section 11's FD bullet, the REMARK the
+    /// component shows beside the empty outputs, is SolveInstance
+    /// behaviour: it needs an IGH_DataAccess this harness has no native
+    /// core to build, so the null contract measured here is the engine
+    /// half and the Remark itself is read, not run, the same honest
+    /// reduction ValidateExportDefaultTessellation records for
+    /// FacePolylines.
+    /// </summary>
+    private static void ValidateSkinNet(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType =
+            RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType =
+            RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphFaceType = RequireContractType(plugin, "TnaGraphFaceDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type vertexMappingType =
+            RequireContractType(plugin, "TnaSourceVertexMappingDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 0, 0), P(1, 0, 0), P(1, 1, 1), P(0, 1, 1)));
+
+        object GraphVertex(int id)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            return vertex;
+        }
+        object face = CreateInstance(graphFaceType);
+        SetContractProperty(face, graphFaceType, "Id", 0);
+        SetContractProperty(
+            face, graphFaceType, "Vertices", new[] { 10, 11, 12, 13 });
+        object formGraph = CreateInstance(graphType);
+        SetContractProperty(formGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                GraphVertex(10), GraphVertex(11),
+                GraphVertex(12), GraphVertex(13)));
+        SetContractProperty(formGraph, graphType, "Faces",
+            Of(graphFaceType, face));
+
+        object Mapping(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(vertexMappingType);
+            SetContractProperty(
+                item, vertexMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, vertexMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            return item;
+        }
+        object mappings = CreateInstance(mappingsType);
+        SetContractProperty(mappings, mappingsType,
+            "SourceVertexToFormVertex",
+            Of(vertexMappingType,
+                Mapping(10, 0), Mapping(11, 1),
+                Mapping(12, 2), Mapping(13, 3)));
+
+        object result = CreateResultDto(
+            resultType, "tna", equilibrium,
+            CreateInstance(graphType), CreateInstance(graphType));
+        SetContractProperty(result, resultType, "FormGraph", formGraph);
+        SetContractProperty(result, resultType, "Mappings", mappings);
+
+        object? net = readNet.Invoke(null, new[] { result });
+        if (net is null)
+        {
+            throw new InvalidOperationException(
+                "A TNA Result with faces must give a net; null came back.");
+        }
+        IList vertices =
+            (IList)net.GetType().GetProperty("Vertices")!.GetValue(net)!;
+        IList faces =
+            (IList)net.GetType().GetProperty("Faces")!.GetValue(net)!;
+        if (vertices.Count != 4 || faces.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "Four form vertices and one QUAD face went in, and a net " +
+                "holds TRIANGLES: the quad must come back as two of them, " +
+                "so that every face the tracer ever sees is planar and " +
+                "every level curve it draws is the exact level set. Got " +
+                $"{vertices.Count} vertices and {faces.Count} faces.");
+        }
+        double[] second = (double[])vertices[1]!;
+        if (Math.Abs(second[0] - 1.0) > 1.0e-12 ||
+            Math.Abs(second[2]) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Net vertices are the EQUILIBRIUM positions in form-id " +
+                "order; vertex 1 must be (1, 0, 0), got " +
+                $"({second[0]}, {second[1]}, {second[2]}).");
+        }
+        // The two triangles, and the diagonal is DERIVED rather than
+        // read off. The four net vertices are (0,0,0), (1,0,0), (1,1,1)
+        // and (0,1,1), whose plan is the unit square, so both diagonals
+        // are valid (a convex ring has no outside diagonal) and both
+        // measure sqrt(2) in plan. The rule breaks the tie on the LOWER
+        // vertex index: the pair (0, 2) against the pair (1, 3), and 0
+        // is below 1, so the split is 0 to 2 and the triangles are
+        // [0, 1, 2] and [0, 2, 3], in that order. Corners are still
+        // re-indexed into net positions, which is what the 10..13 form
+        // ids are here to catch.
+        int[] firstTriangle = (int[])faces[0]!;
+        int[] secondTriangle = (int[])faces[1]!;
+        if (!firstTriangle.SequenceEqual(new[] { 0, 1, 2 }) ||
+            !secondTriangle.SequenceEqual(new[] { 0, 2, 3 }))
+        {
+            throw new InvalidOperationException(
+                "A quad splits on the shortest VALID plan diagonal, ties " +
+                "to the lower vertex index: the unit square's diagonals " +
+                "are both valid and both sqrt(2), so the pair (0, 2) " +
+                "wins and the triangles are [0,1,2] and [0,2,3]; got [" +
+                string.Join(",", firstTriangle) + "] and [" +
+                string.Join(",", secondTriangle) + "].");
+        }
+
+        // IDEMPOTENT: a net built from a net's own faces is the same
+        // net. Without this the invariant would hold only on the first
+        // construction, and every fixture in this harness that hands
+        // triangles straight in would be measuring a different rule.
+        object again = Activator.CreateInstance(
+            net.GetType(),
+            new object[]
+            {
+                vertices.Cast<double[]>().ToArray(),
+                faces.Cast<int[]>().ToArray()
+            })!;
+        IList againFaces =
+            (IList)again.GetType().GetProperty("Faces")!.GetValue(again)!;
+        if (againFaces.Count != 2 ||
+            !((int[])againFaces[0]!).SequenceEqual(firstTriangle) ||
+            !((int[])againFaces[1]!).SequenceEqual(secondTriangle))
+        {
+            throw new InvalidOperationException(
+                "Triangulation is IDEMPOTENT: an all-triangle face list " +
+                "comes through untouched, so a net built from another " +
+                "net's faces is the same net.");
+        }
+
+        // The VALIDITY half of the diagonal rule, on the one shape that
+        // separates it from "take the shorter one". A simple quadrilateral
+        // has one interior diagonal when it is non-convex, and the
+        // interior one is not always the shorter. The dart below is the
+        // counterexample, and it is hand-derived rather than found:
+        // A (0, 0), B (10, 0), C (9, 0.4), D (10, 1), wound
+        // counter-clockwise (its shoelace sum is +9, area 4.5), with C
+        // reflex. The diagonal B to D is a vertical segment of length 1
+        // at x = 10; its midpoint (10, 0.5) casts a ray to the right
+        // that crosses NOTHING, so it lies outside. The diagonal A to C
+        // measures sqrt(81 + 0.16) = 9.0089; its midpoint (4.5, 0.2)
+        // casts a ray that crosses edge B to C at x 9.5, once, so it
+        // lies inside. Take the shorter without asking and the two
+        // triangles overlap in plan, the face's own union is not the
+        // face, and the mesh stops being the height field the whole
+        // exactness argument rests on. The z coordinates are 0, 1, 2 and
+        // 3 on purpose: the rule is a PLAN rule and must not read them.
+        double[][] dart =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 10.0, 0.0, 1.0 },
+            new[] { 9.0, 0.4, 2.0 },
+            new[] { 10.0, 1.0, 3.0 }
+        };
+        MethodInfo triangulate = RequirePublicStatic(patterns, "Triangulate");
+        IList dartFaces = (IList)triangulate.Invoke(
+            null,
+            new object[] { dart, new[] { new[] { 0, 1, 2, 3 } } })!;
+        if (dartFaces.Count != 2 ||
+            !((int[])dartFaces[0]!).SequenceEqual(new[] { 0, 1, 2 }) ||
+            !((int[])dartFaces[1]!).SequenceEqual(new[] { 0, 2, 3 }))
+        {
+            throw new InvalidOperationException(
+                "A non-convex quad splits on its INTERIOR diagonal even " +
+                "when that is the longer one: the dart A(0,0) B(10,0) " +
+                "C(9,0.4) D(10,1) must give [0,1,2] and [0,2,3], because " +
+                "B to D measures 1 and lies outside while A to C " +
+                "measures 9.0089 and lies inside; got " +
+                string.Join(
+                    " and ",
+                    dartFaces.Cast<int[]>().Select(
+                        triangle => "[" + string.Join(",", triangle) + "]")) +
+                ".");
+        }
+
+        object fd = CreateResultDto(
+            resultType, "fd", CreateInstance(equilibriumType), null, null);
+        if (readNet.Invoke(null, new[] { fd }) is not null)
+        {
+            throw new InvalidOperationException(
+                "An FD Result carries no faces and must give a NULL net, " +
+                "so the component can name the reason.");
+        }
+    }
+
+    /// <summary>
+    /// The setout map (spec section 4), measured. Barrel: a cut gives two
+    /// OPEN strips of length 6 whose seam is the arc midpoint, PointAt
+    /// walks signed offsets from it, and Run keeps the trace vertices
+    /// between its ends. Dome: cuts give CLOSED loops; the lowest loop's
+    /// seam takes the trace vertex on the +X bearing from its plan
+    /// centroid, the loop above PROPAGATES from it (nearest in plan), and
+    /// PointAt wraps.
+    /// </summary>
+    private static void ValidateSkinSetout(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo pointAt = RequirePublicStatic(patterns, "PointAt");
+        MethodInfo runMethod = RequirePublicStatic(patterns, "Run");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        T Reading<T>(object curve, string name) =>
+            (T)curve.GetType().GetProperty(name)!.GetValue(curve)!;
+        double[] At(object curve, double u) =>
+            (double[])pointAt.Invoke(null, new[] { curve, (object)u })!;
+
+        object barrel = Net(SkinBarrelNet());
+        IList levels = (IList)traceAll.Invoke(
+            null, new object[] { barrel, new double[] { 0.75 } })!;
+        IList strips = (IList)levels[0]!;
+        if (strips.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "A cut at 0.75 crosses the tent twice, one strip each " +
+                $"side of the crest; got {strips.Count} components.");
+        }
+        foreach (object? item in strips)
+        {
+            object strip = item!;
+            if (Reading<bool>(strip, "Closed"))
+            {
+                throw new InvalidOperationException(
+                    "A strip ending on the boundary is OPEN.");
+            }
+            if (Math.Abs(Reading<double>(strip, "Length") - 6.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Each strip runs the full 6 m of the barrel; got " +
+                    $"{Reading<double>(strip, "Length")}.");
+            }
+            if (Math.Abs(Reading<double>(strip, "Seam") - 3.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "An open strip's seam is its arc-length MIDPOINT, " +
+                    "the centre-outward setout rule; got " +
+                    $"{Reading<double>(strip, "Seam")}.");
+            }
+            double[] mid = At(strip, 0.0);
+            if (Math.Abs(mid[0] - 3.0) > 1.0e-9 ||
+                Math.Abs(mid[2] - 0.75) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "u = 0 is the seam: x 3 at the cut height; got " +
+                    $"({mid[0]}, {mid[1]}, {mid[2]}).");
+            }
+            double[] left = At(strip, -3.0);
+            double[] right = At(strip, 3.0);
+            if (Math.Abs(left[0]) > 1.0e-9 ||
+                Math.Abs(right[0] - 6.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "u runs signed from the seam: -3 is x 0 and +3 is " +
+                    $"x 6; got x {left[0]} and x {right[0]}.");
+            }
+        }
+        IList sampled = (IList)runMethod.Invoke(
+            null, new object[] { strips[0]!, -1.5, 1.5 })!;
+        double[] xs = sampled.Cast<double[]>()
+            .Select(p => p[0])
+            .ToArray();
+        // The trace vertices of the front strip at height h, DERIVED from
+        // the triangulation. Every quad of the barrel is planar (its two
+        // horizontal chords are parallel) and its plan is the unit
+        // square, so both diagonals are valid and both measure sqrt(2);
+        // the tie goes to the lower vertex index, which for face
+        // [a, a+1, a+8, a+7] is the pair (a, a+8), the diagonal from
+        // (i, j) to (i + 1, j + 1). Cutting at h in (0, 1) therefore
+        // crosses the vertical edge from (i, 0, 0) to (i, 1, 1) at
+        // (i, h, h) and that diagonal, from (i, 0, 0) to (i + 1, 1, 1),
+        // at (i + h, h, h). Every one of them lies on the line y = h,
+        // z = h, so the strip is still straight and still 6 m long and
+        // the diagonal crossings are COLLINEAR additions, which is why
+        // no length pinned above moves. At h = 0.75 the vertices are
+        // x = 0, 0.75, 1, 1.75, 2, ... and Run(-1.5, 1.5), which spans
+        // x 1.5 to x 4.5, keeps those strictly between.
+        double[] expectedXs =
+            { 1.5, 1.75, 2.0, 2.75, 3.0, 3.75, 4.0, 4.5 };
+        if (xs.Length != expectedXs.Length ||
+            xs.Zip(expectedXs).Any(pair =>
+                Math.Abs(pair.First - pair.Second) > 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "Run(-1.5, 1.5) keeps the trace vertices between its " +
+                "ends: x 1.5, 1.75, 2, 2.75, 3, 3.75, 4, 4.5; got [" +
+                string.Join(", ", xs) + "].");
+        }
+
+        object dome = Net(SkinDomeNet());
+        IList domeLevels = (IList)traceAll.Invoke(
+            null, new object[] { dome, new double[] { 0.25, 0.75 } })!;
+        IList lower = (IList)domeLevels[0]!;
+        IList upper = (IList)domeLevels[1]!;
+        if (lower.Count != 1 || upper.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "Each dome cut is ONE closed loop; got " +
+                $"{lower.Count} and {upper.Count}.");
+        }
+        object lowerLoop = lower[0]!;
+        object upperLoop = upper[0]!;
+        if (!Reading<bool>(lowerLoop, "Closed") ||
+            !Reading<bool>(upperLoop, "Closed"))
+        {
+            throw new InvalidOperationException(
+                "A loop that returns to its first crossing is CLOSED.");
+        }
+        double expectedLower = 16.0 * 1.75 * Math.Sin(Math.PI / 8.0);
+        if (Math.Abs(Reading<double>(lowerLoop, "Length") - expectedLower)
+            > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The 0.25 loop is an octagon of radius 1.75: perimeter " +
+                $"{expectedLower}; got " +
+                $"{Reading<double>(lowerLoop, "Length")}.");
+        }
+        double[] lowerSeam = At(lowerLoop, 0.0);
+        if (Math.Abs(lowerSeam[0] - 1.75) > 1.0e-9 ||
+            Math.Abs(lowerSeam[1]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The LOWEST loop's seam is the trace vertex on the +X " +
+                "bearing from its plan centroid: (1.75, 0); got " +
+                $"({lowerSeam[0]}, {lowerSeam[1]}).");
+        }
+        double[] upperSeam = At(upperLoop, 0.0);
+        if (Math.Abs(upperSeam[0] - 1.25) > 1.0e-9 ||
+            Math.Abs(upperSeam[1]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A higher loop's seam PROPAGATES from the loop below, " +
+                "nearest in plan: (1.25, 0); got " +
+                $"({upperSeam[0]}, {upperSeam[1]}).");
+        }
+        double upperLength = Reading<double>(upperLoop, "Length");
+        double[] wrapped = At(upperLoop, upperLength + 0.1);
+        double[] direct = At(upperLoop, 0.1);
+        if (Math.Abs(wrapped[0] - direct[0]) > 1.0e-9 ||
+            Math.Abs(wrapped[1] - direct[1]) > 1.0e-9 ||
+            Math.Abs(wrapped[2] - direct[2]) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A closed loop's u WRAPS: u = L + 0.1 is u = 0.1.");
+        }
+    }
+
+    /// <summary>Read a SkinPatternResult's cells through reflection into
+    /// plain tuples the checks can measure.</summary>
+    private static (int Course, double[][] Outline, bool Clipped,
+        double U0, double U1)[] SkinCells(object generated)
+    {
+        IList cells = (IList)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        var read = new List<(int, double[][], bool, double, double)>();
+        foreach (object? item in cells)
+        {
+            object cell = item!;
+            Type type = cell.GetType();
+            IList outline =
+                (IList)type.GetProperty("Outline")!.GetValue(cell)!;
+            read.Add((
+                (int)type.GetProperty("Course")!.GetValue(cell)!,
+                outline.Cast<double[]>().ToArray(),
+                (bool)type.GetProperty("Clipped")!.GetValue(cell)!,
+                (double)type.GetProperty("U0")!.GetValue(cell)!,
+                (double)type.GetProperty("U1")!.GetValue(cell)!));
+        }
+        return read.ToArray();
+    }
+
+    private static double PlanCentroidY(double[][] outline) =>
+        outline.Average(point => point[1]);
+
+    /// <summary>The engine's own plan-validity predicates,
+    /// <c>SkinPatterns.PlanSelfCrosses</c> and
+    /// <c>SkinPatterns.PlansOverlap</c>, resolved once in
+    /// <see cref="Run"/>.</summary>
+    private static MethodInfo? SkinPlanSelfCrosses;
+
+    private static MethodInfo? SkinPlansOverlap;
+
+    /// <summary>
+    /// The height-field guarantee, asserted (spec section 4): cells set
+    /// out through the map project to plan without overlap. Every
+    /// outline must be SIMPLE in plan (no two non-adjacent edges
+    /// properly crossing) and every pair DISJOINT (no proper edge
+    /// crossing between cells, and no cell's own interior centroid
+    /// strictly inside another). Touching along a shared joint edge is
+    /// not overlap, so every test is strict.
+    ///
+    /// The arithmetic is NOT this harness's own. Both tests call the
+    /// engine's public predicates, the same two methods the engines now
+    /// FILTER with before they emit, so the two cannot disagree about
+    /// what a bad cell is. A filter that dropped what this check would
+    /// have accepted, or kept what it would have refused, would be
+    /// worse than no filter at all, and a second copy of the arithmetic
+    /// here is exactly how the two would drift apart. The harness's
+    /// contribution is the message: WHICH cell, and against what claim.
+    /// </summary>
+    private static void RequireDisjointSimplePlans(
+        IReadOnlyList<double[][]> outlines,
+        string label)
+    {
+        MethodInfo? crossesMethod = SkinPlanSelfCrosses;
+        MethodInfo? overlapMethod = SkinPlansOverlap;
+        if (crossesMethod is null || overlapMethod is null)
+        {
+            throw new InvalidOperationException(
+                "SkinPatterns must expose PlanSelfCrosses and " +
+                "PlansOverlap publicly: the engines filter on them and " +
+                "this check measures on them, and one copy of the " +
+                "arithmetic is the whole point.");
+        }
+        bool SelfCrosses(double[][] outline) =>
+            (bool)crossesMethod.Invoke(
+                null, new object[] { outline })!;
+        bool Overlap(double[][] first, double[][] second) =>
+            (bool)overlapMethod.Invoke(
+                null, new object[] { first, second })!;
+
+        for (int at = 0; at < outlines.Count; at++)
+        {
+            if (SelfCrosses(outlines[at]))
+            {
+                throw new InvalidOperationException(
+                    $"{label}: cell {at}'s plan projection " +
+                    "self-crosses, which the height-field " +
+                    "setout guarantees against.");
+            }
+        }
+        for (int a = 0; a < outlines.Count; a++)
+        {
+            for (int b = a + 1; b < outlines.Count; b++)
+            {
+                if (Overlap(outlines[a], outlines[b]))
+                {
+                    throw new InvalidOperationException(
+                        $"{label}: cells {a} and {b} overlap in plan, " +
+                        "which the height-field setout guarantees " +
+                        "against.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The plan guarantee is enforced, and enforcement is NOT a licence
+    /// to stop caring: a fixture that was clean must go on being clean,
+    /// so every clean case asserts that the engine dropped NOTHING.
+    /// Without this the filter would quietly absorb a regression and
+    /// ship a smaller pattern with the gate still green.
+    /// </summary>
+    private static void RequireNothingDropped(object generated, string label)
+    {
+        Type type = generated.GetType();
+        int degenerate = (int)type
+            .GetProperty("PlanDegenerateDropped")!.GetValue(generated)!;
+        int overlap = (int)type
+            .GetProperty("PlanOverlapDropped")!.GetValue(generated)!;
+        if (degenerate != 0 || overlap != 0)
+        {
+            throw new InvalidOperationException(
+                $"{label}: this pattern is clean in plan by " +
+                "construction, so the plan-validity filter must drop " +
+                $"NOTHING; it dropped {degenerate} self-crossing and " +
+                $"{overlap} overlapping. The filter is a guarantee, not " +
+                "a licence to start producing bad cells.");
+        }
+        string diagnostics = (string)type
+            .GetProperty("Diagnostics")!.GetValue(generated)!;
+        if (!diagnostics.Contains(
+                "Plan-degenerate cells dropped: 0",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains(
+                "Plan-overlap cells dropped: 0",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"{label}: both drop counts are reported in the " +
+                "diagnostics as their own lines, zero included, so the " +
+                "guarantee is legible rather than merely true; got " +
+                $"'{diagnostics}'.");
+        }
+    }
+
+    /// <summary>
+    /// The courses engine (spec section 5), measured joint for joint.
+    /// Barrel (S 0.6, CH 0.5, four bands of the 2 m rise): every course
+    /// on each strip carries the EXACT pinned joint set: even courses
+    /// eleven joints at -3 + 0.6k (ten pieces of 0.6, a joint AT the
+    /// seam), odd courses those shifted half a pitch plus the two strip
+    /// ends (eleven pieces, the two 0.3 end pieces absorbing the phase),
+    /// which pins the pitch, the phase, the truncation, the half-piece
+    /// stagger and the mirror symmetry in one assertion. Dome: each
+    /// closed course is round(L/S) EQUAL pieces (L from the octagon
+    /// perimeter formula), rotated half a pitch on odd courses. Both:
+    /// cells arrive sorted by course, outlines are real polygons, and
+    /// the plan projections are pairwise disjoint and simple, the
+    /// height-field guarantee. Groups are taken in ARRIVAL order, never
+    /// re-sorted, so the ascending joint and span pins also assert spec
+    /// section 3's within-course ordering, the studio's build sequence.
+    /// BandCount's sliver-merge branch is exercised directly (a 2.05 m
+    /// rise merges its 0.05 sliver, a 2.2 m rise ships its 0.2 top
+    /// band). Outlines are asserted OPEN rings, first point not
+    /// repeated: the closing repeat is appended by the component's
+    /// ClosedOutlineCurve, which, like the C and CO tree building beside
+    /// it, lives in SolveInstance and needs an IGH_DataAccess this
+    /// harness cannot build, so spec section 11's "every cell closed"
+    /// and "trees aligned" bullets are covered here by their engine
+    /// halves (the open-ring convention pinned, one sorted cell list for
+    /// both trees) and the component halves are read, not run, the
+    /// ValidateExportDefaultTessellation convention.
+    /// </summary>
+    private static void ValidateSkinCourses(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrelNet = Activator.CreateInstance(
+            netType, new object[] { barrelVertices, barrelFaces })!;
+        object generated = courses.Invoke(
+            null, new object[] { barrelNet, 0.6, 0.5 })!;
+        var cells = SkinCells(generated);
+        int courseCount = (int)generated.GetType()
+            .GetProperty("CourseCount")!.GetValue(generated)!;
+        if (courseCount != 4)
+        {
+            throw new InvalidOperationException(
+                "A 2 m rise at CH 0.5 is four courses (no sliver to " +
+                $"merge); got {courseCount}.");
+        }
+        MethodInfo bandCount = RequirePublicStatic(patterns, "BandCount");
+        int Bands(double zMax) => (int)bandCount.Invoke(
+            null, new object[] { 0.0, zMax, 0.5 })!;
+        if (Bands(2.05) != 4 || Bands(2.2) != 5)
+        {
+            throw new InvalidOperationException(
+                "The sliver-merge rule: a top band whose rise is under " +
+                "a quarter of CH merges into the band below (a 2.05 m " +
+                "rise at CH 0.5 is FOUR bands, the 0.05 sliver merged), " +
+                "while one over it ships (a 2.2 m rise is FIVE, the " +
+                "0.2 top band kept).");
+        }
+        for (int at = 1; at < cells.Length; at++)
+        {
+            if (cells[at].Course < cells[at - 1].Course)
+            {
+                throw new InvalidOperationException(
+                    "Cells arrive sorted by course then position, the " +
+                    "studio's build sequence.");
+            }
+        }
+        for (int course = 0; course < 4; course++)
+        {
+            foreach (bool front in new[] { true, false })
+            {
+                // ARRIVAL order, deliberately un-sorted: the ascending
+                // joint comparison below then also asserts the
+                // within-course ordering the studio's build sequence
+                // depends on (the engine's ThenBy(U0)).
+                var group = cells
+                    .Where(cell =>
+                        cell.Course == course &&
+                        (PlanCentroidY(cell.Outline) < 2.0) == front)
+                    .ToArray();
+                double[] joints = course % 2 == 0
+                    ? Enumerable.Range(0, 11)
+                        .Select(k => -3.0 + 0.6 * k)
+                        .ToArray()
+                    : new[] { -3.0 }
+                        .Concat(Enumerable.Range(0, 10)
+                            .Select(k => -2.7 + 0.6 * k))
+                        .Concat(new[] { 3.0 })
+                        .ToArray();
+                if (group.Length != joints.Length - 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Course {course} on one strip carries " +
+                        $"{joints.Length - 1} pieces; got " +
+                        $"{group.Length}.");
+                }
+                for (int at = 0; at < group.Length; at++)
+                {
+                    if (Math.Abs(group[at].U0 - joints[at]) > 1.0e-9 ||
+                        Math.Abs(group[at].U1 - joints[at + 1]) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            "The seam-anchored pitch grid: course " +
+                            $"{course} piece {at} must span " +
+                            $"[{joints[at]}, {joints[at + 1]}]; got " +
+                            $"[{group[at].U0}, {group[at].U1}]. Even " +
+                            "courses put a joint AT the seam, odd " +
+                            "courses centre a piece on it, and only " +
+                            "the end pieces absorb the phase.");
+                    }
+                }
+                foreach (var cell in group)
+                {
+                    if (!group.Any(other =>
+                        Math.Abs(other.U0 + cell.U1) < 1.0e-9 &&
+                        Math.Abs(other.U1 + cell.U0) < 1.0e-9))
+                    {
+                        throw new InvalidOperationException(
+                            "A mirror-symmetric fixture gets " +
+                            "mirror-symmetric joints: the span " +
+                            $"[{cell.U0}, {cell.U1}] has no mirrored " +
+                            "partner about the seam.");
+                    }
+                }
+                bool[] clippedFlags =
+                    group.Select(cell => cell.Clipped).ToArray();
+                int endPieces = clippedFlags.Count(flag => flag);
+                if (course % 2 == 0 ? endPieces != 0 : endPieces != 2)
+                {
+                    throw new InvalidOperationException(
+                        "On this fixture only the odd courses' two end " +
+                        $"pieces are clipped; course {course} flags " +
+                        $"{endPieces}.");
+                }
+            }
+        }
+        foreach (var cell in cells)
+        {
+            if (cell.Outline.Length < 3)
+            {
+                throw new InvalidOperationException(
+                    "Every cell is a real polygon of at least three " +
+                    "distinct points.");
+            }
+            double[] first = cell.Outline[0];
+            double[] last = cell.Outline[^1];
+            if (Math.Abs(first[0] - last[0]) < 1.0e-9 &&
+                Math.Abs(first[1] - last[1]) < 1.0e-9 &&
+                Math.Abs(first[2] - last[2]) < 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Engine outlines are OPEN rings: the closing repeat " +
+                    "belongs to the component's ClosedOutlineCurve, and " +
+                    "this pin is the convention that method depends on.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "courses/barrel");
+        RequireNothingDropped(generated, "courses/barrel");
+        string diagnostics = (string)generated.GetType()
+            .GetProperty("Diagnostics")!.GetValue(generated)!;
+        if (!diagnostics.Contains("Pattern: courses",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains("Boundary-clipped cells: 8",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Diagnostics name the pattern and count the clipped " +
+                "cells (two odd courses, two strips, two end pieces " +
+                $"each: 8); got '{diagnostics}'.");
+        }
+
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object domeNet = Activator.CreateInstance(
+            netType, new object[] { domeVertices, domeFaces })!;
+        object domeGenerated = courses.Invoke(
+            null, new object[] { domeNet, 0.6, 0.5 })!;
+        var domeCells = SkinCells(domeGenerated);
+        int domeCourses = (int)domeGenerated.GetType()
+            .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
+        if (domeCourses != 4)
+        {
+            throw new InvalidOperationException(
+                $"The dome's 2 m rise at CH 0.5 is four courses; got " +
+                $"{domeCourses}.");
+        }
+        for (int course = 0; course < 4; course++)
+        {
+            // ARRIVAL order here too: the indexed span pin below
+            // asserts the ordering along the loop.
+            var ring = domeCells
+                .Where(cell => cell.Course == course)
+                .ToArray();
+            double midHeight = course == 3 ? 1.75 : 0.25 + 0.5 * course;
+            double expectedLength =
+                16.0 * (2.0 - midHeight) * Math.Sin(Math.PI / 8.0);
+            int expectedPieces = Math.Max(
+                1, (int)Math.Round(expectedLength / 0.6));
+            if (ring.Length != expectedPieces)
+            {
+                throw new InvalidOperationException(
+                    $"A closed course is n = max(1, round(L/S)) equal " +
+                    $"pieces: course {course} (L {expectedLength:F3}) " +
+                    $"must carry {expectedPieces}; got {ring.Length}.");
+            }
+            double pitch = expectedLength / expectedPieces;
+            double expectedPhase = course % 2 == 0 ? 0.0 : pitch / 2.0;
+            for (int at = 0; at < ring.Length; at++)
+            {
+                double expectedU0 = expectedPhase + at * pitch;
+                if (Math.Abs(ring[at].U0 - expectedU0) > 1.0e-9 ||
+                    Math.Abs(ring[at].U1 - ring[at].U0 - pitch) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "A closed course is EQUAL pieces of pitch " +
+                        $"{pitch:F4} in arrival order from the phase " +
+                        "(rotated half a pitch on odd courses): piece " +
+                        $"{at} of course {course} must span " +
+                        $"[{expectedU0:F4}, {expectedU0 + pitch:F4}]; " +
+                        $"got [{ring[at].U0:F4}, {ring[at].U1:F4}].");
+                }
+            }
+        }
+        RequireDisjointSimplePlans(
+            domeCells.Select(cell => cell.Outline).ToArray(),
+            "courses/dome");
+        RequireNothingDropped(domeGenerated, "courses/dome");
+    }
+
+    /// <summary>
+    /// Ruling B of the whole-branch review as item B2 corrects it,
+    /// measured: a band whose level curves do not CORRESPOND one for one
+    /// is REFUSED whole, named in the diagnostics, and counted, rather
+    /// than filled with cells that pair curves which are not the same
+    /// piece of surface.
+    ///
+    /// The test is of the MATCHING, not of the count. Counting is too
+    /// weak, and two ordinary surfaces show it: a two-hump barrel cuts
+    /// into two STRIPS low down and two hump LOOPS higher up, and a net
+    /// where one island splits in the same band as another dies reads
+    /// two at every height. Both are fixtures here, both keep the count
+    /// at 2 throughout, and against the build before B2 both had every
+    /// band built and cells laid over one another. The rule is a mutual
+    /// BIJECTION under MatchBelow in both directions: no curve claimed
+    /// by two, none unclaimed, the two maps inverses of each other. One
+    /// test catches split, death, swap and simultaneous split-and-death.
+    ///
+    /// The two-peak fixture splits at z 0.9 (the derivation is in
+    /// SkinTwoPeakNet: one closed loop up to 0.9, two above it).
+    ///
+    /// COURSES at S 0.6 and CH 0.5. A 2 m rise is four bands, and the
+    /// nine traced heights are, in order, zMin + eps, 0.25, 0.5, 0.75,
+    /// 1.0, 1.25, 1.5, 1.75 and zMax - eps, carrying 1, 1, 1, 1, 2, 2,
+    /// 2, 2 and 2 components. Band r spans levels 2r, 2r + 1 and
+    /// 2r + 2, so band 0 sees 1, 1, 1; band 1 sees 1, 1, 2; band 2 sees
+    /// 2, 2, 2; band 3 sees 2, 2, 2. Exactly ONE band, band 1, is a
+    /// transition, and it spans z 0.500 to z 1.000, which is what the
+    /// diagnostics line must name. Courses 0, 2 and 3 still carry cells;
+    /// course 1 carries none.
+    ///
+    /// HEXAGONAL on the same net. Its five traced heights are
+    /// zMin + eps, 0.5, 1.0, 1.5 and zMax - eps, carrying 1, 1, 2, 2 and
+    /// 2, so the one transition interval is again 0.500 to 1.000. A
+    /// lattice cell of centre row c reaches from row c - 1 to row c + 1,
+    /// that is from z 0.5(c - 1) to z 0.5(c + 1) clamped to the surface,
+    /// so the interval falls inside the span of rows c = 1 (z 0 to 1.0)
+    /// and c = 2 (z 0.5 to 1.5) and of no other: TWO lattice bands are
+    /// refused. Their clamped centre heights are 0.5 and 1.0, which are
+    /// courses 1 and 2, so the surviving cells carry courses 0 and 3
+    /// alone.
+    ///
+    /// Neither the barrel nor the dome has a transition anywhere, so
+    /// both engines must report none on them: the check that the refusal
+    /// is a refusal and not a habit.
+    ///
+    /// Two more fixtures measure that the correspondence is a property
+    /// of the GEOMETRY rather than of the world axes, which the overlap
+    /// area of axis-aligned plan bounding boxes was not.
+    ///
+    /// The two-hump barrel TURNED 37 degrees in plan must be refused
+    /// exactly as the upright one is, cell count for cell count. A
+    /// rotation about world Z moves no z, no face and no traced
+    /// component, so the transition is at the same heights and the
+    /// refusal must be the same refusal.
+    ///
+    /// An ANNULAR shell, whose every cut is two NESTED closed loops,
+    /// must be refused NOWHERE: nested loops correspond perfectly, outer
+    /// to outer and inner to inner, and an oculus dome is an ordinary
+    /// funicular form the component may not propose nothing for while
+    /// stating a false reason. Box area cannot express nesting, because
+    /// the outer loop's box contains the inner's; a distance can.
+    ///
+    /// The component's own half of the ruling, the runtime Warning that
+    /// says the skin has a HOLE, lives in SolveInstance and needs an
+    /// IGH_DataAccess this harness has no native core to build. What is
+    /// measured here is the engine half the component reads: the
+    /// TransitionBands count the Warning is raised on, and the
+    /// diagnostics text the Warning points at. The Warning itself is
+    /// READ, not run, the ValidateExportDefaultTessellation convention.
+    /// </summary>
+    private static void ValidateSkinTransitions(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        static T Reading<T>(object generated, string name) =>
+            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
+
+        object twoPeak = Net(SkinTwoPeakNet());
+
+        object built = courses.Invoke(
+            null, new object[] { twoPeak, 0.6, 0.5 })!;
+        var cells = SkinCells(built);
+        if (Reading<int>(built, "CourseCount") != 4)
+        {
+            throw new InvalidOperationException(
+                "The two-peak net's 2 m rise at CH 0.5 is four bands; " +
+                $"got {Reading<int>(built, "CourseCount")}.");
+        }
+        if (Reading<int>(built, "TransitionBands") != 1)
+        {
+            throw new InvalidOperationException(
+                "Exactly one courses band, band 1, spans the split (its " +
+                "three levels carry 1, 1 and 2 components); got " +
+                $"{Reading<int>(built, "TransitionBands")}.");
+        }
+        const string CoursesLine =
+            "Transition bands skipped: 1 (level curves do not correspond " +
+            "between z=0.500 and z=1.000; courses cannot bond across it)";
+        string diagnostics = Reading<string>(built, "Diagnostics");
+        if (!diagnostics.Contains(CoursesLine, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The diagnostics must NAME the refused band and the " +
+                $"heights it sits between: '{CoursesLine}'; got " +
+                $"'{diagnostics}'.");
+        }
+        if (cells.Any(cell => cell.Course == 1))
+        {
+            throw new InvalidOperationException(
+                "A transition band emits NO cells, so nothing may carry " +
+                "course 1; a stated hole beats overlapping cells.");
+        }
+        foreach (int course in new[] { 0, 2, 3 })
+        {
+            if (!cells.Any(cell => cell.Course == course))
+            {
+                throw new InvalidOperationException(
+                    "Only the transition band is refused: course " +
+                    $"{course} must still carry cells.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "courses/two peaks");
+        RequireNothingDropped(built, "courses/two peaks");
+
+        object hexBuilt = hexagonal.Invoke(
+            null, new object[] { twoPeak, 0.6, 0.5 })!;
+        var hexCells = SkinCells(hexBuilt);
+        if (Reading<int>(hexBuilt, "TransitionBands") != 2)
+        {
+            throw new InvalidOperationException(
+                "Two lattice bands reach across the 0.500 to 1.000 " +
+                "transition, centre rows 1 and 2; got " +
+                $"{Reading<int>(hexBuilt, "TransitionBands")}.");
+        }
+        const string HexagonalLine =
+            "Transition bands skipped: 2 (level curves do not correspond " +
+            "between z=0.500 and z=1.000; hexagonal cannot bond across it)";
+        string hexDiagnostics = Reading<string>(hexBuilt, "Diagnostics");
+        if (!hexDiagnostics.Contains(
+                HexagonalLine, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The honeycomb names its refused bands the same way: " +
+                $"'{HexagonalLine}'; got '{hexDiagnostics}'.");
+        }
+        if (hexCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Only the bands that span the split are refused; the " +
+                "rest of the honeycomb still grows.");
+        }
+        if (hexCells.Any(cell => cell.Course == 1 || cell.Course == 2))
+        {
+            throw new InvalidOperationException(
+                "The refused lattice rows are the ones whose clamped " +
+                "centres sit at z 0.5 and z 1.0, courses 1 and 2, so no " +
+                "surviving cell may carry either.");
+        }
+        foreach (int course in new[] { 0, 3 })
+        {
+            if (!hexCells.Any(cell => cell.Course == course))
+            {
+                throw new InvalidOperationException(
+                    $"The honeycomb still carries course {course}.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            hexCells.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/two peaks");
+        // The honeycomb on this net is NOT clean any more, and the
+        // reason is worth stating rather than hiding behind a relaxed
+        // assertion. CH 0.5 was the one course height of five where it
+        // happened to be: measured against the build before this wave it
+        // dropped 2 and 0 at CH 0.2, 6 and 2 at CH 0.3, 2 and 2 at CH
+        // 0.35, nothing at CH 0.5 and 2 and 0 at CH 0.8, and the check
+        // was written on the lucky one. Exact level curves are longer
+        // than the chords they replace, by different amounts on rows of
+        // different shape, so the honeycomb's lattice in ABSOLUTE arc
+        // length shears differently and 7 of the 32 cells it builds here
+        // now fold or land on one another. Two of those seven the
+        // crossing predicate owns rather than the setout: measuring a
+        // fold as a perpendicular DISTANCE instead of as a cross product
+        // sees folds on short edges that an area floor was blind to.
+        // That is the defect already
+        // parked for the setout redesign, at the magnitude it has
+        // everywhere else on this fixture, and the filter keeps every
+        // one of them out of the sidecar. Pinned as a MEASUREMENT so it
+        // cannot grow unseen; the courses engine on the same net is
+        // still required to drop NOTHING, above.
+        int peakDegenerate = Reading<int>(hexBuilt, "PlanDegenerateDropped");
+        int peakOverlap = Reading<int>(hexBuilt, "PlanOverlapDropped");
+        if (peakDegenerate != 4 || peakOverlap != 3)
+        {
+            throw new InvalidOperationException(
+                "The honeycomb on the two-peak net at CH 0.5 is pinned " +
+                "to drop 4 self-crossing and 3 overlapping cells, a " +
+                "MEASUREMENT of the absolute-arc-length defect the next " +
+                $"round inherits; it dropped {peakDegenerate} and " +
+                $"{peakOverlap}.");
+        }
+
+        // ---- the refusal is a refusal, not a habit.
+        foreach ((string label, (double[][], int[][]) fixture) in
+                 new (string, (double[][], int[][]))[]
+                 {
+                     ("barrel", SkinBarrelNet()),
+                     ("dome", SkinDomeNet())
+                 })
+        {
+            object net = Net(fixture);
+            foreach (MethodInfo engine in new[] { courses, hexagonal })
+            {
+                object plain = engine.Invoke(
+                    null, new object[] { net, 0.6, 0.5 })!;
+                if (Reading<int>(plain, "TransitionBands") != 0 ||
+                    Reading<string>(plain, "Diagnostics").Contains(
+                        "Transition bands skipped",
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"The {label} keeps the same component count at " +
+                        $"every height, so {engine.Name} must refuse no " +
+                        "band and say nothing about transitions; it " +
+                        $"reported {Reading<int>(plain, "TransitionBands")}.");
+                }
+            }
+        }
+
+        // ---- the two nets a COUNT test cannot see. Both hold two
+        // components at every one of the nine course heights and change
+        // WHAT those components are across band 1, so only the
+        // correspondence catches them. Both were reproduced against the
+        // build before item B2: no band refused, no warning, and cells
+        // laid over one another (the two-hump barrel at S 0.6 and CH 0.5
+        // gave 70 courses cells with 10 self-crossing and 166 overlapping
+        // pairs, and 72 honeycomb cells with 8 and 85; the
+        // split-and-death net gave 80 courses cells with 49 overlapping
+        // pairs and 116 honeycomb cells with 24 self-crossing and 155).
+        //
+        // Both refuse the SAME band as the two-peak net, and for the same
+        // arithmetic. COURSES: the nine heights are zMin + eps, 0.25,
+        // 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, zMax - eps, band r spans
+        // levels 2r, 2r + 1 and 2r + 2, and the change is between 0.75
+        // and 1.0 on the two-hump barrel (strips become hump loops) and
+        // between 0.5 and 0.75 on the split-and-death net (block loops
+        // become peak loops), so band 1, spanning z 0.500 to 1.000, is
+        // the one band whose three levels do not correspond.
+        // HEXAGONAL: its heights are the clamped lattice rows -1 to 5,
+        // which distinct gives zMin + eps, 0.5, 1.0, 1.5, zMax - eps, and
+        // the consecutive pair that fails to correspond is again 0.500 to
+        // 1.000. A lattice cell of centre row c reaches from
+        // z 0.5(c - 1) to z 0.5(c + 1), so that interval falls inside the
+        // span of rows c = 1 and c = 2 and of no other: TWO rows refused,
+        // their clamped centres at z 0.5 and z 1.0, which are courses 1
+        // and 2.
+        // The drops are given per fixture and per engine, and what comes
+        // back is what each engine BUILT, kept plus dropped, which is
+        // the quantity a rotation must leave alone.
+        (int CoursesBuilt, int HexagonsBuilt) RefusesTheMiddleBand(
+            string label,
+            (double[][] Vertices, int[][] Faces) fixture,
+            (int Degenerate, int Overlap) expectedCourseDrops,
+            (int Degenerate, int Overlap) expectedHexagonDrops)
+        {
+            (int Degenerate, int Overlap) Drops(object generated)
+            {
+                Type type = generated.GetType();
+                return (
+                    (int)type.GetProperty("PlanDegenerateDropped")!
+                        .GetValue(generated)!,
+                    (int)type.GetProperty("PlanOverlapDropped")!
+                        .GetValue(generated)!);
+            }
+            void RequireDrops(
+                object generated,
+                string which,
+                (int Degenerate, int Overlap) expected)
+            {
+                (int degenerate, int overlap) = Drops(generated);
+                if (degenerate != expected.Degenerate ||
+                    overlap != expected.Overlap)
+                {
+                    throw new InvalidOperationException(
+                        $"{which}/{label}: the plan-validity filter is " +
+                        $"pinned at {expected.Degenerate} self-crossing " +
+                        $"and {expected.Overlap} overlapping cells " +
+                        $"dropped; it dropped {degenerate} and " +
+                        $"{overlap}.");
+                }
+            }
+
+            object subject = Net(fixture);
+
+            object byCourses = courses.Invoke(
+                null, new object[] { subject, 0.6, 0.5 })!;
+            var courseCells = SkinCells(byCourses);
+            if (Reading<int>(byCourses, "TransitionBands") != 1)
+            {
+                throw new InvalidOperationException(
+                    $"The {label} holds two components at every height " +
+                    "and changes which two across band 1, so exactly one " +
+                    "courses band is refused on the CORRESPONDENCE; got " +
+                    $"{Reading<int>(byCourses, "TransitionBands")}.");
+            }
+            string courseText = Reading<string>(byCourses, "Diagnostics");
+            if (!courseText.Contains(CoursesLine, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The {label}'s refused courses band is named with " +
+                    $"its heights: '{CoursesLine}'; got '{courseText}'.");
+            }
+            if (courseCells.Any(cell => cell.Course == 1))
+            {
+                throw new InvalidOperationException(
+                    $"The {label}'s refused band emits NO cells, so " +
+                    "nothing may carry course 1.");
+            }
+            foreach (int course in new[] { 0, 2, 3 })
+            {
+                if (!courseCells.Any(cell => cell.Course == course))
+                {
+                    throw new InvalidOperationException(
+                        "Only the transition band is refused: course " +
+                        $"{course} of the {label} must still carry cells.");
+                }
+            }
+            RequireDisjointSimplePlans(
+                courseCells.Select(cell => cell.Outline).ToArray(),
+                $"courses/{label}");
+            RequireDrops(byCourses, "courses", expectedCourseDrops);
+
+            object byHexagons = hexagonal.Invoke(
+                null, new object[] { subject, 0.6, 0.5 })!;
+            var hexagons = SkinCells(byHexagons);
+            if (Reading<int>(byHexagons, "TransitionBands") != 2)
+            {
+                throw new InvalidOperationException(
+                    $"Two lattice rows of the {label} reach across the " +
+                    "0.500 to 1.000 transition, centre rows 1 and 2; got " +
+                    $"{Reading<int>(byHexagons, "TransitionBands")}.");
+            }
+            string hexagonText = Reading<string>(byHexagons, "Diagnostics");
+            if (!hexagonText.Contains(
+                    HexagonalLine, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The {label}'s honeycomb names its refused rows the " +
+                    $"same way: '{HexagonalLine}'; got '{hexagonText}'.");
+            }
+            if (hexagons.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "Only the rows that span the change are refused; the " +
+                    $"rest of the {label}'s honeycomb still grows.");
+            }
+            if (hexagons.Any(
+                    cell => cell.Course == 1 || cell.Course == 2))
+            {
+                throw new InvalidOperationException(
+                    "The refused lattice rows are the ones whose clamped " +
+                    "centres sit at z 0.5 and z 1.0, courses 1 and 2, so " +
+                    $"no surviving {label} cell may carry either.");
+            }
+            RequireDisjointSimplePlans(
+                hexagons.Select(cell => cell.Outline).ToArray(),
+                $"hexagonal/{label}");
+            RequireDrops(byHexagons, "hexagonal", expectedHexagonDrops);
+            return (
+                courseCells.Length +
+                    expectedCourseDrops.Degenerate +
+                    expectedCourseDrops.Overlap,
+                hexagons.Length +
+                    expectedHexagonDrops.Degenerate +
+                    expectedHexagonDrops.Overlap);
+        }
+        (int CoursesBuilt, int HexagonsBuilt) upright =
+            RefusesTheMiddleBand(
+                "two-hump barrel", SkinTwoHumpBarrelNet(), (0, 0), (4, 0));
+        // The split-and-death HONEYCOMB's plans were left UNASSERTED in
+        // the previous wave, because four of its cells self-crossed in
+        // plan at the far ends of a square loop's u domain, where the
+        // anti-seam cut folds the clipped outline back on itself. They
+        // are asserted now: the plan-validity filter drops those four
+        // before the pattern is emitted, and the four is pinned, so the
+        // defect underneath is measured rather than tolerated. It is a
+        // pre-existing honeycomb defect on closed level curves, not a
+        // transition defect, and it belongs to the next sub-project with
+        // the dome crown's.
+        // Four became SIX and TWO in this wave, four of them from the
+        // exact level curves and two from the crossing predicate. The
+        // rows of this net are square loops whose exact level set turns
+        // the corner instead of chording it, so every row is a little
+        // longer and the honeycomb's absolute-arc-length lattice shears
+        // a little differently; and a fold measured as a perpendicular
+        // distance is seen where a cross-product floor was blind to it
+        // on a short edge. Same defect, same place, same order of
+        // magnitude, and still pinned.
+        RefusesTheMiddleBand(
+            "split-and-death", SkinSplitAndDeathNet(), (0, 0), (6, 2));
+
+        // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
+        // world Z leaves every z, every face and every traced component
+        // where it was, so the transition at z 0.500 to 1.000 is there at
+        // every angle and the refusal must be too. Against the build
+        // before this item the two-hump barrel swept 0 to 180 degrees in
+        // 5 degree steps was refused at EXACTLY five angles, 0, 45, 90,
+        // 135 and 180; at the other thirty-two TransitionBands came back
+        // 0, no line was written, no warning fired, and the courses
+        // engine emitted 84 cells with 12 to 14 self-crossing and 152 to
+        // 214 overlapping pairs in plan. 37 degrees is the measured worst
+        // case (13 and 183) and is the angle pinned here; the upright
+        // case above pins the other alignment, so both are measured.
+        //
+        // What is asserted equal between the two alignments is the
+        // number of cells BUILT, kept plus dropped, which is the
+        // invariance itself rather than a number: a rotation cannot add
+        // or remove a lattice site or a piece of a course. The cells are
+        // NOT asserted cell for cell, and deliberately so. A closed
+        // loop's seam falls back to the trace vertex on the +X bearing
+        // from the loop's plan centroid, a stated GLOBAL rule that reads
+        // the world axes on purpose (as the lowest open strip's does),
+        // so turning the model moves the seam to a different vertex and
+        // with it every setout coordinate of the hump loops. That is the
+        // rule working: the SET of cells is a property of the geometry,
+        // and where the setout starts along a closed loop is a stated
+        // convention.
+        //
+        // Moving the seam is also why the turned fixture DROPS where the
+        // upright one does not: the top course's two hump loops each end
+        // up with one piece whose plan projection self-crosses, and five
+        // honeycomb cells go the same way against the upright fixture's
+        // four. It happens at 30, 37, 45, 90 and 137 degrees alike and
+        // not at 0 or 17. The two OVERLAPPING honeycomb cells this
+        // fixture used to drop are gone, because the exact level curve
+        // of a hump loop turns its corners instead of chording them and
+        // the two cells that used to land on a neighbour no longer reach
+        // it; the self-crossing count rose instead, because a fold is
+        // now measured as a perpendicular distance.
+        // It is NOT correspondence damage: TransitionBands is 1
+        // at every angle and the refused band carries no cells at any of
+        // them. It is a cell-shape defect on a re-entrant closed loop,
+        // the same family as the L-shaped shell's, and the filter is
+        // what answers it: the plans that survive ARE asserted disjoint
+        // and simple, on both engines, at both alignments.
+        (int CoursesBuilt, int HexagonsBuilt) turned =
+            RefusesTheMiddleBand(
+                "two-hump barrel rotated 37 degrees",
+                SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
+                (2, 0),
+                (5, 0));
+        if (turned.CoursesBuilt != upright.CoursesBuilt ||
+            turned.HexagonsBuilt != upright.HexagonsBuilt ||
+            upright.CoursesBuilt == 0 ||
+            upright.HexagonsBuilt == 0)
+        {
+            throw new InvalidOperationException(
+                "Turning a model about world Z cannot add or remove a " +
+                "cell: the two-hump barrel BUILDS " +
+                $"{upright.CoursesBuilt} courses and " +
+                $"{upright.HexagonsBuilt} honeycomb cells upright and " +
+                $"{turned.CoursesBuilt} and {turned.HexagonsBuilt} at " +
+                "37 degrees, kept plus dropped.");
+        }
+
+        // ---- the ANNULAR shell, whose every cut is two NESTED loops.
+        // This is the check that would have caught a whole surface class
+        // being silently refused: against the build before this item the
+        // oculus dome came back with ZERO cells on both engines at every
+        // course height tried, every band counted as a transition, and
+        // the diagnostics asserting that the level curves do not
+        // correspond when they correspond perfectly, outer to outer and
+        // inner to inner (the mechanism is in SkinRingVaultNet).
+        //
+        // The courses count is pinned at CH 0.35, the shipped default,
+        // and hand-derived here. A 2 m rise at CH 0.35 is
+        // ceil(2/0.35) = 6 bands, and the top band's own rise,
+        // 2 - 5 x 0.35 = 0.25, is above CH/4 = 0.0875 so no sliver
+        // merges. Band r is set out on its mid height, which is
+        // (r CH + bandTop)/2 with bandTop = (r + 1) CH except on the top
+        // band where it is the crown: 0.175, 0.525, 0.875, 1.225, 1.575
+        // and 1.875. Each mid carries TWO loops, and a regular 16-gon of
+        // circumradius R has perimeter 32 R sin(pi/16) = 6.242890 R. The
+        // outer and inner radii SUM to 5.0 at every height (both skirts
+        // are linear in z and 4 + 1 = 3.2 + 1.8 = 2.5 + 2.5 = 5), so the
+        // two perimeters of a band sum to 6.242890 x 5 = 31.214452 m and
+        // L/S = 52.024 pieces. Taking the two loops separately, every
+        // band's pair rounds to 52: the six pairs are (40, 12), (38, 14),
+        // (36, 16), (33, 19), (30, 22) and (27, 25). 6 x 52 = 312.
+        //
+        // The honeycomb's count is NOT pinned: its per-row column counts
+        // over two charts have no short derivation, and what this fixture
+        // exists to measure is that the surface is not refused, which the
+        // structural assertions carry.
+        object ring = Net(SkinRingVaultNet());
+        foreach (double ringHeight in new[] { 0.2, 0.35, 0.5, 0.8, 1.9 })
+        {
+            foreach (MethodInfo engine in new[] { courses, hexagonal })
+            {
+                object built2 = engine.Invoke(
+                    null, new object[] { ring, 0.6, ringHeight })!;
+                var ringCells = SkinCells(built2);
+                if (Reading<int>(built2, "TransitionBands") != 0 ||
+                    Reading<string>(built2, "Diagnostics").Contains(
+                        "Transition bands skipped",
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "An annular shell's nested loops CORRESPOND, " +
+                        "outer to outer and inner to inner, so " +
+                        $"{engine.Name} must refuse no band of it at CH " +
+                        $"{ringHeight}; it reported " +
+                        $"{Reading<int>(built2, "TransitionBands")}.");
+                }
+                if (ringCells.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        "An oculus dome is an ordinary funicular form " +
+                        $"and {engine.Name} must propose a pattern on " +
+                        $"it at CH {ringHeight}; it proposed nothing.");
+                }
+                if (engine == courses && ringHeight == 0.35 &&
+                    ringCells.Length != 312)
+                {
+                    throw new InvalidOperationException(
+                        "The annular shell's courses at CH 0.35 are 312 " +
+                        "cells by the derivation in this check (six " +
+                        "bands, each a pair of nested loops rounding to " +
+                        $"52 pieces); got {ringCells.Length}.");
+                }
+                // The PLANS, at every one of the ten cases. The courses
+                // engine drops nothing anywhere on this shell; the
+                // honeycomb drops 4 self-crossing and 2 overlapping
+                // cells at CH 0.5, 9 and 1 at CH 0.8 and 12 and 6 at CH
+                // 1.9, and nothing at CH 0.2 or 0.35. Those are not a
+                // correspondence defect: they are the same pre-existing
+                // family the dome crown and the split-and-death
+                // honeycomb are in, the honeycomb laying its lattice in
+                // ABSOLUTE arc length across rows whose lengths differ,
+                // and here the inner loop's length GROWS with height
+                // while the outer's shrinks, which is the sharpest case
+                // of it in the harness. Pinned as measurements, not
+                // derivations, so the size of the inherited problem is
+                // on the record and cannot grow unseen.
+                RequireDisjointSimplePlans(
+                    ringCells.Select(cell => cell.Outline).ToArray(),
+                    $"{engine.Name}/ring vault CH {ringHeight}");
+                (int Degenerate, int Overlap) expectedDrops =
+                    engine == courses
+                        ? (0, 0)
+                        : ringHeight switch
+                        {
+                            0.5 => (4, 2),
+                            0.8 => (9, 1),
+                            1.9 => (12, 6),
+                            _ => (0, 0)
+                        };
+                int ringDegenerate = Reading<int>(
+                    built2, "PlanDegenerateDropped");
+                int ringOverlap = Reading<int>(
+                    built2, "PlanOverlapDropped");
+                if (ringDegenerate != expectedDrops.Degenerate ||
+                    ringOverlap != expectedDrops.Overlap)
+                {
+                    throw new InvalidOperationException(
+                        $"{engine.Name} on the annular shell at CH " +
+                        $"{ringHeight} is pinned to drop " +
+                        $"{expectedDrops.Degenerate} self-crossing and " +
+                        $"{expectedDrops.Overlap} overlapping cells; it " +
+                        $"dropped {ringDegenerate} and {ringOverlap}.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// ONE surface, FIVE meshings, ONE answer. This is the check that
+    /// makes the correspondence a property of the geometry rather than
+    /// of the mesh, and it is the check the previous wave's gate passed
+    /// by luck.
+    ///
+    /// The luck, stated plainly. The correspondence scores a pair of
+    /// curves by the mean distance from each sample point of one to the
+    /// nearest SAMPLE POINT of the other, so its answer carries an error
+    /// of about half the other curve's sample spacing. On an annular
+    /// shell the outer and the inner loop of a level lie a few
+    /// millionths of a metre apart at the ridge, far inside that error,
+    /// so the mesh decided which loop corresponded to which. The quad
+    /// ring vault is the one annular mesh whose equal sampling makes the
+    /// tangential half of that error cancel, so it broke the tie
+    /// correctly and the gate was green. Measured against the build
+    /// before this wave, at S 0.6, courses cells kept:
+    ///
+    ///   CH 0.35: quad 312, triangulated 260, ridge turned 0.1 deg 312,
+    ///            ridge turned 11.25 deg 260, unequal densities 261
+    ///   CH 0.5:  quad 208, triangulated 156, ridge turned 0.1 deg 208,
+    ///            ridge turned 11.25 deg 156, unequal densities 156
+    ///   CH 1.9:  quad  52, triangulated   0, ridge turned 0.1 deg   0,
+    ///            ridge turned 11.25 deg   0, unequal densities   0
+    ///
+    /// Five meshings of one surface, five answers, and four of them
+    /// wrong, with a band or the whole shell refused and the diagnostics
+    /// stating that the level curves do not correspond when they
+    /// correspond perfectly, outer to outer and inner to inner. A
+    /// fixture that only passes on one meshing is not a fixture.
+    ///
+    /// The check is in three parts.
+    ///
+    /// 1. THE CLASSIFICATION ITSELF. On every one of the five meshings,
+    /// every mid-height level of the CH 0.35 course grid must trace TWO
+    /// CLOSED components, one of nesting depth 0 and one of depth 1, and
+    /// the depth-1 one must be the SHORTER. The six mid heights are
+    /// hand-derived: a 2 m rise at CH 0.35 is ceil(2 / 0.35) = 6 bands,
+    /// the top band's own rise 2 - 5 x 0.35 = 0.25 being above CH / 4 =
+    /// 0.0875 so nothing merges, and band r is set out on
+    /// (r CH + bandTop) / 2 with bandTop = (r + 1) CH except on the top
+    /// band where it is the crown: 0.175, 0.525, 0.875, 1.225, 1.575 and
+    /// 1.875. That the inner loop is the shorter is arithmetic and not
+    /// observation: the outer and inner radii SUM to 5.0 at every height
+    /// of this shell, so below the 2.5 m ridge the inner radius is under
+    /// 2.5 and the outer over it, and a loop of smaller radius is a
+    /// shorter loop. Asserting the depths directly is what makes the
+    /// rule legible; asserting them on all five meshings is what makes
+    /// it topological.
+    ///
+    /// 2. THE QUAD FIXTURE'S OWN COUNTS, pinned by hand. A regular
+    /// 16-gon of circumradius R has perimeter 32 R sin(pi / 16) =
+    /// 6.242890 R, and the two radii of a band sum to 5.0, so the two
+    /// loops of any band together measure 31.214452 m, which is 52.024
+    /// pieces at S 0.6; taken separately every band's pair rounds to 52.
+    ///   CH 0.35, six bands: (40, 12), (38, 14), (36, 16), (33, 19),
+    ///   (30, 22), (27, 25). 6 x 52 = 312.
+    ///   CH 0.5, four bands with mids 0.25, 0.75, 1.25 and 1.75:
+    ///   (40, 12), (36, 16), (33, 19), (28, 24). 4 x 52 = 208.
+    ///   CH 1.9, ONE band: ceil(2 / 1.9) = 2 bands, and the top band's
+    ///   own rise 2 - 1.9 = 0.1 is under CH / 4 = 0.475 so it merges
+    ///   into the one below; the single mid is the crown-to-base
+    ///   midpoint z 1.0, where the radii are 3.333333 and 1.666667 and
+    ///   the perimeters 20.80963 m and 10.40482 m, giving 35 and 17.
+    ///   1 x 52 = 52.
+    /// The honeycomb's counts have no such derivation, so they are
+    /// declared MEASUREMENTS and pinned as measurements: 252, 180 and
+    /// 108 cells BUILT at the three course heights.
+    ///
+    /// 3. THE FOUR OTHER MESHINGS GIVE THE QUAD FIXTURE'S ANSWER. At
+    /// each of the three course heights and on both engines: no band
+    /// refused, nothing said about transitions, cells emitted, the plans
+    /// disjoint and simple, and the number of cells BUILT, kept plus
+    /// dropped, equal to the quad fixture's.
+    ///
+    /// BUILT and not KEPT, and the reason is the same one the rotated
+    /// two-hump barrel gives. What a remeshing must not change is which
+    /// curves correspond and therefore how many cells the setout lays
+    /// down; WHICH of those cells the plan-validity filter then drops is
+    /// a property of the pre-existing absolute-arc-length defect, which
+    /// damages different cells on different meshes. The drops are pinned
+    /// per meshing below so that the inherited problem stays visible and
+    /// cannot grow unseen, and the courses engine is required to drop
+    /// NOTHING on any of the five.
+    ///
+    /// ONE count moves, and it is not a defect: the unequal-density
+    /// meshing's courses at CH 0.35 are 313 rather than 312, because a
+    /// 32-gon inscribed in a circle is longer than a 16-gon and the
+    /// third band's inner course crosses a rounding boundary. The
+    /// derivation is in SkinRingVaultUnequalNet.
+    /// </summary>
+    private static void ValidateSkinRingVaultMeshings(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        static T Reading<T>(object generated, string name) =>
+            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
+
+        var meshings =
+            new (string Label,
+                 (double[][] Vertices, int[][] Faces) Fixture)[]
+            {
+                ("quad, 16 a ring", SkinRingVaultNet()),
+                ("triangulated", SkinRingVaultTriangulatedNet()),
+                ("ridge turned 0.1 degrees",
+                    SkinRingVaultRidgeTurnedNet(0.1)),
+                ("ridge turned 11.25 degrees",
+                    SkinRingVaultRidgeTurnedNet(11.25)),
+                ("rings 16/16/16/32/32", SkinRingVaultUnequalNet())
+            };
+
+        // ---- 1. the nesting depths themselves, on every meshing.
+        double[] mids = { 0.175, 0.525, 0.875, 1.225, 1.575, 1.875 };
+        foreach ((string label,
+                  (double[][] Vertices, int[][] Faces) fixture) in meshings)
+        {
+            IList levels = (IList)traceAll.Invoke(
+                null, new object[] { Net(fixture), mids })!;
+            for (int at = 0; at < mids.Length; at++)
+            {
+                IList level = (IList)levels[at]!;
+                if (level.Count != 2)
+                {
+                    throw new InvalidOperationException(
+                        $"The ring vault meshed {label} cuts into two " +
+                        $"nested loops at every mid height; at z {mids[at]}" +
+                        $" it gave {level.Count} components.");
+                }
+                var depths = new List<int>();
+                var lengths = new List<double>();
+                foreach (object? item in level)
+                {
+                    object curve = item!;
+                    PropertyInfo? depth =
+                        curve.GetType().GetProperty("Depth");
+                    if (depth is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A traced level curve must carry the NESTING " +
+                            "DEPTH the correspondence classifies on: " +
+                            "without it the matching falls back to a " +
+                            "distance, and no distance can separate two " +
+                            "loops that coincide in plan at a ridge.");
+                    }
+                    if (!(bool)curve.GetType()
+                            .GetProperty("Closed")!.GetValue(curve)!)
+                    {
+                        throw new InvalidOperationException(
+                            "An annular shell's level components are " +
+                            "closed loops, not strips.");
+                    }
+                    depths.Add((int)depth.GetValue(curve)!);
+                    lengths.Add((double)curve.GetType()
+                        .GetProperty("Length")!.GetValue(curve)!);
+                }
+                int outer = depths.IndexOf(0);
+                int inner = depths.IndexOf(1);
+                if (outer < 0 || inner < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"The ring vault meshed {label} at z {mids[at]} " +
+                        "holds an OUTER loop of nesting depth 0 and an " +
+                        "INNER loop of depth 1, at every mesh density and " +
+                        "every angle, because containment is topological; " +
+                        $"got depths [{string.Join(",", depths)}].");
+                }
+                if (!(lengths[inner] < lengths[outer]))
+                {
+                    throw new InvalidOperationException(
+                        "The depth-1 loop is the one round the oculus, so " +
+                        "it is the SHORTER: the two radii of this shell " +
+                        "sum to 5.0 at every height, so below the 2.5 m " +
+                        $"ridge the inner is under 2.5. On {label} at z " +
+                        $"{mids[at]} the depth-1 loop measured " +
+                        $"{lengths[inner]} against {lengths[outer]}.");
+                }
+            }
+        }
+
+        // ---- 2 and 3. one answer across the five meshings.
+        double[] courseHeights = { 0.35, 0.5, 1.9 };
+        // The quad fixture's own counts, part 2 above. Courses derived,
+        // honeycomb declared measurements.
+        var pinnedBuilt = new Dictionary<(string, double), int>
+        {
+            { ("Courses", 0.35), 312 },
+            { ("Courses", 0.5), 208 },
+            { ("Courses", 1.9), 52 },
+            { ("Hexagonal", 0.35), 252 },
+            { ("Hexagonal", 0.5), 180 },
+            { ("Hexagonal", 1.9), 108 }
+        };
+        // The plan-validity drops, per meshing and per course height,
+        // MEASUREMENTS of the pre-existing absolute-arc-length defect
+        // and not derivations. The courses engine drops nothing on any
+        // of the five, which is asserted rather than tabled.
+        var pinnedDrops =
+            new Dictionary<(string, double), (int Degenerate, int Overlap)>
+            {
+                { ("quad, 16 a ring", 0.35), (0, 0) },
+                { ("quad, 16 a ring", 0.5), (4, 2) },
+                { ("quad, 16 a ring", 1.9), (12, 6) },
+                { ("triangulated", 0.35), (1, 0) },
+                { ("triangulated", 0.5), (5, 2) },
+                { ("triangulated", 1.9), (12, 6) },
+                { ("ridge turned 0.1 degrees", 0.35), (0, 0) },
+                { ("ridge turned 0.1 degrees", 0.5), (3, 1) },
+                { ("ridge turned 0.1 degrees", 1.9), (13, 6) },
+                { ("ridge turned 11.25 degrees", 0.35), (1, 1) },
+                { ("ridge turned 11.25 degrees", 0.5), (6, 2) },
+                { ("ridge turned 11.25 degrees", 1.9), (14, 9) },
+                { ("rings 16/16/16/32/32", 0.35), (0, 0) },
+                { ("rings 16/16/16/32/32", 0.5), (2, 2) },
+                { ("rings 16/16/16/32/32", 1.9), (12, 5) }
+            };
+
+        foreach ((string label,
+                  (double[][] Vertices, int[][] Faces) fixture) in meshings)
+        {
+            object subject = Net(fixture);
+            foreach (double courseHeight in courseHeights)
+            {
+                foreach (MethodInfo engine in new[] { courses, hexagonal })
+                {
+                    object generated = engine.Invoke(
+                        null, new object[] { subject, 0.6, courseHeight })!;
+                    var emitted = SkinCells(generated);
+                    string text = Reading<string>(generated, "Diagnostics");
+                    if (Reading<int>(generated, "TransitionBands") != 0 ||
+                        text.Contains(
+                            "Transition bands skipped",
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"The ring vault meshed {label} has no " +
+                            "transition anywhere: a remeshing moves no " +
+                            "level set, so " + engine.Name + " must " +
+                            $"refuse no band of it at CH {courseHeight}; " +
+                            "it reported " +
+                            $"{Reading<int>(generated, "TransitionBands")}.");
+                    }
+                    if (emitted.Length == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"{engine.Name} must propose a pattern on the " +
+                            $"ring vault meshed {label} at CH " +
+                            $"{courseHeight}; it proposed nothing.");
+                    }
+                    int degenerate =
+                        Reading<int>(generated, "PlanDegenerateDropped");
+                    int overlap = Reading<int>(generated, "PlanOverlapDropped");
+                    if (engine == courses && (degenerate != 0 || overlap != 0))
+                    {
+                        throw new InvalidOperationException(
+                            $"The courses engine is clean in plan on this " +
+                            $"shell at every meshing, so it must drop " +
+                            $"NOTHING on {label} at CH {courseHeight}; it " +
+                            $"dropped {degenerate} and {overlap}.");
+                    }
+                    if (engine == hexagonal)
+                    {
+                        (int Degenerate, int Overlap) expected =
+                            pinnedDrops[(label, courseHeight)];
+                        if (degenerate != expected.Degenerate ||
+                            overlap != expected.Overlap)
+                        {
+                            throw new InvalidOperationException(
+                                $"The honeycomb on {label} at CH " +
+                                $"{courseHeight} is pinned to drop " +
+                                $"{expected.Degenerate} self-crossing and " +
+                                $"{expected.Overlap} overlapping cells, a " +
+                                "MEASUREMENT of the absolute-arc-length " +
+                                "defect the next round inherits; it " +
+                                $"dropped {degenerate} and {overlap}.");
+                        }
+                    }
+                    int built = emitted.Length + degenerate + overlap;
+                    int pinned = pinnedBuilt[(engine.Name, courseHeight)];
+                    // The unequal-density meshing measures a LONGER inner
+                    // curve, and at CH 0.35 the third band's inner course
+                    // crosses a rounding boundary: 313 rather than 312,
+                    // derived in SkinRingVaultUnequalNet.
+                    if (label == "rings 16/16/16/32/32" &&
+                        engine == courses &&
+                        courseHeight == 0.35)
+                    {
+                        pinned = 313;
+                    }
+                    if (built != pinned)
+                    {
+                        throw new InvalidOperationException(
+                            "One surface, five meshings, one answer: " +
+                            $"{engine.Name} on the ring vault meshed " +
+                            $"{label} at CH {courseHeight} must BUILD " +
+                            $"{pinned} cells, kept plus dropped, as the " +
+                            $"quad fixture does; it built {built} " +
+                            $"({emitted.Length} kept, {degenerate} and " +
+                            $"{overlap} dropped).");
+                    }
+                    RequireDisjointSimplePlans(
+                        emitted.Select(cell => cell.Outline).ToArray(),
+                        $"{engine.Name}/ring vault {label} CH " +
+                        $"{courseHeight}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The tracer draws the EXACT level set, not an approximation of it,
+    /// and this is the check that measures the difference.
+    ///
+    /// THE DEFECT, reproduced against the build before this wave. Trace
+    /// joins the two crossings on a face's boundary with a straight
+    /// chord. On a triangle that chord IS the level set. On a quad whose
+    /// four corners are not coplanar it is not, and two approximations
+    /// of ONE level set can interleave in plan where the exact curves
+    /// cannot: on a plan-injective surface a crossing point would lie on
+    /// both components, so they would be one component. The spiral
+    /// vault is the shortest way to see it. Turning ring j of a
+    /// twelve-sided ring by j whole angular steps moves NO vertex and
+    /// leaves the surface and the height field exactly as they were; it
+    /// only changes which corners a quad joins, and it makes every quad
+    /// twisted. Measured at the top cut, z 1.999998: all twenty-four
+    /// quads the trace crosses are non-planar, by up to 4.038e-2 m, the
+    /// chord misses the exact level set by up to 2.562e-5 m, and the two
+    /// loops are 1.559e-5 m apart in radius. The error is LARGER than
+    /// the separation, so the two traced polygons interleave, neither
+    /// contains the other, both come back nesting depth 0, and the
+    /// correspondence has no bijection. Against that build the courses
+    /// engine gave ZERO cells with a band refused at CH 1.9 where the
+    /// control gives 52, 75 kept of 150 built at CH 0.5 where the
+    /// control gives 205, and 103 of 253 at CH 0.35 where the control
+    /// gives 310, with the diagnostics reporting a transition on a shell
+    /// that has none.
+    ///
+    /// FOUR PHASINGS, ONE ANSWER, and every count DERIVED rather than
+    /// measured, by the perimeter law in SkinSpiralVaultNet: on a
+    /// triangulated strip between two closed rings the level's length is
+    /// (1 - s) x perimeter(lower) + s x perimeter(upper) whatever the
+    /// rings' relative phase, because each quad gives up exactly one
+    /// lower chord and one upper chord to the cut. So all four phasings
+    /// must build the control's own 52, 205 and 310 courses cells.
+    ///
+    ///   the control, every ring square to the next;
+    ///   the SPIRAL, one full step a ring, which the base build refused
+    ///     whole;
+    ///   ONE BAND sheared, rings 6 and above turned one full step, so
+    ///     exactly twelve of the 144 quads are twisted and every vertex
+    ///     is the control's. It is the MILDEST remesh that breaks: the
+    ///     sheared band is the one immediately below the ridge, whose
+    ///     quads carry the top cut, and the base build gave 0 cells with
+    ///     a band refused at CH 1.9, 154 built at CH 0.5 and 258 at CH
+    ///     0.35. Shearing any OTHER single band alone was measured and
+    ///     refuses nothing.
+    ///   a phase JITTER of 11 degrees, alternating, which unlike the
+    ///     other two genuinely moves every vertex. The base build
+    ///     refused no band of it but built 51, 204 and 306 cells against
+    ///     the control's 52, 205 and 310 and dropped 32 and 42 of them
+    ///     at CH 0.5, so the mesh was deciding the tessellation there
+    ///     too, quietly.
+    ///
+    /// The continuous knife edge was measured as well, by bisection on
+    /// the twist: 20.4668694 degrees a ring is clean and the next double
+    /// is refused whole. A tessellation that turns into nothing between
+    /// two neighbouring doubles is the signature of an answer resting on
+    /// an approximation rather than on the geometry.
+    ///
+    /// The honeycomb's BUILT counts are equal across the four as well
+    /// and are declared MEASUREMENTS, 252, 180 and 108, since its
+    /// per-row column counts over two charts have no short derivation.
+    /// Its DROP counts are measurements too, pinned per phasing: the
+    /// absolute-arc-length defect parked for the next sub-project damages
+    /// different cells on different phasings, and on the sheared band it
+    /// damages different ones again from the spiral even though the two
+    /// are the same triangulated surface, because the face ORDER differs
+    /// and the plan filter drops in emission order. The courses engine
+    /// drops NOTHING on any of the four, which is asserted rather than
+    /// tabled.
+    /// </summary>
+    private static void ValidateSkinSpiralMeshings(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        static T Reading<T>(object generated, string name) =>
+            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
+
+        string[] phasings =
+            { "control", "spiral", "sheared band", "jitter" };
+
+        // ---- 1. the classification, at the six mid heights of the CH
+        // 0.35 grid and at the TOP CUT. The mids are the ones spec
+        // section 5's banding gives a 2 m rise at CH 0.35, derived in
+        // SkinRingVaultMeshings' own check and identical here: six bands,
+        // no sliver merge, mid r at (r CH + bandTop) / 2. The top cut is
+        // zMax pulled inside by epsilon = (zMax - zMin) x 1e-6 = 2e-6 m,
+        // and it is the level that matters: there the outer and inner
+        // loops are 1.6e-5 m apart in radius, far inside the chord
+        // error, and it is where the base build's classification
+        // collapsed to two loops of depth 0.
+        double[] levels =
+            { 0.175, 0.525, 0.875, 1.225, 1.575, 1.875, 2.0 - 2.0e-6 };
+        foreach (string phasing in phasings)
+        {
+            IList traced = (IList)traceAll.Invoke(
+                null,
+                new object[]
+                {
+                    Net(SkinSpiralVaultNet(SkinSpiralPhases(phasing))),
+                    levels
+                })!;
+            for (int at = 0; at < levels.Length; at++)
+            {
+                IList level = (IList)traced[at]!;
+                if (level.Count != 2)
+                {
+                    throw new InvalidOperationException(
+                        $"The spiral vault phased '{phasing}' cuts into " +
+                        "two nested loops at every height inside the " +
+                        $"rims; at z {levels[at]} it gave {level.Count} " +
+                        "components.");
+                }
+                var depths = new List<int>();
+                var lengths = new List<double>();
+                foreach (object? item in level)
+                {
+                    object curve = item!;
+                    if (!(bool)curve.GetType()
+                            .GetProperty("Closed")!.GetValue(curve)!)
+                    {
+                        throw new InvalidOperationException(
+                            "An annular shell's level components are " +
+                            "closed loops, not strips.");
+                    }
+                    depths.Add((int)curve.GetType()
+                        .GetProperty("Depth")!.GetValue(curve)!);
+                    lengths.Add((double)curve.GetType()
+                        .GetProperty("Length")!.GetValue(curve)!);
+                }
+                int outer = depths.IndexOf(0);
+                int inner = depths.IndexOf(1);
+                if (outer < 0 || inner < 0)
+                {
+                    throw new InvalidOperationException(
+                        "Two components of ONE level set cannot cross in " +
+                        "plan on a height field, so one loop contains the " +
+                        "other and the depths are 0 and 1. The spiral " +
+                        $"vault phased '{phasing}' at z {levels[at]} gave " +
+                        $"depths [{string.Join(",", depths)}], which is " +
+                        "what a tracer says when it is drawing chords " +
+                        "across twisted quads instead of the level set.");
+                }
+                // The depth-1 loop is the SHORTER at every mid, because
+                // the two radii sum to 5.0 and every mid is below the
+                // 2 m crown, so the inner radius is under 2.5. At the top
+                // cut the two are 1.6e-5 m apart in radius and the
+                // comparison would be a knife edge, so it is not made
+                // there.
+                if (at < 6 && !(lengths[inner] < lengths[outer]))
+                {
+                    throw new InvalidOperationException(
+                        "The depth-1 loop is the one round the oculus, " +
+                        "so it is the SHORTER: the two radii of this " +
+                        "shell sum to 5.0 at every height. On " +
+                        $"'{phasing}' at z {levels[at]} the depth-1 loop " +
+                        $"measured {lengths[inner]} against " +
+                        $"{lengths[outer]}.");
+                }
+            }
+        }
+
+        // ---- 2 and 3. one answer across the four phasings. The courses
+        // counts are DERIVED in SkinSpiralVaultNet from the perimeter
+        // law; the honeycomb's are measurements.
+        double[] courseHeights = { 0.35, 0.5, 1.9 };
+        var pinnedBuilt = new Dictionary<(string, double), int>
+        {
+            { ("Courses", 0.35), 310 },
+            { ("Courses", 0.5), 205 },
+            { ("Courses", 1.9), 52 },
+            { ("Hexagonal", 0.35), 252 },
+            { ("Hexagonal", 0.5), 180 },
+            { ("Hexagonal", 1.9), 108 }
+        };
+        var pinnedDrops =
+            new Dictionary<(string, double), (int Degenerate, int Overlap)>
+            {
+                { ("control", 0.35), (1, 3) },
+                { ("control", 0.5), (5, 5) },
+                { ("control", 1.9), (9, 5) },
+                { ("spiral", 0.35), (1, 3) },
+                { ("spiral", 0.5), (5, 5) },
+                { ("spiral", 1.9), (9, 5) },
+                { ("sheared band", 0.35), (0, 4) },
+                { ("sheared band", 0.5), (5, 4) },
+                { ("sheared band", 1.9), (8, 7) },
+                { ("jitter", 0.35), (0, 3) },
+                { ("jitter", 0.5), (7, 7) },
+                { ("jitter", 1.9), (10, 6) }
+            };
+
+        foreach (string phasing in phasings)
+        {
+            object subject =
+                Net(SkinSpiralVaultNet(SkinSpiralPhases(phasing)));
+            foreach (double courseHeight in courseHeights)
+            {
+                foreach (MethodInfo engine in new[] { courses, hexagonal })
+                {
+                    object generated = engine.Invoke(
+                        null, new object[] { subject, 0.6, courseHeight })!;
+                    var emitted = SkinCells(generated);
+                    if (Reading<int>(generated, "TransitionBands") != 0 ||
+                        Reading<string>(generated, "Diagnostics").Contains(
+                            "Transition bands skipped",
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"The spiral vault phased '{phasing}' has no " +
+                            "transition anywhere: a phase is not a " +
+                            "topology, so " + engine.Name + " must refuse " +
+                            $"no band of it at CH {courseHeight}; it " +
+                            "reported " +
+                            $"{Reading<int>(generated, "TransitionBands")}.");
+                    }
+                    if (emitted.Length == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"{engine.Name} must propose a pattern on the " +
+                            $"spiral vault phased '{phasing}' at CH " +
+                            $"{courseHeight}; it proposed nothing.");
+                    }
+                    int degenerate =
+                        Reading<int>(generated, "PlanDegenerateDropped");
+                    int overlap =
+                        Reading<int>(generated, "PlanOverlapDropped");
+                    if (engine == courses && (degenerate != 0 || overlap != 0))
+                    {
+                        throw new InvalidOperationException(
+                            "The courses engine is clean in plan on this " +
+                            "shell at every phasing, so it must drop " +
+                            $"NOTHING on '{phasing}' at CH {courseHeight}; " +
+                            $"it dropped {degenerate} and {overlap}.");
+                    }
+                    if (engine == hexagonal)
+                    {
+                        (int Degenerate, int Overlap) expected =
+                            pinnedDrops[(phasing, courseHeight)];
+                        if (degenerate != expected.Degenerate ||
+                            overlap != expected.Overlap)
+                        {
+                            throw new InvalidOperationException(
+                                $"The honeycomb on '{phasing}' at CH " +
+                                $"{courseHeight} is pinned to drop " +
+                                $"{expected.Degenerate} self-crossing and " +
+                                $"{expected.Overlap} overlapping cells, a " +
+                                "MEASUREMENT of the absolute-arc-length " +
+                                "defect the next round inherits; it " +
+                                $"dropped {degenerate} and {overlap}.");
+                        }
+                    }
+                    int built = emitted.Length + degenerate + overlap;
+                    int pinned = pinnedBuilt[(engine.Name, courseHeight)];
+                    if (built != pinned)
+                    {
+                        throw new InvalidOperationException(
+                            "One surface, four phasings, one answer: " +
+                            $"{engine.Name} on the spiral vault phased " +
+                            $"'{phasing}' at CH {courseHeight} must BUILD " +
+                            $"{pinned} cells, kept plus dropped, which the " +
+                            "perimeter law derives; it built " +
+                            $"{built} ({emitted.Length} kept, " +
+                            $"{degenerate} and {overlap} dropped).");
+                    }
+                    RequireDisjointSimplePlans(
+                        emitted.Select(cell => cell.Outline).ToArray(),
+                        $"{engine.Name}/spiral vault '{phasing}' CH " +
+                        $"{courseHeight}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Ruling A of the whole-branch review, measured: level-curve
+    /// orientation is NORMALISED after tracing and before seams, so the
+    /// pattern a net produces depends on the net's geometry and not on
+    /// the order its faces happen to arrive in.
+    ///
+    /// Three assertions, each pinning one half of the rule.
+    ///
+    /// 1. OPEN strips, direction. The scrambled barrel's rows are
+    /// emitted so the lower half walks east to west and the upper half
+    /// west to east (the derivation is in SkinBarrelScrambledNet). After
+    /// normalisation every traced strip must run WEST TO EAST: first
+    /// point at x = 0, last at x = 6, at BOTH 0.75 (rows 0 and 3) and
+    /// 1.25 (rows 1 and 2). Without the rule the 0.75 strips come back
+    /// x 6 to x 0 and the two heights disagree.
+    ///
+    /// 2. CLOSED loops, direction. The dome's loops are traced clockwise
+    /// from its ring-major face order, and the rule turns them
+    /// counter-clockwise, so the signed plan area must be POSITIVE. Its
+    /// value is pinned too: a regular n-gon of circumradius R has area
+    /// (1/2) n R^2 sin(2 pi / n), and the 0.25 cut of a dome whose
+    /// radius at height h is 2 - h is a regular octagon of circumradius
+    /// 1.75, so the area is 0.5 x 8 x 1.75^2 x sin(pi / 4) = 12.25
+    /// sin(pi / 4), about 8.6621 m2. Before the fix that number came
+    /// back with a minus sign.
+    ///
+    /// 3. The cells themselves. The courses engine on the scrambled
+    /// barrel must give the ORDERED barrel's cells back, cell for cell
+    /// within 1e-9: same count, same course, same clipped flag, same
+    /// setout span, same outline points in the same order. The count is
+    /// 84, hand-derived from the joint sets ValidateSkinCourses already
+    /// pins: per strip, courses 0 and 2 carry ten 0.6 pieces each and
+    /// courses 1 and 3 carry eleven each (nine 0.6 pieces plus two 0.3
+    /// end pieces), 42 per strip, two strips. The plans must be
+    /// disjoint and simple, and the hexagonal engine run over the same
+    /// scrambled net must give its pinned 76 cells with disjoint simple
+    /// plans as well: bow ties are exactly what
+    /// RequireDisjointSimplePlans catches, and against the shipped code
+    /// the review's verifier saw all ten cells of one band self-cross.
+    ///
+    /// 4. The same closed-loop rule on a model SITED away from the world
+    /// origin, which is the case an uncentred shoelace breaks on. The
+    /// raw sum's terms are of order d squared for a model d metres out
+    /// while the answer it is asked for is the loop's own area, so the
+    /// cancellation error grows with the square of the distance and a
+    /// SMALL loop far out loses its sign. The dome's crown cut is that
+    /// small loop: the extreme trace is pulled inside the surface by
+    /// epsilon = (zMax - zMin) x 1e-6 = 2e-6 m, and the dome's radius at
+    /// height h is 2 - h, so the crown loop is a regular octagon of
+    /// circumradius 2e-6 m and area (1/2) x 8 x (2e-6)^2 x sin(pi / 4) =
+    /// 1.131371e-11 m2. Translated by (500, 300) the raw shoelace sums
+    /// terms of order 1.5e5 to reach that, which is 1e-16 of the terms
+    /// and below what a double can carry: measured against the build
+    /// before the fix it returned exactly 0.0, read as "not negative",
+    /// left the crown loop clockwise against every loop below it, and
+    /// the top band's cells came back with one self-crossing cell and
+    /// three properly crossing pairs. Measured at 0, 100 and 300 m the
+    /// same build was clean, so the case only appears once a studio
+    /// sites its model, which an OS-gridded site does by hundreds of
+    /// kilometres.
+    ///
+    /// The area is measured here in the CENTRED form too, because that
+    /// is the only form that can read a small loop 500 m out at all; the
+    /// tolerance is 1e-13 m2, hand-derived: subtracting a plan mean of
+    /// order 500 leaves each coordinate carrying about 500 x 2^-52 =
+    /// 1.1e-13 m of rounding, each shoelace term multiplies that by the
+    /// loop's own 2e-6 m reach, and eight terms sum to about 4e-18 m2,
+    /// five orders inside the tolerance. The 0.25 loop is asserted at
+    /// its origin value as well, unmoved by the siting: a translation
+    /// changes no area.
+    /// </summary>
+    private static void ValidateSkinOrientation(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        object Net((double[][] Vertices, int[][] Faces) fixture) =>
+            Activator.CreateInstance(
+                netType, new object[] { fixture.Vertices, fixture.Faces })!;
+        double[][] Points(object curve) =>
+            ((IList)curve.GetType().GetProperty("Points")!.GetValue(curve)!)
+            .Cast<double[]>().ToArray();
+        static double SignedPlanArea(double[][] points)
+        {
+            double twice = 0.0;
+            for (int i = 0; i < points.Length; i++)
+            {
+                double[] a = points[i];
+                double[] b = points[(i + 1) % points.Length];
+                twice += a[0] * b[1] - b[0] * a[1];
+            }
+            return twice / 2.0;
+        }
+        // The same area measured from the points' own plan mean. A loop
+        // sited hundreds of metres out cannot be read any other way: the
+        // raw sum above returns 0.0 for the dome's crown loop at 500 m,
+        // which is the defect this check exists for, so the MEASUREMENT
+        // has to be centred even where the engine's rule is what is
+        // under test.
+        static double CentredPlanArea(double[][] points)
+        {
+            double cx = points.Average(point => point[0]);
+            double cy = points.Average(point => point[1]);
+            double twice = 0.0;
+            for (int i = 0; i < points.Length; i++)
+            {
+                double[] a = points[i];
+                double[] b = points[(i + 1) % points.Length];
+                twice +=
+                    (a[0] - cx) * (b[1] - cy) -
+                    (b[0] - cx) * (a[1] - cy);
+            }
+            return twice / 2.0;
+        }
+
+        // ---- 1. open strips run one way, at every height.
+        object scrambled = Net(SkinBarrelScrambledNet());
+        IList levels = (IList)traceAll.Invoke(
+            null,
+            new object[] { scrambled, new[] { 0.75, 1.25 } })!;
+        foreach (double height in new[] { 0.75, 1.25 })
+        {
+            IList strips =
+                (IList)levels[height < 1.0 ? 0 : 1]!;
+            if (strips.Count != 2)
+            {
+                throw new InvalidOperationException(
+                    "The scrambled barrel is the SAME surface: a cut at " +
+                    $"{height} still gives two strips; got {strips.Count}.");
+            }
+            foreach (object? item in strips)
+            {
+                double[][] points = Points(item!);
+                if (Math.Abs(points[0][0]) > 1.0e-9 ||
+                    Math.Abs(points[^1][0] - 6.0) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "Every traced strip runs west to east once the " +
+                        "direction is normalised, whatever order the " +
+                        $"faces arrived in: the cut at {height} gives a " +
+                        $"strip from x {points[0][0]} to x " +
+                        $"{points[^1][0]}, not 0 to 6.");
+                }
+            }
+        }
+
+        // ---- 2. closed loops run counter-clockwise in plan.
+        object dome = Net(SkinDomeNet());
+        IList domeLevels = (IList)traceAll.Invoke(
+            null, new object[] { dome, new[] { 0.25, 0.75 } })!;
+        double expectedArea =
+            0.5 * 8.0 * 1.75 * 1.75 * Math.Sin(Math.PI / 4.0);
+        double area = SignedPlanArea(Points(((IList)domeLevels[0]!)[0]!));
+        if (Math.Abs(area - expectedArea) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A CLOSED loop runs counter-clockwise in plan, so its " +
+                "signed plan area is POSITIVE: the 0.25 cut is a regular " +
+                "octagon of circumradius 1.75 and area " +
+                $"{expectedArea:F6} m2; got {area:F6}.");
+        }
+        double upperArea =
+            SignedPlanArea(Points(((IList)domeLevels[1]!)[0]!));
+        if (!(upperArea > 0.0))
+        {
+            throw new InvalidOperationException(
+                "Every closed loop is turned counter-clockwise, not just " +
+                $"the lowest; the 0.75 loop's signed area is {upperArea}.");
+        }
+
+        // ---- 3. the cells are the ordered fixture's, cell for cell.
+        object ordered = Net(SkinBarrelNet());
+        object orderedBuilt = courses.Invoke(
+            null, new object[] { ordered, 0.6, 0.5 })!;
+        object scrambledBuilt = courses.Invoke(
+            null, new object[] { scrambled, 0.6, 0.5 })!;
+        var orderedCells = SkinCells(orderedBuilt);
+        var scrambledCells = SkinCells(scrambledBuilt);
+        RequireNothingDropped(orderedBuilt, "courses/barrel ordered");
+        RequireNothingDropped(scrambledBuilt, "courses/barrel scrambled");
+        if (orderedCells.Length != 84 ||
+            scrambledCells.Length != orderedCells.Length)
+        {
+            throw new InvalidOperationException(
+                "The barrel's courses carry 84 cells (per strip: ten 0.6 " +
+                "pieces on courses 0 and 2, eleven on courses 1 and 3; " +
+                "42 per strip, two strips), and the scrambled net must " +
+                $"carry the same; got {orderedCells.Length} ordered and " +
+                $"{scrambledCells.Length} scrambled.");
+        }
+        for (int at = 0; at < orderedCells.Length; at++)
+        {
+            var expected = orderedCells[at];
+            var actual = scrambledCells[at];
+            bool same =
+                expected.Course == actual.Course &&
+                expected.Clipped == actual.Clipped &&
+                Math.Abs(expected.U0 - actual.U0) <= 1.0e-9 &&
+                Math.Abs(expected.U1 - actual.U1) <= 1.0e-9 &&
+                expected.Outline.Length == actual.Outline.Length;
+            for (int p = 0; same && p < expected.Outline.Length; p++)
+            {
+                for (int c = 0; c < 3; c++)
+                {
+                    same &= Math.Abs(
+                        expected.Outline[p][c] - actual.Outline[p][c])
+                        <= 1.0e-9;
+                }
+            }
+            if (!same)
+            {
+                throw new InvalidOperationException(
+                    "Scrambling the face order must not move a single " +
+                    $"cell: cell {at} came back as course " +
+                    $"{actual.Course} spanning [{actual.U0:F4}, " +
+                    $"{actual.U1:F4}] with {actual.Outline.Length} " +
+                    $"points, against course {expected.Course} spanning " +
+                    $"[{expected.U0:F4}, {expected.U1:F4}] with " +
+                    $"{expected.Outline.Length} points on the ordered " +
+                    "net.");
+            }
+        }
+        RequireDisjointSimplePlans(
+            scrambledCells.Select(cell => cell.Outline).ToArray(),
+            "courses/barrel scrambled");
+
+        object scrambledHexBuilt = hexagonal.Invoke(
+            null, new object[] { scrambled, 0.6, 0.5 })!;
+        var scrambledHexagons = SkinCells(scrambledHexBuilt);
+        RequireNothingDropped(
+            scrambledHexBuilt, "hexagonal/barrel scrambled");
+        if (scrambledHexagons.Length != 76)
+        {
+            throw new InvalidOperationException(
+                "The scrambled net grows the same honeycomb the ordered " +
+                "one does, 38 cells per chart and 76 in all; got " +
+                $"{scrambledHexagons.Length}.");
+        }
+        RequireDisjointSimplePlans(
+            scrambledHexagons.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/barrel scrambled");
+
+        // ---- 4. a model SITED away from the world origin keeps every
+        // loop counter-clockwise, crown loop included.
+        object sited = Net(SkinDomeSitedNet(500.0, 300.0));
+        IList sitedLevels = (IList)traceAll.Invoke(
+            null,
+            new object[] { sited, new[] { 0.25, 2.0 - 2.0e-6 } })!;
+        double sitedLowArea =
+            CentredPlanArea(Points(((IList)sitedLevels[0]!)[0]!));
+        if (Math.Abs(sitedLowArea - expectedArea) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Siting the dome 500 m east and 300 m north moves no " +
+                "area and turns no loop: the 0.25 cut is still the " +
+                $"counter-clockwise octagon of area {expectedArea:F6} " +
+                $"m2; got {sitedLowArea:F6}.");
+        }
+        double crownArea =
+            CentredPlanArea(Points(((IList)sitedLevels[1]!)[0]!));
+        double expectedCrown =
+            0.5 * 8.0 * 2.0e-6 * 2.0e-6 * Math.Sin(Math.PI / 4.0);
+        if (!(crownArea > 0.0) ||
+            Math.Abs(crownArea - expectedCrown) > 1.0e-13)
+        {
+            throw new InvalidOperationException(
+                "The CROWN loop of a sited dome runs counter-clockwise " +
+                "like every other: a regular octagon of circumradius " +
+                "2e-6 m (the epsilon the extreme trace is pulled in by) " +
+                $"and area {expectedCrown:E6} m2, POSITIVE; got " +
+                $"{crownArea:E6}. An uncentred shoelace returns 0.0 " +
+                "here, reads it as not negative, and leaves the crown " +
+                "loop running against every loop below it.");
+        }
+        object sitedBuilt = courses.Invoke(
+            null, new object[] { sited, 0.6, 0.5 })!;
+        var sitedCells = SkinCells(sitedBuilt);
+        RequireNothingDropped(sitedBuilt, "courses/dome sited 500 m out");
+        if (sitedCells.Length != 42)
+        {
+            throw new InvalidOperationException(
+                "The sited dome carries the origin dome's courses: the " +
+                "mid-height loop of band r has round(L / S) pieces for " +
+                "L = 16 (2 - h) sin(pi / 8), so mids at 0.25, 0.75, " +
+                "1.25 and 1.75 give 18, 13, 8 and 3 pieces, 42 in all; " +
+                $"got {sitedCells.Length}.");
+        }
+        RequireDisjointSimplePlans(
+            sitedCells.Select(cell => cell.Outline).ToArray(),
+            "courses/dome sited 500 m out");
+    }
+
+    /// <summary>
+    /// The hexagonal engine (spec section 6), measured on the barrel,
+    /// where the front strip's setout maps to x = 3 + u and z = z, so
+    /// setout coordinates read straight off the geometry.
+    ///
+    /// The kept and clipped counts are pinned at 76 and 36, hand-derived
+    /// from the lattice under Ruling D's interval-overlap membership. A
+    /// candidate is a cell when its raw (u, z) extent meets the chart's
+    /// interior, its u extent measured against the half-length of the
+    /// level curve at its own CENTRE row (item D2's correction: the
+    /// widest of the rows a candidate spans admits candidates lying
+    /// wholly beyond the curve they sit on). On this fixture the
+    /// correction moves NOTHING and the two numbers stand unchanged,
+    /// which is itself the derivation: every level curve of a barrel
+    /// chart is the whole 6 m strip, so the centre row's half-length and
+    /// the widest are both 3 at every height and the two rules are the
+    /// same rule here. The dome grid below is where they part.
+    ///
+    /// Every level curve of a barrel chart is the whole 6 m
+    /// strip, so the chart's half-length is 3 at every height and the u
+    /// test admits column i while |0.75 S i| - S/2 is under 3, that is
+    /// |0.45 i| - 0.3 &lt; 3: i = 7 gives 2.85 and is admitted, i = 8
+    /// gives 3.3 and is refused, so 15 columns, i = -7 to 7. The z test
+    /// admits centre row c while CH(c + 1) is above zMin and CH(c - 1)
+    /// below zMax, that is 0.5(c + 1) &gt; 0 and 0.5(c - 1) &lt; 2, so c
+    /// runs 0 to 4. Since c = 1 + i + 2j, an even column carries the ODD
+    /// rows of that set and an odd column the EVEN ones: the 7 even
+    /// columns (0, +-2, +-4, +-6) carry rows 1 and 3, two cells each,
+    /// and the 8 odd columns (+-1, +-3, +-5, +-7) carry rows 0, 2 and 4,
+    /// three each. 14 + 24 = 38 per chart, 76 over the two charts.
+    ///
+    /// Clipped: an even column's two cells reach rows 0 and 4, whose
+    /// heights clamp by only the epsilon the extreme traces are pulled
+    /// in by (2e-6, under the 10-epsilon clip tolerance), and their u
+    /// never passes the half-length, so none of the 14 is flagged. In
+    /// the six odd columns +-1, +-3, +-5 the row-0 cell reaches row -1
+    /// and the row-4 cell reaches row 5, both a clear 0.5 outside the
+    /// surface, so 12 are flagged and the six row-2 cells are not. In
+    /// the two rim columns +-7 the hexagon's u reaches 3.45 against a
+    /// half-length of 3, so all 6 of their cells are flagged. 18 per
+    /// chart, 36 over both.
+    ///
+    /// Course indices are asserted on UNCLIPPED and CLIPPED cells alike,
+    /// under the engine's stated centre rule (the Task 3
+    /// centre-for-centroid note). The clipped population splits by each
+    /// outline's own height range: 16 bottom-clipped in course 0 (the
+    /// six odd columns' row-0 cells plus the two rim columns', per
+    /// chart), 16 top-clipped in course 3 (the row-4 cells the same
+    /// way), and 4 rim cells whose outlines span z 0.5 to 1.5 in course
+    /// 2 (the rim columns' row-2 cells).
+    ///
+    /// Ruling D's own case is pinned at the end: a CH at or above the
+    /// rise, which the shipped 0.35 default reaches on any shell rising
+    /// less than that, must give ONE clipped course of cells instead of
+    /// nothing. It too is unmoved by the centre-row correction, and for
+    /// the same reason: the chart is the epsilon-pulled base and crown,
+    /// both the whole 6 m strip, so the centre row's half-length is 3
+    /// like every other.
+    /// </summary>
+    private static void ValidateSkinHexagonal(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrelNet = Activator.CreateInstance(
+            netType, new object[] { barrelVertices, barrelFaces })!;
+        object generated = hexagonal.Invoke(
+            null, new object[] { barrelNet, 0.6, 0.5 })!;
+        var cells = SkinCells(generated);
+
+        if (cells.Length != 76)
+        {
+            throw new InvalidOperationException(
+                "Every lattice site whose raw (u, z) extent meets a " +
+                "chart is a cell, clipped rim cells KEPT: 14 from the " +
+                "seven even columns and 24 from the eight odd ones, 38 " +
+                $"per chart, 76 in all; got {cells.Length}.");
+        }
+        int clipped = cells.Count(cell => cell.Clipped);
+        if (clipped != 36)
+        {
+            throw new InvalidOperationException(
+                "The rim is clipped, not dropped: 12 from the six inner " +
+                "odd columns and 6 from the two rim columns, 18 per " +
+                $"chart, 36 in all; got {clipped}.");
+        }
+
+        // ---- one interior cell, corner by corner: column i = 1 of the
+        // front chart, centre (0.45, 1.0). Its six corners in (x, z),
+        // x = 3 + u on this fixture, in outline order.
+        (double X, double Z)[] corners =
+        {
+            (3.3, 0.5), (3.6, 0.5), (3.75, 1.0),
+            (3.6, 1.5), (3.3, 1.5), (3.15, 1.0)
+        };
+        var interior = cells.Where(cell =>
+                !cell.Clipped &&
+                cell.Course == 2 &&
+                Math.Abs(cell.U0 - 0.15) < 1.0e-9 &&
+                Math.Abs(cell.U1 - 0.75) < 1.0e-9 &&
+                PlanCentroidY(cell.Outline) < 2.0)
+            .ToArray();
+        if (interior.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "Exactly one unclipped front-chart cell spans " +
+                "[0.15, 0.75] in course 2 (the column-1 interior " +
+                $"hexagon); got {interior.Length}.");
+        }
+        double[][] outline = interior[0].Outline;
+        var where = new int[corners.Length];
+        for (int c = 0; c < corners.Length; c++)
+        {
+            where[c] = Array.FindIndex(outline, point =>
+                Math.Abs(point[0] - corners[c].X) < 1.0e-6 &&
+                Math.Abs(point[2] - corners[c].Z) < 1.0e-6);
+            if (where[c] < 0)
+            {
+                throw new InvalidOperationException(
+                    "An interior cell is six-sided with the stated " +
+                    "vertex offsets (S/4 and S/2 across, CH up); " +
+                    $"corner ({corners[c].X}, {corners[c].Z}) is not " +
+                    "in the outline.");
+            }
+            if (c > 0 && where[c] <= where[c - 1])
+            {
+                throw new InvalidOperationException(
+                    "The six corners appear in outline order: bottom " +
+                    "edge, east point, top edge back, west point.");
+            }
+        }
+
+        // ---- lattice neighbours share edges: the column-2 cell one
+        // translation (0.75 S, CH) away shares two corners with it,
+        // mapped to the same 3D points.
+        var neighbour = cells.Where(cell =>
+                cell.Course == 3 &&
+                Math.Abs(cell.U0 - 0.6) < 1.0e-9 &&
+                PlanCentroidY(cell.Outline) < 2.0)
+            .ToArray();
+        if (neighbour.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "The (0.75 S, CH) neighbour of the interior cell " +
+                "exists once, spanning [0.6, 1.2] in course 3; got " +
+                $"{neighbour.Length}.");
+        }
+        foreach ((double x, double z) in
+                 new[] { (3.75, 1.0), (3.6, 1.5) })
+        {
+            bool inFirst = outline.Any(point =>
+                Math.Abs(point[0] - x) < 1.0e-9 &&
+                Math.Abs(point[2] - z) < 1.0e-9);
+            bool inSecond = neighbour[0].Outline.Any(point =>
+                Math.Abs(point[0] - x) < 1.0e-9 &&
+                Math.Abs(point[2] - z) < 1.0e-9);
+            if (!inFirst || !inSecond)
+            {
+                throw new InvalidOperationException(
+                    "Lattice neighbours SHARE their edge: the corner " +
+                    $"({x}, {z}) must appear in both outlines, mapped " +
+                    "to the same point.");
+            }
+        }
+
+        // ---- course indices follow the centre bands. An unclipped
+        // cell's z extent is exactly [zc - CH, zc + CH] about its
+        // lattice centre, so the MIDPOINT of that extent is the centre
+        // height, give or take the epsilon the extreme traces are pulled
+        // inside the surface by (about 2e-6 here); the banding slack is
+        // 1e-4, far above that pull and far below the 0.25 gap to the
+        // next band.
+        //
+        // The midpoint of the extent and NOT the mean of the points. The
+        // mean was the same number while a run carried only the mesh's
+        // own trace vertices, because the bottom and the top run then
+        // gained the same ones; now that a net holds triangles, a run
+        // also carries the crossings on the quad DIAGONALS, and those
+        // sit at x = i + h on this fixture, so their number inside one
+        // hexagon's u span depends on the row's height. The two runs
+        // gain different counts, the mean drifts off the centre by up to
+        // a twelfth of CH, and the proxy stops measuring what it names.
+        // The extent cannot drift: it is set by the two lattice rows.
+        foreach (var cell in cells.Where(cell => !cell.Clipped))
+        {
+            double centreZ =
+                (cell.Outline.Min(point => point[2]) +
+                 cell.Outline.Max(point => point[2])) / 2.0;
+            int band = Math.Min(3, Math.Max(0,
+                (int)Math.Floor(centreZ / 0.5 + 1.0e-4)));
+            if (cell.Course != band)
+            {
+                throw new InvalidOperationException(
+                    "The course index is the band holding the cell's " +
+                    $"centre height; a cell centred at z {centreZ:F3} " +
+                    $"carries course {cell.Course}, not {band}.");
+            }
+        }
+
+        // ---- course indices on the CLIPPED cells, the only ones where
+        // the engine's centre rule and the spec's centroid wording could
+        // diverge. On this fixture the clamped lattice centres give:
+        // bottom-clipped cells (centre row 0, outline never above z
+        // 0.5) course 0; top-clipped (centre row 4, outline never below
+        // z 1.5) course 3; the u-clipped rim cells (centre row 2)
+        // course 2. 16, 16 and 4 of them across both charts.
+        int bottomClipped = 0;
+        int topClipped = 0;
+        int rimClipped = 0;
+        foreach (var cell in cells.Where(cell => cell.Clipped))
+        {
+            double maxZ = cell.Outline.Max(point => point[2]);
+            double minZ = cell.Outline.Min(point => point[2]);
+            int expected;
+            if (maxZ <= 0.5 + 1.0e-6)
+            {
+                expected = 0;
+                bottomClipped++;
+            }
+            else if (minZ >= 1.5 - 1.0e-6)
+            {
+                expected = 3;
+                topClipped++;
+            }
+            else
+            {
+                expected = 2;
+                rimClipped++;
+            }
+            if (cell.Course != expected)
+            {
+                throw new InvalidOperationException(
+                    "A clipped cell's course is the band of its " +
+                    $"clamped lattice centre: expected {expected}, got " +
+                    $"{cell.Course} (outline z {minZ:F3}..{maxZ:F3}).");
+            }
+        }
+        if (bottomClipped != 16 || topClipped != 16 || rimClipped != 4)
+        {
+            throw new InvalidOperationException(
+                "The clipped population splits 16 bottom (course 0), " +
+                "16 top (course 3) and 4 rim (course 2); got " +
+                $"{bottomClipped}, {topClipped} and {rimClipped}.");
+        }
+
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "hexagonal/barrel");
+        RequireNothingDropped(generated, "hexagonal/barrel");
+        string diagnostics = (string)generated.GetType()
+            .GetProperty("Diagnostics")!.GetValue(generated)!;
+        if (!diagnostics.Contains("Pattern: hexagonal",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains("Boundary-clipped cells: 36",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Diagnostics name the pattern and count the clipped " +
+                $"cells; got '{diagnostics}'.");
+        }
+
+        // ---- the dome: closed loops, and the only fixture here whose
+        // level curves SHORTEN with height. The honeycomb is cut at the
+        // meridian opposite the seam rather than wrapped (the plan's
+        // Task 3 spec-deviation note). The dome's assertions are
+        // otherwise STRUCTURAL: cells exist, clipped cells are kept,
+        // courses are in range, plans disjoint where the guarantee
+        // holds. Spec section 11's vertex-offset, neighbour-sharing and
+        // course-band bullets are measured exactly on the barrel above,
+        // where x = 3 + u reads the setout straight off the geometry.
+        // One count IS pinned, at CH 0.5, because it is the only thing
+        // in the harness that can tell item D2's centre-row membership
+        // from the widest-row membership it replaced; its derivation and
+        // its dependence on the anti-seam cut are written out beside it.
+        //
+        // Item D2 widened this from the single CH 0.5 case to a GRID of
+        // course heights, so the guarantee is measured where the shipped
+        // default 0.35 actually lives rather than only where it happens
+        // to hold, and left two of the four unasserted because the
+        // honeycomb still breached there. It no longer breaches
+        // ANYWHERE, because the plan-validity filter drops what breaches
+        // before it is emitted, so all four are asserted disjoint now.
+        //
+        // What is pinned instead is WHAT THE FILTER DROPS, which is the
+        // measure of the defect underneath it. The honeycomb lays its
+        // lattice in ABSOLUTE arc length across rows whose lengths
+        // differ, so equal u is a different fraction of each row and the
+        // cells shear until they overlap; the answer is a per-row cell
+        // count, a redesign belonging to the next sub-project. On this
+        // fixture the filter drops 2 self-crossing cells and no
+        // overlapping one at CH 0.35, and 6 and 2 at CH 0.8, and nothing
+        // at CH 0.2 or 0.5. Those four pairs are pinned as MEASUREMENTS,
+        // not derivations: they are the size of the inherited problem,
+        // and pinning them means it can neither grow nor be quietly
+        // reintroduced elsewhere, and that the next round will see them
+        // fall to zero. The measurements are tabled in
+        // .superpowers/sdd/2026-08-31-skin/final-fix-report-3.md.
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object domeNet = Activator.CreateInstance(
+            netType, new object[] { domeVertices, domeFaces })!;
+        foreach ((double domeHeight, int expected,
+                  int expectedDegenerate, int expectedOverlap) in
+                 new[]
+                 {
+                     (0.2, 0, 0, 0),
+                     (0.35, 0, 2, 0),
+                     (0.5, 38, 1, 0),
+                     (0.8, 0, 7, 2)
+                 })
+        {
+            object domeGenerated = hexagonal.Invoke(
+                null, new object[] { domeNet, 0.6, domeHeight })!;
+            var domeCells = SkinCells(domeGenerated);
+            if (domeCells.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"The dome grows a honeycomb at CH {domeHeight}.");
+            }
+            // The one hand-derived dome count, and the assertion that
+            // measures item B2's centre-row correction, because the
+            // barrel cannot: on a barrel every level curve is the same
+            // length so the centre row and the widest row agree, and
+            // only a chart whose curves SHORTEN with height tells the
+            // two rules apart.
+            //
+            // At S 0.6 and CH 0.5 the dome's chart is the five clamped
+            // lattice heights zMin + eps, 0.5, 1.0, 1.5 and zMax - eps.
+            // The cut at height h is a regular octagon of circumradius
+            // 2 - h, so its perimeter is 16 (2 - h) sin(pi / 8) and its
+            // half-length is 8 (2 - h) sin(pi / 8): 6.1229, 4.5922,
+            // 3.0615, 1.5307 and 6.12e-6 at those five heights. The z
+            // test admits centre rows 0 to 4 (row -1 lies at or below
+            // the base, row 5 at or above the crown), and c = 1 + i + 2j
+            // makes an even column carry the ODD rows of that set and an
+            // odd column the EVEN ones. The u test admits column i while
+            // |0.45 i| is under halfAtCentre + 0.3, halfAtCentre being
+            // the half-length at the row's OWN clamped height:
+            //   c = 0, half 6.1229, |i| up to 14, odd i: 14 columns
+            //   c = 1, half 4.5922, |i| up to 10, even i: 11 columns
+            //   c = 2, half 3.0615, |i| up to  7, odd i:  8 columns
+            //   c = 3, half 1.5307, |i| up to  4, even i: 5 columns
+            //   c = 4, half 6.1e-6, |i| up to  0, odd i:  0 columns
+            // 14 + 11 + 8 + 5 + 0 = 38.
+            //
+            // Under the WIDEST rule the same arithmetic runs on the
+            // largest half-length among rows c - 1, c and c + 1, which
+            // gives 6.1229, 6.1229, 4.5922, 3.0615 and 1.5307 and so 14,
+            // 15, 10, 7 and 4 columns, 50 cells. Those extra 12 are the
+            // candidates that lie wholly beyond the curve they sit on,
+            // and they are what the correction removes.
+            //
+            // The count depends on the anti-seam cut as well, a closed
+            // loop's u domain running from -half to +half rather than
+            // wrapping, which is the plan's Task 3 deviation and not yet
+            // blessed by the spec review. If that rule moves, so does
+            // this number.
+            // The derivation counts the lattice sites the engine BUILDS,
+            // so it is the built count it pins, kept plus dropped, and
+            // not the survivors'. One of the 38 is dropped since the
+            // crossing predicate began measuring a fold as a
+            // perpendicular distance: at the crown the epsilon loop's
+            // edges are about 1.5 microns long, and a cross-product
+            // floor of 1e-9 on an edge that short is a tolerance of two
+            // thirds of a millimetre, which is a millimetre of slack
+            // inside a cell a micron across. The fold it was blind to is
+            // a real one and the cell is dropped for it.
+            if (expected > 0 &&
+                domeCells.Length + expectedDegenerate + expectedOverlap
+                    != expected)
+            {
+                throw new InvalidOperationException(
+                    $"The dome honeycomb at CH {domeHeight} BUILDS " +
+                    $"{expected} cells by the derivation in this check " +
+                    "(14 + 11 + 8 + 5 + 0 columns over centre rows 0 to " +
+                    $"4); got {domeCells.Length} kept plus " +
+                    $"{expectedDegenerate} and {expectedOverlap} dropped. " +
+                    "Measuring u against the widest of the rows a " +
+                    "candidate spans instead of its own centre row gives " +
+                    "50.");
+            }
+            if (!domeCells.Any(cell => cell.Clipped))
+            {
+                throw new InvalidOperationException(
+                    "The dome's rim and anti-seam cells are CLIPPED and " +
+                    $"kept, not dropped, at CH {domeHeight}.");
+            }
+            int domeCourses = (int)domeGenerated.GetType()
+                .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
+            foreach (var cell in domeCells)
+            {
+                if (cell.Outline.Length < 3 ||
+                    cell.Course < 0 || cell.Course >= domeCourses)
+                {
+                    throw new InvalidOperationException(
+                        "Every dome cell is a real polygon in a real " +
+                        $"course band, at CH {domeHeight} as anywhere.");
+                }
+            }
+            RequireDisjointSimplePlans(
+                domeCells.Select(cell => cell.Outline).ToArray(),
+                $"hexagonal/dome CH {domeHeight}");
+            int droppedDegenerate = (int)domeGenerated.GetType()
+                .GetProperty("PlanDegenerateDropped")!
+                .GetValue(domeGenerated)!;
+            int droppedOverlap = (int)domeGenerated.GetType()
+                .GetProperty("PlanOverlapDropped")!
+                .GetValue(domeGenerated)!;
+            if (droppedDegenerate != expectedDegenerate ||
+                droppedOverlap != expectedOverlap)
+            {
+                throw new InvalidOperationException(
+                    "The plan-validity filter's drops on the dome " +
+                    $"honeycomb at CH {domeHeight} are pinned at " +
+                    $"{expectedDegenerate} self-crossing and " +
+                    $"{expectedOverlap} overlapping, the measured size " +
+                    "of the honeycomb's absolute-arc-length defect over " +
+                    $"closed level curves; got {droppedDegenerate} and " +
+                    $"{droppedOverlap}.");
+            }
+        }
+
+        // ---- Ruling D: a SHALLOW shell, CH at or above the rise. The
+        // barrel rises 2 m, so CH 2.0 sits exactly on the rise and CH
+        // 2.5 above it; the shipped default 0.35 sits there for any
+        // shell rising less than 0.35, which is why this is not an
+        // exotic case. Both give a chart of just two levels, the
+        // epsilon-pulled base and crown, and the interval rule then
+        // admits exactly ONE centre row per column: a candidate's z
+        // extent is CH either side of its centre, so with CH at or
+        // above the rise row -1 lies wholly at or below the base and
+        // row 2 wholly at or above the crown, leaving row 1 for the
+        // even columns and row 0 for the odd ones (c = 1 + i + 2j fixes
+        // the parity). The u test is the barrel's own: the chart's
+        // half-length is 3 at both levels, so columns i = -7 to 7 are
+        // admitted, 15 of them. 15 cells per chart, 30 over the two.
+        // Every one reaches a lattice row a clear CH outside the
+        // surface, so every one is CLIPPED, and a 2 m rise at CH 2.0 or
+        // 2.5 is a single band, so every one carries course 0. Before
+        // the interval rule this case gave ZERO cells while the courses
+        // engine on the same shell built a band.
+        foreach (double shallowHeight in new[] { 2.0, 2.5 })
+        {
+            object shallow = hexagonal.Invoke(
+                null,
+                new object[] { barrelNet, 0.6, shallowHeight })!;
+            var shallowCells = SkinCells(shallow);
+            int shallowBands = (int)shallow.GetType()
+                .GetProperty("CourseCount")!.GetValue(shallow)!;
+            if (shallowCells.Length != 30)
+            {
+                throw new InvalidOperationException(
+                    $"At CH {shallowHeight}, at or above the barrel's " +
+                    "2 m rise, the honeycomb is one clipped course of " +
+                    "15 cells per chart, 30 in all, not nothing; got " +
+                    $"{shallowCells.Length}.");
+            }
+            if (shallowBands != 1 ||
+                shallowCells.Any(cell => cell.Course != 0))
+            {
+                throw new InvalidOperationException(
+                    "A rise no greater than one course height is ONE " +
+                    "band, so every cell carries course 0; got " +
+                    $"{shallowBands} bands.");
+            }
+            if (shallowCells.Any(cell => !cell.Clipped))
+            {
+                throw new InvalidOperationException(
+                    "Every shallow-shell cell reaches a lattice row a " +
+                    "clear course height outside the surface, so every " +
+                    "one is CLIPPED and kept.");
+            }
+            RequireDisjointSimplePlans(
+                shallowCells.Select(cell => cell.Outline).ToArray(),
+                $"hexagonal/shallow CH {shallowHeight}");
+            RequireNothingDropped(
+                shallow, $"hexagonal/shallow CH {shallowHeight}");
+        }
+    }
+
+    /// <summary>
+    /// The plan guarantee ENFORCED (spec section 4), measured on the
+    /// surface that breaks the argument it used to rest on.
+    ///
+    /// Three parts, and the first is the one that makes the other two
+    /// mean anything.
+    ///
+    /// 1. THE PREDICATE ITSELF. Every plan assertion in this harness now
+    /// calls the engine's own PlanSelfCrosses and PlansOverlap, so the
+    /// filter and the check cannot drift apart; the price is that a
+    /// predicate that always answered "no" would make every plan
+    /// assertion in the file vacuous and drop nothing. So the predicate
+    /// is exercised on hand-built cases with hand-known answers. The bow
+    /// tie (0,0), (1,0), (0,1), (1,1) crosses itself: its second edge
+    /// runs along x + y = 1 and its closing edge along y = x, and those
+    /// meet at (0.5, 0.5), strictly inside both, while the unit square
+    /// (0,0), (1,0), (1,1), (0,1) does not. Two unit squares a clear gap
+    /// apart do not overlap; two that SHARE an edge do not either, which
+    /// is the whole reason the crossing test is strict, since every pair
+    /// of neighbours in a course shares its joint; two offset by
+    /// (0.5, 0.5) do, by a proper edge crossing; and a small square
+    /// wholly inside a large one does, by containment, which no edge
+    /// crossing can see.
+    ///
+    /// 2. THE L-SHAPED SHELL at CH 0.5, the case the argument misses
+    /// (the derivation is in SkinLShapedNet). The courses engine builds
+    /// 95 cells there and exactly ONE of them self-crosses in plan; the
+    /// filter drops it, reports it, and hands back 94 whose plans are
+    /// disjoint and simple. The 94 is 95 minus the one, and the 95 is
+    /// not pinned separately because it is the arithmetic of a
+    /// nine-column L nobody can read off in one line: what is pinned is
+    /// the DROP, one self-crossing and no overlapping, and the fact that
+    /// what remains is clean.
+    ///
+    /// 3. THE FILTER IS NOT A BLANKET. At CH 0.3, 0.4, 0.45, 0.55, 0.6
+    /// and 0.7 the same shell drops NOTHING, which is what makes CH 0.5
+    /// a defect rather than a policy, and it is the same discipline
+    /// every other clean fixture in this file now keeps through
+    /// RequireNothingDropped.
+    ///
+    /// NOT MEASURED, and the reason is the same one ValidateSkinIdentity
+    /// gives: the author-facing WARNING lives in SolveInstance and needs
+    /// an IGH_DataAccess this harness has no native core to build. What
+    /// is measured here is the two counts the warning is raised on and
+    /// the two diagnostics lines it points at. The warning's own
+    /// sentence is READ, not run, and it is recorded here so a reviewer
+    /// can read it beside what it claims. It is SCALED TO THE FRACTION
+    /// DROPPED, because the sentence it replaced promised "a small hole
+    /// where each one was" while handing back an empty tree. A
+    /// HELICOIDAL shell is the case, and it was reproduced outside this
+    /// harness against the built plugin: on a three-turn ramp of inner
+    /// radius 1 and outer radius 2 climbing 2 m, at S 0.6, the honeycomb
+    /// drops 11 of 11 at CH 0.35 and 8 of 8 at CH 0.5 and the pattern is
+    /// EMPTY, while the courses engine drops 10 of 15 and 3 of 10.
+    /// Dropping everything there is the right answer, a level curve that
+    /// wraps not being a height field's; only the sentence was wrong.
+    /// The three branches, in SkinComponent.SolveNative:
+    ///   nothing survives: "NOTHING survived, so this pattern is EMPTY
+    ///   and covers none of the surface."
+    ///   at most a tenth dropped: "The skin has a small hole where each
+    ///   one was, and the tessellation Export writes still imports."
+    ///   more than a tenth: "That is N per cent of this pattern, so the
+    ///   skin has a LARGE hole and it covers only part of the surface;
+    ///   the tessellation Export writes still imports."
+    /// and every branch is preceded by the count against the TOTAL the
+    /// pattern built, "D of the B cells this pattern built were DROPPED
+    /// to keep it valid in plan", so the fraction is legible whichever
+    /// branch fires.
+    /// </summary>
+    private static void ValidateSkinPlanFilter(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo selfCrosses =
+            RequirePublicStatic(patterns, "PlanSelfCrosses");
+        MethodInfo overlap = RequirePublicStatic(patterns, "PlansOverlap");
+
+        // ---- 1. the predicate, on hand-built cases.
+        bool Crossing(double[][] outline) =>
+            (bool)selfCrosses.Invoke(null, new object[] { outline })!;
+        bool Overlapping(double[][] first, double[][] second) =>
+            (bool)overlap.Invoke(null, new object[] { first, second })!;
+        double[][] Square(double x, double y, double side) => new[]
+        {
+            new[] { x, y, 0.0 },
+            new[] { x + side, y, 0.0 },
+            new[] { x + side, y + side, 0.0 },
+            new[] { x, y + side, 0.0 }
+        };
+        double[][] bowTie =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 }
+        };
+        if (!Crossing(bowTie))
+        {
+            throw new InvalidOperationException(
+                "A bow tie self-crosses in plan: the engine's own " +
+                "PlanSelfCrosses must say so, or every plan assertion " +
+                "in this harness is vacuous and the filter drops " +
+                "nothing.");
+        }
+        if (Crossing(Square(0.0, 0.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "A unit square does not self-cross, and a predicate " +
+                "that says it does would empty every pattern.");
+        }
+        if (Overlapping(Square(0.0, 0.0, 1.0), Square(3.0, 3.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "Two squares a clear gap apart do not overlap.");
+        }
+        if (Overlapping(Square(0.0, 0.0, 1.0), Square(1.0, 0.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "Two squares SHARING an edge do not overlap: every " +
+                "pair of neighbours in a course shares its joint, which " +
+                "is why the crossing test is strict.");
+        }
+        if (!Overlapping(Square(0.0, 0.0, 1.0), Square(0.5, 0.5, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "Two squares offset by half their side overlap, by a " +
+                "proper edge crossing.");
+        }
+        if (!Overlapping(Square(0.0, 0.0, 4.0), Square(1.0, 1.0, 1.0)))
+        {
+            throw new InvalidOperationException(
+                "A square wholly INSIDE another overlaps it, and no " +
+                "edge crossing can see that: containment is the case " +
+                "the interior-point test exists for.");
+        }
+
+        // ---- 1b. the crossing tolerance is a DISTANCE, not an area,
+        // and these two cases are what separate the one from the other.
+        // Both are hand-derived.
+        //
+        // A cross product is twice a triangle's area, which is the
+        // segment's own length times the perpendicular distance from the
+        // point to its line. Comparing it against a fixed floor
+        // therefore sets a tolerance that MOVES with the segment, and
+        // the two ends of the model are where it shows.
+        //
+        // SMALL. The crown of a dome is traced at zMax pulled inside by
+        // epsilon, so the crown loop's edges are of the order of a
+        // micron. A bow tie 1.5 microns across, corners (0,0), (s,0),
+        // (0,s), (s,s) with s = 1.5e-6, has its edges 1 and 3 crossing
+        // at the centre: edge 1 runs the line x + y = s and the far
+        // corner (s, s) stands s / sqrt(2) = 1.06e-6 m off it, a
+        // micron of genuine fold. The cross product is the edge's own
+        // length s sqrt(2) times that, which is s squared = 2.25e-12,
+        // four hundred times BELOW a floor of 1e-9, so an area test
+        // calls this bow tie clean and the filter would emit it.
+        //
+        // LARGE. Two segments 100 m long crossing at their midpoints
+        // with the second only 1e-10 m from end to end: the ends of the
+        // short one stand 1e-10 m either side of the long one's line,
+        // a tenth of a nanometre, which is a touch and not a fold. The
+        // cross product is 100 x 1e-10 = 1e-8, ten times ABOVE a floor
+        // of 1e-9, so an area test calls this a crossing and the filter
+        // would drop a cell for it.
+        double[][] longEdge =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 100.0, 0.0, 0.0 },
+            new[] { 100.0, 1.0, 0.0 }
+        };
+        double[][] shallowTouch =
+        {
+            new[] { 50.0, 1.0e-10, 0.0 },
+            new[] { 50.0, -1.0e-10, 0.0 },
+            new[] { 60.0, -1.0, 0.0 }
+        };
+        if (Overlapping(longEdge, shallowTouch))
+        {
+            throw new InvalidOperationException(
+                "A fold a tenth of a nanometre deep is not a fold: two " +
+                "cells whose edges pass within 1e-10 m of one another " +
+                "are two cells that touch at their joint. Only a " +
+                "tolerance measured as an AREA would call this a " +
+                "crossing (the cross product is 1e-8 on a 100 m edge, " +
+                "above the old 1e-9 floor).");
+        }
+        // ---- 1c. CONTAINMENT is tested from a point that is certainly
+        // inside, not from the plan mean, which on a sufficiently
+        // non-convex outline is outside it. Hand-derived, and the C
+        // shape is the shape that separates the two.
+        //
+        // The C: (0,0), (3,0), (3,1), (1,1), (1,2), (3,2), (3,3), (0,3),
+        // wound counter-clockwise. Its shoelace sum is 14, so its area
+        // is 7, which is the 3 by 3 square less the 2 by 1 notch, and it
+        // is simple. Its plan MEAN is (14/8, 12/8) = (1.75, 1.5), which
+        // sits in the notch, 1 < x < 3 and 1 < y < 2, and so OUTSIDE the
+        // C itself.
+        //
+        // The square holding it runs (-1, -1.5) to (5, 4.5), so the C is
+        // wholly inside with a clear margin and no edge of either
+        // crosses an edge of the other. The square's own mean is
+        // (2, 1.5), which is inside the square and, being in the notch
+        // again, NOT inside the C. So every mean available to the old
+        // rule failed its own interiority test, the containment half was
+        // skipped at both ends, and two cells one wholly inside the
+        // other came back as no overlap.
+        double[][] cShape =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 3.0, 0.0, 0.0 },
+            new[] { 3.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 1.0, 2.0, 0.0 },
+            new[] { 3.0, 2.0, 0.0 },
+            new[] { 3.0, 3.0, 0.0 },
+            new[] { 0.0, 3.0, 0.0 }
+        };
+        double[][] holder =
+        {
+            new[] { -1.0, -1.5, 0.0 },
+            new[] { 5.0, -1.5, 0.0 },
+            new[] { 5.0, 4.5, 0.0 },
+            new[] { -1.0, 4.5, 0.0 }
+        };
+        if (!Overlapping(cShape, holder) || !Overlapping(holder, cShape))
+        {
+            throw new InvalidOperationException(
+                "A non-convex cell lying WHOLLY INSIDE another overlaps " +
+                "it, whichever way round the two are read. No edge " +
+                "crossing can see that, and neither outline's plan mean " +
+                "is inside the C, so a containment test that gives up " +
+                "when the mean falls outside gives the wrong answer and " +
+                "the plan guarantee has a hole in it.");
+        }
+
+        // ---- 1d. THE INTERIOR POINT IS THE CALLER'S, and this is the
+        // structural half of the cost guard ValidateSkinPlanFilterCost
+        // times. Finding a point certainly inside an outline is not
+        // free, and it depends on that outline alone, so the pair test
+        // takes both points as arguments and finds NEITHER of its own:
+        // PlansOverlapWithInteriors is what KeepValidPlans calls, once
+        // per outline rather than once per pair.
+        //
+        // It is pinned by LYING to it. Two squares a clear gap apart,
+        // with a point offered for the first that is not inside the
+        // first at all and is inside the second. A test that believes
+        // the caller answers OVERLAP; one that quietly found its own
+        // point would answer no overlap, which is what the two-argument
+        // PlansOverlap says about the same two squares three lines
+        // above. So a regression that goes back to finding the point
+        // inside the pair test fails here, deterministically and
+        // without a clock, whatever the machine is doing.
+        //
+        // The honest calls are pinned beside it: the C shape and its
+        // holder, with each outline's real point handed in, must give
+        // the same answer both ways round as PlansOverlap does, and a
+        // pair of nulls, which is what an outline with no interior at
+        // all offers, must leave the crossing walk to answer alone.
+        MethodInfo interiorPoint =
+            RequirePublicStatic(patterns, "PlanInteriorPoint");
+        MethodInfo overlapWith =
+            RequirePublicStatic(patterns, "PlansOverlapWithInteriors");
+        double[]? Interior(double[][] outline) =>
+            (double[]?)interiorPoint.Invoke(null, new object[] { outline });
+        bool OverlappingWith(
+            double[][] first,
+            double[]? firstInside,
+            double[][] second,
+            double[]? secondInside) =>
+            (bool)overlapWith.Invoke(
+                null,
+                new object?[] { first, firstInside, second, secondInside })!;
+        double[][] here = Square(0.0, 0.0, 1.0);
+        double[][] faraway = Square(3.0, 3.0, 1.0);
+        if (!OverlappingWith(
+                here, new[] { 3.5, 3.5 }, faraway, Interior(faraway)))
+        {
+            throw new InvalidOperationException(
+                "PlansOverlapWithInteriors must USE the interior points " +
+                "it is given and find none of its own: told that the " +
+                "first square's interior point is (3.5, 3.5), which is " +
+                "inside the second square, it must answer overlap. That " +
+                "it does is what lets the filter find one point per " +
+                "outline instead of one per pair, which is the whole of " +
+                "the cost fix.");
+        }
+        if (OverlappingWith(here, null, faraway, null))
+        {
+            throw new InvalidOperationException(
+                "Two squares a clear gap apart do not overlap, and a " +
+                "pair of outlines with no interior point between them " +
+                "leaves the crossing walk to say so.");
+        }
+        if (!OverlappingWith(
+                cShape, Interior(cShape), holder, Interior(holder)) ||
+            !OverlappingWith(
+                holder, Interior(holder), cShape, Interior(cShape)))
+        {
+            throw new InvalidOperationException(
+                "Handed each outline's own interior point, the pair test " +
+                "must give what PlansOverlap gives: the C shape lying " +
+                "wholly inside its holder overlaps it both ways round. " +
+                "The convenience form is the same test with the points " +
+                "found for the caller, and the two cannot be allowed to " +
+                "disagree.");
+        }
+
+        double[][] micronBowTie =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.5e-6, 0.0, 0.0 },
+            new[] { 0.0, 1.5e-6, 0.0 },
+            new[] { 1.5e-6, 1.5e-6, 0.0 }
+        };
+        if (!Crossing(micronBowTie))
+        {
+            throw new InvalidOperationException(
+                "A bow tie 1.5 microns across is a bow tie: its fold is " +
+                "1.06e-6 m deep, a thousand times the nanometre the " +
+                "predicate calls a fold, and only a tolerance measured " +
+                "as an AREA could miss it (the cross product is " +
+                "2.25e-12, below the old 1e-9 floor).");
+        }
+
+        // ---- 2 and 3. the L-shaped shell.
+        (double[][] vertices, int[][] faces) = SkinLShapedNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        object built = courses.Invoke(
+            null, new object[] { net, 0.6, 0.5 })!;
+        var cells = SkinCells(built);
+        int degenerate = (int)built.GetType()
+            .GetProperty("PlanDegenerateDropped")!.GetValue(built)!;
+        int dropped = (int)built.GetType()
+            .GetProperty("PlanOverlapDropped")!.GetValue(built)!;
+        // The two counts are MEASUREMENTS of the pre-existing
+        // absolute-arc-length defect on a re-entrant plan, declared as
+        // measurements because no derivation of them exists, and they
+        // MOVED when the tracer began drawing exact level curves. On a
+        // height field of unit quads the four corner heights rarely
+        // satisfy f00 + f11 = f10 + f01, so almost every quad of this
+        // shell is non-planar and its level set BENDS at the diagonal
+        // where the chord used to cut the corner. Every traced curve is
+        // therefore a little longer, round(L / S) gives a few more
+        // pieces, and this shell builds 99 courses cells where it built
+        // 95. Which of them the re-entrant corner shears into an invalid
+        // one moves with them: 1 self-crossing and 0 overlapping became
+        // 1 and 1. The final-fix-report-5 table carries the same shell at
+        // eleven course heights on both builds.
+        if (degenerate != 1 || dropped != 1)
+        {
+            throw new InvalidOperationException(
+                "A non-convex L-shaped shell at CH 0.5 builds TWO " +
+                "courses cells the height-field argument says it cannot, " +
+                "one self-crossing in plan and one overlapping a cell " +
+                "already kept, and the filter drops both: 1 and 1; got " +
+                $"{degenerate} and {dropped}.");
+        }
+        if (cells.Length != 97)
+        {
+            throw new InvalidOperationException(
+                "99 cells built less the two dropped leaves 97; got " +
+                $"{cells.Length}.");
+        }
+        string diagnostics = (string)built.GetType()
+            .GetProperty("Diagnostics")!.GetValue(built)!;
+        if (!diagnostics.Contains(
+                "Plan-degenerate cells dropped: 1",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains(
+                "Plan-overlap cells dropped: 1",
+                StringComparison.Ordinal) ||
+            !diagnostics.Contains("Cells: 97", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A dropped cell is never silent: both counts are their " +
+                "own diagnostics lines and the cell count is the " +
+                $"SURVIVORS'; got '{diagnostics}'.");
+        }
+        RequireDisjointSimplePlans(
+            cells.Select(cell => cell.Outline).ToArray(),
+            "courses/L-shaped shell CH 0.5");
+
+        // The clean course heights, and CH 0.3 is NOT among them any
+        // more. It was clean while the tracer chorded across a
+        // non-planar quad and it is not clean now that the curve bends,
+        // and the honest answer is to pin the heights that pass and name
+        // the one that does not rather than weaken the assertion to
+        // cover it. CH 0.3 now builds 165 cells and drops 1
+        // self-crossing, the same inherited defect CH 0.5 above carries
+        // and the same magnitude, one bad cell in a hundred and
+        // something. It is measured below with the survivors still
+        // required disjoint and simple, which is the guarantee itself;
+        // the count is in final-fix-report-5.
+        foreach (double height in new[] { 0.4, 0.45, 0.55, 0.6, 0.7 })
+        {
+            object clean = courses.Invoke(
+                null, new object[] { net, 0.6, height })!;
+            RequireNothingDropped(
+                clean, $"courses/L-shaped shell CH {height}");
+            RequireDisjointSimplePlans(
+                SkinCells(clean).Select(cell => cell.Outline).ToArray(),
+                $"courses/L-shaped shell CH {height}");
+        }
+        object atThreeTenths = courses.Invoke(
+            null, new object[] { net, 0.6, 0.3 })!;
+        int shallowDegenerate = (int)atThreeTenths.GetType()
+            .GetProperty("PlanDegenerateDropped")!.GetValue(atThreeTenths)!;
+        int shallowOverlap = (int)atThreeTenths.GetType()
+            .GetProperty("PlanOverlapDropped")!.GetValue(atThreeTenths)!;
+        if (shallowDegenerate != 1 || shallowOverlap != 0)
+        {
+            throw new InvalidOperationException(
+                "The L-shaped shell at CH 0.3 is the second course " +
+                "height where the re-entrant corner shears one cell into " +
+                "a self-crossing plan, a MEASUREMENT of the inherited " +
+                "absolute-arc-length defect and not a derivation: 1 " +
+                $"self-crossing and 0 overlapping; got {shallowDegenerate} " +
+                $"and {shallowOverlap}.");
+        }
+        RequireDisjointSimplePlans(
+            SkinCells(atThreeTenths).Select(cell => cell.Outline).ToArray(),
+            "courses/L-shaped shell CH 0.3");
+    }
+
+    /// <summary>
+    /// The plan filter's COST, pinned on the shape that made it hurt.
+    ///
+    /// The filter is right and was, for a while, unusably slow, which on
+    /// Grasshopper's single canvas thread is its own kind of wrong: the
+    /// component recomputes at every nudge of a slider, so a pattern that
+    /// takes ten seconds is a component that has stopped responding. The
+    /// containment half of the pair test needs a point certainly inside
+    /// an outline, and on a cell curved enough for its own plan mean to
+    /// fall outside it, finding one meant triangulating the outline. That
+    /// was done inside the pair test, so an O(k squared) walk asked for
+    /// O(k) points and paid for the whole triangulation each time.
+    ///
+    /// Measured on this fixture, against the build before the fix and
+    /// after it, courses at CH 0.35:
+    ///
+    ///   48 a ring, S 0.6:  26.8 ms  to   18.5 ms
+    ///   48 a ring, S 1.5:   772 ms  to     39 ms
+    ///   48 a ring, S 2.0:  2926 ms  to     79 ms
+    ///   48 a ring, S 3.0:  9005 ms  to    116 ms
+    ///   96 a ring, S 3.0:   206 s   to   0.65 s
+    ///
+    /// Two changes, and both leave every answer alone. The points are
+    /// found ONCE PER OUTLINE, in KeepValidPlans, and handed to
+    /// PlansOverlapWithInteriors, which ValidateSkinPlanFilter pins
+    /// structurally by lying to it. And the triangles come from
+    /// SplitPolygonInOrder one at a time, in the order the whole
+    /// triangulation would have written them, so the point is the point
+    /// the old rule gave and the outline is only split as far as the
+    /// first accepted centroid: 5321 outlines off this fixture at six
+    /// sizes, two course heights, both densities and both engines gave
+    /// interior points identical to the last digit on both builds.
+    ///
+    /// WHAT IS PINNED HERE is the wall clock, because the structural
+    /// pin cannot see the second change and neither can a count. The
+    /// case is the 96-a-ring shell at S 3.0, which took 206 SECONDS
+    /// before; measured in this harness it takes 0.86 s, and the bound
+    /// is FOUR SECONDS. That is 4.6 times the measured time, so an
+    /// ordinary machine having an ordinary bad afternoon cannot trip it,
+    /// and it is 50 times under the regression it exists to catch.
+    /// LOSING EITHER CHANGE ALONE STILL FAILS IT, which is why one
+    /// bound can guard both: measured on the same shell outside this
+    /// harness, the two together take 0.65 s, the points found per pair
+    /// again takes 13.7 s, the triangulation built whole again takes
+    /// 14.0, and neither change takes 206. Each is worth about fifteen
+    /// times on its own and they are worth three hundred together,
+    /// because the pair walk multiplies what a point costs.
+    ///
+    /// THE COUNT is pinned beside the clock so the fast answer is still
+    /// the right answer, and it is derived rather than measured. A 2 m
+    /// rise at CH 0.35 is six bands, mids 0.175, 0.525, 0.875, 1.225,
+    /// 1.575 and 1.875. The rings are 13 circles of radius 4 - 0.25 j
+    /// and the level radius interpolates linearly between them, so the
+    /// outer and inner radii at those mids are 3.928409/1.071591,
+    /// 3.785227/1.214773, 3.618056/1.381944, 3.426786/1.573214,
+    /// 3.1825/1.8175 and 2.854167/2.145833, the spiral vault fixture's
+    /// own table. A regular 96-gon of circumradius R has perimeter
+    /// 192 R sin(pi / 96) = 6.282064 R, so at S 3 the pieces are
+    /// 8.22617/2.24393, 7.92635/2.54376, 7.57629/2.89382,
+    /// 7.17576/3.29434, 6.66422/3.80588 and 5.97669/4.49342, which round
+    /// to (8, 2), (8, 3), (8, 3), (7, 3), (7, 4) and (6, 4): 10 + 11 +
+    /// 11 + 10 + 11 + 10 = 63. The tightest of those is 4.49342, two
+    /// thirds of a hundredth of a piece from the rounding boundary,
+    /// which is 20 mm of arc in a 13.48 m course: far above the
+    /// arithmetic's noise, and worth saying out loud because it is the
+    /// one number here a small change in the tracer could move.
+    /// </summary>
+    private static void ValidateSkinPlanFilterCost(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+
+        (double[][] vertices, int[][] faces) = SkinAnnularVaultNet(96);
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        object built = courses.Invoke(
+            null, new object[] { net, 3.0, 0.35 })!;
+        clock.Stop();
+        var cells = SkinCells(built);
+        if (cells.Length != 63)
+        {
+            throw new InvalidOperationException(
+                "An annular vault of 96 a ring at S 3 and CH 0.35 lays " +
+                "63 cells by the derivation in this check, six bands of " +
+                "two nested loops rounding to (8, 2), (8, 3), (8, 3), " +
+                $"(7, 3), (7, 4) and (6, 4); got {cells.Length}.");
+        }
+        int transitions = (int)built.GetType()
+            .GetProperty("TransitionBands")!.GetValue(built)!;
+        if (transitions != 0)
+        {
+            throw new InvalidOperationException(
+                "An annular shell's nested loops correspond at every " +
+                "level, outer to outer and inner to inner, so no band of " +
+                $"it is refused; {transitions} were.");
+        }
+        RequireNothingDropped(built, "courses/annular vault 96 a ring S 3");
+        const double Bound = 4.0;
+        if (clock.Elapsed.TotalSeconds > Bound)
+        {
+            throw new InvalidOperationException(
+                "The courses engine must lay this shell in well under " +
+                $"{Bound} seconds; it took " +
+                $"{clock.Elapsed.TotalSeconds:F2}. It took 206 seconds " +
+                "before the interior point was found once per outline " +
+                "and the triangulation stopped being built whole, and " +
+                "this runs on the canvas thread at every nudge of the " +
+                "Size slider. Read the comment on this check before " +
+                "widening the bound: it is six times the measured time " +
+                "already, so what has been lost is one of the two " +
+                "changes, not a machine having a bad afternoon.");
+        }
+    }
+
+    /// <summary>
+    /// The floors, engine level (spec section 3): S and CH refuse below
+    /// 1 mm through the negated-comparison guard, so NaN is refused too.
+    /// The component floors CH with a warning before calling; the engine
+    /// refusal is what the harness can measure.
+    /// </summary>
+    private static void ValidateSkinGuards(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+
+        void MustRefuse(MethodInfo engine, double size,
+            double courseHeight, string expectedFragment)
+        {
+            try
+            {
+                engine.Invoke(
+                    null, new object[] { net, size, courseHeight });
+            }
+            catch (TargetInvocationException wrapped)
+                when (wrapped.InnerException is ArgumentException inner &&
+                      inner.Message.Contains(
+                          expectedFragment, StringComparison.Ordinal))
+            {
+                return;
+            }
+            throw new InvalidOperationException(
+                $"{engine.Name}({size}, {courseHeight}) must refuse " +
+                $"with '{expectedFragment}'.");
+        }
+
+        MustRefuse(courses, 0.0, 0.35, "S must be greater than 1 mm");
+        MustRefuse(courses, double.NaN, 0.35,
+            "S must be greater than 1 mm");
+        MustRefuse(courses, 0.6, 0.0005,
+            "Course Height must be greater than 1 mm");
+        MustRefuse(hexagonal, -1.0, 0.35,
+            "S must be greater than 1 mm");
+        MustRefuse(hexagonal, 0.6, double.NaN,
+            "Course Height must be greater than 1 mm");
+    }
+
+    /// <summary>
+    /// The one-component identity (spec section 2): the old Skin GUID is
+    /// KEPT, so a saved definition's Skin placement becomes the new
+    /// component under the ports-moved warning rather than an orphan; the
+    /// Armadillo Dual GUID retires and no component may ever carry it;
+    /// the Pattern input offers the three-entry value list the way
+    /// Columns' Type does, defaulting to courses; and the outputs are
+    /// VISIBLE, the proposer convention, because seeing the pattern the
+    /// moment it computes is the point of the component.
+    ///
+    /// The last pin here is the PREMISE of Ruling C: Skin is a
+    /// GH_TaskCapableComponent, and that base indexes its TaskList BY
+    /// ITERATION. What follows from it cannot be measured in this
+    /// harness, and it is worth saying plainly WHICH parts are read
+    /// rather than run, the ValidateExportDefaultTessellation
+    /// convention:
+    ///
+    /// NOT MEASURED, read in SkinComponent.SolveInstance instead. In the
+    /// pre phase, EVERY iteration now adds to TaskList: the force-
+    /// aligned pattern adds the real dispatch, and both the paths that
+    /// dispatch nothing, the TryReadInputs failure and any Pattern other
+    /// than 2, add the completed null-carrying placeholder NoTask
+    /// returns, so an iteration's index into the list is its own. In the
+    /// post phase the guard before the synchronous recompute now reads
+    /// "!haveTaskResult || taskResult is null || taskResult.Error is
+    /// OperationCanceledException", so a placeholder retrieved for an
+    /// iteration whose Pattern changed to 2 between the phases is a MISS
+    /// and not an empty result. Both halves need an IGH_DataAccess with
+    /// a real iteration index and a running Grasshopper solution, which
+    /// this harness has no native core to build. A single-item pattern-2
+    /// solve is unchanged by either half: it dispatches at iteration 0
+    /// and retrieves a real, non-null result at iteration 0, exactly as
+    /// the retired ArmadilloDualComponent did at base 405ff14.
+    /// </summary>
+    private static void ValidateSkinIdentity(Assembly plugin)
+    {
+        Type skin = RequireComponentType(plugin, "SkinComponent");
+        var keptGuid = new Guid("7c2e9a54-3b6d-4f18-9e27-a1c5d8b4e063");
+        var retiredGuid = new Guid("51f4ade8-f918-4455-9823-563afbf201f4");
+
+        if (plugin.GetType(
+                "Ananke.COMPAS.Native.Components.ArmadilloDualComponent")
+            is not null)
+        {
+            throw new InvalidOperationException(
+                "ArmadilloDualComponent is retired; its class must not " +
+                "exist.");
+        }
+
+        object instance = Activator.CreateInstance(skin)
+            ?? throw new InvalidOperationException(
+                "Could not construct SkinComponent.");
+        try
+        {
+            Guid guid = (Guid)skin.GetProperty("ComponentGuid")!
+                .GetValue(instance)!;
+            if (guid != keptGuid)
+            {
+                throw new InvalidOperationException(
+                    "Skin keeps the OLD Skin's GUID " +
+                    $"{keptGuid}, so saved placements load; got {guid}.");
+            }
+
+            foreach (Type componentType in GetLoadableTypes(plugin)
+                .Where(IsConcretePublicGrasshopperComponent))
+            {
+                object other = Activator.CreateInstance(componentType)!;
+                try
+                {
+                    Guid otherGuid = (Guid)componentType
+                        .GetProperty("ComponentGuid")!.GetValue(other)!;
+                    if (otherGuid == retiredGuid)
+                    {
+                        throw new InvalidOperationException(
+                            $"{componentType.Name} carries the RETIRED " +
+                            "Armadillo Dual GUID, which is never " +
+                            "reused.");
+                    }
+                }
+                finally
+                {
+                    if (other is IDisposable disposableOther)
+                        disposableOther.Dispose();
+                }
+            }
+
+            // ---- the Pattern value list, the Columns Type mechanism.
+            // DeclaredOnly on the component type itself: the pin is that
+            // SkinComponent OVERRIDES the base's empty list.
+            PropertyInfo listsProperty = skin.GetProperty(
+                "SuggestedValueLists",
+                BindingFlags.Instance | BindingFlags.NonPublic |
+                BindingFlags.DeclaredOnly)
+                ?? throw new InvalidOperationException(
+                    "SkinComponent must OVERRIDE SuggestedValueLists " +
+                    "with the Pattern list, the Columns Type mechanism.");
+            IList specs = (IList)listsProperty.GetValue(instance)!;
+            if (specs.Count != 1)
+            {
+                throw new InvalidOperationException(
+                    $"One suggested list, Pattern; got {specs.Count}.");
+            }
+            object spec = specs[0]!;
+            Type specType = spec.GetType();
+            int inputIndex =
+                (int)specType.GetProperty("InputIndex")!.GetValue(spec)!;
+            string name =
+                (string)specType.GetProperty("Name")!.GetValue(spec)!;
+            string fallback = (string)specType
+                .GetProperty("DefaultValue")!.GetValue(spec)!;
+            IList items =
+                (IList)specType.GetProperty("Items")!.GetValue(spec)!;
+            string[] labels = items.Cast<object>()
+                .Select(item => (string)item.GetType()
+                    .GetField("Item1")!.GetValue(item)!)
+                .ToArray();
+            string[] values = items.Cast<object>()
+                .Select(item => (string)item.GetType()
+                    .GetField("Item2")!.GetValue(item)!)
+                .ToArray();
+            string[] expectedLabels =
+            {
+                "0 · courses", "1 · hexagonal", "2 · force aligned"
+            };
+            if (inputIndex != 1 ||
+                !string.Equals(name, "Pattern", StringComparison.Ordinal) ||
+                !string.Equals(fallback, "0", StringComparison.Ordinal) ||
+                !labels.SequenceEqual(expectedLabels, StringComparer.Ordinal) ||
+                !values.SequenceEqual(
+                    new[] { "0", "1", "2" }, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Pattern list pins: input 1, named Pattern, " +
+                    "default 0, items '0 · courses', '1 · hexagonal', " +
+                    "'2 · force aligned' with values 0, 1, 2. Got " +
+                    $"index {inputIndex}, name '{name}', default " +
+                    $"'{fallback}', labels [{string.Join(", ", labels)}].");
+            }
+
+            // ---- VISIBLE outputs, the proposer convention.
+            object server =
+                skin.GetProperty("Params")!.GetValue(instance)!;
+            IEnumerable outputs = (IEnumerable)server.GetType()
+                .GetProperty("Output")!.GetValue(server)!;
+            int outputCount = 0;
+            foreach (object? output in outputs)
+            {
+                outputCount++;
+                PropertyInfo? hidden =
+                    output!.GetType().GetProperty("Hidden");
+                if (hidden is not null &&
+                    hidden.GetValue(output) is bool isHidden && isHidden)
+                {
+                    throw new InvalidOperationException(
+                        "Skin is a PROPOSER: no output starts Hidden; " +
+                        "seeing the pattern the moment it computes is " +
+                        "the point of the component.");
+                }
+            }
+            if (outputCount != 4)
+            {
+                throw new InvalidOperationException(
+                    $"Four outputs (C, CO, FL, D); got {outputCount}.");
+            }
+
+            // ---- Ruling C's premise. Everything the ruling turns on is
+            // that this base indexes TaskList by ITERATION; the two
+            // halves of the fix are read in the doc comment above.
+            bool taskCapable = false;
+            for (Type? at = skin; at is not null; at = at.BaseType)
+            {
+                taskCapable |= at.Name.StartsWith(
+                    "GH_TaskCapableComponent", StringComparison.Ordinal);
+            }
+            if (!taskCapable)
+            {
+                throw new InvalidOperationException(
+                    "Skin is a GH_TaskCapableComponent: its TaskList is " +
+                    "indexed by iteration, which is why every iteration " +
+                    "has to add to it, dispatching or not.");
+            }
+        }
+        finally
+        {
+            if (instance is IDisposable disposable)
+                disposable.Dispose();
         }
     }
 
