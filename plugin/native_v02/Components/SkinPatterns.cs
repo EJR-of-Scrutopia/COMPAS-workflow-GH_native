@@ -14,10 +14,30 @@ namespace Ananke.COMPAS.Native.Components;
 /// by the same form-graph-to-equilibrium walk DeconstructComponent's
 /// ThrustMesh makes, without the Mesh, so the smoke harness can hand one in
 /// and measure everything downstream of it.
+///
+/// FACES ARE TRIANGLES, always, whoever built the net. The faces handed to
+/// the constructor are triangulated once, here, at READ TIME, by
+/// SkinPatterns.Triangulate, whose comment carries the rule and the reason.
+/// The short of it: a face whose corners are not coplanar does not define a
+/// surface at all until something says how to fill it, and the level set of
+/// a filled quad is a curve rather than the chord the tracer draws, so a
+/// quad mesh gives the tracer APPROXIMATE level curves, and two
+/// approximations of one level set can interleave in plan where the exact
+/// curves cannot. Making it the net's own invariant rather than ReadNet's
+/// is deliberate: the smoke harness builds its nets straight through this
+/// constructor, so a rule that lived in ReadNet alone would be a rule no
+/// fixture could measure.
 /// </summary>
 internal sealed record SkinNet(
     IReadOnlyList<double[]> Vertices,
-    IReadOnlyList<int[]> Faces);
+    IReadOnlyList<int[]> Faces)
+{
+    /// <summary>The faces, triangulated. An all-triangle face list comes
+    /// through untouched, so the invariant is idempotent and a net built
+    /// from another net's faces is the same net.</summary>
+    public IReadOnlyList<int[]> Faces { get; } =
+        SkinPatterns.Triangulate(Vertices, Faces);
+}
 
 /// <summary>
 /// One traced level-curve component: the polyline of edge crossings at
@@ -174,6 +194,208 @@ internal static class SkinPatterns
         return new SkinNet(vertices, faces);
     }
 
+    /// <summary>
+    /// Every face as TRIANGLES, so that every face the tracer ever sees is
+    /// PLANAR and every level curve it draws is the EXACT level set of the
+    /// surface rather than an approximation of one.
+    ///
+    /// WHY IT EXISTS. Trace cuts a face by joining the two crossings on its
+    /// boundary with a straight CHORD. On a triangle that chord IS the
+    /// level set, because three points define a plane and height restricted
+    /// to a plane is affine. On a quad whose four corners are NOT coplanar
+    /// it is not: such a quad does not define a surface at all until
+    /// something says how to fill it, and every filling has a level set that
+    /// bends. The chord is therefore an approximation, and two
+    /// approximations of ONE level set can interleave in plan where the
+    /// exact curves cannot.
+    ///
+    /// That impossibility is the point. On a plan-injective surface (a
+    /// height field, which spec section 4's whole guarantee rests on) two
+    /// components of one level set cannot cross in plan: a crossing point
+    /// would lie on both, so they would be one component. Nesting is
+    /// therefore well defined, the depth rule AssignNestingDepths states is
+    /// sound rather than sampling-dependent, and the correspondence and the
+    /// plan guarantee are strengthened with it. With quads none of that
+    /// holds, because the curves being classified are not the level set.
+    ///
+    /// REPRODUCED against the build before this change on an annular vault
+    /// meshed as a SPIRAL: thirteen rings of twelve on the profile
+    /// z = 2 (1 - ((r - 2.5) / 1.5)^2), ring j turned by j full angular
+    /// steps, which moves NO vertex (a full step maps a ring onto itself)
+    /// and leaves the mesh a certified height field. The courses engine went
+    /// from the unturned control's 52 cells to ZERO with a band refused at
+    /// CH 1.9, from 205 to 75 at CH 0.5 and from 310 to 103 at CH 0.35, and
+    /// the diagnostics reported a transition on a shell that has none.
+    /// Measured at the top cut, z = 1.999998: all 24 quads the trace
+    /// crosses are non-planar, by up to 4.038e-2 m; the chord misses the
+    /// exact level set by up to 2.562e-5 m; and the two loops are only
+    /// 1.559e-5 m apart in radius there. The approximation is LARGER than
+    /// the separation, so the two traced polygons interleave, neither
+    /// contains the other, both are classified depth 0, and the bijection
+    /// fails. Triangulating the same net returns depths 0 and 1, no
+    /// crossing, and the control's own 52, 205 and 310.
+    ///
+    /// THE RULE, stated because it must not depend on the order the faces
+    /// arrive in. A triangle passes through untouched. A polygon is split
+    /// on its SHORTEST valid PLAN DIAGONAL, and the two halves are split
+    /// again by the same rule until only triangles are left. A diagonal is
+    /// valid when it crosses no edge of the polygon properly and its
+    /// midpoint lies inside the polygon in plan, which is what keeps the
+    /// triangles inside the face and their union equal to it; a non-convex
+    /// quad has exactly one such diagonal and the shorter of the two is not
+    /// always it, so validity is tested before length and not after. Ties
+    /// in length go to the pair with the lower vertex index (the lower of
+    /// the two indices first, then the higher), which is a property of the
+    /// mesh's own numbering rather than of any traversal, so a concentric
+    /// quad whose two diagonals are exactly equal splits the same way
+    /// whichever corner its winding starts from. A polygon with no valid
+    /// diagonal at all is degenerate in plan, outside the height-field
+    /// domain, and is fanned from its first corner so the answer stays
+    /// deterministic.
+    ///
+    /// The triangulation is IDEMPOTENT and an all-triangle list is returned
+    /// unchanged, so a net built from another net's faces is the same net.
+    /// </summary>
+    public static IReadOnlyList<int[]> Triangulate(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces)
+    {
+        bool anyPolygon = false;
+        foreach (int[] face in faces)
+        {
+            if (face.Length > 3)
+            {
+                anyPolygon = true;
+                break;
+            }
+        }
+        if (!anyPolygon)
+            return faces;
+        var triangles = new List<int[]>(faces.Count * 2);
+        foreach (int[] face in faces)
+        {
+            if (face.Length <= 3)
+            {
+                triangles.Add(face);
+                continue;
+            }
+            SplitPolygon(vertices, face, triangles);
+        }
+        return triangles;
+    }
+
+    /// <summary>One step of Triangulate's rule: find the shortest valid
+    /// plan diagonal, cut the ring in two along it and recurse. The
+    /// comment on Triangulate carries the rule and the tie-break.
+    /// </summary>
+    private static void SplitPolygon(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int> ring,
+        List<int[]> into)
+    {
+        int count = ring.Count;
+        if (count < 3)
+            return;
+        if (count == 3)
+        {
+            into.Add(new[] { ring[0], ring[1], ring[2] });
+            return;
+        }
+        int bestFrom = -1;
+        int bestTo = -1;
+        double bestLength = double.PositiveInfinity;
+        (int Low, int High) bestPair = (int.MaxValue, int.MaxValue);
+        for (int from = 0; from < count; from++)
+        {
+            for (int to = from + 2; to < count; to++)
+            {
+                if (from == 0 && to == count - 1)
+                    continue;
+                if (!IsPlanDiagonal(vertices, ring, from, to))
+                    continue;
+                double[] a = vertices[ring[from]];
+                double[] b = vertices[ring[to]];
+                double dx = a[0] - b[0];
+                double dy = a[1] - b[1];
+                double length = Math.Sqrt(dx * dx + dy * dy);
+                (int Low, int High) pair =
+                    ring[from] < ring[to]
+                        ? (ring[from], ring[to])
+                        : (ring[to], ring[from]);
+                bool better = length < bestLength - 1.0e-12 ||
+                    (length <= bestLength + 1.0e-12 &&
+                     (pair.Low < bestPair.Low ||
+                      (pair.Low == bestPair.Low &&
+                       pair.High < bestPair.High)));
+                if (!better)
+                    continue;
+                bestLength = Math.Min(bestLength, length);
+                bestPair = pair;
+                bestFrom = from;
+                bestTo = to;
+            }
+        }
+        if (bestFrom < 0)
+        {
+            // Degenerate in plan, outside the height-field domain: fan
+            // from the first corner so the answer is still deterministic.
+            for (int corner = 1; corner + 1 < count; corner++)
+            {
+                into.Add(new[]
+                {
+                    ring[0], ring[corner], ring[corner + 1]
+                });
+            }
+            return;
+        }
+        // The two halves, each still wound the way the face was: the near
+        // side runs from the diagonal's first corner to its second, the
+        // far side leaves the first corner, jumps the diagonal and comes
+        // back round. Both start at the same corner, so a quad split on
+        // its 0-2 diagonal reads [0,1,2] and [0,2,3] rather than the
+        // same triangles written from somewhere else in their cycle.
+        var near = new List<int>();
+        for (int at = bestFrom; at <= bestTo; at++)
+            near.Add(ring[at]);
+        var far = new List<int> { ring[bestFrom] };
+        for (int at = bestTo; at != bestFrom; at = (at + 1) % count)
+            far.Add(ring[at]);
+        SplitPolygon(vertices, near, into);
+        SplitPolygon(vertices, far, into);
+    }
+
+    /// <summary>Is the segment between two non-adjacent corners a DIAGONAL
+    /// of the ring in plan: crossing no edge properly, and with its
+    /// midpoint inside? The midpoint test is what refuses the outside
+    /// diagonal of a non-convex quad, which the shorter-of-the-two rule
+    /// alone would sometimes choose.</summary>
+    private static bool IsPlanDiagonal(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int> ring,
+        int from,
+        int to)
+    {
+        int count = ring.Count;
+        double[] a = vertices[ring[from]];
+        double[] b = vertices[ring[to]];
+        for (int edge = 0; edge < count; edge++)
+        {
+            int next = (edge + 1) % count;
+            if (edge == from || edge == to || next == from || next == to)
+                continue;
+            if (PlanSegmentsCross(
+                    a, b, vertices[ring[edge]], vertices[ring[next]]))
+            {
+                return false;
+            }
+        }
+        var outline = new double[count][];
+        for (int corner = 0; corner < count; corner++)
+            outline[corner] = vertices[ring[corner]];
+        return PlanContains(
+            (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0, outline);
+    }
+
     // ---- level-curve tracing and seams (spec section 4) -----------------
 
     /// <summary>
@@ -261,8 +483,9 @@ internal static class SkinPatterns
             }
             // The crossing count around a closed face boundary is even
             // (the below/at-or-above classification changes state an even
-            // number of times). Pair consecutive crossings; on a saddle
-            // face the pairing is the deterministic marching choice.
+            // number of times), and on a TRIANGLE, which is all a net now
+            // holds, it is 0 or 2, so the pairing is forced and the saddle
+            // ambiguity a quad used to leave is gone with the quad.
             for (int pair = 0; pair + 1 < hits.Count; pair += 2)
             {
                 Link(hits[pair], hits[pair + 1]);
@@ -639,6 +862,28 @@ internal static class SkinPatterns
     /// Spec section 4's "matched to the component below it", in TWO
     /// stages: CLASSIFY, then measure.
     ///
+    /// 0. KIND. An OPEN strip may only be matched to an open strip and a
+    /// CLOSED loop only to a closed loop. A strip has two ends on the
+    /// surface boundary and a loop has none, so the two are never the
+    /// same piece of surface, and a band bonded from one to the other is
+    /// the bow tie ruling B2 was written against: on the two-hump
+    /// barrel the mid level at z 0.75 cuts into the front and back
+    /// STRIPS and the upper level at z 1.00 into the two hump LOOPS, and
+    /// a band built across that change lays every cell of it over its
+    /// neighbour. Kind is topological, like depth, and it is the same
+    /// invariant two of this method's callers were already testing by
+    /// hand after the fact (NormaliseDirections would not take a
+    /// direction from a loop, AssignSeams would not propagate a seam
+    /// from a strip); putting it in the classification is what makes it
+    /// hold for the correspondence too. Nothing else could: at a
+    /// transition of this shape both levels hold two components, both of
+    /// nesting depth 0, and a distance can only say which is nearer, so
+    /// the refusal rested on a near-tie between a full-length strip and
+    /// two half-length loops. That tie broke the right way while the
+    /// mesh was quads and the wrong way once the tracer began drawing
+    /// EXACT level curves with twice as many points, which is how it was
+    /// found.
+    ///
     /// 1. NESTING DEPTH. A component may only be matched to a candidate
     /// of EQUAL depth, the depth AssignNestingDepths assigned from
     /// containment within each component's own level. That comment
@@ -711,8 +956,11 @@ internal static class SkinPatterns
         double bestScore = double.PositiveInfinity;
         for (int i = 0; i < candidates.Count; i++)
         {
-            // Stage one: a candidate of another nesting depth is not a
-            // candidate at all, whatever the distance says.
+            // Stage one: a candidate of another KIND, or of another
+            // nesting depth, is not a candidate at all, whatever the
+            // distance says.
+            if (candidates[i].Closed != curve.Closed)
+                continue;
             if (candidates[i].Depth != curve.Depth)
                 continue;
             double score = PlanProximity(curve, candidates[i]);
