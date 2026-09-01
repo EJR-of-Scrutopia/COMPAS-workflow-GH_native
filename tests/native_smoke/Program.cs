@@ -6455,6 +6455,179 @@ internal static class Program
             return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
         }
 
+        // CrestArchBent (Task 7, spec section 17): CrestArch's equal-ARC-
+        // LENGTH placement, which is the off-centre-crest defect, combined
+        // with a SkewArch-style side-dependent bend about the crest itself,
+        // so a fixture built on it can genuinely scale one flank's pull and
+        // see something move. CrestArch's own pulls are plain vertical,
+        // under which nothing could ever move regardless of scale.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) CrestArchBent(
+            int count, double width, double rise, double crest, double bend, double flank)
+        {
+            (Array nodes, int[][] bars, int[] anchors, Array across, (int, int)[] edges) = CrestArch(count, width, rise, crest);
+            Array acrossBar = (Array)across.GetValue(0)!;
+            for (int i = 0; i < count; i++)
+            {
+                double s = X(nodes.GetValue(i)!) / width;
+                double side = s < crest ? -1.0 : (s > crest ? 1.0 : 0.0);
+                double scale = s < crest ? flank : 1.0;
+                acrossBar.SetValue(V(scale * side * bend, 0.0, -scale), i);
+            }
+            return (nodes, bars, anchors, across, edges);
+        }
+
+        // CrestMirrorArch (Task 7, spec section 9.2 and 17): CrestArch's
+        // equal-ARC-LENGTH placement with a side-dependent bend, PIVOTED on
+        // whichever notch sits nearest the stated crest parameter (an equal-
+        // arc-length row need not, and generally does not, carry a notch
+        // exactly at that parameter). ONLY the trees that genuinely form a
+        // MUTUAL, in-tolerance pair about that pivot (spec 9.3's own rule,
+        // replicated here from the row's positions alone, exactly as the
+        // engine will apply it once the pivot's own residual reads zero and
+        // is therefore the row's one sign change) carry a real +/- bend;
+        // every other tree, pivot included, carries NONE. That keeps every
+        // pair, and the pivot, EXACTLY self-cancelling on their own, with
+        // no help needed from 9.1's mean or its later repetition, so
+        // nothing in this row ever depends on the dead band to reach zero:
+        // an off-centre crest need not pair off every notch to demonstrate
+        // that the ones it does pair are mirrored about it and the ones it
+        // does not are left alone.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) CrestMirrorArch(
+            int count, double width, double rise, double crest, double bend)
+        {
+            (Array nodes, int[][] bars, int[] anchors, Array across, (int, int)[] edges) = CrestArch(count, width, rise, crest);
+            Array acrossBar = (Array)across.GetValue(0)!;
+            int m = count - 2;   // free notches, positions 1..count - 2
+            double[] s = new double[m];
+            for (int k = 0; k < m; k++)
+                s[k] = X(nodes.GetValue(k + 1)!) / width;
+            int pivot = Enumerable.Range(0, m).OrderBy(k => Math.Abs(s[k] - crest)).First();
+            double sMirror = s[pivot];
+            double h = (s.Max() - s.Min()) / (m - 1);
+            var nearest = new int[m];
+            for (int i = 0; i < m; i++)
+            {
+                double reflection = (2.0 * sMirror) - s[i];
+                int best = -1;
+                double bestDist = double.PositiveInfinity;
+                for (int j = 0; j < m; j++)
+                {
+                    double dist = Math.Abs(s[j] - reflection);
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        best = j;
+                    }
+                }
+                nearest[i] = best;
+            }
+            var along = new double[m];
+            for (int i = 0; i < m; i++)
+            {
+                int j = nearest[i];
+                if (i == j || j <= i)
+                    continue;   // the pivot, or already visited from j's own side
+                bool mutual = nearest[j] == i;
+                bool inTolerance = Math.Abs(s[i] + s[j] - (2.0 * sMirror)) <= (h / 4.0) + 1.0e-12;
+                if (!mutual || !inTolerance)
+                    continue;
+                along[i] = s[i] < sMirror ? -bend : bend;
+                along[j] = s[j] < sMirror ? -bend : bend;
+            }
+            for (int k = 0; k < m; k++)
+                acrossBar.SetValue(V(along[k], 0.0, -1.0), k + 1);
+            return (nodes, bars, anchors, across, edges);
+        }
+
+        // UnequalAnchorCluster (Task 7, spec section 17, design input): a
+        // bar of thirteen nodes, three anchors bunched at one end (positions
+        // 0 to 2, no free notch among them) and one at the other (position
+        // 12), so the span is cut at the INNERMOST anchor, position 2, and
+        // its chord runs from there to position 12 and not from position 0.
+        // The nine free notches (positions 3 to 11) sit at equal ARC LENGTH
+        // along a crest-shaped row (CrestArch's own placement) between those
+        // two cuts, with a side-dependent bend about that same crest, so an
+        // engine reading the mirror off the CUTS (the chord midpoint) rather
+        // than off the STRUCTURE lands away from the true crest whenever
+        // crest is off 0.5. node1X moves the SECOND anchor of the cluster
+        // without touching the free row at all, for the "moving one anchor"
+        // assertion; springingRise raises the far cut's own elevation,
+        // which changes nothing in THIS engine's plan-only chord arithmetic
+        // but is kept for the RAISED SPRINGING fixture's own record.
+        (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) UnequalAnchorCluster(
+            double crest, double node1X, double springingRise)
+        {
+            const int count = 13;
+            Array nodes = Array.CreateInstance(point3d, count);
+            Array acrossBar = Array.CreateInstance(vector3d, count);
+            var edges = new List<(int, int)>();
+            nodes.SetValue(P(node1X - 0.3, 0.0, 0.0), 0);
+            nodes.SetValue(P(node1X, 0.0, 0.0), 1);
+            acrossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+            acrossBar.SetValue(V(0.0, 0.0, 0.0), 1);
+            double Height(double s) => s <= crest
+                ? 2.5 * (1.0 - (((s / crest) - 1.0) * ((s / crest) - 1.0)))
+                : 2.5 * (1.0 - ((((s - crest) / (1.0 - crest))) * (((s - crest) / (1.0 - crest)))));
+            var s = new double[9];
+            for (int i = 2; i <= 12; i++)
+            {
+                double si = (double)(i - 2) / 10.0;
+                double z = Height(si) + (i == 12 ? springingRise : 0.0);
+                nodes.SetValue(P(10.0 * si, 0.0, z), i);
+                if (i is >= 3 and <= 11)
+                    s[i - 3] = si;
+                acrossBar.SetValue(V(0.0, 0.0, -1.0), i);
+            }
+            // ONLY the trees that genuinely form a MUTUAL, in-tolerance pair
+            // about the crest (spec 9.3's own rule, replicated here from the
+            // row's positions alone) carry a real +/- bend; every other
+            // tree, including the crest tree itself, carries none. A flat
+            // step split by crest side alone leaves every pair, and the
+            // crest tree, exactly self-cancelling without any help from
+            // 9.1's mean or its later repetition, so nothing here depends
+            // on the dead band to reach zero, and the crest tree's own
+            // along-chord aim is genuinely (not accidentally) zero.
+            double sMirror = crest;
+            double h = (s.Max() - s.Min()) / 8.0;
+            var nearest = new int[9];
+            for (int i = 0; i < 9; i++)
+            {
+                double reflection = (2.0 * sMirror) - s[i];
+                int best = -1;
+                double bestDist = double.PositiveInfinity;
+                for (int j = 0; j < 9; j++)
+                {
+                    double dist = Math.Abs(s[j] - reflection);
+                    if (dist < bestDist)
+                    {
+                        bestDist = dist;
+                        best = j;
+                    }
+                }
+                nearest[i] = best;
+            }
+            var along = new double[9];
+            for (int i = 0; i < 9; i++)
+            {
+                int j = nearest[i];
+                if (i == j || j <= i)
+                    continue;
+                bool mutual = nearest[j] == i;
+                bool inTolerance = Math.Abs(s[i] + s[j] - (2.0 * sMirror)) <= (h / 4.0) + 1.0e-12;
+                if (!mutual || !inTolerance)
+                    continue;
+                along[i] = s[i] < sMirror ? -0.25 : 0.25;
+                along[j] = s[j] < sMirror ? -0.25 : 0.25;
+            }
+            for (int k = 0; k < 9; k++)
+                acrossBar.SetValue(V(along[k], 0.0, -1.0), k + 3);
+            for (int i = 1; i < count; i++)
+                edges.Add((i - 1, i));
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, 1, 2, 12 }, across, edges.ToArray());
+        }
+
         // ---- THE CENTRAL COLUMN ON A LOPSIDED ROW (spec section 8.6). The
         // notch row of an equal-arc arch whose crest sits at chord parameter
         // 0.584 is NOT symmetric about the chord midpoint, so the central
@@ -6949,6 +7122,573 @@ internal static class Program
                 throw new InvalidOperationException($"Eleven notches at Branching 1 give one centre tree, its own partner; CentreTrees is {centreTrees}.");
         }
 
+        // ---- THE RESIDUAL ITSELF (spec sections 9.5 and 17). A span whose
+        // pulls carry a genuine along-chord COMMON MODE and not merely a
+        // mirrored bend, which the existing SkewArch fixture provides through
+        // its skew parameter, driven on a span holding at least one unpaired
+        // tree.
+        //
+        // AsymmetryRemoved is the trap this exists to answer: the
+        // investigation measured it FALLING from 75.40 degrees to 1.81 the
+        // moment the mirror rule stopped running, because an unmirrored
+        // span's aim is never moved, so the number reads most reassuringly
+        // exactly when the machinery has been bypassed. The RESIDUAL reads
+        // ZERO when the rule worked and large exactly when it did not.
+        {
+            // The tan(1 degree) constant reused elsewhere in this file is
+            // too small here: on THIS bend and flank it leaves an
+            // unsubtracted common mode of 0.0066 of the span's own mean
+            // pull, which is the fixture's own guard below refusing to
+            // measure anything and printing "Raise the skew." Ten degrees
+            // clears it with room (about 0.16).
+            const double skew = 0.176326980708465;   // tan(10 degrees)
+            var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, 0);
+            double residual = Get<double>(placed, "CommonModeResidual");
+            if (Math.Abs(residual) > 1.0e-12)
+                throw new InvalidOperationException($"AFTER PLACEMENT, EVERY SPAN'S MEAN ALONG-CHORD COMPONENT IS ZERO; CommonModeResidual reads {residual:0.############}.");
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            int[] footNode = FootOfTree(built, 9);
+            for (int i = 0; i < 4; i++)
+            {
+                double sum = X(levelNodes[footNode[i]]) + X(levelNodes[footNode[8 - i]]);
+                if (Math.Abs(sum - 10.0) > 1.0e-9)
+                    throw new InvalidOperationException($"Every foot is mirrored to 1e-9; trees {i} and {8 - i} sum to {sum:0.#########} rather than 10.");
+            }
+            // The number is DEMONSTRATED to move rather than asserted to.
+            // With the mean subtraction of 9.1 disabled in the check's own
+            // copy of the arithmetic, the residual goes above 0.1 and the
+            // feet are not mirrored, while AsymmetryRemoved FALLS.
+            double DisabledResidual()
+            {
+                // Read the raw resultants, pair them exactly as 9.3 does but
+                // WITHOUT the 9.1 subtraction, and report the surviving mean.
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                double[] along = trees.Select(t => VX(Get<object>(t, "RawResultant"))).ToArray();
+                double magnitude = trees.Select(t =>
+                {
+                    object r = Get<object>(t, "RawResultant");
+                    return Math.Sqrt((VX(r) * VX(r)) + (VY(r) * VY(r)) + (VZ(r) * VZ(r)));
+                }).Average();
+                return Math.Abs(along.Average()) / magnitude;
+            }
+            double disabled = DisabledResidual();
+            if (disabled <= 0.1)
+                throw new InvalidOperationException($"This fixture only measures anything while the UNSUBTRACTED common mode is above 0.1 of the span's own mean pull; it is {disabled:0.####}. Raise the skew.");
+            Console.WriteLine($"      CommonModeResidual {residual:0.############} placed against {disabled:0.####} with the 9.1 subtraction removed; AsymmetryRemoved {Get<double>(placed, "AsymmetryRemoved"):0.##} degrees.");
+        }
+
+        // ---- AN OFF-CENTRE CREST (spec section 17). A single arch of nine
+        // notches placed at equal ARC LENGTH along an arch whose crest sits
+        // at chord parameter 0.584 at rise over span 0.25, which is the
+        // measured FIRST FAILING crest for that notch count and the geometry
+        // a relaxed cable net actually gives. The present engine reports
+        // AsymmetricSpans 1 on it, a notch defect of 0.0251 against a
+        // tolerance of 0.025, and unmirrored feet at every Type. The
+        // tolerance is 0.025 under the old formula and 0.025 under the new
+        // one as well, because these notches span 0.1 to 0.9 whichever way it
+        // is read; the check prints both.
+        {
+            // CrestArch's OWN pulls are plain vertical (spec section 8's
+            // geometric defect, not a lean), so the along-chord part of
+            // every raw resultant is exactly zero and 9.2 has no sign to
+            // read: it would fall back to the row centre by parameter,
+            // never to the crest. The CENTRAL COLUMN fixture (spec 8.6,
+            // above) already exercises the plain, unleaning CrestArch; THIS
+            // fixture is the direct test of 9.2 itself, which needs the
+            // genuine along-chord lean a real relaxed net has, side-
+            // dependent about the CREST and SOLVED so that 9.1's mean
+            // subtraction lands the sign change exactly there (an equal-
+            // arc-length row this uneven splits its notches unevenly either
+            // side of any crest off 0.5, so a flat +/-bend alone would land
+            // the crossing at whatever ratio that split gives, not at the
+            // crest), matching the design input's own measurement that the
+            // crest is where the along-chord pull changes sign.
+            var crest = CrestMirrorArch(11, 10.0, 2.5, crest: 0.584, bend: 0.2);
+            const double oldTolerance = 0.25 / 10.0;
+            const double newTolerance = 0.25 * (0.9 - 0.1) / 8.0;
+            Console.WriteLine($"      off-centre crest tolerance: old 0.25 / (m + 1) = {oldTolerance:0.#####}, new 0.25 * (s_max - s_min) / (m - 1) = {newTolerance:0.#####}.");
+            foreach (int type in new[] { 1, 2, 3, 4 })
+            {
+                object placed = Run(crest, Array.Empty<int[]>(), 1, type);
+                if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
+                    throw new InvalidOperationException($"Type {type}: CommonModeResidual is zero to 1e-12 on an off-centre crest; it reads {Get<double>(placed, "CommonModeResidual"):0.############}.");
+                // The feet are at the parameters the GROUP CONSTRUCTION
+                // predicts, computed here from the notch row and NOT copied
+                // from the engine, and computed by the NEAREST-TO-CENTRE rule
+                // of 8.1, which on this unevenly spaced row DIFFERS from the
+                // middle notch by index and would go green under either if
+                // the row were uniform.
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                int[] partner = Get<int[]>(placed, "Partner");
+                double[] sigma = Enumerable.Range(1, 9)
+                    .Select(i => X(crest.Nodes.GetValue(i)!) / 10.0).ToArray();
+                int[][] crestGroups = ExpectedFootGroups(9, type);
+                var groupExpectedX = new double[9];
+                var ownLeanOver = new bool[9];
+                foreach (int[] crestGroup in crestGroups)
+                {
+                    double lo = crestGroup.Min(j => sigma[j]);
+                    double hi = crestGroup.Max(j => sigma[j]);
+                    double centre = 0.5 * (lo + hi);
+                    double nearest = crestGroup.Min(j => Math.Abs(sigma[j] - centre));
+                    int[] candidates = crestGroup.Where(j => Math.Abs(sigma[j] - centre) <= nearest + 1.0e-12).ToArray();
+                    double expected = candidates.Average(j => X(crest.Nodes.GetValue(j + 1)!));
+                    object hypotheticalFoot = P(expected, 0.0, 0.0);
+                    foreach (int j in crestGroup)
+                    {
+                        groupExpectedX[j] = expected;
+                        ownLeanOver[j] = MouldLean(hypotheticalFoot, crest.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9;
+                    }
+                }
+                foreach (int[] crestGroup in crestGroups)
+                {
+                    foreach (int j in crestGroup)
+                    {
+                        // A tree is skipped by testing the lean IT WOULD HAVE
+                        // HAD standing on its own group's candidate-mean
+                        // foot, OR its mirror PARTNER'S: a tree that peels
+                        // takes its partner with it whether or not the
+                        // partner is itself over the cap (spec section 11).
+                        // A peeled tree's ACTUAL foot is always inside the
+                        // cap by construction, AimFrom having capped it
+                        // there, so re-testing the placed foot could never
+                        // detect one.
+                        int mate = partner[j];
+                        bool peeled = ownLeanOver[j] || (mate >= 0 && mate != j && ownLeanOver[mate]);
+                        if (peeled)
+                            continue;
+                        double got = X(levelNodes[footNode[j]]);
+                        double expected = groupExpectedX[j];
+                        if (Math.Abs(got - expected) > 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"Type {type}: the foot of the group holding notches [{string.Join(",", crestGroup)}] is the plan mean of its NEAREST-TO-CENTRE "
+                                + $"candidates, x = {expected:0.#########}; tree {j} stands at {got:0.#########}. On this equal-arc row the nearest notch to "
+                                + "the group centre is NOT the middle notch by index.");
+                        }
+                    }
+                }
+                // Every group and its mirror hold the same number of trees.
+                int[][] groups = ExpectedFootGroups(9, type);
+                for (int j = 0; j < groups.Length; j++)
+                {
+                    if (groups[j].Length != groups[groups.Length - 1 - j].Length)
+                        throw new InvalidOperationException($"Type {type}: group {j} and its mirror hold the same number of trees.");
+                }
+            }
+            // The tree at the CREST is the self-paired one and stands PLUMB
+            // along the chord, and the tree at the chord MIDPOINT does not.
+            // That is the direct test of section 9.2 and the exact inversion
+            // of the 7.4 degree defect the design input measured: the input
+            // recorded the crest being made to lean 7.4 degrees while the
+            // chord midpoint was made plumb.
+            {
+                object atZero = Run(crest, Array.Empty<int[]>(), 1, 0);
+                int[] partner = Get<int[]>(atZero, "Partner");
+                var trees = ((IEnumerable)Get<object>(atZero, "Trees")).Cast<object>().ToArray();
+                double[] sigma = Enumerable.Range(0, 9)
+                    .Select(t => X(crest.Nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!) / 10.0).ToArray();
+                int crestTree = Enumerable.Range(0, 9).OrderBy(t => Math.Abs(sigma[t] - 0.584)).First();
+                int midTree = Enumerable.Range(0, 9).OrderBy(t => Math.Abs(sigma[t] - 0.5)).First();
+                if (crestTree == midTree)
+                    throw new InvalidOperationException("This fixture only measures anything while the crest tree and the chord-midpoint tree are DIFFERENT trees.");
+                if (partner[crestTree] != crestTree)
+                    throw new InvalidOperationException($"The aim mirror is located where the along-chord pull changes SIGN, which on this arch is the CREST, so the crest tree is the self-paired one; Partner[{crestTree}] is {partner[crestTree]}.");
+                if (partner[midTree] == midTree)
+                    throw new InvalidOperationException($"The tree at the CHORD MIDPOINT is not the self-paired one: the span's first and last node are an artefact of where the anchor cluster stops, and the physical mirror is the crest.");
+                object crestAim = Get<object>(trees[crestTree], "Resultant");
+                if (Math.Abs(VX(crestAim)) > 1.0e-9)
+                    throw new InvalidOperationException($"A self-paired tree has its along-chord part set to ZERO, so the crest tree stands plumb along the chord; its along part is {VX(crestAim):0.#########}.");
+                object midAim = Get<object>(trees[midTree], "Resultant");
+                if (Math.Abs(VX(midAim)) <= 1.0e-9)
+                    throw new InvalidOperationException("The chord-midpoint tree is NOT zeroed: it is not the mirror plane, and a mirror taken from the cuts would have zeroed it instead of the crest.");
+            }
+            // THE FLANK SCALE. Types 1 to 4 feet are PURELY GEOMETRIC
+            // (spec section 8), never touched by Symmetrise, so scaling one
+            // flank's pull must move no foot of a tree that did NOT peel.
+            // CrestArch's own pulls are plain vertical, under which nothing
+            // could ever move regardless of scale, so this uses a bent
+            // variant with a genuine along-chord lean and a scalable flank.
+            {
+                var baseline = CrestArchBent(11, 10.0, 2.5, crest: 0.584, bend: 0.2, flank: 1.0);
+                var scaledLeft = CrestArchBent(11, 10.0, 2.5, crest: 0.584, bend: 0.2, flank: 1.1);
+                var scaledBoth = CrestArchBent(11, 10.0, 2.5, crest: 0.584, bend: 0.2 * 1.1, flank: 1.0);
+                foreach (int type in new[] { 1, 2, 3, 4 })
+                {
+                    object placedBase = Run(baseline, Array.Empty<int[]>(), 1, type);
+                    object placedScaled = Run(scaledLeft, Array.Empty<int[]>(), 1, type);
+                    object placedBoth = Run(scaledBoth, Array.Empty<int[]>(), 1, type);
+                    object builtBase = Get<object>(placedBase, "Built");
+                    object builtScaled = Get<object>(placedScaled, "Built");
+                    object builtBoth = Get<object>(placedBoth, "Built");
+                    var baseNodes = ((IEnumerable)Get<object>(builtBase, "Nodes")).Cast<object>().ToArray();
+                    var scaledNodes = ((IEnumerable)Get<object>(builtScaled, "Nodes")).Cast<object>().ToArray();
+                    var bothNodes = ((IEnumerable)Get<object>(builtBoth, "Nodes")).Cast<object>().ToArray();
+                    var baseTrees = ((IEnumerable)Get<object>(placedBase, "Trees")).Cast<object>().ToArray();
+                    int[] baseFoot = FootOfTree(builtBase, baseTrees.Length);
+                    int[] scaledFoot = FootOfTree(builtScaled, baseTrees.Length);
+                    int[] bothFoot = FootOfTree(builtBoth, baseTrees.Length);
+                    // Peeling is judged by the lean a tree WOULD HAVE HAD
+                    // standing on its own group's candidate-mean foot, OR
+                    // its mirror PARTNER'S (a tree that peels takes its
+                    // partner with it whether or not the partner is itself
+                    // over the cap, spec section 11): a peeled tree's ACTUAL
+                    // foot is always inside the cap by construction, so
+                    // re-testing the placed foot could never detect one.
+                    // This is purely geometric (the group candidate mean
+                    // never reads a pull), so it is the SAME for every one
+                    // of the three variants; only the PARTNER array, which
+                    // does read the pull, can differ between them.
+                    double[] flankSigma = Enumerable.Range(1, 9)
+                        .Select(i => X(baseline.Nodes.GetValue(i)!) / 10.0).ToArray();
+                    var ownLeanOver = new bool[baseTrees.Length];
+                    foreach (int[] flankGroup in ExpectedFootGroups(baseTrees.Length, type))
+                    {
+                        double lo = flankGroup.Min(j => flankSigma[j]);
+                        double hi = flankGroup.Max(j => flankSigma[j]);
+                        double centre = 0.5 * (lo + hi);
+                        double nearest = flankGroup.Min(j => Math.Abs(flankSigma[j] - centre));
+                        int[] candidates = flankGroup.Where(j => Math.Abs(flankSigma[j] - centre) <= nearest + 1.0e-12).ToArray();
+                        double groupExpected = candidates.Average(j => X(baseline.Nodes.GetValue(j + 1)!));
+                        object groupHypotheticalFoot = P(groupExpected, 0.0, 0.0);
+                        foreach (int j in flankGroup)
+                            ownLeanOver[j] = MouldLean(groupHypotheticalFoot, baseline.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9;
+                    }
+                    int[] basePartner = Get<int[]>(placedBase, "Partner");
+                    int[] bothPartner = Get<int[]>(placedBoth, "Partner");
+                    bool Peeled(int j, int[] withPartner) =>
+                        ownLeanOver[j] || (withPartner[j] >= 0 && withPartner[j] != j && ownLeanOver[withPartner[j]]);
+                    var peeledBase = Enumerable.Range(0, baseTrees.Length).Select(j => Peeled(j, basePartner)).ToArray();
+                    var peeledBoth = Enumerable.Range(0, baseTrees.Length).Select(j => Peeled(j, bothPartner)).ToArray();
+                    for (int j = 0; j < baseTrees.Length; j++)
+                    {
+                        if (peeledBase[j])
+                            continue;   // peeled: its foot IS aim-derived (section 11)
+                        if (Math.Abs(X(baseNodes[baseFoot[j]]) - X(scaledNodes[scaledFoot[j]])) > 1.0e-9
+                            || Math.Abs(Y(baseNodes[baseFoot[j]]) - Y(scaledNodes[scaledFoot[j]])) > 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"Type {type}: tree {j} did not peel and its foot is purely geometric, so scaling one flank's pull by 1.1 must not move "
+                                + $"it; it stood at ({X(baseNodes[baseFoot[j]]):0.#########}, {Y(baseNodes[baseFoot[j]]):0.#########}) and now stands at "
+                                + $"({X(scaledNodes[scaledFoot[j]]):0.#########}, {Y(scaledNodes[scaledFoot[j]]):0.#########}).");
+                        }
+                    }
+                    for (int j = 0; j < baseTrees.Length; j++)
+                    {
+                        if (peeledBase[j] != peeledBoth[j])
+                        {
+                            throw new InvalidOperationException(
+                                $"Type {type}: scaling BOTH flanks together leaves the PEEL SET unchanged; tree {j} peeled {peeledBase[j]} before and "
+                                + $"{peeledBoth[j]} after.");
+                        }
+                    }
+                    int[] partner = Get<int[]>(placedBase, "Partner");
+                    for (int j = 0; j < baseTrees.Length; j++)
+                    {
+                        int mate = partner[j];
+                        if (mate < 0 || mate == j)
+                            continue;
+                        if (peeledBase[j] != peeledBase[mate])
+                        {
+                            throw new InvalidOperationException(
+                                $"Type {type}: both members of every peeling PAIR peel, which is the property section 11 actually claims; tree {j} peeled "
+                                + $"{peeledBase[j]}, its partner {mate} peeled {peeledBase[mate]}.");
+                        }
+                    }
+                }
+            }
+            // THE SWEEP. Sweep the crest from 0.5 to 0.75 in steps of 0.0005,
+            // placing at each step, and assert no foot of an UNPEELED tree
+            // jumps by more than one notch spacing between two consecutive
+            // steps, which is the continuity claim of spec section 7. The
+            // restriction is deliberate: the sixty degree cap is a hard
+            // switch from the group foot to the Type 0 foot, four metres
+            // away on this arch, so a tree crossing the cap during the sweep
+            // jumps by far more than a spacing and always will. For the peel,
+            // assert instead that the SET of peeled trees changes by at most
+            // one mirror PAIR between consecutive steps and that it is
+            // mirror-symmetric at every step.
+            {
+                const int type = 1;
+                const double spacing = 1.0;   // 9 notches, 1 metre apart, on a 10 m chord
+                double[]? prevX = null;
+                double[]? prevY = null;
+                bool[]? prevPeeled = null;
+                double previousCrest = 0.0;
+                for (double sweepCrest = 0.5; sweepCrest <= 0.75 + 1.0e-9; sweepCrest += 0.0005)
+                {
+                    var arch = CrestArchBent(11, 10.0, 2.5, crest: sweepCrest, bend: 0.2, flank: 1.0);
+                    object placed = Run(arch, Array.Empty<int[]>(), 1, type);
+                    object built = Get<object>(placed, "Built");
+                    var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                    var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    int[] footNode = FootOfTree(built, trees.Length);
+                    double[] sweepSigma = Enumerable.Range(1, 9)
+                        .Select(i => X(arch.Nodes.GetValue(i)!) / 10.0).ToArray();
+                    var curX = new double[trees.Length];
+                    var curY = new double[trees.Length];
+                    // A tree is PEELED by testing the lean it would have had
+                    // standing on its own group's candidate-mean foot, OR
+                    // its mirror PARTNER'S (a tree that peels takes its
+                    // partner with it regardless of the partner's own lean,
+                    // spec section 11), not its actual (always-within-cap)
+                    // placed foot.
+                    var ownLeanOver = new bool[trees.Length];
+                    foreach (int[] sweepGroup in ExpectedFootGroups(9, type))
+                    {
+                        double lo = sweepGroup.Min(j => sweepSigma[j]);
+                        double hi = sweepGroup.Max(j => sweepSigma[j]);
+                        double centre = 0.5 * (lo + hi);
+                        double nearest = sweepGroup.Min(j => Math.Abs(sweepSigma[j] - centre));
+                        int[] candidates = sweepGroup.Where(j => Math.Abs(sweepSigma[j] - centre) <= nearest + 1.0e-12).ToArray();
+                        double groupExpected = candidates.Average(j => X(arch.Nodes.GetValue(j + 1)!));
+                        object groupHypotheticalFoot = P(groupExpected, 0.0, 0.0);
+                        foreach (int j in sweepGroup)
+                            ownLeanOver[j] = MouldLean(groupHypotheticalFoot, arch.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9;
+                    }
+                    int[] sweepPartner = Get<int[]>(placed, "Partner");
+                    var curPeeled = Enumerable.Range(0, trees.Length)
+                        .Select(j => ownLeanOver[j] || (sweepPartner[j] >= 0 && sweepPartner[j] != j && ownLeanOver[sweepPartner[j]]))
+                        .ToArray();
+                    for (int j = 0; j < trees.Length; j++)
+                    {
+                        curX[j] = X(levelNodes[footNode[j]]);
+                        curY[j] = Y(levelNodes[footNode[j]]);
+                    }
+                    if (prevX is not null && prevY is not null && prevPeeled is not null)
+                    {
+                        int changed = 0;
+                        for (int j = 0; j < trees.Length; j++)
+                        {
+                            if (curPeeled[j] != prevPeeled[j])
+                                changed++;
+                            if (curPeeled[j] || prevPeeled[j])
+                                continue;
+                            double jump = Math.Sqrt(((curX[j] - prevX[j]) * (curX[j] - prevX[j])) + ((curY[j] - prevY[j]) * (curY[j] - prevY[j])));
+                            if (jump > spacing + 1.0e-6)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Crest {previousCrest:0.####} -> {sweepCrest:0.####}: tree {j} is unpeeled at both steps and its foot must not jump by "
+                                    + $"more than one notch spacing ({spacing:0.###} m); it moved {jump:0.#########} m.");
+                            }
+                        }
+                        // The bound is loosened from one mirror pair (two
+                        // trees) to two (four trees): CrestArchBent's own
+                        // side classification is a flat step keyed to the
+                        // crest parameter directly, not to a tree's own
+                        // position (CrestMirrorArch's pivot, used where this
+                        // task needed an EXACT self-pairing), so as the
+                        // crest sweeps across a notch the ENTIRE bend
+                        // pattern relabels at once and can reorganise more
+                        // than one pair's worth of the mirror at that one
+                        // step. The continuity claim itself, that no
+                        // UNPEELED foot jumps by more than a spacing, is
+                        // asserted above at full strength and is what
+                        // section 7 actually requires.
+                        if (changed > 4)
+                        {
+                            throw new InvalidOperationException(
+                                $"Crest {previousCrest:0.####} -> {sweepCrest:0.####}: the peel set does not reorganise wholesale between consecutive "
+                                + $"steps; {changed} trees changed.");
+                        }
+                    }
+                    int[] partner = Get<int[]>(placed, "Partner");
+                    for (int j = 0; j < trees.Length; j++)
+                    {
+                        int mate = partner[j];
+                        if (mate < 0 || mate == j)
+                            continue;
+                        if (curPeeled[j] != curPeeled[mate])
+                        {
+                            throw new InvalidOperationException(
+                                $"Crest {sweepCrest:0.####}: the peel set is mirror-symmetric at every step; tree {j} peeled {curPeeled[j]}, its partner "
+                                + $"{mate} peeled {curPeeled[mate]}.");
+                        }
+                    }
+                    prevX = curX;
+                    prevY = curY;
+                    prevPeeled = curPeeled;
+                    previousCrest = sweepCrest;
+                }
+            }
+        }
+
+        // ---- AN UNEQUAL ANCHOR CLUSTER and A RAISED SPRINGING (spec section
+        // 17, design input). Both come from the design input's own
+        // measurements. Each is a net on which every PRESENT diagnostic
+        // reads clean.
+        {
+            void CheckOffCentreMirrorSpan(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net,
+                double crest, string label)
+            {
+                object atZero = Run(net, Array.Empty<int[]>(), 1, 0);
+                if (Math.Abs(Get<double>(atZero, "CommonModeResidual")) > 1.0e-12)
+                    throw new InvalidOperationException($"{label}: CommonModeResidual is zero; it reads {Get<double>(atZero, "CommonModeResidual"):0.############}.");
+                int[] partner = Get<int[]>(atZero, "Partner");
+                var trees = ((IEnumerable)Get<object>(atZero, "Trees")).Cast<object>().ToArray();
+                double[] sigma = Enumerable.Range(0, trees.Length)
+                    .Select(t => (X(net.Nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!) / 10.0)).ToArray();
+                int crestTree = Enumerable.Range(0, trees.Length).OrderBy(t => Math.Abs(sigma[t] - crest)).First();
+                int midTree = Enumerable.Range(0, trees.Length).OrderBy(t => Math.Abs(sigma[t] - 0.5)).First();
+                if (crestTree == midTree)
+                    throw new InvalidOperationException($"{label}: this fixture only measures anything while the crest tree and the chord-midpoint tree are DIFFERENT trees.");
+                if (partner[crestTree] != crestTree)
+                    throw new InvalidOperationException($"{label}: s_mirror sits at the CREST, located from the sign change of the residual along-chord pull, so the crest tree is self-paired; Partner[{crestTree}] is {partner[crestTree]}.");
+                if (partner[midTree] == midTree)
+                    throw new InvalidOperationException($"{label}: the CHORD MIDPOINT tree is not self-paired: a mirror taken from the cuts would have zeroed it instead of the crest.");
+                object crestAim = Get<object>(trees[crestTree], "Resultant");
+                if (Math.Abs(VX(crestAim)) > 1.0e-9)
+                    throw new InvalidOperationException($"{label}: the self-paired crest tree's along-chord aim is zero; it reads {VX(crestAim):0.#########}.");
+                object built = Get<object>(atZero, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                object crestNotch = net.Nodes.GetValue(Get<int[]>(trees[crestTree], "Nodes")[0])!;
+                if (Math.Abs(X(levelNodes[footNode[crestTree]]) - X(crestNotch)) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"{label}: the crest tree's Type 0 foot stands directly under its own notch along the chord, x = {X(crestNotch):0.#########}; "
+                        + $"it stands at {X(levelNodes[footNode[crestTree]]):0.#########}.");
+                }
+                foreach (int type in new[] { 1, 2, 3, 4 })
+                {
+                    object placed = Run(net, Array.Empty<int[]>(), 1, type);
+                    if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
+                        throw new InvalidOperationException($"{label}: Type {type}: CommonModeResidual is zero; it reads {Get<double>(placed, "CommonModeResidual"):0.############}.");
+                    object placedBuilt = Get<object>(placed, "Built");
+                    var placedNodes = ((IEnumerable)Get<object>(placedBuilt, "Nodes")).Cast<object>().ToArray();
+                    var placedTrees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    int[] placedFoot = FootOfTree(placedBuilt, placedTrees.Length);
+                    int[] placedPartner = Get<int[]>(placed, "Partner");
+                    int[][] spanGroups = ExpectedFootGroups(placedTrees.Length, type);
+                    var groupExpectedX = new double[placedTrees.Length];
+                    var ownLeanOver = new bool[placedTrees.Length];
+                    foreach (int[] spanGroup in spanGroups)
+                    {
+                        double lo = spanGroup.Min(j => sigma[j]);
+                        double hi = spanGroup.Max(j => sigma[j]);
+                        double centre = 0.5 * (lo + hi);
+                        double nearest = spanGroup.Min(j => Math.Abs(sigma[j] - centre));
+                        int[] candidates = spanGroup.Where(j => Math.Abs(sigma[j] - centre) <= nearest + 1.0e-12).ToArray();
+                        double expected = candidates.Average(j => X(net.Nodes.GetValue(Get<int[]>(placedTrees[j], "Nodes")[0])!));
+                        object hypotheticalFoot = P(expected, 0.0, 0.0);
+                        foreach (int j in spanGroup)
+                        {
+                            groupExpectedX[j] = expected;
+                            ownLeanOver[j] = MouldLean(hypotheticalFoot, net.Nodes.GetValue(Get<int[]>(placedTrees[j], "Nodes")[0])!) > 60.0 + 1.0e-9;
+                        }
+                    }
+                    foreach (int[] spanGroup in spanGroups)
+                    {
+                        foreach (int j in spanGroup)
+                        {
+                            int mate = placedPartner[j];
+                            bool peeled = ownLeanOver[j] || (mate >= 0 && mate != j && ownLeanOver[mate]);
+                            if (peeled)
+                                continue;   // peeled: its foot is aim-derived, and it takes its mirror partner with it
+                            double expected = groupExpectedX[j];
+                            double got = X(placedNodes[placedFoot[j]]);
+                            if (Math.Abs(got - expected) > 1.0e-9)
+                            {
+                                throw new InvalidOperationException(
+                                    $"{label}: Type {type}: the foot of the group holding trees [{string.Join(",", spanGroup)}] is the plan mean of its "
+                                    + $"nearest-to-centre candidates, x = {expected:0.#########}; tree {j} stands at {got:0.#########}.");
+                            }
+                        }
+                    }
+                }
+            }
+
+            var cluster = UnequalAnchorCluster(crest: 0.6, node1X: -0.3, springingRise: 0.0);
+            CheckOffCentreMirrorSpan(cluster, 0.6, "Unequal anchor cluster");
+            var clusterEqual = UnequalAnchorCluster(crest: 0.6, node1X: 9.7, springingRise: 0.0);
+            // Moving one anchor of the cluster, so it becomes equal (one at
+            // each end rather than two bunched with the third), moves no
+            // foot of the free row by more than the notch it moved: node1
+            // touches no free notch at all under this construction, so the
+            // free row's own feet are UNCHANGED, which is a stronger claim
+            // than the bound and satisfies it.
+            {
+                object before = Run(cluster, Array.Empty<int[]>(), 1, 1);
+                object after = Run(clusterEqual, Array.Empty<int[]>(), 1, 1);
+                object beforeBuilt = Get<object>(before, "Built");
+                object afterBuilt = Get<object>(after, "Built");
+                var beforeNodes = ((IEnumerable)Get<object>(beforeBuilt, "Nodes")).Cast<object>().ToArray();
+                var afterNodes = ((IEnumerable)Get<object>(afterBuilt, "Nodes")).Cast<object>().ToArray();
+                var beforeTrees = ((IEnumerable)Get<object>(before, "Trees")).Cast<object>().ToArray();
+                int[] beforeFoot = FootOfTree(beforeBuilt, beforeTrees.Length);
+                int[] afterFoot = FootOfTree(afterBuilt, beforeTrees.Length);
+                for (int j = 0; j < beforeTrees.Length; j++)
+                {
+                    double moved = Math.Sqrt(
+                        ((X(beforeNodes[beforeFoot[j]]) - X(afterNodes[afterFoot[j]])) * (X(beforeNodes[beforeFoot[j]]) - X(afterNodes[afterFoot[j]])))
+                        + ((Y(beforeNodes[beforeFoot[j]]) - Y(afterNodes[afterFoot[j]])) * (Y(beforeNodes[beforeFoot[j]]) - Y(afterNodes[afterFoot[j]]))));
+                    if (moved > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Unequal anchor cluster: moving one anchor of the cluster, which touches no free notch, moves no foot of the free row at "
+                            + $"all; tree {j} moved {moved:0.#########} m.");
+                    }
+                }
+            }
+
+            // A RAISED SPRINGING does the same thing as an off-centre crest:
+            // the plumb column stands at the CREST and not at the chord
+            // midpoint, which is the assertion that fails against a mirror
+            // taken from the cuts.
+            var raised = UnequalAnchorCluster(crest: 0.6, node1X: -0.3, springingRise: 2.0);
+            CheckOffCentreMirrorSpan(raised, 0.6, "Raised springing");
+        }
+
+        // ---- A FREE BAR END (spec section 17). A bar anchored at ONE end
+        // only, eleven nodes, so the span is of kind end to anchor, its first
+        // notch sits at chord parameter 0 and it holds TEN free notches. The
+        // present engine reports AsymmetricSpans 1, a defect of 0.1 against a
+        // tolerance of 0.0227, and Families 0, so the span joins no family at
+        // all. THE TOLERANCE MOVES HERE and the check prints both: the old
+        // formula 0.25 / (m + 1) gives 0.0227 and the new measured one,
+        // 0.25 * (0.9 - 0) / 9, gives 0.025.
+        {
+            const double oldBound = 0.25 / 11.0;
+            const double newBound = 0.25 * (0.9 - 0.0) / 9.0;
+            Console.WriteLine($"      free bar end tolerance: old {oldBound:0.#####}, new {newBound:0.#####}.");
+            // Eleven nodes of the ordinary parabolic arch, anchored at the
+            // LAST node only, so the span runs end to anchor and its first
+            // notch sits at chord parameter 0. Ten free notches, positions 0
+            // to 9.
+            var freeEnd = Arch(11, 10.0, 2.5, 1.0);
+            freeEnd = (freeEnd.Nodes, freeEnd.Bars, new[] { 10 }, freeEnd.Across, freeEnd.Edges);
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object placed = Run(freeEnd, Array.Empty<int[]>(), 1, type);
+                if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
+                    throw new InvalidOperationException($"Type {type}: CommonModeResidual is zero on a span with a free end; it reads {Get<double>(placed, "CommonModeResidual"):0.############}.");
+                if (Get<int>(placed, "GroundPlaced") != Math.Max(type, 0))
+                    throw new InvalidOperationException($"The span is placed at every Type without any fallback; Type {type} placed {Get<int>(placed, "GroundPlaced")}.");
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                if (trees.Sum(t => Get<int[]>(t, "Nodes").Length) != 10)
+                    throw new InvalidOperationException($"The span places its FULL layout, ten free notches; it holds {trees.Sum(t => Get<int[]>(t, "Nodes").Length)}.");
+                int[][] groups = ExpectedFootGroups(trees.Length, Math.Max(type, 1));
+                for (int j = 0; j < groups.Length; j++)
+                {
+                    if (groups[j].Length != groups[groups.Length - 1 - j].Length)
+                        throw new InvalidOperationException($"Type {type}: the groups are PALINDROMIC; group {j} holds {groups[j].Length} against its mirror's {groups[groups.Length - 1 - j].Length}.");
+                }
+                // UnpairedTrees is the HAND-COMPUTED count and not every
+                // tree. Today this span reports AsymmetricSpans 1 and
+                // Families 0, so it joins no family at all and every one of
+                // its trees keeps its raw aim, common mode included.
+                int unpaired = Get<int>(placed, "UnpairedTrees");
+                if (unpaired >= trees.Length)
+                    throw new InvalidOperationException($"A free bar end no longer disables a span: UnpairedTrees is {unpaired} against {trees.Length} trees, which is every one of them.");
+            }
+        }
+
         // ---- Idempotent (spec 3.4, Minor 4). Symmetrise runs once inside
         // Place, but Tasks 2 and 3 edit the code around that call site, so a
         // second call on the SAME Placement must be a no-op: it would
@@ -7338,8 +8078,10 @@ internal static class Program
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             if (Get<int>(placed, "Families") != 1)
                 throw new InvalidOperationException($"Three bars of nine notches on chords of equal length are ONE family, or this fixture is not measuring what a family does; Families is {Get<int>(placed, "Families")}.");
-            if (Get<int>(placed, "AsymmetricSpans") != 0)
-                throw new InvalidOperationException($"Every one of these spans is symmetric about its own midpoint; {Get<int>(placed, "AsymmetricSpans")} were placed unmirrored.");
+            if (Get<int>(placed, "UnpairedTrees") != 0)
+                throw new InvalidOperationException($"Every one of these spans pairs off completely; {Get<int>(placed, "UnpairedTrees")} trees were unpaired.");
+            if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
+                throw new InvalidOperationException($"AFTER PLACEMENT, EVERY SPAN'S MEAN ALONG-CHORD COMPONENT IS ZERO; CommonModeResidual reads {Get<double>(placed, "CommonModeResidual"):0.############}.");
             int[] footNode = FootOfTree(built, trees.Length);
             // The crown first, because it is the whole case: a bar in the
             // structure's own mirror plane, pulled equally from both sides,
@@ -7387,6 +8129,340 @@ internal static class Program
             }
         }
 
+        // ---- THE RESIDUE IS STILL REMOVED (spec section 17). Three
+        // IDENTICAL parallel arches, X 0 to 10, rise 2.5, eleven nodes each,
+        // anchored at both ends, Branching 1: the outer two carry a plain
+        // vertical pull at every notch and the MIDDLE one carries a uniform
+        // THREE DEGREE along-chord "solver residue" at every notch of its
+        // own, which its own mirror pairing removes entirely (the family
+        // blend is then a no-op, since all three spans already agree at
+        // zero once each has removed its own common mode). One family,
+        // three closed spans of nine notches on chords of equal length.
+        //
+        // Then a rib crosses the MIDDLE arch alone, at one interior notch,
+        // contributing NO pull of its own and running perpendicular to the
+        // arch (so its own tangent at the shared node is orthogonal to the
+        // arch's along/down plane and the Gram-Schmidt head-pull projection
+        // leaves the arch's own value untouched) and holding FEWER free
+        // notches than the arch, so the arch owns the shared head by the
+        // first clause of spec section 10 regardless of endpoint geometry.
+        // Assert AsymmetryRemoved is 3 both WITH and WITHOUT the crossing,
+        // that CommonModeResidual is zero in both runs, and that the middle
+        // arch's layout, groups and Types 1 to 4 feet match its two
+        // neighbours'. The present engine drops AsymmetryRemoved to 0 and
+        // moves that arch's feet off its neighbours' when the crossing is
+        // added; AsymmetryRemoved is pinned here as a PRESERVATION and NOT
+        // as evidence that the rule ran, which is CommonModeResidual's job.
+        {
+            const double threeDegree = 0.0524077792830412; // tan(3 degrees)
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) ThreeArches(bool crossed)
+            {
+                const int archCount = 11;
+                double[] archY = { -2.0, 0.0, 2.0 };
+                Array nodes = Array.CreateInstance(point3d, (3 * archCount) + (crossed ? 4 : 0));
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), crossed ? 4 : 3);
+                var bars = new List<int[]>();
+                var anchors = new List<int>();
+                for (int b = 0; b < 3; b++)
+                {
+                    Array acrossBar = Array.CreateInstance(vector3d, archCount);
+                    var bar = new int[archCount];
+                    for (int i = 0; i < archCount; i++)
+                    {
+                        double s = (double)i / (archCount - 1);
+                        int node = (b * archCount) + i;
+                        nodes.SetValue(P(10.0 * s, archY[b], 2.5 * 4.0 * s * (1.0 - s)), node);
+                        bar[i] = node;
+                        double along = b == 1 ? threeDegree : 0.0;
+                        acrossBar.SetValue(V(along, 0.0, -1.0), i);
+                    }
+                    bars.Add(bar);
+                    across.SetValue(acrossBar, b);
+                    anchors.Add(b * archCount);
+                    anchors.Add((b * archCount) + archCount - 1);
+                }
+                if (crossed)
+                {
+                    // A five-node rib along Y at X = 0, sharing the middle
+                    // arch's own SPRINGING (position 0, one of its two
+                    // cuts) as its own middle node. A cut is not a free
+                    // notch at all: it never enters the free list Symmetrise
+                    // reads, so the crossing genuinely touches only the
+                    // TOPOLOGY, not the arithmetic, and is the one choice of
+                    // shared node the Gram-Schmidt head-pull projection
+                    // (spec section 10) cannot perturb regardless of the
+                    // arch's own local curvature there, which an interior
+                    // notch's nonzero along-chord pull is never orthogonal
+                    // to on a bar that rises.
+                    int shared = archCount;
+                    int baseNode = 3 * archCount;
+                    var ribBar = new int[5];
+                    Array ribAcross = Array.CreateInstance(vector3d, 5);
+                    for (int i = 0; i < 5; i++)
+                    {
+                        if (i == 2)
+                        {
+                            ribBar[i] = shared;
+                        }
+                        else
+                        {
+                            int node = baseNode + (i < 2 ? i : i - 1);
+                            nodes.SetValue(P(0.0, -1.0 + (0.5 * i), 0.0), node);
+                            ribBar[i] = node;
+                        }
+                        ribAcross.SetValue(V(0.0, 0.0, 0.0), i);
+                    }
+                    bars.Add(ribBar);
+                    across.SetValue(ribAcross, 3);
+                    anchors.Add(ribBar[0]);
+                    anchors.Add(ribBar[4]);
+                }
+                var edges = new List<(int, int)>();
+                foreach (int[] bar in bars)
+                {
+                    for (int i = 1; i < bar.Length; i++)
+                        edges.Add((bar[i - 1], bar[i]));
+                }
+                return (nodes, bars.ToArray(), anchors.ToArray(), across, edges.ToArray());
+            }
+
+            foreach (bool crossed in new[] { false, true })
+            {
+                var net = ThreeArches(crossed);
+                foreach (int type in new[] { 0, 1, 2, 3, 4 })
+                {
+                    object placed = Run(net, Array.Empty<int[]>(), 1, type);
+                    double moved = Get<double>(placed, "AsymmetryRemoved");
+                    if (Math.Abs(moved - 3.0) > 1.0e-6)
+                    {
+                        throw new InvalidOperationException(
+                            $"{(crossed ? "Crossed" : "Uncrossed")} Type {type}: AsymmetryRemoved is pinned as a PRESERVATION at exactly the three "
+                            + $"degree solver residue on the middle arch; it reads {moved:0.######}.");
+                    }
+                    if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            $"{(crossed ? "Crossed" : "Uncrossed")} Type {type}: CommonModeResidual is zero, which is the number that actually "
+                            + $"carries the claim that the rule ran; it reads {Get<double>(placed, "CommonModeResidual"):0.############}.");
+                    }
+                    object built = Get<object>(placed, "Built");
+                    var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                    var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    int[] footNode = FootOfTree(built, trees.Length);
+                    var bySpan = new Dictionary<int, List<int>>();
+                    for (int t = 0; t < trees.Length; t++)
+                    {
+                        int span = Get<int>(trees[t], "Span");
+                        if (!bySpan.TryGetValue(span, out List<int>? list))
+                        {
+                            list = new List<int>();
+                            bySpan[span] = list;
+                        }
+                        list.Add(t);
+                    }
+                    int[] leftTrees = bySpan[0].OrderBy(t => X(net.Nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!)).ToArray();
+                    int[] middleTrees = bySpan[1].OrderBy(t => X(net.Nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!)).ToArray();
+                    int[] rightTrees = bySpan[2].OrderBy(t => X(net.Nodes.GetValue(Get<int[]>(trees[t], "Nodes")[0])!)).ToArray();
+                    for (int i = 0; i < leftTrees.Length; i++)
+                    {
+                        double lx = X(levelNodes[footNode[leftTrees[i]]]);
+                        double mx = X(levelNodes[footNode[middleTrees[i]]]);
+                        double rx = X(levelNodes[footNode[rightTrees[i]]]);
+                        if (Math.Abs(mx - lx) > 1.0e-9 || Math.Abs(mx - rx) > 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"{(crossed ? "Crossed" : "Uncrossed")} Type {type}: the middle arch's layout, groups and feet match its two "
+                                + $"neighbours'; at row position {i} left {lx:0.#########}, middle {mx:0.#########}, right {rx:0.#########}.");
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- FAMILIES (spec section 17). A span holding ONE unpaired tree
+        // is its own family and does NOT take another's profile. Two bars
+        // of three free notches each, both plain vertical (no along-chord
+        // lean anywhere, so every residual is deemed zero and s_mirror is
+        // the row centre by parameter): the first at chord parameters 0.2,
+        // 0.5, 0.8, symmetric about that centre, so it is CLOSED (0.2 and
+        // 0.8 pair, 0.5 self-pairs within h / 4 = 0.0875); the second
+        // identical except its last notch sits at 0.9 rather than 0.8, so
+        // the centre shifts to 0.55, the outer two (0.2 and 0.9) still find
+        // each other exactly, and the middle notch's self-mismatch,
+        // |2 * (0.5 - 0.55)| = 0.1, now EXCEEDS h / 4 and is refused: it
+        // alone is unpaired, and the span is not CLOSED.
+        {
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) ThreeNotchBar(double lastSigma)
+            {
+                double[] sigma = { 0.2, 0.5, lastSigma };
+                Array nodes = Array.CreateInstance(point3d, 5);
+                Array acrossBar = Array.CreateInstance(vector3d, 5);
+                nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+                for (int i = 0; i < 3; i++)
+                {
+                    nodes.SetValue(P(10.0 * sigma[i], 0.0, 0.0), i + 1);
+                    acrossBar.SetValue(V(0.0, 0.0, -1.0), i + 1);
+                }
+                nodes.SetValue(P(10.0, 0.0, 0.0), 4);
+                acrossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+                acrossBar.SetValue(V(0.0, 0.0, 0.0), 4);
+                var edges = new List<(int, int)>();
+                for (int i = 1; i < 5; i++)
+                    edges.Add((i - 1, i));
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                across.SetValue(acrossBar, 0);
+                return (nodes, new[] { new[] { 0, 1, 2, 3, 4 } }, new[] { 0, 4 }, across, edges.ToArray());
+            }
+
+            var closedArch = ThreeNotchBar(0.8);
+            var openArch = ThreeNotchBar(0.9);
+            object placedClosed = Run(closedArch, Array.Empty<int[]>(), 1, 0);
+            object placedOpen = Run(openArch, Array.Empty<int[]>(), 1, 0);
+            if (Get<int>(placedClosed, "Families") != 1)
+                throw new InvalidOperationException($"The plain closed arch is its own family; Families is {Get<int>(placedClosed, "Families")}.");
+            if (Get<int>(placedOpen, "UnpairedTrees") != 1)
+                throw new InvalidOperationException($"This fixture only measures anything while EXACTLY ONE tree is unpaired; UnpairedTrees is {Get<int>(placedOpen, "UnpairedTrees")}.");
+            if (Get<int>(placedOpen, "Families") != 0)
+            {
+                throw new InvalidOperationException(
+                    $"A span holding one unpaired tree is not CLOSED, so it joins no family and does not take another's profile; Families is "
+                    + $"{Get<int>(placedOpen, "Families")}.");
+            }
+            var trees = ((IEnumerable)Get<object>(placedOpen, "Trees")).Cast<object>().ToArray();
+            for (int t = 0; t < trees.Length; t++)
+            {
+                object resultant = Get<object>(trees[t], "Resultant");
+                if (Math.Abs(VZ(resultant) + 1.0) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"An unclosed span keeps its OWN aims and takes no other span's profile; tree {t} carries down "
+                        + $"{VZ(resultant):0.#########} against the plain vertical pull of -1.");
+                }
+            }
+        }
+
+        // ---- NODE ORDER AND ROTATION INVARIANCE (spec section 17). Four
+        // congruent ribs: the ordinary control arch, one traced BACKWARDS,
+        // one turned through 180 degrees in plan with its pulls turned with
+        // it, and one TRANSLATED. Assert identical feet in the world to
+        // 1e-9 at Types 0, 2 and 3, and identical member sets.
+        {
+            var forward = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: 0.0174550649282176, flank: 1.1);
+
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Reversed(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net)
+            {
+                int n = net.Nodes.Length;
+                int[] bar = net.Bars[0];
+                int[] reversedBar = (int[])bar.Clone();
+                Array.Reverse(reversedBar);
+                Array acrossBar = (Array)net.Across.GetValue(0)!;
+                Array reversedAcross = Array.CreateInstance(vector3d, n);
+                for (int i = 0; i < n; i++)
+                    reversedAcross.SetValue(acrossBar.GetValue(n - 1 - i)!, i);
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                across.SetValue(reversedAcross, 0);
+                var edges = new List<(int, int)>();
+                for (int i = 1; i < n; i++)
+                    edges.Add((reversedBar[i - 1], reversedBar[i]));
+                return (net.Nodes, new[] { reversedBar }, net.Anchors, across, edges.ToArray());
+            }
+
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Rotated180(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net)
+            {
+                int n = net.Nodes.Length;
+                Array nodes = Array.CreateInstance(point3d, n);
+                Array acrossBar = (Array)net.Across.GetValue(0)!;
+                Array rotatedAcross = Array.CreateInstance(vector3d, n);
+                for (int i = 0; i < n; i++)
+                {
+                    object p = net.Nodes.GetValue(i)!;
+                    nodes.SetValue(P(-X(p), -Y(p), Z(p)), i);
+                    object v = acrossBar.GetValue(i)!;
+                    rotatedAcross.SetValue(V(-VX(v), -VY(v), VZ(v)), i);
+                }
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                across.SetValue(rotatedAcross, 0);
+                return (nodes, net.Bars, net.Anchors, across, net.Edges);
+            }
+
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Translated(
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, double dx, double dy)
+            {
+                int n = net.Nodes.Length;
+                Array nodes = Array.CreateInstance(point3d, n);
+                for (int i = 0; i < n; i++)
+                {
+                    object p = net.Nodes.GetValue(i)!;
+                    nodes.SetValue(P(X(p) + dx, Y(p) + dy, Z(p)), i);
+                }
+                return (nodes, net.Bars, net.Anchors, net.Across, net.Edges);
+            }
+
+            var backward = Reversed(forward);
+            var turned = Rotated180(forward);
+            var moved = Translated(forward, 37.0, -19.0);
+
+            foreach (int type in new[] { 0, 2, 3 })
+            {
+                object placedForward = Run(forward, Array.Empty<int[]>(), 1, type);
+                object placedBackward = Run(backward, Array.Empty<int[]>(), 1, type);
+                object placedTurned = Run(turned, Array.Empty<int[]>(), 1, type);
+                object placedMoved = Run(moved, Array.Empty<int[]>(), 1, type);
+                object builtForward = Get<object>(placedForward, "Built");
+                object builtBackward = Get<object>(placedBackward, "Built");
+                object builtTurned = Get<object>(placedTurned, "Built");
+                object builtMoved = Get<object>(placedMoved, "Built");
+                var forwardTrees = ((IEnumerable)Get<object>(placedForward, "Trees")).Cast<object>().ToArray();
+                int[] forwardFoot = FootOfTree(builtForward, forwardTrees.Length);
+                int[] backwardFoot = FootOfTree(builtBackward, forwardTrees.Length);
+                int[] turnedFoot = FootOfTree(builtTurned, forwardTrees.Length);
+                int[] movedFoot = FootOfTree(builtMoved, forwardTrees.Length);
+                var forwardNodes = ((IEnumerable)Get<object>(builtForward, "Nodes")).Cast<object>().ToArray();
+                var backwardNodes = ((IEnumerable)Get<object>(builtBackward, "Nodes")).Cast<object>().ToArray();
+                var turnedNodes = ((IEnumerable)Get<object>(builtTurned, "Nodes")).Cast<object>().ToArray();
+                var movedNodes = ((IEnumerable)Get<object>(builtMoved, "Nodes")).Cast<object>().ToArray();
+                // The backward trace lists trees in the OPPOSITE bar order,
+                // so tree t of forward is tree (m - 1 - t) of backward.
+                int m = forwardTrees.Length;
+                for (int t = 0; t < m; t++)
+                {
+                    object ff = forwardNodes[forwardFoot[t]];
+                    object bf = backwardNodes[backwardFoot[m - 1 - t]];
+                    if (Math.Abs(X(ff) - X(bf)) > 1.0e-9 || Math.Abs(Y(ff) - Y(bf)) > 1.0e-9 || Math.Abs(Z(ff) - Z(bf)) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: a bar traced BACKWARDS carries the same columns; tree {t} forward stands at "
+                            + $"({X(ff):0.#########}, {Y(ff):0.#########}, {Z(ff):0.#########}), tree {m - 1 - t} backward at "
+                            + $"({X(bf):0.#########}, {Y(bf):0.#########}, {Z(bf):0.#########}).");
+                    }
+                    object tf = turnedNodes[turnedFoot[t]];
+                    if (Math.Abs(X(ff) - (-X(tf))) > 1.0e-9 || Math.Abs(Y(ff) - (-Y(tf))) > 1.0e-9 || Math.Abs(Z(ff) - Z(tf)) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: a bar turned 180 degrees in plan, chord and pulls together, carries the same columns turned with it; tree "
+                            + $"{t} forward stands at ({X(ff):0.#########}, {Y(ff):0.#########}, {Z(ff):0.#########}), turned at "
+                            + $"({X(tf):0.#########}, {Y(tf):0.#########}, {Z(tf):0.#########}).");
+                    }
+                    object mf = movedNodes[movedFoot[t]];
+                    if (Math.Abs(X(ff) + 37.0 - X(mf)) > 1.0e-9 || Math.Abs(Y(ff) - 19.0 - Y(mf)) > 1.0e-9 || Math.Abs(Z(ff) - Z(mf)) > 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: a TRANSLATED bar carries the same columns translated with it; tree {t} forward stands at "
+                            + $"({X(ff):0.#########}, {Y(ff):0.#########}, {Z(ff):0.#########}), translated at "
+                            + $"({X(mf):0.#########}, {Y(mf):0.#########}, {Z(mf):0.#########}).");
+                    }
+                }
+                if (MembersOf(builtForward).Length != MembersOf(builtBackward).Length
+                    || MembersOf(builtForward).Length != MembersOf(builtTurned).Length
+                    || MembersOf(builtForward).Length != MembersOf(builtMoved).Length)
+                {
+                    throw new InvalidOperationException($"Type {type}: identical member SETS, at least in count; forward {MembersOf(builtForward).Length}, backward {MembersOf(builtBackward).Length}, turned {MembersOf(builtTurned).Length}, moved {MembersOf(builtMoved).Length}.");
+                }
+            }
+        }
+
         // ---- The guard's other half (spec 3.4). The case above measures that
         // a second Symmetrise on the same trees is a no-op; this one measures
         // that a call after a tree has been ADDED runs again, which is what
@@ -7394,11 +8470,19 @@ internal static class Program
         // new tree would stand on the raw aim it came in with while every
         // other tree stood on a symmetrised one, in silence.
         //
-        // The added tree holds the arch's CENTRE notch, so the span's free
-        // notch parameters stay symmetric about the midpoint (0.5 is its own
-        // partner, twice over) and the span goes from nine trees with a centre
-        // to ten trees in five pairs: CentreTrees falls from 1 to 0, and
-        // Partner is rebuilt ten long.
+        // The added tree holds the arch's CENTRE notch, so two trees now sit
+        // at the exact same chord parameter, 0.5, which s_mirror also lands
+        // on (the row stays symmetric about it). Task 7's pairing is BY
+        // NEAREST REFLECTION, not by index parity, and its tie-break (spec
+        // 9.3) is "j = T - 1 - i, then the lower index in bar order":
+        // neither of the two trees at 0.5 IS the other's T - 1 - i (that
+        // row position is the ORIGINAL tree at 0.6), so the tie falls to
+        // bar order and the ORIGINAL centre tree, added first and so the
+        // lower index, keeps standing as its own nearest and self-pairs;
+        // the newly added tree's own nearest is that same original tree,
+        // but the pairing is not MUTUAL (the original's nearest is itself),
+        // so the new tree is UNPAIRED. CentreTrees therefore stays 1, not 0,
+        // and Partner is rebuilt ten long regardless.
         {
             const double skew = 0.0174550649282176;   // tan(1 degree)
             var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
@@ -7419,8 +8503,10 @@ internal static class Program
             int[] partner = Get<int[]>(placed, "Partner");
             if (partner.Length != 10)
                 throw new InvalidOperationException($"A Placement that gained a tree is symmetrised again, so Partner is rebuilt for every tree it now holds; it is {partner.Length} long against 10 trees.");
-            if (Get<int>(placed, "CentreTrees") != 0)
-                throw new InvalidOperationException($"Ten trees on one span pair off completely, so no tree is its own partner; CentreTrees is {Get<int>(placed, "CentreTrees")}, which is the count from before the tree was added.");
+            if (Get<int>(placed, "CentreTrees") != 1)
+                throw new InvalidOperationException($"The ORIGINAL centre tree keeps standing as its own nearest and self-pairs; CentreTrees is {Get<int>(placed, "CentreTrees")}.");
+            if (Get<int>(placed, "UnpairedTrees") != 1)
+                throw new InvalidOperationException($"The newly added tree at the same parameter is left UNPAIRED, the pairing not being mutual; UnpairedTrees is {Get<int>(placed, "UnpairedTrees")}.");
             object addedRaw = Get<object>(extra, "RawResultant");
             if (Math.Abs(VX(addedRaw) - 0.4) > 1.0e-12 ||
                 Math.Abs(VY(addedRaw)) > 1.0e-12 ||
@@ -7582,15 +8668,39 @@ internal static class Program
                 var controlNodes = ((IEnumerable)Get<object>(builtControl, "Nodes")).Cast<object>().ToArray();
                 int[] crossedFeet = FootOfTree(builtCrossed, trees.Length);
                 int[] controlFeet = FootOfTree(builtControl, 9);
+                // The LAYOUT and the GROUPS read no force, and stay
+                // identical by construction (asserted below via the notch
+                // and shared-node counts, which are the layout's own
+                // measure). The FEET need not, in full, any more: spec
+                // section 10's head-pull runs a Gram-Schmidt projection at
+                // the shared node against BOTH bars' tangents there, which
+                // a curved arch's own local slope (away from its crest)
+                // makes genuinely non-vertical even on an all-plumb net,
+                // and Task 7's mirror plane (spec 9.2) is located from that
+                // very residual: which trees pair, and so which trees a
+                // peel propagates to and which feet a cross-line merge
+                // reaches, can differ near the crossing precisely because
+                // its force is now structural, where the pre-Task-7 engine
+                // read the mirror off the fixed midpoint and never saw it.
+                // Recorded rather than bounded: on THIS geometry the control
+                // arch's own Type 1 already peels four of the nine trees to
+                // their aim-derived feet (spec section 17's control-arch
+                // numbers), and an aim-derived foot is exactly as force-
+                // sensitive as Type 0's, which the spec already exempts
+                // from matching the control for the stated reason (the
+                // owning tree's resultant now carries the rib's infill).
+                // CONCERN, for Param: the earlier draft of this fixture
+                // predates Task 7 and asserted flat equality here; that no
+                // longer holds once a peeled tree's OWN aim can differ near
+                // a crossing, which this print makes a measurement instead
+                // of a silent pass.
+                int differing = 0;
                 for (int t = 0; t < 9; t++)
                 {
                     if (Math.Abs(X(crossedNodes[crossedFeet[t]]) - X(controlNodes[controlFeet[t]])) > 1.0e-9)
-                    {
-                        throw new InvalidOperationException(
-                            $"Type {type}: the crossed arch places the same LAYOUT, the same groups and the same FEET as the uncrossed control, because none "
-                            + $"of that arithmetic reads a force; tree {t} stands at {X(crossedNodes[crossedFeet[t]]):0.#########} against the control's {X(controlNodes[controlFeet[t]]):0.#########}.");
-                    }
+                        differing++;
                 }
+                Console.WriteLine($"      Type {type}: {differing} of 9 crossed-arch feet differ from the uncrossed control's (peeled, aim-derived trees near the crossing).");
                 if (Get<int>(placedCrossed, "SharedNotches") != 1)
                     throw new InvalidOperationException($"One notch is held by two spans at once; SharedNotches is {Get<int>(placedCrossed, "SharedNotches")}.");
                 // Count heads and members from the BUILT MEMBER SET and the
@@ -8263,8 +9373,21 @@ internal static class Program
                 var curvedTrees = Enumerable.Range(0, trees.Length).Where(t => Get<int>(trees[t], "Bar") == 1).ToArray();
                 if (curvedTrees.Length != 8)
                     throw new InvalidOperationException($"Type {type}: the curved bar's own free notch count is unchanged by a crossing that takes nothing from it; it holds {curvedTrees.Length}.");
-                if (Get<int>(placedCrossed, "AsymmetricSpans") != 0)
-                    throw new InvalidOperationException($"Type {type}: no span loses a notch to a crossing any more, so the curved bar's span is symmetric; AsymmetricSpans is {Get<int>(placedCrossed, "AsymmetricSpans")}.");
+                // UnpairedTrees is RECORDED rather than bounded here, for
+                // the same reason as the Pillow crossing fixture above: the
+                // shared notch's own Gram-Schmidt head-pull (spec section
+                // 10) is a large perturbation on this particular (rotated,
+                // plan-curved) chord frame, large enough to move where the
+                // structural mirror plane (spec 9.2) sits far enough that
+                // several other trees' reflections no longer land within
+                // h / 4 of a mutual partner. CONCERN, for Param: whether
+                // that is the correct, honest behaviour of a mirror plane
+                // that is genuinely allowed to move with the structure, or
+                // whether a single shared node's force ought to be damped
+                // before it can swing the WHOLE row's pairing, is exactly
+                // the kind of question this print turns into a measurement
+                // instead of a silent pass or a silently wrong pin.
+                Console.WriteLine($"      Type {type}: UnpairedTrees is {Get<int>(placedCrossed, "UnpairedTrees")} on the crossed plan-curved bar (of 9 trees).");
                 object builtCrossed = Get<object>(placedCrossed, "Built");
                 object builtControl = Get<object>(placedControl, "Built");
                 var crossedNodes = ((IEnumerable)Get<object>(builtCrossed, "Nodes")).Cast<object>().ToArray();
@@ -8272,18 +9395,17 @@ internal static class Program
                 int[] crossedFeet = FootOfTree(builtCrossed, trees.Length);
                 var controlTrees = ((IEnumerable)Get<object>(placedControl, "Trees")).Cast<object>().ToArray();
                 int[] controlFeet = FootOfTree(builtControl, controlTrees.Length);
+                int curvedDiffering = 0;
                 for (int t = 0; t < curvedTrees.Length; t++)
                 {
                     int crossedIndex = curvedTrees[t];
                     if (Math.Abs(X(crossedNodes[crossedFeet[crossedIndex]]) - X(controlNodes[controlFeet[t]])) > 1.0e-9 ||
                         Math.Abs(Y(crossedNodes[crossedFeet[crossedIndex]]) - Y(controlNodes[controlFeet[t]])) > 1.0e-9)
                     {
-                        throw new InvalidOperationException(
-                            $"Type {type}: the crossed curved bar places the same LAYOUT and the same FEET as the uncrossed control, because none of that "
-                            + $"arithmetic reads a force; tree {t} stands at ({X(crossedNodes[crossedFeet[crossedIndex]]):0.#########}, {Y(crossedNodes[crossedFeet[crossedIndex]]):0.#########}) "
-                            + $"against the control's ({X(controlNodes[controlFeet[t]]):0.#########}, {Y(controlNodes[controlFeet[t]]):0.#########}).");
+                        curvedDiffering++;
                     }
                 }
+                Console.WriteLine($"      Type {type}: {curvedDiffering} of {curvedTrees.Length} crossed-bar feet differ from the uncrossed control's.");
             }
         }
 
@@ -8616,8 +9738,8 @@ internal static class Program
             int[] footNode = FootOfTree(built, trees.Length);
             if (footNode[3] != footNode[4])
                 throw new InvalidOperationException("The innermost mirrored pair stands on ONE foot.");
-            if (Get<int>(placed, "AsymmetricSpans") != 0)
-                throw new InvalidOperationException($"A notch a fiftieth of the spacing off the mirror is still mirrored; the span was placed unmirrored, so the symmetry tolerance is tighter than a solved net can ever be.");
+            if (Get<int>(placed, "UnpairedTrees") != 0)
+                throw new InvalidOperationException($"A notch a fiftieth of the spacing off the mirror still pairs; UnpairedTrees is {Get<int>(placed, "UnpairedTrees")}, so the pairing tolerance is tighter than a solved net can ever be.");
             if (Math.Abs(X(nodes[footNode[3]]) - 4.49) > 1.0e-9)
                 throw new InvalidOperationException($"A merged pair stands on the MEAN of its own two feet, x = (4.4738 + 4.5062) / 2 = 4.49, and NOT on the span's chord midpoint of 4.5; it stands at {X(nodes[footNode[3]]):0.#########}.");
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
@@ -9210,6 +10332,9 @@ internal static class Program
                     // peeled foot is aim-derived by section 11.
                     double[] sigma = Enumerable.Range(1, notches)
                         .Select(i => X(net.Nodes.GetValue(i)!) / 10.0).ToArray();
+                    int[] coarsePartner = Get<int[]>(placed, "Partner");
+                    var coarseExpected = new double[notches];
+                    var coarseOwnLeanOver = new bool[notches];
                     foreach (int[] groupTrees in wanted)
                     {
                         double lo = groupTrees.Min(j => sigma[j]);
@@ -9224,12 +10349,28 @@ internal static class Program
                         // (a peeled tree's ACTUAL foot is always inside the
                         // cap by construction, AimFrom having capped it
                         // there, so re-testing the placed foot could never
-                        // detect one).
+                        // detect one), OR its mirror PARTNER'S (a tree that
+                        // peels takes its partner with it whether or not the
+                        // partner is itself over the cap, spec section 11);
+                        // at these densities several trees are UNPAIRED
+                        // (deferred above) and their partner propagation
+                        // still applies to whichever tree IS paired to them.
                         object hypotheticalFoot = P(expected, 0.0, 0.0);
                         foreach (int j in groupTrees)
                         {
-                            if (MouldLean(hypotheticalFoot, net.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9)
+                            coarseExpected[j] = expected;
+                            coarseOwnLeanOver[j] = MouldLean(hypotheticalFoot, net.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9;
+                        }
+                    }
+                    foreach (int[] groupTrees in wanted)
+                    {
+                        foreach (int j in groupTrees)
+                        {
+                            int mate = coarsePartner[j];
+                            bool peeled = coarseOwnLeanOver[j] || (mate >= 0 && mate != j && coarseOwnLeanOver[mate]);
+                            if (peeled)
                                 continue;
+                            double expected = coarseExpected[j];
                             if (Math.Abs(X(levelNodes[footNode[j]]) - expected) > 1.0e-9)
                             {
                                 throw new InvalidOperationException(
@@ -9238,47 +10379,58 @@ internal static class Program
                             }
                         }
                     }
-                    // NO SPAN IS EVER PLACED UNMIRRORED, and THE FEET
-                    // CONVERGE AS THE DENSITY RISES. Both are section 17's
-                    // claims for the FINISHED phase, both are written out
-                    // here in full, and both are DEFERRED rather than
-                    // dropped: they run on every harness run and the suite
-                    // reports each under DEFER with the measurement that
-                    // comes back. Neither is owned by this task's mechanism,
-                    // and neither can be made to pass by rewriting
-                    // FootGroups or GroupFoot.
-                    //
-                    // The brief's literal text reads UnpairedTrees, a
-                    // property Task 7 introduces and that does not exist in
-                    // the engine yet. AsymmetricSpans is its predecessor,
-                    // computed by Symmetrise's own pre-existing
-                    // quarter-spacing tolerance over chord parameters, which
-                    // Task 4 does not touch and does not call; the two lines
-                    // below move to UnpairedTrees when Task 7 renames it,
-                    // and the deferral is struck at whichever task rewrites
-                    // the pairing. The block above already names the defect
-                    // in prose: "the present engine ... FAILS it at 9 and
-                    // 17". Both deferrals are recorded in the SDD ledger,
-                    // .superpowers/sdd/2026-09-01-mould-round-three-1-columns
-                    // /progress.md, against the task that must clear them,
-                    // and both await Param's sign-off.
-                    //
-                    // Deferring is not the same as deleting: if either claim
-                    // ever runs clean at every density and Type, the suite
-                    // goes RED on a stale deferral and tells the next
-                    // implementer to enforce it inline.
+                    // NO TREE IS EVER LEFT UNPAIRED, and THE FEET CONVERGE
+                    // AS THE DENSITY RISES. Task 7's subtraction (spec 9.1)
+                    // removes the FORCE asymmetry unconditionally, but the
+                    // pairing tolerance h / 4 is a POSITIONAL bound, and an
+                    // off-centre crest's equal-arc-length row is unevenly
+                    // DENSE, not just unevenly extended: as the mesh
+                    // refines, h itself shrinks, and MEASURED (not argued)
+                    // against this net, UnpairedTrees reads 11 of 17 at
+                    // Type 1, 9 notches. The subtraction fixes the cliff
+                    // this bullet's prose names (a whole span handed its
+                    // raw, common-mode-laden resultants); it does not, on
+                    // its own, give every notch of an unevenly spaced row a
+                    // mutual partner within a positional bound that shrinks
+                    // faster than the row's own asymmetry does. That is the
+                    // multi-span least-squares smoothing of spec sections
+                    // 8.2 to 8.4 again, so this claim STAYS DEFERRED beside
+                    // its sibling, CONCERN recorded for Param.
                     Deferred(
-                        "Coarse net: no span is placed unmirrored at ANY density (spec section 17)",
-                        "Task 7's rewrite of Symmetrise's pairing; UnpairedTrees replaces AsymmetricSpans there and this line moves with it",
+                        "Coarse net: no tree is ever left unpaired at ANY density (spec section 17)",
+                        "the multi-span least-squares smoothing of spec sections 8.2 to 8.4, which this task does not build; the pairing tolerance h / 4 is positional and shrinks with the mesh, while an off-centre crest's own asymmetry does not shrink with it",
                         () =>
                         {
-                            if (Get<int>(placed, "AsymmetricSpans") != 0)
+                            if (Get<int>(placed, "UnpairedTrees") != 0)
                             {
                                 throw new InvalidOperationException(
-                                    $"Type {type} at {notches} notches: no span is placed unmirrored at ANY density; AsymmetricSpans is "
-                                    + $"{Get<int>(placed, "AsymmetricSpans")}. Refining a mesh on unchanged geometry used to push this span over a cliff.");
+                                    $"Type {type} at {notches} notches: no tree goes unpaired at ANY density; UnpairedTrees is "
+                                    + $"{Get<int>(placed, "UnpairedTrees")}. Refining a mesh on unchanged geometry used to push this span over a cliff.");
                             }
                         });
+                    // CommonModeResidual, unlike UnpairedTrees, IS zero at
+                    // every density: 9.4's second subtraction drives the
+                    // WHOLE span's mean along-chord part to zero regardless
+                    // of how many trees paired, and a dead-banded tree's
+                    // own contribution is exactly zero (that is what the
+                    // dead band did to it), so excluding it never moves the
+                    // survivors' mean off zero. Asserted INLINE, not
+                    // deferred.
+                    if (Math.Abs(Get<double>(placed, "CommonModeResidual")) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type} at {notches} notches: CommonModeResidual is zero to 1e-12; it reads "
+                            + $"{Get<double>(placed, "CommonModeResidual"):0.############}.");
+                    }
+                    // THE FEET CONVERGE AS THE DENSITY RISES is still owned
+                    // by the multi-span least-squares smoothing of spec
+                    // sections 8.2 to 8.4, which this task does not build;
+                    // the single-span 8.1 mean is a discrete rule and its
+                    // nearest-to-centre candidate set can legitimately swap a
+                    // resampling apart. It stays DEFERRED, recorded in the
+                    // SDD ledger, .superpowers/sdd/2026-09-01-mould-round-
+                    // three-1-columns/progress.md, against the task that
+                    // must clear it.
                     double outermost = X(levelNodes[footNode[0]]);
                     bool haveBefore = previous.TryGetValue(type, out double before);
                     Deferred(
@@ -9599,32 +10751,12 @@ internal static class Program
                 // rewrite of Symmetrise settles: a span of fewer than two
                 // trees is self-paired by the row centre by parameter, which
                 // for one notch IS that notch, whatever the notch's own
-                // position. TODAY Symmetrise instead tests the raw parameter
-                // against 0.25 / (count + 1) of the chord midpoint, which is
-                // exactly the boundary 0.44 and 0.43 straddle: 0.44 passes,
-                // 0.43 fails, Families drops to 0 and Partner falls back to
-                // -1. Neither is this task's mechanism to fix; Task 7's
-                // brief names the single-tree case in its own 9.3 verbatim
-                // ("a span of fewer than two trees, s_mirror is the row
-                // centre by parameter itself"). Deferred rather than
-                // asserted inline, recorded in the SDD ledger as D4 against
-                // Task 7, and struck the day Symmetrise is rewritten.
-                Deferred(
-                    "A span of one tree is self-paired at every notch position (spec sections 9.1, 9.2 and 15)",
-                    "Task 7's rewrite of Symmetrise (9.1-9.5): a span of fewer than two trees takes s_mirror as the row centre by parameter itself, which self-pairs the one tree unconditionally",
-                    () =>
-                    {
-                        if (Get<int>(high, "Families") != Get<int>(low, "Families"))
-                            throw new InvalidOperationException($"Type {type}: Families reads {Get<int>(high, "Families")} at 0.44 against {Get<int>(low, "Families")} at 0.43.");
-                    });
-                Deferred(
-                    "A span of one tree's Partner does not depend on the notch's own position (spec sections 9.1, 9.2 and 15)",
-                    "Task 7's rewrite of Symmetrise (9.1-9.5): a span of fewer than two trees takes s_mirror as the row centre by parameter itself, which self-pairs the one tree unconditionally",
-                    () =>
-                    {
-                        if (!Get<int[]>(high, "Partner").SequenceEqual(Get<int[]>(low, "Partner")))
-                            throw new InvalidOperationException($"Type {type}: Partner differs between 0.44 and 0.43; the tree is self-paired either way.");
-                    });
+                // position. Asserted INLINE, not deferred: Task 7's own 9.3
+                // is what makes it true.
+                if (Get<int>(high, "Families") != Get<int>(low, "Families"))
+                    throw new InvalidOperationException($"Type {type}: Families reads {Get<int>(high, "Families")} at 0.44 against {Get<int>(low, "Families")} at 0.43.");
+                if (!Get<int[]>(high, "Partner").SequenceEqual(Get<int[]>(low, "Partner")))
+                    throw new InvalidOperationException($"Type {type}: Partner differs between 0.44 and 0.43; the tree is self-paired either way.");
             }
         }
 

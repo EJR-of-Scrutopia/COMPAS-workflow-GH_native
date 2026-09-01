@@ -441,8 +441,8 @@ namespace Ananke.COMPAS.Native.Components
                 Message = (type < 0 ? "Auto: " : string.Empty)
                     + $"Type {placement.GroundPlaced}, {Count(built.Feet.Count, "foot", "feet")}"
                     + (built.Peeled > 0 ? $", {built.Peeled} peeled" : string.Empty)
-                    + (placement.AsymmetricSpans > 0
-                        ? $", unmirrored {placement.AsymmetricSpans}"
+                    + (placement.UnpairedTrees > 0
+                        ? $", unpaired {placement.UnpairedTrees}"
                         : string.Empty);
 
                 Point3d[] netNodes = nodes.ToArray();
@@ -629,18 +629,20 @@ namespace Ananke.COMPAS.Native.Components
                     + $"{placement.AsymmetryRemoved:0.##} degrees; "
                     + $"{placement.CentreTrees} centre tree(s) standing in the "
                     + "mirror plane"
-                    + (placement.AsymmetricSpans > 0
-                        ? $"; {Count(placement.AsymmetricSpans, "span", "spans")} placed "
-                            + "unmirrored: a crossing or a free end breaks their symmetry"
+                    + (placement.UnpairedTrees > 0
+                        ? $"; {Count(placement.UnpairedTrees, "tree", "trees")} unpaired: "
+                            + "no mirror partner within a quarter of the span's own spacing"
                         : string.Empty)
-                    + ".",
+                    + $"; the largest surviving common mode is "
+                    + $"{placement.CommonModeResidual:0.####} of its span's own mean pull.",
                 placement.AsymmetryRemoved, unit: "degrees",
                 context: ResultDiagnostics.Context(
                     ("spans", spansWithTrees.ToString(CultureInfo.InvariantCulture)),
                     ("families", placement.Families.ToString(CultureInfo.InvariantCulture)),
                     ("moved", Inv(placement.AsymmetryRemoved, "0.##")),
                     ("centres", placement.CentreTrees.ToString(CultureInfo.InvariantCulture)),
-                    ("unmirrored", placement.AsymmetricSpans.ToString(CultureInfo.InvariantCulture)))));
+                    ("unpaired", placement.UnpairedTrees.ToString(CultureInfo.InvariantCulture)),
+                    ("residual", Inv(placement.CommonModeResidual, "0.####")))));
 
             var scored = placement.Tried
                 .OrderByDescending(t => t.Ground)

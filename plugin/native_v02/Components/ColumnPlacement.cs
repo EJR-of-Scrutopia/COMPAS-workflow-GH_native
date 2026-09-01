@@ -325,10 +325,9 @@ namespace Ananke.COMPAS.Native.Components
             public List<SpanFrame> Frames = new();
             /// <summary>
             /// The mirror partner of each tree: the tree it pairs with about
-            /// its span's midpoint, ITSELF for the centre tree of an odd
-            /// count, -1 where there is no partner at all: the ring tree, and
-            /// every tree of a span whose free notches are not symmetric about
-            /// its chord midpoint (see <c>AsymmetricSpans</c>).
+            /// its span's STRUCTURAL mirror plane (spec 9.2), ITSELF for a
+            /// SELF-PAIRED tree, -1 for the ring tree and for every UNPAIRED
+            /// tree (see <c>UnpairedTrees</c>).
             /// </summary>
             public int[] Partner = Array.Empty<int>();
             /// <summary>The largest angle Symmetrise moved an aim through, in degrees.</summary>
@@ -340,16 +339,27 @@ namespace Ananke.COMPAS.Native.Components
             /// tree count, so the number reported is the number shared.
             /// </summary>
             public int Families;
-            /// <summary>Trees that are their own mirror partner.</summary>
+            /// <summary>Trees that are their own mirror partner (SELF-PAIRED, spec 9.3).</summary>
             public int CentreTrees;
             /// <summary>
-            /// Spans placed UNMIRRORED, because their free notches are not
-            /// symmetric about their chord midpoint: a crossing that took an
-            /// interior notch, or a free bar end that put the first notch on
-            /// the chord's own start. Mirroring those would pair trees that do
-            /// not straddle the mirror plane.
+            /// Trees that found no mirror partner. It REPLACES
+            /// AsymmetricSpans, because no span is placed unmirrored any
+            /// more: the common mode goes by subtraction before any pairing
+            /// runs, and an unpaired tree now costs only the sharing of one
+            /// partner's across and down.
             /// </summary>
-            public int AsymmetricSpans;
+            public int UnpairedTrees;
+            /// <summary>Spans every tree of which is paired or self-paired.</summary>
+            public int ClosedSpans;
+            /// <summary>
+            /// The largest along-chord common mode still standing after
+            /// placement, as a fraction of its own span's mean pull. It reads
+            /// ZERO when the rule ran and large exactly when it did not, which
+            /// is why it and not AsymmetryRemoved is the number to look at:
+            /// the investigation measured AsymmetryRemoved FALLING from 75.40
+            /// degrees to 1.81 the moment the mirror rule stopped running.
+            /// </summary>
+            public double CommonModeResidual;
             /// <summary>
             /// Spans holding at least one tree. A span whose only free notches
             /// were already claimed by a crossing or by the ring tree holds
@@ -667,73 +677,66 @@ namespace Ananke.COMPAS.Native.Components
         // Symmetry
 
         /// <summary>
-        /// Mirror every span's resultants about its own midpoint, share them
-        /// across every span that holds the same notches, and report the
-        /// largest angle an aim moved through.
+        /// Remove the COMMON MODE by subtraction, locate the span's
+        /// STRUCTURAL mirror plane from where the residual along-chord pull
+        /// changes sign, pair trees about that plane by chord-parameter
+        /// reflection, average CLOSED spans into families, and report the
+        /// largest angle an aim moved through. Spec section 9, in order:
         ///
-        /// The GROUPING of spec 3.3 was already mirrored about the span's
-        /// midpoint; the FEET were not, because each tree aimed from its own
-        /// resultant and a solved net's forces are never mirrored to the last
-        /// digit and differ from bar to bar. That is what came back off
-        /// Param's review arch as columns that did not match across a span, a
-        /// centre column leaning, and neighbouring principal lines
-        /// disagreeing with one another.
+        /// 9.1 THE COMMON MODE GOES FIRST, BY SUBTRACTION, NOT BY PAIRING.
+        /// Every non-ring tree's resultant is read in its span's frame as
+        /// (along, across, down); for each span the MEAN along part over the
+        /// trees that carry a resultant at all (<c>HeadMain >= 0</c>) is
+        /// subtracted from every one of them, unconditionally, with no test
+        /// to fail and no state in which the step is skipped.
         ///
-        /// So each resultant is read in its span's frame as (along, across,
-        /// down): along the chord from the span's first node to its last,
-        /// across it in plan, and down. Tree i and tree m-1-i are a mirrored
-        /// pair, so their along parts are made equal and opposite and their
-        /// across and down parts equal; the centre tree of an odd count is
-        /// its own partner and its along part is zero.
+        /// 9.2 THE MIRROR PLANE COMES FROM THE STRUCTURE, not the anchors.
+        /// The span's trees are sorted by their MAIN NOTCH'S CHORD PARAMETER,
+        /// ties to the lower bar position, and s_mirror is located from the
+        /// sign change in the residual along part 9.1 leaves behind, falling
+        /// back to the row centre by parameter where there is none (a span
+        /// whose residuals are all deemed zero, or of fewer than two trees).
+        /// It is not clamped to the chord.
         ///
-        /// A span is only mirrored when it CAN be: when its free notches are
-        /// symmetric about its chord midpoint, each notch's partner standing
-        /// within a quarter of THAT SPAN'S notch spacing of where the mirror
-        /// would put it, which in chord parameter is 0.25 / (count + 1).
-        /// A crossing that takes an interior notch, or a bar end that is
-        /// neither anchor nor rim and so puts a notch on the chord's own
-        /// start, leaves a free list whose index i and index m-1-i are not
-        /// geometric mirrors at all, and forcing them equal and opposite would
-        /// move feet toward a plane nothing straddles. Such a span keeps its
-        /// own aims, takes its bands from each tree's own projection, merges
-        /// nothing, and is counted in AsymmetricSpans.
+        /// 9.3 THE PAIRING, PER TREE, BY PARAMETER. Tree i's candidate
+        /// partner is whichever tree sits nearest its reflection about
+        /// s_mirror; the pair is accepted on a mismatch of at most h / 4,
+        /// mutuality, and an equal notch count; a tree that is its own
+        /// nearest within h / 4 is SELF-PAIRED; everything else, including a
+        /// tree with no owned notch, is UNPAIRED and keeps what 9.1 left it.
         ///
-        /// A FAMILY then shares the ALONG and DOWN profiles only, and every
-        /// span keeps its OWN across. That is what makes the frame's one
-        /// arbitrary choice, which end of the bar Pattern traced first, drop
-        /// out of the answer entirely. Read a span in either node order and
-        /// the pair step leaves along ANTISYMMETRIC and down SYMMETRIC, so
-        /// along[i] and down[i] come out the same both ways and can be
-        /// averaged at face value; across comes out NEGATED, and is left
-        /// alone, so it is rebuilt against the same negated normal and lands
-        /// back in the world where the net put it. Bars congruent by
-        /// TRANSLATION (a barrel whose bars are traced in mixed directions)
-        /// and by ROTATION (opposite ribs of a dome, chord and pull turned
-        /// together) therefore both carry the same columns, by construction
-        /// and with no test to get wrong.
+        /// 9.4 SYMMETRISE, AND THE INVARIANT. An accepted pair's along parts
+        /// are made equal and opposite about their mean difference and its
+        /// across and down replaced by the pair's means; a self-paired
+        /// tree's along is zeroed; the family averaging of 9.5 runs; THE
+        /// SPAN MEAN IS SUBTRACTED ONCE MORE, because the pair step can put
+        /// a common mode back on a span holding unpaired trees; and only
+        /// then does the dead band apply, so an aim within PlumbDegrees of
+        /// vertical is vertical. AFTER PLACEMENT, EVERY SPAN'S MEAN
+        /// ALONG-CHORD COMPONENT IS ZERO except where the dead band moved a
+        /// tree.
         ///
-        /// Sharing across as well needed a rule for which way round a span
-        /// was, and every such rule has a null: a rib lying IN the structure's
-        /// own mirror plane, pulled equally from both sides, has no opinion,
-        /// and would take the family's across in a frame that exists only
-        /// because a curve was drawn left to right. It would lean out of the
-        /// plane it lies in, and to the other side if the curve were redrawn.
-        /// The across a span needs is its own, mirrored within itself by the
-        /// pair step, which is what 3.4 always said it was.
+        /// 9.5 THE FAMILIES. Only a CLOSED span, every tree of which is
+        /// paired or self-paired, may join one; the rest is unchanged from
+        /// spec 3.4: alike in free notch count, in Branching, and in chord
+        /// length within a tenth of the family LEAD's; ALONG and DOWN shared
+        /// by tree index, every span keeping its OWN across, which is what
+        /// makes the frame's one arbitrary choice, which end of the bar was
+        /// traced first, drop out of the answer entirely.
         ///
-        /// A family is the spans alike in free-notch count, in Branching (one
-        /// slider, so alike by construction) and in chord LENGTH within a
-        /// tenth of the family LEAD's. Length is in the key because the aim is
-        /// shared, and a short steep span handed a long flat one's aim can put
-        /// its foot beyond its own anchors. Measuring against the lead rather
-        /// than pairwise makes the bucketing non-transitive and order
-        /// dependent, which is deliberate: it is a cheap grouping of like with
-        /// like, not an equivalence relation. A span like no other is its own
-        /// family and keeps its own aims. An aim within PlumbDegrees of
-        /// vertical is vertical.
+        /// 9.6 THE RESIDUAL. Placement.CommonModeResidual is the largest,
+        /// over every span, of the surviving mean along part AS PLACED
+        /// divided by the mean |resultant|, excluding trees the dead band
+        /// moved and trees with no owned notch. It reads zero when the rule
+        /// worked and large exactly when it did not, which is why it and not
+        /// AsymmetryRemoved is the number to look at: the investigation
+        /// measured AsymmetryRemoved FALLING from 75.40 degrees to 1.81 the
+        /// moment the mirror rule stopped running.
         ///
-        /// Tree.Load is deliberately NOT averaged. The forces a tree reports
-        /// are its own; only WHERE IT STANDS is shared.
+        /// The RING TREE takes no part in any of this: it has no span, its
+        /// foot is fixed, and it is not symmetrised. Tree.Load is
+        /// deliberately NOT averaged by the family step: the forces a tree
+        /// reports are its own; only WHERE IT STANDS is shared.
         /// </summary>
         public static double Symmetrise(Placement placement, Point3d[] nodes, int[][] bars)
         {
@@ -760,39 +763,22 @@ namespace Ananke.COMPAS.Native.Components
             }
             placement.Families = 0;
             placement.CentreTrees = 0;
-            placement.AsymmetricSpans = 0;
+            placement.UnpairedTrees = 0;
+            placement.ClosedSpans = 0;
             placement.SpansWithTrees = 0;
+            placement.CommonModeResidual = 0.0;
             if (count == 0)
                 return 0.0;
 
-            // Span frames, and each span's trees in grouping order: they are
-            // added to Trees span by span, group by group, so insertion order
-            // IS grouping order.
             int spanCount = placement.Spans.Count;
-            var chord = new Vector3d[spanCount];
-            var normal = new Vector3d[spanCount];
-            var chordLength = new double[spanCount];
+
+            // Each span's trees, IN BAR ORDER: they are added to Trees span
+            // by span, group by group, so insertion order IS bar order, and
+            // a tree's position in this list is the row index spec section 9
+            // uses for its tie-breaks.
             var order = new List<int>[spanCount];
             for (int s = 0; s < spanCount; s++)
-            {
-                Span span = placement.Spans[s];
-                int[] bar = bars[span.Bar];
-                Point3d first = nodes[bar[span.First]];
-                Point3d last = nodes[bar[span.Last]];
-                double dx = last.X - first.X;
-                double dy = last.Y - first.Y;
-                double length = Math.Sqrt((dx * dx) + (dy * dy));
-                chordLength[s] = length;
-                if (length <= 1.0e-12)
-                {
-                    dx = 1.0;
-                    dy = 0.0;
-                    length = 1.0;
-                }
-                chord[s] = new Vector3d(dx / length, dy / length, 0.0);
-                normal[s] = new Vector3d(-chord[s].Y, chord[s].X, 0.0);
                 order[s] = new List<int>();
-            }
             for (int t = 0; t < count; t++)
             {
                 Tree tree = trees[t];
@@ -801,149 +787,170 @@ namespace Ananke.COMPAS.Native.Components
                 order[tree.Span].Add(t);
             }
 
-            // Which spans can be mirrored at all. A span is SYMMETRIC when
-            // every free notch's chord parameter s has a partner at 1 - s: the
-            // sorted parameters then pair off across the midpoint, which is
-            // exactly what index i and index m-1-i of the grouping claim to
-            // be. The free notches are the nodes the span's trees hold, every
-            // one of them in exactly one tree. A crossing that took an
-            // interior notch, or a free bar end that put the first notch at
-            // parameter zero, breaks it.
-            //
-            // The tolerance is a quarter of THIS SPAN'S notch spacing. In
-            // chord parameter that is 0.25 / (count + 1): count notches cut
-            // the chord into count + 1 gaps, so one gap is 1 / (count + 1) of
-            // it. The span's own count, not the net's median plan edge, which
-            // is a median over every edge in both mesh directions and stands
-            // in no fixed ratio to the spacing along any one bar: on a mesh
-            // refined along its principal lines that median is several notch
-            // spacings and the test stops discriminating, and on one refined
-            // across them it is a fraction of one and the test becomes exact
-            // coincidence again.
-            //
-            // The positions being compared come out of the solve, not off the
-            // curve the author drew, so they are never mirrored to the last
-            // digit: an exact-coincidence tolerance would call an ordinary
-            // relaxed arch asymmetric and quietly hand it back its pre-branch
-            // placement. A quarter of the spacing is a constant factor of four
-            // inside the failures this test exists to catch, which move a
-            // notch by a whole spacing or more (a crossing takes one out; a
-            // free end shifts every partner by half of one), and far outside
-            // the millimetres a solver moves a node it meant to leave alone.
-            //
-            // A span with a free END has one interval fewer than count + 1,
-            // an error of one part in count that a quarter-spacing bound does
-            // not notice.
-            var symmetric = new bool[spanCount];
-            var parameters = new List<double>();
+            // Each tree's resultant, read once in its own span's frame as
+            // (along, across, down), and its MAIN notch's chord parameter:
+            // the one place this method reads parameter order rather than
+            // bar order (9.2).
+            var along = new double[count];
+            var across = new double[count];
+            var down = new double[count];
+            var sParam = new double[count];
             for (int s = 0; s < spanCount; s++)
             {
                 if (order[s].Count == 0)
                     continue;
                 placement.SpansWithTrees++;
-                Span span = placement.Spans[s];
-                int[] bar = bars[span.Bar];
-                Point3d first = nodes[bar[span.First]];
-                Point3d last = nodes[bar[span.Last]];
-                parameters.Clear();
+                SpanFrame frame = placement.Frames[s];
                 foreach (int t in order[s])
                 {
-                    foreach (int node in trees[t].Nodes)
-                        parameters.Add(ChordParameter(first, last, nodes[node]));
+                    Vector3d r = trees[t].Resultant;
+                    along[t] = (r.X * frame.C.X) + (r.Y * frame.C.Y);
+                    across[t] = (r.X * frame.N.X) + (r.Y * frame.N.Y);
+                    down[t] = r.Z;
+                    sParam[t] = ChordParameter(frame.P0, frame.P1, nodes[trees[t].Nodes[0]]);
                 }
-                parameters.Sort();
-                double spacing = parameters.Count > 0
-                    ? 0.25 / (parameters.Count + 1)
-                    : 1.0;
-                symmetric[s] = true;
-                for (int i = 0; i < parameters.Count; i++)
-                {
-                    double partner = parameters[parameters.Count - 1 - i];
-                    if (Math.Abs(parameters[i] + partner - 1.0) > spacing)
-                    {
-                        symmetric[s] = false;
-                        break;
-                    }
-                }
-                if (!symmetric[s])
-                    placement.AsymmetricSpans++;
             }
 
-            var along = new double[count];
-            var across = new double[count];
-            var down = new double[count];
-            for (int t = 0; t < count; t++)
-            {
-                Tree tree = trees[t];
-                if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
-                    continue;
-                int s = tree.Span;
-                Vector3d r = tree.Resultant;
-                along[t] = (r.X * chord[s].X) + (r.Y * chord[s].Y);
-                across[t] = (r.X * normal[s].X) + (r.Y * normal[s].Y);
-                down[t] = r.Z;
-            }
+            // 9.1: the common mode goes first, by subtraction, and
+            // unconditionally: for a span of one tree, a free end, a span
+            // whose every tree is unpaired, a crossing, or any other span.
+            // A tree with no owned notch carries no resultant and takes no
+            // part in the mean.
+            SubtractSpanMean(trees, order, along);
 
-            // Mirror pairs, per span. An asymmetric span has no pairs at all:
-            // its trees keep Partner -1, which is what makes BuildLevel read
-            // each of their bands off its own projection and MergeFeet leave
-            // them alone.
+            // 9.2 and 9.3: the structural mirror plane and the pairing, per
+            // span. Also settles which spans are CLOSED, spec 9.5's gate on
+            // joining a family.
+            var closed = new bool[spanCount];
             for (int s = 0; s < spanCount; s++)
             {
-                if (!symmetric[s])
-                    continue;
                 List<int> ids = order[s];
-                int m = ids.Count;
-                for (int i = 0; i < m - 1 - i; i++)
-                {
-                    int low = ids[i];
-                    int high = ids[m - 1 - i];
-                    placement.Partner[low] = high;
-                    placement.Partner[high] = low;
-                    double half = 0.5 * (along[low] - along[high]);
-                    along[low] = half;
-                    along[high] = -half;
-                    double side = 0.5 * (across[low] + across[high]);
-                    across[low] = side;
-                    across[high] = side;
-                    double weight = 0.5 * (down[low] + down[high]);
-                    down[low] = weight;
-                    down[high] = weight;
-                }
-                if ((m % 2) == 1)
-                {
-                    int centre = ids[m / 2];
-                    placement.Partner[centre] = centre;
-                    along[centre] = 0.0;
-                    placement.CentreTrees++;
-                }
-            }
+                int rowCount = ids.Count;
+                if (rowCount == 0)
+                    continue;
+                SpanFrame frame = placement.Frames[s];
+                double h = frame.H;
+                var rowIndexOf = new Dictionary<int, int>();
+                for (int i = 0; i < rowCount; i++)
+                    rowIndexOf[ids[i]] = i;
 
-            // Families: the symmetric spans alike in free-notch count (hence
-            // in tree count and layout at this one Branching) and in chord
-            // LENGTH within a tenth of the family LEAD's. Length is in the key
-            // because the family shares an AIM: without it a three metre span
-            // and a ten metre one holding the same number of notches average
-            // together, and the short one takes an aim that can throw its foot
-            // past its own anchors. Measuring against the lead makes the
-            // grouping order dependent and non-transitive, which is what a
-            // bucket is; it is not claiming to be an equivalence relation. A
-            // span that matches no family is its own family, and averaging it
-            // with itself changes nothing.
+                // The row centre by parameter (spec section 4), the
+                // fallback for s_mirror, over EVERY free notch of the span.
+                double rowCentre = 0.5 * (frame.Sigma.Min() + frame.Sigma.Max());
+
+                double sMirror = LocateMirror(trees, ids, rowIndexOf, sParam, along, rowCentre);
+
+                // The candidate partner of every LOADED tree: the tree
+                // nearest its reflection about s_mirror. A tree with no
+                // owned notch takes no part at all, on either side of the
+                // search (9.3).
+                int[] loaded = ids.Where(t => trees[t].HeadMain >= 0).ToArray();
+                var nearest = new Dictionary<int, int>();
+                foreach (int t in loaded)
+                {
+                    int rowIndex = rowIndexOf[t];
+                    int mirrorRow = rowCount - 1 - rowIndex;
+                    int mirrorTreeId = ids[mirrorRow];
+                    double reflection = (2.0 * sMirror) - sParam[t];
+                    int best = -1;
+                    double bestDist = double.PositiveInfinity;
+                    foreach (int u in loaded)
+                    {
+                        double dist = Math.Abs(sParam[u] - reflection);
+                        if (best < 0 || dist < bestDist - 1.0e-12)
+                        {
+                            best = u;
+                            bestDist = dist;
+                        }
+                        else if (dist <= bestDist + 1.0e-12)
+                        {
+                            bool uIsMirror = u == mirrorTreeId;
+                            bool bestIsMirror = best == mirrorTreeId;
+                            if ((uIsMirror && !bestIsMirror)
+                                || (uIsMirror == bestIsMirror && rowIndexOf[u] < rowIndexOf[best]))
+                            {
+                                best = u;
+                                bestDist = dist;
+                            }
+                        }
+                    }
+                    nearest[t] = best;
+                }
+
+                var settled = new HashSet<int>();
+                foreach (int t in loaded)
+                {
+                    if (settled.Contains(t))
+                        continue;
+                    int j = nearest[t];
+                    if (j == t)
+                    {
+                        double selfMismatch = Math.Abs(2.0 * (sParam[t] - sMirror));
+                        if (selfMismatch <= (h / 4.0) + 1.0e-12)
+                        {
+                            placement.Partner[t] = t;
+                            along[t] = 0.0;
+                            placement.CentreTrees++;
+                            settled.Add(t);
+                        }
+                        continue;
+                    }
+                    if (settled.Contains(j) || nearest[j] != t)
+                        continue;
+                    double mismatch = Math.Abs(sParam[t] + sParam[j] - (2.0 * sMirror));
+                    bool sameCount = trees[t].Nodes.Length == trees[j].Nodes.Length;
+                    if (mismatch > (h / 4.0) + 1.0e-12 || !sameCount)
+                        continue;
+                    double half = 0.5 * (along[t] - along[j]);
+                    along[t] = half;
+                    along[j] = -half;
+                    double side = 0.5 * (across[t] + across[j]);
+                    across[t] = side;
+                    across[j] = side;
+                    double weight = 0.5 * (down[t] + down[j]);
+                    down[t] = weight;
+                    down[j] = weight;
+                    placement.Partner[t] = j;
+                    placement.Partner[j] = t;
+                    settled.Add(t);
+                    settled.Add(j);
+                }
+
+                closed[s] = ids.All(t => placement.Partner[t] != -1);
+                if (closed[s])
+                    placement.ClosedSpans++;
+            }
+            placement.UnpairedTrees = Enumerable.Range(0, count).Count(t =>
+                !trees[t].Ring && trees[t].Span >= 0 && trees[t].Span < spanCount
+                    && placement.Partner[t] < 0);
+
+            // 9.5: families, gated on CLOSED spans, otherwise unchanged from
+            // spec 3.4: alike in free-notch count (hence tree count and
+            // layout at this one Branching), in Branching (one slider, so
+            // alike by construction) and in chord LENGTH within a tenth of
+            // the family LEAD's. Length is in the key because the family
+            // shares an AIM: without it a three metre span and a ten metre
+            // one holding the same number of notches average together, and
+            // the short one takes an aim that can throw its foot past its
+            // own anchors. Measuring against the lead makes the bucketing
+            // non-transitive and order dependent, which is deliberate: it is
+            // a cheap grouping of like with like, not an equivalence
+            // relation.
             var families = new List<List<int>>();
             var familyNotches = new List<int>();
             var familyLength = new List<double>();
             for (int s = 0; s < spanCount; s++)
             {
-                if (order[s].Count == 0 || !symmetric[s])
+                if (order[s].Count == 0 || !closed[s])
                     continue;
                 int notches = order[s].Sum(t => trees[t].Nodes.Length);
+                double length = placement.Frames[s].L;
                 int found = -1;
                 for (int f = 0; f < families.Count && found < 0; f++)
                 {
                     if (familyNotches[f] != notches)
                         continue;
-                    if (Math.Abs(chordLength[s] - familyLength[f]) > 0.10 * familyLength[f])
+                    if (Math.Abs(length - familyLength[f]) > 0.10 * familyLength[f])
                         continue;
                     found = f;
                 }
@@ -951,7 +958,7 @@ namespace Ananke.COMPAS.Native.Components
                 {
                     families.Add(new List<int>());
                     familyNotches.Add(notches);
-                    familyLength.Add(chordLength[s]);
+                    familyLength.Add(length);
                     found = families.Count - 1;
                 }
                 families[found].Add(s);
@@ -963,15 +970,16 @@ namespace Ananke.COMPAS.Native.Components
                 if (family.Any(s => order[s].Count != m))
                     continue;
                 placement.Families++;
-                // ALONG and DOWN only. Both are node-order invariant after the
-                // pair step, along by being antisymmetric and down by being
-                // symmetric, so tree i of one span and tree i of another are
-                // the same tree of the family whichever way either bar was
-                // traced. ACROSS is not: it comes out negated when a bar is
-                // traced the other way, and there is no way to tell which way
-                // round a span is that does not fail on a span pulled equally
-                // from both sides. So across stays the span's own, already
-                // mirrored within the span by the pair step.
+                // ALONG and DOWN only. Both are node-order invariant after
+                // the pair step, along by being antisymmetric and down by
+                // being symmetric, so tree i of one span and tree i of
+                // another are the same tree of the family whichever way
+                // either bar was traced. ACROSS is not: it comes out
+                // negated when a bar is traced the other way, and there is
+                // no rule for which way round a span is that does not fail
+                // on a rib lying in the structure's own mirror plane. So
+                // across stays the span's own, already mirrored within the
+                // span by the pair step.
                 var meanAlong = new double[m];
                 var meanDown = new double[m];
                 foreach (int s in family)
@@ -999,33 +1007,164 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
+            // 9.4: the span mean is subtracted ONCE MORE, because the pair
+            // step (and the family averaging inside it) can put a common
+            // mode back on a span holding unpaired trees: with residuals of
+            // 1, -2 and 1, pairing the outer two to zero leaves a mean of
+            // -2/3 that was not there before.
+            SubtractSpanMean(trees, order, along);
+
             // Back into each span's own frame, with the dead band, and the
-            // angle every aim moved through. An asymmetric span was never
-            // read into a pair or a family, so it is handed back the
-            // resultant it came in with; the dead band is not part of the
-            // mirror machinery and still applies, because a degree of
-            // residual lean out of a solved net is noise on any span.
+            // angle every aim moved through.
             double moved = 0.0;
+            var deadBand = new bool[count];
             for (int t = 0; t < count; t++)
             {
                 Tree tree = trees[t];
                 if (tree.Ring || tree.Span < 0 || tree.Span >= spanCount)
                     continue;
                 int s = tree.Span;
-                Vector3d rebuilt = symmetric[s]
-                    ? new Vector3d(
-                        (along[t] * chord[s].X) + (across[t] * normal[s].X),
-                        (along[t] * chord[s].Y) + (across[t] * normal[s].Y),
-                        down[t])
-                    : tree.Resultant;
+                SpanFrame frame = placement.Frames[s];
+                Vector3d rebuilt = new Vector3d(
+                    (along[t] * frame.C.X) + (across[t] * frame.N.X),
+                    (along[t] * frame.C.Y) + (across[t] * frame.N.Y),
+                    down[t]);
                 if (AngleBetween(MouldGeometry.AimFrom(rebuilt), Vector3d.ZAxis) <= PlumbDegrees)
+                {
                     rebuilt = new Vector3d(0.0, 0.0, down[t]);
+                    deadBand[t] = true;
+                }
                 tree.Resultant = rebuilt;
                 moved = Math.Max(moved, AngleBetween(
                     MouldGeometry.AimFrom(tree.RawResultant),
                     MouldGeometry.AimFrom(tree.Resultant)));
             }
+
+            // 9.6: the residual. For each span, the along parts of its
+            // non-ring trees AS PLACED, excluding trees the dead band moved
+            // and trees with no owned notch; the span's residual is the
+            // absolute mean of those divided by the mean of their
+            // |resultant|, zero where the set is empty or that mean is zero.
+            // CommonModeResidual is the largest of them over the net.
+            for (int s = 0; s < spanCount; s++)
+            {
+                List<int> ids = order[s];
+                if (ids.Count == 0)
+                    continue;
+                int[] set = ids.Where(t => trees[t].HeadMain >= 0 && !deadBand[t]).ToArray();
+                if (set.Length == 0)
+                    continue;
+                double meanAlongPlaced = set.Average(t => along[t]);
+                double meanMagnitude = set.Average(t => trees[t].Resultant.Length);
+                double residual = meanMagnitude <= 1.0e-15
+                    ? 0.0
+                    : Math.Abs(meanAlongPlaced) / meanMagnitude;
+                placement.CommonModeResidual = Math.Max(placement.CommonModeResidual, residual);
+            }
+
             return moved;
+        }
+
+        /// <summary>
+        /// Spec 9.1, and its repetition in 9.4: subtract, from every tree of
+        /// every span that carries a resultant at all (<c>HeadMain >= 0</c>),
+        /// the MEAN along part over that same set. Unconditional, with no
+        /// test to fail and no state in which it is skipped.
+        /// </summary>
+        private static void SubtractSpanMean(
+            List<Tree> trees, List<int>[] order, double[] along)
+        {
+            for (int s = 0; s < order.Length; s++)
+            {
+                List<int> ids = order[s];
+                if (ids.Count == 0)
+                    continue;
+                int[] carrying = ids.Where(t => trees[t].HeadMain >= 0).ToArray();
+                if (carrying.Length == 0)
+                    continue;
+                double mean = carrying.Average(t => along[t]);
+                foreach (int t in carrying)
+                    along[t] -= mean;
+            }
+        }
+
+        /// <summary>
+        /// Spec 9.2: locate one span's structural mirror plane from where
+        /// the residual along part 9.1 leaves behind changes sign. The
+        /// span's trees are read SORTED BY THEIR MAIN NOTCH'S CHORD
+        /// PARAMETER, ties to the lower bar position (<paramref
+        /// name="rowIndexOf"/>), which is the one place spec section 9 reads
+        /// parameter order rather than bar order.
+        /// </summary>
+        private static double LocateMirror(
+            List<Tree> trees,
+            List<int> ids,
+            Dictionary<int, int> rowIndexOf,
+            double[] sParam,
+            double[] along,
+            double rowCentre)
+        {
+            int[] sorted = ids.OrderBy(t => sParam[t]).ThenBy(t => rowIndexOf[t]).ToArray();
+
+            // A_mag over the span's own trees, unfiltered: spec 9.2 reads it
+            // over "those trees", the sorted row, not the loaded subset.
+            double magnitudeMean = ids.Average(t => trees[t].Resultant.Length);
+            bool AllZero()
+            {
+                if (magnitudeMean <= 1.0e-15)
+                    return true;
+                foreach (int t in sorted)
+                {
+                    if (Math.Abs(along[t]) > 1.0e-9 * magnitudeMean)
+                        return false;
+                }
+                return true;
+            }
+            bool DeemedZero(int t) => magnitudeMean <= 1.0e-15 || Math.Abs(along[t]) <= 1.0e-9 * magnitudeMean;
+
+            var candidates = new List<double>();
+            if (sorted.Length >= 2 && !AllZero())
+            {
+                for (int k = 0; k < sorted.Length; k++)
+                {
+                    int t = sorted[k];
+                    if (DeemedZero(t))
+                    {
+                        // A tree whose residual is deemed zero is itself a
+                        // sign change, at its own parameter: the exact limit
+                        // of the interpolation below, so the plane moves
+                        // continuously as a residual passes through zero.
+                        candidates.Add(sParam[t]);
+                        continue;
+                    }
+                    if (k + 1 < sorted.Length)
+                    {
+                        int u = sorted[k + 1];
+                        if (!DeemedZero(u) && (along[t] > 0.0) != (along[u] > 0.0))
+                        {
+                            double frac = along[t] / (along[t] - along[u]);
+                            candidates.Add(sParam[t] + (frac * (sParam[u] - sParam[t])));
+                        }
+                    }
+                }
+            }
+
+            if (candidates.Count == 0)
+                return rowCentre;
+            if (candidates.Count == 1)
+                return candidates[0];
+            double sMirror = candidates[0];
+            double best = Math.Abs(candidates[0] - rowCentre);
+            for (int k = 1; k < candidates.Count; k++)
+            {
+                double d = Math.Abs(candidates[k] - rowCentre);
+                if (d < best - 1.0e-12)
+                {
+                    best = d;
+                    sMirror = candidates[k];
+                }
+            }
+            return sMirror;
         }
 
         /// <summary>
