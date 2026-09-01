@@ -171,6 +171,45 @@ Grasshopper and not the studio's build sequence at all. If that is confirmed, th
 are wrong and the seam-outward ordering ruling stands on its usefulness to him rather than on any
 claim about the studio.
 
+## 1d. Flowlines and Diagnostics come off Skin
+
+> "also from skin we can remove flow lines ouptut then if the tesselation / new pattern is correctly
+> shaped to the flow lines. Remove Diagnositcs too, leave the info bubble that pops up as enough"
+
+FLOWLINES. Sound, and conditional on the rework of section 1a. The Flowlines output exists so the
+author can eyeball the force field before committing to a cut; once the cells are BOUNDED by the flow
+lines, the pattern is the field and a separate output says the same thing twice. The dependency must
+be respected in the plan: Flowlines may only be removed in the same wave that reshapes the pattern
+onto the flow. Removing it first would leave him with the present Voronoi and no way to see the field
+it ignores.
+
+DIAGNOSTICS. Accepted, with one requirement. The D output today carries the pattern name, the cell
+and course counts, mean, min and max piece length, the stagger, the boundary-clipped count, the
+refused transition bands with their heights, and the two plan-validity drop counts. Some of that is
+already on the Message line and in the warnings; the REST MUST MOVE to the balloon as a Remark rather
+than disappear. The min and max piece length in particular is the number that tells him whether a
+pattern is uniform, and it was what showed him the force-aligned pattern was not: his earlier
+screenshot read min 0.377 m against max 3.889 m. Losing it would remove the measurement that
+diagnoses the very problem this round exists to fix.
+
+Note the trade he is making, so it is a choice and not a surprise: a balloon can be read and cannot be
+wired. If he later wants to compare two patterns numerically, or log a sweep of sizes, he will want an
+output again.
+
+A BETTER OPTION IS AVAILABLE and is put to him, because it fits the plugin's own architecture rather
+than working around it. Skin is the only component in the chain that takes a Result and does NOT emit
+one; every other component passes RES through with its own diagnostics appended under its own prefix,
+and Diagnose is the single place the author reads them. If Skin emitted RES with skin.* diagnostics
+appended, the numbers would live where every other component's numbers live, Diagnose would read them
+with everything else, and the balloon would still carry the summary. That removes two ports and adds
+one, leaves Skin with Cells and Surface as its only geometry outputs, and puts it in the RES chain
+where it arguably always belonged.
+
+Implementation note for the plan: the harness asserts on D's text today, including the transition line
+and the drop counts. Those assertions move to the engine's own returned PatternDiagnostics, which is
+where they should have been, since the engine is measurable without Rhino and the component's text is
+not.
+
 ## 2. Skin outputs a surface as well as a polyline
 
 > "one thing worth adding to the skin component is that it outputs a surface too, it actually can be
