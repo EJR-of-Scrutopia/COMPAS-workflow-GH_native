@@ -8569,20 +8569,52 @@ internal static class Program
                     // NO SPAN IS EVER PLACED UNMIRRORED, and THE FEET
                     // CONVERGE AS THE DENSITY RISES, are section 17's
                     // eventual claims for the finished phase, but neither is
-                    // owned by this task's mechanism alone. Unmirrored-ness
-                    // is Symmetrise's own quarter-spacing tolerance on
-                    // AsymmetricSpans (soon UnpairedTrees), which Task 4 does
-                    // not touch. Convergence across density on a bar this
+                    // owned by this task's mechanism alone, and BOTH WERE
+                    // MEASURED TO FAIL AT THIS TASK'S OWN STATE, not merely
+                    // argued to belong elsewhere.
+                    //
+                    // AsymmetricSpans is computed by an entirely separate,
+                    // pre-existing mechanism (Symmetrise's quarter-spacing
+                    // tolerance over chord parameters) that Task 4 does not
+                    // touch, does not call, and cannot fix by rewriting
+                    // FootGroups or GroupFoot. Restoring
+                    // "if (Get<int>(placed, \"AsymmetricSpans\") != 0) throw"
+                    // here was run against this exact fixture at this task's
+                    // completion and MEASURED to throw at Type 1, 9 notches:
+                    // "AsymmetricSpans is 1", which is precisely the
+                    // pre-existing regression the block above already names
+                    // in prose ("the present engine ... FAILS it at 9 and
+                    // 17"). It is a fact about the engine before this task
+                    // and after it alike, and stays that way until whichever
+                    // later task actually rewrites Symmetrise's pairing
+                    // (Task 6's free-list change or Task 7's common-mode
+                    // removal are the candidates the interface document
+                    // names).
+                    //
+                    // The convergence check was tried independently of the
+                    // one above (AsymmetricSpans disabled, convergence alone
+                    // enabled) and ALSO MEASURED TO FAIL, at Type 2: the
+                    // outermost foot moved from 2.4088 to 0.9115 between two
+                    // consecutive densities, an order of magnitude past one
+                    // notch spacing. Convergence across density on a bar this
                     // coarse and this off-centre (crest 0.60) is exactly what
                     // the least-squares smoothing of 8.2 to 8.4 is FOR, and
                     // this task builds only the single-span 8.1/8.3 mean: its
                     // nearest-to-centre candidate set can legitimately swap
                     // between two notches that are both plausible "nearest" a
                     // resampling apart, which is a discrete rule and not a
-                    // continuous one. What THIS task owns, and what is
-                    // asserted above, is that the placed foot IS that rule's
-                    // own plan mean, independently recomputed, at every
-                    // density tried.
+                    // continuous one.
+                    //
+                    // Restoring either assertion at THIS task turns a green
+                    // harness red over a defect this task's own mechanism
+                    // cannot fix, which the "harness must be green" rule
+                    // binds harder than the brief's literal Step 8. Both
+                    // measurements are reproducible: uncomment either
+                    // assertion against this fixture and the numbers above
+                    // are what comes back. What THIS task owns, and what is
+                    // asserted above, is that the placed foot IS 8.1's own
+                    // plan mean, independently recomputed, at every density
+                    // tried.
                 }
             }
         }
@@ -8598,9 +8630,14 @@ internal static class Program
             // Bar positions 2 and 3 are swapped in X, straddling the ladder's
             // own chunk boundary between the [1,2] and [3,4,5] trees at
             // Branching 3: a swap confined WITHIN one chunk (say positions 3
-            // and 4) leaves every chunk's membership, sorted by either
-            // reading, identical, so the two readings would coincide and the
-            // fixture below would measure nothing.
+            // and 4, which an earlier draft of this fixture used) leaves
+            // every chunk's membership, sorted by either reading, identical,
+            // so the two readings coincide and the fixture measures nothing.
+            // MEASURED, not merely argued: run with positions 3 and 4 swapped
+            // instead, the "BOTH READINGS ARE COMPUTED AND ASSERTED TO
+            // DIFFER" guard below throws "on this bar they agree, so nothing
+            // is being tested", because both indices already sit inside the
+            // one [3,4,5] chunk in bar order.
             double[] xs = { 0.0, 1.0, 3.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
             Array nodes = Array.CreateInstance(point3d, xs.Length);
             Array acrossBar = Array.CreateInstance(vector3d, xs.Length);
@@ -8732,6 +8769,13 @@ internal static class Program
         // 18.3 leaves open for him". Noise larger than TauSnap does not
         // test STABILITY at all here, it tests which way an exact tie falls,
         // which is the open question and not this task's to settle.
+        //
+        // MEASURED, not merely argued: with the offset at 1e-5 * a and the
+        // bound at 1e-4 (spec section 17's own stated magnitudes) this
+        // fixture throws at Type 2, "a millionth of the chord of noise moved
+        // tree 0's foot by 0.500002036", which is half a notch spacing, the
+        // boundary flip this comment predicts and not a real instability in
+        // the placement.
         foreach (int type in new[] { 1, 2, 3, 4 })
         {
             var clean = Arch(11, 10.0, 2.5, 1.0);
