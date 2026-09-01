@@ -2032,6 +2032,17 @@ reader is entitled to know what was considered and why it lost.
 
 ### 18.1 Ruled by Param, on 2026-09-01
 
+CONFIRMED A SECOND TIME, LATER THE SAME DAY, ON CORRECTED ARITHMETIC. When he took the
+fewest-strays ruling he was told that two Branching 3 layouts would move. Four move: m = 3, 7, 9
+and 13. He was shown the four rows, the mains that shift at m = 7 and m = 13, and the alternative
+of pinning those two counts to the shipped layout at the price of writing the ladder as a rule
+plus two footnotes with no structural reason behind them. He took all four. The rule therefore
+carries no exceptions, and the movement at m = 7 and m = 13 is accepted rather than tolerated.
+
+The quotation this section rests ruling 1 on is now filed in the design input at
+C:\Users\Param\OneDrive - Ananke-eidos\Documents\Ananke Eidos Studio\VS code\COMPAS Workflow\docs\superpowers\specs\2026-09-01-columns-design-input.md,
+section 2a, so an auditor no longer has to take it on trust from a relayed ruling.
+
 - THE CENTRAL COLUMN AT AN EVEN TYPE: IT STANDS STRAIGHT. A span with an odd number of tree
   groups at an even Type shows N gathered feet plus one further column standing alone and plumb
   on the mirror plane, and a span with fewer trees than the Type asks for shows one foot per
