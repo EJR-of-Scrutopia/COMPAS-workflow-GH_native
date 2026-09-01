@@ -1351,13 +1351,82 @@ internal static class SkinPatterns
     }
 
     /// <summary>
+    /// A point that is certainly INSIDE an outline in plan.
+    ///
+    /// The plan MEAN first, because on a convex cell it is inside and
+    /// costs four arithmetic operations a corner. Where the mean falls
+    /// outside, which a sufficiently non-convex outline's does, the
+    /// outline is triangulated by the same rule the net's faces are and
+    /// the CENTROID of a triangle is taken instead: a triangle of a
+    /// valid triangulation lies inside the polygon, and its centroid
+    /// lies in that triangle's own interior. The triangles are tried in
+    /// turn and the first centroid the point-in-polygon test accepts
+    /// wins, which steps over any triangle a degenerate corner made
+    /// flat. False, and no point, only for an outline of fewer than
+    /// three corners or one so degenerate that no triangle of it has an
+    /// interior at all.
+    /// </summary>
+    private static bool PlanInteriorPoint(
+        IReadOnlyList<double[]> outline,
+        out double x,
+        out double y)
+    {
+        x = 0.0;
+        y = 0.0;
+        if (outline.Count < 3)
+            return false;
+        foreach (double[] point in outline)
+        {
+            x += point[0];
+            y += point[1];
+        }
+        x /= outline.Count;
+        y /= outline.Count;
+        if (PlanContains(x, y, outline))
+            return true;
+        var ring = new int[outline.Count];
+        for (int at = 0; at < ring.Length; at++)
+            ring[at] = at;
+        var triangles = new List<int[]>();
+        SplitPolygon(outline, ring, triangles);
+        foreach (int[] triangle in triangles)
+        {
+            double cx =
+                (outline[triangle[0]][0] +
+                 outline[triangle[1]][0] +
+                 outline[triangle[2]][0]) / 3.0;
+            double cy =
+                (outline[triangle[0]][1] +
+                 outline[triangle[1]][1] +
+                 outline[triangle[2]][1]) / 3.0;
+            if (PlanContains(cx, cy, outline))
+            {
+                x = cx;
+                y = cy;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Do two outlines OVERLAP in plan? True when any edge of one
     /// properly crosses any edge of the other, and true when one's own
     /// interior point lies inside the other, which is the containment
-    /// case no edge crossing can see. The interior point used is the
-    /// outline's plan mean, and it is required to lie inside the
-    /// outline itself before it is asked about the other, since a
-    /// non-convex outline's mean can fall outside it.
+    /// case no edge crossing can see.
+    ///
+    /// The interior point is PlanInteriorPoint's, and the reason it is
+    /// not simply the plan mean is a stated blind spot this closes. The
+    /// mean of a sufficiently non-convex outline falls OUTSIDE it (a C
+    /// shape's mean sits in the notch), and the rule before this one
+    /// tested the mean for interiority and, finding it outside, SKIPPED
+    /// the containment test rather than looking harder. So a
+    /// sufficiently non-convex cell lying wholly inside another passed
+    /// as no overlap, with no edge crossing anywhere to catch it. It was
+    /// never observed in 422 measured configurations, which is what
+    /// makes it worth closing now: a latent hole in the plan guarantee
+    /// is a hole that will be found by a surface nobody has drawn yet,
+    /// and the guarantee is the reason the native patterns exist.
     ///
     /// Touching along a shared joint edge is NOT overlap: two cells of
     /// the same course meet at their joint by construction and the
@@ -1381,27 +1450,13 @@ internal static class SkinPatterns
                 }
             }
         }
-        double x = 0.0;
-        double y = 0.0;
-        foreach (double[] point in first)
+        if (PlanInteriorPoint(first, out double x, out double y) &&
+            PlanContains(x, y, second))
         {
-            x += point[0];
-            y += point[1];
-        }
-        x /= first.Count;
-        y /= first.Count;
-        if (PlanContains(x, y, first) && PlanContains(x, y, second))
             return true;
-        x = 0.0;
-        y = 0.0;
-        foreach (double[] point in second)
-        {
-            x += point[0];
-            y += point[1];
         }
-        x /= second.Count;
-        y /= second.Count;
-        return PlanContains(x, y, second) && PlanContains(x, y, first);
+        return PlanInteriorPoint(second, out x, out y) &&
+               PlanContains(x, y, first);
     }
 
     /// <summary>

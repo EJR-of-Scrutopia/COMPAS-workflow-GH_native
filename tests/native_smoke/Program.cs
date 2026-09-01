@@ -12054,6 +12054,55 @@ internal static class Program
                 "crossing (the cross product is 1e-8 on a 100 m edge, " +
                 "above the old 1e-9 floor).");
         }
+        // ---- 1c. CONTAINMENT is tested from a point that is certainly
+        // inside, not from the plan mean, which on a sufficiently
+        // non-convex outline is outside it. Hand-derived, and the C
+        // shape is the shape that separates the two.
+        //
+        // The C: (0,0), (3,0), (3,1), (1,1), (1,2), (3,2), (3,3), (0,3),
+        // wound counter-clockwise. Its shoelace sum is 14, so its area
+        // is 7, which is the 3 by 3 square less the 2 by 1 notch, and it
+        // is simple. Its plan MEAN is (14/8, 12/8) = (1.75, 1.5), which
+        // sits in the notch, 1 < x < 3 and 1 < y < 2, and so OUTSIDE the
+        // C itself.
+        //
+        // The square holding it runs (-1, -1.5) to (5, 4.5), so the C is
+        // wholly inside with a clear margin and no edge of either
+        // crosses an edge of the other. The square's own mean is
+        // (2, 1.5), which is inside the square and, being in the notch
+        // again, NOT inside the C. So every mean available to the old
+        // rule failed its own interiority test, the containment half was
+        // skipped at both ends, and two cells one wholly inside the
+        // other came back as no overlap.
+        double[][] cShape =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 3.0, 0.0, 0.0 },
+            new[] { 3.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 1.0, 2.0, 0.0 },
+            new[] { 3.0, 2.0, 0.0 },
+            new[] { 3.0, 3.0, 0.0 },
+            new[] { 0.0, 3.0, 0.0 }
+        };
+        double[][] holder =
+        {
+            new[] { -1.0, -1.5, 0.0 },
+            new[] { 5.0, -1.5, 0.0 },
+            new[] { 5.0, 4.5, 0.0 },
+            new[] { -1.0, 4.5, 0.0 }
+        };
+        if (!Overlapping(cShape, holder) || !Overlapping(holder, cShape))
+        {
+            throw new InvalidOperationException(
+                "A non-convex cell lying WHOLLY INSIDE another overlaps " +
+                "it, whichever way round the two are read. No edge " +
+                "crossing can see that, and neither outline's plan mean " +
+                "is inside the C, so a containment test that gives up " +
+                "when the mean falls outside gives the wrong answer and " +
+                "the plan guarantee has a hole in it.");
+        }
+
         double[][] micronBowTie =
         {
             new[] { 0.0, 0.0, 0.0 },
