@@ -5901,7 +5901,7 @@ internal static class Program
         MethodInfo segment = RequirePublicStatic(engine, "SegmentDistance");
         MethodInfo symmetrise = RequirePublicStatic(engine, "Symmetrise");
         Type point3d = place.GetParameters()[0].ParameterType.GetElementType()!;
-        Type vector3d = place.GetParameters()[3].ParameterType.GetElementType()!.GetElementType()!;
+        Type vector3d = place.GetParameters()[4].ParameterType.GetElementType()!.GetElementType()!;
         double forkFraction = (double)engine.GetField("ForkFraction")!.GetValue(null)!;
         Type geometry = plugin.GetType(
             "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
@@ -6078,11 +6078,56 @@ internal static class Program
             return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
         }
 
-        object Run((Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int[][] loops, double median, int branching, int ground)
+        object Run((Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) net, int[][] loops, int branching, int ground)
         {
+            // The untransversed pull per bar and bar position, and the whole
+            // incident pull per node, built so that the two stand in the
+            // relation a REAL net puts them in, because spec section 10's
+            // arithmetic reads both and cancels one against the other.
+            //
+            // The node's WHOLE pull is what the fixture declares at that node
+            // in total, which is the SUM of the bar declarations there: a
+            // notch held by two bars, each declaring a unit, carries two.
+            // Each bar's UNTRANSVERSED pull at a node is that same whole pull,
+            // because BarLoads excludes only the edges running ALONG that bar
+            // and a hand-built fixture declares no force along one. So
+            // pull[b][k] is nodePull[bars[b][k]] and NOT across[b][k].
+            //
+            // At a notch held by ONE bar the two are identical and equal to
+            // the transverse array, so k is 1, the (k - 1) term vanishes, the
+            // head pull is that bar's own untransversed pull unchanged, and
+            // NO number in this file moves. At a notch held by two the head
+            // pull comes out (pull_A + pull_B) - nodePull = nodePull, which is
+            // the node's whole pull counted exactly ONCE and IN FULL, which is
+            // the ruling of 2026-09-01. Setting pull[b][k] to across[b][k]
+            // instead would make the two bars' pulls sum to the whole and the
+            // (k - 1) term subtract the whole, leaving a head pull of ZERO at
+            // every crossing in this file.
+            Array nodePull = Array.CreateInstance(vector3d, net.Nodes.Length);
+            for (int i = 0; i < net.Nodes.Length; i++)
+                nodePull.SetValue(V(0.0, 0.0, 0.0), i);
+            for (int b = 0; b < net.Bars.Length; b++)
+            {
+                Array barAcross = (Array)net.Across.GetValue(b)!;
+                for (int k = 0; k < net.Bars[b].Length; k++)
+                {
+                    int node = net.Bars[b][k];
+                    object had = nodePull.GetValue(node)!;
+                    object add = barAcross.GetValue(k)!;
+                    nodePull.SetValue(V(VX(had) + VX(add), VY(had) + VY(add), VZ(had) + VZ(add)), node);
+                }
+            }
+            Array pull = Array.CreateInstance(vector3d.MakeArrayType(), net.Bars.Length);
+            for (int b = 0; b < net.Bars.Length; b++)
+            {
+                Array barPull = Array.CreateInstance(vector3d, net.Bars[b].Length);
+                for (int k = 0; k < net.Bars[b].Length; k++)
+                    barPull.SetValue(nodePull.GetValue(net.Bars[b][k])!, k);
+                pull.SetValue(barPull, b);
+            }
             return place.Invoke(null, new object?[]
             {
-                net.Nodes, net.Bars, net.Anchors, net.Across, loops, 0.0, median, branching, ground,
+                net.Nodes, net.Bars, net.Edges, net.Anchors, net.Across, pull, nodePull, loops, 0.0, branching, ground,
             })!;
         }
         T Get<T>(object o, string name)
@@ -6249,6 +6294,146 @@ internal static class Program
             return ((ox * dx) + (oy * dy), (ox * -dy) + (oy * dx));
         }
 
+        // ---- THE SIGNATURE NO LONGER ACCEPTS A MEDIAN (spec section 4).
+        // That is the strongest possible form of the span-local rule: a
+        // tolerance scaled by the net's median plan edge is a median over
+        // every edge in BOTH mesh directions and stands in no fixed ratio to
+        // the notch spacing along any one bar. On a mesh refined along its
+        // principal lines the bound became several whole notch spacings and
+        // stopped discriminating; on one refined across them it collapsed to
+        // exact coincidence.
+        {
+            string[] names = place.GetParameters().Select(p => p.Name!).ToArray();
+            string[] wanted =
+            {
+                "nodes", "bars", "edges", "anchors", "across", "pull", "nodePull",
+                "perimeterLoops", "ground", "branching", "groundAsked",
+            };
+            if (!names.SequenceEqual(wanted))
+            {
+                throw new InvalidOperationException(
+                    $"ColumnPlacement.Place reads ({string.Join(", ", wanted)}); it reads ({string.Join(", ", names)}). "
+                    + "medianPlanEdge is REMOVED so it cannot be read by accident, edges comes after bars so the call reads net first, "
+                    + "and pull and nodePull sit immediately after across because they are the same measurement at three levels of exclusion.");
+            }
+            if (names.Any(n => n.Contains("median", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("No argument of Place may name a median.");
+        }
+
+        // ---- TOLERANCES ARE SPAN-LOCAL (spec section 4). One net holding
+        // two spans of very different notch density, five notches over ten
+        // metres and twenty-one over ten metres. Each span's answer must be
+        // bit-identical to the same span placed ALONE, which no net-median
+        // tolerance can manage.
+        {
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Row(int count, double y)
+            {
+                Array nodes = Array.CreateInstance(point3d, count);
+                Array acrossBar = Array.CreateInstance(vector3d, count);
+                var edges = new List<(int, int)>();
+                for (int i = 0; i < count; i++)
+                {
+                    double s = (double)i / (count - 1);
+                    nodes.SetValue(P(10.0 * s, y, 2.5 * 4.0 * s * (1.0 - s)), i);
+                    acrossBar.SetValue(V(0.0, 0.0, -1.0), i);
+                    if (i > 0)
+                        edges.Add((i - 1, i));
+                }
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                across.SetValue(acrossBar, 0);
+                return (nodes, new[] { Enumerable.Range(0, count).ToArray() }, new[] { 0, count - 1 }, across, edges.ToArray());
+            }
+            double[] FeetAlone(int count, int type)
+            {
+                object placed = Run(Row(count, 0.0), Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                return footNode.Select(f => X(levelNodes[f])).ToArray();
+            }
+            // The two spans on ONE net, five notches at y = 0 and twenty-one
+            // at y = 40, far enough apart that no merge and no collision can
+            // reach across.
+            const int coarse = 7;
+            const int fine = 23;
+            Array bothNodes = Array.CreateInstance(point3d, coarse + fine);
+            Array bothAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            var bothBars = new int[2][];
+            var bothAnchors = new List<int>();
+            var bothEdges = new List<(int, int)>();
+            int offset = 0;
+            foreach ((int count, double y, int b) in new[] { (coarse, 0.0, 0), (fine, 40.0, 1) })
+            {
+                Array acrossBar = Array.CreateInstance(vector3d, count);
+                var bar = new int[count];
+                for (int i = 0; i < count; i++)
+                {
+                    double s = (double)i / (count - 1);
+                    bothNodes.SetValue(P(10.0 * s, y, 2.5 * 4.0 * s * (1.0 - s)), offset + i);
+                    acrossBar.SetValue(V(0.0, 0.0, -1.0), i);
+                    bar[i] = offset + i;
+                    if (i > 0)
+                        bothEdges.Add((offset + i - 1, offset + i));
+                }
+                bothBars[b] = bar;
+                bothAcross.SetValue(acrossBar, b);
+                bothAnchors.Add(offset);
+                bothAnchors.Add(offset + count - 1);
+                offset += count;
+            }
+            var together = (bothNodes, bothBars, bothAnchors.ToArray(), bothAcross, bothEdges.ToArray());
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object placed = Run(together, Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                double[] alone = FeetAlone(coarse, type).Concat(FeetAlone(fine, type)).ToArray();
+                for (int t = 0; t < trees.Length; t++)
+                {
+                    if (Math.Abs(X(levelNodes[footNode[t]]) - alone[t]) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            $"Type {type}: a span's answer is a function of ITS OWN notches and nothing else, so a five-notch span placed beside a "
+                            + $"twenty-one-notch one is bit-identical to the same span placed alone; tree {t} stands at {X(levelNodes[footNode[t]]):0.#########} "
+                            + $"together against {alone[t]:0.#########} alone.");
+                    }
+                }
+            }
+            // And no absolute number has crept in: the same shape a thousand
+            // times bigger puts every foot a thousand times further out.
+            object small = Run(Row(11, 0.0), Array.Empty<int[]>(), 1, 2);
+            Array bigNodes = Array.CreateInstance(point3d, 11);
+            Array bigAcrossBar = Array.CreateInstance(vector3d, 11);
+            var bigEdges = new List<(int, int)>();
+            for (int i = 0; i < 11; i++)
+            {
+                double s = i / 10.0;
+                bigNodes.SetValue(P(10000.0 * s, 0.0, 2500.0 * 4.0 * s * (1.0 - s)), i);
+                bigAcrossBar.SetValue(V(0.0, 0.0, -1.0), i);
+                if (i > 0)
+                    bigEdges.Add((i - 1, i));
+            }
+            Array bigAcross = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            bigAcross.SetValue(bigAcrossBar, 0);
+            object large = Run((bigNodes, new[] { Enumerable.Range(0, 11).ToArray() }, new[] { 0, 10 }, bigAcross, bigEdges.ToArray()),
+                Array.Empty<int[]>(), 1, 2);
+            object smallBuilt = Get<object>(small, "Built");
+            object largeBuilt = Get<object>(large, "Built");
+            var smallNodes = ((IEnumerable)Get<object>(smallBuilt, "Nodes")).Cast<object>().ToArray();
+            var largeNodes = ((IEnumerable)Get<object>(largeBuilt, "Nodes")).Cast<object>().ToArray();
+            int[] smallFeet = FootOfTree(smallBuilt, 9);
+            int[] largeFeet = FootOfTree(largeBuilt, 9);
+            for (int t = 0; t < 9; t++)
+            {
+                double scaled = X(smallNodes[smallFeet[t]]) * 1000.0;
+                if (Math.Abs(X(largeNodes[largeFeet[t]]) - scaled) > 1.0e-9 * Math.Max(Math.Abs(scaled), 1.0))
+                    throw new InvalidOperationException($"Scaling the whole net by 1000 scales every foot by 1000; tree {t} stands at {X(largeNodes[largeFeet[t]]):0.###} against {scaled:0.###}.");
+            }
+        }
+
         (int Lower, int Upper)[] MembersOf(object level) =>
             ((IEnumerable)Get<object>(level, "Members")).Cast<object>()
                 .Select(m => ((int)m.GetType().GetField("Item1")!.GetValue(m)!,
@@ -6282,7 +6467,7 @@ internal static class Program
         {
             const double skew = 0.0174550649282176;   // tan(1 degree)
             var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -6357,7 +6542,7 @@ internal static class Program
         {
             const double skew = 0.0174550649282176;   // tan(1 degree)
             var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, 0);
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             double firstMoved = Get<double>(placed, "AsymmetryRemoved");
             var beforeResultant = trees.Select(t => Get<object>(t, "Resultant")).ToArray();
@@ -6414,7 +6599,7 @@ internal static class Program
             Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
             across.SetValue(acrossBar, 0);
             var band = (nodes, new[] { new[] { 0, 1, 2, 3 } }, new[] { 0, 3 }, across, Array.Empty<(int, int)>());
-            object placed = Run(band, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(band, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -6513,7 +6698,7 @@ internal static class Program
                 anchors.Add((b * count) + count - 1);
             }
             var family = (nodes, bars, anchors.ToArray(), across, Array.Empty<(int, int)>());
-            object placed = Run(family, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(family, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -6621,7 +6806,7 @@ internal static class Program
             // standing on its own foot on the mirror plane. Three feet per
             // span, twelve in all.
             {
-                object banded = Run(family, Array.Empty<int[]>(), 1.0, 1, 2);
+                object banded = Run(family, Array.Empty<int[]>(), 1, 2);
                 object bandedBuilt = Get<object>(banded, "Built");
                 var bandedNodes = ((IEnumerable)Get<object>(bandedBuilt, "Nodes")).Cast<object>().ToArray();
                 var bandedTrees = ((IEnumerable)Get<object>(banded, "Trees")).Cast<object>().ToArray();
@@ -6732,7 +6917,7 @@ internal static class Program
                 anchors.Add((b * count) + count - 1);
             }
             var ribs = (nodes, bars, anchors.ToArray(), across, Array.Empty<(int, int)>());
-            object placed = Run(ribs, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(ribs, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -6802,7 +6987,7 @@ internal static class Program
         {
             const double skew = 0.0174550649282176;   // tan(1 degree)
             var arch = SkewArch(11, 10.0, 2.5, bend: 0.25, skew: skew, flank: 1.1);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, 0);
             if (Get<int>(placed, "CentreTrees") != 1 || Get<int[]>(placed, "Partner").Length != 9)
                 throw new InvalidOperationException("Eleven notches at Branching 1 hold nine trees, the middle one its own partner.");
             Type treeType = engine.GetNestedType("Tree", BindingFlags.Public | BindingFlags.NonPublic)
@@ -6873,7 +7058,7 @@ internal static class Program
                 anchors.Add((b * count) + count - 1);
             }
             var unlike = (nodes, bars, anchors.ToArray(), across, Array.Empty<(int, int)>());
-            object placed = Run(unlike, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(unlike, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -6939,7 +7124,7 @@ internal static class Program
             across.SetValue(archBar, 1);
             var crossed = (nodes, new[] { new[] { 11, 3, 12 }, Enumerable.Range(0, 11).ToArray() },
                 new[] { 0, 10, 11, 12 }, across, Array.Empty<(int, int)>());
-            object placed = Run(crossed, Array.Empty<int[]>(), 1.0, 1, 2);
+            object placed = Run(crossed, Array.Empty<int[]>(), 1, 2);
             if (Get<int>(placed, "GroundPlaced") != 2)
                 throw new InvalidOperationException($"An unmirrored span is placed like any other, its bands read off each tree's own projection; it placed {Get<int>(placed, "GroundPlaced")}.");
             // The deviation against the bound, by hand. Eight free notches
@@ -6984,7 +7169,7 @@ internal static class Program
                 }
             }
             // The same arch with nothing taken out of it is symmetric.
-            object whole = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1.0, 1, 2);
+            object whole = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1, 2);
             if (Get<int>(whole, "AsymmetricSpans") != 0)
                 throw new InvalidOperationException($"An arch anchored at both ends with every notch free IS symmetric; AsymmetricSpans is {Get<int>(whole, "AsymmetricSpans")}.");
         }
@@ -7004,7 +7189,7 @@ internal static class Program
         // rather than on an end one.
         {
             var curved = PlanCurved(0.15);
-            object placed = Run(curved, Array.Empty<int[]>(), 4.0, 1, 2);
+            object placed = Run(curved, Array.Empty<int[]>(), 1, 2);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -7045,7 +7230,7 @@ internal static class Program
         // bar, in the name of symmetry.
         {
             var curved = PlanCurved(0.15);
-            object placed = Run(curved, Array.Empty<int[]>(), 4.0, 1, 0);
+            object placed = Run(curved, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -7108,7 +7293,7 @@ internal static class Program
             across.SetValue(((Array)curved.Across.GetValue(0)!), 1);
             var net = (nodes, new[] { new[] { 10, 3, 11 }, Enumerable.Range(0, 10).ToArray() },
                 new[] { 0, 9, 10, 11 }, across, Array.Empty<(int, int)>());
-            object placed = Run(net, Array.Empty<int[]>(), 4.0, 1, 0);
+            object placed = Run(net, Array.Empty<int[]>(), 1, 0);
             const double removedDeviation = 1.0 / 9.0;
             const double removedBound = 0.25 / 8.0;
             if (removedDeviation <= removedBound)
@@ -7145,7 +7330,7 @@ internal static class Program
         // degrees, so nothing else steps off.
         {
             var curved = PlanCurved(0.15);
-            object placed = Run(curved, Array.Empty<int[]>(), 4.0, 1, 1);
+            object placed = Run(curved, Array.Empty<int[]>(), 1, 1);
             object built = Get<object>(placed, "Built");
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -7175,7 +7360,7 @@ internal static class Program
         // is what made the slider look dead.
         {
             var wide = Arch(11, 10.0, 2.5, 1.0);
-            object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 1);
+            object placed = Run(wide, Array.Empty<int[]>(), 1, 1);
             if (Get<int>(placed, "GroundAsked") != 1 || Get<int>(placed, "GroundPlaced") != 1)
                 throw new InvalidOperationException($"Type 1 asked is Type 1 placed; asked {Get<int>(placed, "GroundAsked")}, placed {Get<int>(placed, "GroundPlaced")}.");
             var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
@@ -7230,7 +7415,7 @@ internal static class Program
         // midpoint, and the two bands come out at 2.5 and 7.5.
         {
             var wide = Arch(11, 10.0, 2.5, 1.0);
-            object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 2);
+            object placed = Run(wide, Array.Empty<int[]>(), 1, 2);
             if (Get<int>(placed, "GroundPlaced") != 2)
                 throw new InvalidOperationException($"Type 2 asked is Type 2 placed; it placed {Get<int>(placed, "GroundPlaced")}.");
             object built = Get<object>(placed, "Built");
@@ -7265,15 +7450,30 @@ internal static class Program
         }
 
         // ---- Neighbours stay apart (spec 3.5). A narrow bay, span four,
-        // seven notches, the across pulls leaning INWARD hard enough that the
-        // two feet either side of the centre land a fortieth of a unit from
-        // it, inside a clearance of a thirtieth. Neither is a mirrored pair
-        // with it, so nothing merges: five trees keep five feet and the close
-        // pairs are counted instead. Welding them is what turned leaning
-        // neighbours into accidental V's and X's on the review arch.
+        // seven notches, the across pulls leaning INWARD just hard enough
+        // that the two feet either side of the centre land 0.15 of a unit
+        // from it, inside the feet-close clearance of 0.25 * g = 0.1667.
+        // Neither is a mirrored pair WITH the centre, so nothing merges
+        // there; and the two feet that ARE a mirrored pair of each other
+        // (the one left of centre and the one right of it) stand 0.30 apart,
+        // OUTSIDE that same clearance, so that pair does not merge either.
+        // Five trees keep five feet and the close pairs are counted instead.
+        // Welding them is what turned leaning neighbours into accidental V's
+        // and X's on the review arch.
+        //
+        // The bend is retuned from the pre-span-local fixture, whose 0.025
+        // gap (a fortieth) sat inside the OLD 0.05 * median clearance of
+        // 0.0333 without merging, but sits inside the NEW, five-times-larger
+        // 0.25 * g clearance of 0.1667 both ways round: 0.025 is comfortably
+        // "close", but its own mirror pair's gap of 0.05 is ALSO inside
+        // 0.1667 and used to merge outright before this retune, welding
+        // every one of the three inner trees onto the mirror plane and
+        // leaving no close-but-separate pair for this fixture to show at
+        // all. 0.15 keeps the tree-to-centre gap inside the close clearance
+        // while doubling it, for the mirrored pair itself, safely outside.
         {
-            var bay = SkewArch(7, 4.0, 2.5, bend: -0.28875, skew: 0.0, flank: 1.0);
-            object placed = Run(bay, Array.Empty<int[]>(), 2.0 / 3.0, 1, 0);
+            var bay = SkewArch(7, 4.0, 2.5, bend: -0.2325, skew: 0.0, flank: 1.0);
+            object placed = Run(bay, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
@@ -7283,8 +7483,12 @@ internal static class Program
                 throw new InvalidOperationException($"No two of these feet are a mirrored pair inside the clearance, so every tree keeps its own foot; {feet.Length} feet under {trees.Length} trees.");
             if (Get<int>(built, "FeetMerged") != 0)
                 throw new InvalidOperationException($"Nothing merges here; {Get<int>(built, "FeetMerged")} merges reported.");
+            const double bayG = 2.0 / 3.0;
+            const double bayFeetClose = 0.25 * bayG;
+            const double bayOldClearance = 0.05 * (2.0 / 3.0);
+            Console.WriteLine($"      narrow bay feet-close clearance {bayFeetClose:0.###} (0.25 * g) against {bayOldClearance:0.###} (0.05 * median) before; FeetClose {Get<int>(built, "FeetClose")}.");
             if (Get<int>(built, "FeetClose") < 1)
-                throw new InvalidOperationException("Feet that stand within the clearance and stay two are counted, so the author can raise Type or space the lines; none was.");
+                throw new InvalidOperationException("Feet that stand within the FEET-CLOSE clearance and stay two are counted, so the author can raise Type or space the lines; none was.");
         }
 
         // ---- The centre pair merges (spec 3.5). Ten notches, an even count,
@@ -7307,7 +7511,7 @@ internal static class Program
             var arch = SkewArch(10, 9.0, 2.5, bend: -0.2, skew: 0.0, flank: 1.0);
             object node4 = arch.Nodes.GetValue(4)!;
             arch.Nodes.SetValue(P(3.98, 0.0, Z(node4)), 4);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
@@ -7336,7 +7540,7 @@ internal static class Program
         // fifteen, which is not an arch anyone builds.
         {
             var arch = Arch(9, 8.0, 5.0, 1.0);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 2, 0);
+            object placed = Run(arch, Array.Empty<int[]>(), 2, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>()
@@ -7393,7 +7597,7 @@ internal static class Program
         // mid-air for Deconstruct, Monitor and Animate alike.
         {
             var arch = Arch(9, 8.0, 5.0, 1.0);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 3, 0);
+            object placed = Run(arch, Array.Empty<int[]>(), 3, 0);
             object built = Get<object>(placed, "Built");
             var nodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
             var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>()
@@ -7421,7 +7625,7 @@ internal static class Program
         // the level itself stands, and nothing names lean.
         {
             var wide = Arch(13, 12.0, 2.0, 1.0);
-            object placed = Run(wide, Array.Empty<int[]>(), 1.0, 1, 1);
+            object placed = Run(wide, Array.Empty<int[]>(), 1, 1);
             int asked = Get<int>(placed, "GroundAsked");
             int got = Get<int>(placed, "GroundPlaced");
             if (asked != 1 || got != 1)
@@ -7442,7 +7646,7 @@ internal static class Program
         foreach (int count in new[] { 9, 8 })
         {
             var arch = Arch(count, 8.0, 5.0, 1.0);
-            object placed = Run(arch, Array.Empty<int[]>(), 1.0, 1, 1);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, 1);
             if (Get<int>(placed, "GroundPlaced") != 1)
                 throw new InvalidOperationException($"A rise-five arch eight wide holds one central foot: its outer trunks lean 54 degrees and the mirrored pairs sum to a vertical push at the foot; {count} notches fell back.");
             object built = Get<object>(placed, "Built");
@@ -7461,7 +7665,7 @@ internal static class Program
         {
             var arch = Arch(9, 8.0, 5.0, 1.0);
             var held = (arch.Nodes, arch.Bars, new[] { 0, 3, 5, 8 }, arch.Across, arch.Edges);
-            object placed = Run(held, Array.Empty<int[]>(), 1.0, 1, 0);
+            object placed = Run(held, Array.Empty<int[]>(), 1, 0);
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
             if (spans.Length != 3)
                 throw new InvalidOperationException($"Anchors at 0, 3, 5 and 8 cut a nine-notch bar into three spans; got {spans.Length}.");
@@ -7497,7 +7701,7 @@ internal static class Program
             across.SetValue(acrossA, 0);
             across.SetValue(acrossB, 1);
             var net = (nodes, new[] { new[] { 0, 1, 2 }, new[] { 3, 4, 5 } }, new[] { 0, 3 }, across, new[] { (0, 1), (1, 2), (3, 4), (4, 5), (2, 6), (5, 6), (2, 5) });
-            object placed = Run(net, new[] { new[] { 2, 5, 6 } }, 1.5, 1, 0);
+            object placed = Run(net, new[] { new[] { 2, 5, 6 } }, 1, 0);
             object? ring = Get<object?>(placed, "RingTree");
             if (ring is null)
                 throw new InvalidOperationException("Two bars ending on an anchor-free rim must get a ring tree.");
@@ -7539,7 +7743,7 @@ internal static class Program
             across.SetValue(acrossB, 1);
             var net = (nodes, new[] { new[] { 0, 1, 2, 3, 4 }, new[] { 5, 6, 2, 7, 8 } }, new[] { 0, 4, 5, 8 }, across,
                 new[] { (0, 1), (1, 2), (2, 3), (3, 4), (5, 6), (6, 2), (2, 7), (7, 8) });
-            object placed = Run(net, Array.Empty<int[]>(), 2.0, 1, 1);
+            object placed = Run(net, Array.Empty<int[]>(), 1, 1);
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
             var heads = trees.SelectMany(t => (int[])Get<object>(t, "Nodes")).ToArray();
             if (heads.Count(h => h == 2) != 1)
@@ -7601,9 +7805,14 @@ internal static class Program
                 Array netNodes = Array.CreateInstance(point3d, netVertices.Length);
                 for (int i = 0; i < netVertices.Length; i++)
                     netNodes.SetValue(P(netVertices[i][0], netVertices[i][1], netVertices[i][2]), i);
+                object memberList = levelType.GetField("Members")!.GetValue(level)!;
+                int count = (int)memberList.GetType().GetProperty("Count")!.GetValue(memberList)!;
+                var perMember = new double[count];
+                for (int i = 0; i < count; i++)
+                    perMember[i] = clearance;
                 return (int)countCollisions.Invoke(null, new object?[]
                 {
-                    level, netNodes, new HashSet<int>(), clearance,
+                    level, netNodes, new HashSet<int>(), perMember,
                 })!;
             }
 
@@ -7693,7 +7902,7 @@ internal static class Program
             across.SetValue(archAcross, 0);
             var outward = (archNodes, new[] { new[] { 0, 1, 2, 3, 4 } }, new[] { 0, 4 }, across, archEdges.ToArray());
 
-            object placed = Run(outward, Array.Empty<int[]>(), 0.75, 1, -1);
+            object placed = Run(outward, Array.Empty<int[]>(), 1, -1);
             if (Get<int>(placed, "GroundAsked") != -1)
                 throw new InvalidOperationException("Auto records GroundAsked as -1.");
             var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
@@ -7728,18 +7937,30 @@ internal static class Program
                 throw new InvalidOperationException($"Auto places the shortest load path among the levels with no collision, ties to the higher; that is {winner} and it placed {Get<int>(placed, "GroundPlaced")}.");
         }
 
-        // ---- Auto prefers the level that does not collide (spec 3.7). The
-        // rise-five arch eight wide at a clearance of 1.2 (a median plan edge
-        // of 24 gives ClearanceFraction 0.05 that) stands its seven Type 0
-        // feet one unit apart, so every neighbouring pair of members is
-        // inside the clearance and Type 0 collides six times. Type 1 gathers
-        // all seven onto one foot, where every member shares an end and
-        // nothing can collide. Type 0 still carries the SHORTEST load path,
-        // being plumb throughout, so an Auto that only minimised the load
-        // path would take it.
+        // ---- Auto prefers the level that does not collide (spec sections
+        // 14 and 17). The OLD fixture cannot be built: it drove this arch at
+        // a median plan edge of 24 so that 0.05 of the median was 1.2 and
+        // seven plumb Type 0 members a unit apart collided six times. With
+        // the median gone the span's g is 1.0, the clearance is 0.05, and
+        // they never collide; the fixture's premise died with the median.
+        //
+        // The replacement is spec section 17's own geometry: the same arch
+        // with two neighbouring interior notches crowded to 0.02 * g apart in
+        // plan, a mesh the author can really produce, so that their two plumb
+        // Type 0 members stand inside 0.05 * g and collide, while at Type 1
+        // they share a foot, share an end and cannot. Type 0 still carries
+        // the shortest load path, being plumb throughout, so Auto's
+        // preference for the collision-free level is still what is measured.
         {
             var arch = Arch(9, 8.0, 5.0, 1.0);
-            object placed = Run(arch, Array.Empty<int[]>(), 24.0, 1, -1);
+            // Notches at bar positions 4 and 5 crowded to a fiftieth of the
+            // spacing apart. g here is 1.0: seven free notches from chord
+            // parameter 1/8 to 7/8 on a chord of 8, so h = (7/8 - 1/8) / 6
+            // and g = h * 8 = 1.
+            object node4 = arch.Nodes.GetValue(4)!;
+            object node5 = arch.Nodes.GetValue(5)!;
+            arch.Nodes.SetValue(P(X(node5) - 0.02, Y(node5), Z(node4)), 4);
+            object placed = Run(arch, Array.Empty<int[]>(), 1, -1);
             var tried = ((IEnumerable)Get<object>(placed, "Tried")).Cast<object>().ToArray();
             if (tried.Length != 5)
                 throw new InvalidOperationException($"Auto builds all five levels; it built {tried.Length}.");
@@ -7749,13 +7970,13 @@ internal static class Program
             object zero = AtLevel(0);
             object one = AtLevel(1);
             if (Get<int>(zero, "Collisions") == 0)
-                throw new InvalidOperationException("This fixture wants Type 0 to collide: seven plumb members a unit apart inside a clearance of 1.2.");
+                throw new InvalidOperationException("This fixture wants Type 0 to collide: two plumb members 0.02 * g apart, inside a clearance of 0.05 * g.");
             if (Get<bool>(zero, "Feasible"))
                 throw new InvalidOperationException("Feasible means no collision, and Type 0 collides here.");
             if (Get<string>(zero, "Rule") != "collision")
                 throw new InvalidOperationException($"A colliding level names the collision as its worst measure; it names '{Get<string>(zero, "Rule")}'.");
             if (Get<int>(one, "Collisions") != 0)
-                throw new InvalidOperationException($"Type 1 gathers every tree onto one foot, where every member shares an end; it reports {Get<int>(one, "Collisions")} collisions.");
+                throw new InvalidOperationException($"At Type 1 the crowded pair shares a foot and shares an end, so nothing can collide; it reports {Get<int>(one, "Collisions")}.");
             if (tried.Any(t => Get<double>(t, "LoadPath") < Get<double>(zero, "LoadPath")))
                 throw new InvalidOperationException("Type 0 carries the shortest load path here, or the preference for a collision-free level is not being tested at all.");
             int winner = AutoWinner(tried);
@@ -7763,6 +7984,66 @@ internal static class Program
                 throw new InvalidOperationException("The recomputed winner is a collision-free level, and Type 0 is not one.");
             if (Get<int>(placed, "GroundPlaced") != winner)
                 throw new InvalidOperationException($"Auto places the shortest load path among the levels with no collision, ties to the higher; that is {winner} and it placed {Get<int>(placed, "GroundPlaced")}.");
+            Console.WriteLine($"      collision clearance 0.05 * g = 0.05 here against 0.05 * median = 1.2 before; Type 0 collisions {Get<int>(zero, "Collisions")}, Auto chose {winner}.");
+        }
+
+        // ---- Cross-span collisions use the SMALLER of the two spans' own
+        // clearances (spec sections 4 and 17): a member of one span and a
+        // member of another are judged against 0.05 * min(g_A, g_B), not
+        // either span's own g alone, because at a twentieth of a spacing two
+        // members of ONE span can barely collide at all.
+        {
+            var lower = Arch(9, 8.0, 5.0, 1.0);
+            var upper = Arch(9, 8.0, 5.0, 1.0);
+            // Both arches share g = 1.0 (seven free notches, chord parameter
+            // 1/8 to 7/8 on a chord of 8, exactly as the fixture above), so
+            // the cross-span clearance is 0.05 * min(1.0, 1.0) = 0.05, and
+            // the two chords are set 0.03 * g apart in plan: inside it, where
+            // neither arch's OWN neighbouring notches, a whole g apart, ever
+            // could be.
+            const double g = 1.0;
+            const double crossOffset = 0.03 * g;
+            for (int i = 0; i < 9; i++)
+            {
+                object p = upper.Nodes.GetValue(i)!;
+                upper.Nodes.SetValue(P(X(p), Y(p) + crossOffset, Z(p)), i);
+            }
+            Array bothNodes = Array.CreateInstance(point3d, 18);
+            for (int i = 0; i < 9; i++)
+            {
+                bothNodes.SetValue(lower.Nodes.GetValue(i)!, i);
+                bothNodes.SetValue(upper.Nodes.GetValue(i)!, 9 + i);
+            }
+            Array bothAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+            bothAcross.SetValue(lower.Across.GetValue(0)!, 0);
+            bothAcross.SetValue(upper.Across.GetValue(0)!, 1);
+            var bothBars = new[] { Enumerable.Range(0, 9).ToArray(), Enumerable.Range(9, 9).ToArray() };
+            var bothAnchors = new[] { 0, 8, 9, 17 };
+            var bothEdges = new List<(int, int)>();
+            for (int i = 1; i < 9; i++)
+                bothEdges.Add((i - 1, i));
+            for (int i = 1; i < 9; i++)
+                bothEdges.Add((9 + i - 1, 9 + i));
+            var net = (bothNodes, bothBars, bothAnchors, bothAcross, bothEdges.ToArray());
+            object placed = Run(net, Array.Empty<int[]>(), 1, 0);
+            object built = Get<object>(placed, "Built");
+            // Every free notch stands plumb here, so its Type 0 column is a
+            // vertical segment directly under it; the two arches share the
+            // same rise profile, so notch i of one stands exactly crossOffset
+            // from notch i of the other AT EVERY HEIGHT, and no other pair
+            // comes within an order of the spacing g of one another. Seven
+            // free notches per arch, so seven cross-span collisions, one per
+            // corresponding pair, and nothing else: the check computes that
+            // count itself, from the two spans' own g, not a number carried
+            // in from outside it.
+            int freeNotches = 7;
+            int expected = crossOffset < 0.05 * g ? freeNotches : 0;
+            if (Get<int>(built, "Collisions") != expected)
+            {
+                throw new InvalidOperationException(
+                    $"Two spans set {crossOffset:0.###} apart in plan, against a cross-span clearance of 0.05 * min(g_A, g_B) = {0.05 * g:0.###}, "
+                    + $"collide once per corresponding pair of Type 0 columns inside it, {expected} here; it reports {Get<int>(built, "Collisions")}.");
+            }
         }
     }
 

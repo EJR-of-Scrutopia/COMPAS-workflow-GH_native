@@ -50,7 +50,14 @@ namespace Ananke.COMPAS.Native.Components
         /// </summary>
         public const double PlumbDegrees = 2.0;
 
-        /// <summary>Collision clearance as a fraction of the median plan edge.</summary>
+        /// <summary>
+        /// Collision clearance as a fraction of a MEMBER's own tree's span
+        /// spacing (<c>SpacingOf</c>'s <c>g</c>), read fresh for each member
+        /// judged: spec section 4 puts every tolerance in this engine in the
+        /// terms of the span, or the pair of spans, it applies to, and the
+        /// net's median plan edge is gone from the signature so it cannot
+        /// stand in for it by accident.
+        /// </summary>
         public const double ClearanceFraction = 0.05;
 
         public const int MaxGround = 4;
@@ -70,6 +77,138 @@ namespace Ananke.COMPAS.Native.Components
             public string LastKind = "end";
             /// <summary>Bar positions of the notches this span holds, in bar order.</summary>
             public List<int> Free = new();
+        }
+
+        /// <summary>
+        /// One span read in its OWN terms, which is where every tolerance in
+        /// this engine now comes from. Nothing here reads the net's median
+        /// plan edge, and the argument that carried it is gone from
+        /// <see cref="Place"/> so that it cannot be read by accident.
+        /// </summary>
+        public sealed class SpanFrame
+        {
+            /// <summary>Plan positions of the span's first and last node.</summary>
+            public Point3d P0;
+            public Point3d P1;
+            /// <summary>Chord length in plan.</summary>
+            public double L;
+            /// <summary>Unit chord direction in plan.</summary>
+            public Vector3d C;
+            /// <summary>Plan normal to the chord.</summary>
+            public Vector3d N;
+            /// <summary>
+            /// The chord midpoint. A coordinate origin and nothing more: no
+            /// rule places a foot at it or measures a symmetry about it.
+            /// </summary>
+            public Point3d M;
+            /// <summary>
+            /// Plan bounding box diagonal over the two cut nodes and all the
+            /// free notches, which is a length the span always has even when
+            /// its chord has none.
+            /// </summary>
+            public double D;
+            /// <summary>Bar positions of the free notches, in bar order.</summary>
+            public int[] Positions = Array.Empty<int>();
+            /// <summary>Net vertices of the free notches, in bar order.</summary>
+            public int[] Nodes = Array.Empty<int>();
+            /// <summary>Chord parameter per free notch, aligned with Nodes.</summary>
+            public double[] Sigma = Array.Empty<double>();
+            /// <summary>The span spacing in chord parameter.</summary>
+            public double H;
+            /// <summary>The same spacing as a LENGTH, H * L.</summary>
+            public double G;
+            /// <summary>L is zero by the bound of spec section 4.</summary>
+            public bool ChordZero;
+            /// <summary>Every notch falls at one chord parameter.</summary>
+            public bool OneParameter;
+            /// <summary>
+            /// The chord parameter within which two candidate notches count
+            /// as equidistant from a target: 1e-6 * H.
+            /// </summary>
+            public double TauSnap;
+            /// <summary>
+            /// The plan distance within which two feet of THIS span are the
+            /// same point and become one node: 1e-9 * L.
+            /// </summary>
+            public double TauWeld;
+        }
+
+        /// <summary>
+        /// The span's own frame. The chord parameters are NOT assumed to rise
+        /// with bar order: a bar that is not plan-monotone disagrees, and
+        /// nothing below reads an index where a parameter is meant or a
+        /// parameter where an index is meant.
+        ///
+        /// The spacing is MEASURED rather than assumed, because a crossing, a
+        /// free end or a crest that crowds its neighbours leaves the notches
+        /// unevenly spread and the measured mean is then the span's own
+        /// answer. It agrees exactly with the old 0.25 / (count + 1) form
+        /// wherever the notches are uniform between the cuts.
+        /// </summary>
+        public static SpanFrame Frame(
+            Point3d[] nodes, int[][] bars, Span span, IReadOnlyList<int> freePositions)
+        {
+            int[] bar = bars[span.Bar];
+            var frame = new SpanFrame
+            {
+                P0 = nodes[bar[span.First]],
+                P1 = nodes[bar[span.Last]],
+                Positions = freePositions.ToArray(),
+            };
+            frame.Nodes = frame.Positions.Select(p => bar[p]).ToArray();
+
+            double minX = Math.Min(frame.P0.X, frame.P1.X);
+            double maxX = Math.Max(frame.P0.X, frame.P1.X);
+            double minY = Math.Min(frame.P0.Y, frame.P1.Y);
+            double maxY = Math.Max(frame.P0.Y, frame.P1.Y);
+            foreach (int node in frame.Nodes)
+            {
+                minX = Math.Min(minX, nodes[node].X);
+                maxX = Math.Max(maxX, nodes[node].X);
+                minY = Math.Min(minY, nodes[node].Y);
+                maxY = Math.Max(maxY, nodes[node].Y);
+            }
+            frame.D = Math.Sqrt(((maxX - minX) * (maxX - minX)) + ((maxY - minY) * (maxY - minY)));
+
+            double dx = frame.P1.X - frame.P0.X;
+            double dy = frame.P1.Y - frame.P0.Y;
+            frame.L = Math.Sqrt((dx * dx) + (dy * dy));
+            // A span's CHORD LENGTH IS ZERO when L <= 1e-9 * D. Where D is
+            // itself zero, so that every node stands at one plan point, the
+            // span is degenerate by the same rule.
+            frame.ChordZero = frame.L <= 1.0e-9 * frame.D;
+            if (frame.ChordZero)
+            {
+                frame.C = new Vector3d(1.0, 0.0, 0.0);
+                frame.N = new Vector3d(0.0, 1.0, 0.0);
+            }
+            else
+            {
+                frame.C = new Vector3d(dx / frame.L, dy / frame.L, 0.0);
+                frame.N = new Vector3d(-frame.C.Y, frame.C.X, 0.0);
+            }
+            frame.M = new Point3d(
+                0.5 * (frame.P0.X + frame.P1.X), 0.5 * (frame.P0.Y + frame.P1.Y), 0.0);
+
+            int m = frame.Nodes.Length;
+            frame.Sigma = new double[m];
+            for (int i = 0; i < m; i++)
+            {
+                frame.Sigma[i] = frame.ChordZero
+                    ? 0.5
+                    : (((nodes[frame.Nodes[i]].X - frame.P0.X) * frame.C.X)
+                        + ((nodes[frame.Nodes[i]].Y - frame.P0.Y) * frame.C.Y)) / frame.L;
+            }
+            double smallest = m > 0 ? frame.Sigma.Min() : 0.0;
+            double largest = m > 0 ? frame.Sigma.Max() : 0.0;
+            frame.OneParameter = (largest - smallest) <= 1.0e-9;
+            frame.H = (m >= 2 && !frame.OneParameter)
+                ? (largest - smallest) / (m - 1)
+                : 1.0 / (m + 1);
+            frame.G = frame.H * (frame.ChordZero ? frame.D : frame.L);
+            frame.TauSnap = 1.0e-6 * frame.H;
+            frame.TauWeld = 1.0e-9 * (frame.ChordZero ? frame.D : frame.L);
+            return frame;
         }
 
         /// <summary>One tree: its notches, its main notch, and what it carries.</summary>
@@ -154,7 +293,11 @@ namespace Ananke.COMPAS.Native.Components
             public List<Span> Spans = new();
             public List<Tree> Trees = new();
             public Tree? RingTree;
-            public double Clearance;
+            /// <summary>
+            /// Each span's own frame, aligned with <see cref="Spans"/>. Every
+            /// tolerance in this engine is a formula in these terms.
+            /// </summary>
+            public List<SpanFrame> Frames = new();
             /// <summary>
             /// The mirror partner of each tree: the tree it pairs with about
             /// its span's midpoint, ITSELF for the centre tree of an odd
@@ -694,34 +837,46 @@ namespace Ananke.COMPAS.Native.Components
         ///
         /// <paramref name="across"/> is, per bar and per bar position, the
         /// transverse pull the net hands that notch (MouldGeometry.BarLoads
-        /// then BarTransverse). <paramref name="perimeterLoops"/> are the
-        /// boundary loops as net vertex lists; an empty array means no rim
-        /// can be detected and no ring tree is placed.
+        /// then BarTransverse). <paramref name="pull"/> is that same notch's
+        /// UNTRANSVERSED pull, and <paramref name="nodePull"/> is the whole
+        /// incident pull per NET NODE (MouldGeometry.NodeLoads): spec section
+        /// 10's head-pull arithmetic reads both, starting at Task 6, so that
+        /// a notch held by several bars is counted exactly once and in full.
+        /// <paramref name="edges"/> is the net's edge list; spec section 4
+        /// threads it through so that every tolerance below can be judged in
+        /// the terms of the span, or the pair of spans, it applies to, rather
+        /// than the net's median plan edge. <paramref name="perimeterLoops"/>
+        /// are the boundary loops as net vertex lists; an empty array means
+        /// no rim can be detected and no ring tree is placed.
         /// <paramref name="groundAsked"/> is 0 to MaxGround, or -1 for Auto.
-        ///
-        /// The net's edges are not taken: spec 3.7's net test is against the
-        /// net's VERTICES, and the edge-proximity rule that used to want them
-        /// was never in the spec.
         /// </summary>
         public static Placement Place(
             Point3d[] nodes,
             int[][] bars,
+            (int, int)[] edges,
             int[] anchors,
             Vector3d[][] across,
+            Vector3d[][] pull,
+            Vector3d[] nodePull,
             int[][] perimeterLoops,
             double ground,
-            double medianPlanEdge,
             int branching,
             int groundAsked)
         {
+            // Neither pull nor nodePull is optional and neither has a
+            // default: a null or short array is a programming error and not a
+            // fallback, because the head-pull arithmetic of spec section 10
+            // has no answer without them.
+            if (pull is null || pull.Length != bars.Length)
+                throw new ArgumentException("pull is the untransversed pull per bar and bar position, one array per bar.", nameof(pull));
+            if (nodePull is null || nodePull.Length != nodes.Length)
+                throw new ArgumentException("nodePull is the whole incident pull per NET NODE, one entry for every node.", nameof(nodePull));
+            if (edges is null)
+                throw new ArgumentException("edges is the net's edge list, which decides which spans are adjacent.", nameof(edges));
+
             branching = Math.Min(Math.Max(branching, 1), MaxBranching);
             var anchorSet = new HashSet<int>(anchors);
-            double clearance = ClearanceFraction * Math.Max(medianPlanEdge, 1.0e-9);
-            var placement = new Placement
-            {
-                GroundAsked = groundAsked,
-                Clearance = clearance,
-            };
+            var placement = new Placement { GroundAsked = groundAsked };
 
             var held = new HashSet<int>();
             Tree? ring = RingTree(nodes, bars, anchorSet, across, perimeterLoops, ground, held);
@@ -732,12 +887,15 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             placement.Spans = Spans(bars, anchorSet, held);
-            foreach (Span span in placement.Spans)
+            for (int s = 0; s < placement.Spans.Count; s++)
             {
+                Span span = placement.Spans[s];
                 // Free notches: everything the span holds that nothing has
                 // taken yet. A notch shared with an earlier bar (a crossing)
                 // is already held and is skipped; it does not cut the span.
                 int[] free = span.Free.Where(p => !held.Contains(bars[span.Bar][p])).ToArray();
+                SpanFrame frame = Frame(nodes, bars, span, free);
+                placement.Frames.Add(frame);
                 (int[][] groups, int[] mains) = Group(free.Length, branching);
                 for (int g = 0; g < groups.Length; g++)
                 {
@@ -748,7 +906,7 @@ namespace Ananke.COMPAS.Native.Components
                     var tree = new Tree
                     {
                         Bar = span.Bar,
-                        Span = placement.Spans.IndexOf(span),
+                        Span = s,
                         Nodes = ordered.Select(p => bars[span.Bar][p]).ToArray(),
                         Load = ordered.Select(p => Math.Abs(across[span.Bar][p].Z)).ToArray(),
                     };
@@ -774,7 +932,7 @@ namespace Ananke.COMPAS.Native.Components
                 // more, so there is nothing to fall back to and GroundPlaced
                 // always equals GroundAsked.
                 int level = Math.Min(groundAsked, MaxGround);
-                Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
+                Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level);
                 placement.Tried.Add(built);
                 placement.Built = built;
                 placement.GroundPlaced = level;
@@ -790,7 +948,7 @@ namespace Ananke.COMPAS.Native.Components
                 Level? bestAny = null;
                 for (int level = MaxGround; level >= 0; level--)
                 {
-                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level, clearance);
+                    Level built = BuildLevel(nodes, placement, bars, anchorSet, ground, level);
                     placement.Tried.Add(built);
                     if (bestAny is null || built.LoadPath < bestAny.LoadPath)
                         bestAny = built;
@@ -973,14 +1131,37 @@ namespace Ananke.COMPAS.Native.Components
         // ------------------------------------------------------------------
         // One level
 
+        /// <summary>
+        /// The tree's own span spacing as a LENGTH. The ring tree has no
+        /// span, so its scale R is the smallest plan distance between two of
+        /// its own rim notches, which is in its own terms and needs no net
+        /// median.
+        /// </summary>
+        private static double SpacingOf(Placement placement, Point3d[] nodes, int tree)
+        {
+            Tree t = placement.Trees[tree];
+            if (!t.Ring && t.Span >= 0 && t.Span < placement.Frames.Count)
+                return placement.Frames[t.Span].G;
+            double smallest = double.MaxValue;
+            for (int i = 0; i < t.Nodes.Length; i++)
+            {
+                for (int j = i + 1; j < t.Nodes.Length; j++)
+                {
+                    double d = Math.Sqrt(MouldGeometry.PlanDistanceSquared(nodes[t.Nodes[i]], nodes[t.Nodes[j]]));
+                    if (d > 0.0)
+                        smallest = Math.Min(smallest, d);
+                }
+            }
+            return smallest < double.MaxValue ? smallest : 1.0;
+        }
+
         private static Level BuildLevel(
             Point3d[] nodes,
             Placement placement,
             int[][] bars,
             HashSet<int> anchors,
             double ground,
-            int level,
-            double clearance)
+            int level)
         {
             var result = new Level { Ground = level };
             List<Tree> trees = placement.Trees;
@@ -1175,8 +1356,16 @@ namespace Ananke.COMPAS.Native.Components
                 }
             }
 
+            // Each tree's own span spacing, read once and threaded through
+            // both the merge and the close count so a five-notch span and a
+            // twenty-one-notch span on the same net answer for their own
+            // feet alone.
+            var spacing = new double[trees.Count];
+            for (int t = 0; t < trees.Count; t++)
+                spacing[t] = SpacingOf(placement, nodes, t);
+            var footSpacing = new List<double>();
             int[] footIndex = MergeFeet(
-                placement, foot, clearance, result.Nodes,
+                placement, nodes, foot, spacing, result.Nodes, footSpacing,
                 out int merged, out int close);
             result.FeetMerged = merged;
             result.FeetClose = close;
@@ -1299,7 +1488,16 @@ namespace Ananke.COMPAS.Native.Components
             result.WorstAlignment = worstAlign;
             result.WorstBranchOff = worstBranchOff;
             result.PlumbTrees = plumb.Count(p => p);
-            result.Collisions = CountCollisions(result, nodes, anchors, clearance);
+            // The COLLISION CLEARANCE is 0.05 * g of the tree whose member is
+            // being judged, and 0.05 * min(g_A, g_B) where two members of
+            // different spans are judged against one another, which is the
+            // minimum of their two clearances. This is a knowing change to a
+            // measure that is not a placement rule: it will move collision
+            // counts and with them Auto's choice on some nets.
+            var memberClearance = new double[result.Members.Count];
+            for (int mm = 0; mm < result.Members.Count; mm++)
+                memberClearance[mm] = ClearanceFraction * SpacingOf(placement, nodes, result.MemberTree[mm]);
+            result.Collisions = CountCollisions(result, nodes, anchors, memberClearance);
             result.LoadPath = 0.0;
             for (int m = 0; m < result.Members.Count; m++)
             {
@@ -1418,36 +1616,60 @@ namespace Ananke.COMPAS.Native.Components
         /// Feet at the SAME point are one node whatever put them there: two
         /// trees in one band, every tree of a span at Type 1, or two spans
         /// whose bands meet at a crossing. That is WELDING, and it is not a
-        /// merge and is not counted.
+        /// merge and is not counted. The weld tolerance is now the SPAN's
+        /// own, off <see cref="SpanFrame.TauWeld"/>: one span's for two feet
+        /// of that span, the smaller of two spans' for feet of two spans, and
+        /// a tiny flat fallback for a foot with no span at all (the ring
+        /// tree), which stands where the flat weld epsilon always did.
         ///
         /// Beyond that only a MIRRORED PAIR merges (spec 3.5): when its two
-        /// feet lie within the clearance of each other the pair stands on one
-        /// foot at the MEAN of the two, which on symmetric geometry is on the
-        /// mirror plane, where its own symmetry says it belongs. Not the
-        /// span's chord midpoint, which is where this stood: a pair's two feet
+        /// feet lie within 0.25 of the SMALLER of the two trees' own span
+        /// spacings (<c>SpacingOf</c>) the pair stands on one foot at the
+        /// MEAN of the two, which on symmetric geometry is on the mirror
+        /// plane, where its own symmetry says it belongs. Not the span's
+        /// chord midpoint, which is where this stood: a pair's two feet
         /// differ only in their along-chord part, so the clearance test says
         /// nothing at all about how far off the chord they sit, and on a bar
         /// that curves in plan the innermost notches sit off it by the plan
         /// sagitta. Merging onto the chord midpoint moved such a pair sideways
         /// by that sagitta, out from under its own bar, with nothing measuring
-        /// the move. Any other two feet inside the clearance stay two and are
-        /// counted in FeetClose. Merging those was what turned leaning
-        /// neighbours into accidental V's and X's on Param's review arch: two
-        /// trees that lean toward one another are not one tree, and the ring
-        /// tree's foot, fixed by 3.2, never merges at all.
+        /// the move. Any other two feet inside the same 0.25 * spacing stay
+        /// two and are counted in FeetClose, against the SMALLER of the two
+        /// BUILT feet's own recorded spacings. Merging those was what turned
+        /// leaning neighbours into accidental V's and X's on Param's review
+        /// arch: two trees that lean toward one another are not one tree, and
+        /// the ring tree's foot, fixed by 3.2, never merges at all.
+        ///
+        /// The merge and weld RULES are Task 8's; only their SCALE is span-
+        /// local here, the shape unchanged: a mirrored pair merges, nothing
+        /// else does, and welding stays exact coincidence.
         /// </summary>
         private static int[] MergeFeet(
             Placement placement,
+            Point3d[] nodes,
             Point3d[] foot,
-            double clearance,
+            double[] spacing,
             List<Point3d> levelNodes,
+            List<double> footSpacing,
             out int merged,
             out int close)
         {
             int n = foot.Length;
             merged = 0;
-            double squared = clearance * clearance;
-            const double weldSquared = 1.0e-18;
+
+            // The weld tolerance for a pair of feet: the span each foot's
+            // tree stands on decides it, the smaller of two when the trees
+            // disagree, and a flat fallback (matching the old weld epsilon
+            // exactly) where a tree carries no span at all.
+            double TauWeldSquared(int a, int b)
+            {
+                int spanA = placement.Trees[a].Span;
+                int spanB = placement.Trees[b].Span;
+                double tauA = spanA >= 0 && spanA < placement.Frames.Count ? placement.Frames[spanA].TauWeld : 1.0e-9;
+                double tauB = spanB >= 0 && spanB < placement.Frames.Count ? placement.Frames[spanB].TauWeld : 1.0e-9;
+                double tau = spanA == spanB ? tauA : Math.Min(tauA, tauB);
+                return tau * tau;
+            }
 
             for (int t = 0; t < n; t++)
             {
@@ -1461,7 +1683,9 @@ namespace Ananke.COMPAS.Native.Components
                     placement.Trees[partner].FixedFoot is not null)
                     continue;
                 double gap = MouldGeometry.PlanDistanceSquared(foot[t], foot[partner]);
-                if (gap <= weldSquared || gap > squared)
+                double weldSquared = TauWeldSquared(t, partner);
+                double mergeClearance = 0.25 * Math.Min(spacing[t], spacing[partner]);
+                if (gap <= weldSquared || gap > mergeClearance * mergeClearance)
                     continue;
                 var middle = new Point3d(
                     0.5 * (foot[t].X + foot[partner].X),
@@ -1478,7 +1702,7 @@ namespace Ananke.COMPAS.Native.Components
                 footIndex[t] = -1;
                 for (int u = 0; u < t; u++)
                 {
-                    if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= weldSquared &&
+                    if (MouldGeometry.PlanDistanceSquared(foot[t], foot[u]) <= TauWeldSquared(t, u) &&
                         Math.Abs(foot[t].Z - foot[u].Z) <= 1.0e-9)
                     {
                         footIndex[t] = footIndex[u];
@@ -1488,19 +1712,23 @@ namespace Ananke.COMPAS.Native.Components
                 if (footIndex[t] < 0)
                 {
                     levelNodes.Add(foot[t]);
+                    footSpacing.Add(spacing[t]);
                     footIndex[t] = levelNodes.Count - 1;
                 }
             }
 
-            // What stands close but apart, counted once per pair of feet.
-            // The feet are the only nodes in the level so far, which is why
-            // this runs here and not after the members are built.
+            // What stands close but apart, counted once per pair of feet,
+            // each pair judged against 0.25 of the SMALLER of the two BUILT
+            // feet's own recorded spacings. The feet are the only nodes in
+            // the level so far, which is why this runs here and not after
+            // the members are built.
             close = 0;
             for (int i = 0; i < levelNodes.Count; i++)
             {
                 for (int j = i + 1; j < levelNodes.Count; j++)
                 {
-                    if (MouldGeometry.PlanDistanceSquared(levelNodes[i], levelNodes[j]) <= squared)
+                    double closeClearance = 0.25 * Math.Min(footSpacing[i], footSpacing[j]);
+                    if (MouldGeometry.PlanDistanceSquared(levelNodes[i], levelNodes[j]) <= closeClearance * closeClearance)
                         close++;
                 }
             }
@@ -1511,11 +1739,15 @@ namespace Ananke.COMPAS.Native.Components
         // Collisions
 
         /// <summary>
-        /// Two members that share no end and come closer than the clearance
-        /// collide. A member collides with the NET when its interior, sampled
-        /// at 1/8 .. 7/8 of its length, rises above it: a sample whose Z is
-        /// more than the clearance above the Z of the net vertex nearest it
-        /// IN PLAN. That is spec 3.7's net test entire.
+        /// Two members that share no end and come closer than the SMALLER of
+        /// their two clearances collide. A member collides with the NET when
+        /// its interior, sampled at 1/8 .. 7/8 of its length, rises above it:
+        /// a sample whose Z is more than that member's OWN clearance above
+        /// the Z of the net vertex nearest it IN PLAN. That is spec 3.7's net
+        /// test entire, with the clearance no longer one number for the whole
+        /// level but the span-local one spec section 4 asks for: spec section
+        /// 19 puts the SHAPE of the two tests, member-to-member and member-
+        /// to-net, out of scope, and only their per-member scale changes.
         ///
         /// It used to be more and less than that at once. It also refused a
         /// sample within the clearance of any net EDGE the member did not end
@@ -1539,7 +1771,7 @@ namespace Ananke.COMPAS.Native.Components
             Level level,
             Point3d[] netNodes,
             HashSet<int> anchors,
-            double clearance)
+            double[] memberClearance)
         {
             int collisions = 0;
             int count = level.Members.Count;
@@ -1553,7 +1785,7 @@ namespace Ananke.COMPAS.Native.Components
                         continue;
                     double d = SegmentDistance(
                         level.Nodes[a1], level.Nodes[a2], level.Nodes[b1], level.Nodes[b2]);
-                    if (d < clearance)
+                    if (d < Math.Min(memberClearance[i], memberClearance[j]))
                         collisions++;
                 }
             }
@@ -1584,7 +1816,7 @@ namespace Ananke.COMPAS.Native.Components
                             nearest = i;
                         }
                     }
-                    if (nearest >= 0 && p.Z > netNodes[nearest].Z + clearance)
+                    if (nearest >= 0 && p.Z > netNodes[nearest].Z + memberClearance[m])
                     {
                         hit = true;
                     }

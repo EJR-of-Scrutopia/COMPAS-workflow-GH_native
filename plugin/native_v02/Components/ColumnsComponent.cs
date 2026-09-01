@@ -332,8 +332,13 @@ namespace Ananke.COMPAS.Native.Components
                 double alongToAnchors = 0.0;
                 double acrossToColumns = 0.0;
                 var across = new Vector3d[bars.Count][];
+                var barPull = new Vector3d[bars.Count][];
                 for (int b = 0; b < bars.Count; b++)
                 {
+                    // The untransversed pull is KEPT rather than discarded
+                    // after BarTransverse: spec section 10 threads it through
+                    // so the head load at a shared node is counted exactly
+                    // once and in full.
                     Vector3d[] pull = MouldGeometry.BarLoads(bars[b], nodes, incident);
                     Vector3d[] transverse = MouldGeometry.BarTransverse(bars[b], nodes, pull);
                     for (int k = 0; k < bars[b].Count; k++)
@@ -341,8 +346,10 @@ namespace Ananke.COMPAS.Native.Components
                         alongToAnchors += (pull[k] - transverse[k]).Length;
                         acrossToColumns += transverse[k].Length;
                     }
+                    barPull[b] = pull;
                     across[b] = transverse;
                 }
+                Vector3d[] nodePull = MouldGeometry.NodeLoads(nodes, incident);
 
                 // The boundary loops, for the free-rim test. Computed the way
                 // Animate computes its Perimeter Nodes: naked mesh edges when
@@ -358,15 +365,16 @@ namespace Ananke.COMPAS.Native.Components
                 List<int>[] grouping = MouldGeometry.GroupingAdjacency(result, edges, n);
                 List<List<int>> loops = MouldGeometry.ConnectedGroups(perimeterIds, grouping);
 
-                double median = MouldGeometry.MedianEdgeLength(nodes, edges);
                 ColumnPlacement.Placement placement = ColumnPlacement.Place(
                     nodes,
                     bars.Select(b => b.ToArray()).ToArray(),
+                    edges,
                     anchors.ToArray(),
                     across,
+                    barPull,
+                    nodePull,
                     loops.Select(l => l.ToArray()).ToArray(),
                     groundLevel,
-                    median,
                     branching,
                     type);
                 ColumnPlacement.Level built = placement.Built;
