@@ -8851,6 +8851,223 @@ internal static class Program
                     throw new InvalidOperationException($"Type {type}: noise well inside TauSnap changed {field} from {Get<int>(builtClean, field)} to {Get<int>(builtNoisy, field)}.");
             }
         }
+
+        // ---- THE PEEL, AS A PAIR (spec section 11). A tree that peels takes
+        // its mirror PARTNER with it, whether or not the partner is over the
+        // cap; both feet are then Type 0 feet and are mirror images, and both
+        // members count in Peeled. The wide flat span at Type 1 is the
+        // measured control: FOUR trees of the nine-notch rise-2.5 arch peel,
+        // the flank trunks leaning 77.3 and 61.9 degrees to the central foot
+        // while the next one in leans 43.6 and stays.
+        {
+            object placed = Run(Arch(11, 10.0, 2.5, 1.0), Array.Empty<int[]>(), 1, 1);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            int[] footNode = FootOfTree(built, 9);
+            int[] partner = Get<int[]>(placed, "Partner");
+            int shared = footNode[4];
+            int[] peeledSet = Enumerable.Range(0, 9).Where(t => footNode[t] != shared).ToArray();
+            if (Get<int>(built, "Peeled") != peeledSet.Length)
+                throw new InvalidOperationException($"Peeled counts the members that stepped off; it reads {Get<int>(built, "Peeled")} against {peeledSet.Length} trees standing off the shared foot.");
+            foreach (int t in peeledSet)
+            {
+                int mate = partner[t];
+                if (mate < 0 || mate == t)
+                    continue;
+                if (!peeledSet.Contains(mate))
+                    throw new InvalidOperationException($"A tree that peels takes its mirror PARTNER with it, whether or not the partner is over the cap; tree {t} peeled and {mate} did not.");
+                double sum = X(levelNodes[footNode[t]]) + X(levelNodes[footNode[mate]]);
+                if (Math.Abs(sum - 10.0) > 1.0e-9)
+                    throw new InvalidOperationException($"Both feet of a peeling pair are Type 0 feet and are mirror images; trees {t} and {mate} stand at {X(levelNodes[footNode[t]]):0.#########} and {X(levelNodes[footNode[mate]]):0.#########}, summing to {sum:0.#########} rather than 10.");
+            }
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (feet.Any(f => !footNode.Contains(f)))
+                throw new InvalidOperationException("A foot left with NO trees standing on it is not built.");
+        }
+
+        // ---- A SPAN OF ONE TREE (spec sections 15 and 17). One free notch,
+        // at chord parameter 0.44 and again at 0.43, which is the MEASURED
+        // boundary of the self-pairing test on the engine as it stands: 0.44
+        // passed it, 0.43 failed it, and 0.43 dropped Families to 0 and
+        // disabled the whole span. Under this spec THE TWO PARAMETERS GIVE
+        // THE SAME ANSWER IN EVERY RESPECT, which is the strongest form the
+        // fixture can take: the mean of one along part is that along part, so
+        // 9.1 zeroes it unconditionally, and s_mirror falls back to the row
+        // centre by parameter, which for one notch IS that notch. Its h is
+        // the fallback 1 / (m + 1) = 0.5.
+        {
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) Lone(double parameter)
+            {
+                Array nodes = Array.CreateInstance(point3d, 3);
+                nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+                nodes.SetValue(P(10.0 * parameter, 0.0, 2.5), 1);
+                nodes.SetValue(P(10.0, 0.0, 0.0), 2);
+                Array acrossBar = Array.CreateInstance(vector3d, 3);
+                acrossBar.SetValue(V(0.0, 0.0, 0.0), 0);
+                acrossBar.SetValue(V(0.2, 0.0, -1.0), 1);
+                acrossBar.SetValue(V(0.0, 0.0, 0.0), 2);
+                Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                across.SetValue(acrossBar, 0);
+                return (nodes, new[] { new[] { 0, 1, 2 } }, new[] { 0, 2 }, across, new[] { (0, 1), (1, 2) });
+            }
+            foreach (int type in new[] { 0, 1, 2, 3, 4, -1 })
+            {
+                object high = Run(Lone(0.44), Array.Empty<int[]>(), 1, type);
+                object low = Run(Lone(0.43), Array.Empty<int[]>(), 1, type);
+                foreach ((object placed, double parameter) in new[] { (high, 0.44), (low, 0.43) })
+                {
+                    object built = Get<object>(placed, "Built");
+                    var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    if (feet.Length != 1)
+                        throw new InvalidOperationException($"Type {type}, notch at {parameter}: T is 1 and T is at most N, so the tree is a group of one and the span places exactly ONE foot; it built {feet.Length}. An EVEN Type on a span of one tree places one foot, not two and not three, and no central foot is added anywhere.");
+                    if (type >= 1 && Math.Abs(X(levelNodes[feet[0]]) - (10.0 * parameter)) > 1.0e-9)
+                        throw new InvalidOperationException($"Type {type}: the one foot stands at that notch's own plan position, x = {10.0 * parameter:0.###}; it stands at {X(levelNodes[feet[0]]):0.#########}.");
+                }
+                object builtHigh = Get<object>(high, "Built");
+                object builtLow = Get<object>(low, "Built");
+                foreach (string field in new[] { "Peeled", "Gathered", "CentralColumns", "FeetMerged", "FeetClose" })
+                {
+                    if (Get<int>(builtHigh, field) != Get<int>(builtLow, field))
+                        throw new InvalidOperationException($"Type {type}: the placements at 0.44 and 0.43 are IDENTICAL in every diagnostic count; {field} reads {Get<int>(builtHigh, field)} against {Get<int>(builtLow, field)}. Today the 0.43 case drops Families to 0 and disables the span.");
+                }
+                // Families and Partner are the two readings 9.1/9.2's
+                // rewrite of Symmetrise settles: a span of fewer than two
+                // trees is self-paired by the row centre by parameter, which
+                // for one notch IS that notch, whatever the notch's own
+                // position. TODAY Symmetrise instead tests the raw parameter
+                // against 0.25 / (count + 1) of the chord midpoint, which is
+                // exactly the boundary 0.44 and 0.43 straddle: 0.44 passes,
+                // 0.43 fails, Families drops to 0 and Partner falls back to
+                // -1. Neither is this task's mechanism to fix; Task 7's
+                // brief names the single-tree case in its own 9.3 verbatim
+                // ("a span of fewer than two trees, s_mirror is the row
+                // centre by parameter itself"). Deferred rather than
+                // asserted inline, recorded in the SDD ledger as D4 against
+                // Task 7, and struck the day Symmetrise is rewritten.
+                Deferred(
+                    "A span of one tree is self-paired at every notch position (spec sections 9.1, 9.2 and 15)",
+                    "Task 7's rewrite of Symmetrise (9.1-9.5): a span of fewer than two trees takes s_mirror as the row centre by parameter itself, which self-pairs the one tree unconditionally",
+                    () =>
+                    {
+                        if (Get<int>(high, "Families") != Get<int>(low, "Families"))
+                            throw new InvalidOperationException($"Type {type}: Families reads {Get<int>(high, "Families")} at 0.44 against {Get<int>(low, "Families")} at 0.43.");
+                    });
+                Deferred(
+                    "A span of one tree's Partner does not depend on the notch's own position (spec sections 9.1, 9.2 and 15)",
+                    "Task 7's rewrite of Symmetrise (9.1-9.5): a span of fewer than two trees takes s_mirror as the row centre by parameter itself, which self-pairs the one tree unconditionally",
+                    () =>
+                    {
+                        if (!Get<int[]>(high, "Partner").SequenceEqual(Get<int[]>(low, "Partner")))
+                            throw new InvalidOperationException($"Type {type}: Partner differs between 0.44 and 0.43; the tree is self-paired either way.");
+                    });
+            }
+        }
+
+        // ---- A SPAN OF TWO FREE NOTCHES at Branching 1 (spec section 15).
+        // At Type 1 they form ONE group of two, whose two candidates are its
+        // two notches, so the foot is their MIDPOINT. At Types 2 to 4, T is
+        // at most N and each tree is a group of one standing under its own
+        // notch.
+        {
+            Array nodes = Array.CreateInstance(point3d, 4);
+            nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(3.0, 0.0, 2.0), 1);
+            nodes.SetValue(P(7.0, 0.0, 2.0), 2);
+            nodes.SetValue(P(10.0, 0.0, 0.0), 3);
+            Array acrossBar = Array.CreateInstance(vector3d, 4);
+            for (int i = 0; i < 4; i++)
+                acrossBar.SetValue(V(0.0, 0.0, i == 0 || i == 3 ? 0.0 : -1.0), i);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            var pairSpan = (nodes, new[] { new[] { 0, 1, 2, 3 } }, new[] { 0, 3 }, across, new[] { (0, 1), (1, 2), (2, 3) });
+            object one = Run(pairSpan, Array.Empty<int[]>(), 1, 1);
+            object builtOne = Get<object>(one, "Built");
+            var nodesOne = ((IEnumerable)Get<object>(builtOne, "Nodes")).Cast<object>().ToArray();
+            int[] footOne = FootOfTree(builtOne, 2);
+            if (footOne[0] != footOne[1] || Math.Abs(X(nodesOne[footOne[0]]) - 5.0) > 1.0e-9)
+                throw new InvalidOperationException($"Two free notches at Type 1 form ONE group of two whose foot is the midpoint of its two candidates, x = 5; they stand at {X(nodesOne[footOne[0]]):0.###} and {X(nodesOne[footOne[1]]):0.###}.");
+            foreach (int type in new[] { 2, 3, 4 })
+            {
+                object placed = Run(pairSpan, Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, 2);
+                if (Math.Abs(X(levelNodes[footNode[0]]) - 3.0) > 1.0e-9 || Math.Abs(X(levelNodes[footNode[1]]) - 7.0) > 1.0e-9)
+                    throw new InvalidOperationException($"Type {type}: T is at most N, so each tree is a group of one standing under its own notch at x = 3 and x = 7; they stand at {X(levelNodes[footNode[0]]):0.###} and {X(levelNodes[footNode[1]]):0.###}.");
+            }
+        }
+
+        // ---- A SPAN WHOSE CHORD LENGTH IS ZERO (spec section 15). A bar
+        // whose two cut nodes coincide in plan. It still gets its LAYOUT and
+        // its MAINS from section 6, which read only the bar order and the
+        // count, so it still builds trees and members; a span with no layout
+        // could build nothing at all. Every tree of it is unpaired, there is
+        // no common mode to remove because there is no chord to read one
+        // along, and it takes ONE foot at the plan mean of its free notches
+        // whatever the Type. A stated answer rather than a division by zero.
+        {
+            Array nodes = Array.CreateInstance(point3d, 5);
+            nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(1.0, 0.0, 2.0), 1);
+            nodes.SetValue(P(0.0, 2.0, 3.0), 2);
+            nodes.SetValue(P(-1.0, 0.0, 2.0), 3);
+            nodes.SetValue(P(0.0, 0.0, 0.0), 4);
+            Array acrossBar = Array.CreateInstance(vector3d, 5);
+            for (int i = 0; i < 5; i++)
+                acrossBar.SetValue(V(0.0, 0.0, i == 0 || i == 4 ? 0.0 : -1.0), i);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            var loop = (nodes, new[] { new[] { 0, 1, 2, 3, 4 } }, new[] { 0, 4 }, across, new[] { (0, 1), (1, 2), (2, 3), (3, 4) });
+            const double meanX = (1.0 + 0.0 - 1.0) / 3.0;
+            const double meanY = (0.0 + 2.0 + 0.0) / 3.0;
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object placed = Run(loop, Array.Empty<int[]>(), 1, type);
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                if (Get<int>(placed, "SpanDegenerate") != 1)
+                    throw new InvalidOperationException($"A span whose two cut nodes coincide in plan raises columns.span_degenerate; SpanDegenerate is {Get<int>(placed, "SpanDegenerate")}.");
+                if (feet.Length != 1)
+                    throw new InvalidOperationException($"Type {type}: a chord of no length takes ONE foot at the plan mean of its free notches whatever the Type; it built {feet.Length}.");
+                if (Math.Abs(X(levelNodes[feet[0]]) - meanX) > 1.0e-9 || Math.Abs(Y(levelNodes[feet[0]]) - meanY) > 1.0e-9)
+                    throw new InvalidOperationException($"That one foot is the plan mean ({meanX:0.###}, {meanY:0.###}); it stands at ({X(levelNodes[feet[0]]):0.###}, {Y(levelNodes[feet[0]]):0.###}).");
+                if (Get<int>(placed, "GroundPlaced") != type)
+                    throw new InvalidOperationException($"Nothing refuses the level: Type {type} asked is Type {type} placed on a degenerate span; it placed {Get<int>(placed, "GroundPlaced")}.");
+            }
+        }
+
+        // ---- A SPAN WHOSE NOTCHES ALL FALL AT ONE CHORD PARAMETER (spec
+        // section 15), which is a bar that doubles back in plan. It takes h
+        // from the fallback 1 / (m + 1) and is otherwise an ORDINARY span:
+        // its layout, its trees and its mains come from section 6 BY INDEX in
+        // bar order, which needs no parameter at all, and its group centre is
+        // then one parameter, so every notch of the group is a tied candidate
+        // and the foot is their plan mean. It raises span_degenerate at
+        // warning and nothing refuses the level.
+        {
+            Array nodes = Array.CreateInstance(point3d, 5);
+            nodes.SetValue(P(0.0, 0.0, 0.0), 0);
+            nodes.SetValue(P(5.0, 1.0, 2.0), 1);
+            nodes.SetValue(P(5.0, 3.0, 3.0), 2);
+            nodes.SetValue(P(5.0, -1.0, 2.0), 3);
+            nodes.SetValue(P(10.0, 0.0, 0.0), 4);
+            Array acrossBar = Array.CreateInstance(vector3d, 5);
+            for (int i = 0; i < 5; i++)
+                acrossBar.SetValue(V(0.0, 0.0, i == 0 || i == 4 ? 0.0 : -1.0), i);
+            Array across = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+            across.SetValue(acrossBar, 0);
+            var doubled = (nodes, new[] { new[] { 0, 1, 2, 3, 4 } }, new[] { 0, 4 }, across, new[] { (0, 1), (1, 2), (2, 3), (3, 4) });
+            object placed = Run(doubled, Array.Empty<int[]>(), 1, 1);
+            object built = Get<object>(placed, "Built");
+            var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+            var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+            if (Get<int>(placed, "SpanDegenerate") != 1)
+                throw new InvalidOperationException($"Every notch at one chord parameter raises span_degenerate; SpanDegenerate is {Get<int>(placed, "SpanDegenerate")}.");
+            if (feet.Length != 1 || Math.Abs(X(levelNodes[feet[0]]) - 5.0) > 1.0e-9 || Math.Abs(Y(levelNodes[feet[0]]) - 1.0) > 1.0e-9)
+                throw new InvalidOperationException($"At Type 1 the one group's centre is that one parameter, so every notch is a tied candidate and the foot is their plan mean, (5, 1); it built {feet.Length} feet, the first at ({X(levelNodes[feet[0]]):0.###}, {Y(levelNodes[feet[0]]):0.###}).");
+        }
     }
 
     private static double AngleDeg(double ax, double ay, double az, double bx, double by, double bz)

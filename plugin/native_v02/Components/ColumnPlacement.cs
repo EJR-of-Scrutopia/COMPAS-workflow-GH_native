@@ -351,6 +351,13 @@ namespace Ananke.COMPAS.Native.Components
             /// is symmetrised rather than left standing on its raw aim.
             /// </summary>
             public int SymmetrisedTrees = -1;
+            /// <summary>
+            /// Spans of the two degenerate kinds of spec section 15: a chord
+            /// of no length, and a notch row that falls at one chord
+            /// parameter. Reported as columns.span_degenerate at warning;
+            /// nothing refuses the level.
+            /// </summary>
+            public int SpanDegenerate;
         }
 
         // ------------------------------------------------------------------
@@ -1068,6 +1075,8 @@ namespace Ananke.COMPAS.Native.Components
                 int[] free = span.Free.Where(p => !held.Contains(bars[span.Bar][p])).ToArray();
                 SpanFrame frame = Frame(nodes, bars, span, free);
                 placement.Frames.Add(frame);
+                if (free.Length > 0 && (frame.ChordZero || frame.OneParameter))
+                    placement.SpanDegenerate++;
                 (int[][] groups, int[] mains) = Group(free.Length, branching);
                 for (int g = 0; g < groups.Length; g++)
                 {
@@ -1350,7 +1359,12 @@ namespace Ananke.COMPAS.Native.Components
 
             // Every tree's OWN foot, where the ray from its main notch along
             // the aim meets the ground: what Type 0 stands on, and what a
-            // peeled trunk falls back to.
+            // peeled trunk falls back to. A tree whose main notch is at or
+            // below GROUND cannot meet the lean cap from any foot, so it
+            // peels, with its partner, and its Type 0 foot lies directly
+            // under that notch because the aim ray has no rise to travel.
+            // `ownRise` is already clamped at zero, so the case is recorded
+            // rather than discovered.
             var own = new Point3d[trees.Count];
             for (int t = 0; t < trees.Count; t++)
             {
@@ -1368,12 +1382,47 @@ namespace Ananke.COMPAS.Native.Components
                     ground);
             }
 
+            // A span whose CHORD LENGTH is zero has no chord direction and no
+            // parameter. It takes ONE foot at the plan mean of its free
+            // notches WHATEVER THE TYPE, Type 0 included, which is why this
+            // runs before the level split rather than inside its else. The
+            // one-parameter span needs no branch at all: its group centre is
+            // that one parameter, so every notch of the group is a tied
+            // candidate and GroupFoot already returns their plan mean.
+            var chordZeroTree = new bool[trees.Count];
+            for (int s = 0; s < placement.Spans.Count; s++)
+            {
+                SpanFrame frame = placement.Frames[s];
+                if (!frame.ChordZero || frame.Nodes.Length == 0)
+                    continue;
+                double sumX = 0.0;
+                double sumY = 0.0;
+                foreach (int node in frame.Nodes)
+                {
+                    sumX += nodes[node].X;
+                    sumY += nodes[node].Y;
+                }
+                var oneFoot = new Point3d(
+                    sumX / frame.Nodes.Length, sumY / frame.Nodes.Length, ground);
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    if (trees[t].FixedFoot is not null || trees[t].Span != s)
+                        continue;
+                    foot[t] = oneFoot;
+                    chordZeroTree[t] = true;
+                }
+            }
+
             if (level == 0)
             {
                 // Each tree stands on its own foot, on the line of the force
                 // it carries. AimFrom caps the lean, so this is never refused.
                 for (int t = 0; t < trees.Count; t++)
+                {
+                    if (chordZeroTree[t])
+                        continue;
                     foot[t] = own[t];
+                }
             }
             else
             {
@@ -1405,6 +1454,8 @@ namespace Ananke.COMPAS.Native.Components
                     if (row.Count == 0)
                         continue;
                     SpanFrame frame = placement.Frames[s];
+                    if (frame.ChordZero)
+                        continue;
                     (int[][] groups, int central) = FootGroups(row.Count, level);
                     if (central >= 0)
                         result.CentralColumns++;
@@ -1443,19 +1494,37 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
 
-                // THE PEEL (spec section 11). A tree whose trunk from its
-                // assigned foot to its main notch leans past the cap stands
-                // instead on its Type 0 foot. A peel NEVER MOVES A FOOT: a
-                // foot's position does not depend on the trees standing on
-                // it, so the rebuild-and-rejudge loop the band rule needed is
-                // gone with the bands, and a foot left with no trees is not
-                // built.
+                // A tree that peels takes its mirror PARTNER with it, whether
+                // or not the partner is over the cap. Both feet are then Type
+                // 0 feet, and they are mirror images wherever the two main
+                // notches are, because the pair step made the two aims mirror
+                // images. Both members count in Peeled. An unpaired tree
+                // peels alone. A self-paired tree peels onto its own Type 0
+                // foot, which has no along-chord component because the pair
+                // step set its along aim to zero, so it stands directly under
+                // its own notch along the chord; it lies on the span's plane
+                // of symmetry exactly when that notch does, and no step
+                // projects it there.
+                //
+                // The loop cannot cascade: peeling is one-way, a peeled tree
+                // never rejoins a shared foot, and no foot moves on account
+                // of a peel.
+                var stepped = new bool[trees.Count];
                 for (int t = 0; t < trees.Count; t++)
                 {
-                    if (trees[t].FixedFoot is not null)
+                    if (trees[t].FixedFoot is not null || stepped[t])
                         continue;
                     double lean = MouldGeometry.LeanFromVertical(foot[t], nodes[trees[t].Nodes[0]]);
                     if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
+                        continue;
+                    stepped[t] = true;
+                    int mate = t < placement.Partner.Length ? placement.Partner[t] : -1;
+                    if (mate >= 0 && mate < trees.Count && mate != t && trees[mate].FixedFoot is null)
+                        stepped[mate] = true;
+                }
+                for (int t = 0; t < trees.Count; t++)
+                {
+                    if (!stepped[t])
                         continue;
                     foot[t] = own[t];
                     result.Peeled++;
