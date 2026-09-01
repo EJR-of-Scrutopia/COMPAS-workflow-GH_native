@@ -8002,6 +8002,116 @@ internal static class Program
                 if (!Enumerable.Reverse(sizes).SequenceEqual(sizes))
                     throw new InvalidOperationException($"A borrowed notch stays in Tree.Nodes, so the span's tree sizes are still a PALINDROME; they read [{string.Join(",", sizes)}].");
             }
+
+            // 6. THE HEAD MAIN AT BRANCHING 3, which is the case HeadMainOf
+            //    exists for and which no fixture above reaches. Every crossing
+            //    check in this file runs at Branching 1, where a tree holds
+            //    exactly ONE notch: HeadMain can then only be 0 or -1, and the
+            //    trunk, the fork and the member build all run to Nodes[0]
+            //    whichever it is. The real job — picking the innermost OWNED
+            //    notch out of several when the would-be main is itself
+            //    borrowed, and building the geometry to THAT node — was
+            //    therefore never exercised.
+            //
+            //    The arch holds nine free notches, bar positions 1 to 9, so at
+            //    Branching 3 the layout is 3, 3, 3 (nine odd, centre tree of
+            //    three, no strays) and the middle group is the free stations
+            //    3, 4, 5, that is bar positions 4, 5 and 6. Its main is the
+            //    station at the row centre, bar position 5 — EXACTLY the node
+            //    the rib lands on. The rib holds ten free notches against the
+            //    arch's nine and owns the shared node by the rule's first
+            //    clause, so the arch's middle tree is [5, 4, 6] with Owned
+            //    [false, true, true]: its would-be main is borrowed. Nodes 4
+            //    and 6 then sit one station either side of the centre and tie,
+            //    and the tie goes to the lower bar position, so the head main
+            //    is node 4.
+            {
+                var one = Touching((At: 5, Count: 11));
+                object placed = Run(one, Array.Empty<int[]>(), 3, 0);
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                int middle = Enumerable.Range(0, trees.Length).FirstOrDefault(
+                    t => Get<int>(trees[t], "Bar") == 0 && Get<int[]>(trees[t], "Nodes")[0] == 5, -1);
+                if (middle < 0)
+                {
+                    throw new InvalidOperationException(
+                        "At Branching 3 the arch's nine free notches lay out 3, 3, 3 and the middle group's MAIN is the row-centre notch, bar position 5, which is the node the rib lands on. No arch tree has it as Nodes[0]: "
+                        + string.Join(" | ", trees.Where(t => Get<int>(t, "Bar") == 0).Select(t => $"[{string.Join(",", Get<int[]>(t, "Nodes"))}]")));
+                }
+                int[] treeNodes = Get<int[]>(trees[middle], "Nodes");
+                bool[] owned = Get<bool[]>(trees[middle], "Owned");
+                int headMain = Get<int>(trees[middle], "HeadMain");
+                if (treeNodes.Length != 3 || owned[0] || !owned[1] || !owned[2])
+                {
+                    throw new InvalidOperationException(
+                        $"The arch's middle tree holds the three notches 5, 4 and 6 and BORROWS its would-be main, the shared node 5, owning the other two; it reads [{string.Join(",", treeNodes)}] owned [{string.Join(",", owned)}].");
+                }
+                if (headMain <= 0 || !owned[headMain])
+                    throw new InvalidOperationException($"The would-be main is borrowed, so the head main is a DIFFERENT and OWNED notch, never index 0; HeadMain is {headMain} and Owned there is {(headMain >= 0 && headMain < owned.Length ? owned[headMain].ToString() : "out of range")}.");
+                if (treeNodes[headMain] != 4)
+                    throw new InvalidOperationException($"Nodes 4 and 6 stand one station either side of the row centre and tie, so the head main is the LOWER bar position, node 4; it is node {treeNodes[headMain]}.");
+
+                // And the geometry follows the head main and not Nodes[0].
+                // The tree's resultant is the sum over its OWNED notches only,
+                // which here is (0, 0, -1) at node 4 and (0, 0, -1) at node 6
+                // and nothing at all from the borrowed node 5, so the aim is
+                // plumb and at Type 0 the tree's own foot stands DIRECTLY
+                // under its head main: (4, 5, 0). Built to Nodes[0] instead it
+                // would stand at (5, 5, 0), a whole metre away, so the two
+                // answers are not near-misses of one another.
+                object built = Get<object>(placed, "Built");
+                var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                int[] footNode = FootOfTree(built, trees.Length);
+                if (footNode[middle] < 0)
+                    throw new InvalidOperationException("The arch's middle tree owns two of its three notches, so it builds members and stands on a foot.");
+                object footPoint = levelNodes[footNode[middle]];
+                object headPoint = one.Nodes.GetValue(4)!;
+                object borrowedPoint = one.Nodes.GetValue(5)!;
+                if (Math.Abs(X(footPoint) - 4.0) > 1.0e-9 || Math.Abs(Y(footPoint) - 5.0) > 1.0e-9 || Math.Abs(Z(footPoint)) > 1.0e-9)
+                    throw new InvalidOperationException($"Under a plumb resultant the Type 0 foot stands under the HEAD MAIN, node 4, at (4, 5, 0); it stands at ({X(footPoint):0.#####}, {Y(footPoint):0.#####}, {Z(footPoint):0.#####}). Under Nodes[0] it would stand at (5, 5, 0).");
+
+                (int Lower, int Upper)[] allMembers = MembersOf(built);
+                int[] memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
+                int[] mine = Enumerable.Range(0, allMembers.Length).Where(m => memberTree[m] == middle).ToArray();
+                if (mine.Length != 3)
+                    throw new InvalidOperationException($"Two owned notches and a borrowed one make THREE members: the trunk, the main branch to the head main, and one branch to the other owned notch. This tree built {mine.Length}.");
+                bool Same(object a, object b) =>
+                    Math.Abs(X(a) - X(b)) < 1.0e-9 && Math.Abs(Y(a) - Y(b)) < 1.0e-9 && Math.Abs(Z(a) - Z(b)) < 1.0e-9;
+                if (mine.Any(m => Same(levelNodes[allMembers[m].Upper], borrowedPoint)))
+                    throw new InvalidOperationException("The arch BORROWS node 5, so it builds no member to it at all; the rib alone carries that head.");
+                int trunk = mine.FirstOrDefault(m => allMembers[m].Lower == footNode[middle], -1);
+                if (trunk < 0)
+                    throw new InvalidOperationException("One member of this tree leaves its foot: the trunk.");
+                int forkNode = allMembers[trunk].Upper;
+                object forkPoint = levelNodes[forkNode];
+                if (!mine.Any(m => allMembers[m].Lower == forkNode && Same(levelNodes[allMembers[m].Upper], headPoint)))
+                    throw new InvalidOperationException("The MAIN BRANCH runs from the fork to the head main, node 4.");
+                // The fork lies ON the segment from the foot to the head main.
+                // Measured as the perpendicular distance from that line, and
+                // measured again from the line to the borrowed would-be main,
+                // so the check says which of the two segments the fork is on
+                // rather than merely that it is on one of them.
+                double OffLine(object from, object to, object p)
+                {
+                    double dx = X(to) - X(from), dy = Y(to) - Y(from), dz = Z(to) - Z(from);
+                    double px = X(p) - X(from), py = Y(p) - Y(from), pz = Z(p) - Z(from);
+                    double cx = (dy * pz) - (dz * py);
+                    double cy = (dz * px) - (dx * pz);
+                    double cz = (dx * py) - (dy * px);
+                    return Math.Sqrt((cx * cx) + (cy * cy) + (cz * cz))
+                        / Math.Max(Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz)), 1.0e-12);
+                }
+                if (OffLine(footPoint, headPoint, forkPoint) > 1.0e-9)
+                    throw new InvalidOperationException($"The fork lies ON the segment from the foot to the HEAD MAIN; it stands {OffLine(footPoint, headPoint, forkPoint):0.#########} off that line.");
+                if (OffLine(footPoint, borrowedPoint, forkPoint) < 1.0e-6)
+                    throw new InvalidOperationException("The two segments are plainly distinguishable and the fork must be off the one running to the BORROWED would-be main; it lies on it.");
+
+                // The borrowed node still carries EXACTLY ONE head across the
+                // whole placement, the rib's, which is the point of both lines
+                // holding the notch while only one builds to it.
+                int heads = allMembers.Count(m => Same(levelNodes[m.Upper], borrowedPoint));
+                if (heads != 1)
+                    throw new InvalidOperationException($"The shared node is one point in space and carries EXACTLY ONE column head; {heads} members end at it.");
+            }
         }
 
         // ---- A band foot is the plan CENTROID of its mains (spec 3.5,

@@ -1721,9 +1721,20 @@ namespace Ananke.COMPAS.Native.Components
             {
                 // Each tree stands on its own foot, on the line of the force
                 // it carries. AimFrom caps the lean, so this is never refused.
+                // A tree whose HeadMain is -1 is skipped here for the same
+                // reason it is skipped everywhere else in this method: it owns
+                // no notch, so `own` was never computed for it and copying
+                // that uncomputed default across would put a plan-origin foot
+                // in the array. Nothing downstream reads it, because every
+                // consumer re-checks HeadMain, but a foot no tree stands on
+                // has no business being written. The FixedFoot test comes
+                // first, exactly as it does in the `own` loop above: the ring
+                // tree's foot is given and not derived from a head main.
                 for (int t = 0; t < trees.Count; t++)
                 {
                     if (chordZeroTree[t])
+                        continue;
+                    if (trees[t].FixedFoot is null && trees[t].HeadMain < 0)
                         continue;
                     foot[t] = own[t];
                 }
