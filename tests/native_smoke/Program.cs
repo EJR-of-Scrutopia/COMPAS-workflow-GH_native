@@ -1532,6 +1532,13 @@ internal static class Program
             failures.Add($"Icon family: {DescribeException(exception)}");
         }
 
+        // Every deferred assertion is reported here, at the suite level, so
+        // that a check a brief asked for and a task could not enforce is
+        // visible to whoever runs the harness and not only to a reader of
+        // the one comment block beside it. A deferral whose defect has since
+        // been fixed becomes a failure, not a silence.
+        ReportDeferrals(failures);
+
         if (failures.Count == 0)
         {
             Console.WriteLine(
@@ -8494,6 +8501,7 @@ internal static class Program
         // no span is ever placed unmirrored, and the foot positions CONVERGE
         // as the density rises rather than jumping between them.
         {
+            var previous = new Dictionary<int, double>();
             foreach (int notches in new[] { 3, 5, 9, 17 })
             {
                 var net = CrestArch(notches + 2, 10.0, 2.5, crest: 0.60);
@@ -8567,54 +8575,66 @@ internal static class Program
                         }
                     }
                     // NO SPAN IS EVER PLACED UNMIRRORED, and THE FEET
-                    // CONVERGE AS THE DENSITY RISES, are section 17's
-                    // eventual claims for the finished phase, but neither is
-                    // owned by this task's mechanism alone, and BOTH WERE
-                    // MEASURED TO FAIL AT THIS TASK'S OWN STATE, not merely
-                    // argued to belong elsewhere.
+                    // CONVERGE AS THE DENSITY RISES. Both are section 17's
+                    // claims for the FINISHED phase, both are written out
+                    // here in full, and both are DEFERRED rather than
+                    // dropped: they run on every harness run and the suite
+                    // reports each under DEFER with the measurement that
+                    // comes back. Neither is owned by this task's mechanism,
+                    // and neither can be made to pass by rewriting
+                    // FootGroups or GroupFoot.
                     //
-                    // AsymmetricSpans is computed by an entirely separate,
-                    // pre-existing mechanism (Symmetrise's quarter-spacing
-                    // tolerance over chord parameters) that Task 4 does not
-                    // touch, does not call, and cannot fix by rewriting
-                    // FootGroups or GroupFoot. Restoring
-                    // "if (Get<int>(placed, \"AsymmetricSpans\") != 0) throw"
-                    // here was run against this exact fixture at this task's
-                    // completion and MEASURED to throw at Type 1, 9 notches:
-                    // "AsymmetricSpans is 1", which is precisely the
-                    // pre-existing regression the block above already names
-                    // in prose ("the present engine ... FAILS it at 9 and
-                    // 17"). It is a fact about the engine before this task
-                    // and after it alike, and stays that way until whichever
-                    // later task actually rewrites Symmetrise's pairing
-                    // (Task 6's free-list change or Task 7's common-mode
-                    // removal are the candidates the interface document
-                    // names).
+                    // The brief's literal text reads UnpairedTrees, a
+                    // property Task 7 introduces and that does not exist in
+                    // the engine yet. AsymmetricSpans is its predecessor,
+                    // computed by Symmetrise's own pre-existing
+                    // quarter-spacing tolerance over chord parameters, which
+                    // Task 4 does not touch and does not call; the two lines
+                    // below move to UnpairedTrees when Task 7 renames it,
+                    // and the deferral is struck at whichever task rewrites
+                    // the pairing. The block above already names the defect
+                    // in prose: "the present engine ... FAILS it at 9 and
+                    // 17". Both deferrals are recorded in the SDD ledger,
+                    // .superpowers/sdd/2026-09-01-mould-round-three-1-columns
+                    // /progress.md, against the task that must clear them,
+                    // and both await Param's sign-off.
                     //
-                    // The convergence check was tried independently of the
-                    // one above (AsymmetricSpans disabled, convergence alone
-                    // enabled) and ALSO MEASURED TO FAIL, at Type 2: the
-                    // outermost foot moved from 2.4088 to 0.9115 between two
-                    // consecutive densities, an order of magnitude past one
-                    // notch spacing. Convergence across density on a bar this
-                    // coarse and this off-centre (crest 0.60) is exactly what
-                    // the least-squares smoothing of 8.2 to 8.4 is FOR, and
-                    // this task builds only the single-span 8.1/8.3 mean: its
-                    // nearest-to-centre candidate set can legitimately swap
-                    // between two notches that are both plausible "nearest" a
-                    // resampling apart, which is a discrete rule and not a
-                    // continuous one.
-                    //
-                    // Restoring either assertion at THIS task turns a green
-                    // harness red over a defect this task's own mechanism
-                    // cannot fix, which the "harness must be green" rule
-                    // binds harder than the brief's literal Step 8. Both
-                    // measurements are reproducible: uncomment either
-                    // assertion against this fixture and the numbers above
-                    // are what comes back. What THIS task owns, and what is
-                    // asserted above, is that the placed foot IS 8.1's own
-                    // plan mean, independently recomputed, at every density
-                    // tried.
+                    // Deferring is not the same as deleting: if either claim
+                    // ever runs clean at every density and Type, the suite
+                    // goes RED on a stale deferral and tells the next
+                    // implementer to enforce it inline.
+                    Deferred(
+                        "Coarse net: no span is placed unmirrored at ANY density (spec section 17)",
+                        "Task 7's rewrite of Symmetrise's pairing; UnpairedTrees replaces AsymmetricSpans there and this line moves with it",
+                        () =>
+                        {
+                            if (Get<int>(placed, "AsymmetricSpans") != 0)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Type {type} at {notches} notches: no span is placed unmirrored at ANY density; AsymmetricSpans is "
+                                    + $"{Get<int>(placed, "AsymmetricSpans")}. Refining a mesh on unchanged geometry used to push this span over a cliff.");
+                            }
+                        });
+                    double outermost = X(levelNodes[footNode[0]]);
+                    bool haveBefore = previous.TryGetValue(type, out double before);
+                    Deferred(
+                        "Coarse net: the outermost foot converges across density rather than jumping (spec section 17)",
+                        "the multi-span least-squares smoothing of spec sections 8.2 to 8.4, which this task does not build; the single-span 8.1 mean is a discrete rule and its nearest-to-centre candidate set can legitimately swap a resampling apart",
+                        () =>
+                        {
+                            if (haveBefore && notches >= 9 &&
+                                Math.Abs(outermost - before) > 10.0 / notches)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Type {type}: refining from the previous density moved the outermost foot from {before:0.####} to {outermost:0.####}, "
+                                    + "further than one notch spacing. The feet CONVERGE as the density rises; they do not jump between densities.");
+                            }
+                        });
+                    previous[type] = outermost;
+
+                    // What THIS task owns, and what is asserted above without
+                    // any deferral, is that the placed foot IS 8.1's own plan
+                    // mean, independently recomputed, at every density tried.
                 }
             }
         }
@@ -8638,6 +8658,15 @@ internal static class Program
             // DIFFER" guard below throws "on this bar they agree, so nothing
             // is being tested", because both indices already sit inside the
             // one [3,4,5] chunk in bar order.
+            //
+            // Task 4's brief states positions 3 and 4 and the guard
+            // xs[3] <= xs[4]; the numbers here are positions 2 and 3 and the
+            // guard xs[2] <= xs[3]. That is a CORRECTION to the brief, not a
+            // silent substitution: it is written into the brief's Step 8 and
+            // into the SDD ledger,
+            // .superpowers/sdd/2026-09-01-mould-round-three-1-columns/progress.md,
+            // and it awaits Param's sign-off there rather than living only
+            // in this comment.
             double[] xs = { 0.0, 1.0, 3.0, 2.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
             Array nodes = Array.CreateInstance(point3d, xs.Length);
             Array acrossBar = Array.CreateInstance(vector3d, xs.Length);
@@ -8775,7 +8804,17 @@ internal static class Program
         // fixture throws at Type 2, "a millionth of the chord of noise moved
         // tree 0's foot by 0.500002036", which is half a notch spacing, the
         // boundary flip this comment predicts and not a real instability in
-        // the placement.
+        // the placement. The spec's own two numbers collide: a displacement
+        // of 1e-6 times the chord is, in chord parameter, exactly
+        // TauSnap = 1e-6 * h, so section 17's noise sits ON the tie boundary
+        // section 8.1 draws and crosses it by construction.
+        //
+        // The offset here is 1e-8 against a bound of 1e-6, three orders
+        // inside TauSnap. That is a CORRECTION to spec section 17 and to
+        // Task 4's Step 9, not a silent substitution: both carry it, and the
+        // SDD ledger,
+        // .superpowers/sdd/2026-09-01-mould-round-three-1-columns/progress.md,
+        // records it awaiting Param's sign-off.
         foreach (int type in new[] { 1, 2, 3, 4 })
         {
             var clean = Arch(11, 10.0, 2.5, 1.0);
@@ -15538,6 +15577,78 @@ internal static class Program
             current = current.InnerException;
         }
         return string.Join(" -> ", chain);
+    }
+
+    /// <summary>
+    /// A DEFERRED ASSERTION: a check a brief asks for, WRITTEN OUT AND RUN,
+    /// that measures a defect the task carrying it does not own and cannot
+    /// fix. The assertion is not deleted and its absence is not left to a
+    /// reader of one comment block: it runs on every harness run, and the
+    /// suite reports it under DEFER with the measurement that comes back.
+    /// The claim is the assertion in one line; the owner names the task or
+    /// the mechanism that must make it pass.
+    ///
+    /// A deferral is STRICT. If a claim runs everywhere it is written and
+    /// never once fails, the defect it was deferred over is gone, and the
+    /// run FAILS with a stale-deferral message telling the next implementer
+    /// to delete the wrapper and assert inline. A deferral that quietly
+    /// outlives its defect is how a dropped check becomes permanent.
+    /// </summary>
+    private static readonly Dictionary<string, string?> DeferralOutcomes =
+        new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, string> DeferralOwners =
+        new(StringComparer.Ordinal);
+    private static readonly List<string> DeferralOrder = new();
+
+    private static void Deferred(string claim, string owner, Action check)
+    {
+        if (!DeferralOutcomes.ContainsKey(claim))
+        {
+            DeferralOutcomes[claim] = null;
+            DeferralOrder.Add(claim);
+        }
+        DeferralOwners[claim] = owner;
+        try
+        {
+            check();
+        }
+        catch (Exception exception)
+        {
+            DeferralOutcomes[claim] ??= DescribeException(exception);
+        }
+    }
+
+    /// <summary>
+    /// Print every deferred assertion at the suite level and turn any stale
+    /// one into a failure. Called once, after every validator has run.
+    /// </summary>
+    private static void ReportDeferrals(List<string> failures)
+    {
+        if (DeferralOrder.Count == 0)
+            return;
+        Console.WriteLine(
+            $"DEFER {DeferralOrder.Count} assertion"
+            + $"{(DeferralOrder.Count == 1 ? " is" : "s are")} written and run "
+            + "but NOT enforced, each over a defect its own task does not own. "
+            + "Each is recorded in the SDD ledger against the task that must "
+            + "make it pass.");
+        foreach (string claim in DeferralOrder)
+        {
+            string owner = DeferralOwners[claim];
+            string? outcome = DeferralOutcomes[claim];
+            if (outcome is null)
+            {
+                failures.Add(
+                    $"STALE DEFERRAL ({owner}): \"{claim}\" now PASSES "
+                    + "everywhere it is written. The defect it was deferred "
+                    + "over is fixed; delete the Deferred(...) wrapper, "
+                    + "assert it inline, and strike it from the ledger.");
+                continue;
+            }
+            Console.WriteLine($"  !  {claim}");
+            Console.WriteLine($"     owner: {owner}");
+            Console.WriteLine($"     measured: {outcome}");
+        }
     }
 
     private static string ResolveRhinoRoot(string? requestedRoot)

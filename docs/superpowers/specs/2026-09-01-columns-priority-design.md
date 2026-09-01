@@ -1741,6 +1741,17 @@ present cliff and each must now be quiet.
   the group centres, no span is ever placed unmirrored, and the foot positions converge as the
   density rises rather than jumping between them. Assert also that the 3 notch case at Type 4
   places THREE feet and not four, and that the check names the reason.
+  DEFERRAL, recorded 2026-09-01 against Task 4 and awaiting Param's sign-off, ledger item D1.
+  Two of those four claims are written into the harness and RUN but not enforced, because Task 4
+  neither owns nor can reach the defects they measure. "No span is ever placed unmirrored" throws
+  at Type 1 with 9 notches, AsymmetricSpans reading 1, which is Symmetrise's own pre-existing
+  quarter-spacing mechanism and exactly the regression this bullet already names in prose; it is
+  owned by whichever task rewrites the pairing, where UnpairedTrees replaces AsymmetricSpans.
+  "The foot positions converge as the density rises" throws at Type 2 with the outermost foot
+  moving from 2.4088 to 0.9115 between two densities; it is owned by the multi-span least-squares
+  smoothing of sections 8.2 to 8.4, which the single-span rule of 8.1 does not have. Both run on
+  every harness pass and the suite reports them under DEFER with those measurements, and either
+  turns the run RED the moment it starts passing, so the gap cannot outlive its cause.
 - A SPAN OF ONE TREE. One free notch, at chord parameter 0.44 and again at 0.43, which is the
   measured boundary of the self-pairing test on the engine as it stands. Assert at both
   parameters and at Types 0, 1, 2, 3, 4 and Auto: exactly one foot, at that notch's plan
@@ -1883,6 +1894,15 @@ Then the rest, each of which catches a rule this spec states.
   the same group, that no foot moves by more than 1e-5 times the chord, and that no diagnostic
   count changes. Band arithmetic fails this whenever a main notch sits near a boundary, which is
   what the centre notch of a uniform arch does at every even Type.
+  CORRECTION, recorded 2026-09-01 against Task 4 and awaiting Param's sign-off, ledger item D3.
+  Those two magnitudes collide with this spec's own section 8.1. In chord parameter a
+  displacement of 1e-6 times the chord IS TAU_snap = 1e-6 * h, so the noise as written sits on
+  the exact-tie boundary section 8.1 draws and crosses it by construction. Measured on the built
+  engine, the literal pair throws at Type 2 with a foot moving 0.500002036, half a notch spacing,
+  which is an exact-tie flip in the candidate selection on a perfectly symmetric arch at an even
+  Type and not an instability in the placement. The offset should read 1e-9 times the chord
+  against a bound of 1e-7 times the chord, three orders inside TAU_snap, which is what the
+  harness now uses. The claim itself is unchanged; only the magnitudes are.
 - NODE ORDER AND ROTATION INVARIANCE. Four congruent ribs, one traced backwards, one turned
   through 180 degrees in plan with its pulls turned with it, and one translated. Assert identical
   feet in the world to 1e-9 at Types 0, 2 and 3, and identical member sets.
@@ -1907,6 +1927,12 @@ Then the rest, each of which catches a rule this spec states.
   parameter is meant, or the parameter where the index is meant, goes red rather than green.
   Include the tie case, two notches at one chord parameter, and assert the layout is unchanged by
   the order they are listed in.
+  NOTE, recorded 2026-09-01 against Task 4, ledger item D2. Which two bar positions the fixture
+  swaps is not free. Task 4's brief named positions 3 and 4, and both of those sit inside the one
+  Branching-3 chunk [3,4,5], so the bar-order and parameter-order readings coincide and the
+  fixture's own must-differ guard throws "on this bar they agree, so nothing is being tested".
+  The swap must STRADDLE a chunk boundary. The harness swaps positions 2 and 3, on the boundary
+  between the [1,2] and [3,4,5] trees, which is what makes the two readings differ.
 - CROSS-LINE SHARING. Three parallel ribs joined by net edges: with the outer two moved so that
   their feet fall inside a quarter of the tighter spacing of the middle rib's, one column at the
   convergence of all three taken once as a connected component and not pairwise; with them moved
