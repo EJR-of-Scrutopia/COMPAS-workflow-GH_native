@@ -78,6 +78,81 @@ placed there without two members meeting at one connection, and how a span whose
 elsewhere still receives symmetric treatment. Solving the general symmetry rule without solving this
 would leave his most likely trigger in place.
 
+## 4a. The one-sided lean, MEASURED, and what it changes in the design
+
+A second screenshot showed the columns on one side of the crown leaning as expected and those on the
+other leaning the wrong way, with the feet all displaced in the same world direction rather than
+mirroring. That was diagnosed against a fresh build of the engine, driven directly. The result is
+conclusive and it confirms section 4's hypothesis as the trigger.
+
+WHAT WAS RULED OUT, so the redesign does not waste effort there. The aim's sign and frame are exactly
+right: over 20,000 random pull vectors, mirroring the input and mirroring the output agreed to the last
+bit, and hand-built mirrored resultants gave feet mirrored to zero. The lean cap is continuous and
+monotone, so it compresses the symptom rather than causing it; on the broken net it reduced a
+37 degree discrepancy to 30.5. The across component kept per span is real but displaces feet
+perpendicular to the chord, in world Y, so it cannot produce a lean along the chord at all.
+
+WHAT IT IS. A crossing steals an interior notch, the span's surviving notches no longer pair off, the
+whole span is condemned, and line 618 to 623 hands it back its RAW resultants entire, including the
+common along-chord component the mirror rule exists to remove. Every foot on that rib then walks the
+same way down the chord.
+
+| net | asymmetric spans | mean foot shift | worst mirror error |
+| --- | --- | --- | --- |
+| no crossing | 0 | 0.000 | 0.000 |
+| crossing near a springing | 5 | +0.663 | 2.171 |
+| crossing at the CENTRE notch | 0 | 0.000 | 0.000 |
+
+The third row is the tell: a crossing at the centre leaves the notch list symmetric and costs nothing.
+Only an off-centre crossing does the damage, which is what his ribs do where they touch away from the
+crown.
+
+THE CLIFF IS ABOUT A CENTIMETRE WIDE. Nudging one notch along the chord: at 0.20 the span is mirrored
+and every foot is exact; at 0.21 five spans are condemned, the mean foot moves 0.944 and the worst
+error is 2.209. One centimetre of node movement on a ten metre span takes every column on every rib
+from perfectly mirrored to displaced most of a metre in the same direction.
+
+TWO MORE ROUTES TO THE SAME COMPLAINT, both found in the same investigation.
+
+A bar anchored at ONE end only trips the cliff with no crossing at all. And an unequal anchor cluster
+does something quieter and arguably worse: the span still PASSES the test, but its chord now runs from
+the innermost anchor, so the mirror plane sits off the crown, the pairing is off by one, and the column
+that should stand plumb stands half a notch away from the crest.
+
+Worst of all, and on a net where every diagnostic reads clean: with the crest displaced a tenth of the
+span off centre, every span passes, so the mirror rule IMPOSES a symmetry the structure does not have.
+The notch at the true crest, which wants to stand plumb, is made to lean 7.4 degrees, and the notch at
+the chord midpoint, which wants 7.9 degrees, is made plumb. The band of columns between the true crest
+and the chord midpoint leans the wrong way. Raising one springing above the other does the same.
+
+A DIAGNOSTIC TRAP worth fixing in the same wave. AsymmetryRemoved FELL from 75.40 degrees to 1.81 the
+moment the rule stopped running, because an unmirrored span's aim is never moved. The number reads most
+reassuringly exactly when the machinery has been bypassed. The honest signal today is AsymmetricSpans,
+which the component prints as ", unmirrored N"; the number that SHOULD be reported is the largest
+along-chord common mode still standing after placement, which reads zero when the rule worked.
+
+WHAT THIS CHANGES IN THE AGREED DESIGN. Section 5's per-tree pairing was proposed to soften the cliff.
+The measurement says go further and remove the cliff entirely, because any threshold on a continuous
+measurement has one, and this one is a centimetre wide with a metre of column movement on the far side:
+
+1. REMOVE THE COMMON MODE EXPLICITLY, not by pairing. What must go is the span's MEAN along-chord pull,
+   a rigid-body tilt no column should follow. Subtracting that mean is defined for any notch list
+   whatever, needs no pairing, no tolerance and no test, and is continuous in the node positions, so it
+   cannot cliff. Pairing then only refines what is left, and an unpartnered notch costs nothing.
+2. DERIVE THE MIRROR PLANE FROM THE STRUCTURE, not from the anchors. The span's first and last node are
+   an artefact of where the anchor cluster stops; the physical mirror is where the along-chord pull
+   changes sign. That fixes the unequal anchor cluster and the off-centre crest in one move, and it
+   degrades gracefully on a genuinely asymmetric vault instead of forcing a symmetry onto it.
+3. A STOLEN NOTCH KEEPS ITS OWN LINE'S FRAME, or a crossing is not allowed to take another line's
+   interior notch at all. That alone accounted for 1.33 units of error on a perfectly symmetric net
+   with no skew whatever.
+4. THE DIAGNOSTIC REPORTS THE RESIDUAL, so it cannot read clean when the rule was skipped.
+
+INCIDENTAL, AND WORTH ITS OWN LOOK LATER: the outermost principal line, which carries infill on one
+side only, had an across component NINE TIMES its down component, so its columns are aimed almost
+entirely sideways. That is not the reported symptom and is not this wave's business, but it will be
+visible on his model as the outermost ribs' columns leaning out of plane.
+
 ## 5. What carries over from the earlier agreed design
 
 These were agreed with him before the above and are not displaced by it:
