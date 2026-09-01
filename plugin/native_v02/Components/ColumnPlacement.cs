@@ -207,63 +207,118 @@ namespace Ananke.COMPAS.Native.Components
         // Grouping
 
         /// <summary>
-        /// Positions 0..count-1, in span order, grouped into trees of
-        /// <paramref name="branching"/> consecutive notches. The span splits
-        /// into a LEFT half, a CENTRE notch when the count is odd, and a
-        /// RIGHT half; each half is grouped from the centre outward so the
-        /// remainder, fewer than Branching, sits at the anchor end where the
-        /// loads are smallest, and the right half mirrors the left. The
-        /// centre notch is a single column: it has no mirror partner, so it
-        /// stands outside the pairing rather than pushing everything to one
-        /// side. Every position is in exactly one group.
+        /// Positions 0..count-1, in BAR ORDER along the span, grouped into
+        /// trees by THE LADDER of spec section 5: a span's stations are the
+        /// CENTRE, then the outermost mirrored pair, then the next pair
+        /// inward, and when n things are placed the centre station is
+        /// occupied if and only if n is odd.
         ///
-        /// The MAIN notch of a group is its innermost position, so mirrored
-        /// groups have mirrored mains.
+        /// Two properties constrain the layout before any counting begins,
+        /// and neither reads a coordinate. The sequence of tree sizes is a
+        /// PALINDROME about the row centre by index, so tree i and tree
+        /// T-1-i hold the same number of notches. And a tree that STRADDLES
+        /// the row centre has ODD size, because a straddling tree of even
+        /// size has two equally inner notches and the choice between them is
+        /// a coin toss that puts the fork off the centre.
+        ///
+        /// The centre tree size k is then chosen by FEWEST STRAYS, which is
+        /// Param's ruling of 2026-09-01. A stray is a REMAINDER tree of one
+        /// notch, not merely a tree of one notch: at Branching 1 every tree
+        /// holds one notch and none of them is a stray. Where two admissible
+        /// k leave equally few strays the SMALLER wins, which is what the
+        /// shipped engine always picked, so on a tie no column moves; the
+        /// tie is unreachable for Branching 1 to 3 and the clause is there
+        /// for totality. Anyone raising Branching past three must revisit
+        /// this method rather than leaning on the ladder's fourth rung.
+        ///
+        /// The MAIN notch of a group is its innermost, the one nearest the
+        /// row centre by index, so mirrored groups have mirrored mains.
         /// </summary>
         public static (int[][] Groups, int[] Mains) Group(int count, int branching)
         {
             branching = Math.Min(Math.Max(branching, 1), MaxBranching);
-            var groups = new List<int[]>();
-            var mains = new List<int>();
             if (count <= 0)
                 return (Array.Empty<int[]>(), Array.Empty<int>());
 
-            int half = count / 2;
-            bool odd = (count % 2) == 1;
+            int[] sizes = Layout(count, branching);
+            var groups = new int[sizes.Length][];
+            var mains = new int[sizes.Length];
+            double rowCentre = (count - 1) / 2.0;
+            int at = 0;
+            for (int g = 0; g < sizes.Length; g++)
+            {
+                groups[g] = Enumerable.Range(at, sizes[g]).ToArray();
+                int main = groups[g][0];
+                double best = Math.Abs(main - rowCentre);
+                foreach (int p in groups[g])
+                {
+                    double d = Math.Abs(p - rowCentre);
+                    if (d < best - 1.0e-12)
+                    {
+                        best = d;
+                        main = p;
+                    }
+                }
+                mains[g] = main;
+                at += sizes[g];
+            }
+            return (groups, mains);
+        }
 
-            // Left half, innermost first, outward to the anchor.
-            var left = new List<(int[], int)>();
-            int at = half - 1;
-            while (at >= 0)
+        /// <summary>
+        /// The tree sizes along the span, anchor to anchor. Each half is
+        /// tiled from the CENTRE OUTWARD with trees of size B and the
+        /// leftover rem notches at the ANCHOR END form one tree of size rem,
+        /// which is a stray when rem is 1. The remainder trees therefore land
+        /// on the ladder's stations by construction: the centre tree when k
+        /// is 1, and the two anchor-end trees when rem is not zero. There are
+        /// at most three of them, which is why the ladder is never asked for
+        /// four.
+        /// </summary>
+        private static int[] Layout(int count, int branching)
+        {
+            if (branching == 1)
+                return Enumerable.Repeat(1, count).ToArray();
+
+            // Admissible centre tree sizes: 0 when the count is even, 1 when
+            // it is odd, and 3 when it is odd, B is at least 3 and there are
+            // at least three notches to hold.
+            var admissible = new List<int>();
+            if ((count % 2) == 0)
+                admissible.Add(0);
+            else
+                admissible.Add(1);
+            if ((count % 2) == 1 && branching >= 3 && count >= 3)
+                admissible.Add(3);
+
+            int chosen = -1;
+            int fewest = int.MaxValue;
+            foreach (int k in admissible)
             {
-                int size = Math.Min(branching, at + 1);
-                int[] notches = Enumerable.Range(at - size + 1, size).ToArray();
-                left.Add((notches, at));
-                at -= size;
-            }
-            left.Reverse();
-            foreach ((int[] notches, int main) in left)
-            {
-                groups.Add(notches);
-                mains.Add(main);
+                int halfLength = (count - k) / 2;
+                int remainder = halfLength % branching;
+                int strays = (k == 1 ? 1 : 0) + (remainder == 1 ? 2 : 0);
+                if (strays < fewest || (strays == fewest && k < chosen))
+                {
+                    fewest = strays;
+                    chosen = k;
+                }
             }
 
-            if (odd)
-            {
-                groups.Add(new[] { half });
-                mains.Add(half);
-            }
+            int hlf = (count - chosen) / 2;
+            int rem = hlf % branching;
+            var left = new List<int>();
+            if (rem > 0)
+                left.Add(rem);
+            for (int i = 0; i < hlf / branching; i++)
+                left.Add(branching);
 
-            // Right half, the mirror of the left, innermost first.
-            at = odd ? half + 1 : half;
-            while (at < count)
-            {
-                int size = Math.Min(branching, count - at);
-                groups.Add(Enumerable.Range(at, size).ToArray());
-                mains.Add(at);
-                at += size;
-            }
-            return (groups.ToArray(), mains.ToArray());
+            var sizes = new List<int>(left);
+            if (chosen > 0)
+                sizes.Add(chosen);
+            for (int i = left.Count - 1; i >= 0; i--)
+                sizes.Add(left[i]);
+            return sizes.ToArray();
         }
 
         // ------------------------------------------------------------------

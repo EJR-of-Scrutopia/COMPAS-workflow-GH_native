@@ -5936,6 +5936,124 @@ internal static class Program
         if (none.Length != 0)
             throw new InvalidOperationException("No notches group into nothing.");
 
+        // ---- THE LADDER TABLES (spec section 6), pinned verbatim for
+        // B = 1, 2 and 3 and m = 1 to 13. Sizes are read along the span from
+        // one anchor to the other. Fewest strays is PARAM'S RULING of
+        // 2026-09-01; the ENGINE's own row is printed beside the spec's for
+        // every count, so the rows that move are numbers in the record and
+        // not a claim. A size of 1 is a stray at B = 2 and B = 3, where it is
+        // a REMAINDER; at B = 1 it is the whole tree the slider asked for and
+        // is not counted as one.
+        {
+        string[] ladderOne = Enumerable.Range(1, 13)
+            .Select(m => string.Join(",", Enumerable.Repeat(1, m))).ToArray();
+        string[] ladderTwo =
+        {
+            "1", "1,1", "1,1,1", "2,2", "2,1,2", "1,2,2,1", "1,2,1,2,1",
+            "2,2,2,2", "2,2,1,2,2", "1,2,2,2,2,1", "1,2,2,1,2,2,1",
+            "2,2,2,2,2,2", "2,2,2,1,2,2,2",
+        };
+        string[] ladderThree =
+        {
+            "1", "1,1", "3", "2,2", "2,1,2", "3,3", "2,3,2", "1,3,3,1",
+            "3,3,3", "2,3,3,2", "2,3,1,3,2", "3,3,3,3", "2,3,3,3,2",
+        };
+        // The SHIPPED engine's rows at Branching 3, for the record. Its rule
+        // is "always take the smallest admissible k", so it never builds a
+        // centre tree of three at all.
+        string[] shippedThree =
+        {
+            "1", "1,1", "1,1,1", "2,2", "2,1,2", "3,3", "3,1,3", "1,3,3,1",
+            "1,3,1,3,1", "2,3,3,2", "2,3,1,3,2", "3,3,3,3", "3,3,1,3,3",
+        };
+        string Sizes(int[][] g) => string.Join(",", g.Select(x => x.Length));
+        int Strays(int[][] g, int branching) =>
+            branching == 1 ? 0 : g.Count(x => x.Length == 1);
+        var moved = new List<int>();
+        for (int m = 1; m <= 13; m++)
+        {
+            foreach ((int branching, string[] table) in new[]
+                { (1, ladderOne), (2, ladderTwo), (3, ladderThree) })
+            {
+                (int[][] g, int[] mains) = Grouped(m, branching);
+                string got = Sizes(g);
+                if (got != table[m - 1])
+                {
+                    throw new InvalidOperationException(
+                        $"Branching {branching}, m = {m}: the ladder of spec section 6 lays the span out as [{table[m - 1]}]; "
+                        + $"the engine laid it out as [{got}]. The shipped engine's row was [{(branching == 3 ? shippedThree[m - 1] : table[m - 1])}].");
+                }
+                if (g.Sum(x => x.Length) != m || g.SelectMany(x => x).Distinct().Count() != m)
+                    throw new InvalidOperationException($"Branching {branching}, m = {m}: every notch is in exactly one tree; [{got}] is not a partition of {m}.");
+                var reversed = g.Select(x => x.Length).Reverse().ToArray();
+                if (!reversed.SequenceEqual(g.Select(x => x.Length)))
+                    throw new InvalidOperationException($"Branching {branching}, m = {m}: the tree sizes are a PALINDROME about the row centre by index; [{got}] is not.");
+                for (int j = 0; j < g.Length; j++)
+                {
+                    if (!g[j].Contains(mains[j]))
+                        throw new InvalidOperationException($"Branching {branching}, m = {m}: the main of group {j} is one of its own notches.");
+                }
+                if (branching == 3 && table[m - 1] != shippedThree[m - 1])
+                    moved.Add(m);
+            }
+        }
+        if (!moved.SequenceEqual(new[] { 3, 7, 9, 13 }))
+        {
+            throw new InvalidOperationException(
+                $"Fewest strays moves FOUR rows at Branching 3, m = 3, 7, 9 and 13, and none at Branching 1 or 2; it moved [{string.Join(",", moved)}]. "
+                + "A future criterion change must not quietly move a fifth.");
+        }
+        // No changed row's stray count RISES: that is the property his ruling
+        // was chosen for, and the retired "fewest remainder trees" failed it
+        // at m = 5 and m = 11.
+        foreach (int m in moved)
+        {
+            int before = shippedThree[m - 1].Split(',').Count(s => s == "1");
+            int after = ladderThree[m - 1].Split(',').Count(s => s == "1");
+            if (after > before)
+                throw new InvalidOperationException($"Branching 3, m = {m}: the stray count rose from {before} to {after}; fewest strays never raises it.");
+        }
+        // The MAINS at m = 7 and m = 13 at Branching 3, because at those two
+        // counts the TREE COUNT does not change and the mains are the whole
+        // of what moves: 1, 3, 5 against the engine's 2, 3, 4, and
+        // 1, 4, 6, 8, 11 against its 2, 5, 6, 7, 10.
+        (_, int[] mainsSeven) = Grouped(7, 3);
+        if (!mainsSeven.SequenceEqual(new[] { 1, 3, 5 }))
+            throw new InvalidOperationException($"Branching 3, m = 7 lays out [2,3,2], whose mains are 1, 3, 5 against the engine's 2, 3, 4; got [{string.Join(",", mainsSeven)}].");
+        (_, int[] mainsThirteen) = Grouped(13, 3);
+        if (!mainsThirteen.SequenceEqual(new[] { 1, 4, 6, 8, 11 }))
+            throw new InvalidOperationException($"Branching 3, m = 13 lays out [2,3,3,3,2], whose mains are 1, 4, 6, 8, 11 against the engine's 2, 5, 6, 7, 10; got [{string.Join(",", mainsThirteen)}].");
+
+        // ---- HIS THREE CASES BY NAME (spec section 5, quoted). One stray
+        // defers to the CENTRE notch; two strays are the two END notches with
+        // nothing at the centre; three are the two ends AND the centre.
+        void RequireStrays(int m, int branching, int[] expectedStrayGroups, string why)
+        {
+            (int[][] g, _) = Grouped(m, branching);
+            int[] got = Enumerable.Range(0, g.Length).Where(j => g[j].Length == 1).ToArray();
+            if (!got.SequenceEqual(expectedStrayGroups))
+            {
+                throw new InvalidOperationException(
+                    $"Branching {branching}, m = {m}: {why}; the strays stand at group(s) [{string.Join(",", expectedStrayGroups)}] "
+                    + $"and stand at [{string.Join(",", got)}].");
+            }
+        }
+        RequireStrays(5, 2, new[] { 1 }, "ONE stray defers directly to the centre node and every other notch lies in a mirrored pair of trees");
+        RequireStrays(6, 2, new[] { 0, 3 }, "TWO strays are the two end nodes and NOTHING sits in the centre");
+        RequireStrays(7, 2, new[] { 0, 2, 4 }, "THREE strays are the two end nodes plus the centre");
+        RequireStrays(5, 3, new[] { 1 }, "ONE stray at the centre: k = 1 leaves rem 2 and one stray, k = 3 leaves rem 1 and two");
+        RequireStrays(8, 3, new[] { 0, 3 }, "TWO strays at the ends and nothing at the centre: m is even, so k is 0 and the half remainder is 1");
+        // THREE strays is UNREACHABLE at Branching 3, and the check says why:
+        // three strays needs k = 1 with a half remainder of one, and at every
+        // such count k = 3 leaves none and wins (case r = 1 of the derivation).
+        for (int m = 1; m <= 13; m++)
+        {
+            (int[][] g, _) = Grouped(m, 3);
+            if (Strays(g, 3) >= 3)
+                throw new InvalidOperationException($"Three strays is unreachable at Branching 3: it needs k = 1 with a half remainder of one, and at every such count k = 3 leaves NO stray and wins. m = {m} left {Strays(g, 3)}.");
+        }
+        }
+
         // ---- A hand-built arch.
         // count notches from x = 0 to x = width, z = rise * 4 * s * (1 - s),
         // anchored at both ends, every notch pulled straight down by `load`.
@@ -7207,8 +7325,8 @@ internal static class Program
         }
 
         // ---- The same arch at Branching 3, where a tree holds a notch BELOW
-        // 65% of its main notch's height. Group(7,3) gives {1,2,3} with main
-        // 3 at z 4.6875, so the spec's fork height is z 3.047 while bar
+        // 65% of its main notch's height. Group(7,3) gives {0,1} with main 1
+        // at z 3.75, so the spec's fork height is z 2.4375 while bar
         // position 1 sits at z 2.1875, under it. Two things must hold and
         // neither did: every member leaves the engine lower end first, and a
         // node that is only ever a lower end is a FOOT, so it stands on the
