@@ -60,6 +60,46 @@ His remark that it "should be not too hard" is true of the cheap form and not of
 proper form is the right answer for a mason's skin and it is a foundation change, though a much
 smaller one than it sounds because it reuses the hardened tracer rather than replacing it.
 
+## 1a. The force-aligned pattern is reworked onto the same setout, not patched
+
+> "also with the force aligned cut for tesselation i think we need to rework but again not too hard to
+> solve. You can already see we are calculating those force bandings with the sine shapped curves
+> going up the form, these should be where we fit the tesselation pattern, not cutting through it
+> randomly. We need to be strategic, so we should find a way to create amazing voussoirs in that. I
+> think the tesselation pattern as it is, is quite ugly and we should avoid that messiess"
+
+He is describing the engine's own two halves working against each other. The force-aligned pattern
+computes a line field from the thrust, advects STREAMLINES along it (the sinusoidal curves he can see
+running up the form, which the component already emits on its Flowlines output), and then throws that
+structure away: the cells come from a geodesic VORONOI of a seed set, whose boundaries are the
+bisectors between seeds and therefore bear no relation to the streamlines they cross. The flow is
+computed and then ignored, which is exactly why the result reads as random and, in his word, ugly.
+
+THE REWORK, and it is a simplification rather than an addition. All three patterns become the same
+construction on different fields, which the tracer already supports because it cuts level sets of any
+piecewise-linear scalar carried on the triangles:
+
+- courses: level sets of geodesic distance from the rim, divided along their length
+- hexagonal: the same chart, a honeycomb lattice laid on it
+- force aligned: one family taken from the thrust flow, the other from its perpendicular, cells being
+  the quads between two consecutive curves of each family
+
+So the Voronoi and the whole worker round trip go away, pattern 2 becomes native like the other two,
+and it inherits every guarantee six adversarial rounds bought: exact level curves through triangulated
+faces, nesting depth, correspondence by bijection, and the enforced plan validity. The streamline
+family is not uniformly spaced by nature, since flow converges where force concentrates, so the rule
+must INSERT a streamline where a strip grows past the size bound and TERMINATE one where it narrows
+below it, which is what a mason does when adding or dropping a course, and is also how the pattern
+stays uniform while remaining force-aligned.
+
+ONE QUESTION IS HIS TO RULE and is put to him separately: which family carries the CONTINUOUS joint.
+Masonry logic says the continuous bed joints should run ACROSS the thrust, so the thrust closes them
+rather than sliding along them, which would make the flow lines the staggered head joints. His
+sentence reads the other way, with the pieces sitting BETWEEN adjacent flow lines in strips running up
+the form. Both are buildable and they look completely different. The engine's own present comment
+claims the Voronoi makes "every joint run across the thrust instead of along it", so the existing
+intent is the masonry one, but it is achieved by a construction he has rejected.
+
 ## 2. Skin outputs a surface as well as a polyline
 
 > "one thing worth adding to the skin component is that it outputs a surface too, it actually can be
