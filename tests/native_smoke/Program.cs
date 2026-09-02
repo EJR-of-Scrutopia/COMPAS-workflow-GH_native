@@ -12123,6 +12123,49 @@ internal static class Program
                         $"Step 4b: a trunk the second pass peels stands on its OWN Type 0 foot, at {ownLeft:0.#########} and {ownRight:0.#########}; "
                         + $"they stand at {X(pairNodesOut[pairFoot[0]]):0.#########} and {X(pairNodesOut[pairFoot[1]]):0.#########}.");
                 }
+
+                // PIN (spec section 11): "a foot left with no trees is not
+                // built." The second peel moved BOTH trunks off the merged
+                // mean at pairMean and onto their own feet; the merged node
+                // is not removed from Nodes (members, Deconstruct and Export
+                // all index Nodes by position) but nothing stands on it any
+                // more, so it must be absent from Feet. Found here by its
+                // own recomputed position, at ground height and on the
+                // chord, so this pin does not depend on the engine's own
+                // node ordering to find it.
+                int mergedNode = -1;
+                for (int i = 0; i < pairNodesOut.Length; i++)
+                {
+                    if (i == pairFoot[0] || i == pairFoot[1])
+                        continue;
+                    if (Math.Abs(X(pairNodesOut[i]) - pairMean) <= 1.0e-9 &&
+                        Math.Abs(Y(pairNodesOut[i])) <= 1.0e-9)
+                    {
+                        mergedNode = i;
+                        break;
+                    }
+                }
+                if (mergedNode < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: the merged mean at {pairMean:0.#########} must still stand in Nodes even once the peel abandons it, or this pin "
+                        + "measures nothing.");
+                }
+                var pairFeet = ((IEnumerable)Get<object>(pairBuilt, "Feet")).Cast<int>().ToArray();
+                if (pairFeet.Contains(mergedNode))
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: spec section 11, \"a foot left with no trees is not built\" -- node {mergedNode}, the mean both trunks abandoned, "
+                        + $"carries no tree once the second peel has moved both of them onto their own feet, so it must not appear in Feet; Feet is "
+                        + $"[{string.Join(", ", pairFeet)}].");
+                }
+                if (!pairFeet.OrderBy(f => f).SequenceEqual(new[] { pairFoot[0], pairFoot[1] }.OrderBy(f => f)))
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: Feet must hold exactly the two feet the trunks actually stand on, neither more (the abandoned merge) nor fewer "
+                        + $"(a foot that DOES carry a tree dropped); Feet is [{string.Join(", ", pairFeet)}], the trunks stand on "
+                        + $"[{pairFoot[0]}, {pairFoot[1]}].");
+                }
             }
         }
 

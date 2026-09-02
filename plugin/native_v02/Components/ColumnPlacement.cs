@@ -2211,8 +2211,26 @@ namespace Ananke.COMPAS.Native.Components
                 footIndex[t] = match;
                 result.Peeled++;
             }
-            for (int i = 0; i < result.Nodes.Count; i++)
-                result.Feet.Add(i);
+
+            // Spec section 11: "a foot left with no trees is not built."
+            // Feet is the set of node indices a tree's footIndex actually
+            // resolves to, taken AFTER both peel passes have settled, not
+            // every index Nodes happens to hold. A second-pass peel above
+            // can move a tree off a merged foot without moving anything
+            // else off it, leaving that merged node in result.Nodes with
+            // nothing pointing at it any more (members, Deconstruct and
+            // Export all still index Nodes by position, so the node itself
+            // is never removed) — such a node must not appear in Feet. A
+            // tree with HeadMain < 0 owns no notch, builds no foot at all,
+            // and carries footIndex[t] == -1 (see MergeFeet's own node[]),
+            // so it contributes nothing here either.
+            var feetBuilt = new SortedSet<int>();
+            for (int t = 0; t < trees.Count; t++)
+            {
+                if (footIndex[t] >= 0)
+                    feetBuilt.Add(footIndex[t]);
+            }
+            result.Feet.AddRange(feetBuilt);
 
             // Members. Trunk foot to fork, main branch fork to the HEAD MAIN
             // (the tree's innermost OWNED notch, Nodes[0] on every tree that
