@@ -1224,9 +1224,12 @@ internal static class SkinPatterns
     /// strip's seam is its arc-length MIDPOINT, so setout is
     /// centre-outward and mirror-symmetric geometry gets mirror-symmetric
     /// joints by construction. A closed loop's seam is propagated from
-    /// the loop below it (the trace vertex nearest in plan to the lower
-    /// seam); the lowest loop's seam is the trace vertex on the +X
-    /// bearing from its plan centroid, deterministic and stated.
+    /// the loop below it (the point nearest in plan to the lower seam,
+    /// by EXACT projection onto this loop's own segments, rule 4.2.6 and
+    /// NearestArcInPlan below); the lowest loop's seam is the trace
+    /// vertex on the +X bearing from its plan centroid, deterministic
+    /// and stated, and exact already since it is not measured against
+    /// anything below it.
     /// </summary>
     private static void AssignSeams(
         IReadOnlyList<List<SkinLevelCurve>> byHeight)
@@ -1245,8 +1248,7 @@ internal static class SkinPatterns
                 if (matched >= 0 && below[matched].Closed)
                 {
                     double[] lowerSeam = PointAt(below[matched], 0.0);
-                    curve.Seam =
-                        curve.Cumulative[NearestInPlan(curve, lowerSeam)];
+                    curve.Seam = NearestArcInPlan(curve, lowerSeam);
                 }
                 else
                 {
@@ -1519,6 +1521,54 @@ internal static class SkinPatterns
             }
         }
         return best;
+    }
+
+    /// <summary>
+    /// The ARC LENGTH at the point of this curve nearest IN PLAN to a
+    /// target, by exact projection onto the curve's own segments (rule
+    /// 4.2.6). NearestInPlan returns a sample INDEX and quantises the answer
+    /// to the mesh; this returns a continuous arc length. A straight segment
+    /// projects to a straight plan segment and the parameter along it is
+    /// affine in both, so interpolating the cumulative arc by the plan
+    /// parameter is exact rather than approximate.
+    /// </summary>
+    private static double NearestArcInPlan(
+        SkinLevelCurve curve,
+        double[] target)
+    {
+        double bestArc = 0.0;
+        double bestDistance = double.PositiveInfinity;
+        int segments = curve.Closed
+            ? curve.Points.Count
+            : curve.Points.Count - 1;
+        for (int i = 0; i < segments; i++)
+        {
+            double[] a = curve.Points[i];
+            double[] b = curve.Points[(i + 1) % curve.Points.Count];
+            double dx = b[0] - a[0];
+            double dy = b[1] - a[1];
+            double lengthSquared = dx * dx + dy * dy;
+            double t = lengthSquared > 1.0e-18
+                ? ((target[0] - a[0]) * dx +
+                   (target[1] - a[1]) * dy) / lengthSquared
+                : 0.0;
+            t = Math.Min(Math.Max(t, 0.0), 1.0);
+            double px = a[0] + dx * t;
+            double py = a[1] + dy * t;
+            double distance =
+                (px - target[0]) * (px - target[0]) +
+                (py - target[1]) * (py - target[1]);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                double start = curve.Cumulative[i];
+                double end = i + 1 < curve.Points.Count
+                    ? curve.Cumulative[i + 1]
+                    : curve.Length;
+                bestArc = start + (end - start) * t;
+            }
+        }
+        return bestArc;
     }
 
     /// <summary>The trace vertex on the +X bearing from the loop's plan

@@ -1084,6 +1084,23 @@ internal static class Program
 
         try
         {
+            ValidateSkinSeamDrift(plugin);
+            Console.WriteLine(
+                "PASS  Skin seam drift (check 12.5(f)): a propagated " +
+                "closed-row seam is the EXACT projection of the row below's " +
+                "seam onto this row's own plan segments, stored as a " +
+                "continuous arc length, not the nearest trace vertex; on a " +
+                "circular dome at 96 a ring every course's seam then sits " +
+                "on the +X bearing to within 1e-6 rad.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin seam drift: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -20087,14 +20104,21 @@ internal static class Program
                 // on the record and cannot grow unseen. RE-MEASURED for
                 // task 23 (rule 4.2.2's per-row lattice replaces the
                 // absolute one every prior measurement here was of): CH
-                // 0.2 now drops 115, CH 0.35 drops 73, CH 0.5 drops 48,
+                // 0.2 now drops 121, CH 0.35 drops 73, CH 0.5 drops 48,
                 // CH 0.8 drops 30 and CH 1.9 drops NOTHING, the opposite
                 // shape from the absolute lattice's, whose worst case was
                 // the tallest CH and whose shortest was clean. On a
                 // per-row lattice a SHORT chart (few rows, so few charts
                 // to smooth the count change over) is where the surplus
                 // concentrates, and CH 0.2 gives this shell its most
-                // rows of any case tried.
+                // rows of any case tried. RE-MEASURED again for task 24
+                // (rule 4.2.6's exact-projection seam replaces the
+                // quantised one every prior measurement here was of): CH
+                // 0.2 moves from 115 to 121, CH 0.35 from 73 to 74, CH 0.5
+                // from 48 to 49 and CH 0.8 from 30 to 32, the seam having
+                // shifted by up to half a vertex spacing on the closed
+                // rings this shell traces at every height; CH 1.9 is
+                // unmoved.
                 RequireDisjointSimplePlans(
                     ringCells.Select(cell => cell.Outline).ToArray(),
                     $"{engine.Name}/ring vault CH {ringHeight}");
@@ -20103,10 +20127,10 @@ internal static class Program
                         ? (0, 0)
                         : ringHeight switch
                         {
-                            0.2 => (0, 115),
-                            0.35 => (0, 73),
-                            0.5 => (0, 48),
-                            0.8 => (0, 30),
+                            0.2 => (0, 121),
+                            0.35 => (0, 74),
+                            0.5 => (0, 49),
+                            0.8 => (0, 32),
                             1.9 => (0, 0),
                             _ => (0, 0)
                         };
@@ -20493,23 +20517,35 @@ internal static class Program
         // 1.9, the same invariant the meshings exist to prove; every
         // meshing is now clean of self-crossing cells, and CH 1.9 is
         // clean of overlaps too on all five, the opposite shape from the
-        // absolute lattice's own worst case.
+        // absolute lattice's own worst case. RE-MEASURED again for task 24
+        // (rule 4.2.6's exact-projection seam replaces the quantised one
+        // every prior measurement here was of), the seam having shifted by
+        // up to half a vertex spacing on the closed rings every one of
+        // these five meshings traces: at CH 0.35 the quad and triangulated
+        // fixtures move from 73 to 74, "ridge turned 0.1 degrees" from 80
+        // to 81, "ridge turned 11.25 degrees" from 80 to 84 and "rings
+        // 16/16/16/32/32" from 79 to 81; at CH 0.5 the quad and
+        // triangulated fixtures move from 48 to 49 and "ridge turned 11.25
+        // degrees" from 52 to 51; every other cell in the table (CH 1.9
+        // throughout, and CH 0.5 on the two unlisted meshings) is unmoved,
+        // and pinnedBuilt's own totals are unmoved too since a moved drop
+        // is one fewer or one more KEPT cell, not a different built total.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
-                { ("quad, 16 a ring", 0.35), (0, 73) },
-                { ("quad, 16 a ring", 0.5), (0, 48) },
+                { ("quad, 16 a ring", 0.35), (0, 74) },
+                { ("quad, 16 a ring", 0.5), (0, 49) },
                 { ("quad, 16 a ring", 1.9), (0, 0) },
-                { ("triangulated", 0.35), (0, 73) },
-                { ("triangulated", 0.5), (0, 48) },
+                { ("triangulated", 0.35), (0, 74) },
+                { ("triangulated", 0.5), (0, 49) },
                 { ("triangulated", 1.9), (0, 0) },
-                { ("ridge turned 0.1 degrees", 0.35), (0, 80) },
+                { ("ridge turned 0.1 degrees", 0.35), (0, 81) },
                 { ("ridge turned 0.1 degrees", 0.5), (0, 52) },
                 { ("ridge turned 0.1 degrees", 1.9), (0, 0) },
-                { ("ridge turned 11.25 degrees", 0.35), (0, 80) },
-                { ("ridge turned 11.25 degrees", 0.5), (0, 52) },
+                { ("ridge turned 11.25 degrees", 0.35), (0, 84) },
+                { ("ridge turned 11.25 degrees", 0.5), (0, 51) },
                 { ("ridge turned 11.25 degrees", 1.9), (0, 0) },
-                { ("rings 16/16/16/32/32", 0.35), (0, 79) },
+                { ("rings 16/16/16/32/32", 0.35), (0, 81) },
                 { ("rings 16/16/16/32/32", 0.5), (0, 52) },
                 { ("rings 16/16/16/32/32", 1.9), (0, 0) }
             };
@@ -20794,20 +20830,26 @@ internal static class Program
         // 0.35, 0.5 and 1.9, exactly the ring vault meshings' own totals
         // (the same shell, phased rather than remeshed); every phasing is
         // now clean of self-crossing cells, and CH 1.9 is clean of
-        // overlaps too on all four.
+        // overlaps too on all four. RE-MEASURED again for task 24 (rule
+        // 4.2.6's exact-projection seam replaces the quantised one every
+        // prior measurement here was of), the seam having shifted by up to
+        // half a vertex spacing on the closed rings every phasing traces:
+        // at CH 0.35 control and spiral move from 61 to 62 and jitter from
+        // 79 to 82; at CH 0.5 sheared band moves from 39 to 41; every
+        // other cell in the table is unmoved.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
-                { ("control", 0.35), (0, 61) },
+                { ("control", 0.35), (0, 62) },
                 { ("control", 0.5), (0, 41) },
                 { ("control", 1.9), (0, 0) },
-                { ("spiral", 0.35), (0, 61) },
+                { ("spiral", 0.35), (0, 62) },
                 { ("spiral", 0.5), (0, 41) },
                 { ("spiral", 1.9), (0, 0) },
                 { ("sheared band", 0.35), (0, 62) },
-                { ("sheared band", 0.5), (0, 39) },
+                { ("sheared band", 0.5), (0, 41) },
                 { ("sheared band", 1.9), (0, 0) },
-                { ("jitter", 0.35), (0, 79) },
+                { ("jitter", 0.35), (0, 82) },
                 { ("jitter", 0.5), (0, 51) },
                 { ("jitter", 1.9), (0, 0) }
             };
@@ -22492,6 +22534,140 @@ internal static class Program
         {
             if (instance is IDisposable disposable)
                 disposable.Dispose();
+        }
+    }
+
+    /// <summary>A circular dome at 96 a ring: 24 rings, the vertex at ring h
+    /// and angle theta at (3 (1 - h) cos theta, 3 (1 - h) sin theta, 2 h),
+    /// the last ring collapsed to the apex. Check 12.5(f) needs a fine
+    /// closed-row fixture, and the coarse octagonal dome cannot show a drift
+    /// of half a vertex spacing because half its vertex spacing is most of a
+    /// hexagon.
+    ///
+    /// DEVIATION (see progress.md): from ring 3 up, every ring's grid
+    /// carries an extra HALF-STEP twist over the ring below it (theta
+    /// offset by (ring - 2) * pi / Around for ring at least 2). Rings 0
+    /// to 2, which bound the lowest closed level (0.1, between rings 1
+    /// and 2), are left aligned so the base loop's PlusXVertex seam stays
+    /// exactly on the +X bearing, matching rule 4.2.6's own premise that
+    /// the lowest loop's seam is "exact already". The brief's literal
+    /// fixture axis-aligns EVERY ring's 96 samples on the SAME 96
+    /// bearings, which makes the exact continuous nearest-in-plan point
+    /// on the row above COINCIDE with a trace vertex at every level, on
+    /// both the shipped quantised rule and the exact projection alike:
+    /// the quantisation defect this check exists to measure is invisible
+    /// on a perfectly rotation-aligned mesh, because there is nothing for
+    /// it to round away from, and the smoke test proved this literally
+    /// (worst bearing 0.0 to 17 significant digits) before this twist was
+    /// added. The twist is the smallest change that keeps the fixture's
+    /// every other property (24 rings, 96 a ring, one rimmed dome, apex
+    /// collapse, and now the base loop's own bearing exact) while making
+    /// every PROPAGATED target actually fall between two trace vertices,
+    /// which is what the propagation defect needs to be measured at
+    /// all.</summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinFineDomeNet()
+    {
+        const int Rings = 24;
+        const int Around = 96;
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < Rings; ring++)
+        {
+            double h = (double)ring / Rings;
+            double twist = Math.Max(0, ring - 2) * Math.PI / Around;
+            for (int k = 0; k < Around; k++)
+            {
+                double theta = Math.PI * 2.0 * k / Around + twist;
+                vertices.Add(new[]
+                {
+                    3.0 * (1.0 - h) * Math.Cos(theta),
+                    3.0 * (1.0 - h) * Math.Sin(theta),
+                    2.0 * h
+                });
+            }
+        }
+        int apex = vertices.Count;
+        vertices.Add(new[] { 0.0, 0.0, 2.0 });
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < Rings; ring++)
+        {
+            for (int k = 0; k < Around; k++)
+            {
+                int next = (k + 1) % Around;
+                faces.Add(new[]
+                {
+                    ring * Around + k,
+                    ring * Around + next,
+                    (ring + 1) * Around + next,
+                    (ring + 1) * Around + k
+                });
+            }
+        }
+        for (int k = 0; k < Around; k++)
+        {
+            int next = (k + 1) % Around;
+            faces.Add(new[]
+            {
+                (Rings - 1) * Around + k,
+                (Rings - 1) * Around + next,
+                apex
+            });
+        }
+        var rim = new List<int>();
+        for (int k = 0; k < Around; k++)
+            rim.Add(k);
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// Check 12.5(f). On a circular dome at 96 a ring every course's seam
+    /// sits on the +X bearing, because the lowest loop's seam is taken there
+    /// and every loop above propagates from the one below. Under the shipped
+    /// rule the propagated seam is QUANTISED to the nearest trace vertex, so
+    /// it wanders by up to half a vertex spacing, which is 0.098 m at this
+    /// ring count. Measured as the seam's plan BEARING, because on a dome
+    /// the rings shrink and consecutive seams differ radially by
+    /// construction: the drift the defect describes is angular.
+    /// </summary>
+    private static void ValidateSkinSeamDrift(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+        (double[][] vertices, int[][] faces, int[] _) = SkinFineDomeNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        var levels = new List<double>();
+        for (int k = 1; k <= 18; k++)
+            levels.Add(0.1 * k);
+        object traced = traceAll.Invoke(
+            null, new object[] { net, levels })!;
+        double worst = 0.0;
+        foreach (object? level in (IList)traced)
+        {
+            foreach (object? item in (IList)level!)
+            {
+                object curve = item!;
+                if (!Reading<bool>(curve, "Closed"))
+                    continue;
+                MethodInfo pointAt = RequirePublicStatic(patterns, "PointAt");
+                double[] seam = (double[])pointAt.Invoke(
+                    null, new object[] { curve, 0.0 })!;
+                double angle = Math.Atan2(seam[1], seam[0]);
+                worst = Math.Max(worst, Math.Abs(angle));
+            }
+        }
+        if (worst > 1.0e-6)
+        {
+            throw new InvalidOperationException(
+                "A closed row's seam is the point on that row NEAREST IN " +
+                "PLAN to the row below's seam, found by exact projection " +
+                "onto the row's segments and stored as a continuous arc " +
+                "length, not by choosing the nearest sample vertex " +
+                "(rule 4.2.6); on a half-step-twisted circular dome every " +
+                "seam then sits off the +X bearing, and the worst bearing " +
+                $"here is {worst} rad against a vertex spacing of " +
+                "2 pi / 96 = 0.065 rad.");
         }
     }
 
