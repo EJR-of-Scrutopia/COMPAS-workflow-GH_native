@@ -11437,6 +11437,16 @@ internal static class Program
                     Console.WriteLine($"      case 2, moved apart: {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}, FeetClose {Get<int>(built, "FeetClose")}.");
                     if (feet.Length != 3 || Get<int>(built, "FeetMerged") != 0)
                         throw new InvalidOperationException($"Case 2: ribs moved outside the merge clearance stand as three separate columns; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                    // A spread of 0.4 clears the feet-close clearance itself
+                    // (0.25 * g), not only the merge clearance the two share by
+                    // number: nothing here stands close either. This PINS the
+                    // clearance in the direction Case 1 and the narrow bay
+                    // cannot, because both are near enough that only a widened
+                    // clearance would ever show: a clearance widened past 0.4 *
+                    // g would start counting these apart ribs as close, and this
+                    // is the check that would go red.
+                    if (Get<int>(built, "FeetClose") != 0)
+                        throw new InvalidOperationException($"Case 2: ribs moved 0.4 * g apart clear the feet-close clearance too; FeetClose is {Get<int>(built, "FeetClose")}, expected 0.");
                 }
 
                 // Case 3: the same net as case 1, with the two joining edges
@@ -11454,8 +11464,21 @@ internal static class Program
                     object placed = Run(cut, Array.Empty<int[]>(), 1, 1);
                     object built = Get<object>(placed, "Built");
                     var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    Console.WriteLine($"      case 3, no edges: {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}, FeetClose {Get<int>(built, "FeetClose")}.");
                     if (feet.Length != 3 || Get<int>(built, "FeetMerged") != 0)
                         throw new InvalidOperationException($"Case 3: feet inside the clearance with NO net edge between their spans must not merge; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                    // This is Case 1's own geometry, feet inside a quarter of
+                    // the tighter spacing, with only the two joining edges cut.
+                    // Rule 3 never fires (no adjacency), so the SAME 27 pairs
+                    // that would have merged there stand close instead: this
+                    // PINS the clearance from the other side of Case 2, on the
+                    // near rather than the far bank, where the narrow bay's own
+                    // 27-pair reading (Finding 1's own headline case) cannot be
+                    // told apart from a merge clearance moved a factor of five
+                    // (0.05 * median to 0.25 * g) unless the count itself is
+                    // asserted rather than printed.
+                    if (Get<int>(built, "FeetClose") != 27)
+                        throw new InvalidOperationException($"Case 3: with no net edge to merge on, every pair inside the clearance stands close instead; FeetClose is {Get<int>(built, "FeetClose")}, expected 27.");
                 }
 
                 // Case 4, MIRROR-REFUSED: two straight ribs, five notches
@@ -11556,9 +11579,41 @@ internal static class Program
                         new[] { 0, 6, 7, 11 }, allAcross, edgesBoth.ToArray());
                     object placed = Run(mixed, Array.Empty<int[]>(), 1, 2);
                     object built = Get<object>(placed, "Built");
+                    var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
                     var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    Console.WriteLine($"      case 5, MIXED: {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}, MergeRefused {Get<int>(built, "MergeRefused")}.");
                     if (Get<int>(built, "FeetMerged") != 1)
                         throw new InvalidOperationException($"Case 5, MIXED: the central foot and both flanking candidates of the bent rib accept as ONE merge GROUP; FeetMerged {Get<int>(built, "FeetMerged")}, MergeRefused {Get<int>(built, "MergeRefused")}, {feet.Length} feet.");
+                    // FeetMerged == 1 alone pins a COUNT two earlier fixtures in
+                    // this same block already produce; it says nothing about
+                    // WHICH trees merged or WHERE the merged foot stands, so an
+                    // engine that merged the right trees to the wrong point, or
+                    // a different pair to the right count, would still read
+                    // FeetMerged 1 here. Eight trees stand this net (three of
+                    // A's five free notches at Type 2, plus B's three free
+                    // notches at Type 3, a merge that is neither Case 1's
+                    // three-way ring nor Case 4's refusal), and exactly four of
+                    // them ever reach a foot: A's central group, A's two flanks
+                    // (2, 8) and (0, 2), and B's own merged trio, so feet.Length
+                    // pins the shape of the merge and not only that one
+                    // happened. The merged foot is the LEAST-SQUARES
+                    // convergence of A's central candidate line and both of B's
+                    // flanking candidate lines, measured here rather than
+                    // rederived, because MIXED is defined by the ENGINE'S own
+                    // group index and mirror test and not by an independent
+                    // geometric solve.
+                    if (feet.Length != 4)
+                        throw new InvalidOperationException($"Case 5, MIXED: eight trees reach exactly FOUR feet (three plain plus one merged trio); {feet.Length} feet.");
+                    const double mergedX = 0.026153846153845861;
+                    const double mergedY = 5.1069230769230778;
+                    bool foundMerged = feet.Any(fi =>
+                        Math.Abs(X(levelNodes[fi]) - mergedX) <= 1.0e-9 && Math.Abs(Y(levelNodes[fi]) - mergedY) <= 1.0e-9);
+                    if (!foundMerged)
+                    {
+                        throw new InvalidOperationException(
+                            $"Case 5, MIXED: the merged foot must stand at the candidates' own convergence, ({mergedX:0.#########}, {mergedY:0.#########}); "
+                            + $"no built foot matched it: {string.Join(", ", feet.Select(fi => $"({X(levelNodes[fi]):0.#########}, {Y(levelNodes[fi]):0.#########})"))}.");
+                    }
                 }
 
                 // Case 6, LEAN-REFUSED: a two-notch span whose pair of tied
