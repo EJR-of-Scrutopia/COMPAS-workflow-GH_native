@@ -11881,13 +11881,17 @@ internal static class Program
             // 64.7 degrees, outside the cap, once the convergence stands it at
             // the far end of its own candidate hull.
             // Section 12's own lean-cap test on the CANDIDATE convergence
-            // already catches this before it is ever accepted, which is
-            // EXACTLY what "in practice the second pass finds nothing"
-            // means: the check asserts the disjunction the brief states
-            // (refused and counted, OR peeled a second time) rather than
-            // assuming which, and then asserts the level that comes back is
-            // STABLE, so that a hypothetical third pass would find nothing
-            // either.
+            // already catches this before it is ever accepted, so THIS fixture
+            // asserts the disjunction the brief states (refused and counted, OR
+            // peeled a second time) rather than assuming which, and then
+            // asserts the level that comes back is STABLE, so that a
+            // hypothetical third pass would find nothing either.
+            //
+            // What this fixture does NOT show, and what an earlier note here
+            // wrongly read it as showing, is that the second peel pass finds
+            // nothing anywhere. It shows only that section 12's refusal closes
+            // the CROSS-LINE door. The central-pair door is open, and Step 4b
+            // below walks through it.
             {
                 var mergeThenPeel = MergePastTheCap();
                 object placed = Run(mergeThenPeel, Array.Empty<int[]>(), 1, 1);
@@ -11906,6 +11910,136 @@ internal static class Program
                     throw new InvalidOperationException(
                         $"Step 4: the level the engine actually returns must be STABLE under the cap, which is what \"a third pass changes nothing\" "
                         + $"means in practice; WorstLean is {worstLean:0.###} against a cap of {maxLean:0.###}.");
+                }
+            }
+
+            // ---- STEP 4b: THE SECOND PEEL PASS ACTUALLY FINDS SOMETHING,
+            // and the fixture that makes it do so (spec sections 11 and 12).
+            //
+            // The engine's comment used to claim the harness DEMONSTRATED that
+            // the pass finds nothing, on the ground that section 12 refuses a
+            // merge whose converged foot would put a participating trunk over
+            // the cap. It did not demonstrate it, and the claim is FALSE as
+            // stated, because that refusal belongs to RULE 3, the cross-line
+            // merge, alone. RULE 2, THE CENTRAL PAIR OF AN EVEN TREE ROW, moves
+            // its two feet to their MEAN with no lean test anywhere, and that
+            // is the door the second pass exists to close. MEASURED: with the
+            // pass disabled, this fixture returns a level whose worst lean is
+            // 63.3 degrees, outside the machine's own sliding joint.
+            //
+            // THE GEOMETRY, and every number in it is recomputed here rather
+            // than read off the engine. One straight span from x = 0 to x = 3,
+            // anchored at both ends, with TWO free notches, at x = 1 standing
+            // 0.26 up and at x = 2 standing 0.24 up. Two free notches make
+            // sigma 1/3 and 2/3, so h is 1/3 and g is 1. Each notch is pulled
+            // hard ALONG the chord and INWARD, ten times its own weight, so
+            // AimFrom caps both aims at exactly sixty degrees and each Type 0
+            // foot stands tan(60) times its own notch height inward of it:
+            // 1.4503 and 1.5843. The two feet are 0.1340 apart, inside the
+            // central-pair clearance of 0.25 * g, and NOT crossed, so the pair
+            // merges onto their mean at 1.5173.
+            //
+            // That mean is OUTWARD of each foot, because the feet are not
+            // crossed, so BOTH trunks that stood exactly AT the cap now stand
+            // past it, at 63.3 and 63.5 degrees. Nothing before the second pass
+            // can see it: the first peel pass does not run at Type 0 at all,
+            // and rule 2 tests no lean. The second pass catches both, and by
+            // the group-index mirror they are each other's mirror anyway.
+            {
+                double capTangent = Math.Tan(60.0 * Math.PI / 180.0);
+                double leftRise = 0.26;
+                double rightRise = 0.24;
+                double thrust = 10.0;
+                Array pairNodes = Array.CreateInstance(point3d, 4);
+                pairNodes.SetValue(P(0.0, 0.0, 0.0), 0);
+                pairNodes.SetValue(P(1.0, 0.0, leftRise), 1);
+                pairNodes.SetValue(P(2.0, 0.0, rightRise), 2);
+                pairNodes.SetValue(P(3.0, 0.0, 0.0), 3);
+                Array pairAcross = Array.CreateInstance(vector3d, 4);
+                pairAcross.SetValue(V(0.0, 0.0, -1.0), 0);
+                pairAcross.SetValue(V(thrust, 0.0, -1.0), 1);
+                pairAcross.SetValue(V(-thrust, 0.0, -1.0), 2);
+                pairAcross.SetValue(V(0.0, 0.0, -1.0), 3);
+                Array pairAcrossPerBar = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                pairAcrossPerBar.SetValue(pairAcross, 0);
+                var pairNet = (
+                    pairNodes,
+                    new[] { new[] { 0, 1, 2, 3 } },
+                    new[] { 0, 3 },
+                    pairAcrossPerBar,
+                    new[] { (0, 1), (1, 2), (2, 3) });
+
+                double pairG = 1.0;
+                double ownLeft = 1.0 + (capTangent * leftRise);
+                double ownRight = 2.0 - (capTangent * rightRise);
+                double pairMean = 0.5 * (ownLeft + ownRight);
+                double leanLeft = Math.Atan2(pairMean - 1.0, leftRise) * 180.0 / Math.PI;
+                double leanRight = Math.Atan2(2.0 - pairMean, rightRise) * 180.0 / Math.PI;
+
+                // THE FIXTURE ONLY MEASURES ANYTHING while all three of these
+                // hold, so a later change of geometry that quietly stops the
+                // second pass firing says so rather than going green.
+                if (ownRight <= ownLeft)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: the two Type 0 feet must not have CROSSED, or the mean lies INWARD of each and both leans FALL; "
+                        + $"left {ownLeft:0.#####}, right {ownRight:0.#####}.");
+                }
+                if (ownRight - ownLeft > 0.25 * pairG)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: the two feet must be inside the central-pair clearance of 0.25 * g = {0.25 * pairG:0.#####} or rule 2 never fires; "
+                        + $"they are {ownRight - ownLeft:0.#####} apart.");
+                }
+                if (leanLeft <= maxLean + 1.0e-9 || leanRight <= maxLean + 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: from the merged mean at {pairMean:0.#####} BOTH trunks must stand past the cap, or there is no second peel to find; "
+                        + $"they lean {leanLeft:0.###} and {leanRight:0.###} against {maxLean:0.###}.");
+                }
+
+                object pairPlaced = Run(pairNet, Array.Empty<int[]>(), 1, 0);
+                object pairBuilt = Get<object>(pairPlaced, "Built");
+                var pairTrees = ((IEnumerable)Get<object>(pairPlaced, "Trees")).Cast<object>().ToArray();
+                if (pairTrees.Length != 2)
+                    throw new InvalidOperationException($"Step 4b: two free notches at Branching 1 are two trees; there are {pairTrees.Length}.");
+                if (Get<int>(pairBuilt, "MergeRefused") != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: one span alone offers no CROSS-LINE candidate, so section 12's own lean-cap refusal cannot fire here and the central "
+                        + $"pair is the only merge; MergeRefused is {Get<int>(pairBuilt, "MergeRefused")}.");
+                }
+                if (Get<int>(pairBuilt, "FeetMerged") != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: the central pair of this even row stands on the mean of its two step-8 feet, ONE merge; FeetMerged is "
+                        + $"{Get<int>(pairBuilt, "FeetMerged")}.");
+                }
+                // THE CLAIM. Both trunks are caught by the SECOND pass and by
+                // nothing else: the first pass does not run at Type 0.
+                if (Get<int>(pairBuilt, "Peeled") != 2)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: the central-pair merge stands both trunks at {leanLeft:0.###} and {leanRight:0.###} degrees, past the cap of "
+                        + $"{maxLean:0.###}, and the SECOND peel pass catches both; Peeled is {Get<int>(pairBuilt, "Peeled")}, so the pass found nothing.");
+                }
+                double pairWorstLean = Get<double>(pairBuilt, "WorstLean");
+                if (pairWorstLean > maxLean + 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: the level the engine returns is STABLE under the cap once the second pass has run; WorstLean is "
+                        + $"{pairWorstLean:0.###} against {maxLean:0.###}.");
+                }
+                // AND THEY STAND WHERE THE PEEL PUTS THEM, on their own Type 0
+                // feet, recomputed here and not read back off the engine.
+                var pairNodesOut = ((IEnumerable)Get<object>(pairBuilt, "Nodes")).Cast<object>().ToArray();
+                int[] pairFoot = FootOfTree(pairBuilt, pairTrees.Length);
+                if (Math.Abs(X(pairNodesOut[pairFoot[0]]) - ownLeft) > 1.0e-9 ||
+                    Math.Abs(X(pairNodesOut[pairFoot[1]]) - ownRight) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"Step 4b: a trunk the second pass peels stands on its OWN Type 0 foot, at {ownLeft:0.#########} and {ownRight:0.#########}; "
+                        + $"they stand at {X(pairNodesOut[pairFoot[0]]):0.#########} and {X(pairNodesOut[pairFoot[1]]):0.#########}.");
                 }
             }
         }

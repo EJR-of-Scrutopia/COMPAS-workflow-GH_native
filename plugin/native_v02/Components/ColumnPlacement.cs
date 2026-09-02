@@ -2142,13 +2142,29 @@ namespace Ananke.COMPAS.Native.Components
             // already judged, so re-judging it is harmless and needs no
             // extra bookkeeping of which trees a merge actually touched.
             // Cannot cascade: a tree already peeled in the first pass is
-            // skipped, a second-pass peel takes its mirror partner exactly as
-            // the first does, and no foot moves on account of a peel, so
-            // nothing here can feed a third pass anything to catch. In
-            // practice this finds nothing at all, because section 12 already
-            // refuses a merge whose converged foot would put a participating
-            // trunk over the cap; the harness demonstrates that rather than
-            // assumes it.
+            // skipped, a second-pass peel takes its mirror exactly as the
+            // first does, and no foot moves on account of a peel, so nothing
+            // here can feed a third pass anything to catch.
+            //
+            // THIS PASS IS NOT DECORATION, AND THE HARNESS HOLDS THE FIXTURE
+            // THAT PROVES IT. An earlier note here claimed the pass finds
+            // nothing at all, because section 12 refuses a merge whose
+            // converged foot would put a participating trunk over the cap, and
+            // claimed the harness demonstrated that. It did not, and the claim
+            // is false as stated: that refusal belongs to RULE 3, THE
+            // CROSS-LINE MERGE, ALONE. RULE 2, THE CENTRAL PAIR OF AN EVEN
+            // TREE ROW, moves its two feet onto their mean with no lean test
+            // anywhere; where the pair's two Type 0 feet stand UNCROSSED and
+            // inside the central-pair clearance, that mean lies OUTWARD of
+            // each of them, so two trunks capped at exactly sixty degrees by
+            // AimFrom both end up past it. The smoke harness's Step 4b builds
+            // that case on one straight span of two free notches pulled hard
+            // inward, and MEASURES the two leans it produces, 63.3 and 63.5
+            // degrees; disabling this guard puts that fixture red with Peeled
+            // 0 and a level whose worst lean is outside the machine's own
+            // sliding joint. At Type 0, where the first pass does not run at
+            // all, this pass is the only thing standing between rule 2 and a
+            // trunk the sliding joint cannot build.
             var steppedAgain = new bool[trees.Count];
             for (int t = 0; t < trees.Count; t++)
             {
