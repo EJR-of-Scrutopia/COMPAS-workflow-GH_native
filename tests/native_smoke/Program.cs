@@ -6995,6 +6995,42 @@ internal static class Program
             return byTree;
         }
 
+        // THE FEET OF THE SPAN ROWS ALONE, added 2026-09-02 with the S < 3
+        // conviction. A CENTRE COLUMN is a station of no row: it carries a
+        // fixed foot, no merge rule and no peel can reach it, and it neither
+        // converges with anything nor is converged upon. A fixture measuring
+        // the merge, the convergence or the fallback is therefore measuring
+        // the ROW feet, and counting the centre column's among them would
+        // make the assertion say something it never meant.
+        //
+        // KEPT BY IDENTITY, and this is the way round that matters: a foot is
+        // a row foot when SOME tree with a span of its own stands on it. The
+        // other way round, dropping every foot a centre column stands on,
+        // would drop a foot they SHARE, and they can share one: a centre
+        // column's fixed foot at the plan mean of the notches it gathers can
+        // land exactly on a straight span's own group foot, and the two weld
+        // into a single node. MEASURED on the three-rib fixture with its
+        // joining edges cut, where the middle rib's Type 1 foot and the
+        // centre column's mean are both the origin.
+        //
+        // Every call site asserts CentresExtracted as well, so a column
+        // appearing or disappearing is caught rather than quietly absorbed.
+        int[] RowFeet(object placed, object level)
+        {
+            var placedTrees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+            int[] byTree = FootOfTree(level, placedTrees.Length);
+            var rows = new HashSet<int>();
+            for (int t = 0; t < placedTrees.Length; t++)
+            {
+                if (byTree[t] < 0)
+                    continue;
+                if (Get<int>(placedTrees[t], "Span") >= 0 || Get<bool>(placedTrees[t], "Ring"))
+                    rows.Add(byTree[t]);
+            }
+            return ((IEnumerable)Get<object>(level, "Feet")).Cast<int>()
+                .Where(rows.Contains).ToArray();
+        }
+
         // Spec section 7's counting, reimplemented in the check. It must NOT
         // call the engine's FootGroups: three separate fixtures compare their
         // own expectation against the placed feet, and an expectation read
@@ -8781,13 +8817,34 @@ internal static class Program
                 // longer holds once a peeled tree's OWN aim can differ near
                 // a crossing, which this print makes a measurement instead
                 // of a silent pass.
+                //
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction.
+                // The balance exemption used to read TRUE for a group of ONE,
+                // its balance station being that group's only index, so at
+                // Branching 1 the shared notch was never annexed and the arch
+                // built a head to it. It is annexed now, and the crossing
+                // stands on its own centre column: the arch's tree at the
+                // shared notch owns nothing, builds nothing and HAS NO FOOT.
+                // That is Param's "the centre is never annexed" reaching
+                // Branching 1, and it agrees with what this same crossing
+                // already did at Branching 2 and 3. The loop therefore counts
+                // the treeless one rather than indexing a -1, and asserts
+                // there is EXACTLY ONE of them, which is the fix's own claim
+                // and not a tolerance for missing feet.
+                int footless = Enumerable.Range(0, 9).Count(t => crossedFeet[t] < 0);
+                if (footless != 1 || crossedFeet[2] >= 0)
+                    throw new InvalidOperationException(
+                        $"Type {type}: at Branching 1 the shared notch is annexed by neither span and stands on its own centre column, so EXACTLY ONE of the arch's nine trees, the one holding the shared notch at bar position 3, builds nothing and has no foot; {footless} are footless and the shared notch's own tree "
+                        + $"{(crossedFeet[2] < 0 ? "is" : "is not")} among them. Before the S < 3 conviction of 2026-09-02 the group of one read as BALANCED about its own only index, the exemption was vacuously true and the arch kept the head.");
                 int differing = 0;
                 for (int t = 0; t < 9; t++)
                 {
+                    if (crossedFeet[t] < 0)
+                        continue;
                     if (Math.Abs(X(crossedNodes[crossedFeet[t]]) - X(controlNodes[controlFeet[t]])) > 1.0e-9)
                         differing++;
                 }
-                Console.WriteLine($"      Type {type}: {differing} of 9 crossed-arch feet differ from the uncrossed control's (peeled, aim-derived trees near the crossing).");
+                Console.WriteLine($"      Type {type}: {differing} of 8 standing crossed-arch feet differ from the uncrossed control's (peeled, aim-derived trees near the crossing); the ninth is the crossing's own, now a centre column.");
                 if (Get<int>(placedCrossed, "SharedNotches") != 1)
                     throw new InvalidOperationException($"One notch is held by two spans at once; SharedNotches is {Get<int>(placedCrossed, "SharedNotches")}.");
                 // Count heads and members from the BUILT MEMBER SET and the
@@ -8802,9 +8859,33 @@ internal static class Program
                     Math.Abs(Z(levelNodes[m.Upper]) - Z(shared)) < 1.0e-9);
                 if (heads != 1)
                     throw new InvalidOperationException($"The shared node is one point in space and carries EXACTLY ONE column head; {heads} members end at it.");
-                object owner = trees.First(t => Get<int[]>(t, "Nodes").Contains(3) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), 3)]);
-                if (Get<int>(owner, "Bar") != 0)
-                    throw new InvalidOperationException("The ARCH owns this head, by the lower X of its endpoint pair's first point, (0, 5) against the rib's (3, 0). Both spans tie on free notch count and on chord length, which is what every regularly ribbed vault gives.");
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction.
+                // The assertion WAS that the ARCH builds this head, by the
+                // lower X of its endpoint pair's first point, (0, 5) against
+                // the rib's (3, 0). At Branching 1 no side builds it any
+                // more: the group of one no longer reads as balanced about
+                // its own only index, the notch is annexed and it stands on a
+                // column of its own, Bar -1 and Span -1, plumb beneath the
+                // crossing. What the owner rule still decides is WHICH span
+                // extracts it, and that shows as exactly ONE centre column
+                // rather than two. The bar-order invariance below is what
+                // holds the tie-break itself here, and the balanced case the
+                // exemption was written for is pinned separately, on the
+                // centre crossing at Branching 3, further down.
+                object holder = trees.First(t => Get<int[]>(t, "Nodes").Contains(3) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), 3)]);
+                if (Get<int>(holder, "Bar") != -1 || Get<int>(holder, "Span") != -1
+                    || Get<int[]>(holder, "Nodes").Length != 1
+                    || Get<int>(placedCrossed, "CentresExtracted") != 1)
+                    throw new InvalidOperationException(
+                        $"Type {type}: the shared notch stands on ONE column of its own, on no bar and in no span's row; it is held by bar {Get<int>(holder, "Bar")}, span {Get<int>(holder, "Span")}, and {Get<int>(placedCrossed, "CentresExtracted")} centre columns were extracted. Exactly one, because the owner rule still decides which of the two spans annexes it and only the annexing span extracts.");
+                object footHolder = trees.First(t => Get<int>(t, "Span") == -1 && !Get<bool>(t, "Ring"));
+                object sharedPoint = crossed.Nodes.GetValue(3)!;
+                object? fixedFoot = Get<object?>(footHolder, "FixedFoot");
+                if (fixedFoot is null
+                    || Math.Abs(X(fixedFoot) - X(sharedPoint)) > 1.0e-9
+                    || Math.Abs(Y(fixedFoot) - Y(sharedPoint)) > 1.0e-9)
+                    throw new InvalidOperationException(
+                        $"Type {type}: the crossing's centre column stands PLUMB beneath the crossing, its foot on that node's own plan point; it stands at {(fixedFoot is null ? "no fixed foot at all" : $"({X(fixedFoot):0.#####}, {Y(fixedFoot):0.#####})")} against ({X(sharedPoint):0.#####}, {Y(sharedPoint):0.#####}).");
             }
             // And the answer is IDENTICAL with the bars handed over in the
             // other order, which is the assertion the present engine fails
@@ -9081,16 +9162,42 @@ internal static class Program
                 int derived = OwnerByRule(net, placed, 0, 1);
                 if (derived != expectedBar)
                     throw new InvalidOperationException($"The check's own reading of the owner rule gives bar {derived} where the item states bar {expectedBar}: {why}. One of the two is wrong and it must be settled before the engine is judged.");
-                object ownerTree = trees.First(t =>
-                    Get<int[]>(t, "Nodes").Contains(shared) &&
-                    Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), shared)]);
-                if (Get<int>(ownerTree, "Bar") != expectedBar)
-                    throw new InvalidOperationException($"Bar {expectedBar} owns the head at node {shared}: {why}. Bar {Get<int>(ownerTree, "Bar")} built the member.");
-                foreach (object other in trees.Where(t => Get<int>(t, "Bar") != expectedBar && Get<int[]>(t, "Nodes").Contains(shared)))
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction.
+                // This ran, and still runs, at Branching 1, where every group
+                // is a group of ONE. The balance station of such a group IS
+                // its only index, so the exemption read vacuously true and the
+                // owner BUILT the head; the exemption's own stated meaning, a
+                // notch "reached from both sides alike", needs a member
+                // strictly either side and so needs a group of three. The
+                // owner now ANNEXES the shared notch and it stands on a centre
+                // column of its own, which is Param's "the centre is never
+                // annexed" reaching Branching 1.
+                //
+                // THE OWNER RULE IS STILL WHAT THIS FIXTURE MEASURES, and it
+                // still decides: only the OWNING span annexes, so there is
+                // exactly one centre column and it carries THE OWNING SPAN'S
+                // OWN FRAME, handed over for SpacingOf. That frame lists the
+                // free notches of its own bar, which names the bar as
+                // exactly as the built member did.
+                foreach (object holder in trees.Where(
+                    t => Get<int>(t, "Span") >= 0 && Get<int[]>(t, "Nodes").Contains(shared)))
                 {
-                    if (Get<bool[]>(other, "Owned")[Array.IndexOf(Get<int[]>(other, "Nodes"), shared)])
-                        throw new InvalidOperationException($"The other line HOLDS the notch for the layout and the pairing and builds NO member to it; bar {Get<int>(other, "Bar")} built one at node {shared}.");
+                    if (Get<bool[]>(holder, "Owned")[Array.IndexOf(Get<int[]>(holder, "Nodes"), shared)])
+                        throw new InvalidOperationException($"At Branching 1 NEITHER line builds to the shared node at {shared}: the group of one no longer reads as balanced about its own only index, so the owner annexes it and it stands apart. Bar {Get<int>(holder, "Bar")} built a member to it.");
                 }
+                object[] centres = trees.Where(
+                    t => Get<int>(t, "Span") < 0 && !Get<bool>(t, "Ring")).ToArray();
+                if (centres.Length != 1 || Get<int>(placed, "CentresExtracted") != 1
+                    || !Get<int[]>(centres[0], "Nodes").SequenceEqual(new[] { shared }))
+                    throw new InvalidOperationException($"Only the OWNING span annexes, so the shared node at {shared} takes exactly ONE centre column holding exactly that node; {centres.Length} trees stand outside every span row and CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                object? scale = Get<object?>(centres[0], "Scale");
+                if (scale is null)
+                    throw new InvalidOperationException($"The centre column carries the ANNEXING span's frame, which is the only terms a tree with no span of its own can be judged in; it carries none at node {shared}.");
+                int[] frameNodes = Get<int[]>(scale, "Nodes");
+                int otherBar = expectedBar == 0 ? 1 : 0;
+                if (frameNodes.Length == 0 || frameNodes.Any(v => !net.Bars[expectedBar].Contains(v))
+                    || frameNodes.All(v => net.Bars[otherBar].Contains(v)))
+                    throw new InvalidOperationException($"Bar {expectedBar} owns and so ANNEXES the head at node {shared}: {why}. The centre column carries a frame over free notches [{string.Join(",", frameNodes)}], which is not bar {expectedBar}'s span alone.");
             }
 
             // 1. THE RIB OWNS, by the greater free notch count: ten against
@@ -9126,13 +9233,41 @@ internal static class Program
                 var mirrored = Touching((At: 3, Count: 11), (At: 7, Count: 11));
                 object placed = Run(mirrored, Array.Empty<int[]>(), 1, 2);
                 var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
-                int OwnerOfNode(int shared) => Get<int>(
-                    trees.First(t =>
-                        Get<int[]>(t, "Nodes").Contains(shared) &&
-                        Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), shared)]),
-                    "Bar");
-                if (OwnerOfNode(3) == 0 || OwnerOfNode(7) == 0)
-                    throw new InvalidOperationException("Each rib holds ten free notches against the arch's nine, so each rib owns its own head.");
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction.
+                // The old reading asked which BAR built the head at each
+                // shared node. At Branching 1 no bar does any more: the group
+                // of one no longer reads as balanced about its own only index,
+                // so each rib ANNEXES its own shared node and each stands on
+                // its own centre column. The rule is read the same way it is
+                // read above, off the frame the annexing span hands over, so
+                // this still says "each rib owns its own head" and not merely
+                // "the arch does not".
+                //
+                // WHY THE OLD LINE WOULD HAVE PASSED IN SILENCE, and why it is
+                // rewritten rather than left: it asked only that the owner's
+                // Bar was NOT 0, and a centre column's Bar is -1, so the
+                // annexation would have satisfied it without the ribs owning
+                // anything at all.
+                int[] AnnexingFrame(int shared)
+                {
+                    object[] holding = trees.Where(
+                        t => Get<int>(t, "Span") < 0 && !Get<bool>(t, "Ring")
+                            && Get<int[]>(t, "Nodes").Contains(shared)).ToArray();
+                    if (holding.Length != 1)
+                        throw new InvalidOperationException($"The shared node {shared} stands on exactly ONE centre column; {holding.Length} trees outside every span row hold it.");
+                    object? frame = Get<object?>(holding[0], "Scale");
+                    if (frame is null)
+                        throw new InvalidOperationException($"The centre column at node {shared} carries the annexing span's frame; it carries none.");
+                    return Get<int[]>(frame, "Nodes");
+                }
+                if (Get<int>(placed, "CentresExtracted") != 2)
+                    throw new InvalidOperationException($"Two ribs touching at mirrored positions each annex their own shared node, so TWO centre columns stand; CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                foreach (int shared in new[] { 3, 7 })
+                {
+                    int[] frameNodes = AnnexingFrame(shared);
+                    if (frameNodes.All(v => mirrored.Bars[0].Contains(v)))
+                        throw new InvalidOperationException($"Each rib holds ten free notches against the arch's nine, so each rib owns and annexes its own head; the column at node {shared} carries a frame over [{string.Join(",", frameNodes)}], which lies wholly on the ARCH.");
+                }
                 object built = Get<object>(placed, "Built");
                 var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
                 int[] footNode = FootOfTree(built, trees.Length);
@@ -9461,8 +9596,18 @@ internal static class Program
                 object placedCrossed = Run(net, Array.Empty<int[]>(), 1, type);
                 object placedControl = Run(curved, Array.Empty<int[]>(), 1, type);
                 var trees = ((IEnumerable)Get<object>(placedCrossed, "Trees")).Cast<object>().ToArray();
-                if (trees.Length != 9)
-                    throw new InvalidOperationException($"Type {type}: BOTH lines hold node 3, so the curved bar keeps its EIGHT free notches and the crossing bar keeps its one; nine trees total, got {trees.Length}.");
+                // TEN, not nine, since the S < 3 conviction of 2026-09-02, and
+                // UPDATED DELIBERATELY. Both spans still LIST node 3 and both
+                // still lay out over it, which is what this fixture is about;
+                // what changed is that at Branching 1 the owning span no
+                // longer BUILDS to it. A group of one used to read as balanced
+                // about its own only index, so the exemption was vacuously
+                // true; it now needs a group of three, the notch is annexed
+                // and it stands on a centre column, which is the tenth tree.
+                if (trees.Length != 10)
+                    throw new InvalidOperationException($"Type {type}: BOTH lines hold node 3, so the curved bar keeps its EIGHT free notches and the crossing bar keeps its one, and the annexed node 3 stands on a centre column of its own; ten trees total, got {trees.Length}.");
+                if (Get<int>(placedCrossed, "CentresExtracted") != 1)
+                    throw new InvalidOperationException($"Type {type}: node 3 is annexed by the owning span and stands apart; CentresExtracted is {Get<int>(placedCrossed, "CentresExtracted")}.");
                 var curvedTrees = Enumerable.Range(0, trees.Length).Where(t => Get<int>(trees[t], "Bar") == 1).ToArray();
                 if (curvedTrees.Length != 8)
                     throw new InvalidOperationException($"Type {type}: the curved bar's own free notch count is unchanged by a crossing that takes nothing from it; it holds {curvedTrees.Length}.");
@@ -9488,17 +9633,28 @@ internal static class Program
                 int[] crossedFeet = FootOfTree(builtCrossed, trees.Length);
                 var controlTrees = ((IEnumerable)Get<object>(placedControl, "Trees")).Cast<object>().ToArray();
                 int[] controlFeet = FootOfTree(builtControl, controlTrees.Length);
+                // ONE of the curved bar's eight trees now builds nothing and
+                // stands on no foot: the one holding node 3, which its own
+                // span annexes to the centre column. Asserted rather than
+                // tolerated, and asserted to be THAT tree, so a second tree
+                // silently losing its foot could not hide here.
+                int curvedFootless = curvedTrees.Count(t => crossedFeet[t] < 0);
+                int nodeThreeTree = curvedTrees.Single(t => Get<int[]>(trees[t], "Nodes").Contains(3));
+                if (curvedFootless != 1 || crossedFeet[nodeThreeTree] >= 0)
+                    throw new InvalidOperationException($"Type {type}: exactly ONE of the curved bar's eight trees builds nothing, the one holding the annexed node 3; {curvedFootless} are footless and node 3's own tree {(crossedFeet[nodeThreeTree] < 0 ? "is" : "is not")} among them.");
                 int curvedDiffering = 0;
                 for (int t = 0; t < curvedTrees.Length; t++)
                 {
                     int crossedIndex = curvedTrees[t];
+                    if (crossedFeet[crossedIndex] < 0)
+                        continue;
                     if (Math.Abs(X(crossedNodes[crossedFeet[crossedIndex]]) - X(controlNodes[controlFeet[t]])) > 1.0e-9 ||
                         Math.Abs(Y(crossedNodes[crossedFeet[crossedIndex]]) - Y(controlNodes[controlFeet[t]])) > 1.0e-9)
                     {
                         curvedDiffering++;
                     }
                 }
-                Console.WriteLine($"      Type {type}: {curvedDiffering} of {curvedTrees.Length} crossed-bar feet differ from the uncrossed control's.");
+                Console.WriteLine($"      Type {type}: {curvedDiffering} of {curvedTrees.Length} crossed-bar feet differ from the uncrossed control's (node 3's own tree stands apart on a centre column).");
             }
         }
 
@@ -10060,8 +10216,15 @@ internal static class Program
                 new[] { (0, 1), (1, 2), (2, 3), (3, 4), (5, 6), (6, 2), (2, 7), (7, 8) });
             object placed = Run(net, Array.Empty<int[]>(), 1, 1);
             var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
-            if (trees.Length != 6)
-                throw new InvalidOperationException($"BOTH lines hold node 2, so each bar keeps all three of its own free notches; six trees, got {trees.Length}.");
+            // SEVEN, not six, since the S < 3 conviction of 2026-09-02, and
+            // UPDATED DELIBERATELY. Each bar still LISTS all three of its own
+            // free notches, which is what the count was written to hold; the
+            // seventh tree is the annexed crossing standing on a centre
+            // column of its own. At Branching 1 every group is a group of
+            // ONE, whose balance station is its only index, so the exemption
+            // used to read vacuously true and the arch built the head.
+            if (trees.Length != 7)
+                throw new InvalidOperationException($"BOTH lines hold node 2, so each bar keeps all three of its own free notches, and the annexed crossing stands on a centre column; seven trees, got {trees.Length}.");
             object built = Get<object>(placed, "Built");
             var members = MembersOf(built);
             var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
@@ -10072,9 +10235,18 @@ internal static class Program
                 Math.Abs(Z(levelNodes[m.Upper]) - Z(shared)) < 1.0e-9);
             if (heads != 1)
                 throw new InvalidOperationException($"The crossing node is one point in space and carries EXACTLY ONE column head; {heads} members end at it.");
-            object owner = trees.First(t => Get<int[]>(t, "Nodes").Contains(2) && Get<bool[]>(t, "Owned")[Array.IndexOf(Get<int[]>(t, "Nodes"), 2)]);
-            if (Get<int>(owner, "Bar") != 0)
-                throw new InvalidOperationException("The ARCH owns this head, by the lower X of its endpoint pair's first point, (-4, 0) against the rib's (0, -4): free notch count ties at three and chord length ties at eight, so the geometric keys decide.");
+            // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction: the
+            // ARCH still owns, and so still ANNEXES, but at Branching 1 it no
+            // longer BUILDS. The owner rule is read here off the frame the
+            // annexing span hands the centre column, whose free-notch list
+            // names the bar as exactly as the built member did.
+            object centre = trees.Single(t => Get<int>(t, "Span") < 0 && !Get<bool>(t, "Ring"));
+            if (!Get<int[]>(centre, "Nodes").SequenceEqual(new[] { 2 })
+                || Get<int>(placed, "CentresExtracted") != 1)
+                throw new InvalidOperationException($"The crossing is annexed by its owner and stands on ONE centre column holding node 2 alone; it holds [{string.Join(",", Get<int[]>(centre, "Nodes"))}] and CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+            int[] centreFrameNodes = Get<int[]>(Get<object>(centre, "Scale"), "Nodes");
+            if (!centreFrameNodes.All(v => new[] { 0, 1, 2, 3, 4 }.Contains(v)))
+                throw new InvalidOperationException($"The ARCH owns this head, by the lower X of its endpoint pair's first point, (-4, 0) against the rib's (0, -4): free notch count ties at three and chord length ties at eight, so the geometric keys decide. The centre column carries a frame over [{string.Join(",", centreFrameNodes)}], which is not the arch's span.");
             var spans = ((IEnumerable)Get<object>(placed, "Spans")).Cast<object>().ToArray();
             if (spans.Length != 2)
                 throw new InvalidOperationException($"A crossing does not cut a span: two bars give two spans, got {spans.Length}.");
@@ -10325,19 +10497,34 @@ internal static class Program
                                 throw new InvalidOperationException(
                                     $"{arms} arms of {perArm}, Branching {branching}, Type {type}: {arms * (perArm - 1)} notches each pulled by one unit, and a crown whose head pull projects to nothing, carry {arms * (perArm - 1)} in all; the trees carry {carried:0.####}. The centre column MOVES the term off the annexing tree and nothing is created or destroyed.");
 
-                            // AND THE RULING IS THE SMALLEST POSSIBLE CHANGE.
-                            // At Branching 1 the ladder already gives the crown
-                            // a tree of its own, so nothing is left over,
-                            // NOTHING IS EXTRACTED and the engine is untouched
-                            // there -- which is exactly why Param sees no fault
-                            // at Branching 1 and why the counts above already
-                            // matched. At Branching 2 and 3 the crown falls
-                            // inside a group of two and is annexed, so one node
-                            // and only one is taken out.
+                            // ONE CENTRE COLUMN AT EVERY BRANCHING, and this
+                            // line is UPDATED DELIBERATELY, 2026-09-02, for
+                            // the S < 3 conviction. It used to read
+                            // "branching == 1 ? 0 : 1", on the reasoning that
+                            // at Branching 1 the ladder already gives the
+                            // crown a tree of its own so nothing is left over.
+                            // That reasoning held only because the balance
+                            // exemption read VACUOUSLY TRUE for a group of
+                            // one: at size 1 the balance station is the
+                            // group's only index and the difference is
+                            // identically zero, so the owner kept the crown
+                            // and built to it. The exemption's own stated
+                            // meaning, a notch reached from both sides alike,
+                            // needs a member strictly either side and so needs
+                            // a group of three. The crown is annexed at
+                            // Branching 1 too now, and stands apart.
+                            //
+                            // The counts above already matched here at
+                            // Branching 1 because a tree of ONE holding only
+                            // the crown was ALREADY counted apart from the
+                            // flanks by OwnedPerBar; the case that did not
+                            // match is Param's own net, where the crown falls
+                            // at the row END and the owner holds it beside a
+                            // whole flank's worth of notches.
                             int extracted = Get<int>(placed, "CentresExtracted");
-                            if (extracted != (branching == 1 ? 0 : 1))
+                            if (extracted != 1)
                                 throw new InvalidOperationException(
-                                    $"{arms} arms of {perArm}, Branching {branching}, Type {type}: the crown is left over at Branching 2 and 3 and NOT at Branching 1, where the ladder already stands it alone; CentresExtracted is {extracted}.");
+                                    $"{arms} arms of {perArm}, Branching {branching}, Type {type}: the crown is a shared notch its owner annexes at EVERY branching, so ONE centre column stands under it; CentresExtracted is {extracted}.");
                             if (extracted == 1)
                             {
                                 // ITS FOOT STANDS DIRECTLY BENEATH IT, on the
@@ -10681,10 +10868,22 @@ internal static class Program
                                     throw new InvalidOperationException(
                                         $"{where}: the trees claim {perBar.Sum() + apart} owned notches and the level built {heads.Sum()} heads. Owned is the engine's own statement of what it builds and the two may not drift apart.");
 
+                                // UPDATED DELIBERATELY, 2026-09-02, for the
+                                // S < 3 conviction. This read
+                                // "branching == 1 ? 0 : 1" because at
+                                // Branching 1 the balance exemption was
+                                // VACUOUSLY TRUE: a group of one is balanced
+                                // about its own only index by arithmetic and
+                                // not by straddling anything, so the meeting
+                                // notch stayed with its own arm. The
+                                // exemption now needs a group of three, which
+                                // is what "reached from both sides alike"
+                                // means, and the crowns stand apart at every
+                                // branching.
                                 int extracted = Get<int>(placed, "CentresExtracted");
-                                if (extracted != (branching == 1 ? 0 : 1))
+                                if (extracted != 1)
                                     throw new InvalidOperationException(
-                                        $"{where}: the crowns are left over at Branching 2 and 3 and NOT at Branching 1, where the ladder already stands each of them alone; CentresExtracted is {extracted}. It counts COLUMNS, so the arms' crowns meeting once take ONE between them however many arms there are.");
+                                        $"{where}: the crowns are left over at EVERY branching; CentresExtracted is {extracted}. It counts COLUMNS, so the arms' crowns meeting once take ONE between them however many arms there are.");
 
                                 // EQUAL BRANCH COUNTS PER SIDE, which is the
                                 // count Param measures with his eye and the
@@ -10692,10 +10891,14 @@ internal static class Program
                                 if (perBar.Distinct().Count() != 1)
                                     throw new InvalidOperationException(
                                         $"{where}: EVERY SIDE OF A MIRROR-SYMMETRIC FORM BUILDS THE SAME NUMBER OF BRANCHES; the arms built [{string.Join(", ", perBar)}].");
-                                int ownPerArm = perArm - (branching == 1 ? 0 : 1);
-                                if (perBar[0] != ownPerArm || apart != (branching == 1 ? 0 : arms))
+                                // UPDATED DELIBERATELY with the line above:
+                                // the crowns stand apart at Branching 1 too,
+                                // so both expectations lose their branching
+                                // case.
+                                int ownPerArm = perArm - 1;
+                                if (perBar[0] != ownPerArm || apart != arms)
                                     throw new InvalidOperationException(
-                                        $"{where}: with the crowns standing together on one column of their own each arm builds to its {ownPerArm} remaining notches and no more, and the {(branching == 1 ? 0 : arms)} crowns stand apart; it built {perBar[0]} per arm with {apart} apart.");
+                                        $"{where}: with the crowns standing together on one column of their own each arm builds to its {ownPerArm} remaining notches and no more, and the {arms} crowns stand apart; it built {perBar[0]} per arm with {apart} apart.");
 
                                 // THE RULE ITSELF, stated rather than inferred:
                                 // NO TREE REACHES BOTH ACROSS ITS OWN FLANK AND
@@ -12173,7 +12376,26 @@ internal static class Program
                 object placed = Run(dome, Array.Empty<int[]>(), 1, 1);
                 object built = Get<object>(placed, "Built");
                 var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
-                var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction.
+                // These three ribs FAN, so each pair has EXACTLY ONE co-located
+                // free notch, their middle ones, and the meeting rule sees a
+                // crown. Before the conviction the balance exemption read
+                // vacuously true for a group of one and the meeting notches
+                // stayed with their own arms; they are annexed now, and the
+                // three of them stand TOGETHER on one centre column at their
+                // plan mean, which is the origin. Its foot is a station of no
+                // row and cannot merge or converge, so this fixture, which is
+                // about the MERGE and the CONVERGENCE, reads the row feet.
+                //
+                // The convergence itself is untouched, and that is the point
+                // of measuring it here rather than assuming it: a group's foot
+                // is a function of the notch POSITIONS its span lists and
+                // never of who owns them, so the three ribs' own Type 1 feet
+                // stand exactly where they stood and still merge into one at
+                // the least-squares point below.
+                if (Get<int>(placed, "CentresExtracted") != 1)
+                    throw new InvalidOperationException($"The three fanned ribs' middle notches are ONE meeting and take ONE centre column between them; CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                var feet = RowFeet(placed, built);
                 if (feet.Length != 1)
                     throw new InvalidOperationException($"Three adjacent ribs whose feet fall inside a quarter of the tighter spacing become ONE column at the convergence of all three, taken once as a CONNECTED COMPONENT and not pairwise; {feet.Length} feet built.");
                 if (Get<int>(built, "FeetMerged") != 1)
@@ -12333,7 +12555,20 @@ internal static class Program
                 object placedShared = Run(sharing, Array.Empty<int[]>(), 1, 1);
                 object builtShared = Get<object>(placedShared, "Built");
                 var sharedNodes = ((IEnumerable)Get<object>(builtShared, "Nodes")).Cast<object>().ToArray();
-                var sharedFeet = ((IEnumerable)Get<object>(builtShared, "Feet")).Cast<int>().ToArray();
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction.
+                // S is a notch BOTH ribs hold, so at Branching 1, where every
+                // group is a group of one, its owner used to keep it only
+                // because the balance exemption read vacuously true. It is
+                // annexed now and stands on its own column at S's own plan
+                // point, which is the origin, two spacings below the notches
+                // this fixture's merged foot is taken from. That column is a
+                // station of no row: it neither merges nor converges, and
+                // counting its foot here would make "the two ribs' feet merge
+                // into ONE column" say something else. The ROW feet are read,
+                // and the extraction is asserted rather than absorbed.
+                if (Get<int>(placedShared, "CentresExtracted") != 1)
+                    throw new InvalidOperationException($"S is a shared notch its owner annexes, so ONE centre column stands under it; CentresExtracted is {Get<int>(placedShared, "CentresExtracted")}.");
+                var sharedFeet = RowFeet(placedShared, builtShared);
                 string sharedState =
                     $"{sharedFeet.Length} feet, the first at ({X(sharedNodes[sharedFeet[0]]):0.#########}, {Y(sharedNodes[sharedFeet[0]]):0.#########}), "
                     + $"FeetMerged={Get<int>(builtShared, "FeetMerged")}, MergeRefused={Get<int>(builtShared, "MergeRefused")}, ConvergenceFallback={Get<int>(builtShared, "ConvergenceFallback")}; "
@@ -12463,15 +12698,25 @@ internal static class Program
                     var dome = DomeRibs(spread: 0.1, fan: 30.0);
                     object placed = Run(dome, Array.Empty<int[]>(), 1, 1);
                     object built = Get<object>(placed, "Built");
-                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    // UPDATED DELIBERATELY, 2026-09-02, for the S < 3
+                    // conviction, exactly as Step 1's reading of the same
+                    // ribs above: the three fanned middle notches are one
+                    // meeting, they are annexed at Branching 1 now that a
+                    // group of one no longer reads as balanced about its own
+                    // only index, and they stand together on a centre column
+                    // whose foot is a station of no row. The ROW feet are
+                    // what merges.
+                    if (Get<int>(placed, "CentresExtracted") != 1)
+                        throw new InvalidOperationException($"Case 1: the three fanned ribs' middle notches are ONE meeting and take ONE centre column; CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                    var feet = RowFeet(placed, built);
                     if (feet.Length != 1 || Get<int>(built, "FeetMerged") != 1)
-                        throw new InvalidOperationException($"Case 1: three ribs whose feet fall inside a quarter of the tighter spacing become one column as a CONNECTED COMPONENT; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
-                    // Nine owned trees fold onto ONE foot here, all nine by
+                        throw new InvalidOperationException($"Case 1: three ribs whose feet fall inside a quarter of the tighter spacing become one column as a CONNECTED COMPONENT; {feet.Length} row feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                    // The owned trees fold onto ONE foot here, all of them by
                     // this SAME decision, not by chance: a subtraction that
                     // charges a k-member group only one folding against the
-                    // k-1 it causes would report 9 - 1 (folded) - 1 (the
-                    // group) = 7 welds where none happened. Welds is REPORTED
-                    // by the engine now, and it must read zero.
+                    // k-1 it causes would report welds where none happened.
+                    // Welds is REPORTED by the engine now, and it must read
+                    // zero.
                     if (Get<int>(built, "Welds") != 0)
                         throw new InvalidOperationException($"Case 1: nine trees fold onto one foot by ONE merge decision, so nothing here is a weld; Welds is {Get<int>(built, "Welds")}.");
                 }
@@ -12484,10 +12729,30 @@ internal static class Program
                     var apart = DomeRibs(spread: 0.4, fan: 30.0);
                     object placed = Run(apart, Array.Empty<int[]>(), 1, 1);
                     object built = Get<object>(placed, "Built");
-                    var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
-                    Console.WriteLine($"      case 2, moved apart: {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}, FeetClose {Get<int>(built, "FeetClose")}.");
+                    // UPDATED DELIBERATELY, 2026-09-02, for the S < 3
+                    // conviction, and this one is worth stating plainly
+                    // because it is not the MIDDLE notches that meet here.
+                    // Moving the ribs apart in plan by 0.4 separates their
+                    // middle notches, which is what the case is about; it
+                    // brings their LOWER notches, at along -1, to within 0.167
+                    // and 0.2 of one another against the co-location clearance
+                    // of 0.25, and that is the only co-located pair each rib
+                    // pair has. Fanned ribs converge somewhere whatever their
+                    // spread. The engine already read that as a meeting before
+                    // this conviction; what it did not do was extract it at
+                    // Branching 1, because a group of one read as balanced
+                    // about its own only index. It does now, and the
+                    // lower notches take a centre column between them.
+                    //
+                    // THE CASE'S OWN CLAIM IS UNTOUCHED: no ROW foot merges
+                    // and none stands close, which is what the spread was
+                    // moved to prove.
+                    if (Get<int>(placed, "CentresExtracted") != 1)
+                        throw new InvalidOperationException($"Case 2: the ribs' LOWER notches still meet at a spread of 0.4 and take ONE centre column between them; CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                    var feet = RowFeet(placed, built);
+                    Console.WriteLine($"      case 2, moved apart: {feet.Length} row feet, FeetMerged {Get<int>(built, "FeetMerged")}, FeetClose {Get<int>(built, "FeetClose")}, plus one centre column on the lower notches' own meeting.");
                     if (feet.Length != 3 || Get<int>(built, "FeetMerged") != 0)
-                        throw new InvalidOperationException($"Case 2: ribs moved outside the merge clearance stand as three separate columns; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                        throw new InvalidOperationException($"Case 2: ribs moved outside the merge clearance stand as three separate columns; {feet.Length} row feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
                     // A spread of 0.4 clears the feet-close clearance itself
                     // (0.25 * g), not only the merge clearance the two share by
                     // number: nothing here stands close either. This PINS the
@@ -12516,33 +12781,87 @@ internal static class Program
                     object built = Get<object>(placed, "Built");
                     var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
                     Console.WriteLine($"      case 3, no edges: {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}, FeetClose {Get<int>(built, "FeetClose")}.");
+                    // UPDATED DELIBERATELY, 2026-09-02, for the S < 3
+                    // conviction. Adjacency is by net EDGE, but a MEETING is
+                    // by geometry alone, so cutting the two joining edges does
+                    // not stop the three fanned middle notches meeting; it only
+                    // stops their feet merging. The meeting is annexed at
+                    // Branching 1 now and takes one centre column, whose fixed
+                    // foot is the plan mean of the three, the origin, which is
+                    // exactly where the middle rib's own Type 1 foot already
+                    // stood: the two WELD into one node, and the level still
+                    // carries THREE feet.
+                    if (Get<int>(placed, "CentresExtracted") != 1)
+                        throw new InvalidOperationException($"Case 3: cutting the joining edges stops the MERGE and not the MEETING; the three fanned middle notches still take ONE centre column. CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
                     if (feet.Length != 3 || Get<int>(built, "FeetMerged") != 0)
                         throw new InvalidOperationException($"Case 3: feet inside the clearance with NO net edge between their spans must not merge; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
                     // This is Case 1's own geometry, feet inside a quarter of
                     // the tighter spacing, with only the two joining edges cut.
-                    // Rule 3 never fires (no adjacency), so the SAME 27 pairs
-                    // that would have merged there stand close instead: this
-                    // PINS the clearance from the other side of Case 2, on the
-                    // near rather than the far bank, where the narrow bay's own
-                    // 27-pair reading (Finding 1's own headline case) cannot be
-                    // told apart from a merge clearance moved a factor of five
-                    // (0.05 * median to 0.25 * g) unless the count itself is
-                    // asserted rather than printed.
-                    if (Get<int>(built, "FeetClose") != 27)
-                        throw new InvalidOperationException($"Case 3: with no net edge to merge on, every pair inside the clearance stands close instead; FeetClose is {Get<int>(built, "FeetClose")}, expected 27.");
+                    // Rule 3 never fires (no adjacency), so every pair inside
+                    // the clearance stands close instead: this PINS the
+                    // clearance from the other side of Case 2, on the near
+                    // rather than the far bank, where the narrow bay's own
+                    // reading cannot be told apart from a merge clearance moved
+                    // a factor of five (0.05 * median to 0.25 * g) unless the
+                    // count itself is asserted rather than printed.
+                    //
+                    // SIXTEEN, not the twenty-seven this read before the S < 3
+                    // conviction, and the arithmetic is stated so the number is
+                    // checkable rather than recorded. Rule 4 counts pairs of
+                    // TREES with distinct foot nodes; a tree that owns nothing
+                    // has HeadMain -1 and is skipped. BEFORE: nine trees, three
+                    // to a rib, three distinct foot nodes, so the cross-rib
+                    // pairs are 3 * 3 * 3 = 27. NOW: each rib's middle tree
+                    // owns nothing, leaving two a rib, so the cross-rib pairs
+                    // are 3 * 2 * 2 = 12; and the centre column, which stands
+                    // welded on the middle rib's node, pairs with the four
+                    // trees of the OTHER two ribs and with neither of the
+                    // middle rib's, its own node being theirs. 12 + 4 = 16.
+                    if (Get<int>(built, "FeetClose") != 16)
+                        throw new InvalidOperationException($"Case 3: with no net edge to merge on, every pair inside the clearance stands close instead; FeetClose is {Get<int>(built, "FeetClose")}, expected 16.");
                 }
 
-                // Case 4, MIRROR-REFUSED: two straight ribs, five notches
-                // each (three free, Branching 1), placed at Type 3 so T is at
-                // most N and each notch is its own group (three groups per
-                // span, in bar order). Rib A stands plumb at x = 0; rib B
-                // tilts, standing 0.5375 off A at its own position 1 (group
-                // 0) and 1.5125 off at position 3 (group 2, position 1's
-                // mirror by group index): one candidate lies inside the
-                // clearance and its mirror does not, so the candidate is
-                // refused rather than merged.
+                // Case 4, MIRROR-REFUSED: one merge candidate inside the
+                // clearance whose MIRROR BY GROUP INDEX is not, so the
+                // candidate is refused rather than merged.
+                //
+                // THE GEOMETRY IS RESTATED, 2026-09-02, for the S < 3
+                // conviction, and the reason is stated rather than assumed.
+                // The old fixture was two five-node ribs (three free notches
+                // each) at Type 3, rib A plumb at x = 0 and rib B tilting to
+                // 0.5375 off it at position 1 and 1.5125 at position 3. At
+                // Type 3 with three trees each notch is its own group and its
+                // foot stands PLUMB UNDER ITS OWN NOTCH, so a merge candidate
+                // and a co-located pair of free notches are, on that shape,
+                // the SAME geometric event measured by the SAME clearance,
+                // 0.25 * g. Rib B stood inside it at exactly one station, so
+                // the two spans had EXACTLY ONE co-located pair, which is the
+                // engine's own definition of a MEETING. It always was one:
+                // MEASURED, that shape already produced a centre column at
+                // Branching 3 before this conviction, where the notch sits at
+                // free index 0 of a group of three and the balance station is
+                // index 1. What the conviction changed is Branching 1 and 2,
+                // where a group of ONE used to read as balanced about its own
+                // only index; the meeting is now annexed there too and the
+                // merge rules never see the pair at all.
+                //
+                // So the shape is restated to one where NO meeting can fire
+                // and the mirror refusal can still be reached: TWO co-located
+                // pairs, which is what the unique-meeting gate refuses, with
+                // only ONE of them a merge candidate whose mirror is far.
+                // Six nodes a rib at y = 0, 2, 4, 6, 8, 10, four free notches,
+                // Type 3, whose foot groups are 1, 2, 1 so the mirror of group
+                // 0 is group 2. Rib A is plumb at x = 0. Rib B runs at x = 0.3
+                // to y = 4 and JOGS to x = 1.4 for the rest, so its free
+                // notches stand 0.3, 0.3, 1.4 and 1.4 off A's. With g = 2 the
+                // clearance is 0.5: the two 0.3 stations are co-located, which
+                // is two pairs and no meeting; group 0's feet are 0.3 apart
+                // and are a candidate; group 2's are 1.4 apart and are not, so
+                // group 0 is REFUSED; and the middle group's feet, the plan
+                // means of two parallel tangents each, stand at (0, 5) and
+                // (0.85, 5), which is 0.85 and outside, so nothing merges.
                 {
-                    const int perRib = 5;
+                    const int perRib = 6;
                     Array nodes = Array.CreateInstance(point3d, 2 * perRib);
                     Array across = Array.CreateInstance(vector3d.MakeArrayType(), 2);
                     var bars = new int[2][];
@@ -12554,9 +12873,9 @@ internal static class Program
                         var bar = new int[perRib];
                         for (int i = 0; i < perRib; i++)
                         {
-                            double y = i * 2.5;                 // 0, 2.5, 5, 7.5, 10
+                            double y = i * 2.0;                 // 0, 2, 4, 6, 8, 10
                             double s = i / (double)(perRib - 1);
-                            double x = r == 0 ? 0.0 : 0.05 + (0.195 * y);
+                            double x = r == 0 ? 0.0 : (y <= 4.0 + 1.0e-9 ? 0.3 : 1.4);
                             int id = (r * perRib) + i;
                             nodes.SetValue(P(x, y, 4.0 * 4.0 * s * (1.0 - s)), id);
                             ribAcross.SetValue(V(0.0, 0.0, -1.0), i);
@@ -12577,6 +12896,14 @@ internal static class Program
                     object placed = Run(mirrorRefused, Array.Empty<int[]>(), 1, 3);
                     object built = Get<object>(placed, "Built");
                     var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
+                    // THE PREMISE, PINNED: no meeting fires here, so the merge
+                    // rules are what answer for this pair. Without this line a
+                    // future change that turned the two co-located pairs into
+                    // one would take the candidate away and leave a
+                    // MergeRefused of zero looking like a rule that stopped
+                    // working.
+                    if (Get<int>(placed, "CentresExtracted") != 0)
+                        throw new InvalidOperationException($"Case 4: two co-located pairs are what the unique-meeting gate refuses, so NOTHING is extracted here and the merge rules answer for the candidate; CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
                     if (Get<int>(built, "FeetMerged") != 0 || Get<int>(built, "MergeRefused") < 1)
                         throw new InvalidOperationException($"Case 4, MIRROR-REFUSED: one candidate inside the clearance whose mirror is not must refuse and count, not merge; FeetMerged {Get<int>(built, "FeetMerged")}, MergeRefused {Get<int>(built, "MergeRefused")}, {feet.Length} feet.");
                 }
@@ -13250,10 +13577,23 @@ internal static class Program
                 object placed = Run(crossedNet, Array.Empty<int[]>(), 1, type);
                 object built = Get<object>(placed, "Built");
                 var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
-                var curvedTreeIndices = Enumerable.Range(0, trees.Length).Where(t => Get<int>(trees[t], "Bar") == 1).ToArray();
                 var levelNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
                 int[] footNode = FootOfTree(built, trees.Length);
-                double[] curvedXs = curvedTreeIndices.Select(t => X(levelNodes[footNode[t]])).ToArray();
+                // UPDATED DELIBERATELY, 2026-09-02, for the S < 3 conviction:
+                // the curved bar's tree holding the shared node 3 owns
+                // nothing now, because the group of one it forms at Branching
+                // 1 no longer reads as balanced about its own only index, so
+                // that node is annexed and stands on a centre column. A tree
+                // that builds nothing stands on no foot, and its -1 is not a
+                // foot to mirror. Exactly one is absent, and that is asserted
+                // rather than tolerated, so a second tree losing its foot
+                // could not hide here.
+                var curvedTreeIndices = Enumerable.Range(0, trees.Length)
+                    .Where(t => Get<int>(trees[t], "Bar") == 1).ToArray();
+                if (curvedTreeIndices.Count(t => footNode[t] < 0) != 1)
+                    throw new InvalidOperationException($"Task 10 step 1: exactly ONE of the curved bar's trees, the one holding the annexed shared node, builds nothing; {curvedTreeIndices.Count(t => footNode[t] < 0)} do.");
+                double[] curvedXs = curvedTreeIndices.Where(t => footNode[t] >= 0)
+                    .Select(t => X(levelNodes[footNode[t]])).ToArray();
                 double defect = MirrorDefect(curvedXs);
                 double bound = controlDefect + crossReach + 1.0e-6;
                 if (defect > bound)
@@ -13539,23 +13879,52 @@ internal static class Program
             // ownedTrees-without-the-ring against distinctFeet-with-it, as
             // before, cancelled this exact fold against the ring tree's own
             // extra foot and reported 0.
+            //
+            // THE TWO EXTRA SPANS ARE RESTATED, 2026-09-02, for the S < 3
+            // conviction, and the reason is stated rather than assumed. They
+            // were two single-notch spans whose free notches stood at the
+            // SAME plan point, which is precisely EXACTLY ONE co-located pair
+            // between two spans, and that is the engine's own definition of a
+            // MEETING. Before the conviction the balance exemption read
+            // vacuously true for a group of one and the meeting was never
+            // extracted at Branching 1; now it is, both trees own nothing,
+            // neither builds a foot and there is no fold left to weld.
+            //
+            // The two spans keep their coincident FEET and lose their
+            // coincident NOTCHES, which is what the weld was ever about: span
+            // C is one free notch at (10, 0, 2) between anchors on the x axis,
+            // standing plumb on (10, 0, 0); span D is TWO free notches at
+            // (10, -0.5, 2) and (10, 0.5, 2) between anchors on the y axis,
+            // whose plan tangents are parallel, so its convergence is SINGULAR
+            // and its Type 1 foot is their plan mean, (10, 0, 0), the same
+            // point. No pair of their notches is within the co-location
+            // clearance: span C's own g is 2 and span D's is 1, so the
+            // clearance is 0.25 and the nearest pair stands 0.5 apart.
+            //
+            // Welds is TWO, not one, and the arithmetic is stated so the
+            // number is checkable. The fold loop runs over TREES and counts a
+            // weld each time a tree lands on a node first claimed by a tree of
+            // another decision group. Span C's one tree claims the node; both
+            // of span D's trees, which share span D's own group foot, land on
+            // it, and each is a group away from span C. One tree folding
+            // before was one weld; two fold now.
             {
-                Array weldNodes = Array.CreateInstance(point3d, 13);
+                Array weldNodes = Array.CreateInstance(point3d, 14);
                 for (int i = 0; i < 7; i++)
                     weldNodes.SetValue(ringNodes.GetValue(i)!, i);
                 weldNodes.SetValue(P(8.0, 0.0, 0.0), 7);
                 weldNodes.SetValue(P(10.0, 0.0, 2.0), 8);
                 weldNodes.SetValue(P(12.0, 0.0, 0.0), 9);
                 weldNodes.SetValue(P(10.0, -2.0, 0.0), 10);
-                weldNodes.SetValue(P(10.0, 0.0, 2.0), 11);
-                weldNodes.SetValue(P(10.0, 2.0, 0.0), 12);
+                weldNodes.SetValue(P(10.0, -0.5, 2.0), 11);
+                weldNodes.SetValue(P(10.0, 0.5, 2.0), 12);
+                weldNodes.SetValue(P(10.0, 2.0, 0.0), 13);
                 Array weldAcrossExtra1 = Array.CreateInstance(vector3d, 3);
-                Array weldAcrossExtra2 = Array.CreateInstance(vector3d, 3);
+                Array weldAcrossExtra2 = Array.CreateInstance(vector3d, 4);
                 for (int i = 0; i < 3; i++)
-                {
                     weldAcrossExtra1.SetValue(V(0.0, 0.0, -1.0), i);
+                for (int i = 0; i < 4; i++)
                     weldAcrossExtra2.SetValue(V(0.0, 0.0, -1.0), i);
-                }
                 Array weldAcross = Array.CreateInstance(vector3d.MakeArrayType(), 4);
                 weldAcross.SetValue(ringAcrossA, 0);
                 weldAcross.SetValue(ringAcrossB, 1);
@@ -13563,18 +13932,25 @@ internal static class Program
                 weldAcross.SetValue(weldAcrossExtra2, 3);
                 var weldNet = (
                     weldNodes,
-                    new[] { new[] { 0, 1, 2 }, new[] { 3, 4, 5 }, new[] { 7, 8, 9 }, new[] { 10, 11, 12 } },
-                    new[] { 0, 3, 7, 9, 10, 12 },
+                    new[] { new[] { 0, 1, 2 }, new[] { 3, 4, 5 }, new[] { 7, 8, 9 }, new[] { 10, 11, 12, 13 } },
+                    new[] { 0, 3, 7, 9, 10, 13 },
                     weldAcross,
-                    new[] { (0, 1), (1, 2), (3, 4), (4, 5), (2, 6), (5, 6), (2, 5), (7, 8), (8, 9), (10, 11), (11, 12) });
+                    new[] { (0, 1), (1, 2), (3, 4), (4, 5), (2, 6), (5, 6), (2, 5), (7, 8), (8, 9), (10, 11), (11, 12), (12, 13) });
                 object placedWeld = Run(weldNet, new[] { new[] { 2, 5, 6 } }, 1, 1);
                 object builtWeld = Get<object>(placedWeld, "Built");
                 if (Get<object?>(placedWeld, "RingTree") is null)
                     throw new InvalidOperationException("This fixture must still get a ring tree from the reused {2, 5, 6} rim loop.");
+                // THE PREMISE, PINNED: nothing here MEETS, so nothing is
+                // annexed and every tree keeps its own head. Without this line
+                // a geometry drifting back into a single co-located pair would
+                // take both feet away and leave a weld count of zero looking
+                // like a counter that stopped working.
+                if (Get<int>(placedWeld, "CentresExtracted") != 0)
+                    throw new InvalidOperationException($"No two spans here have exactly one co-located free notch, so nothing meets and nothing is extracted; CentresExtracted is {Get<int>(placedWeld, "CentresExtracted")}.");
                 if (Get<int>(builtWeld, "FeetMerged") != 0)
                     throw new InvalidOperationException($"Nothing here is a decision: the ring bars never merge on their own (measured above), and the isolated pair is neither adjacent nor a Rule 2 row; FeetMerged must be 0, it is {Get<int>(builtWeld, "FeetMerged")}.");
-                if (Get<int>(builtWeld, "Welds") != 1)
-                    throw new InvalidOperationException($"The two isolated single-notch trees share one plan position under a plumb pull and fold onto ONE foot with no merge decision behind it, which is exactly one weld, alongside a ring tree that never merges or welds with anything; Welds is {Get<int>(builtWeld, "Welds")}.");
+                if (Get<int>(builtWeld, "Welds") != 2)
+                    throw new InvalidOperationException($"The isolated spans stand on ONE foot by positional luck alone, with no merge decision behind it: span C's tree claims the node and span D's two trees fold onto it, a group away, which is exactly two welds, alongside a ring tree that never merges or welds with anything; Welds is {Get<int>(builtWeld, "Welds")}.");
             }
             // The ring tree's own tolerances come from its own rim scale R,
             // never a net median: structurally guaranteed, because

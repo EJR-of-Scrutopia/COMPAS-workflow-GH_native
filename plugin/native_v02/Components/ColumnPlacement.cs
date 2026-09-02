@@ -1741,7 +1741,38 @@ namespace Ananke.COMPAS.Native.Components
                     // straddling tree of a crossing, which the engine already
                     // handles and which this ruling does not touch. Every
                     // other shared notch the group owns is annexed.
+                    //
+                    // AND "REACHED FROM BOTH SIDES ALIKE" NEEDS A MEMBER
+                    // STRICTLY EITHER SIDE, so the exemption can only mean
+                    // anything from a group of THREE up. At size 1 the balance
+                    // station IS the group's only index, the difference is
+                    // identically zero, and EVERY notch of a one-notch group
+                    // reads as exempt. That is vacuous rather than true: a
+                    // group of one straddles nothing.
+                    //
+                    // MEASURED on Param's own exported net (441 vertices, 800
+                    // edges, two eleven-node bars both ending on the shared
+                    // crown, ten free notches a span, g = 0.8): at Branching 1
+                    // every group is a group of one, the crown fell at the row
+                    // END where the ladder puts a stray, it was never annexed,
+                    // and the tie-break owner built one extra branch on one
+                    // flank. Nine branches against ten at Branching 1 and
+                    // thirteen against fourteen at Branching 2, at EVERY Type.
+                    // At Branching 3 the crown lands in a group of TWO, balance
+                    // 0.5, the difference is 0.5 and the extraction already
+                    // ran, which is why only some of his screenshots showed the
+                    // fault. Size 2 is untouched by the conjunct, a balance of
+                    // k + 0.5 never being an index.
+                    //
+                    // THE CONSEQUENCE IS DELIBERATE. At Branching 1 every
+                    // group is a group of one, so every genuinely shared or
+                    // meeting notch now extracts to a centre column, interior
+                    // crossings on a ribbed grid included. That is Param's
+                    // "the centre is never annexed" applied at Branching 1, and
+                    // it agrees with the crossings that already extract at
+                    // Branching 2 and 3 on the same grid.
                     double balance = groups[g][0] + ((groups[g].Length - 1) / 2.0);
+                    bool straddles = groups[g].Length >= 3;
                     int[] treeNodes = ordered.Select(p => bars[span.Bar][p]).ToArray();
                     var owned = new bool[treeNodes.Length];
                     var load = new double[treeNodes.Length];
@@ -1769,7 +1800,7 @@ namespace Ananke.COMPAS.Native.Components
                             // have entered them, so nothing is created or
                             // destroyed.
                             bool meets = meetingOf.TryGetValue(node, out int meeting);
-                            if (meets && Math.Abs(orderedFree[k] - balance) > 1.0e-9)
+                            if (meets && (!straddles || Math.Abs(orderedFree[k] - balance) > 1.0e-9))
                             {
                                 owned[k] = false;
                                 load[k] = 0.0;
@@ -1805,7 +1836,8 @@ namespace Ananke.COMPAS.Native.Components
                             // function of notch POSITIONS and never of who
                             // owns them. The head and its load move to a
                             // column of the node's own, below.
-                            bool annexed = isOwner && Math.Abs(orderedFree[k] - balance) > 1.0e-9;
+                            bool annexed = isOwner
+                                && (!straddles || Math.Abs(orderedFree[k] - balance) > 1.0e-9);
                             owned[k] = isOwner && !annexed;
                             if (isOwner)
                             {
