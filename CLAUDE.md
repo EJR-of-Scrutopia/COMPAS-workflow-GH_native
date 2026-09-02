@@ -28,8 +28,17 @@ so it is a false-clean mechanism.
 Before every build and every commit:
 
 ```
-find . -name "*Name clash*" -not -path "./.git/*"
+find . \( -name "*Name clash*" -o -name "*Edit conflict*" \) -not -path "./.git/*"
 ```
+
+**BOTH MARKERS, ALWAYS.** OneDrive writes `(# Name clash ... #)` AND
+`(# Edit conflict ... #)`. Scanning for only the first was the practice until
+2026-09-02, when four `Edit conflict` artefacts were found that every previous
+scan had missed, one of them a stale `Ananke.COMPAS.gha` sitting in
+`plugin/native_v02/bin/Release/net8.0-windows/`, the exact directory the
+installer copies from. **Scan build output too**: `bin/` and `obj/` are
+git-ignored, so `git status` never shows them, and an install takes whatever
+`.gha` is there.
 
 `ls **/*"Name clash"*` does NOT find them in subdirectories under Git Bash. Use
 the `find` form.

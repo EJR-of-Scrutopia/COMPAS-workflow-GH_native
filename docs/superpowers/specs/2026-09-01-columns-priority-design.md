@@ -1282,6 +1282,40 @@ out of reach, and it stays, with one change: it acts on a MIRROR PAIR.
   whose converged foot would put a participating trunk over the cap, so in practice the second
   pass finds nothing, and the harness is required to demonstrate that rather than to assume it.
 
+### ERRATUM, 2026-09-02: three sentences of this section are superseded
+
+Recorded here rather than by rewriting the paragraphs above, so the reasoning that produced them
+stays legible. Where this erratum and the text above disagree, the erratum governs.
+
+1. "A tree that peels takes its mirror PARTNER with it" and "An unpaired tree peels alone" are
+   SUPERSEDED BY PARAM'S RULING OF 2026-09-02. The peel now takes its mirror by the same GROUP-INDEX
+   rule the feet use, read off the span's own row, and no longer consults the pairing at all. The
+   reason is that this wave moved foot position off the pairing and onto the group ladder, so a peel
+   that still read the pairing left ONE unmirrored flank column while every other foot was symmetric
+   by construction, which made the orphan conspicuous rather than lost in the noise. Measured before
+   the fix on the seventeen-notch Type 1 net: trees 3 and 13 are mutual nearest partners but their
+   positional mismatch of 0.0182 exceeds h/4 of 0.0142 by 28 per cent, so they went unpaired, tree 3
+   crossed the cap and peeled alone, and the foot mirror error was 2.7715 against a baseline spread
+   of 0.2465 to 0.2925. The tolerance h/4 was NOT widened; the peel simply stopped depending on the
+   pairing, as the feet already had.
+
+2. "In practice the second pass finds nothing, and the harness is required to demonstrate that
+   rather than to assume it" is MEASURED FALSE in both halves. The reason the sentence gives, that
+   section 12 forbids a merge whose converged foot would put a trunk over the cap, holds for RULE 3,
+   the cross-line merge, alone. RULE 2, the central pair of an even tree row, moves its two feet onto
+   their mean with no lean test anywhere, and where the pair's two Type 0 feet stand uncrossed and
+   inside the central-pair clearance that mean lies OUTWARD of both, so both trunks can finish past
+   the cap. At Type 0 the first pass does not run at all, which leaves the second pass as the only
+   thing standing between rule 2 and an unbuildable trunk. It is now demonstrated rather than
+   assumed: a fixture stands two trunks at 63.316 and 63.562 degrees and the second pass catches
+   both, and disabling the pass turns the harness red. Before that fixture existed the entire pass
+   could be deleted with the suite staying green and its output byte-identical.
+
+3. "A foot left with no trees is not built" is NOT YET TRUE OF THE ENGINE. This is an open defect
+   rather than a correction. Every node is added to Level.Feet unconditionally, so after a
+   second-pass peel the abandoned merged foot remains in Level.Nodes and Level.Feet with no tree
+   standing on it. It was unreachable until the fixture above first made the second pass fire.
+
 When can it still fire, once the feet are decided first? Exactly when a tree's assigned foot
 stands further from its head main in plan than 1.732 times that notch's height above the ground,
 which is tan of sixty degrees. In practice that is a low anchor-end notch on a wide flat span at
