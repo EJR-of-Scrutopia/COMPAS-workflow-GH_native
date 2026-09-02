@@ -7581,7 +7581,6 @@ internal static class Program
                     var placedNodes = ((IEnumerable)Get<object>(placedBuilt, "Nodes")).Cast<object>().ToArray();
                     var placedTrees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
                     int[] placedFoot = FootOfTree(placedBuilt, placedTrees.Length);
-                    int[] placedPartner = Get<int[]>(placed, "Partner");
                     int[][] spanGroups = ExpectedFootGroups(placedTrees.Length, type);
                     var groupExpectedX = new double[placedTrees.Length];
                     var ownLeanOver = new bool[placedTrees.Length];
@@ -7604,12 +7603,29 @@ internal static class Program
                     {
                         foreach (int j in spanGroup)
                         {
-                            int mate = placedPartner[j];
-                            bool peeled = ownLeanOver[j] || (mate >= 0 && mate != j && ownLeanOver[mate]);
-                            if (peeled)
-                                continue;   // peeled: its foot is aim-derived, and it takes its mirror partner with it
-                            double expected = groupExpectedX[j];
+                            // A tree peels when it crosses the cap OR WHEN ITS
+                            // ROW MIRROR DOES, spec section 11's group-index
+                            // rule and NOT the pairing: one span, one row, one
+                            // tree per notch, so the mirror of tree j is tree
+                            // T - 1 - j. A peeled foot is aim-derived and is
+                            // not the group's candidate mean, so it is skipped
+                            // here; but the peel is never an ORPHAN, and that
+                            // is asserted rather than skipped.
+                            int mirror = placedTrees.Length - 1 - j;
                             double got = X(placedNodes[placedFoot[j]]);
+                            double expected = groupExpectedX[j];
+                            bool peeled = ownLeanOver[j] || ownLeanOver[mirror];
+                            if (peeled)
+                            {
+                                if (Math.Abs(got - expected) <= 1.0e-9)
+                                {
+                                    throw new InvalidOperationException(
+                                        $"{label}: Type {type}: tree {j} crosses the sixty-degree cap from its group foot, or its row mirror {mirror} does, "
+                                        + $"so it PEELS with its mirror by the group-index rule of spec section 11; it is still standing on the group foot at "
+                                        + $"x = {expected:0.#########}.");
+                                }
+                                continue;
+                            }
                             if (Math.Abs(got - expected) > 1.0e-9)
                             {
                                 throw new InvalidOperationException(
@@ -10355,7 +10371,6 @@ internal static class Program
                     // peeled foot is aim-derived by section 11.
                     double[] sigma = Enumerable.Range(1, notches)
                         .Select(i => X(net.Nodes.GetValue(i)!) / 10.0).ToArray();
-                    int[] coarsePartner = Get<int[]>(placed, "Partner");
                     var coarseExpected = new double[notches];
                     var coarseOwnLeanOver = new bool[notches];
                     foreach (int[] groupTrees in wanted)
@@ -10367,17 +10382,12 @@ internal static class Program
                         double expected = groupTrees
                             .Where(j => Math.Abs(sigma[j] - centre) <= nearest + 1.0e-12)
                             .Average(j => X(net.Nodes.GetValue(j + 1)!));
-                        // A tree is skipped by testing the lean IT WOULD HAVE
-                        // HAD standing on the group's own candidate-mean foot
-                        // (a peeled tree's ACTUAL foot is always inside the
-                        // cap by construction, AimFrom having capped it
-                        // there, so re-testing the placed foot could never
-                        // detect one), OR its mirror PARTNER'S (a tree that
-                        // peels takes its partner with it whether or not the
-                        // partner is itself over the cap, spec section 11);
-                        // at these densities several trees are UNPAIRED
-                        // (deferred above) and their partner propagation
-                        // still applies to whichever tree IS paired to them.
+                        // Whether a tree CROSSES THE CAP is measured by the
+                        // lean IT WOULD HAVE HAD standing on the group's own
+                        // candidate-mean foot: a peeled tree's ACTUAL foot is
+                        // always inside the cap by construction, AimFrom
+                        // having capped it there, so re-testing the placed
+                        // foot could never detect one.
                         object hypotheticalFoot = P(expected, 0.0, 0.0);
                         foreach (int j in groupTrees)
                         {
@@ -10385,14 +10395,48 @@ internal static class Program
                             coarseOwnLeanOver[j] = MouldLean(hypotheticalFoot, net.Nodes.GetValue(j + 1)!) > 60.0 + 1.0e-9;
                         }
                     }
+                    // WHICH TREES PEEL, PREDICTED HERE AND NOT READ OFF THE
+                    // ENGINE. A tree peels when it crosses the cap OR WHEN ITS
+                    // MIRROR DOES, and the mirror is the GROUP-INDEX mirror of
+                    // spec sections 7 and 11: at Branching 1 the row holds one
+                    // tree per notch in bar order, so the mirror of tree j is
+                    // tree R - 1 - j. NOT the PAIRING: this is the orphaned
+                    // flank peel Param ruled on for 2026-09-02. At Type 1 on
+                    // seventeen notches trees 3 and 13 go UNPAIRED (mismatch
+                    // 0.0182 against h / 4 = 0.0142), tree 3 crosses the cap,
+                    // and a pairing-driven peel left tree 13 standing on the
+                    // shared foot with a mirror error of 2.7715 against a
+                    // baseline spread of 0.2465 to 0.2925.
+                    var coarsePeels = new bool[notches];
+                    for (int j = 0; j < notches; j++)
+                        coarsePeels[j] = coarseOwnLeanOver[j] || coarseOwnLeanOver[notches - 1 - j];
+                    // THE ENGINE'S OWN ANSWER, read as a fact about the placed
+                    // feet rather than as a diagnostic it reports: a tree
+                    // stands on its group's foot exactly when it did not peel.
+                    var coarseOnGroupFoot = new bool[notches];
+                    for (int j = 0; j < notches; j++)
+                        coarseOnGroupFoot[j] = Math.Abs(X(levelNodes[footNode[j]]) - coarseExpected[j]) <= 1.0e-9;
                     foreach (int[] groupTrees in wanted)
                     {
                         foreach (int j in groupTrees)
                         {
-                            int mate = coarsePartner[j];
-                            bool peeled = coarseOwnLeanOver[j] || (mate >= 0 && mate != j && coarseOwnLeanOver[mate]);
-                            if (peeled)
+                            if (coarsePeels[j])
+                            {
+                                // A PEEL IS NEVER AN ORPHAN. The set that
+                                // stepped off must be closed under the row
+                                // mirror, so asserting the predicted set
+                                // against the placed feet pins both halves at
+                                // once: a peel that dragged nothing would show
+                                // tree R - 1 - j still on the group foot.
+                                if (coarseOnGroupFoot[j])
+                                {
+                                    throw new InvalidOperationException(
+                                        $"Type {type} at {notches} notches: tree {j} crosses the sixty-degree cap from its group foot, or its row mirror "
+                                        + $"{notches - 1 - j} does, so it PEELS with its mirror by the group-index rule of spec section 11; it is still standing "
+                                        + $"on the group foot at x = {coarseExpected[j]:0.#########}.");
+                                }
                                 continue;
+                            }
                             double expected = coarseExpected[j];
                             if (Math.Abs(X(levelNodes[footNode[j]]) - expected) > 1.0e-9)
                             {
@@ -10443,27 +10487,27 @@ internal static class Program
                             $"Type {type} at {notches} notches: CommonModeResidual is zero to 1e-12 regardless of how many trees paired; it reads "
                             + $"{Get<double>(placed, "CommonModeResidual"):0.############}.");
                     }
-                    // THE FOOT MIRROR ERROR, measured FAIRLY: tree t against
-                    // its row-index mirror T - 1 - t, the pairing candidate
-                    // 9.2/9.3 themselves reach for on a palindromic row,
-                    // EXCLUDING a pair where exactly one side has individually
-                    // stepped off its shared foot under the sixty-degree cap
-                    // (peeled trees stand on an AIM-DERIVED foot by spec
-                    // section 11, not on 8.1's candidate mean, so comparing a
-                    // peeled foot against an unpeeled one compares two
-                    // different rules and not a mirror failure of either).
-                    // Every GATHERED (unpeeled) foot is already proved above,
-                    // independently of the engine, to be section 8.1's own
-                    // plan mean; this checks that mean is the SAME density-
-                    // stable value on both sides of the row, at EVERY density
-                    // swept, which is the density-refinement idea the retired
-                    // check was reaching for. MEASURED: it holds to the same
-                    // small, geometry-driven margin (under 0.35, against the
-                    // 0.2465 to 0.2925 actually observed across 3, 5, 9 and 17
-                    // notches and every Type, fully paired or not) at every
-                    // combination tried; a genuinely UNPEELED mismatch never
-                    // approaches the 2.77 an orphaned peel produces once one
-                    // side of a pair steps off and the other does not.
+                    // THE FOOT MIRROR ERROR, over EVERY pair and with NOTHING
+                    // EXCLUDED: tree t against its row-index mirror T - 1 - t.
+                    // The earlier reading of this check skipped a pair where
+                    // exactly one side had stepped off its shared foot, on the
+                    // ground that a peeled foot and a gathered one are two
+                    // different rules; that exclusion is retired, because
+                    // under spec section 11 as Param ruled it on 2026-09-02
+                    // ONE SIDE OF A PAIR CAN NO LONGER STEP OFF ALONE. The
+                    // peel takes its mirror by the group-index rule, so the
+                    // two sides are either both gathered, when their feet are
+                    // section 8.1's own plan mean on each side of the row, or
+                    // both peeled, when their feet are the aim-derived Type 0
+                    // feet under mirror-image notches. Either way they are
+                    // mirror images to the row's own equal-arc-length defect.
+                    //
+                    // MEASURED: the worst pair over 3, 5, 9 and 17 notches and
+                    // every Type sits in the 0.2465 to 0.2925 band, under the
+                    // 0.35 bound asserted; the ORPHANED peel this replaced
+                    // produced 2.7715 at Type 1 on seventeen notches, an order
+                    // of magnitude clear of it, so restoring a pairing-driven
+                    // peel puts this check red rather than green.
                     {
                         double x0 = X(net.Nodes.GetValue(0)!);
                         double xN = X(net.Nodes.GetValue(notches + 1)!);
@@ -10474,20 +10518,14 @@ internal static class Program
                             int m = trees.Length - 1 - t;
                             if (t >= m)
                                 continue;
-                            int mateT = coarsePartner[t];
-                            bool tPeeled = coarseOwnLeanOver[t] || (mateT >= 0 && mateT != t && coarseOwnLeanOver[mateT]);
-                            int mateM = coarsePartner[m];
-                            bool mPeeled = coarseOwnLeanOver[m] || (mateM >= 0 && mateM != m && coarseOwnLeanOver[mateM]);
-                            if (tPeeled != mPeeled)
-                                continue;   // an ORPHANED peel: CONCERN, not this claim; see the report.
                             double err = Math.Abs(X(levelNodes[footNode[t]]) + X(levelNodes[footNode[m]]) - (x0 + xN));
                             if (err > worstFairMirror) { worstFairMirror = err; worstFairAt = t; }
                         }
                         if (worstFairMirror > 0.35)
                         {
                             throw new InvalidOperationException(
-                                $"Type {type} at {notches} notches: an unpeeled tree's foot and its row-index mirror's foot are equidistant from the "
-                                + $"chord midpoint to within the row's own equal-arc-length defect; the worst pair (tree {worstFairAt}) is off by {worstFairMirror:0.#########}.");
+                                $"Type {type} at {notches} notches: every tree's foot and its row-index mirror's foot are equidistant from the "
+                                + $"chord midpoint to within the row's own equal-arc-length defect, peeled or gathered alike; the worst pair (tree {worstFairAt}) is off by {worstFairMirror:0.#########}.");
                         }
                     }
                     // THE FEET CONVERGE AS THE DENSITY RISES is still owned

@@ -1929,6 +1929,41 @@ namespace Ananke.COMPAS.Native.Components
                 groupCount[t] = -1;
             }
 
+            // THE PEEL'S MIRROR, BY THE GROUP-INDEX RULE THE FEET ALREADY USE
+            // (spec sections 7 and 11), and NOT by the pairing. This phase
+            // moved a foot's position off the pairing and onto the group
+            // ladder; reading placement.Partner here left the PEEL still
+            // governed by the pairing, so an UNPAIRED tree over the cap peeled
+            // ALONE and its mirror stayed on the shared foot, leaving one
+            // unmirrored flank column. MEASURED on the seventeen-notch Type 1
+            // crest net: trees 3 and 13 are mutual nearest partners but their
+            // positional mismatch, 0.0182, exceeds h / 4, 0.0142, by 28 per
+            // cent, so they go UNPAIRED; tree 3 crossed the cap, peeled alone,
+            // and the foot mirror error stood at 2.7715 against a baseline
+            // spread of 0.2465 to 0.2925. PARAM'S RULING of 2026-09-02 is that
+            // the pairing stops governing the peel exactly as it has already
+            // stopped governing the foot, and h / 4 is NOT to be weakened to
+            // make such trees pair.
+            //
+            // The row is section 6's own row, in bar order, the same row step
+            // 8 lays the foot groups over. Group sizes are a palindrome by
+            // construction and a group's members are laid down contiguously in
+            // row order, so the tree at row position j and the tree at row
+            // position R - 1 - j sit in groups gi and N - 1 - gi at mirrored
+            // offsets within them: reflecting the ROW is the group-index
+            // mirror, carried down from the group to the tree. That is why
+            // this is built here, once, from rowOf alone, and read by BOTH
+            // peel passes and by BOTH the Type 0 and the Type N branch.
+            var mirrorTree = new int[trees.Count];
+            for (int t = 0; t < trees.Count; t++)
+                mirrorTree[t] = -1;
+            for (int s = 0; s < rowOf.Length; s++)
+            {
+                List<int> mirrorRow = rowOf[s];
+                for (int j = 0; j < mirrorRow.Count; j++)
+                    mirrorTree[mirrorRow[j]] = mirrorRow[mirrorRow.Count - 1 - j];
+            }
+
             if (level == 0)
             {
                 // At Type 0 every tree stands on its own foot, so the row's
@@ -2037,17 +2072,24 @@ namespace Ananke.COMPAS.Native.Components
                     }
                 }
 
-                // A tree that peels takes its mirror PARTNER with it, whether
-                // or not the partner is over the cap. Both feet are then Type
-                // 0 feet, and they are mirror images wherever the two main
-                // notches are, because the pair step made the two aims mirror
-                // images. Both members count in Peeled. An unpaired tree
-                // peels alone. A self-paired tree peels onto its own Type 0
+                // A tree that peels takes its MIRROR with it, whether or not
+                // the mirror is over the cap. Both feet are then Type 0 feet,
+                // and they are mirror images wherever the two main notches
+                // are, because the pair step made the two aims mirror images.
+                // Both members count in Peeled. A tree that is its own mirror,
+                // the lone centre of an odd row, peels onto its own Type 0
                 // foot, which has no along-chord component because the pair
                 // step set its along aim to zero, so it stands directly under
                 // its own notch along the chord; it lies on the span's plane
                 // of symmetry exactly when that notch does, and no step
                 // projects it there.
+                //
+                // The mirror is mirrorTree, the group-index mirror, NOT
+                // placement.Partner: see the note where mirrorTree is built.
+                // A tree owning no notch is passed over on the mirror side as
+                // well as on the driving side, because `own` was never
+                // computed for it and copying that uncomputed default across
+                // would stand a plan-origin foot on the ground.
                 //
                 // The loop cannot cascade: peeling is one-way, a peeled tree
                 // never rejoins a shared foot, and no foot moves on account
@@ -2060,8 +2102,9 @@ namespace Ananke.COMPAS.Native.Components
                     if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
                         continue;
                     stepped[t] = true;
-                    int mate = t < placement.Partner.Length ? placement.Partner[t] : -1;
-                    if (mate >= 0 && mate < trees.Count && mate != t && trees[mate].FixedFoot is null)
+                    int mate = mirrorTree[t];
+                    if (mate >= 0 && mate < trees.Count && mate != t &&
+                        trees[mate].FixedFoot is null && trees[mate].HeadMain >= 0)
                         stepped[mate] = true;
                 }
                 for (int t = 0; t < trees.Count; t++)
@@ -2115,9 +2158,16 @@ namespace Ananke.COMPAS.Native.Components
                 double lean = MouldGeometry.LeanFromVertical(standing, nodes[trees[t].Nodes[trees[t].HeadMain]]);
                 if (lean <= MouldGeometry.MaxLeanDegrees + 1.0e-9)
                     continue;
+                // The same mirror, on the same guards, as the first pass. No
+                // tree can be re-footed twice and no Peeled double-counted:
+                // the mirror is an involution and the first pass marked t and
+                // mirrorTree[t] together under exactly these guards, so a tree
+                // the driving loop above reached (stepped[t] false) cannot have
+                // a mirror the first pass stepped.
                 steppedAgain[t] = true;
-                int mate = t < placement.Partner.Length ? placement.Partner[t] : -1;
-                if (mate >= 0 && mate < trees.Count && mate != t && trees[mate].FixedFoot is null)
+                int mate = mirrorTree[t];
+                if (mate >= 0 && mate < trees.Count && mate != t &&
+                    trees[mate].FixedFoot is null && trees[mate].HeadMain >= 0)
                     steppedAgain[mate] = true;
             }
             for (int t = 0; t < trees.Count; t++)
