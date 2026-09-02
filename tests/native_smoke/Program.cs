@@ -1083,6 +1083,27 @@ internal static class Program
 
         try
         {
+            ValidateParamCrownContract(plugin);
+            Console.WriteLine(
+                "PASS  Param's crown arch: the contract HE exported (441 "
+                + "vertices, 800 edges, two eleven-node principal runs both "
+                + "starting on the shared crown, ten free notches a span, g "
+                + "0.8) is rebuilt into ColumnsComponent's own inputs and "
+                + "placed at Branching 1, 2 and 3 across Types 0 to 4. The two "
+                + "flanks build the SAME number of branches at every one of "
+                + "the fifteen, nine a flank at Branching 1 and thirteen at 2 "
+                + "and 3; the crown stands on exactly ONE column filed Bar -1 "
+                + "and Span -1, its foot fixed at the origin on the ground and "
+                + "its trunk vertical to a part in 1e9; and the catcher stays "
+                + "silent, the owner rule having already answered.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Param's crown arch: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateStiffnessSeparation(plugin);
             Console.WriteLine(
                 "PASS  EI separation: bar sag scales exactly as one over EI, "
@@ -5943,6 +5964,308 @@ internal static class Program
             expectedX: -Math.Sin(Math.PI / 3.0),
             expectedZ: Math.Cos(Math.PI / 3.0),
             label: "capped shallow pull");
+    }
+
+    /// <summary>
+    /// PARAM'S OWN EXPORTED NET, and from 2026-09-02 it is the regression
+    /// fixture for the branch counts. Every other column check in this file
+    /// drives a net this file builds; this one drives the contract HE
+    /// exported from Grasshopper, 441 vertices and 800 edges, two eleven-node
+    /// principal runs that BOTH start on the shared crown at the origin, ten
+    /// free notches a span and a span spacing of 0.8.
+    ///
+    /// It is here because a hand-built net could not have caught the defect
+    /// it pins. The crown of his arch is a node BOTH bars hold, and the
+    /// ladder puts a group of one at the row END, which is exactly where a
+    /// crown-terminating bar's shared node sits; the balance exemption then
+    /// read vacuously true, the tie-break owner kept the crown and built one
+    /// extra branch on one flank. MEASURED before the fix of 2026-09-02: nine
+    /// branches against ten at Branching 1 and thirteen against fourteen at
+    /// Branching 2, at every Type, with Branching 3 already right because
+    /// there the crown falls in a group of two.
+    ///
+    /// The inputs are rebuilt from the contract exactly as
+    /// <c>ColumnsComponent</c> builds them: the valid edges with their source
+    /// map, the principal runs, the incident force lists, the per-bar
+    /// UNTRANSVERSED pull and its transverse part, the per-node pull, the
+    /// thrust mesh and the perimeter loops. Nothing is hand-fed, so a change
+    /// to any of that machinery moves this check with it.
+    /// </summary>
+    private static void ValidateParamCrownContract(Assembly plugin)
+    {
+        Type engine = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.ColumnPlacement", throwOnError: true)!;
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo place = RequirePublicStatic(engine, "Place");
+        Type point3d = place.GetParameters()[0].ParameterType.GetElementType()!;
+        Type vector3d = place.GetParameters()[4].ParameterType.GetElementType()!.GetElementType()!;
+        double X(object p) => (double)point3d.GetProperty("X")!.GetValue(p)!;
+        double Y(object p) => (double)point3d.GetProperty("Y")!.GetValue(p)!;
+        double Z(object p) => (double)point3d.GetProperty("Z")!.GetValue(p)!;
+        T Get<T>(object o, string name)
+        {
+            Type type = o.GetType();
+            object value = type.GetField(name)?.GetValue(o) ?? type.GetProperty(name)?.GetValue(o)
+                ?? throw new InvalidOperationException($"{type.Name} has no {name}.");
+            return (T)value;
+        }
+
+        // The asset, by the harness's own convention: beside Program.cs under
+        // assets/, copied to the build output and resolved against
+        // AppContext.BaseDirectory so the check works from any working
+        // directory.
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's exported crown-arch contract is missing from the " +
+                "build output (assets/param-crown-arch-contract.json, copied " +
+                "by the harness's assets/ convention): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(plugin, resultType, File.ReadAllText(path));
+        var errors = ((IEnumerable)resultType.GetMethod("Validate")!.Invoke(result, null)!)
+            .Cast<string>().ToArray();
+        if (errors.Length != 0)
+        {
+            throw new InvalidOperationException(
+                $"Param's exported contract must validate against the plugin's own ResultDto; it reports {errors.Length}: "
+                + string.Join(" | ", errors.Take(4)));
+        }
+        object equilibrium = Get<object>(result, "Equilibrium")
+            ?? throw new InvalidOperationException("Param's contract carries no equilibrium.");
+
+        object[] vertices = ((IEnumerable)Get<object>(equilibrium, "Vertices")).Cast<object>().ToArray();
+        int count = vertices.Length;
+        Array nodes = Array.CreateInstance(point3d, count);
+        for (int i = 0; i < count; i++)
+        {
+            Type dto = vertices[i].GetType();
+            nodes.SetValue(
+                Activator.CreateInstance(
+                    point3d,
+                    (double)dto.GetProperty("X")!.GetValue(vertices[i])!,
+                    (double)dto.GetProperty("Y")!.GetValue(vertices[i])!,
+                    (double)dto.GetProperty("Z")!.GetValue(vertices[i])!)!,
+                i);
+        }
+
+        MethodInfo validEdges = RequirePublicStatic(geometry, "ValidEdges");
+        object?[] edgeArgs = { equilibrium, count, null };
+        var edges = ((IEnumerable)validEdges.Invoke(null, edgeArgs)!).Cast<object>().ToArray();
+        int[] edgeSource = (int[])edgeArgs[2]!;
+        Array edgeArray = Array.CreateInstance(typeof(ValueTuple<int, int>), edges.Length);
+        var ends = new (int U, int V)[edges.Length];
+        for (int e = 0; e < edges.Length; e++)
+        {
+            edgeArray.SetValue(edges[e], e);
+            ends[e] = (
+                (int)edges[e].GetType().GetField("Item1")!.GetValue(edges[e])!,
+                (int)edges[e].GetType().GetField("Item2")!.GetValue(edges[e])!);
+        }
+
+        int[] anchors = ((IEnumerable)Get<object>(equilibrium, "ResolvedSupportNodeIds"))
+            .Cast<int>().Where(i => i >= 0 && i < count).Distinct().OrderBy(i => i).ToArray();
+        double ground = (double)RequirePublicStatic(geometry, "GroundLevel")
+            .Invoke(null, new object[] { nodes, anchors })!;
+
+        var runs = ((IEnumerable)RequirePublicStatic(geometry, "PrincipalRuns")
+            .Invoke(null, new object[] { equilibrium, count })!)
+            .Cast<object>()
+            .Select(r => ((IEnumerable)r).Cast<int>().ToList())
+            .ToList();
+        int[][] bars = runs.Select(r => r.ToArray()).ToArray();
+
+        // THE FIXTURE'S OWN PREMISE, pinned before anything is judged. A
+        // fixture that stopped being the shape it describes would otherwise
+        // pass while measuring something else entirely.
+        double[] memberForces = ((IEnumerable)Get<object>(equilibrium, "MemberForces"))
+            .Cast<double>().ToArray();
+        if (count != 441 || edges.Length != 800 || bars.Length != 2
+            || bars[0].Length != 11 || bars[1].Length != 11
+            || bars[0][0] != bars[1][0])
+        {
+            throw new InvalidOperationException(
+                $"This is Param's exported crown arch: 441 vertices, 800 valid edges, and TWO eleven-node principal runs that both START on the one shared crown. It reads {count} vertices, {edges.Length} edges and {bars.Length} runs of [{string.Join(", ", bars.Select(b => b.Length))}] beginning at [{string.Join(", ", bars.Select(b => b[0]))}].");
+        }
+        int crown = bars[0][0];
+        if (Math.Abs(X(nodes.GetValue(crown)!)) > 1.0e-9 || Math.Abs(Y(nodes.GetValue(crown)!)) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                $"The shared crown stands on the form's own axis in plan, which is what makes the centre column's position checkable; it stands at ({X(nodes.GetValue(crown)!):0.#####}, {Y(nodes.GetValue(crown)!):0.#####}).");
+        }
+
+        // The incident force lists, exactly as ColumnsComponent builds them:
+        // every valid edge on both its ends, carrying the member force of the
+        // edge it came FROM, which is what edgeSource is for.
+        Type pairType = typeof(ValueTuple<int, double>);
+        Type listType = typeof(List<>).MakeGenericType(pairType);
+        MethodInfo addPair = listType.GetMethod("Add")!;
+        Array incident = Array.CreateInstance(listType, count);
+        for (int i = 0; i < count; i++)
+            incident.SetValue(Activator.CreateInstance(listType)!, i);
+        for (int e = 0; e < edges.Length; e++)
+        {
+            int source = e < edgeSource.Length ? edgeSource[e] : e;
+            double force = source >= 0 && source < memberForces.Length ? memberForces[source] : 0.0;
+            addPair.Invoke(
+                incident.GetValue(ends[e].U)!,
+                new[] { Activator.CreateInstance(pairType, ends[e].V, force) });
+            addPair.Invoke(
+                incident.GetValue(ends[e].V)!,
+                new[] { Activator.CreateInstance(pairType, ends[e].U, force) });
+        }
+
+        MethodInfo barLoads = RequirePublicStatic(geometry, "BarLoads");
+        MethodInfo barTransverse = RequirePublicStatic(geometry, "BarTransverse");
+        Array across = Array.CreateInstance(vector3d.MakeArrayType(), bars.Length);
+        Array pull = Array.CreateInstance(vector3d.MakeArrayType(), bars.Length);
+        for (int b = 0; b < bars.Length; b++)
+        {
+            object barPull = barLoads.Invoke(null, new object[] { runs[b], nodes, incident })!;
+            pull.SetValue(barPull, b);
+            across.SetValue(
+                barTransverse.Invoke(null, new object[] { runs[b], nodes, barPull })!, b);
+        }
+        object nodePull = RequirePublicStatic(geometry, "NodeLoads")
+            .Invoke(null, new object[] { nodes, incident })!;
+
+        // The perimeter machinery, which is what decides whether a RING TREE
+        // is placed at all. On this net the thrust mesh is absent and the one
+        // loop found holds the anchors, so no ring tree stands; that is the
+        // component's own answer and not an assumption, so it is computed
+        // here rather than skipped.
+        object?[] meshArgs = { result, null };
+        object? thrust = RequirePublicStatic(geometry, "ThrustMeshFromResult").Invoke(null, meshArgs);
+        int[] meshToNode = (int[])meshArgs[1]!;
+        object neighbours = RequirePublicStatic(geometry, "BuildAdjacency")
+            .Invoke(null, new object[] { count, edgeArray })!;
+        object?[] perimeterArgs = { thrust, meshToNode, neighbours, count, null };
+        int[] perimeter = (int[])RequirePublicStatic(geometry, "PerimeterNodes")
+            .Invoke(null, perimeterArgs)!;
+        object grouping = RequirePublicStatic(geometry, "GroupingAdjacency")
+            .Invoke(null, new object[] { result, edgeArray, count })!;
+        int[][] loops = ((IEnumerable)RequirePublicStatic(geometry, "ConnectedGroups")
+            .Invoke(null, new object[] { perimeter, grouping })!)
+            .Cast<object>()
+            .Select(l => ((IEnumerable)l).Cast<int>().ToArray())
+            .ToArray();
+
+        var report = new List<string>();
+        foreach (int branching in new[] { 1, 2, 3 })
+        {
+            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+            {
+                object placed = place.Invoke(null, new object?[]
+                {
+                    nodes, bars, edgeArray, anchors, across, pull, nodePull, loops,
+                    ground, branching, type,
+                })!;
+                string where = $"Param's exported crown arch, Branching {branching}, Type {type}";
+                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                object built = Get<object>(placed, "Built");
+                var builtNodes = ((IEnumerable)Get<object>(built, "Nodes")).Cast<object>().ToArray();
+                var memberTree = ((IEnumerable)Get<object>(built, "MemberTree")).Cast<int>().ToArray();
+                var members = ((IEnumerable)Get<object>(built, "Members")).Cast<object>()
+                    .Select(m => ((int)m.GetType().GetField("Item1")!.GetValue(m)!,
+                        (int)m.GetType().GetField("Item2")!.GetValue(m)!))
+                    .ToArray();
+
+                // MEMBERS PER BAR, which is what Param counts with his eye,
+                // and NEVER feet: the defect is fully present at Type 0, which
+                // welds nothing, while Types 1 to 4 weld between three and
+                // fifteen feet on this net and would swamp a foot count.
+                var perBar = new Dictionary<int, int>();
+                for (int m = 0; m < members.Length; m++)
+                {
+                    int bar = Get<int>(trees[memberTree[m]], "Bar");
+                    perBar[bar] = perBar.TryGetValue(bar, out int had) ? had + 1 : 1;
+                }
+                int flankZero = perBar.TryGetValue(0, out int zero) ? zero : 0;
+                int flankOne = perBar.TryGetValue(1, out int one) ? one : 0;
+                if (flankZero != flankOne)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: the two flanks of a mirror-symmetric arch build the SAME NUMBER of branches; they built {flankZero} and {flankOne}. Measured before the S < 3 conviction of 2026-09-02: nine against ten at Branching 1 and thirteen against fourteen at Branching 2, at every Type, because the crown fell in a group of ONE at the row end, the balance exemption read vacuously true, and the tie-break owner kept it. Which flank gained the branch is a lexicographic endpoint sort, so it flips if the model is mirrored in x.");
+                }
+                int expectedPerFlank = branching == 1 ? 9 : 13;
+                if (flankZero != expectedPerFlank)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: ten free notches a span, one of them the shared crown, build {expectedPerFlank} branches a flank at this branching; each built {flankZero}.");
+                }
+
+                // ONE CENTRE COLUMN, at every Branching and every Type. At
+                // Branching 3 this was already so before the conviction; at 1
+                // and 2 it is what the conviction changed.
+                object[] apart = trees.Where(
+                    t => Get<int>(t, "Span") < 0 && !Get<bool>(t, "Ring")).ToArray();
+                if (apart.Length != 1 || Get<int>(placed, "CentresExtracted") != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: the shared crown is annexed by its owner and stands on exactly ONE column of no bar and no span's row; {apart.Length} such trees stand and CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                }
+                object centre = apart[0];
+                if (Get<int>(centre, "Bar") != -1 || Get<int>(centre, "Span") != -1
+                    || !Get<int[]>(centre, "Nodes").SequenceEqual(new[] { crown }))
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: that column is filed Bar -1 and Span -1 and holds the crown alone; it reads bar {Get<int>(centre, "Bar")}, span {Get<int>(centre, "Span")}, notches [{string.Join(", ", Get<int[]>(centre, "Nodes"))}]. Filing it under the annexing span would flip that row's parity and fire the central-pair merge, moving two feet Param has ruled must not move.");
+                }
+                object? fixedFoot = Get<object?>(centre, "FixedFoot");
+                if (fixedFoot is null || Math.Abs(X(fixedFoot)) > 1.0e-9
+                    || Math.Abs(Y(fixedFoot)) > 1.0e-9
+                    || Math.Abs(Z(fixedFoot) - ground) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: the centre column's foot is FIXED at the crown's own plan point on the ground, (0, 0, {ground:0.#####}); it stands at {(fixedFoot is null ? "no fixed foot at all" : $"({X(fixedFoot):0.#####}, {Y(fixedFoot):0.#####}, {Z(fixedFoot):0.#####})")}.");
+                }
+
+                // AND ITS TRUNK IS VERTICAL, measured as the PLAN
+                // DISPLACEMENT from its foot to the far end of the one member
+                // it builds, which is zero rather than merely small: the
+                // engine's own two-degree dead band swallows a small lean.
+                int centreIndex = Array.IndexOf(trees, centre);
+                int[] mine = Enumerable.Range(0, members.Length)
+                    .Where(m => memberTree[m] == centreIndex).ToArray();
+                if (mine.Length != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: a centre column of ONE notch is ONE member, the trunk from its foot to the crown; it built {mine.Length}.");
+                }
+                object low = builtNodes[members[mine[0]].Item1];
+                object high = builtNodes[members[mine[0]].Item2];
+                double dx = X(high) - X(low);
+                double dy = Y(high) - Y(low);
+                double plan = Math.Sqrt((dx * dx) + (dy * dy));
+                if (plan > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: the centre column moves {plan:0.#########} in plan between its foot and the crown, so it leans {(180.0 / Math.PI) * Math.Atan2(plan, Math.Abs(Z(high) - Z(low))):0.####} degrees. Param's ruling of 2026-09-02 is 'a central column thats verticle'.");
+                }
+
+                // PARAM'S CATCHER HAS NOTHING TO SAY HERE, and that is worth
+                // pinning: the crown of this net is a single shared node the
+                // owner rule already answers for, so the catcher must be
+                // silent. A catcher that fired here would be catching the
+                // engine's own correct answer.
+                if (Get<int>(placed, "CentresCaught") != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{where}: the crown is one shared node, wholly on its own column, so no crown here is MIXED and the catcher stays silent; CentresCaught is {Get<int>(placed, "CentresCaught")}.");
+                }
+                if (type == 0)
+                    report.Add($"B{branching} {flankZero}v{flankOne}");
+            }
+        }
+        Console.WriteLine(
+            "      Param's exported crown arch (441 vertices, 800 edges, two 11-node bars on one crown, g 0.8), branches per flank at Type 0: "
+            + string.Join(", ", report)
+            + ". Before the S < 3 conviction: B1 9v10, B2 13v14, B3 13v13.");
     }
 
     /// <summary>

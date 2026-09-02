@@ -50,9 +50,48 @@ at all. Doctored in memory: the schema/units refusal messages, and a
 from an in-memory copy, proving an export written before the addendum
 still parses).
 
-This is the first asset file this harness project has needed; the
-convention is a plain `assets/` folder beside `Program.cs`, copied to
-the build output (`CopyToOutputDirectory` in
-`Ananke.COMPAS.NativeSmoke.csproj`) and resolved at run time relative
-to `AppContext.BaseDirectory`, so the check works regardless of the
-working directory `dotnet run` is invoked from.
+`param-crown-arch-contract.json` is a `bench.result/1` document Param
+exported from Grasshopper on 2026-09-02, added the same day. It is the
+arch of his own screenshots, not a shape this repo invented: 441
+vertices, 800 valid edges, 42 anchors on the ground, and two
+eleven-node principal runs that BOTH START on the shared crown at the
+origin, giving each span ten free notches and a spacing of 0.8.
+
+It is here because a hand-built net could not have caught the defect it
+pins. His crown is a node both bars hold, and the ladder puts a group of
+ONE at the row END, which is exactly where a crown-terminating bar's
+shared node sits; the balance exemption of section 10 then read
+vacuously true, since a group of one is balanced about its own only
+index by arithmetic, so the tie-break owner kept the crown and built one
+extra branch on one flank. MEASURED before the fix of 2026-09-02: nine
+branches against ten at Branching 1 and thirteen against fourteen at
+Branching 2, at every Type, with Branching 3 already right because there
+the crown falls in a group of two. AFTER: nine against nine, thirteen
+against thirteen, and Branching 3 unmoved.
+
+`Program.cs` reads it in `ValidateParamCrownContract`, which rebuilds
+`ColumnsComponent`'s own inputs from it rather than hand-feeding
+anything: `MouldGeometry.ValidEdges` with its source map,
+`PrincipalRuns`, the incident force lists keyed through that map,
+`BarLoads` for the untransversed pull and `BarTransverse` for its
+transverse part, `NodeLoads`, and the perimeter machinery
+(`ThrustMeshFromResult`, `BuildAdjacency`, `PerimeterNodes`,
+`GroupingAdjacency`, `ConnectedGroups`). It then runs
+`ColumnPlacement.Place` at Branching 1, 2 and 3 across Types 0 to 4 and
+asserts equal per-bar MEMBER counts (never feet: the defect is fully
+present at Type 0, which welds nothing), exactly one Span -1 centre
+column holding the crown, its foot fixed at the origin on the ground,
+and its trunk vertical to a part in 1e9. HIS NET IS THE REGRESSION
+FIXTURE FOR THE BRANCH COUNTS FROM NOW ON.
+
+The file is committed verbatim as exported and must not be regenerated
+to tidy it: the premise check in `Program.cs` pins its 441 vertices, 800
+edges and two eleven-node runs, and a replacement that fails those is
+telling you it is a different net.
+
+`assets/` was first needed for `fixture-pieces.json`; the convention is
+a plain `assets/` folder beside `Program.cs`, copied to the build output
+(`CopyToOutputDirectory` in `Ananke.COMPAS.NativeSmoke.csproj`, which
+globs `assets\**` so a new file needs no project edit) and resolved at
+run time relative to `AppContext.BaseDirectory`, so the checks work
+regardless of the working directory `dotnet run` is invoked from.
