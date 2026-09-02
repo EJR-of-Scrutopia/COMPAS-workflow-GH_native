@@ -435,9 +435,13 @@ namespace Ananke.COMPAS.Native.Components
             /// <summary>Notches held by two spans at once.</summary>
             public int SharedNotches;
             /// <summary>
-            /// Shared notches taken out of the group that would have annexed
-            /// them and stood on a column of their own (PARAM'S RULING of
-            /// 2026-09-02). A SECOND KIND of central column, and deliberately
+            /// CENTRE COLUMNS, one per shared or MEETING centre taken out of
+            /// the group that would have annexed it (PARAM'S RULING of
+            /// 2026-09-02). Columns and not notches: a shared node stands
+            /// alone, but the crowns of three arms that stop short of one
+            /// another are one meeting and take ONE column between them, and
+            /// what Param counts on the screen is the column.
+            /// A SECOND KIND of central column, and deliberately
             /// NOT folded into <c>Level.CentralColumns</c>, which counts the
             /// standing column an odd tree row takes at an even Type and
             /// nothing else: one is a property of the LAYOUT and per level,
@@ -1431,6 +1435,141 @@ namespace Ananke.COMPAS.Native.Components
             return best;
         }
 
+        /// <summary>
+        /// WHICH FREE NOTCHES MEET, as a map from net vertex to the meeting it
+        /// belongs to. PARAM'S RULING of 2026-09-02: "the central column
+        /// shouldnt land in the branching that is the point. I want the
+        /// branching to ignore it in those instances and just have a central
+        /// column thats verticle".
+        ///
+        /// Two free notches of DIFFERENT spans are CO-LOCATED when they stand
+        /// within 0.25 * min(g_A, g_B) of one another in plan, which is
+        /// section 12's own feet-close clearance and not a new number: the
+        /// question "are these two the same place" has one answer in this
+        /// engine and this asks it of notches rather than of feet.
+        ///
+        /// TWO SPANS MEET WHEN THEY HAVE EXACTLY ONE CO-LOCATED PAIR, and this
+        /// gate is the whole of the rule's safety. Without it two parallel
+        /// ribs laid a fifth of a spacing apart, which is a modelling slip and
+        /// not a crown, co-locate at EVERY station and both ribs lose nearly
+        /// every branch to a string of centre columns. Measured: sixteen
+        /// notches fired without the gate, none with it, at rib offsets from a
+        /// whole spacing down to a tenth, while every crown case still fires.
+        ///
+        /// A GENUINELY SHARED NOTCH IS NOT HERE. It is one node with several
+        /// holders, the owner rule of spec section 10 already decides it, and
+        /// leaving it out is what keeps that path byte for byte what it was.
+        ///
+        /// Meetings are UNIONED, so three arms stopping short of one crown,
+        /// which meet pairwise three times, are ONE meeting of three notches
+        /// and take one column between them rather than three.
+        /// </summary>
+        private static Dictionary<int, int> Meetings(
+            Point3d[] nodes,
+            int[][] bars,
+            List<Span> spans,
+            List<SpanFrame> frames,
+            int[][] freeOf,
+            Dictionary<int, List<(int Bar, int Position, int Span)>> holderMap)
+        {
+            var solo = new int[spans.Count][];
+            var minX = new double[spans.Count];
+            var maxX = new double[spans.Count];
+            var minY = new double[spans.Count];
+            var maxY = new double[spans.Count];
+            for (int s = 0; s < spans.Count; s++)
+            {
+                solo[s] = freeOf[s]
+                    .Select(p => bars[spans[s].Bar][p])
+                    .Where(n => holderMap[n].Count <= 1)
+                    .ToArray();
+                minX[s] = double.MaxValue;
+                maxX[s] = double.MinValue;
+                minY[s] = double.MaxValue;
+                maxY[s] = double.MinValue;
+                foreach (int n in solo[s])
+                {
+                    minX[s] = Math.Min(minX[s], nodes[n].X);
+                    maxX[s] = Math.Max(maxX[s], nodes[n].X);
+                    minY[s] = Math.Min(minY[s], nodes[n].Y);
+                    maxY[s] = Math.Max(maxY[s], nodes[n].Y);
+                }
+            }
+
+            // Union-find over the notches that take part, keyed on the net
+            // vertex. The root is always the LOWEST vertex of its meeting, so
+            // the grouping reads no coordinate and cannot depend on the trace.
+            var parent = new Dictionary<int, int>();
+            int Root(int n)
+            {
+                int r = n;
+                while (parent[r] != r)
+                    r = parent[r];
+                while (parent[n] != r)
+                {
+                    int next = parent[n];
+                    parent[n] = r;
+                    n = next;
+                }
+                return r;
+            }
+
+            for (int a = 0; a < spans.Count; a++)
+            {
+                if (solo[a].Length == 0)
+                    continue;
+                for (int b = a + 1; b < spans.Count; b++)
+                {
+                    if (solo[b].Length == 0)
+                        continue;
+                    double clearance = 0.25 * Math.Min(frames[a].G, frames[b].G);
+                    if (!(clearance > 0.0))
+                        continue;
+                    // Plan bounding boxes that cannot come within the
+                    // clearance hold no co-located pair, and skipping them is
+                    // what keeps this quadratic sweep off a real net's neck.
+                    if (minX[a] - maxX[b] > clearance || minX[b] - maxX[a] > clearance ||
+                        minY[a] - maxY[b] > clearance || minY[b] - maxY[a] > clearance)
+                        continue;
+                    int first = -1;
+                    int second = -1;
+                    int pairs = 0;
+                    foreach (int u in solo[a])
+                    {
+                        foreach (int v in solo[b])
+                        {
+                            double dx = nodes[u].X - nodes[v].X;
+                            double dy = nodes[u].Y - nodes[v].Y;
+                            if (((dx * dx) + (dy * dy)) > clearance * clearance)
+                                continue;
+                            pairs++;
+                            if (pairs > 1)
+                                break;
+                            first = u;
+                            second = v;
+                        }
+                        if (pairs > 1)
+                            break;
+                    }
+                    if (pairs != 1)
+                        continue;
+                    if (!parent.ContainsKey(first))
+                        parent[first] = first;
+                    if (!parent.ContainsKey(second))
+                        parent[second] = second;
+                    int rootA = Root(first);
+                    int rootB = Root(second);
+                    if (rootA != rootB)
+                        parent[Math.Max(rootA, rootB)] = Math.Min(rootA, rootB);
+                }
+            }
+
+            var meetings = new Dictionary<int, int>();
+            foreach (int n in parent.Keys.ToArray())
+                meetings[n] = Root(n);
+            return meetings;
+        }
+
         // ------------------------------------------------------------------
         // Entry
 
@@ -1536,19 +1675,43 @@ namespace Ananke.COMPAS.Native.Components
                 ownerOfNode[entry.Key] = owner;
             }
 
+            // THE MEETINGS (PARAM'S RULING of 2026-09-02, the second
+            // mechanism): "the central column shouldnt land in the branching
+            // that is the point. I want the branching to ignore it in those
+            // instances and just have a central column thats verticle".
+            //
+            // A SHARED notch is one node two spans both hold. A MEETING notch
+            // is the same event on a form whose principal lines stop just
+            // SHORT of one another, so that each line carries its own crown
+            // node and the two stand a fraction of a spacing apart. The owner
+            // rule above cannot see that case at all, because two nearly
+            // touching crowns are one holder each; the balance predicate
+            // below, which is the rule that actually decides, is unchanged
+            // and is now asked about meeting notches too.
+            Dictionary<int, int> meetingOf = Meetings(
+                nodes, bars, placement.Spans, placement.Frames, freeOf, holderMap);
+
             // Pass 2: the trees, span by span, over the same free lists and
             // frames Pass 1 built.
             //
             // THE LEFTOVER CENTRE NODES, gathered here and stood on their own
             // columns after the loop (PARAM'S RULING of 2026-09-02, section 0
-            // of the design input). Each is a shared notch whose owning group
-            // is not BALANCED about it, so that group would have annexed it
-            // and gained a branch its mirror on the other line does not have.
-            // Each is extracted at most once, because a node has exactly one
-            // owner, and they are gathered in span-then-group-then-notch
-            // order, which reads no coordinate and so cannot depend on the
-            // trace.
-            var leftOver = new List<(int Node, Vector3d HeadPull, SpanFrame Frame)>();
+            // of the design input). Each is a shared or MEETING notch whose
+            // group is not BALANCED about it, so that group would have annexed
+            // it and gained a branch its mirror on the other line does not
+            // have. A shared node is extracted at most once, because it has
+            // exactly one owner; a meeting notch is extracted at most once
+            // because it belongs to exactly one span. They are gathered in
+            // span-then-group-then-notch order, which reads no coordinate and
+            // so cannot depend on the trace.
+            //
+            // ONE ENTRY PER CENTRE COLUMN, not per notch. A shared node stands
+            // alone and its entry holds one notch, which is the shipped case
+            // unchanged; the left-over notches of ONE meeting stand TOGETHER
+            // on one column, because three arms stopping short of a crown are
+            // one crown and not three.
+            var centres = new List<List<(int Node, Vector3d HeadPull, SpanFrame Frame)>>();
+            var centreOfMeeting = new Dictionary<int, int>();
             for (int s = 0; s < placement.Spans.Count; s++)
             {
                 Span span = placement.Spans[s];
@@ -1591,9 +1754,37 @@ namespace Ananke.COMPAS.Native.Components
                             // Held by ONE bar: the head pull is that bar's own
                             // untransversed pull unchanged, so every existing
                             // harness number is untouched.
-                            owned[k] = true;
-                            load[k] = Math.Abs(across[span.Bar][p].Z);
-                            sum += across[span.Bar][p];
+                            //
+                            // UNLESS THIS NOTCH IS A MEETING NOTCH, in which
+                            // case the very same balance predicate the shared
+                            // branch below applies decides it, in the very
+                            // same terms. A notch the group is balanced about
+                            // is genuinely central to that group and stays;
+                            // any other is a crown the group would have
+                            // annexed, and it goes to the centre column with
+                            // the crowns it meets. The term that leaves this
+                            // tree's Load and Resultant is the term that would
+                            // have entered them, so nothing is created or
+                            // destroyed.
+                            bool meets = meetingOf.TryGetValue(node, out int meeting);
+                            if (meets && Math.Abs(orderedFree[k] - balance) > 1.0e-9)
+                            {
+                                owned[k] = false;
+                                load[k] = 0.0;
+                                if (!centreOfMeeting.TryGetValue(meeting, out int at))
+                                {
+                                    at = centres.Count;
+                                    centreOfMeeting[meeting] = at;
+                                    centres.Add(new List<(int, Vector3d, SpanFrame)>());
+                                }
+                                centres[at].Add((node, across[span.Bar][p], frame));
+                            }
+                            else
+                            {
+                                owned[k] = true;
+                                load[k] = Math.Abs(across[span.Bar][p].Z);
+                                sum += across[span.Bar][p];
+                            }
                         }
                         else
                         {
@@ -1625,7 +1816,8 @@ namespace Ananke.COMPAS.Native.Components
                                     // its Resultant and arrives, entire, on
                                     // the centre column.
                                     load[k] = 0.0;
-                                    leftOver.Add((node, headPull, frame));
+                                    centres.Add(
+                                        new List<(int, Vector3d, SpanFrame)> { (node, headPull, frame) });
                                 }
                                 else
                                 {
@@ -1656,8 +1848,9 @@ namespace Ananke.COMPAS.Native.Components
             }
 
             // THE CENTRE COLUMNS (PARAM'S RULING of 2026-09-02). One tree per
-            // leftover centre node: one notch, its own, standing PLUMB on its
-            // own foot directly beneath it. The arithmetic is a MOVE and not
+            // leftover centre: the shared node alone, or the left-over notches
+            // of one meeting together, standing PLUMB on one foot beneath
+            // their plan mean. The arithmetic is a MOVE and not
             // an addition. Total load is unchanged, the term having left the
             // annexing tree above; the total member count is unchanged, the
             // annexing tree building one fewer and this one building one; and
@@ -1686,19 +1879,53 @@ namespace Ananke.COMPAS.Native.Components
             // is every true crown, the head pull's projection is zero anyway,
             // AimFrom returns plain vertical and this is the foot the tree
             // would have taken by its own aim.
-            foreach ((int node, Vector3d headPull, SpanFrame frame) in leftOver)
+            //
+            // ITS FOOT IS THE PLAN MEAN of the notches it gathers, which for
+            // the shared node is that node's own plan point to the last bit,
+            // an average over one term being that term. For a meeting it is
+            // the point no arm can claim: not one crown, not a bounding-box
+            // centre, the MEAN, so that arms stopping short of the axis by
+            // equal amounts put the column on the axis.
+            foreach (List<(int Node, Vector3d HeadPull, SpanFrame Frame)> centre in centres)
             {
+                double meanX = centre.Average(e => nodes[e.Node].X);
+                double meanY = centre.Average(e => nodes[e.Node].Y);
+                // The main notch is the one nearest that mean in plan. Ties go
+                // to the LOWER NET VERTEX, and a tie is the ordinary case, not
+                // the exception: two arms stopping short of one crown by the
+                // same amount are exactly equidistant from their own mean. The
+                // tolerance is a part in 1e9 of the first frame's own spacing,
+                // never an absolute length, so the answer does not change with
+                // the size of the model.
+                double snap = 1.0e-9 * centre[0].Frame.G;
+                int main = 0;
+                double bestPlan = -1.0;
+                for (int i = 0; i < centre.Count; i++)
+                {
+                    double dx = nodes[centre[i].Node].X - meanX;
+                    double dy = nodes[centre[i].Node].Y - meanY;
+                    double d = Math.Sqrt((dx * dx) + (dy * dy));
+                    if (bestPlan < 0.0 || d < bestPlan - snap ||
+                        (Math.Abs(d - bestPlan) <= snap && centre[i].Node < centre[main].Node))
+                    {
+                        main = i;
+                        bestPlan = d;
+                    }
+                }
+                var head = Vector3d.Zero;
+                foreach ((int _, Vector3d headPull, SpanFrame _) in centre)
+                    head += headPull;
                 placement.Trees.Add(new Tree
                 {
                     Bar = -1,
                     Span = -1,
-                    Nodes = new[] { node },
-                    Load = new[] { Math.Abs(headPull.Z) },
-                    Owned = new[] { true },
-                    Resultant = headPull,
-                    HeadMain = 0,
-                    FixedFoot = new Point3d(nodes[node].X, nodes[node].Y, ground),
-                    Scale = frame,
+                    Nodes = centre.Select(e => e.Node).ToArray(),
+                    Load = centre.Select(e => Math.Abs(e.HeadPull.Z)).ToArray(),
+                    Owned = centre.Select(_ => true).ToArray(),
+                    Resultant = head,
+                    HeadMain = main,
+                    FixedFoot = new Point3d(meanX, meanY, ground),
+                    Scale = centre[0].Frame,
                 });
                 placement.CentresExtracted++;
             }

@@ -10435,6 +10435,440 @@ internal static class Program
                 Console.WriteLine(
                     $"      Two lines meeting at a crown, five free notches each, Branching 2, Type 2: branches per side [{string.Join(", ", perBar)}], {apart} standing at the centre on its own.");
             }
+
+            // ================================================================
+            // THE LINES THAT STOP SHORT OF THE CROWN. PARAM'S RULING of
+            // 2026-09-02, the second mechanism:
+            //
+            //     "the central column shouldnt land in the branching that is
+            //      the point. I want the branching to ignore it in those
+            //      instances and just have a central column thats verticle"
+            //
+            // Everything above this line is the crown as ONE NODE that several
+            // bars share. A modelled vault rarely gives that: each principal
+            // line carries its own crown node and the crowns stand a fraction
+            // of a spacing apart, one holder each, so the owner rule of spec
+            // section 10 never runs and the extraction above never fires. The
+            // branch then runs from a flank foot a spacing and a half away, in
+            // plan, up into the middle of the form, and NOTHING STANDS UNDER
+            // THE CROWN AT ALL.
+            //
+            // The rule is the smallest one that covers both: a SHARED notch
+            // becomes a MEETING notch. Two free notches of different spans are
+            // CO-LOCATED within 0.25 * min(g_A, g_B), which is section 12's own
+            // feet-close clearance and not a new number, and two spans MEET
+            // when they have EXACTLY ONE co-located pair. The balance predicate
+            // that decides what is left over is the shipped one, unchanged.
+            {
+                // ARMS lines stopping SHORT of one another, each carrying its
+                // OWN crown a plan distance `gap` out along its own line, and
+                // anchored at its far end. NO NODE IS SHARED ANYWHERE, which
+                // is the whole difference from Meeting above: SharedNotches is
+                // zero on every one of these and the owner rule is silent.
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges)
+                    Nearly(int arms, int perArm, double reach, double rise, double gap, double load)
+                {
+                    Array nearNodes = Array.CreateInstance(point3d, arms * (perArm + 1));
+                    var nearBars = new int[arms][];
+                    var nearAnchors = new int[arms];
+                    var nearEdges = new List<(int, int)>();
+                    Array nearAcross = Array.CreateInstance(vector3d.MakeArrayType(), arms);
+                    for (int a = 0; a < arms; a++)
+                    {
+                        double angle = 2.0 * Math.PI * a / arms;
+                        var bar = new int[perArm + 1];
+                        Array barAcross = Array.CreateInstance(vector3d, perArm + 1);
+                        bar[0] = a * (perArm + 1);
+                        nearNodes.SetValue(P(gap * Math.Cos(angle), gap * Math.Sin(angle), rise), bar[0]);
+                        barAcross.SetValue(V(0.0, 0.0, -load), 0);
+                        for (int j = 1; j <= perArm; j++)
+                        {
+                            double s = (double)j / perArm;
+                            double r = gap + ((reach - gap) * s);
+                            int at = (a * (perArm + 1)) + j;
+                            nearNodes.SetValue(
+                                P(r * Math.Cos(angle), r * Math.Sin(angle), rise * (1.0 - (s * s))), at);
+                            bar[j] = at;
+                            barAcross.SetValue(V(0.0, 0.0, -load), j);
+                            nearEdges.Add((bar[j - 1], at));
+                        }
+                        nearBars[a] = bar;
+                        nearAnchors[a] = bar[perArm];
+                        nearAcross.SetValue(barAcross, a);
+                    }
+                    return (nearNodes, nearBars, nearAnchors, nearAcross, nearEdges.ToArray());
+                }
+
+                // Two PARALLEL ribs, one laid `offset` off the other in Y and
+                // each anchored at both ends, so that EVERY station of one
+                // faces a station of the other. This is the modelling slip the
+                // unique-meeting gate exists for and it must place no centre
+                // column at any offset.
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges)
+                    Ribs(int count, double length, double rise, double offset, double load)
+                {
+                    Array ribNodes = Array.CreateInstance(point3d, 2 * count);
+                    var ribBars = new int[2][];
+                    var ribAnchors = new List<int>();
+                    var ribEdges = new List<(int, int)>();
+                    Array ribAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+                    for (int b = 0; b < 2; b++)
+                    {
+                        var bar = new int[count];
+                        Array barAcross = Array.CreateInstance(vector3d, count);
+                        for (int i = 0; i < count; i++)
+                        {
+                            int at = (b * count) + i;
+                            double s = (double)i / (count - 1);
+                            ribNodes.SetValue(P(length * s, b * offset, rise * 4.0 * s * (1.0 - s)), at);
+                            bar[i] = at;
+                            barAcross.SetValue(V(0.0, 0.0, -load), i);
+                            if (i > 0)
+                                ribEdges.Add((bar[i - 1], at));
+                        }
+                        ribAnchors.Add(bar[0]);
+                        ribAnchors.Add(bar[count - 1]);
+                        ribBars[b] = bar;
+                        ribAcross.SetValue(barAcross, b);
+                    }
+                    return (ribNodes, ribBars, ribAnchors.ToArray(), ribAcross, ribEdges.ToArray());
+                }
+
+                // A T: a spine anchored both ends, and a stub running up to it
+                // and stopping `gap` short of the spine's station `at`. An
+                // INTERIOR meeting, where the un-owned notch can be the group's
+                // own MAIN, which is the one place the head main can move.
+                (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges)
+                    Tee(int count, int stub, double length, double rise, double gap, int at, double load)
+                {
+                    Array teeNodes = Array.CreateInstance(point3d, count + stub + 1);
+                    var teeBars = new int[2][];
+                    var teeAnchors = new List<int>();
+                    var teeEdges = new List<(int, int)>();
+                    Array teeAcross = Array.CreateInstance(vector3d.MakeArrayType(), 2);
+
+                    var spine = new int[count];
+                    Array spineAcross = Array.CreateInstance(vector3d, count);
+                    for (int i = 0; i < count; i++)
+                    {
+                        double s = (double)i / (count - 1);
+                        teeNodes.SetValue(P(length * s, 0.0, rise * 4.0 * s * (1.0 - s)), i);
+                        spine[i] = i;
+                        spineAcross.SetValue(V(0.0, 0.0, -load), i);
+                        if (i > 0)
+                            teeEdges.Add((spine[i - 1], i));
+                    }
+                    teeAnchors.Add(spine[0]);
+                    teeAnchors.Add(spine[count - 1]);
+                    teeBars[0] = spine;
+                    teeAcross.SetValue(spineAcross, 0);
+
+                    object target = teeNodes.GetValue(spine[at])!;
+                    var arm = new int[stub + 1];
+                    Array armAcross = Array.CreateInstance(vector3d, stub + 1);
+                    for (int j = 0; j <= stub; j++)
+                    {
+                        double t = (double)j / stub;
+                        int node = count + j;
+                        teeNodes.SetValue(
+                            P(X(target), Y(target) + gap + (length * 0.5 * t), Z(target) * (1.0 - (t * t))), node);
+                        arm[j] = node;
+                        armAcross.SetValue(V(0.0, 0.0, -load), j);
+                        if (j > 0)
+                            teeEdges.Add((arm[j - 1], node));
+                    }
+                    teeAnchors.Add(arm[stub]);
+                    teeBars[1] = arm;
+                    teeAcross.SetValue(armAcross, 1);
+
+                    return (teeNodes, teeBars, teeAnchors.ToArray(), teeAcross, teeEdges.ToArray());
+                }
+
+                // Owned notches attributed to the SIDE that builds them, with
+                // every tree that has NO SPAN counted APART. That is the whole
+                // distinction: a centre column is a station of no row.
+                (int[] PerBar, int Apart) OwnedApart(object placed, int barCount)
+                {
+                    var placedTrees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    var perBar = new int[barCount];
+                    int apart = 0;
+                    foreach (object t in placedTrees)
+                    {
+                        int owns = Get<bool[]>(t, "Owned").Count(o => o);
+                        if (owns == 0)
+                            continue;
+                        int bar = Get<int>(t, "Bar");
+                        if (Get<int>(t, "Span") < 0 || bar < 0 || bar >= barCount)
+                            apart += owns;
+                        else
+                            perBar[bar] += owns;
+                    }
+                    return (perBar, apart);
+                }
+
+                // (c) THE CROWN PARAM ACTUALLY SEES. Two arms is the arch he
+                // photographed and three the vault he names next; an odd and an
+                // even notch count each, because the ladder differs. The gap is
+                // a TENTH of the reach's tenth, well inside 0.25 * g on every
+                // one of these, and the co-location arithmetic is checked at
+                // the boundary by (d) below rather than assumed here.
+                const double Gap = 0.1;
+                foreach (int arms in new[] { 2, 3 })
+                {
+                    foreach (int perArm in new[] { 5, 4 })
+                    {
+                        foreach (int branching in new[] { 1, 2, 3 })
+                        {
+                            foreach (int type in new[] { 0, 1, 2, 3, 4 })
+                            {
+                                var vault = Nearly(arms, perArm, 6.0, 3.0, Gap, 1.0);
+                                object placed = Run(vault, Array.Empty<int[]>(), branching, type);
+                                var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                                int[] crowns = Enumerable.Range(0, arms).Select(a => vault.Bars[a][0]).ToArray();
+                                int[] heads = HeadsAt(placed, vault.Nodes, vault.Anchors);
+                                string where = $"{arms} arms of {perArm} stopping {Gap} short, Branching {branching}, Type {type}";
+
+                                if (Get<int>(placed, "SharedNotches") != 0)
+                                    throw new InvalidOperationException(
+                                        $"{where}: no two arms share a node on this form, which is the whole point of it; the engine counted {Get<int>(placed, "SharedNotches")} shared notches and the owner rule of section 10 would be doing the work instead of the meeting rule.");
+
+                                // ONE COLUMN HEAD PER CROWN, and every other
+                                // free notch keeps its own.
+                                foreach (int crown in crowns)
+                                {
+                                    if (heads[crown] != 1)
+                                        throw new InvalidOperationException(
+                                            $"{where}: each arm's crown carries EXACTLY ONE column head, whoever builds it; {heads[crown]} members end at the crown of an arm.");
+                                }
+                                if (heads.Sum() != arms * perArm)
+                                    throw new InvalidOperationException(
+                                        $"{where}: every free notch carries one head and no node is shared, so {arms} arms of {perArm} build {arms * perArm} in all; {heads.Sum()} were built.");
+
+                                (int[] perBar, int apart) = OwnedApart(placed, arms);
+                                if (perBar.Sum() + apart != heads.Sum())
+                                    throw new InvalidOperationException(
+                                        $"{where}: the trees claim {perBar.Sum() + apart} owned notches and the level built {heads.Sum()} heads. Owned is the engine's own statement of what it builds and the two may not drift apart.");
+
+                                int extracted = Get<int>(placed, "CentresExtracted");
+                                if (extracted != (branching == 1 ? 0 : 1))
+                                    throw new InvalidOperationException(
+                                        $"{where}: the crowns are left over at Branching 2 and 3 and NOT at Branching 1, where the ladder already stands each of them alone; CentresExtracted is {extracted}. It counts COLUMNS, so the arms' crowns meeting once take ONE between them however many arms there are.");
+
+                                // EQUAL BRANCH COUNTS PER SIDE, which is the
+                                // count Param measures with his eye and the
+                                // whole complaint of the ruling.
+                                if (perBar.Distinct().Count() != 1)
+                                    throw new InvalidOperationException(
+                                        $"{where}: EVERY SIDE OF A MIRROR-SYMMETRIC FORM BUILDS THE SAME NUMBER OF BRANCHES; the arms built [{string.Join(", ", perBar)}].");
+                                int ownPerArm = perArm - (branching == 1 ? 0 : 1);
+                                if (perBar[0] != ownPerArm || apart != (branching == 1 ? 0 : arms))
+                                    throw new InvalidOperationException(
+                                        $"{where}: with the crowns standing together on one column of their own each arm builds to its {ownPerArm} remaining notches and no more, and the {(branching == 1 ? 0 : arms)} crowns stand apart; it built {perBar[0]} per arm with {apart} apart.");
+
+                                // THE RULE ITSELF, stated rather than inferred:
+                                // NO TREE REACHES BOTH ACROSS ITS OWN FLANK AND
+                                // INTO THE CROWN. At Branching 1 every tree
+                                // holds one notch, so no tree reaches across
+                                // anything and the crown standing alone is the
+                                // ladder's own doing, untouched here.
+                                foreach (object t in trees)
+                                {
+                                    if (Get<int>(t, "Span") < 0)
+                                        continue;
+                                    int[] treeNodes = Get<int[]>(t, "Nodes");
+                                    bool[] owned = Get<bool[]>(t, "Owned");
+                                    if (owned.Count(o => o) <= 1)
+                                        continue;
+                                    for (int k = 0; k < treeNodes.Length; k++)
+                                    {
+                                        if (owned[k] && crowns.Contains(treeNodes[k]))
+                                            throw new InvalidOperationException(
+                                                $"{where}: the tree on bar {Get<int>(t, "Bar")} owns a CROWN together with {owned.Count(o => o) - 1} notches of its own flank, so a branch runs from that flank's foot into the middle of the form. Param's ruling of 2026-09-02: the branching ignores the centre and the centre takes a column of its own.");
+                                    }
+                                }
+
+                                // THE LOAD IS MOVED, NEVER CREATED OR DESTROYED.
+                                // Every notch here is held by ONE bar, crowns
+                                // included, so each carries its declared unit
+                                // and the total is the notch count whatever the
+                                // extraction does with it.
+                                double carried = trees.Sum(t => Get<double[]>(t, "Load").Sum());
+                                if (Math.Abs(carried - (arms * perArm)) > 1.0e-9)
+                                    throw new InvalidOperationException(
+                                        $"{where}: {arms * perArm} notches each pulled by one unit carry {arms * perArm} in all; the trees carry {carried:0.####}. The centre column MOVES the term off the annexing tree and nothing is created or destroyed.");
+
+                                if (extracted == 0)
+                                    continue;
+
+                                // THE COLUMN ITSELF: one tree, no bar, no span,
+                                // holding EVERY crown and owning all of them.
+                                object centreTree = trees.Single(
+                                    t => Get<int>(t, "Span") < 0 && !Get<bool>(t, "Ring"));
+                                int[] centreNodes = Get<int[]>(centreTree, "Nodes");
+                                if (centreNodes.Length != arms || !crowns.All(c => centreNodes.Contains(c))
+                                    || Get<bool[]>(centreTree, "Owned").Any(o => !o)
+                                    || Get<int>(centreTree, "Bar") >= 0)
+                                    throw new InvalidOperationException(
+                                        $"{where}: the crowns of all {arms} arms are ONE crown and stand on ONE column, on no bar and in no span's row; that column holds [{string.Join(", ", centreNodes)}]. Filing it under an arm's span would flip that row's parity and fire the central-pair merge, moving two feet Param has ruled must not move.");
+
+                                // AND THE CROWN STAYS IN ITS OWN GROUP'S NODES,
+                                // UN-OWNED. That is the mechanism by which NO
+                                // FOOT MOVES: a group's foot is a function of
+                                // the notch POSITIONS it lists and never of who
+                                // owns them, so dropping the crown from the row
+                                // instead would move the flank feet Param's
+                                // earlier ruling froze.
+                                foreach (int crown in crowns)
+                                {
+                                    object holder = trees.Single(
+                                        t => Get<int>(t, "Span") >= 0 && Get<int[]>(t, "Nodes").Contains(crown));
+                                    int at = Array.IndexOf(Get<int[]>(holder, "Nodes"), crown);
+                                    if (Get<bool[]>(holder, "Owned")[at])
+                                        throw new InvalidOperationException(
+                                            $"{where}: the crown left over is still LISTED by the group that would have annexed it, and un-owned. Its tree owns it instead, and that group's foot is a function of the notches it lists.");
+                                }
+
+                                // ITS FOOT STANDS ON THE FORM'S OWN AXIS, which
+                                // is the plan MEAN of the crowns, at every Type,
+                                // and it is the only foot there.
+                                object builtLevel = Get<object>(placed, "Built");
+                                var builtNodes = ((IEnumerable)Get<object>(builtLevel, "Nodes")).Cast<object>().ToArray();
+                                var onAxis = ((IEnumerable)Get<object>(builtLevel, "Feet")).Cast<int>()
+                                    .Where(f => Math.Abs(X(builtNodes[f])) < 1.0e-9 && Math.Abs(Y(builtNodes[f])) < 1.0e-9)
+                                    .ToArray();
+                                if (onAxis.Length != 1)
+                                    throw new InvalidOperationException(
+                                        $"{where}: the centre column stands on ONE foot on the form's own axis, the plan MEAN of the crowns and not one crown or a bounding-box centre; {onAxis.Length} feet are there.");
+
+                                // AND IT STANDS AS PLUMB AS THE CROWNS ALLOW.
+                                // BE CLEAR WHAT THIS SAYS. The fork lies on the
+                                // segment from the foot to the head main (spec
+                                // 3.6) and the head main is a crown, so a column
+                                // gathering crowns that stand `Gap` off the axis
+                                // leans by that much and no more: EVERY node of
+                                // it, foot, fork and heads alike, is within the
+                                // crowns' own scatter of the axis. Where the
+                                // crowns coincide, which is the shared-node case
+                                // above, that scatter is zero and the column is
+                                // exactly plumb. What this refuses is the column
+                                // being leant into a SIDE, which is what an aim
+                                // taken from an arm's resultant would do and what
+                                // Param is asking against.
+                                int centreIndex = Array.IndexOf(trees, centreTree);
+                                var memberTree = Get<List<int>>(builtLevel, "MemberTree");
+                                (int Lower, int Upper)[] built = MembersOf(builtLevel);
+                                int centreMembers = 0;
+                                for (int m = 0; m < built.Length; m++)
+                                {
+                                    if (memberTree[m] != centreIndex)
+                                        continue;
+                                    centreMembers++;
+                                    foreach (int end in new[] { built[m].Lower, built[m].Upper })
+                                    {
+                                        double plan = Math.Sqrt(
+                                            (X(builtNodes[end]) * X(builtNodes[end]))
+                                            + (Y(builtNodes[end]) * Y(builtNodes[end])));
+                                        if (plan > Gap + 1.0e-9)
+                                            throw new InvalidOperationException(
+                                                $"{where}: a node of the centre column stands {plan:0.####} off the axis in plan, further than the {Gap} the crowns themselves stand off it. The column is vertical but for the crowns' own scatter; it is never leant into a side.");
+                                    }
+                                }
+                                if (centreMembers != arms + 1)
+                                    throw new InvalidOperationException(
+                                        $"{where}: the centre column is a trunk and one branch per crown, {arms + 1} members; it built {centreMembers}.");
+                            }
+                        }
+                    }
+                }
+
+                // (d) THE UNIQUE-MEETING GATE, and it is the whole safety of
+                // the rule. Two parallel ribs a fifth of a spacing apart are a
+                // modelling slip and not a crown, and they co-locate at EVERY
+                // station: MEASURED, with the gate taken out and every
+                // co-located pair allowed to meet, this fixture fires EIGHT
+                // centre columns over sixteen notches at Branching 2 and both
+                // ribs lose nearly every branch to them. Eleven nodes anchored
+                // at both ends give nine free
+                // notches over a chord of ten, so g is exactly 1.25 and the
+                // co-location clearance 0.3125; offsets from four fifths of a
+                // spacing down to a twentieth of one are all well inside it and
+                // ALL must fire nothing.
+                foreach (double offset in new[] { 1.0, 0.5, 0.3, 0.24, 0.1, 0.05 })
+                {
+                    foreach (int branching in new[] { 1, 2, 3 })
+                    {
+                        foreach (int type in new[] { 0, 2, 4 })
+                        {
+                            var ribs = Ribs(11, 10.0, 3.0, offset, 1.0);
+                            object placed = Run(ribs, Array.Empty<int[]>(), branching, type);
+                            int extracted = Get<int>(placed, "CentresExtracted");
+                            if (extracted != 0)
+                                throw new InvalidOperationException(
+                                    $"Two parallel ribs {offset} apart, Branching {branching}, Type {type}: ribs that face one another at EVERY station MEET NOWHERE. Two spans meet only where they have EXACTLY ONE co-located pair, and without that gate this pair strips both ribs of their branching, eight columns over sixteen notches; {extracted} centre columns were placed.");
+                            int[] heads = HeadsAt(placed, ribs.Nodes, ribs.Anchors);
+                            if (heads.Sum() != 18)
+                                throw new InvalidOperationException(
+                                    $"Two parallel ribs {offset} apart, Branching {branching}, Type {type}: nine free notches a rib, each carrying one head, is eighteen; {heads.Sum()} were built.");
+                        }
+                    }
+                }
+
+                // (e) AN INTERIOR MEETING, AND WHAT IT DOES TO THE HEAD MAIN.
+                // THE ONE RIPPLE OF UN-OWNING A NOTCH, pinned here because it
+                // is a CHOICE and not a discovery. A tree's head main is its
+                // innermost OWNED notch, so un-owning one moves it whenever the
+                // notch un-owned was that innermost one. At a crown it never
+                // is: the crown is the OUTERMOST notch of an end group and the
+                // main is the one nearest the row centre, so the head main
+                // there is exactly where it was, and (c) above holds it.
+                //
+                // In the middle of a span it can be. A spine of eleven nodes
+                // anchored both ends has nine free notches; at Branching 2 the
+                // ladder gives sizes 2, 2, 1, 2, 2 and the main of the first
+                // group is its INNER notch, free index 1, the spine's station 2.
+                // A stub stopping short of THAT station un-owns a group's own
+                // main, and the head main moves OUTWARD to the notch the tree
+                // still owns. THE TREE KEEPS ITS FOOT AND ITS OTHER NOTCH; only
+                // the top of its trunk moves, from the notch it no longer
+                // builds to, to the one it does. That is the answer chosen.
+                {
+                    var tee = Tee(11, 4, 10.0, 3.0, 0.15, 2, 1.0);
+                    object placed = Run(tee, Array.Empty<int[]>(), 2, 2);
+                    var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    if (Get<int>(placed, "CentresExtracted") != 1 || Get<int>(placed, "SharedNotches") != 0)
+                        throw new InvalidOperationException(
+                            $"A stub stopping 0.15 short of the spine's station 2 is a meeting of two spans and nothing is shared; CentresExtracted is {Get<int>(placed, "CentresExtracted")} and SharedNotches {Get<int>(placed, "SharedNotches")}.");
+
+                    // The spine tree that held the meeting notch as its MAIN.
+                    // Node 2 is the spine's station 2 and Nodes[0] of its group.
+                    object held = trees.Single(
+                        t => Get<int>(t, "Span") >= 0 && Get<int[]>(t, "Nodes").Length > 0
+                            && Get<int[]>(t, "Nodes")[0] == 2);
+                    bool[] heldOwned = Get<bool[]>(held, "Owned");
+                    if (heldOwned[0] || Get<int[]>(held, "Nodes").Length != 2 || !heldOwned[1])
+                        throw new InvalidOperationException(
+                            $"The group whose MAIN is the meeting notch keeps both notches listed, un-owns the main and owns the other; it reads [{string.Join(", ", heldOwned.Select(o => o ? 1 : 0))}] over [{string.Join(", ", Get<int[]>(held, "Nodes"))}].");
+                    if (Get<int>(held, "HeadMain") != 1)
+                        throw new InvalidOperationException(
+                            $"Un-owning a group's own main MOVES ITS HEAD MAIN outward to the notch it still owns, so the trunk tops out there and the fork cannot be left pointing at a notch this tree no longer builds to; HeadMain is {Get<int>(held, "HeadMain")}, not 1.");
+                    if (Math.Abs(Get<double[]>(held, "Load")[0]) > 1.0e-12
+                        || Math.Abs(Get<double[]>(held, "Load")[1] - 1.0) > 1.0e-12)
+                        throw new InvalidOperationException(
+                            $"The un-owned main's whole term LEFT this tree and its own notch's stayed; the loads read [{string.Join(", ", Get<double[]>(held, "Load"))}].");
+
+                    // And nothing was lost anywhere: eleven spine nodes less two
+                    // anchors is nine, five stub nodes less one anchor is four,
+                    // and every one of the thirteen carries a head and a unit.
+                    int[] heads = HeadsAt(placed, tee.Nodes, tee.Anchors);
+                    double carried = trees.Sum(t => Get<double[]>(t, "Load").Sum());
+                    if (heads.Sum() != 13 || Math.Abs(carried - 13.0) > 1.0e-9)
+                        throw new InvalidOperationException(
+                            $"Thirteen free notches carry thirteen heads and thirteen units through an interior meeting; {heads.Sum()} heads and {carried:0.####} carried.");
+
+                    Console.WriteLine(
+                        $"      Arms stopping short of a crown, Branching 2: the crowns take ONE column between them and the head main moves only where the un-owned notch WAS the group's main.");
+                }
+            }
         }
 
         // ---- The segment distance, the primitive under the member rule.
