@@ -965,14 +965,20 @@ internal static class Program
                 "Gaussian curvature forces sit ONLY at count-change rows " +
                 "and every count-change row carries one, both directions " +
                 "asserted on the dome, the two-oculus net and (for the " +
-                "converse's own drop-free half) the gentle wedge; a " +
-                "closed row's odd-cell count is EVEN, a pentagon or " +
-                "heptagon always cancelling in pairs round the loop " +
-                "(a deliberate substitution for rule 4.3.2's own meridian " +
-                "claim, which does not hold as the engine is built; " +
-                "deviation recorded in progress.md); and the two-oculus " +
-                "fixture's AFTER withheld count is reported against Task " +
-                "13's own BEFORE.");
+                "converse's own drop-free half) the gentle wedge; rule " +
+                "4.3.2's placement is asserted on a CLOSED row and on an " +
+                "OPEN STRIP alike, by a measured substitute on each half " +
+                "because NEITHER of the rule's literal claims holds as the " +
+                "engine is built (both deviations recorded in progress.md): " +
+                "a closed row's odd-cell count is EVEN, a pentagon or " +
+                "heptagon always cancelling in pairs round the loop, and an " +
+                "open strip's odd cells sit at a CONSTANT stride of the " +
+                "row's own length over their count, which is where two " +
+                "column grids anchored at the same two ends must beat, " +
+                "measured on the shallow taper whose count-change row " +
+                "carries two odd cells among four and so can tell one " +
+                "placement from another; and the two-oculus fixture's AFTER " +
+                "withheld count is reported against Task 13's own BEFORE.");
         }
         catch (Exception exception)
         {
@@ -15927,6 +15933,55 @@ internal static class Program
     }
 
     /// <summary>
+    /// A SHALLOWER, WIDER open strip on the same tilted plane z = y: four
+    /// levels of widths 19.5, 18, 16.5 and 15 at y (and so z) 0, 2, 4 and 6,
+    /// each level drawn at twenty segments so the trace has something to
+    /// walk. It exists for one reason the gentle wedge cannot serve.
+    ///
+    /// The gentle wedge's one open count-change row carries TWO cells and
+    /// BOTH are odd, so every placement claim anyone could make about it is
+    /// true by arithmetic: in a row of two, every cell is at an end, every
+    /// pair is contiguous, and every pair is evenly spaced. It cannot
+    /// discriminate a placement rule from its own negation. This strip can.
+    ///
+    /// At S 3.0, CH 2.0 the centre counts are rule 4.2.2's max(1, round(L /
+    /// 1.5 S)): 4, 4, 4 and 3. Course 2 is therefore the count-change row,
+    /// and it comes back as FOUR cells whose setout corners run 6, 5, 6, 5
+    /// in normalised arc order, with PlanDegenerateDropped and
+    /// PlanOverlapDropped both zero, so nothing here is hidden behind a
+    /// plan-validity drop. Twelve cells in all, four to a course.
+    ///
+    /// Those odd cells sit at ranks 1 and 3 of 4: NEITHER of them within a
+    /// column of an end, which is what check 12.4(e)'s open-strip half
+    /// measures, and what the deviation in progress.md records.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinShallowTaperNet()
+    {
+        double[] widths = { 19.5, 18.0, 16.5, 15.0 };
+        var vertices = new List<double[]>();
+        for (int j = 0; j < widths.Length; j++)
+        {
+            double y = j * 2.0;
+            double width = widths[j];
+            for (int i = 0; i <= 20; i++)
+                vertices.Add(new[]
+                {
+                    3.0 - width / 2.0 + i * (width / 20.0), y, y
+                });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < widths.Length - 1; j++)
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                int a = j * 21 + i;
+                faces.Add(new[] { a, a + 1, a + 22, a + 21 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
     /// A flat rectangular plate, x 0 to 10 and y 0 to 4 at a 0.25 m pitch,
     /// z = 0 throughout, with the y = 0 long edge as its rim. Check 12.1(b)
     /// measures the field on it against the perpendicular distance, which
@@ -21340,12 +21395,20 @@ internal static class Program
         }
 
         // 12.4(d) and 12.4(e): the odd cells exist, sit ONLY where the
-        // CENTRE count changes, and are placed at the meridian opposite the
-        // seam on a closed row or at the ends on an open strip. BOTH
-        // DIRECTIONS of rule 4.3.1 are asserted, and 4.3.2 is asserted at
-        // all: a block that only asked "some odd cells and some change rows
-        // exist" would go green against an engine that scattered pentagons
-        // anywhere it liked, which is the one failure this pair exists for.
+        // CENTRE count changes, and are PLACED rather than scattered. BOTH
+        // DIRECTIONS of rule 4.3.1 are asserted, and rule 4.3.2 is asserted
+        // on BOTH a closed row and an OPEN STRIP: a block that only asked
+        // "some odd cells and some change rows exist" would go green against
+        // an engine that scattered pentagons anywhere it liked, which is the
+        // one failure this pair exists for.
+        //
+        // NEITHER of 4.3.2's two literal placement claims survived
+        // measurement, and NEITHER half is skipped for it. Both were tried
+        // literally first, both measured false against the shipped engine,
+        // and each is replaced by a measured claim of its own on the same
+        // rows, with the numbers recorded in progress.md under
+        // "## Deviations". The substitutes are stated at the placement loop
+        // below rather than here, beside the measurement each rests on.
         //
         // CORNERS HERE MEANS SETOUT CORNERS and not the trace vertices the
         // two horizontal edges carry, so the count is taken off the record's
@@ -21368,11 +21431,17 @@ internal static class Program
                 "must not be filtered (rule 4.3).");
         }
         // The dome and the two-oculus fixture, both, as 12.4(d) names them,
-        // plus the gentle wedge (see SkinGentleWedgeNet), which is what
-        // lets the converse's "carries no odd cell" half actually run: the
-        // dome and the two-oculus net both drop cells, which is enough on
-        // its own to hide a genuine odd cell and is why that half is
-        // skipped wherever a build reports any drop at all (below).
+        // plus two OPEN strips. The gentle wedge (see SkinGentleWedgeNet)
+        // is what lets the converse's "carries no odd cell" half actually
+        // run: the dome and the two-oculus net both drop cells, which is
+        // enough on its own to hide a genuine odd cell and is why that half
+        // is skipped wherever a build reports any drop at all (below). The
+        // shallow taper (see SkinShallowTaperNet) is what lets 12.4(e)'s
+        // OPEN-STRIP half say anything: the wedge's open count-change row
+        // holds two cells and both are odd, so no placement claim about it
+        // can discriminate, while the taper's holds four of which two are.
+        // Every closed row in this loop comes off the dome and the
+        // two-oculus net; every open row comes off these two.
         (double[][] oculusForOdd, int[][] oculusFacesForOdd, int[] _unusedRim) =
             SkinTwoOculusNet();
         object oculusForOddNet = Activator.CreateInstance(
@@ -21384,11 +21453,17 @@ internal static class Program
             netType, new object[] { wedgeVertices, wedgeFaces })!;
         object wedgeBuilt = hexagonal.Invoke(
             null, new object[] { wedgeNet, 3.0, 2.0 })!;
+        (double[][] taperVertices, int[][] taperFaces) = SkinShallowTaperNet();
+        object taperNet = Activator.CreateInstance(
+            netType, new object[] { taperVertices, taperFaces })!;
+        object taperBuilt = hexagonal.Invoke(
+            null, new object[] { taperNet, 3.0, 2.0 })!;
         foreach ((object built, string label) fixture in new[]
                  {
                      (domeBuilt, "dome"),
                      (oculusOddBuilt, "two-oculus"),
-                     (wedgeBuilt, "wedge")
+                     (wedgeBuilt, "wedge"),
+                     (taperBuilt, "shallow taper")
                  })
         {
             var here = SkinCells(fixture.built);
@@ -21487,7 +21562,9 @@ internal static class Program
                 }
             }
             // 12.4(e), PLACEMENT (rule 4.3.2), DEVIATION recorded in
-            // progress.md. Tried literally first: rule 4.3.2's own claim
+            // progress.md, in BOTH halves.
+            //
+            // THE CLOSED-ROW HALF. Tried literally first: rule 4.3.2's own claim
             // that the odd cell sits within one column of the meridian
             // opposite the seam. Measured false on the dome: course 1's
             // four odd cells sit at normalised 0.2187, 0.3125, 0.8750 and
@@ -21506,19 +21583,99 @@ internal static class Program
             // not close back onto itself; the odd-cell count per closed
             // row is EVEN. Measured on every closed course of both
             // fixtures.
+            //
+            // THE OPEN-STRIP HALF, which is the OTHER half of rule 4.3.2
+            // and was for one revision of this file dropped rather than
+            // deviated: the loop below used to `continue` on every open
+            // row, so no open strip reached any placement assertion at
+            // all while the comment above still claimed it did. Tried
+            // literally first, on the shallow taper (SkinShallowTaperNet,
+            // a drop-free open strip whose count-change course 2 holds
+            // four cells): rule 4.3.2's claim that an open strip's odd
+            // cell sits AT AN END measured FALSE. Its two odd cells come
+            // back at ranks 1 and 3 of 4 in normalised arc order, corner
+            // counts 6, 5, 6, 5, so neither is within a column of either
+            // end. A wider strip says the same more loudly: at widths
+            // 37.5, 36, 34.5 and 33 the same course reads 6, 6, 7, 6, 6,
+            // 6, 7, 6, odd at ranks 2 and 6 of 8. There is no closer at
+            // an end because the engine never places one: an open strip's
+            // odd cells are where two uniform column grids beat against
+            // each other, and the ends are where the two grids AGREE.
+            //
+            // What DOES hold on an open strip, and is the substitute
+            // asserted here, follows from that beat. Both rows of an open
+            // strip are parameterised from the strip's own start, and
+            // rule 4.2.2 divides each into its own uniform column count,
+            // so the phase between the two grids is LINEAR in normalised
+            // arc. A mismatch falls exactly where that linear phase
+            // crosses a whole column, and equally spaced crossings of a
+            // straight line are equally spaced: the odd cells of an open
+            // row sit at a CONSTANT STRIDE of the row's own length over
+            // their own count. That is the claim an engine scattering
+            // pentagons breaks and the wedge alone cannot test, since a
+            // row of two cells is evenly spaced whatever it holds. It is
+            // NOT asserted on a closed row, and the measurement says why:
+            // a closed row's seam propagates independently from the row
+            // below (see the dome numbers above), the two grids are not
+            // anchored together, and the dome's own closed course 0 reads
+            // odd at ranks 3, 4, 10 and 11 of 14, strides 1, 6 and 1.
             foreach (int course in here.Select(cell => cell.Course).Distinct())
             {
-                if (!SkinRowIsClosed(fixture.built, course))
-                    continue;
                 int oddHereCount = odd.Count(at => here[at].Course == course);
-                if (oddHereCount % 2 != 0)
+                if (SkinRowIsClosed(fixture.built, course))
+                {
+                    if (oddHereCount % 2 != 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"On the {fixture.label} closed course {course} " +
+                            $"carries {oddHereCount} odd cells, an ODD " +
+                            "total; a pentagon or heptagon transition round " +
+                            "a closed loop always cancels in pairs (rule " +
+                            "4.3.2), so the count must be even.");
+                    }
+                    continue;
+                }
+                if (oddHereCount == 0)
+                    continue;
+                var row = here.Where(cell => cell.Course == course)
+                    .OrderBy(cell => (cell.U0 + cell.U1) / 2.0)
+                    .ToArray();
+                int[] ranks = Enumerable.Range(0, row.Length)
+                    .Where(rank => odd.Any(at =>
+                        here[at].Course == course &&
+                        Math.Abs(here[at].U0 - row[rank].U0) <= 1.0e-12 &&
+                        Math.Abs(here[at].U1 - row[rank].U1) <= 1.0e-12))
+                    .ToArray();
+                string reading = string.Join(
+                    ", ", row.Select((_, rank) => ranks.Contains(rank)
+                        ? "odd"
+                        : "six"));
+                if (row.Length % ranks.Length != 0)
                 {
                     throw new InvalidOperationException(
-                        $"On the {fixture.label} closed course {course} " +
-                        $"carries {oddHereCount} odd cells, an ODD total; " +
-                        "a pentagon or heptagon transition round a closed " +
-                        "loop always cancels in pairs (rule 4.3.2), so the " +
-                        "count must be even.");
+                        $"On the {fixture.label} OPEN course {course} the " +
+                        $"{ranks.Length} odd cells cannot divide the row's " +
+                        $"{row.Length} evenly, so they cannot be on the beat " +
+                        "between the two column grids at all (rule 4.3.2, " +
+                        $"open-strip half). The row reads {reading}.");
+                }
+                int stride = row.Length / ranks.Length;
+                for (int which = 0; which + 1 < ranks.Length; which++)
+                {
+                    if (ranks[which + 1] - ranks[which] != stride)
+                    {
+                        throw new InvalidOperationException(
+                            $"On the {fixture.label} OPEN course {course} " +
+                            "consecutive odd cells sit " +
+                            $"{ranks[which + 1] - ranks[which]} cells apart " +
+                            $"at ranks {ranks[which]} and {ranks[which + 1]}, " +
+                            $"not the {stride} the row's {row.Length} cells " +
+                            $"over its {ranks.Length} odd ones ask for. An " +
+                            "open strip's two column grids are both anchored " +
+                            "at its ends and beat at a CONSTANT stride, so " +
+                            "odd cells at an irregular one are scattered and " +
+                            $"not placed (rule 4.3.2). The row reads {reading}.");
+                    }
                 }
             }
         }
