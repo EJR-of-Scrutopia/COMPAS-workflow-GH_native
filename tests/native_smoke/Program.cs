@@ -1101,6 +1101,24 @@ internal static class Program
 
         try
         {
+            ValidateSkinLineField(plugin);
+            Console.WriteLine(
+                "PASS  Skin line field (check 12.3(a)): on a barrel " +
+                "carrying 1 kN along and 0.1 kN across, SkinFlowField's " +
+                "native directions lie along the barrel's own generators " +
+                "to within 5 degrees at every face; with the force list " +
+                "removed the same net's field falls to the (1, 0) default " +
+                "of rule 3.2.8 everywhere and the component does not " +
+                "throw.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin line field: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -22668,6 +22686,65 @@ internal static class Program
                 "seam then sits off the +X bearing, and the worst bearing " +
                 $"here is {worst} rad against a vertex spacing of " +
                 "2 pi / 96 = 0.065 rad.");
+        }
+    }
+
+    /// <summary>
+    /// Check 12.3(a). The native line field on a BARREL, where the thrust
+    /// runs one way everywhere, gives directions that agree with the
+    /// barrel's own generators to within 5 degrees at every face. THE
+    /// FIXTURE MUST CARRY FORCES: every edge running along the barrel
+    /// carries a compression of 1 kN and every edge across it 0.1 kN, which
+    /// is a one-way thrust stated as data rather than assumed. On the SAME
+    /// barrel with its force list removed the field falls to the (1, 0)
+    /// default of rule 3.2.8 on every face and the component does not throw.
+    /// The author must be able to tell a straight flow line from a defaulted
+    /// one, and running the fixture both ways is what makes that
+    /// distinction exist.
+    /// </summary>
+    private static void ValidateSkinLineField(Assembly plugin)
+    {
+        Type field = RequireComponentType(plugin, "SkinFlowField");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo directions = RequirePublicStatic(field, "Directions");
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object forced = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinBarrelRim(),
+            SkinBarrelForces());
+        var withForce = ((IEnumerable)directions.Invoke(
+                null, new[] { forced })!)
+            .Cast<double[]>()
+            .ToArray();
+        foreach (double[] direction in withForce)
+        {
+            // The barrel runs along x, so the generator is (1, 0, 0) and a
+            // LINE field has no sign: the angle is taken to the nearer end.
+            double along = Math.Abs(direction[0]);
+            double angle = Math.Acos(Math.Min(1.0, along)) * 180.0 / Math.PI;
+            if (angle > 5.0)
+            {
+                throw new InvalidOperationException(
+                    "Under rule 3.2.7 a barrel carrying 1 kN along and " +
+                    "0.1 kN across lies along its own generators " +
+                    $"everywhere, to within 5 degrees; got {angle} degrees. " +
+                    "If it does not, the arithmetic of rules 3.2.5 to 3.2.9 " +
+                    "was built wrong.");
+            }
+        }
+        object bare = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        var defaulted = ((IEnumerable)directions.Invoke(null, new[] { bare })!)
+            .Cast<double[]>()
+            .ToArray();
+        if (defaulted.Length != withForce.Length)
+        {
+            throw new InvalidOperationException(
+                "A net carrying NO force edges at all is not an error: " +
+                "every face takes the (1, 0) default of rule 3.2.8, which " +
+                "is its own e1, and the diagnostics say so rather than " +
+                "leaving the author to wonder why his flow lines came out " +
+                "straight (rule 1.3.6).");
         }
     }
 
