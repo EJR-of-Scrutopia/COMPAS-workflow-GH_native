@@ -1943,7 +1943,8 @@ internal static class SkinPatterns
     /// so an argued guarantee is worth nothing at the sidecar.
     ///
     /// The rule, run in EMISSION ORDER over the sorted cells, which is
-    /// the order the component hands out and the studio builds in:
+    /// the order the component hands out and the overlap filter reads,
+    /// not the studio's own build sequence:
     /// drop a cell whose plan projection self-crosses, then drop a cell
     /// whose plan projection overlaps a cell that has ALREADY SURVIVED.
     /// Each kind is counted, both counts reach the diagnostics as their
