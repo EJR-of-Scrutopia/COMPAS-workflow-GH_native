@@ -953,17 +953,26 @@ internal static class Program
         {
             ValidateSkinHexagonal(plugin);
             Console.WriteLine(
-                "PASS  Skin hexagonal engine: the barrel's honeycomb is " +
-                "pinned at 76 cells with 36 clipped rim cells KEPT, an " +
-                "interior cell carries the stated six vertex offsets in " +
-                "order, lattice neighbours share mapped corners, course " +
-                "indices follow the centre bands on unclipped and " +
-                "clipped cells alike, membership measures u against the " +
-                "candidate's OWN centre-row curve, and the plans are " +
-                "disjoint and simple on the barrel, on the shallow " +
-                "shell and on the dome at CH 0.2 and 0.5, the dome's " +
-                "0.35 and 0.8 being a pre-existing crown breach the " +
-                "check names rather than asserts.");
+                "PASS  Skin hexagonal engine: the lattice is laid in each " +
+                "row's own normalised arc (rule 4.2.2), so the barrel's " +
+                "honeycomb is RE-PINNED at 84 cells with 6 clipped, every " +
+                "row taking the same centre and column count and the same " +
+                "pitch to within one rounding step of 0.75 S, and " +
+                "RequireNothingDropped holds there; a closed row's " +
+                "surviving column gaps are whole multiples of the row's " +
+                "own base unit rather than a fractional leftover at the " +
+                "seam; no cell swallows a whole crown row; the odd cells " +
+                "Gaussian curvature forces sit ONLY at count-change rows " +
+                "and every count-change row carries one, both directions " +
+                "asserted on the dome, the two-oculus net and (for the " +
+                "converse's own drop-free half) the gentle wedge; a " +
+                "closed row's odd-cell count is EVEN, a pentagon or " +
+                "heptagon always cancelling in pairs round the loop " +
+                "(a deliberate substitution for rule 4.3.2's own meridian " +
+                "claim, which does not hold as the engine is built; " +
+                "deviation recorded in progress.md); and the two-oculus " +
+                "fixture's AFTER withheld count is reported against Task " +
+                "13's own BEFORE.");
         }
         catch (Exception exception)
         {
@@ -15869,6 +15878,55 @@ internal static class Program
     }
 
     /// <summary>
+    /// A tilted, planar trapezoidal wedge: z = y throughout, so the whole
+    /// surface lies in one plane and cannot self-cross in plan. Three
+    /// levels, widths 9, 7 and 5 at y (and so z) 0, 2 and 4, an OPEN
+    /// (not closed) strip whose level-cut length tapers evenly with
+    /// height.
+    ///
+    /// At S 3.0, CH 2.0 the centre counts are 2, 2, 1 (rule 4.2.2's
+    /// n = max(1, round(L / 1.5 S))), so course 1 (whose "here" row is
+    /// the middle level, below matching at 2 and above dropping to 1) is
+    /// a genuine centre-count change, and the taper is gentle enough that
+    /// KeepValidPlans drops nothing, measured PlanDegenerateDropped and
+    /// PlanOverlapDropped both zero.
+    ///
+    /// This is what neither the dome nor the two-oculus net can give
+    /// check 12.4(d)'s converse: both always drop at least one cell (the
+    /// pre-existing absolute-arc residual named elsewhere in this file),
+    /// which hides a genuine odd cell behind a plan-validity drop and
+    /// forces the "count-change row carries no odd cell" half of the
+    /// bidirectional check to skip rather than run. This fixture carries
+    /// no drops at all, so that half actually executes here.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinGentleWedgeNet()
+    {
+        double[] widths = { 9.0, 7.0, 5.0 };
+        double dz = 2.0;
+        var vertices = new List<double[]>();
+        for (int j = 0; j < widths.Length; j++)
+        {
+            double y = j * dz;
+            double width = widths[j];
+            for (int i = 0; i <= 6; i++)
+            {
+                double x = 3.0 - width / 2.0 + i * (width / 6.0);
+                vertices.Add(new[] { x, y, y });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < widths.Length - 1; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = j * 7 + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>
     /// A flat rectangular plate, x 0 to 10 and y 0 to 4 at a 0.25 m pitch,
     /// z = 0 throughout, with the y = 0 long edge as its rim. Check 12.1(b)
     /// measures the field on it against the perpendicular distance, which
@@ -21309,17 +21367,28 @@ internal static class Program
                 "and the odd cells follow, and they are NOT a defect and " +
                 "must not be filtered (rule 4.3).");
         }
-        // The dome and the two-oculus fixture, both, as 12.4(d) names them.
+        // The dome and the two-oculus fixture, both, as 12.4(d) names them,
+        // plus the gentle wedge (see SkinGentleWedgeNet), which is what
+        // lets the converse's "carries no odd cell" half actually run: the
+        // dome and the two-oculus net both drop cells, which is enough on
+        // its own to hide a genuine odd cell and is why that half is
+        // skipped wherever a build reports any drop at all (below).
         (double[][] oculusForOdd, int[][] oculusFacesForOdd, int[] _unusedRim) =
             SkinTwoOculusNet();
         object oculusForOddNet = Activator.CreateInstance(
             netType, new object[] { oculusForOdd, oculusFacesForOdd })!;
         object oculusOddBuilt = hexagonal.Invoke(
             null, new object[] { oculusForOddNet, 0.6, 0.35 })!;
+        (double[][] wedgeVertices, int[][] wedgeFaces) = SkinGentleWedgeNet();
+        object wedgeNet = Activator.CreateInstance(
+            netType, new object[] { wedgeVertices, wedgeFaces })!;
+        object wedgeBuilt = hexagonal.Invoke(
+            null, new object[] { wedgeNet, 3.0, 2.0 })!;
         foreach ((object built, string label) fixture in new[]
                  {
                      (domeBuilt, "dome"),
-                     (oculusOddBuilt, "two-oculus")
+                     (oculusOddBuilt, "two-oculus"),
+                     (wedgeBuilt, "wedge")
                  })
         {
             var here = SkinCells(fixture.built);
@@ -21383,6 +21452,15 @@ internal static class Program
             // surviving odd cell is not made any less real by a drop
             // elsewhere, so only the direction a drop can hide is
             // skipped where this fixture build dropped anything at all.
+            //
+            // TASK 23 REVIEW FINDING 3: on the dome and the two-oculus net
+            // alone, EVERY run drops something, so this half never once
+            // executed and a check that cannot fail is not a check. The
+            // wedge (SkinGentleWedgeNet) drops nothing at all, so it is
+            // the fixture that actually exercises this half rather than
+            // merely stating it; mutation-proved in progress.md (forcing
+            // the wedge's own count-change row to report six-sided cells
+            // reproduces exactly the message below, naming "wedge").
             bool anyDropped =
                 Reading<int>(fixture.built, "PlanDegenerateDropped") +
                 Reading<int>(fixture.built, "PlanOverlapDropped") > 0;
