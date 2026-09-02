@@ -146,7 +146,8 @@ internal sealed record SkinCell(
     IReadOnlyList<double[]> Outline,
     bool Clipped,
     double U0,
-    double U1);
+    double U1,
+    bool Cap = false);
 
 /// <summary>One generated pattern. The cells sorted by course then by
 /// rule 7.1's seam-outward order, the band count, the readable diagnostics
@@ -2202,6 +2203,242 @@ internal static class SkinPatterns
             levels, traced, tileable, refused, extra, passes, capReached);
     }
 
+    /// <summary>One flag per face: does this face carry a MESH BOUNDARY
+    /// EDGE, an edge belonging to exactly one triangle? Computed once per
+    /// net, because rule 2.2.1(b) asks it of two whole face sets.</summary>
+    private static bool[] FacesOnBoundary(SkinNet net)
+    {
+        var owners = new Dictionary<(int, int), int>();
+        foreach (int[] face in net.Faces)
+        {
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                (int, int) key = a < b ? (a, b) : (b, a);
+                owners[key] = owners.TryGetValue(key, out int seen)
+                    ? seen + 1
+                    : 1;
+            }
+        }
+        var flagged = new bool[net.Faces.Count];
+        for (int at = 0; at < net.Faces.Count; at++)
+        {
+            int[] face = net.Faces[at];
+            for (int corner = 0; corner < face.Length; corner++)
+            {
+                int a = face[corner];
+                int b = face[(corner + 1) % face.Length];
+                (int, int) key = a < b ? (a, b) : (b, a);
+                if (owners[key] == 1)
+                {
+                    flagged[at] = true;
+                    break;
+                }
+            }
+        }
+        return flagged;
+    }
+
+    /// <summary>
+    /// Rule 2.2.1's three tests, and the CROWN REGION they are asked of,
+    /// defined tightly because three separate tests turn on it and a loose
+    /// definition gives each of them a different answer.
+    ///
+    /// R is the connected set of net faces ALL THREE of whose vertices carry
+    /// a Levels value strictly greater than the level, seeded from every
+    /// such face that shares a vertex with a face the component crosses, and
+    /// walked from face to face across a shared edge only where BOTH ends of
+    /// that edge exceed the level. The STRADDLING BAND is the faces the
+    /// component actually crosses. It is NOT in R: it is the band the cap's
+    /// own outline runs through and it belongs to the cap rather than to the
+    /// region the tests interrogate. Saying which of the two holds a face is
+    /// what decides whether a dome gets a keystone and a barrel does not.
+    ///
+    /// A straddling face is assigned to a component by its own CROSSING
+    /// POINTS, which ARE that component's points: Trace computes them with
+    /// this same arithmetic and stores them, so the equality is exact but
+    /// for a nanometre.
+    /// </summary>
+    private static bool CapQualifies(
+        SkinNet net,
+        double level,
+        int componentAt,
+        IReadOnlyList<SkinLevelCurve> components,
+        bool[] faceOnBoundary,
+        out string refusedBy)
+    {
+        SkinLevelCurve component = components[componentAt];
+        if (!component.Closed)
+        {
+            refusedBy =
+                "the top course is an OPEN strip, so its crown is a ridge " +
+                "and not a disc, and both sides get an ordinary top band";
+            return false;
+        }
+
+        // Every component's straddling faces, by crossing point.
+        var straddling = new List<int>[components.Count];
+        for (int at = 0; at < components.Count; at++)
+            straddling[at] = new List<int>();
+        for (int face = 0; face < net.Faces.Count; face++)
+        {
+            int[] triangle = net.Faces[face];
+            bool below = false;
+            bool above = false;
+            bool finite = true;
+            foreach (int corner in triangle)
+            {
+                double at = net.Levels[corner];
+                if (!double.IsFinite(at))
+                    finite = false;
+                else if (at < level)
+                    below = true;
+                else
+                    above = true;
+            }
+            if (!finite || !below || !above)
+                continue;
+            for (int corner = 0; corner < 3; corner++)
+            {
+                int a = triangle[corner];
+                int b = triangle[(corner + 1) % 3];
+                double da = net.Levels[a];
+                double db = net.Levels[b];
+                if (!((da < level && db >= level) ||
+                      (db < level && da >= level)))
+                {
+                    continue;
+                }
+                double t = (level - da) / (db - da);
+                double[] crossing = Lerp(net.Vertices[a], net.Vertices[b], t);
+                for (int which = 0; which < components.Count; which++)
+                {
+                    foreach (double[] point in components[which].Points)
+                    {
+                        if (Math.Abs(point[0] - crossing[0]) <= 1.0e-9 &&
+                            Math.Abs(point[1] - crossing[1]) <= 1.0e-9 &&
+                            Math.Abs(point[2] - crossing[2]) <= 1.0e-9)
+                        {
+                            if (!straddling[which].Contains(face))
+                                straddling[which].Add(face);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // R, seeded from the straddling band and walked only across edges
+        // both of whose ends exceed the level. A vertex EXACTLY AT the
+        // level counts as exceeding it here (>=, not >), matching the
+        // half-open rule Trace's own Crosses uses (SkinPatterns.cs:839-845):
+        // a vertex on the cut belongs to the upper side. Without that a
+        // mesh ring landing exactly on level (an exact tie, not a
+        // near-miss) breaks the walk one ring short of where the true
+        // surface plainly continues, turning one connected saddle into two
+        // false keystones either side of the tie.
+        bool AboveFace(int[] triangle)
+        {
+            foreach (int corner in triangle)
+            {
+                if (!(net.Levels[corner] >= level))
+                    return false;
+            }
+            return true;
+        }
+        var facesAt = new List<int>?[net.Vertices.Count];
+        for (int face = 0; face < net.Faces.Count; face++)
+        {
+            foreach (int corner in net.Faces[face])
+                (facesAt[corner] ??= new List<int>()).Add(face);
+        }
+        var region = new HashSet<int>();
+        var queue = new Queue<int>();
+        foreach (int seedFace in straddling[componentAt])
+        {
+            foreach (int corner in net.Faces[seedFace])
+            {
+                foreach (int candidate in facesAt[corner] ?? new List<int>())
+                {
+                    if (AboveFace(net.Faces[candidate]) &&
+                        region.Add(candidate))
+                    {
+                        queue.Enqueue(candidate);
+                    }
+                }
+            }
+        }
+        while (queue.Count > 0)
+        {
+            int[] triangle = net.Faces[queue.Dequeue()];
+            for (int corner = 0; corner < 3; corner++)
+            {
+                int a = triangle[corner];
+                int b = triangle[(corner + 1) % 3];
+                if (!(net.Levels[a] >= level) || !(net.Levels[b] >= level))
+                    continue;
+                foreach (int candidate in facesAt[a] ?? new List<int>())
+                {
+                    if (!net.Faces[candidate].Contains(b))
+                        continue;
+                    if (AboveFace(net.Faces[candidate]) &&
+                        region.Add(candidate))
+                    {
+                        queue.Enqueue(candidate);
+                    }
+                }
+            }
+        }
+
+        foreach (int face in region.Concat(straddling[componentAt]))
+        {
+            if (faceOnBoundary[face])
+            {
+                refusedBy =
+                    "a FREE EDGE or an oculus lies in the crown above this " +
+                    "course, so the region is not a disc";
+                return false;
+            }
+        }
+        for (int other = 0; other < components.Count; other++)
+        {
+            if (other == componentAt)
+                continue;
+            foreach (int face in straddling[other])
+            {
+                foreach (int corner in net.Faces[face])
+                {
+                    foreach (int candidate in
+                             facesAt[corner] ?? new List<int>())
+                    {
+                        // R alone is not enough: a RING or GROIN ridge is a
+                        // discrete row of vertices with nothing strictly
+                        // above it on either side (rule 2.5.3), so R is
+                        // EMPTY for both components even though they meet
+                        // AT the ridge. The other component's straddling
+                        // band reaching a face of my OWN straddling band is
+                        // the same saddle, seen with no interior faces to
+                        // walk through: the region above one side is
+                        // reachable from the other's own boundary (rule
+                        // 2.5.2), not only from an interior R.
+                        if (region.Contains(candidate) ||
+                            straddling[componentAt].Contains(candidate))
+                        {
+                            refusedBy =
+                                "another component of the same course seeds " +
+                                "this crown region, so it is the SADDLE " +
+                                "joining two crowns and not a keystone";
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        refusedBy = string.Empty;
+        return true;
+    }
+
     /// <summary>
     /// Running-bond quads, the Bench Studio bonded-courses algorithm
     /// restated on the thrust surface. Bands of Course Height from the
@@ -2259,6 +2496,8 @@ internal static class SkinPatterns
         var keyed =
             new List<(int Course, int Order, double U0, SkinCell Cell)>();
         var transitions = new List<(double Low, double High)>();
+        var capGirths = new List<double>();
+        var capRefusals = new List<string>();
         foreach ((double low, double high) in resolved.Refused)
             AddTransition(transitions, low, high);
         int transitionBands = resolved.Refused.Count;
@@ -2270,6 +2509,8 @@ internal static class SkinPatterns
                 resolved.Traced[levelIndex[band.Low]];
             IReadOnlyList<SkinLevelCurve> uppers =
                 resolved.Traced[levelIndex[band.High]];
+            bool topBand = band.Course == bands - 1;
+            bool[]? onBoundary = topBand ? FacesOnBoundary(net) : null;
             for (int component = 0; component < mids.Count; component++)
             {
                 SkinLevelCurve mid = mids[component];
@@ -2279,6 +2520,49 @@ internal static class SkinPatterns
                     continue;
                 SkinLevelCurve lowerCurve = lowers[lowerAt];
                 SkinLevelCurve upperCurve = uppers[upperAt];
+
+                // Declared BEFORE the test, not in it. C# assigns an out
+                // parameter only when the call is made, and `topBand &&`
+                // will short-circuit on every band but the last, so a
+                // refusedBy declared inside the condition is an unassigned
+                // local at the line below and the file does not compile.
+                string refusedBy = string.Empty;
+                if (topBand &&
+                    CapQualifies(
+                        net, band.Low, lowerAt, lowers, onBoundary!,
+                        out refusedBy))
+                {
+                    // THE CAP'S OUTLINE IS THE LEVEL CURVE, whole, from its
+                    // seam round to its seam (rule 2.3.1). It carries every
+                    // trace vertex of that curve, so it typically has tens
+                    // of corners, and it follows the surface exactly rather
+                    // than chording across it, the same property Run gives
+                    // every other cell edge. It is NOT exempted from
+                    // KeepValidPlans and must not be: if it ever fails,
+                    // that is a defect and the filter is where it should
+                    // show.
+                    var loop = new List<double[]>();
+                    for (int at = 0; at < lowerCurve.Points.Count; at++)
+                        loop.Add(lowerCurve.Points[at]);
+                    List<double[]> capOutline = Dedupe(loop);
+                    if (capOutline.Count >= 3)
+                    {
+                        capGirths.Add(lowerCurve.Length);
+                        keyed.Add((
+                            band.Course,
+                            component,
+                            -lowerCurve.Length / 2.0,
+                            new SkinCell(
+                                band.Course, capOutline, false,
+                                -lowerCurve.Length / 2.0,
+                                lowerCurve.Length / 2.0,
+                                true)));
+                        continue;
+                    }
+                }
+                if (topBand && refusedBy.Length > 0)
+                    capRefusals.Add(refusedBy);
+
                 // A sub-band takes its OWN mid curve and its own pitch (rule
                 // 8.2.5), so a thin sub-band beside a cut locus gives short
                 // pieces, which section 6 then merges: a course that runs
@@ -2311,18 +2595,38 @@ internal static class SkinPatterns
                 .ToList(),
             out int degenerateDropped,
             out int overlapDropped);
+        // Rule 2.3.2a: a cap's girth is metres against ordinary pieces of
+        // order S, so a cap left in the piece-length statistics dominates
+        // the maximum and the max-over-min ratio single-handedly.
+        string? capLine = capGirths.Count > 0 || capRefusals.Count > 0
+            ? $"Crown caps: {capGirths.Count}" +
+              (capGirths.Count > 0
+                  ? " (girth " + string.Join(
+                      ", ",
+                      capGirths.Select(girth =>
+                          girth.ToString(
+                              "F3", CultureInfo.InvariantCulture) + " m")) +
+                    ")"
+                  : string.Empty) +
+              (capRefusals.Count > 0
+                  ? "; no cap where " +
+                    string.Join("; ", capRefusals.Distinct())
+                  : string.Empty)
+            : null;
         return new SkinPatternResult(
             cells,
             bands,
             PatternDiagnostics(
                 "courses", cells.Count, bands,
-                cells.Select(cell => cell.U1 - cell.U0).ToList(),
+                cells.Where(cell => !cell.Cap)
+                    .Select(cell => cell.U1 - cell.U0).ToList(),
                 "half a pitch on odd courses",
                 cells.Count(cell => cell.Clipped),
                 degenerateDropped, overlapDropped,
                 TransitionLine(
                     "courses", transitionBands, transitions,
-                    FieldKindOf(net))),
+                    FieldKindOf(net)),
+                capLine),
             transitionBands,
             transitions,
             degenerateDropped,
@@ -2333,7 +2637,7 @@ internal static class SkinPatterns
             net.EdgesDropped,
             UnreachableCount(net),
             cells.Count(cell => cell.Clipped),
-            Array.Empty<double>(),
+            capGirths,
             Array.Empty<int>(),
             0,
             0,
@@ -2552,7 +2856,8 @@ internal static class SkinPatterns
         int clipped,
         int planDegenerateDropped,
         int planOverlapDropped,
-        string? transitions = null)
+        string? transitions = null,
+        string? caps = null)
     {
         static string F(double value) =>
             value.ToString("F3", CultureInfo.InvariantCulture);
@@ -2581,6 +2886,8 @@ internal static class SkinPatterns
             "automatically so the sidecar imports)");
         if (transitions is not null)
             lines.Add(transitions);
+        if (caps is not null)
+            lines.Add(caps);
         return string.Join("\n", lines);
     }
 

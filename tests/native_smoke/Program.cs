@@ -716,6 +716,24 @@ internal static class Program
 
         try
         {
+            ValidateSkinCrownCap(plugin);
+            Console.WriteLine(
+                "PASS  Skin crown cap: a rimmed hemisphere gets exactly ONE " +
+                "cap, at course CourseCount - 1, spanning its whole girth, " +
+                "and the cells then cover the net's plan area to within " +
+                "one per cent, which the shipped epsilon loop fails; a " +
+                "barrel with two springings gets a RIDGE and says so; the " +
+                "two-oculus fixture is refused for its free edge; and an " +
+                "extent of 13.05 CH still puts the cap on the top course, " +
+                "which pins the sliver merge running first.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Skin crown cap: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -17718,11 +17736,11 @@ internal static class Program
     /// <summary>Read a SkinPatternResult's cells through reflection into
     /// plain tuples the checks can measure.</summary>
     private static (int Course, double[][] Outline, bool Clipped,
-        double U0, double U1)[] SkinCells(object generated)
+        double U0, double U1, bool Cap)[] SkinCells(object generated)
     {
         IList cells = (IList)generated.GetType()
             .GetProperty("Cells")!.GetValue(generated)!;
-        var read = new List<(int, double[][], bool, double, double)>();
+        var read = new List<(int, double[][], bool, double, double, bool)>();
         foreach (object? item in cells)
         {
             object cell = item!;
@@ -17734,7 +17752,8 @@ internal static class Program
                 outline.Cast<double[]>().ToArray(),
                 (bool)type.GetProperty("Clipped")!.GetValue(cell)!,
                 (double)type.GetProperty("U0")!.GetValue(cell)!,
-                (double)type.GetProperty("U1")!.GetValue(cell)!));
+                (double)type.GetProperty("U1")!.GetValue(cell)!,
+                (bool)type.GetProperty("Cap")!.GetValue(cell)!));
         }
         return read.ToArray();
     }
@@ -17927,6 +17946,177 @@ internal static class Program
     }
 
     /// <summary>
+    /// The crown cap (spec section 2), checks 12.2(a) to 12.2(e). There is
+    /// no cap today: the top course closes on the level curve at the crown
+    /// minus epsilon, which on a dome is a micron-scale loop around the
+    /// apex, and the surface above it is covered by nothing.
+    /// </summary>
+    private static void ValidateSkinCrownCap(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        var noForces = Array.Empty<(int, int, double)>();
+
+        static double PlanArea(double[][] ring)
+        {
+            // The harness's own shoelace, and NOT a second copy of a
+            // guarantee: rule 11.5 requires the plan-VALIDITY predicates to
+            // be the engine's, because the filter and the check must not be
+            // able to disagree about what a bad cell is. An area is a
+            // measurement, and this one is centred for the same reason rule
+            // 11.2 centres the engine's.
+            double cx = ring.Average(point => point[0]);
+            double cy = ring.Average(point => point[1]);
+            double twice = 0.0;
+            for (int at = 0; at < ring.Length; at++)
+            {
+                double[] a = ring[at];
+                double[] b = ring[(at + 1) % ring.Length];
+                twice += (a[0] - cx) * (b[1] - cy) -
+                         (b[0] - cx) * (a[1] - cy);
+            }
+            return Math.Abs(twice) / 2.0;
+        }
+
+        // 12.2(a) and 12.2(b): the hemisphere, rimmed at its base ring.
+        (double[][] vertices, int[][] faces, int[] rim) = SkinHemisphereNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, rim, noForces);
+        object built = courses.Invoke(null, new object[] { net, 0.6, 0.35 })!;
+        var cells = SkinCells(built);
+        int courseCount = Reading<int>(built, "CourseCount");
+        var caps = cells.Where(cell => cell.Cap).ToArray();
+        if (caps.Length != 1)
+        {
+            throw new InvalidOperationException(
+                "A dome with ONE springing rim gets exactly one cap, " +
+                "because a keystone is one stone (rule 2.2.3); got " +
+                $"{caps.Length}.");
+        }
+        if (caps[0].Course != courseCount - 1)
+        {
+            throw new InvalidOperationException(
+                "The cap replaces the TILING of band n - 1 and its course " +
+                $"is CourseCount - 1 = {courseCount - 1} (rule 2.4.1); got " +
+                $"{caps[0].Course}.");
+        }
+        if (Math.Abs(caps[0].U0 + caps[0].U1) > 1.0e-9 ||
+            !(caps[0].U1 - caps[0].U0 > 0.0))
+        {
+            throw new InvalidOperationException(
+                "A cap's span is its whole girth, U0 and U1 being " +
+                "-L / 2 and +L / 2 (rule 2.3.2); got " +
+                $"[{caps[0].U0}, {caps[0].U1}].");
+        }
+        foreach (var cell in cells)
+        {
+            if (cell.Course > caps[0].Course && cell.Outline.Length < 4)
+            {
+                throw new InvalidOperationException(
+                    "Nothing above the cap's course has fewer than four " +
+                    "corners, which is the epsilon loop out of existence " +
+                    "(check 12.2(b)).");
+            }
+        }
+        double covered = cells.Sum(cell => PlanArea(cell.Outline));
+        double netArea = 0.0;
+        IList netFaces = (IList)net.GetType()
+            .GetProperty("Faces")!.GetValue(net)!;
+        foreach (object? item in netFaces)
+        {
+            int[] triangle = (int[])item!;
+            netArea += PlanArea(new[]
+            {
+                vertices[triangle[0]],
+                vertices[triangle[1]],
+                vertices[triangle[2]]
+            });
+        }
+        if (Math.Abs(covered - netArea) > 0.01 * netArea)
+        {
+            throw new InvalidOperationException(
+                "The cells cover the surface: the summed plan area differs " +
+                "from the net's own by under one per cent (check 12.2(b)), " +
+                $"which the epsilon loop fails today; got {covered} against " +
+                $"{netArea}.");
+        }
+
+        // 12.2(c): a BARREL with two springing rims gets a RIDGE and no cap.
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrel = SkinNetWith(
+            netType, edgeType, barrelVertices, barrelFaces, SkinBarrelRim(),
+            noForces);
+        object barrelBuilt = courses.Invoke(
+            null, new object[] { barrel, 0.6, 0.5 })!;
+        if (SkinCells(barrelBuilt).Any(cell => cell.Cap))
+        {
+            throw new InvalidOperationException(
+                "A barrel's crown is a RIDGE LINE and not a point, and its " +
+                "two sides are separate traced components matched to one " +
+                "another by nothing; no cap is emitted there (rule 2.5.2) " +
+                "and each side gets an ordinary top band, which is what a " +
+                "barrel is actually built as.");
+        }
+        if (!Reading<string>(barrelBuilt, "Diagnostics").Contains(
+                "ridge", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Say the ridge in the diagnostics in those words rather " +
+                "than reporting a missing cap as a failure (rule 2.5.2).");
+        }
+
+        // 12.2(d): the TWO-OCULUS fixture, where a free edge is in the crown.
+        (double[][] oculusVertices, int[][] oculusFaces, int[] oculusRim) =
+            SkinTwoOculusNet();
+        object oculus = SkinNetWith(
+            netType, edgeType, oculusVertices, oculusFaces, oculusRim,
+            noForces);
+        object oculusBuilt = courses.Invoke(
+            null, new object[] { oculus, 0.6, 0.35 })!;
+        if (SkinCells(oculusBuilt).Any(cell => cell.Cap))
+        {
+            throw new InvalidOperationException(
+                "Rule 2.2.1(b) refuses a crown region carrying a MESH " +
+                "BOUNDARY EDGE, and both the region and the straddling " +
+                "band are tested, so an oculus small enough to lie wholly " +
+                "within the straddling band cannot pass; the two-oculus " +
+                "fixture gets no cap.");
+        }
+        Console.WriteLine(
+            "      Skin crown cap (check 12.2(d)): two-oculus refusal " +
+            "reported as '" +
+            Reading<string>(oculusBuilt, "Diagnostics")
+                .Split('\n')
+                .FirstOrDefault(line => line.StartsWith(
+                    "Crown caps", StringComparison.Ordinal)) + "'.");
+
+        // 12.2(e): the SLIVER, which pins rule 2.4.2 against the "cap one
+        // band low" failure. CH is chosen from the net's own field extent so
+        // the top band is exactly a twentieth of CH before the merge.
+        double extent = SkinLevels(net).Where(double.IsFinite).Max();
+        double sliverHeight = extent / 13.05;
+        object sliver = courses.Invoke(
+            null, new object[] { net, 0.6, sliverHeight })!;
+        var sliverCells = SkinCells(sliver);
+        int sliverCourses = Reading<int>(sliver, "CourseCount");
+        var sliverCaps = sliverCells.Where(cell => cell.Cap).ToArray();
+        if (sliverCourses != 13 ||
+            sliverCaps.Length != 1 ||
+            sliverCaps[0].Course != 12)
+        {
+            throw new InvalidOperationException(
+                "BandCount's sliver merge runs BEFORE the cap decision " +
+                "(rule 2.4.2): an extent of 13.05 CH is 14 bands whose top " +
+                "is CH / 20, under CH / 4, so it merges to 13 and the cap " +
+                $"sits at course 12. Got {sliverCourses} courses and " +
+                $"{sliverCaps.Length} caps at course " +
+                $"{(sliverCaps.Length > 0 ? sliverCaps[0].Course : -1)}.");
+        }
+    }
+
+    /// <summary>
     /// Check 12.1(d), the whole point of section 1. On a hemisphere of
     /// R = 3 rimmed at its base ring, at S 0.6 and CH 0.35, the along-surface
     /// distance between consecutive course boundaries is CH to within 5 per
@@ -17967,7 +18157,7 @@ internal static class Program
         var cells = SkinCells(built);
         int courseCount = Reading<int>(built, "CourseCount");
         double Chord((int Course, double[][] Outline, bool Clipped,
-            double U0, double U1) cell)
+            double U0, double U1, bool Cap) cell)
         {
             double[] first = cell.Outline[0];
             double[] last = cell.Outline[^1];
@@ -17979,6 +18169,13 @@ internal static class Program
         foreach (var cell in cells)
         {
             if (cell.Course >= courseCount - 1)
+                continue;
+            // A cap's outline is one whole loop and carries no bed-to-bed
+            // chord at all: Outline[0] and Outline[^1] are two adjacent
+            // trace points on the SAME level curve, not the low-bed/
+            // high-bed pair BandCell builds, so Chord would measure a
+            // fraction-of-a-millimetre trace segment instead of CH.
+            if (cell.Cap)
                 continue;
             double chord = Chord(cell);
             if (Math.Abs(chord - 0.35) > 0.05 * 0.35)
@@ -18209,7 +18406,39 @@ internal static class Program
             var ring = domeCells
                 .Where(cell => cell.Course == course)
                 .ToArray();
-            double midHeight = course == 3 ? 1.75 : 0.25 + 0.5 * course;
+            if (course == domeCourses - 1)
+            {
+                // The dome's apex is a single triangulated vertex, so its
+                // crown at L_top = (n - 1) CH = 1.5 is a genuine disc: all
+                // three of rule 2.2.1's tests pass and band n - 1 is
+                // replaced by the ONE cap cell rather than tiled as a ring
+                // (rule 2.4.1), which is the fixture this task's own
+                // ValidateSkinCrownCap measures directly. Here it is
+                // enough to pin that this course is exactly that cap,
+                // spanning the whole girth of the octagon at height 1.5.
+                double crownGirth =
+                    16.0 * (2.0 - 1.5) * Math.Sin(Math.PI / 8.0);
+                if (ring.Length != 1 || !ring[0].Cap)
+                {
+                    throw new InvalidOperationException(
+                        $"Course {course} is band n - 1 on a dome whose " +
+                        "crown is a disc, so it is the ONE cap cell " +
+                        "rather than a tiled ring (rule 2.4.1); got " +
+                        $"{ring.Length} cells, the first flagged Cap = " +
+                        $"{(ring.Length > 0 && ring[0].Cap)}.");
+                }
+                if (Math.Abs(ring[0].U0 + crownGirth / 2.0) > 1.0e-9 ||
+                    Math.Abs(ring[0].U1 - crownGirth / 2.0) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "A cap's span is its whole girth, -L / 2 to L / 2 " +
+                        $"(rule 2.3.2): expected [{-crownGirth / 2.0:F4}, " +
+                        $"{crownGirth / 2.0:F4}]; got [{ring[0].U0:F4}, " +
+                        $"{ring[0].U1:F4}].");
+                }
+                continue;
+            }
+            double midHeight = 0.25 + 0.5 * course;
             double expectedLength =
                 16.0 * (2.0 - midHeight) * Math.Sin(Math.PI / 8.0);
             int expectedPieces = Math.Max(
@@ -19855,14 +20084,16 @@ internal static class Program
             null, new object[] { sited, 0.6, 0.5 })!;
         var sitedCells = SkinCells(sitedBuilt);
         RequireNothingDropped(sitedBuilt, "courses/dome sited 500 m out");
-        if (sitedCells.Length != 42)
+        if (sitedCells.Length != 40)
         {
             throw new InvalidOperationException(
                 "The sited dome carries the origin dome's courses: the " +
                 "mid-height loop of band r has round(L / S) pieces for " +
-                "L = 16 (2 - h) sin(pi / 8), so mids at 0.25, 0.75, " +
-                "1.25 and 1.75 give 18, 13, 8 and 3 pieces, 42 in all; " +
-                $"got {sitedCells.Length}.");
+                "L = 16 (2 - h) sin(pi / 8), so mids at 0.25, 0.75 and " +
+                "1.25 give 18, 13 and 8 pieces; band 3's crown is a disc " +
+                "and its tiling is replaced by the ONE cap cell (rule " +
+                "2.4.1), not 3 pieces, so the total is 18 + 13 + 8 + 1 = " +
+                $"40; got {sitedCells.Length}.");
         }
         RequireDisjointSimplePlans(
             sitedCells.Select(cell => cell.Outline).ToArray(),
@@ -20700,6 +20931,14 @@ internal static class Program
         // one moves with them: 1 self-crossing and 0 overlapping became
         // 1 and 1. The final-fix-report-5 table carries the same shell at
         // eleven course heights on both builds.
+        //
+        // Both counts moved AGAIN with the crown cap: the pyramid's apex
+        // at (4, 4) is a single triangulated vertex, so its crown at CH
+        // 0.5 is a genuine disc and rule 2.4.1 replaces the whole top
+        // course's tiling with the ONE cap cell. The drops themselves did
+        // not move, 1 and 1 still, so the cap did not touch the re-entrant
+        // corner's own defect; only the BUILT total fell, from 99 to 95,
+        // which is what the survivor count below now measures.
         if (degenerate != 1 || dropped != 1)
         {
             throw new InvalidOperationException(
@@ -20709,10 +20948,11 @@ internal static class Program
                 "already kept, and the filter drops both: 1 and 1; got " +
                 $"{degenerate} and {dropped}.");
         }
-        if (cells.Length != 97)
+        if (cells.Length != 93)
         {
             throw new InvalidOperationException(
-                "99 cells built less the two dropped leaves 97; got " +
+                "95 cells built (99 less 4 that the crown cap now " +
+                "replaces with one) less the two dropped leaves 93; got " +
                 $"{cells.Length}.");
         }
         string diagnostics = (string)built.GetType()
@@ -20723,7 +20963,7 @@ internal static class Program
             !diagnostics.Contains(
                 "Plan-overlap cells dropped: 1",
                 StringComparison.Ordinal) ||
-            !diagnostics.Contains("Cells: 97", StringComparison.Ordinal))
+            !diagnostics.Contains("Cells: 93", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "A dropped cell is never silent: both counts are their " +
