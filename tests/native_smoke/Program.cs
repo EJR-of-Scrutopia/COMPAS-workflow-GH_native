@@ -650,6 +650,22 @@ internal static class Program
 
         try
         {
+            ValidateSkinFixtures(plugin);
+            Console.WriteLine(
+                "PASS  Skin fixtures: the serpentine is plan-injective in " +
+                "both directions by construction, the two-oculus fixture " +
+                "really omits its two oculi and rims the RECTANGLE rather " +
+                "than the free edges, and the shipped honeycomb's withheld " +
+                "counts on both are printed as check 12.4(g)'s BEFORE, " +
+                "which is the first honest one this repository has had.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Skin fixtures: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -14222,6 +14238,303 @@ internal static class Program
     }
 
     /// <summary>
+    /// A HEMISPHERE of radius 3: 24 rings by 48 around, ring i at polar
+    /// parameter phi = (pi / 2) (i / 24) from the base, the vertex at
+    /// (R cos phi cos theta, R cos phi sin theta, R sin phi), quads between
+    /// adjacent rings and triangles to the apex (0, 0, R). Ring 0 is the
+    /// rim. Check 12.1(c) reads the apex against pi R / 2, which is the one
+    /// closed form for a geodesic distance this repository can assert
+    /// against.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinHemisphereNet()
+    {
+        const int Rings = 24;
+        const int Around = 48;
+        const double Radius = 3.0;
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < Rings; ring++)
+        {
+            double phi = Math.PI / 2.0 * ring / Rings;
+            for (int k = 0; k < Around; k++)
+            {
+                double theta = Math.PI * 2.0 * k / Around;
+                vertices.Add(new[]
+                {
+                    Radius * Math.Cos(phi) * Math.Cos(theta),
+                    Radius * Math.Cos(phi) * Math.Sin(theta),
+                    Radius * Math.Sin(phi)
+                });
+            }
+        }
+        int apex = vertices.Count;
+        vertices.Add(new[] { 0.0, 0.0, Radius });
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < Rings; ring++)
+        {
+            for (int k = 0; k < Around; k++)
+            {
+                int next = (k + 1) % Around;
+                faces.Add(new[]
+                {
+                    ring * Around + k,
+                    ring * Around + next,
+                    (ring + 1) * Around + next,
+                    (ring + 1) * Around + k
+                });
+            }
+        }
+        for (int k = 0; k < Around; k++)
+        {
+            int next = (k + 1) % Around;
+            faces.Add(new[]
+            {
+                (Rings - 1) * Around + k,
+                (Rings - 1) * Around + next,
+                apex
+            });
+        }
+        var rim = new List<int>();
+        for (int k = 0; k < Around; k++)
+            rim.Add(k);
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// Rule 12.0's `SkinTwoOculusNet`, in its own words. A plan grid over
+    /// x in [0, 10] and y in [0, 6] at a 0.25 m pitch, so i runs 0 to 40 and
+    /// j runs 0 to 24, vertices at (0.25 i, 0.25 j, z) with
+    /// z = 2 sin(pi x / 10) sin(pi y / 6), which is zero on all four edges
+    /// and 2 m at the centre. Quad faces between adjacent grid vertices,
+    /// EXCEPT that a face is omitted where its plan centre lies within 1.0 m
+    /// of (3, 3) or within 1.0 m of (7, 3), which cuts two oculi with
+    /// stepped free edges. The rim is every boundary vertex of the
+    /// rectangle, i = 0, i = 40, j = 0 or j = 24, and NOT the oculus edges,
+    /// which is what makes this the fixture that measures rule 1.3.3 and
+    /// rule 2.2.1(b) at once.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinTwoOculusNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 24; j++)
+        {
+            for (int i = 0; i <= 40; i++)
+            {
+                double x = 0.25 * i;
+                double y = 0.25 * j;
+                vertices.Add(new[]
+                {
+                    x,
+                    y,
+                    2.0 * Math.Sin(Math.PI * x / 10.0) *
+                        Math.Sin(Math.PI * y / 6.0)
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 24; j++)
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                double cx = 0.25 * i + 0.125;
+                double cy = 0.25 * j + 0.125;
+                bool inOculus =
+                    Math.Sqrt((cx - 3.0) * (cx - 3.0) +
+                              (cy - 3.0) * (cy - 3.0)) < 1.0 ||
+                    Math.Sqrt((cx - 7.0) * (cx - 7.0) +
+                              (cy - 3.0) * (cy - 3.0)) < 1.0;
+                if (inOculus)
+                    continue;
+                int a = j * 41 + i;
+                faces.Add(new[] { a, a + 1, a + 42, a + 41 });
+            }
+        }
+        var rim = new List<int>();
+        for (int j = 0; j <= 24; j++)
+        {
+            for (int i = 0; i <= 40; i++)
+            {
+                if (i == 0 || i == 40 || j == 0 || j == 24)
+                    rim.Add(j * 41 + i);
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// Rule 12.0's `SkinSerpentineNet`: a sheared strip vault, plan-injective
+    /// by construction. For i = 0 to 60 and j = 0 to 12, with x = 0.25 i and
+    /// t = (j - 6) / 6, the vertex is
+    /// (x, 0.6 sin(2 pi x / 10) + 1.5 t, (1.4 + 0.6 sin(2 pi x / 7.5))
+    /// cos(pi t / 2)). Quad faces between adjacent (i, j). Both long edges,
+    /// j = 0 and j = 12, sit at z 0 and are the rim. The crest meanders
+    /// between 0.8 m and 2.0 m along the strip, so a constant-Z level curve
+    /// above 0.8 m breaks into SEVERAL components of differing length.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinSerpentineNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 12; j++)
+        {
+            double t = (j - 6.0) / 6.0;
+            for (int i = 0; i <= 60; i++)
+            {
+                double x = 0.25 * i;
+                vertices.Add(new[]
+                {
+                    x,
+                    0.6 * Math.Sin(2.0 * Math.PI * x / 10.0) + 1.5 * t,
+                    (1.4 + 0.6 * Math.Sin(2.0 * Math.PI * x / 7.5)) *
+                        Math.Cos(Math.PI * t / 2.0)
+                });
+            }
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 12; j++)
+        {
+            for (int i = 0; i < 60; i++)
+            {
+                int a = j * 61 + i;
+                faces.Add(new[] { a, a + 1, a + 62, a + 61 });
+            }
+        }
+        var rim = new List<int>();
+        for (int i = 0; i <= 60; i++)
+        {
+            rim.Add(i);
+            rim.Add(12 * 61 + i);
+        }
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// Rule 12.0's `SkinEllipticalDomeNet`, which exists for rule 2.6.6's
+    /// base case and for nothing else. SkinDomeNet's own construction with
+    /// the plan circle replaced by an ellipse: rings at parameter h from 0
+    /// to 1 in 24 steps and 96 vertices a ring, the vertex at ring h and
+    /// angle theta sitting at (3 (1 - h) cos theta, 1.5 (1 - h) sin theta,
+    /// 2 h), quads between adjacent rings and the last ring collapsed to the
+    /// apex (0, 0, 2). The base ring at h = 0 is the rim. Because the plan is
+    /// not a circle the cut locus inside the crown is a SEGMENT along the
+    /// major axis rather than a point, so the girth at the top cut stays of
+    /// the order of twice the segment's length however fine CH is made.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinEllipticalDomeNet()
+    {
+        const int Rings = 24;
+        const int Around = 96;
+        var vertices = new List<double[]>();
+        for (int ring = 0; ring < Rings; ring++)
+        {
+            double h = (double)ring / Rings;
+            for (int k = 0; k < Around; k++)
+            {
+                double theta = Math.PI * 2.0 * k / Around;
+                vertices.Add(new[]
+                {
+                    3.0 * (1.0 - h) * Math.Cos(theta),
+                    1.5 * (1.0 - h) * Math.Sin(theta),
+                    2.0 * h
+                });
+            }
+        }
+        int apex = vertices.Count;
+        vertices.Add(new[] { 0.0, 0.0, 2.0 });
+        var faces = new List<int[]>();
+        for (int ring = 0; ring + 1 < Rings; ring++)
+        {
+            for (int k = 0; k < Around; k++)
+            {
+                int next = (k + 1) % Around;
+                faces.Add(new[]
+                {
+                    ring * Around + k,
+                    ring * Around + next,
+                    (ring + 1) * Around + next,
+                    (ring + 1) * Around + k
+                });
+            }
+        }
+        for (int k = 0; k < Around; k++)
+        {
+            int next = (k + 1) % Around;
+            faces.Add(new[]
+            {
+                (Rings - 1) * Around + k,
+                (Rings - 1) * Around + next,
+                apex
+            });
+        }
+        var rim = new List<int>();
+        for (int k = 0; k < Around; k++)
+            rim.Add(k);
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// Two disjoint plates, the second translated 100 m in x so nothing is
+    /// shared, with a rim on the FIRST only. Check 12.1(g): the second
+    /// piece's vertices are unreachable from the rim across the
+    /// triangulation and keep positive infinity.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinDisconnectedNet()
+    {
+        (double[][] one, int[][] oneFaces, int[] rim) = SkinPlateNet();
+        var vertices = new List<double[]>(one);
+        var faces = new List<int[]>(oneFaces);
+        int offset = one.Length;
+        foreach (double[] vertex in one)
+            vertices.Add(new[] { vertex[0] + 100.0, vertex[1], vertex[2] });
+        foreach (int[] face in oneFaces)
+            faces.Add(face.Select(corner => corner + offset).ToArray());
+        return (vertices.ToArray(), faces.ToArray(), rim);
+    }
+
+    /// <summary>The barrel's rim: both eaves, j = 0 and j = 4, which is the
+    /// ordinary two-springing case of rule 1.7.2 and the ridge of rule
+    /// 2.5.</summary>
+    private static int[] SkinBarrelRim()
+    {
+        var rim = new List<int>();
+        for (int i = 0; i <= 6; i++)
+        {
+            rim.Add(i);
+            rim.Add(4 * 7 + i);
+        }
+        return rim.ToArray();
+    }
+
+    /// <summary>
+    /// Check 12.3(a)'s one-way thrust, stated as DATA rather than assumed:
+    /// every edge running ALONG the barrel, between (i, j) and (i + 1, j),
+    /// carries a compression of 1 kN, and every edge ACROSS it, between
+    /// (i, j) and (i, j + 1), carries 0.1 kN.
+    /// </summary>
+    private static (int A, int B, double Force)[] SkinBarrelForces()
+    {
+        var forces = new List<(int, int, double)>();
+        for (int j = 0; j <= 4; j++)
+        {
+            for (int i = 0; i < 6; i++)
+                forces.Add((j * 7 + i, j * 7 + i + 1, 1.0));
+        }
+        for (int j = 0; j < 4; j++)
+        {
+            for (int i = 0; i <= 6; i++)
+                forces.Add((j * 7 + i, (j + 1) * 7 + i, 0.1));
+        }
+        return forces.ToArray();
+    }
+
+    /// <summary>The dome's rim: ring 0, the eight base vertices.</summary>
+    private static int[] SkinDomeRim() =>
+        new[] { 0, 1, 2, 3, 4, 5, 6, 7 };
+
+    /// <summary>
     /// A square-plan plate, 8 by 8 at 1 m, carried on FOUR PAIRWISE
     /// NON-ADJACENT support vertices: its own corners. It is the fixture
     /// rule 1.4.1(b) exists for. No triangle anywhere has two frozen corners
@@ -15349,6 +15662,151 @@ internal static class Program
                 }
             }
         }
+
+        // 12.1(c): the hemisphere's apex.
+        (double[][] domeSphereVertices, int[][] domeSphereFaces,
+            int[] domeSphereRim) = SkinHemisphereNet();
+        object hemisphere = SkinNetWith(
+            netType, edgeType, domeSphereVertices, domeSphereFaces,
+            domeSphereRim, noForces);
+        double[] hemisphereLevels = SkinLevels(hemisphere);
+        double apexLevel = hemisphereLevels[^1];
+        double quarterCircle = Math.PI * 3.0 / 2.0;
+        if (Math.Abs(apexLevel - quarterCircle) > 0.02 * quarterCircle)
+        {
+            throw new InvalidOperationException(
+                "On a hemisphere of R = 3 rimmed at its base ring the field " +
+                $"at the apex is pi R / 2 = {quarterCircle} to within 2 per " +
+                $"cent (check 12.1(c)); got {apexLevel}.");
+        }
+
+        // 12.1(g): a net in two pieces, rimmed on one.
+        (double[][] splitVertices, int[][] splitFaces, int[] splitRim) =
+            SkinDisconnectedNet();
+        object split = SkinNetWith(
+            netType, edgeType, splitVertices, splitFaces, splitRim, noForces);
+        double[] splitLevels = SkinLevels(split);
+        int half = splitLevels.Length / 2;
+        for (int at = 0; at < half; at++)
+        {
+            if (!double.IsFinite(splitLevels[at]))
+            {
+                throw new InvalidOperationException(
+                    "The RIMMED piece of a two-piece net is reachable " +
+                    $"throughout; vertex {at} reads {splitLevels[at]}.");
+            }
+        }
+        for (int at = half; at < splitLevels.Length; at++)
+        {
+            if (!double.IsPositiveInfinity(splitLevels[at]))
+            {
+                throw new InvalidOperationException(
+                    "A vertex UNREACHABLE from the rim across the " +
+                    "triangulation takes positive infinity (rule 1.7.3), " +
+                    "so it can be excluded from the field range and " +
+                    $"counted; vertex {at} reads {splitLevels[at]}.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rule 12.0's fixtures, asserted against the properties the rules read
+    /// off them, and check 12.4(g)'s BEFORE. The honeycomb's quoted 26 to 49
+    /// and 38 to 62 per cent were taken against prose reconstructions
+    /// nothing here can rebuild, so there is no honest before until these
+    /// fixtures exist. These numbers are the before. Task 23 re-measures
+    /// them against the reworked lattice and states the improvement between
+    /// the two.
+    /// BEFORE, measured 2026-09-02: two-oculus 10 of 87, serpentine 0 of 74.
+    /// </summary>
+    private static void ValidateSkinFixtures(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+
+        // The serpentine is PLAN-INJECTIVE by construction, and the whole
+        // engine requires it: plan x strictly increasing in i, plan y
+        // strictly increasing in j at every i.
+        (double[][] serpentine, int[][] _, int[] serpentineRim) =
+            SkinSerpentineNet();
+        for (int j = 0; j <= 12; j++)
+        {
+            for (int i = 0; i < 60; i++)
+            {
+                if (!(serpentine[j * 61 + i + 1][0] >
+                      serpentine[j * 61 + i][0]))
+                {
+                    throw new InvalidOperationException(
+                        "The serpentine's plan x must increase strictly in " +
+                        $"i; it does not at i {i}, j {j}.");
+                }
+            }
+        }
+        for (int i = 0; i <= 60; i++)
+        {
+            for (int j = 0; j < 12; j++)
+            {
+                if (!(serpentine[(j + 1) * 61 + i][1] >
+                      serpentine[j * 61 + i][1]))
+                {
+                    throw new InvalidOperationException(
+                        "The serpentine's plan y must increase strictly in " +
+                        $"j; it does not at i {i}, j {j}.");
+                }
+            }
+        }
+        if (serpentineRim.Length != 122)
+        {
+            throw new InvalidOperationException(
+                "The serpentine's rim is both long edges, 61 vertices each; " +
+                $"got {serpentineRim.Length}.");
+        }
+
+        // The two oculi are really cut: a full grid would carry 960 quads.
+        (double[][] oculusVertices, int[][] oculusFaces, int[] oculusRim) =
+            SkinTwoOculusNet();
+        if (oculusFaces.Length >= 960 || oculusRim.Length != 128)
+        {
+            throw new InvalidOperationException(
+                "The two-oculus fixture omits the faces inside two 1.0 m " +
+                "plan discs, so it holds fewer than the full grid's 960 " +
+                "quads, and its rim is the RECTANGLE'S 128 boundary " +
+                "vertices and not the oculus edges (rule 1.3.3); got " +
+                $"{oculusFaces.Length} faces and {oculusRim.Length} rim " +
+                "vertices.");
+        }
+
+        // Check 12.4(g)'s BEFORE, on the SHIPPED honeycomb.
+        object oculusNet = Activator.CreateInstance(
+            netType, new object[] { oculusVertices, oculusFaces })!;
+        object oculusBuilt = hexagonal.Invoke(
+            null, new object[] { oculusNet, 0.6, 0.35 })!;
+        (double[][] serpentineVertices, int[][] serpentineFaces, int[] _) =
+            SkinSerpentineNet();
+        object serpentineNet = Activator.CreateInstance(
+            netType,
+            new object[] { serpentineVertices, serpentineFaces })!;
+        object serpentineBuilt = hexagonal.Invoke(
+            null, new object[] { serpentineNet, 0.6, 0.35 })!;
+        int Withheld(object built) =>
+            Reading<int>(built, "PlanDegenerateDropped") +
+            Reading<int>(built, "PlanOverlapDropped");
+        int Built(object built) =>
+            Withheld(built) + SkinCells(built).Length;
+        Console.WriteLine(
+            "      Skin honeycomb BEFORE (check 12.4(g), shipped lattice, " +
+            $"S 0.6 CH 0.35): two-oculus {Withheld(oculusBuilt)} withheld " +
+            $"of {Built(oculusBuilt)} built; serpentine " +
+            $"{Withheld(serpentineBuilt)} withheld of " +
+            $"{Built(serpentineBuilt)} built.");
+        if (Built(oculusBuilt) == 0 || Built(serpentineBuilt) == 0)
+        {
+            throw new InvalidOperationException(
+                "Both fixtures must give the shipped honeycomb something " +
+                "to build, or there is no before to measure an after " +
+                "against.");
+        }
     }
 
     /// <summary>
@@ -15371,8 +15829,6 @@ internal static class Program
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
             Activator.CreateInstance(
                 netType, new object[] { fixture.Vertices, fixture.Faces })!;
-        T Reading<T>(object curve, string name) =>
-            (T)curve.GetType().GetProperty(name)!.GetValue(curve)!;
         double[] At(object curve, double u) =>
             (double[])pointAt.Invoke(null, new[] { curve, (object)u })!;
 
@@ -15538,6 +15994,13 @@ internal static class Program
         }
         return read.ToArray();
     }
+
+    /// <summary>Read a property off a reflected object. Class-scope, because
+    /// every Skin check method reads the pattern record this way; three
+    /// identical local copies used to live inside three unrelated methods
+    /// and no new method could see any of them.</summary>
+    private static T Reading<T>(object owner, string name) =>
+        (T)owner.GetType().GetProperty(name)!.GetValue(owner)!;
 
     private static double PlanCentroidY(double[][] outline) =>
         outline.Average(point => point[1]);
@@ -15967,9 +16430,6 @@ internal static class Program
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
             Activator.CreateInstance(
                 netType, new object[] { fixture.Vertices, fixture.Faces })!;
-        static T Reading<T>(object generated, string name) =>
-            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
-
         object twoPeak = Net(SkinTwoPeakNet());
 
         object built = courses.Invoke(
@@ -16571,9 +17031,6 @@ internal static class Program
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
             Activator.CreateInstance(
                 netType, new object[] { fixture.Vertices, fixture.Faces })!;
-        static T Reading<T>(object generated, string name) =>
-            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
-
         var meshings =
             new (string Label,
                  (double[][] Vertices, int[][] Faces) Fixture)[]
@@ -16867,9 +17324,6 @@ internal static class Program
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
             Activator.CreateInstance(
                 netType, new object[] { fixture.Vertices, fixture.Faces })!;
-        static T Reading<T>(object generated, string name) =>
-            (T)generated.GetType().GetProperty(name)!.GetValue(generated)!;
-
         string[] phasings =
             { "control", "spiral", "sheared band", "jitter" };
 
