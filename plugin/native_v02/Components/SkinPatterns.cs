@@ -142,21 +142,47 @@ internal sealed record SkinCell(
     double U0,
     double U1);
 
-/// <summary>One generated pattern: the cells sorted by course then
-/// position (the studio's build sequence), the band count, the readable
-/// diagnostics text the component's D output carries, the count of
-/// bands REFUSED because the level curves across them do not correspond
-/// one for one, and the two counts of cells DROPPED by the plan-validity
-/// filter, self-crossing and overlapping. The component turns all three
-/// into runtime Warnings, because a hole in the skin has to be said out
-/// loud whether a band or a cell made it.</summary>
+/// <summary>One generated pattern. The cells sorted by course then by
+/// rule 7.1's seam-outward order, the band count, the readable diagnostics
+/// text (kept on the RECORD and on no port, rule 9.3.6), the refused
+/// transition bands and their intervals, the two plan-validity drop counts,
+/// and every number rule 9.3.3 names, so that section 12 measures the
+/// ENGINE through reflection without a canvas rather than measuring a
+/// component's formatted string.
+///
+/// The three cap members are read together and each is per CAP, not per
+/// cell: CapGirths carries the girth of each emitted cap, meaning the
+/// CENTRE DISC's girth where rule 2.6 split it and the whole cap's girth
+/// where it did not; CapWedgeCounts carries that cap's W, zero where it was
+/// not split; and CapsOversized counts the caps rule 2.6.6 emitted whole
+/// above the maximum.
+///
+/// The three piece lengths are DERIVED from the surviving cells and need no
+/// member, excluding Cap cells by rule 2.3.2a. skin.surface_failed is
+/// deliberately NOT here: the Brep build happens on the solve thread beside
+/// ClosedOutlineCurve and never in this file, which is rule 5.2.4.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
     string Diagnostics,
     int TransitionBands,
+    IReadOnlyList<(double Low, double High)> TransitionIntervals,
     int PlanDegenerateDropped,
-    int PlanOverlapDropped);
+    int PlanOverlapDropped,
+    string FieldKind,
+    int RimVerticesUsed,
+    int RimVerticesDropped,
+    int ForceEdgesDropped,
+    int UnreachableVertices,
+    int ClippedCells,
+    IReadOnlyList<double> CapGirths,
+    IReadOnlyList<int> CapWedgeCounts,
+    int CapsOversized,
+    int FiveSidedCells,
+    int SevenSidedCells,
+    IReadOnlyList<int> CountChangeRows,
+    int MergedPieces,
+    int DegenerateCentroidsSkipped);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -2028,7 +2054,7 @@ internal static class SkinPatterns
         RequireSizes(size, courseHeight);
         (double zMin, double zMax) = HeightRange(net);
         if (net.Faces.Count == 0 || !(zMax - zMin > 1.0e-9))
-            return Empty("courses");
+            return Empty("courses", net);
 
         int bands = BandCount(zMin, zMax, courseHeight);
         double epsilon = Math.Max((zMax - zMin) * 1.0e-6, 1.0e-9);
@@ -2137,8 +2163,23 @@ internal static class SkinPatterns
                 degenerateDropped, overlapDropped,
                 TransitionLine("courses", transitionBands, transitions)),
             transitionBands,
+            transitions,
             degenerateDropped,
-            overlapDropped);
+            overlapDropped,
+            FieldKindOf(net),
+            net.Rim.Count,
+            net.RimDropped,
+            net.EdgesDropped,
+            UnreachableCount(net),
+            cells.Count(cell => cell.Clipped),
+            Array.Empty<double>(),
+            Array.Empty<int>(),
+            0,
+            0,
+            0,
+            Array.Empty<int>(),
+            0,
+            0);
     }
 
     /// <summary>
@@ -2388,7 +2429,27 @@ internal static class SkinPatterns
         return string.Join("\n", lines);
     }
 
-    private static SkinPatternResult Empty(string name) =>
+    /// <summary>Which field the tracer cut, in the words rule 1.7.4 and the
+    /// skin.field diagnostic use.</summary>
+    private static string FieldKindOf(SkinNet net) =>
+        net.Rim.Count > 0 ? "rim distance" : "world Z";
+
+    /// <summary>How many vertices are unreachable from the rim across the
+    /// triangulation (rule 1.7.3). They are excluded from the field range
+    /// and their faces produce no cells, so the count is a hole and reaches
+    /// a Warning.</summary>
+    private static int UnreachableCount(SkinNet net)
+    {
+        int count = 0;
+        foreach (double level in net.Levels)
+        {
+            if (!double.IsFinite(level))
+                count++;
+        }
+        return count;
+    }
+
+    private static SkinPatternResult Empty(string name, SkinNet? net = null) =>
         new(
             Array.Empty<SkinCell>(),
             0,
@@ -2399,6 +2460,21 @@ internal static class SkinPatterns
                     : "0.75 x S per course row",
                 0, 0, 0),
             0,
+            Array.Empty<(double, double)>(),
+            0,
+            0,
+            net is null ? "world Z" : FieldKindOf(net),
+            net?.Rim.Count ?? 0,
+            net?.RimDropped ?? 0,
+            net?.EdgesDropped ?? 0,
+            net is null ? 0 : UnreachableCount(net),
+            0,
+            Array.Empty<double>(),
+            Array.Empty<int>(),
+            0,
+            0,
+            0,
+            Array.Empty<int>(),
             0,
             0);
 
@@ -2501,7 +2577,7 @@ internal static class SkinPatterns
         RequireSizes(size, courseHeight);
         (double zMin, double zMax) = HeightRange(net);
         if (net.Faces.Count == 0 || !(zMax - zMin > 1.0e-9))
-            return Empty("hexagonal");
+            return Empty("hexagonal", net);
 
         int bands = BandCount(zMin, zMax, courseHeight);
         double epsilon = Math.Max((zMax - zMin) * 1.0e-6, 1.0e-9);
@@ -2736,7 +2812,22 @@ internal static class SkinPatterns
                 TransitionLine(
                     "hexagonal", skippedRows.Count, transitions)),
             skippedRows.Count,
+            transitions,
             degenerateDropped,
-            overlapDropped);
+            overlapDropped,
+            FieldKindOf(net),
+            net.Rim.Count,
+            net.RimDropped,
+            net.EdgesDropped,
+            UnreachableCount(net),
+            cells.Count(cell => cell.Clipped),
+            Array.Empty<double>(),
+            Array.Empty<int>(),
+            0,
+            0,
+            0,
+            Array.Empty<int>(),
+            0,
+            0);
     }
 }

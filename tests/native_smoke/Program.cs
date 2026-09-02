@@ -685,6 +685,21 @@ internal static class Program
 
         try
         {
+            ValidateSkinResultRecord(plugin);
+            Console.WriteLine(
+                "PASS  Skin result record: rule 9.3.6's twenty-one members " +
+                "are all present, the engine names which field it cut, and " +
+                "the rim it used is counted, so section 12 can measure " +
+                "every number of this wave off the engine without a canvas.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin result record: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -17803,6 +17818,71 @@ internal static class Program
                 "diagnostics as their own lines, zero included, so the " +
                 "guarantee is legible rather than merely true; got " +
                 $"'{diagnostics}'.");
+        }
+    }
+
+    /// <summary>
+    /// Rule 9.3.6's record, member for member. Section 12 measures every
+    /// number in this wave off this record and never off a component, so a
+    /// member quietly dropped or renamed would take a check with it.
+    /// </summary>
+    private static void ValidateSkinResultRecord(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+        object generated = courses.Invoke(
+            null, new object[] { net, 0.6, 0.5 })!;
+        string[] required =
+        {
+            "Cells", "CourseCount", "Diagnostics", "TransitionBands",
+            "TransitionIntervals", "PlanDegenerateDropped",
+            "PlanOverlapDropped", "FieldKind", "RimVerticesUsed",
+            "RimVerticesDropped", "ForceEdgesDropped", "UnreachableVertices",
+            "ClippedCells", "CapGirths", "CapWedgeCounts", "CapsOversized",
+            "FiveSidedCells", "SevenSidedCells", "CountChangeRows",
+            "MergedPieces", "DegenerateCentroidsSkipped"
+        };
+        foreach (string member in required)
+        {
+            if (generated.GetType().GetProperty(member) is null)
+            {
+                throw new InvalidOperationException(
+                    "SkinPatternResult carries rule 9.3.6's twenty-one " +
+                    $"members; '{member}' is missing, and section 12 " +
+                    "measures every number off this record rather than off " +
+                    "a component.");
+            }
+        }
+        if (Reading<string>(generated, "FieldKind") != "rim distance")
+        {
+            throw new InvalidOperationException(
+                "A net whose Result named supports cuts a RIM DISTANCE " +
+                "field, and the engine says which field it cut; got " +
+                $"'{Reading<string>(generated, "FieldKind")}'.");
+        }
+        if (Reading<int>(generated, "RimVerticesUsed") != 8)
+        {
+            throw new InvalidOperationException(
+                "The dome's rim is its eight base vertices; got " +
+                $"{Reading<int>(generated, "RimVerticesUsed")}.");
+        }
+        object bare = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        object fallback = courses.Invoke(
+            null, new object[] { bare, 0.6, 0.5 })!;
+        if (Reading<string>(fallback, "FieldKind") != "world Z")
+        {
+            throw new InvalidOperationException(
+                "With no rim the field falls back to world Z (rule 1.7.4) " +
+                "and the engine names the fallback, because a silent " +
+                "change of what CH means is worse than an empty output; " +
+                $"got '{Reading<string>(fallback, "FieldKind")}'.");
         }
     }
 
