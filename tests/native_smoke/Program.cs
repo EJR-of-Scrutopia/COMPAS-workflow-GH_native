@@ -10312,6 +10312,83 @@ internal static class Program
                 }
             }
 
+            // THE WHOLE PLACEMENT IS SCALE INVARIANT, the centre column with
+            // it: the same form a thousand times larger, and a thousand times
+            // smaller, places the same columns resized, to a part in 1e-9 of
+            // its own size, with every clearance-driven count unmoved. This is
+            // a PRESERVATION PIN over the new column, and it is what would
+            // catch an absolute length finding its way into this path, which
+            // is a real hazard here because the column has no span of its own
+            // and only ONE notch: SpacingOf's ring fallback, the smallest plan
+            // distance between two of a tree's own notches, cannot run on it
+            // at all and ends at a hardcoded 1.0.
+            //
+            // BE CLEAR WHAT THIS DOES NOT PROVE, because a check whose stated
+            // reason is false is worse than no check. The column is handed the
+            // annexing span's FRAME so that it never reaches that 1.0, and
+            // this fixture does NOT distinguish that: MEASURED, with the
+            // hand-over disabled, this check and the whole harness and a
+            // hundred and thirty-five probe configurations all stay green.
+            // The reason is that every consumer of the number takes a MIN with
+            // a correctly scaled partner -- the close-foot clearance, the weld
+            // tolerance and the member-to-member clearance all do -- so a
+            // fallback that is too LARGE is swallowed, and the one test that
+            // reads a member's own clearance alone is the net test, which a
+            // column standing plumb beneath its own notch cannot fail. The
+            // hand-over is therefore correct and cheap and DEFENSIVE, and it
+            // is recorded here as unpinned rather than left looking measured.
+            foreach (double factor in new[] { 1000.0, 0.001 })
+            {
+                foreach (int branching in new[] { 2, 3 })
+                {
+                foreach (int type in new[] { 0, 1, 2, 3, 4 })
+                {
+                    var small = Meeting(2, 5, 6.0, 3.0, 1.0);
+                    var large = Meeting(2, 5, 6.0 * factor, 3.0 * factor, 1.0);
+                    object placedSmall = Run(small, Array.Empty<int[]>(), branching, type);
+                    object placedLarge = Run(large, Array.Empty<int[]>(), branching, type);
+                    var smallNodes = ((IEnumerable)Get<object>(Get<object>(placedSmall, "Built"), "Nodes"))
+                        .Cast<object>().Select(n => (X(n), Y(n), Z(n)))
+                        .OrderBy(p => p.Item1).ThenBy(p => p.Item2).ThenBy(p => p.Item3).ToArray();
+                    var largeNodes = ((IEnumerable)Get<object>(Get<object>(placedLarge, "Built"), "Nodes"))
+                        .Cast<object>().Select(n => (X(n), Y(n), Z(n)))
+                        .OrderBy(p => p.Item1).ThenBy(p => p.Item2).ThenBy(p => p.Item3).ToArray();
+                    if (smallNodes.Length != largeNodes.Length)
+                        throw new InvalidOperationException(
+                            $"Branching {branching}, Type {type}: the same crown form a thousand times larger builds {largeNodes.Length} nodes against {smallNodes.Length}. Every clearance in this engine is a formula in its own span's terms, and the centre column carries that span's frame precisely so that it is not judged against a hardcoded length.");
+                    double tolerance = 1.0e-9 * factor * 6.0;
+                    for (int i = 0; i < smallNodes.Length; i++)
+                    {
+                        if (Math.Abs((smallNodes[i].Item1 * factor) - largeNodes[i].Item1) > tolerance ||
+                            Math.Abs((smallNodes[i].Item2 * factor) - largeNodes[i].Item2) > tolerance ||
+                            Math.Abs((smallNodes[i].Item3 * factor) - largeNodes[i].Item3) > tolerance)
+                        {
+                            throw new InvalidOperationException(
+                                $"Branching {branching}, Type {type}: node {i} stands at ({smallNodes[i].Item1:0.####}, {smallNodes[i].Item2:0.####}, {smallNodes[i].Item3:0.####}) on the small form and at ({largeNodes[i].Item1:0.####}, {largeNodes[i].Item2:0.####}, {largeNodes[i].Item3:0.####}) on the same form scaled by {factor:0}. The placement is scale invariant, and a length taken from anywhere but the span's own frame breaks it.");
+                        }
+                    }
+                    // AND EVERY CLEARANCE-DRIVEN COUNT WITH THEM. These are the
+                    // numbers a hardcoded length actually moves, and on a form
+                    // scaled DOWN it moves them first: the close-foot clearance
+                    // is a quarter of the span's spacing, so a model whose
+                    // whole span is a thousandth of a unit across would have
+                    // every one of its feet inside a clearance of 0.25 taken
+                    // from nowhere.
+                    object smallBuilt = Get<object>(placedSmall, "Built");
+                    object largeBuilt = Get<object>(placedLarge, "Built");
+                    foreach (string field in new[] { "FeetClose", "Welds", "FeetMerged", "Collisions", "Peeled", "CentralColumns" })
+                    {
+                        if (Get<int>(smallBuilt, field) != Get<int>(largeBuilt, field))
+                            throw new InvalidOperationException(
+                                $"Branching {branching}, Type {type}, scaled by {factor}: {field} reads {Get<int>(smallBuilt, field)} on the form and {Get<int>(largeBuilt, field)} on the same form resized. Every clearance in this engine is a formula in its own span's terms; the centre column has no span, so it carries the annexing span's FRAME, and without it SpacingOf falls through to a hardcoded 1.0 that means nothing at any other size.");
+                    }
+                    if (Get<int>(placedSmall, "GroundPlaced") != Get<int>(placedLarge, "GroundPlaced"))
+                        throw new InvalidOperationException(
+                            $"Branching {branching}, Type {type}, scaled by {factor}: the form placed Type {Get<int>(placedSmall, "GroundPlaced")} and the resized one Type {Get<int>(placedLarge, "GroundPlaced")}. A clearance judged against a hardcoded length is how a collision, and with it Auto's choice, comes out differently on the same shape at another size.");
+                }
+                }
+            }
+
             // The two arms, at Branching 2, are the very picture Param sent
             // back: four branches against three before the ruling, four
             // against four and a column at the centre after it. Printed so
