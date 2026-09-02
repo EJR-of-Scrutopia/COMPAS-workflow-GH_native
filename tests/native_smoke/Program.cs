@@ -1107,9 +1107,10 @@ internal static class Program
                 "carrying 1 kN along and 0.1 kN across, SkinFlowField's " +
                 "native directions lie along the barrel's own generators " +
                 "to within 5 degrees at every face; with the force list " +
-                "removed the same net's field falls to the (1, 0) default " +
-                "of rule 3.2.8 everywhere and the component does not " +
-                "throw.");
+                "removed the component does not throw, and rule 3.2.8's " +
+                "raw per-face fallback -- read directly, before rule " +
+                "3.2.9's neighbour-averaging blends it away -- is exactly " +
+                "that face's own e1 with coherence 1.0 everywhere.");
         }
         catch (Exception exception)
         {
@@ -22696,11 +22697,24 @@ internal static class Program
     /// FIXTURE MUST CARRY FORCES: every edge running along the barrel
     /// carries a compression of 1 kN and every edge across it 0.1 kN, which
     /// is a one-way thrust stated as data rather than assumed. On the SAME
-    /// barrel with its force list removed the field falls to the (1, 0)
-    /// default of rule 3.2.8 on every face and the component does not throw.
-    /// The author must be able to tell a straight flow line from a defaulted
-    /// one, and running the fixture both ways is what makes that
-    /// distinction exist.
+    /// barrel with its force list removed the component does not throw, and
+    /// rule 3.2.8's fallback -- a face with no force edge takes its own e1
+    /// with coherence 1.0 -- is asserted on `Raw`, not on `Directions`.
+    ///
+    /// Measured (2026-09-03, see Deviations): with the force list removed,
+    /// EVERY face defaults, so `Directions`' three neighbour-averaging
+    /// passes of rule 3.2.9 blend each face's raw e1 with neighbours whose
+    /// own first-edge basis points a different way -- that is what the
+    /// averaging is FOR -- and the smoothed field drifts up to 41 degrees
+    /// off its own face's raw e1 on this fixture (up to 31 degrees off the
+    /// world generator). That drift is the shipped engine working as
+    /// designed, not a defect, so a check reading `Directions`' SMOOTHED
+    /// output could not assert "equals e1" without failing on the honest
+    /// engine, and loosening it to a tolerance wide enough to pass would be
+    /// too wide to catch a wrong fallback. `Raw` is read directly instead,
+    /// by the same NonPublic-static reflection this file already uses for
+    /// `ExportComponent.HasNegativeCourse`, which is exactly what rule
+    /// 3.2.8 describes and is unaffected by rule 3.2.9's averaging.
     /// </summary>
     private static void ValidateSkinLineField(Assembly plugin)
     {
@@ -22741,10 +22755,85 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "A net carrying NO force edges at all is not an error: " +
-                "every face takes the (1, 0) default of rule 3.2.8, which " +
-                "is its own e1, and the diagnostics say so rather than " +
-                "leaving the author to wonder why his flow lines came out " +
-                "straight (rule 1.3.6).");
+                "Directions did not throw, but returned " +
+                $"{defaulted.Length} directions against " +
+                $"{withForce.Length} faces.");
+        }
+
+        MethodInfo raw = field.GetMethod(
+            "Raw",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "SkinFlowField.Raw was not found.");
+        var rawState = (Array)raw.Invoke(null, new[] { bare })!;
+        int[][] bareFaces = ((IEnumerable)netType
+                .GetProperty("Faces")!
+                .GetValue(bare)!)
+            .Cast<int[]>()
+            .ToArray();
+        double[][] bareVertices = ((IEnumerable)netType
+                .GetProperty("Vertices")!
+                .GetValue(bare)!)
+            .Cast<double[]>()
+            .ToArray();
+        if (rawState.Length != bareFaces.Length)
+        {
+            throw new InvalidOperationException(
+                $"SkinFlowField.Raw returned {rawState.Length} entries " +
+                $"against {bareFaces.Length} triangulated faces.");
+        }
+        for (int face = 0; face < rawState.Length; face++)
+        {
+            object entry = rawState.GetValue(face)!;
+            Type entryType = entry.GetType();
+            var plane =
+                (double[])entryType.GetField("Item1")!.GetValue(entry)!;
+            var coherence =
+                (double)entryType.GetField("Item2")!.GetValue(entry)!;
+
+            // Rule 3.2.5's own e1: the triangle's first edge, normalised,
+            // duplicated here rather than reflected into (Basis is private
+            // and returns a three-element tuple Raw itself already reads)
+            // so a defect in Basis and a defect in this check cannot cancel
+            // out.
+            int[] triangle = bareFaces[face];
+            double[] a = bareVertices[triangle[0]];
+            double[] b = bareVertices[triangle[1]];
+            double[] first = { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+            double firstLength = Math.Sqrt(
+                first[0] * first[0] +
+                first[1] * first[1] +
+                first[2] * first[2]);
+            double[] e1 = firstLength > 1.0e-12
+                ? new[]
+                {
+                    first[0] / firstLength,
+                    first[1] / firstLength,
+                    first[2] / firstLength
+                }
+                : new[] { 1.0, 0.0, 0.0 };
+            double dx = plane[0] - e1[0];
+            double dy = plane[1] - e1[1];
+            double dz = plane[2] - e1[2];
+            double delta = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            if (delta > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Rule 3.2.8: a face with no force edge at all must " +
+                    $"take its OWN e1 as its raw direction; face {face} " +
+                    $"got ({plane[0]}, {plane[1]}, {plane[2]}) against e1 " +
+                    $"({e1[0]}, {e1[1]}, {e1[2]}), {delta} apart. A " +
+                    "fallback pointing anywhere else -- ninety degrees " +
+                    "away at e2, say -- would pass every other check in " +
+                    "this file and never be caught.");
+            }
+            if (coherence != 1.0)
+            {
+                throw new InvalidOperationException(
+                    "Rule 3.2.8: a defaulted face must report coherence " +
+                    "1.0, so a fixed default is never discounted as a " +
+                    $"contested vote; face {face} got {coherence}.");
+            }
         }
     }
 
