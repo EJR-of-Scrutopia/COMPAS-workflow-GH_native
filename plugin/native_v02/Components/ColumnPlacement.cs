@@ -21,7 +21,9 @@ namespace Ananke.COMPAS.Native.Components
     /// for each Type level the feet, the fork, the members, then the measures.
     /// The fork lies ON THE SEGMENT from its foot to its main notch, so trunk
     /// and main branch are one straight line by construction and a fork can
-    /// never kink.
+    /// never kink. The CENTRE TREE, Bar -1 and Span -1, is the single
+    /// exception: its trunk is plumb and its main notch is a branch like the
+    /// rest, on Param's ruling of 2026-09-02.
     /// </summary>
     internal static class ColumnPlacement
     {
@@ -2634,27 +2636,70 @@ namespace Ananke.COMPAS.Native.Components
                 // lowest or the branches above the fork already, is
                 // untouched. A borrowed notch is not this tree's to build to
                 // at all, so it plays no part in this measure.
+                //
+                // THE ONE EXCEPTION TO THE FORK-ON-THE-SEGMENT INVARIANT,
+                // and it is deliberate and narrow. PARAM'S RULING of
+                // 2026-09-02 is verbatim "a central column thats verticle",
+                // recorded in
+                // docs/superpowers/specs/2026-09-02-columns-centre-second-mechanism-input.md.
+                // For the CENTRE TREE ALONE, the Bar -1 / Span -1 tree that
+                // gathers the crowns of a meeting, the trunk rises VERTICALLY
+                // from its foot on the axis, the fork sits DIRECTLY ABOVE that
+                // foot, and BRANCHES run from the fork to every crown, the
+                // head main among them. Left on the segment its trunk leaned
+                // toward whichever crown happened to be the head main by
+                // ForkFraction times the crowns' own offset, on a form
+                // mirror-symmetric about the axis: 0.382 degrees at an offset
+                // of 0.02, 1.9097 at 0.1 and 2.6719 at 0.14, all of them
+                // MEASURED by putting the old arithmetic back and running the
+                // harness. The PlumbDegrees dead band is 2.0, so it hid every
+                // one of those but the last. EVERY ORDINARY TREE KEEPS SPEC
+                // 3.6 EXACTLY, so trunk and main branch stay one straight line
+                // everywhere else.
+                //
+                // The AIM the fork is measured against carries the exception.
+                // The height arithmetic below is the shipped one, run against
+                // the CROWNS' height, their mean Z where they differ, so the
+                // machine-joint proportions are unchanged and only the plan
+                // position of fork and trunk moves onto the axis. Where the
+                // crowns coincide the tree holds ONE node, the single-member
+                // path above has already returned, and that geometry is
+                // untouched to the bit.
+                bool centreTree = tree.Bar < 0 && tree.Span < 0;
+                Point3d aimPoint = main;
+                if (centreTree)
+                {
+                    double crownZ = 0.0;
+                    for (int k = 0; k < tree.Nodes.Length; k++)
+                        crownZ += nodes[tree.Nodes[k]].Z;
+                    aimPoint = new Point3d(
+                        footPoint.X, footPoint.Y, crownZ / tree.Nodes.Length);
+                }
                 double fraction = ForkFraction;
-                double rise = main.Z - footPoint.Z;
+                double rise = aimPoint.Z - footPoint.Z;
                 if (rise > 1.0e-9)
                 {
-                    double lowest = main.Z;
+                    // On the centre tree the head main is a BRANCH like any
+                    // other crown, so it counts toward the lowest owned notch
+                    // the fork must stay under; on every ordinary tree it is
+                    // the trunk's own top and the shipped exclusion stands.
+                    double lowest = centreTree ? double.MaxValue : main.Z;
                     for (int k = 0; k < tree.Nodes.Length; k++)
                     {
-                        if (k == tree.HeadMain || !tree.Owned[k])
+                        if ((k == tree.HeadMain && !centreTree) || !tree.Owned[k])
                             continue;
                         lowest = Math.Min(lowest, nodes[tree.Nodes[k]].Z);
                     }
-                    if (lowest > footPoint.Z &&
+                    if (lowest < double.MaxValue && lowest > footPoint.Z &&
                         footPoint.Z + (ForkFraction * rise) >= lowest)
                     {
                         fraction = ForkFraction * (lowest - footPoint.Z) / rise;
                     }
                 }
                 var fork = new Point3d(
-                    footPoint.X + ((main.X - footPoint.X) * fraction),
-                    footPoint.Y + ((main.Y - footPoint.Y) * fraction),
-                    footPoint.Z + ((main.Z - footPoint.Z) * fraction));
+                    footPoint.X + ((aimPoint.X - footPoint.X) * fraction),
+                    footPoint.Y + ((aimPoint.Y - footPoint.Y) * fraction),
+                    footPoint.Z + ((aimPoint.Z - footPoint.Z) * fraction));
                 int forkNode = AddNode(result.Nodes, fork);
                 AddMember(result, footNode, forkNode, total, t);
                 AddMember(result, forkNode, mainNode, tree.Load[tree.HeadMain], t);

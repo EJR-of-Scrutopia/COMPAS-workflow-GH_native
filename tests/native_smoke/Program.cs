@@ -10608,11 +10608,24 @@ internal static class Program
 
                 // (c) THE CROWN PARAM ACTUALLY SEES. Two arms is the arch he
                 // photographed and three the vault he names next; an odd and an
-                // even notch count each, because the ladder differs. The gap is
-                // a TENTH of the reach's tenth, well inside 0.25 * g on every
-                // one of these, and the co-location arithmetic is checked at
-                // the boundary by (d) below rather than assumed here.
-                const double Gap = 0.1;
+                // even notch count each, because the ladder differs.
+                //
+                // THE GAP IS SWEPT, and that is not decoration. A span here
+                // runs from its crown to its anchor, so its spacing g is
+                // (reach - gap) / perArm and the co-location clearance is
+                // 0.25 * g, which is 0.293 at the tightest combination, two
+                // arms of five at a gap of 0.14, against a crown separation of
+                // 2 * gap = 0.28. Every gap below is inside that on every
+                // combination, and the shipped 0.1 is still among them so
+                // nothing measured before moves. The reason for the sweep is
+                // the PLUMB check further down: the trunk's old lean was
+                // ForkFraction * gap off the axis, MEASURED at 1.9097 degrees
+                // for a gap of 0.1 and 2.6719 for one of 0.14, and the
+                // engine's PlumbDegrees dead band of 2.0 swallowed the first.
+                // A fixture pinned at 0.1 alone cannot discriminate a leaning
+                // trunk from a plumb one.
+                foreach (double crownGap in new[] { 0.02, 0.06, 0.1, 0.14 })
+                {
                 foreach (int arms in new[] { 2, 3 })
                 {
                     foreach (int perArm in new[] { 5, 4 })
@@ -10621,12 +10634,12 @@ internal static class Program
                         {
                             foreach (int type in new[] { 0, 1, 2, 3, 4 })
                             {
-                                var vault = Nearly(arms, perArm, 6.0, 3.0, Gap, 1.0);
+                                var vault = Nearly(arms, perArm, 6.0, 3.0, crownGap, 1.0);
                                 object placed = Run(vault, Array.Empty<int[]>(), branching, type);
                                 var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
                                 int[] crowns = Enumerable.Range(0, arms).Select(a => vault.Bars[a][0]).ToArray();
                                 int[] heads = HeadsAt(placed, vault.Nodes, vault.Anchors);
-                                string where = $"{arms} arms of {perArm} stopping {Gap} short, Branching {branching}, Type {type}";
+                                string where = $"{arms} arms of {perArm} stopping {crownGap} short, Branching {branching}, Type {type}";
 
                                 if (Get<int>(placed, "SharedNotches") != 0)
                                     throw new InvalidOperationException(
@@ -10740,45 +10753,106 @@ internal static class Program
                                     throw new InvalidOperationException(
                                         $"{where}: the centre column stands on ONE foot on the form's own axis, the plan MEAN of the crowns and not one crown or a bounding-box centre; {onAxis.Length} feet are there.");
 
-                                // AND IT STANDS AS PLUMB AS THE CROWNS ALLOW.
-                                // BE CLEAR WHAT THIS SAYS. The fork lies on the
-                                // segment from the foot to the head main (spec
-                                // 3.6) and the head main is a crown, so a column
-                                // gathering crowns that stand `Gap` off the axis
-                                // leans by that much and no more: EVERY node of
-                                // it, foot, fork and heads alike, is within the
-                                // crowns' own scatter of the axis. Where the
-                                // crowns coincide, which is the shared-node case
-                                // above, that scatter is zero and the column is
-                                // exactly plumb. What this refuses is the column
-                                // being leant into a SIDE, which is what an aim
-                                // taken from an arm's resultant would do and what
-                                // Param is asking against.
+                                // AND ITS TRUNK IS VERTICAL. PARAM'S RULING of
+                                // 2026-09-02 is verbatim "a central column
+                                // thats verticle", and this is the check that
+                                // says so.
+                                //
+                                // WHAT IT REPLACES, and why that one was blind.
+                                // The old assertion asked only that no node of
+                                // the column stood further off the axis in plan
+                                // than the crowns themselves do. A trunk running
+                                // foot to a fork ForkFraction of the way to
+                                // whichever crown was the head main satisfies
+                                // that and still LEANS, by 1.9097 degrees at a
+                                // gap of 0.1, and the fixture used 0.1, which
+                                // sits inside the engine's own PlumbDegrees dead
+                                // band of 2.0. The measure here is the trunk's
+                                // PLAN DISPLACEMENT, foot to fork, and it is
+                                // ZERO to a part in 1e9 rather than merely
+                                // small, swept over the gaps above so that 0.14,
+                                // where the old lean was 2.6733 degrees and past
+                                // any dead band, is among them.
+                                //
+                                // The trunk is the one member leaving the foot;
+                                // every other member of the column is a BRANCH
+                                // from the fork at its top, and the branches
+                                // reach each crown EXACTLY ONCE, the head main
+                                // among them, which is the second half of the
+                                // ruling: the head main is no longer the top of
+                                // the trunk on this tree alone.
                                 int centreIndex = Array.IndexOf(trees, centreTree);
                                 var memberTree = Get<List<int>>(builtLevel, "MemberTree");
                                 (int Lower, int Upper)[] built = MembersOf(builtLevel);
-                                int centreMembers = 0;
+                                int centreFoot = onAxis[0];
+                                var centreOwn = new List<int>();
                                 for (int m = 0; m < built.Length; m++)
                                 {
-                                    if (memberTree[m] != centreIndex)
+                                    if (memberTree[m] == centreIndex)
+                                        centreOwn.Add(m);
+                                }
+                                if (centreOwn.Count != arms + 1)
+                                    throw new InvalidOperationException(
+                                        $"{where}: the centre column is a trunk and one branch per crown, {arms + 1} members; it built {centreOwn.Count}.");
+                                int[] trunks = centreOwn.Where(m => built[m].Lower == centreFoot).ToArray();
+                                if (trunks.Length != 1)
+                                    throw new InvalidOperationException(
+                                        $"{where}: the centre column leaves its foot by ONE trunk and forks above it; {trunks.Length} of its members start at the foot.");
+                                object trunkLow = builtNodes[built[trunks[0]].Lower];
+                                object trunkHigh = builtNodes[built[trunks[0]].Upper];
+                                double leanX = X(trunkHigh) - X(trunkLow);
+                                double leanY = Y(trunkHigh) - Y(trunkLow);
+                                double trunkPlan = Math.Sqrt((leanX * leanX) + (leanY * leanY));
+                                if (trunkPlan > 1.0e-9)
+                                    throw new InvalidOperationException(
+                                        $"{where}: the centre column's TRUNK MOVES {trunkPlan:0.######} in plan between its foot and its fork, so it leans {(180.0 / Math.PI) * Math.Atan2(trunkPlan, Math.Abs(Z(trunkHigh) - Z(trunkLow))):0.####} degrees. Param's ruling of 2026-09-02 is 'a central column thats verticle': the trunk rises VERTICALLY from the foot on the axis and the fork sits directly above it. A fork left on the segment to the head main leans by ForkFraction times the crowns' own offset, which the {2.0} degree dead band hides at small gaps and cannot hide here.");
+
+                                // THE BRANCHES, one to each crown and no crown
+                                // twice, all of them leaving the fork.
+                                int centreFork = built[trunks[0]].Upper;
+                                var reached = new List<int>();
+                                foreach (int m in centreOwn)
+                                {
+                                    if (m == trunks[0])
                                         continue;
-                                    centreMembers++;
+                                    if (built[m].Lower != centreFork)
+                                        throw new InvalidOperationException(
+                                            $"{where}: every member of the centre column but the trunk is a BRANCH leaving the fork; one leaves node {built[m].Lower} instead, and a member hanging off anything else is a kink the block's Z sort would read as a second foot.");
+                                    object top = builtNodes[built[m].Upper];
+                                    int[] at = crowns.Where(c =>
+                                        Math.Abs(X(vault.Nodes.GetValue(c)!) - X(top)) <= 1.0e-9
+                                        && Math.Abs(Y(vault.Nodes.GetValue(c)!) - Y(top)) <= 1.0e-9
+                                        && Math.Abs(Z(vault.Nodes.GetValue(c)!) - Z(top)) <= 1.0e-9).ToArray();
+                                    if (at.Length != 1)
+                                        throw new InvalidOperationException(
+                                            $"{where}: a branch of the centre column tops out at ({X(top):0.####}, {Y(top):0.####}, {Z(top):0.####}), which is not one of the crowns [{string.Join(", ", crowns)}] it gathers.");
+                                    reached.Add(at[0]);
+                                }
+                                if (reached.Distinct().Count() != arms || crowns.Any(c => !reached.Contains(c)))
+                                    throw new InvalidOperationException(
+                                        $"{where}: the branches reach EACH crown EXACTLY ONCE; they reached [{string.Join(", ", reached.OrderBy(r => r))}] against crowns [{string.Join(", ", crowns)}]. The head main is a branch here like the rest, on Param's ruling.");
+
+                                // And no node of the column is further off the
+                                // axis than the crowns themselves, which was the
+                                // old statement and is still true: the foot and
+                                // the fork are ON the axis and the heads are the
+                                // crowns.
+                                foreach (int m in centreOwn)
+                                {
                                     foreach (int end in new[] { built[m].Lower, built[m].Upper })
                                     {
                                         double plan = Math.Sqrt(
                                             (X(builtNodes[end]) * X(builtNodes[end]))
                                             + (Y(builtNodes[end]) * Y(builtNodes[end])));
-                                        if (plan > Gap + 1.0e-9)
+                                        if (plan > crownGap + 1.0e-9)
                                             throw new InvalidOperationException(
-                                                $"{where}: a node of the centre column stands {plan:0.####} off the axis in plan, further than the {Gap} the crowns themselves stand off it. The column is vertical but for the crowns' own scatter; it is never leant into a side.");
+                                                $"{where}: a node of the centre column stands {plan:0.####} off the axis in plan, further than the {crownGap} the crowns themselves stand off it. It is never leant into a side.");
                                     }
                                 }
-                                if (centreMembers != arms + 1)
-                                    throw new InvalidOperationException(
-                                        $"{where}: the centre column is a trunk and one branch per crown, {arms + 1} members; it built {centreMembers}.");
                             }
                         }
                     }
+                }
                 }
 
                 // (d) THE UNIQUE-MEETING GATE, and it is the whole safety of
