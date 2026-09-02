@@ -439,6 +439,22 @@ namespace Ananke.COMPAS.Native.Components
                                 + "trunk from the shared foot would lean past 60 "
                                 + "degrees. The level itself is placed.");
                 }
+                // PARAM'S CATCHER caught something, and it says WHAT and FROM
+                // WHICH SIDE so the upstream cause stays visible. A silent
+                // catcher would tidy the symptom away and leave the rule that
+                // let it through unexamined, which is the opposite of what he
+                // asked for.
+                if (placement.CentresCaught > 0)
+                {
+                    AddRuntimeMessage(
+                        GH_RuntimeMessageLevel.Remark,
+                        $"{Count(placement.CentresCaught, "branch", "branches")} into a "
+                            + "crown was CAUGHT by the final invariant pass and stood on "
+                            + "a straight column of its own: the crown's other notches "
+                            + "were already on a central column, so one side would have "
+                            + "carried a branch its mirror across the form has not got. "
+                            + string.Join(" ", placement.CaughtRemarks));
+                }
 
                 // What the canvas can read without opening Diagnose. This is
                 // the branch that made the slider mean something, so the

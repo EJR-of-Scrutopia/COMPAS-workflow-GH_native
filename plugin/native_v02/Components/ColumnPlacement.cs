@@ -450,6 +450,24 @@ namespace Ananke.COMPAS.Native.Components
             /// this is a property of the NET and the same at every level.
             /// </summary>
             public int CentresExtracted;
+            /// <summary>
+            /// Columns stood by PARAM'S CATCHER, the final invariant pass: a
+            /// crown SOME of whose notches were still built by their own side
+            /// while the rest stood on a central column, which is his own
+            /// "confirm is the central column connecting to one and not the
+            /// other, then disconnect it and draw a straight column". Counted
+            /// APART from <see cref="CentresExtracted"/> on purpose: that
+            /// number is what the two extraction paths did, this is what was
+            /// left over after them, and folding them together would hide
+            /// exactly the case the catcher exists to report.
+            /// </summary>
+            public int CentresCaught;
+            /// <summary>
+            /// One line per catch, naming the notch, the bar that still built
+            /// it and the notches it crowns with that did not, so the upstream
+            /// cause stays visible instead of being tidied away.
+            /// </summary>
+            public List<string> CaughtRemarks = new();
         }
 
         // ------------------------------------------------------------------
@@ -1573,6 +1591,270 @@ namespace Ananke.COMPAS.Native.Components
         }
 
         // ------------------------------------------------------------------
+        // The catcher
+
+        /// <summary>
+        /// PARAM'S CATCHER, his own design, ruled on 2026-09-02: "we can add a
+        /// catcher too, where the type 2 and up is selected if the columns
+        /// dont have symmetrical number of branches confirm is the central
+        /// column connecting to one and not the other, then disconnect it and
+        /// draw a straight column".
+        ///
+        /// It runs LAST, over the trees as they actually stand, and it asks
+        /// one question of the finished placement rather than re-deciding
+        /// anything upstream. That is the whole point of it: it must catch the
+        /// branch-count asymmetry WHATEVER let it through, including a case
+        /// NEITHER extraction path can see.
+        ///
+        /// THE CROWN GROUPS ARE ITS OWN, built here from geometry alone and
+        /// from neither extraction path's answer. Two free notches of
+        /// DIFFERENT spans within 0.25 * min(g_A, g_B) of one another in plan,
+        /// which is section 12's own feet-close clearance and not a new
+        /// number, belong to one crown; the relation is unioned, so several
+        /// arms reaching one place are one crown. There is no unique-pair gate
+        /// here, and there does not need to be: the gate exists to stop a pair
+        /// of parallel ribs being read as a crown and stripped of their
+        /// branching, and this pass never takes a branch from a group whose
+        /// notches are ALL still built. A SHARED node, one vertex several
+        /// spans hold, is a crown of its own by identity, and it can be
+        /// unioned with a notch that merely stops short of it: that is the
+        /// MIXED CROWN, one arm sharing the node while a third stops short,
+        /// which the owner rule cannot see because the shared node is not solo
+        /// and the meeting rule cannot see for the same reason.
+        ///
+        /// THE TRIGGER IS PARAM'S OWN, and it is a count of BRANCHES INTO THE
+        /// CROWN, per side, never a count of feet: a crown group is caught
+        /// when SOME of its notches are still built by their own span and some
+        /// are not, which is exactly "the central column connecting to one and
+        /// not the other". One side then carries a branch into the middle that
+        /// its mirror across the form has not got. A group every side still
+        /// builds is symmetric and is left alone, which is what keeps the
+        /// straddling tree of a balanced crossing and both parallel ribs
+        /// untouched; a group no side builds is already right.
+        ///
+        /// IT DOES NOT ASSUME WHICH SIDE. Whichever notches are still built
+        /// are the ones un-owned, so the answer does not change when the model
+        /// is mirrored in x and the owner tie-break comes out the other way.
+        ///
+        /// AND IT FIRES ON UNEQUAL FLANKS. Two lines of different free-notch
+        /// counts lay rows of different sizes, so one side's crown notch can
+        /// fall at the balance station of a group of three, and be exempt,
+        /// while the other side's falls anywhere else and extracts. The counts
+        /// go unequal again and this pass is what closes it.
+        ///
+        /// WHAT IT IS NOT FOR: arms that stop short of one another BEYOND the
+        /// clearance are no crown at all here, and they leave equal counts
+        /// with a crown column each. That is a disclosed limitation and not a
+        /// case this pass tries to answer.
+        ///
+        /// Each caught notch is un-owned on its own tree, its whole head pull
+        /// and load leave that tree, and it stands on a column of its own:
+        /// Bar -1, Span -1, a FIXED FOOT on that notch's own plan point at
+        /// ground, which is the same construction the centre columns above
+        /// take and is what makes the trunk stand STRAIGHT. Returns the number
+        /// of columns stood, and appends one line per catch to
+        /// <see cref="Placement.CaughtRemarks"/>.
+        /// </summary>
+        private static int Catch(
+            Point3d[] nodes,
+            int[][] bars,
+            Placement placement,
+            int[][] freeOf,
+            Dictionary<int, List<(int Bar, int Position, int Span)>> holderMap,
+            Dictionary<int, Vector3d[]> headPullByTree,
+            double ground)
+        {
+            int spanCount = placement.Spans.Count;
+            if (spanCount < 2)
+                return 0;
+
+            // Every span's own free notches, and its plan bounding box, so
+            // the quadratic sweep skips the pairs that cannot touch.
+            var freeNodes = new int[spanCount][];
+            var minX = new double[spanCount];
+            var maxX = new double[spanCount];
+            var minY = new double[spanCount];
+            var maxY = new double[spanCount];
+            for (int s = 0; s < spanCount; s++)
+            {
+                freeNodes[s] = freeOf[s].Select(p => bars[placement.Spans[s].Bar][p]).ToArray();
+                minX[s] = double.MaxValue;
+                maxX[s] = double.MinValue;
+                minY[s] = double.MaxValue;
+                maxY[s] = double.MinValue;
+                foreach (int n in freeNodes[s])
+                {
+                    minX[s] = Math.Min(minX[s], nodes[n].X);
+                    maxX[s] = Math.Max(maxX[s], nodes[n].X);
+                    minY[s] = Math.Min(minY[s], nodes[n].Y);
+                    maxY[s] = Math.Max(maxY[s], nodes[n].Y);
+                }
+            }
+
+            // Union-find over net vertices. The root is always the LOWEST
+            // vertex of its crown, so the grouping reads no coordinate and
+            // cannot depend on the trace.
+            var parent = new Dictionary<int, int>();
+            int Root(int n)
+            {
+                int r = n;
+                while (parent[r] != r)
+                    r = parent[r];
+                while (parent[n] != r)
+                {
+                    int next = parent[n];
+                    parent[n] = r;
+                    n = next;
+                }
+                return r;
+            }
+            void Seed(int n)
+            {
+                if (!parent.ContainsKey(n))
+                    parent[n] = n;
+            }
+            void Join(int a, int b)
+            {
+                Seed(a);
+                Seed(b);
+                int rootA = Root(a);
+                int rootB = Root(b);
+                if (rootA != rootB)
+                    parent[Math.Max(rootA, rootB)] = Math.Min(rootA, rootB);
+            }
+
+            // A node several spans hold is a crown of its own, whatever else
+            // stands near it.
+            foreach (KeyValuePair<int, List<(int Bar, int Position, int Span)>> entry in holderMap)
+            {
+                if (entry.Value.Count >= 2)
+                    Seed(entry.Key);
+            }
+            for (int a = 0; a < spanCount; a++)
+            {
+                if (freeNodes[a].Length == 0)
+                    continue;
+                for (int b = a + 1; b < spanCount; b++)
+                {
+                    if (freeNodes[b].Length == 0)
+                        continue;
+                    double clearance = 0.25 * Math.Min(placement.Frames[a].G, placement.Frames[b].G);
+                    if (!(clearance > 0.0))
+                        continue;
+                    if (minX[a] - maxX[b] > clearance || minX[b] - maxX[a] > clearance ||
+                        minY[a] - maxY[b] > clearance || minY[b] - maxY[a] > clearance)
+                        continue;
+                    foreach (int u in freeNodes[a])
+                    {
+                        foreach (int v in freeNodes[b])
+                        {
+                            if (u == v)
+                                continue;
+                            double dx = nodes[u].X - nodes[v].X;
+                            double dy = nodes[u].Y - nodes[v].Y;
+                            if (((dx * dx) + (dy * dy)) <= clearance * clearance)
+                                Join(u, v);
+                        }
+                    }
+                }
+            }
+            if (parent.Count == 0)
+                return 0;
+
+            // Who still BUILDS each notch, read off the trees themselves,
+            // which is the engine's own statement of what it puts up.
+            var builtBy = new Dictionary<int, (int Tree, int Index)>();
+            for (int t = 0; t < placement.Trees.Count; t++)
+            {
+                Tree tree = placement.Trees[t];
+                if (tree.Ring || tree.Span < 0)
+                    continue;
+                for (int k = 0; k < tree.Nodes.Length; k++)
+                {
+                    if (tree.Owned[k])
+                        builtBy[tree.Nodes[k]] = (t, k);
+                }
+            }
+
+            var members = new Dictionary<int, List<int>>();
+            foreach (int n in parent.Keys.ToArray())
+            {
+                int root = Root(n);
+                if (!members.TryGetValue(root, out List<int>? list))
+                {
+                    list = new List<int>();
+                    members[root] = list;
+                }
+                list.Add(n);
+            }
+
+            int caught = 0;
+            foreach (KeyValuePair<int, List<int>> crown in members.OrderBy(e => e.Key))
+            {
+                List<int> group = crown.Value;
+                group.Sort();
+                // A crown must be reached by TWO SIDES before this pass has
+                // anything to say. One notch of one span is a form's own
+                // business.
+                var sides = new HashSet<int>();
+                foreach (int n in group)
+                {
+                    foreach ((int _, int _, int span) in holderMap[n])
+                        sides.Add(span);
+                }
+                if (sides.Count < 2)
+                    continue;
+                int[] built = group.Where(builtBy.ContainsKey).ToArray();
+                // ALL BUILT is symmetric: every side reaches its own crown and
+                // no side has a branch its mirror has not got. NONE BUILT is
+                // the answer the extraction paths already gave. Only a MIXED
+                // crown is Param's case.
+                if (built.Length == 0 || built.Length == group.Count)
+                    continue;
+
+                foreach (int node in built)
+                {
+                    (int t, int k) = builtBy[node];
+                    Tree tree = placement.Trees[t];
+                    Vector3d head = headPullByTree.TryGetValue(t, out Vector3d[]? pulls)
+                        && k < pulls.Length
+                        ? pulls[k]
+                        : Vector3d.Zero;
+                    // The whole term LEAVES this tree and arrives, entire, on
+                    // the column below: nothing is created or destroyed, in
+                    // the same arithmetic the extraction above uses.
+                    tree.Owned[k] = false;
+                    tree.Load[k] = 0.0;
+                    tree.Resultant -= head;
+                    SpanFrame frame = placement.Frames[tree.Span];
+                    tree.HeadMain = HeadMainOf(tree, frame, bars);
+                    placement.Trees.Add(new Tree
+                    {
+                        Bar = -1,
+                        Span = -1,
+                        Nodes = new[] { node },
+                        Load = new[] { Math.Abs(head.Z) },
+                        Owned = new[] { true },
+                        Resultant = head,
+                        HeadMain = 0,
+                        FixedFoot = new Point3d(nodes[node].X, nodes[node].Y, ground),
+                        Scale = frame,
+                    });
+                    caught++;
+                    int[] elsewhere = group.Where(n => n != node && !builtBy.ContainsKey(n)).ToArray();
+                    placement.CaughtRemarks.Add(
+                        $"the notch at ({nodes[node].X:0.###}, {nodes[node].Y:0.###}) was still "
+                        + $"built by the line through bar {tree.Bar}, while "
+                        + $"{(elsewhere.Length == 1 ? "the notch" : "the notches")} it crowns with "
+                        + $"[{string.Join(", ", elsewhere)}] stood on a central column: one side "
+                        + "carried a branch into the middle its mirror across the form had not "
+                        + "got. Disconnected, and standing straight on its own foot.");
+                }
+            }
+            return caught;
+        }
+
+        // ------------------------------------------------------------------
         // Entry
 
         /// <summary>
@@ -1714,6 +1996,9 @@ namespace Ananke.COMPAS.Native.Components
             // one crown and not three.
             var centres = new List<List<(int Node, Vector3d HeadPull, SpanFrame Frame)>>();
             var centreOfMeeting = new Dictionary<int, int>();
+            // Each span tree's own head pull per notch, keyed by the tree's
+            // index in placement.Trees, kept for PARAM'S CATCHER below.
+            var headPullByTree = new Dictionary<int, Vector3d[]>();
             for (int s = 0; s < placement.Spans.Count; s++)
             {
                 Span span = placement.Spans[s];
@@ -1776,6 +2061,12 @@ namespace Ananke.COMPAS.Native.Components
                     int[] treeNodes = ordered.Select(p => bars[span.Bar][p]).ToArray();
                     var owned = new bool[treeNodes.Length];
                     var load = new double[treeNodes.Length];
+                    // THE HEAD PULL AS THIS TREE SAW IT, notch by notch, kept
+                    // so that PARAM'S CATCHER below can hand the whole term
+                    // over to a column of its own without recomputing it and
+                    // risking a different answer. Recorded for every notch,
+                    // owned or not; only an owned one is ever taken back.
+                    var headPullOfNotch = new Vector3d[treeNodes.Length];
                     Vector3d sum = Vector3d.Zero;
                     for (int k = 0; k < treeNodes.Length; k++)
                     {
@@ -1800,6 +2091,7 @@ namespace Ananke.COMPAS.Native.Components
                             // have entered them, so nothing is created or
                             // destroyed.
                             bool meets = meetingOf.TryGetValue(node, out int meeting);
+                            headPullOfNotch[k] = across[span.Bar][p];
                             if (meets && (!straddles || Math.Abs(orderedFree[k] - balance) > 1.0e-9))
                             {
                                 owned[k] = false;
@@ -1843,6 +2135,7 @@ namespace Ananke.COMPAS.Native.Components
                             {
                                 var holderPairs = holders.Select(h => (h.Bar, h.Position)).ToList();
                                 Vector3d headPull = HeadPull(nodes, bars, pull, nodePull, node, holderPairs);
+                                headPullOfNotch[k] = headPull;
                                 if (annexed)
                                 {
                                     // Nothing is created or destroyed: the
@@ -1877,6 +2170,7 @@ namespace Ananke.COMPAS.Native.Components
                         Resultant = sum,
                     };
                     tree.HeadMain = HeadMainOf(tree, frame, bars);
+                    headPullByTree[placement.Trees.Count] = headPullOfNotch;
                     placement.Trees.Add(tree);
                 }
             }
@@ -1963,6 +2257,27 @@ namespace Ananke.COMPAS.Native.Components
                 });
                 placement.CentresExtracted++;
             }
+
+            // ---- PARAM'S CATCHER (his ruling of 2026-09-02, verbatim): "we
+            // can add a catcher too, where the type 2 and up is selected if
+            // the columns dont have symmetrical number of branches confirm is
+            // the central column connecting to one and not the other, then
+            // disconnect it and draw a straight column".
+            //
+            // A FINAL INVARIANT PASS, and it is written to be IMMUNE TO WHICH
+            // UPSTREAM PATH FAILED. It reads no Partner, no Families and no
+            // CommonModeResidual: on Param's own exported net Families is 0
+            // and eight of twelve trees are unpaired for reasons that have
+            // nothing to do with this defect, so any of the three would have
+            // been a coin toss. It counts OWNED NOTCHES and never FEET: the
+            // defect is fully present at Type 0, which welds nothing, while
+            // Types 1 to 4 weld three to fifteen feet and would swamp a foot
+            // count. And it assumes no side: the tie-break that decides an
+            // owner is a lexicographic sort of endpoints, so it flips when
+            // the model is mirrored in x, and the catcher un-owns whichever
+            // side actually kept the branch.
+            placement.CentresCaught = Catch(
+                nodes, bars, placement, freeOf, holderMap, headPullByTree, ground);
 
             // Spec 3.4: the resultants are mirrored about each span's
             // midpoint and shared across each family BEFORE a single foot is

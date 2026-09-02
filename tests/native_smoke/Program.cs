@@ -10427,6 +10427,12 @@ internal static class Program
                     if (heads.Sum() != 9)
                         throw new InvalidOperationException(
                             $"Branching {branching}, Type {type}: every free notch of an uncrossed span carries exactly one head, so nine notches carry nine; {heads.Sum()} were built.");
+                    // PARAM'S CATCHER NEVER FIRES ON A GENUINELY ONE-SIDED
+                    // FORM. One bar, no second span anywhere, so no crown has
+                    // two sides to be asymmetric between.
+                    if (Get<int>(placed, "CentresCaught") != 0)
+                        throw new InvalidOperationException(
+                            $"Branching {branching}, Type {type}: a single-span arch has no crown two lines reach, so the catcher has nothing to say; CentresCaught is {Get<int>(placed, "CentresCaught")}.");
                 }
             }
 
@@ -10884,6 +10890,16 @@ internal static class Program
                                 if (extracted != 1)
                                     throw new InvalidOperationException(
                                         $"{where}: the crowns are left over at EVERY branching; CentresExtracted is {extracted}. It counts COLUMNS, so the arms' crowns meeting once take ONE between them however many arms there are.");
+                                // AND PARAM'S CATCHER FINDS NOTHING TO CATCH.
+                                // Every arm's crown is on the one column, so
+                                // the crown is not MIXED and no side carries a
+                                // branch into the middle its mirrors have not.
+                                // This is the preservation half of the
+                                // catcher: it must be silent wherever the
+                                // extraction paths already answered.
+                                if (Get<int>(placed, "CentresCaught") != 0)
+                                    throw new InvalidOperationException(
+                                        $"{where}: every arm's crown stands on the one column, so nothing is left for the catcher; CentresCaught is {Get<int>(placed, "CentresCaught")}.");
 
                                 // EQUAL BRANCH COUNTS PER SIDE, which is the
                                 // count Param measures with his eye and the
@@ -11101,6 +11117,19 @@ internal static class Program
                             if (extracted != 0)
                                 throw new InvalidOperationException(
                                     $"Two parallel ribs {offset} apart, Branching {branching}, Type {type}: ribs that face one another at EVERY station MEET NOWHERE. Two spans meet only where they have EXACTLY ONE co-located pair, and without that gate this pair strips both ribs of their branching, eight columns over sixteen notches; {extracted} centre columns were placed.");
+                            // AND PARAM'S CATCHER IS SILENT HERE TOO, which
+                            // matters because the catcher builds its OWN crown
+                            // grouping with no unique-pair gate at all: on
+                            // these ribs that grouping swallows both rows
+                            // whole. It stays silent because every notch of
+                            // that group is still BUILT by its own side, so
+                            // the group is not mixed and no side has a branch
+                            // its mirror has not got. A catcher that fired on
+                            // an all-built group would strip both ribs of
+                            // their branching exactly as a missing gate does.
+                            if (Get<int>(placed, "CentresCaught") != 0)
+                                throw new InvalidOperationException(
+                                    $"Two parallel ribs {offset} apart, Branching {branching}, Type {type}: every notch of the catcher's own crown grouping is still built by its own rib, so the group is not MIXED and nothing is caught; CentresCaught is {Get<int>(placed, "CentresCaught")}.");
                             int[] heads = HeadsAt(placed, ribs.Nodes, ribs.Anchors);
                             if (heads.Sum() != 18)
                                 throw new InvalidOperationException(
@@ -11163,6 +11192,253 @@ internal static class Program
 
                     Console.WriteLine(
                         $"      Arms stopping short of a crown, Branching 2: the crowns take ONE column between them and the head main moves only where the un-owned notch WAS the group's main.");
+                }
+
+                // ============================================================
+                // (f) PARAM'S CATCHER, his own design, ruled 2026-09-02:
+                //
+                //     "we can add a catcher too, where the type 2 and up is
+                //      selected if the columns dont have symmetrical number of
+                //      branches confirm is the central column connecting to
+                //      one and not the other, then disconnect it and draw a
+                //      straight column"
+                //
+                // The two cases below are the two his conviction maps that
+                // NEITHER predicate can reach, so each is red without the
+                // catcher and neither is a restatement of anything above.
+                //
+                // A caught column, read the same way every centre column in
+                // this file is read: no span's row lists it, its foot is
+                // fixed on the caught notch's own plan point, and its trunk
+                // leaves that foot VERTICALLY.
+                void RequireStraightColumn(
+                    object placed, int node, object where, string what)
+                {
+                    var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                    object[] standing = trees.Where(
+                        t => Get<int>(t, "Span") < 0 && !Get<bool>(t, "Ring")
+                            && Get<int[]>(t, "Nodes").Contains(node)).ToArray();
+                    if (standing.Length != 1)
+                        throw new InvalidOperationException($"{what}: the caught notch {node} stands on exactly ONE column of its own; {standing.Length} trees outside every span row hold it.");
+                    object tree = standing[0];
+                    if (Get<int>(tree, "Bar") != -1 || Get<int>(tree, "Span") != -1
+                        || Get<int[]>(tree, "Nodes").Length != 1 || !Get<bool[]>(tree, "Owned")[0]
+                        || Get<int>(tree, "HeadMain") != 0)
+                        throw new InvalidOperationException($"{what}: the caught column is ONE notch on no bar and in no span's row, owning it, with its head main on it; it reads bar {Get<int>(tree, "Bar")}, span {Get<int>(tree, "Span")}, {Get<int[]>(tree, "Nodes").Length} notches, head main {Get<int>(tree, "HeadMain")}. Filing it under a span would flip that row's parity and fire the central-pair merge, moving feet Param has ruled must not move.");
+                    object? fixedFoot = Get<object?>(tree, "FixedFoot");
+                    if (fixedFoot is null
+                        || Math.Abs(X(fixedFoot) - X(where)) > 1.0e-9
+                        || Math.Abs(Y(fixedFoot) - Y(where)) > 1.0e-9
+                        || Math.Abs(Z(fixedFoot)) > 1.0e-9)
+                        throw new InvalidOperationException($"{what}: the caught column's foot is FIXED on the caught notch's own plan point at ground, ({X(where):0.#####}, {Y(where):0.#####}, 0); it stands at {(fixedFoot is null ? "no fixed foot at all" : $"({X(fixedFoot):0.#####}, {Y(fixedFoot):0.#####}, {Z(fixedFoot):0.#####})")}.");
+
+                    // AND IT STANDS STRAIGHT, which is the second half of the
+                    // ruling and the reason the existing centre-tree
+                    // construction is reused rather than a new one written:
+                    // the trunk is the one member leaving the foot and its
+                    // PLAN DISPLACEMENT from foot to fork is ZERO, not merely
+                    // small. A fork left on the segment to the head main
+                    // leans, and the engine's own two-degree dead band hides
+                    // a small lean entirely.
+                    object builtLevel = Get<object>(placed, "Built");
+                    var builtNodes = ((IEnumerable)Get<object>(builtLevel, "Nodes")).Cast<object>().ToArray();
+                    var memberTree = Get<List<int>>(builtLevel, "MemberTree");
+                    (int Lower, int Upper)[] built = MembersOf(builtLevel);
+                    int treeIndex = Array.IndexOf(trees, tree);
+                    var feetSet = ((IEnumerable)Get<object>(builtLevel, "Feet")).Cast<int>().ToHashSet();
+                    int[] mine = Enumerable.Range(0, built.Length)
+                        .Where(m => memberTree[m] == treeIndex).ToArray();
+                    if (mine.Length != 1)
+                        throw new InvalidOperationException($"{what}: a caught column of ONE notch is ONE member, the trunk from its foot to that notch; it built {mine.Length}.");
+                    if (!feetSet.Contains(built[mine[0]].Lower))
+                        throw new InvalidOperationException($"{what}: the caught column's single member leaves its own FOOT.");
+                    object low = builtNodes[built[mine[0]].Lower];
+                    object high = builtNodes[built[mine[0]].Upper];
+                    double dx = X(high) - X(low);
+                    double dy = Y(high) - Y(low);
+                    double plan = Math.Sqrt((dx * dx) + (dy * dy));
+                    if (plan > 1.0e-9)
+                        throw new InvalidOperationException($"{what}: the caught column MOVES {plan:0.######} in plan between its foot and its head, so it leans {(180.0 / Math.PI) * Math.Atan2(plan, Math.Abs(Z(high) - Z(low))):0.####} degrees. Param's ruling is 'disconnect it and draw a straight column'.");
+                }
+
+                // (f1) REQUIREMENT 4, UNEQUAL FLANKS. A spine of eleven nodes
+                // anchored at both ends holds NINE free notches; a stub of
+                // five nodes anchored at its far end holds FOUR, and it stops
+                // 0.15 short of the spine's station 5. The two spans have
+                // exactly one co-located pair, so they MEET, and the meeting
+                // rule is what answers for both notches.
+                //
+                // THE TWO ROWS ARE DIFFERENT SIZES, and that is the whole
+                // case. At Branching 3 the spine's nine notches lay out 3, 3,
+                // 3, so its meeting notch, free index 4, sits at the balance
+                // station of a group of THREE and is genuinely straddled: it
+                // is EXEMPT and the spine keeps it. The stub's four notches
+                // lay out 2, 2, so its crown, free index 0, sits at a balance
+                // of 0.5 and EXTRACTS. One crown on a central column, the
+                // other still built by its own line: Param's "the central
+                // column connecting to one and not the other", and neither
+                // predicate can see it, because each is right about its own
+                // side.
+                //
+                // At Branching 1 and 2 both notches fall in groups the
+                // exemption cannot reach and both extract, so nothing is
+                // caught: the fixture drives all three and pins the
+                // difference, which is what stops it passing on an engine
+                // that simply catches everything.
+                {
+                    foreach (int branching in new[] { 1, 2, 3 })
+                    {
+                        foreach (int type in new[] { 0, 1, 2, 3, 4 })
+                        {
+                            var tee = Tee(11, 4, 10.0, 3.0, 0.15, 5, 1.0);
+                            object placed = Run(tee, Array.Empty<int[]>(), branching, type);
+                            string where = $"Unequal flanks, spine of 9 against a stub of 4 stopping 0.15 short of station 5, Branching {branching}, Type {type}";
+                            if (Get<int>(placed, "SharedNotches") != 0 || Get<int>(placed, "CentresExtracted") != 1)
+                                throw new InvalidOperationException($"{where}: nothing is SHARED here and the two spans meet exactly once, so the meeting rule takes one crown; SharedNotches is {Get<int>(placed, "SharedNotches")} and CentresExtracted {Get<int>(placed, "CentresExtracted")}.");
+                            int caught = Get<int>(placed, "CentresCaught");
+                            if (caught != (branching == 3 ? 1 : 0))
+                                throw new InvalidOperationException($"{where}: the spine's meeting notch is EXEMPT only at Branching 3, where its nine notches lay out 3, 3, 3 and free index 4 is the middle group's own balance station; at Branching 1 and 2 both crowns extract and there is nothing left to catch. CentresCaught is {caught}.");
+
+                            // Every free notch still carries EXACTLY ONE head
+                            // and exactly its own unit, caught or not: the
+                            // catcher MOVES a branch, it does not delete one.
+                            int[] heads = HeadsAt(placed, tee.Nodes, tee.Anchors);
+                            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                            double carried = trees.Sum(t => Get<double[]>(t, "Load").Sum());
+                            if (heads.Sum() != 13 || Math.Abs(carried - 13.0) > 1.0e-9)
+                                throw new InvalidOperationException($"{where}: thirteen free notches carry thirteen heads and thirteen units whatever the catcher does; {heads.Sum()} heads and {carried:0.####} carried.");
+
+                            if (caught == 0)
+                                continue;
+                            // The caught notch is the SPINE's station 5, and
+                            // no span's tree builds to it any more.
+                            RequireStraightColumn(placed, 5, tee.Nodes.GetValue(5)!, where);
+                            foreach (object t in trees)
+                            {
+                                if (Get<int>(t, "Span") < 0)
+                                    continue;
+                                int[] treeNodes = Get<int[]>(t, "Nodes");
+                                bool[] owned = Get<bool[]>(t, "Owned");
+                                int at = Array.IndexOf(treeNodes, 5);
+                                if (at >= 0 && owned[at])
+                                    throw new InvalidOperationException($"{where}: once caught, NO span builds to the crown; bar {Get<int>(t, "Bar")} still does.");
+                            }
+                            // AND THE COUNTS ARE EQUAL AGAIN, measured the way
+                            // Param measures them: branches into the crown,
+                            // per side. Before the catch the spine reached it
+                            // and the stub did not.
+                            (int[] perBar, int apartNow) = OwnedApart(placed, 2);
+                            if (perBar[0] != 8 || perBar[1] != 3 || apartNow != 2)
+                                throw new InvalidOperationException($"{where}: with both crowns standing apart the spine builds to its own eight remaining notches and the stub to its own three, and TWO notches stand on columns of no row; it built [{string.Join(", ", perBar)}] with {apartNow} apart.");
+                        }
+                    }
+                    Console.WriteLine(
+                        "      Param's catcher, unequal flanks: at Branching 3 the spine's meeting notch is exempt and the stub's extracts, and the catcher stands the spine's on a straight column of its own.");
+                }
+
+                // (f2) REQUIREMENT 5, A MIXED CROWN, which NEITHER extraction
+                // path can see. Two arms SHARE one crown node X; a third arm
+                // carries its own crown Y and stops a fraction short of X.
+                //
+                // The owner rule answers for X, because X is one node two
+                // spans hold, and annexes it to a central column. The meeting
+                // rule cannot answer for Y at all: it reads only SOLO notches,
+                // and X, being held twice, is not one, so the pair (Y, X) is
+                // never examined and Y has no other neighbour. Y is therefore
+                // still built by its own arm while X stands on a column, which
+                // is one branch into the middle on one side and none on the
+                // others, and it is invisible to both predicates by
+                // construction rather than by accident.
+                {
+                    (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges)
+                        MixedCrown(int perArm, double reach, double rise, double gap, double load)
+                    {
+                        // 0 is X, the node arms 0 and 1 share; 1 is Y, arm 2's
+                        // own crown, standing `gap` away in plan.
+                        Array mixedNodes = Array.CreateInstance(point3d, 2 + (3 * perArm));
+                        mixedNodes.SetValue(P(0.0, 0.0, rise), 0);
+                        mixedNodes.SetValue(P(0.0, gap, rise), 1);
+                        var mixedBars = new int[3][];
+                        var mixedAnchors = new int[3];
+                        var mixedEdges = new List<(int, int)>();
+                        Array mixedAcross = Array.CreateInstance(vector3d.MakeArrayType(), 3);
+                        double[][] direction = { new[] { 1.0, 0.0 }, new[] { -1.0, 0.0 }, new[] { 0.0, 1.0 } };
+                        for (int a = 0; a < 3; a++)
+                        {
+                            var bar = new int[perArm + 1];
+                            Array barAcross = Array.CreateInstance(vector3d, perArm + 1);
+                            bar[0] = a == 2 ? 1 : 0;
+                            barAcross.SetValue(V(0.0, 0.0, -load), 0);
+                            object crown = mixedNodes.GetValue(bar[0])!;
+                            for (int j = 1; j <= perArm; j++)
+                            {
+                                double s = (double)j / perArm;
+                                double r = reach * s;
+                                int at = 2 + (a * perArm) + (j - 1);
+                                mixedNodes.SetValue(
+                                    P(X(crown) + (direction[a][0] * r),
+                                        Y(crown) + (direction[a][1] * r),
+                                        rise * (1.0 - (s * s))),
+                                    at);
+                                bar[j] = at;
+                                barAcross.SetValue(V(0.0, 0.0, -load), j);
+                                mixedEdges.Add((bar[j - 1], at));
+                            }
+                            mixedBars[a] = bar;
+                            mixedAnchors[a] = bar[perArm];
+                            mixedAcross.SetValue(barAcross, a);
+                        }
+                        return (mixedNodes, mixedBars, mixedAnchors, mixedAcross, mixedEdges.ToArray());
+                    }
+
+                    foreach (int branching in new[] { 1, 2, 3 })
+                    {
+                        foreach (int type in new[] { 0, 1, 2, 3, 4 })
+                        {
+                            var mixed = MixedCrown(5, 6.0, 3.0, 0.1, 1.0);
+                            object placed = Run(mixed, Array.Empty<int[]>(), branching, type);
+                            string where = $"A mixed crown, two arms sharing a node and a third stopping 0.1 short, Branching {branching}, Type {type}";
+                            // THE PREMISE, PINNED, and it is the whole reason
+                            // this case exists: ONE node is shared, and NO
+                            // meeting is found anywhere, because the only
+                            // notch near Y is X and X is not solo.
+                            if (Get<int>(placed, "SharedNotches") != 1)
+                                throw new InvalidOperationException($"{where}: arms 0 and 1 share ONE node and nothing else is shared; SharedNotches is {Get<int>(placed, "SharedNotches")}.");
+                            if (Get<int>(placed, "CentresExtracted") != 1)
+                                throw new InvalidOperationException($"{where}: the owner rule annexes the SHARED crown and the meeting rule finds nothing at all, so exactly one column is extracted; CentresExtracted is {Get<int>(placed, "CentresExtracted")}.");
+                            if (Get<int>(placed, "CentresCaught") != 1)
+                                throw new InvalidOperationException($"{where}: the third arm's own crown is still built by that arm while the shared one stands on a column, which is one branch into the middle on one side and none on the others; CentresCaught is {Get<int>(placed, "CentresCaught")}. NEITHER predicate can reach this: the owner rule answers only for a node two spans hold, and the meeting rule reads only SOLO notches, so the pair is never examined.");
+
+                            RequireStraightColumn(placed, 1, mixed.Nodes.GetValue(1)!, where);
+
+                            // EQUAL BRANCH COUNTS PER ARM, which is the count
+                            // Param measures with his eye. Each arm builds to
+                            // its own four stations and to no crown, and the
+                            // two crowns stand apart.
+                            (int[] perBar, int apartNow) = OwnedApart(placed, 3);
+                            if (perBar.Distinct().Count() != 1 || perBar[0] != 4 || apartNow != 2)
+                                throw new InvalidOperationException($"{where}: every arm builds to its own four stations and to no crown, and the two crowns stand apart on columns of no row; the arms built [{string.Join(", ", perBar)}] with {apartNow} apart.");
+                            int[] heads = HeadsAt(placed, mixed.Nodes, mixed.Anchors);
+                            if (heads.Sum() != 14 || heads[0] != 1 || heads[1] != 1)
+                                throw new InvalidOperationException($"{where}: three arms of five over a shared crown are fourteen free notches, each carrying exactly one head, the two crowns among them; {heads.Sum()} heads were built with {heads[0]} at the shared crown and {heads[1]} at the third arm's.");
+                            var trees = ((IEnumerable)Get<object>(placed, "Trees")).Cast<object>().ToArray();
+                            double carried = trees.Sum(t => Get<double[]>(t, "Load").Sum());
+                            // THIRTEEN, not fourteen, and the missing one is
+                            // not missing: the SHARED crown's head pull is the
+                            // Gram-Schmidt residue against both its bars'
+                            // tangents, which at a crown of two arms turned
+                            // through 180 degrees span the vertical, so it
+                            // projects to nothing. Twelve stations and the
+                            // third arm's own solo crown carry a unit each.
+                            // The catcher MOVES the term off the tree that
+                            // kept it and nothing is created or destroyed, so
+                            // this total is the same whether it fires or not.
+                            if (Math.Abs(carried - 13.0) > 1.0e-9)
+                                throw new InvalidOperationException($"{where}: twelve stations and the third arm's own crown carry a unit each, and the SHARED crown's head pull projects to nothing between two arms that span the vertical, so thirteen are carried; the trees carry {carried:0.####}. The catcher MOVES the term off the tree that kept it and nothing is created or destroyed.");
+                        }
+                    }
+                    Console.WriteLine(
+                        "      Param's catcher, a mixed crown: two arms share a node and a third stops short of it; the shared one is annexed, the third arm's own is caught, and every arm builds four branches.");
                 }
             }
         }
