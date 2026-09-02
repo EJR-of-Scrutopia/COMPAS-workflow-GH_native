@@ -666,6 +666,25 @@ internal static class Program
 
         try
         {
+            ValidateSkinRimIndexSpace(plugin);
+            Console.WriteLine(
+                "PASS  Skin rim and force index space: on a Result whose " +
+                "form and equilibrium vertex counts are EQUAL and whose " +
+                "orderings are the exact reverse, the rim is the anchor " +
+                "set mapped through formToNet and the force edges are " +
+                "mapped through the inverse of formToEquilibrium composed " +
+                "with it, both ends, A below B; an unmappable support and " +
+                "an unmappable edge are dropped and counted.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin rim and force index space: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -16080,6 +16099,177 @@ internal static class Program
             throw new InvalidOperationException(
                 "An FD Result carries no faces and must give a NULL net, " +
                 "so the component can name the reason.");
+        }
+    }
+
+    /// <summary>
+    /// Check 12.1(h). A Result whose FORM and EQUILIBRIUM vertex counts are
+    /// EQUAL but whose orderings differ must still seed the right vertices.
+    /// This is the trap at VisualiseComponents.cs:196-206 against
+    /// SkinPatterns.cs:164-178, and it fails SILENTLY if got wrong: the rim
+    /// would be a set of real vertices, just the wrong ones. The same
+    /// Result asserts it of the FORCE EDGES of rule 1.3.5, which fails in
+    /// exactly the same way and poisons the whole of section 3 rather than
+    /// the rim alone.
+    ///
+    /// The fixture: four form vertices 10, 11, 12, 13 mapped to equilibrium
+    /// vertices 3, 2, 1, 0, so the two index spaces are the same SIZE and
+    /// the exact REVERSE of one another. Net order is form order, so net 0
+    /// is form 10 is equilibrium 3.
+    /// </summary>
+    private static void ValidateSkinRimIndexSpace(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType =
+            RequireContractType(plugin, "EquilibriumResultDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeDtoType = RequireContractType(plugin, "EdgeDto");
+        Type graphType = RequireContractType(plugin, "TnaDiagramGraphDto");
+        Type graphVertexType =
+            RequireContractType(plugin, "TnaGraphVertexDto");
+        Type graphFaceType = RequireContractType(plugin, "TnaGraphFaceDto");
+        Type mappingsType = RequireContractType(plugin, "TnaMappingsDto");
+        Type vertexMappingType =
+            RequireContractType(plugin, "TnaSourceVertexMappingDto");
+        Type supportMappingType =
+            RequireContractType(plugin, "TnaSupportMappingDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Of(Type type, params object[] items)
+        {
+            Array array = Array.CreateInstance(type, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        // Equilibrium order 0, 1, 2, 3 carries positions the reverse of the
+        // form's, so a rim read in the wrong space lands on the wrong
+        // corners of the square.
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices",
+            Of(point, P(0, 1, 1), P(1, 1, 1), P(1, 0, 0), P(0, 0, 0)));
+        SetContractProperty(equilibrium, equilibriumType, "Edges",
+            Of(edgeDtoType,
+                Activator.CreateInstance(edgeDtoType, 3, 2)!,
+                Activator.CreateInstance(edgeDtoType, 2, 1)!));
+        SetContractProperty(equilibrium, equilibriumType, "MemberForces",
+            new[] { 7.0, -3.0 });
+
+        object GraphVertex(int id)
+        {
+            object vertex = CreateInstance(graphVertexType);
+            SetContractProperty(vertex, graphVertexType, "Id", id);
+            return vertex;
+        }
+        object face = CreateInstance(graphFaceType);
+        SetContractProperty(face, graphFaceType, "Id", 0);
+        SetContractProperty(
+            face, graphFaceType, "Vertices", new[] { 10, 11, 12, 13 });
+        object formGraph = CreateInstance(graphType);
+        SetContractProperty(formGraph, graphType, "Vertices",
+            Of(graphVertexType,
+                GraphVertex(10), GraphVertex(11),
+                GraphVertex(12), GraphVertex(13)));
+        SetContractProperty(formGraph, graphType, "Faces",
+            Of(graphFaceType, face));
+
+        object Mapping(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(vertexMappingType);
+            SetContractProperty(
+                item, vertexMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, vertexMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            return item;
+        }
+        object Support(int formId, int equilibriumId)
+        {
+            object item = CreateInstance(supportMappingType);
+            SetContractProperty(
+                item, supportMappingType, "FormVertexId", formId);
+            SetContractProperty(
+                item, supportMappingType, "EquilibriumVertexId",
+                equilibriumId);
+            return item;
+        }
+        object mappings = CreateInstance(mappingsType);
+        SetContractProperty(mappings, mappingsType,
+            "SourceVertexToFormVertex",
+            Of(vertexMappingType,
+                Mapping(10, 3), Mapping(11, 2),
+                Mapping(12, 1), Mapping(13, 0)));
+        // Form 10 and form 13 are the supports, so the rim is net 0 and
+        // net 3. One further support names a form vertex that does not
+        // exist, which rule 1.3.4 drops and counts.
+        SetContractProperty(mappings, mappingsType, "Supports",
+            Of(supportMappingType,
+                Support(10, 3), Support(13, 0), Support(99, 0)));
+
+        object result = CreateResultDto(
+            resultType, "tna", equilibrium,
+            CreateInstance(graphType), CreateInstance(graphType));
+        SetContractProperty(result, resultType, "FormGraph", formGraph);
+        SetContractProperty(result, resultType, "Mappings", mappings);
+
+        object net = readNet.Invoke(null, new[] { result })
+            ?? throw new InvalidOperationException(
+                "A TNA Result with faces must give a net.");
+        int[] rim = ((IEnumerable)net.GetType()
+                .GetProperty("Rim")!.GetValue(net)!)
+            .Cast<int>()
+            .OrderBy(index => index)
+            .ToArray();
+        if (!rim.SequenceEqual(new[] { 0, 3 }))
+        {
+            throw new InvalidOperationException(
+                "The rim is the ANCHOR SET mapped through ReadNet's own " +
+                "formToNet (rule 1.3.1), so form 10 and form 13 are NET 0 " +
+                "and NET 3. Reading Mappings.Supports' EquilibriumVertexId " +
+                "into a net lookup instead would give 3 and 0 here by " +
+                "accident and the wrong vertices on any other ordering; " +
+                $"got [{string.Join(",", rim)}].");
+        }
+        if (Reading<int>(net, "RimDropped") != 1)
+        {
+            throw new InvalidOperationException(
+                "A form vertex named as a support but absent from " +
+                "formToNet is DROPPED and COUNTED (rule 1.3.4); the " +
+                "fixture names one and the count must be 1, got " +
+                $"{Reading<int>(net, "RimDropped")}.");
+        }
+
+        IList edges = (IList)net.GetType()
+            .GetProperty("Edges")!.GetValue(net)!;
+        var read = new List<(int A, int B, double Force)>();
+        foreach (object? item in edges)
+        {
+            object edge = item!;
+            read.Add((
+                Reading<int>(edge, "A"),
+                Reading<int>(edge, "B"),
+                Reading<double>(edge, "Force")));
+        }
+        // Equilibrium edge (3, 2) is net (0, 1) and carries 7 kN; edge
+        // (2, 1) is net (1, 2) and carries -3 kN. Stored raw, they would be
+        // (2, 3) and (1, 2), which is a different pair of net vertices on a
+        // net whose two index spaces happen to have the same count.
+        if (read.Count != 2 ||
+            read[0] != (0, 1, 7.0) ||
+            read[1] != (1, 2, -3.0))
+        {
+            throw new InvalidOperationException(
+                "Force edges arrive in EQUILIBRIUM index space and must be " +
+                "mapped into NET space, both ends, A below B (rule 1.3.5): " +
+                "(3,2) at 7 kN is net (0,1) and (2,1) at -3 kN is net " +
+                "(1,2); got [" +
+                string.Join(
+                    ", ",
+                    read.Select(e => $"({e.A},{e.B},{e.Force})")) + "].");
         }
     }
 

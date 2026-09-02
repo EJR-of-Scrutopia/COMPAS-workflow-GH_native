@@ -79,6 +79,15 @@ internal sealed record SkinNet(
             Vertices,
             SkinPatterns.Triangulate(Vertices, Faces),
             Rim);
+
+    /// <summary>How many named supports rule 1.3.4 dropped as unmappable,
+    /// and how many force edges rule 1.3.6 dropped. Init properties and not
+    /// constructor parameters, so that neither the two-argument nor the
+    /// four-argument construction moves and every fixture in the harness
+    /// goes on binding.</summary>
+    public int RimDropped { get; init; }
+
+    public int EdgesDropped { get; init; }
 }
 
 /// <summary>
@@ -233,7 +242,71 @@ internal static class SkinPatterns
             if (corners.Length >= 3)
                 faces.Add(corners);
         }
-        return new SkinNet(vertices, faces);
+
+        // THE RIM IS THE ANCHOR SET (rule 1.3.1), mapped through this
+        // method's own formToNet. It is NOT ResultTables.SupportNodes
+        // (VisualiseComponents.cs:196-206), which returns EQUILIBRIUM
+        // vertex ids: on a net whose two index spaces happen to have the
+        // same count, feeding those into a net lookup indexes the wrong
+        // vertices silently. And it is NOT the mesh boundary (rule 1.3.3),
+        // which includes an oculus, a free edge and every hole, none of
+        // which is a support and none of which a course should be measured
+        // from.
+        var rim = new List<int>();
+        var seen = new HashSet<int>();
+        int rimDropped = 0;
+        foreach (TnaSupportMappingDto support in mappings.Supports)
+        {
+            if (formToNet.TryGetValue(
+                    support.FormVertexId, out int netIndex) &&
+                netIndex >= 0 &&
+                netIndex < vertices.Count)
+            {
+                if (seen.Add(netIndex))
+                    rim.Add(netIndex);
+            }
+            else
+            {
+                rimDropped++;
+            }
+        }
+
+        // THE FORCE EDGES ARRIVE IN EQUILIBRIUM INDEX SPACE (rule 1.3.5).
+        // The composition equilibrium index -> form id -> net index is the
+        // inverse of formToEquilibrium composed with formToNet, and both
+        // ends of every edge go through it. Stored raw, the weights land on
+        // the wrong net vertices silently and every direction section 3
+        // computes is noise wearing the right units.
+        var equilibriumToNet = new Dictionary<int, int>();
+        foreach (KeyValuePair<int, int> pair in formToEquilibrium)
+        {
+            if (formToNet.TryGetValue(pair.Key, out int netIndex))
+                equilibriumToNet[pair.Value] = netIndex;
+        }
+        var edges = new List<SkinNetEdge>();
+        int edgesDropped = 0;
+        for (int at = 0; at < equilibrium.Edges.Count; at++)
+        {
+            EdgeDto edge = equilibrium.Edges[at];
+            if (at >= equilibrium.MemberForces.Count ||
+                !equilibriumToNet.TryGetValue(edge.U, out int a) ||
+                !equilibriumToNet.TryGetValue(edge.V, out int b) ||
+                a == b)
+            {
+                edgesDropped++;
+                continue;
+            }
+            edges.Add(new SkinNetEdge(
+                Math.Min(a, b),
+                Math.Max(a, b),
+                equilibrium.MemberForces[at]));
+        }
+
+        return new SkinNet(vertices, faces, rim, edges)
+        {
+            RimDropped = rimDropped,
+            EdgesDropped = edgesDropped
+        };
     }
 
     /// <summary>
