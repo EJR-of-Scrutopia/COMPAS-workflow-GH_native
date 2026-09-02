@@ -2590,7 +2590,9 @@ internal static class SkinPatterns
             keyed
                 .OrderBy(item => item.Course)
                 .ThenBy(item => item.Order)
-                .ThenBy(item => item.U0)
+                .ThenBy(item => Math.Abs(
+                    (item.Cell.U0 + item.Cell.U1) / 2.0))
+                .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
                 .Select(item => item.Cell)
                 .ToList(),
             out int degenerateDropped,
@@ -2728,10 +2730,28 @@ internal static class SkinPatterns
         var spans = new List<(double, double)>();
         if (mid.Closed)
         {
+            double length = mid.Length;
             for (int k = 0; k < pieces; k++)
             {
-                spans.Add(
-                    (phase + k * pitch, phase + (k + 1) * pitch));
+                double u0 = phase + k * pitch;
+                double u1 = u0 + pitch;
+                // RE-CENTRED AT SOURCE into the signed range
+                // (-L / 2, +L / 2] (rule 7.1.1), on the SPANS and not
+                // merely on the sort key. Re-centring the spans gives U one
+                // meaning across the whole engine, closed and open alike,
+                // namely signed arc about the seam; wrapping only the sort
+                // key would leave two meanings in one engine and would make
+                // rule 6.2's "a tie goes to the neighbour with the lower
+                // U0, which is the seam-ward one" false on every dome. The
+                // cost is stated rather than discovered: every pinned U0
+                // and U1 on a closed fixture moves, and the sidecar's
+                // recorded spans move with them.
+                if ((u0 + u1) / 2.0 > length / 2.0)
+                {
+                    u0 -= length;
+                    u1 -= length;
+                }
+                spans.Add((u0, u1));
             }
             return spans;
         }
@@ -3262,7 +3282,9 @@ internal static class SkinPatterns
             keyed
                 .OrderBy(item => item.Course)
                 .ThenBy(item => item.Chart)
-                .ThenBy(item => item.U0)
+                .ThenBy(item => Math.Abs(
+                    (item.Cell.U0 + item.Cell.U1) / 2.0))
+                .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
                 .Select(item => item.Cell)
                 .ToList(),
             out int degenerateDropped,

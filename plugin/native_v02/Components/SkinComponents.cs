@@ -145,12 +145,15 @@ public sealed class SkinComponent :
             "One closed polyline per cell, on the thrust surface, as a "
                 + "TREE branched by COURSE (path = course, 0 up from the "
                 + "bottom). A NATIVE pattern's branch lists one traced "
-                + "component's run after another, each run ordered along "
-                + "the course, the studio's build sequence within a run; "
-                + "which component comes first still follows the mesh's "
-                + "face order. The force-aligned pattern keeps the "
-                + "worker's own order. Wire into Export's Cells; Export "
-                + "flattens and projects itself.",
+                + "component's run after another, each run ordered SEAM "
+                + "OUTWARD, alternating either side of it with the "
+                + "negative side first; this serves the Grasshopper "
+                + "author's reading and the overlap filter, which keeps "
+                + "the first cell it is handed, and is NOT the studio's "
+                + "own build sequence. Which component comes first still "
+                + "follows the mesh's face order. The force-aligned "
+                + "pattern keeps the worker's own order. Wire into "
+                + "Export's Cells; Export flattens and projects itself.",
             GH_ParamAccess.tree);
         parameters.AddIntegerParameter(
             "Courses",

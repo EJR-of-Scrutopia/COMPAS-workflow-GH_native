@@ -734,6 +734,23 @@ internal static class Program
 
         try
         {
+            ValidateSkinBuildOrder(plugin);
+            Console.WriteLine(
+                "PASS  Skin build order: within every branch the cells run " +
+                "from the seam outward, alternating either side of it with " +
+                "the negative side first, on a closed dome course and on " +
+                "an open barrel strip alike, the closed course's spans " +
+                "having been re-centred into (-L/2, +L/2] at source so U " +
+                "means signed arc about the seam everywhere in the engine.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin build order: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -17951,6 +17968,175 @@ internal static class Program
     /// minus epsilon, which on a dome is a micron-scale loop around the
     /// apex, and the surface above it is covered by nothing.
     /// </summary>
+    /// <summary>
+    /// Build order (spec section 7), checks 12.7(a) and 12.7(b). Within
+    /// every branch the absolute seam-relative mid-span is non-decreasing
+    /// and the first two cells lie on OPPOSITE SIDES of the seam. That
+    /// second bar is only reachable because of rule 7.1.1: on a closed
+    /// course CourseSpans emits every span non-negative, so without the
+    /// re-centring no cell ever has a negative mid and the bar fails on
+    /// every dome fixture. Taken on a closed course and on an open strip,
+    /// since the two reach it by different routes, and in ARRIVAL order,
+    /// never re-sorted.
+    ///
+    /// A COURSE and a BRANCH are not the same thing on this harness's own
+    /// barrel fixture, which is a ridge (ruled by two slopes), so its
+    /// non-topmost courses carry TWO physically separate traced components
+    /// at once, both spanning the same signed U range, and SkinCell keeps
+    /// no component id for the harness to tell them apart by; see the
+    /// "## Deviations" entry against this task for the measurement and
+    /// the strand split it needed. The ODD-course straddling exception
+    /// below is the other half of the same deviation.
+    /// </summary>
+    private static void ValidateSkinBuildOrder(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        foreach ((double[][] vertices, int[][] faces, string label,
+                  bool closed) fixture in new[]
+                 {
+                     (SkinDomeNet().Vertices, SkinDomeNet().Faces,
+                      "dome", true),
+                     (SkinBarrelNet().Vertices, SkinBarrelNet().Faces,
+                      "barrel", false)
+                 })
+        {
+            object net = Activator.CreateInstance(
+                netType,
+                new object[] { fixture.vertices, fixture.faces })!;
+            object built = courses.Invoke(
+                null, new object[] { net, 0.6, 0.5 })!;
+            var cells = SkinCells(built);
+            foreach (IGrouping<int, (int Course, double[][] Outline,
+                         bool Clipped, double U0, double U1, bool Cap)> branch in
+                     cells.GroupBy(cell => cell.Course))
+            {
+                var inBranch = branch.ToArray();
+                if (fixture.closed)
+                {
+                    foreach (var cell in inBranch)
+                    {
+                        if (cell.Cap)
+                            continue;
+                        if (cell.U0 > cell.U1)
+                        {
+                            throw new InvalidOperationException(
+                                "A re-centred span keeps U0 below U1 even " +
+                                "where it STRADDLES the seam (rule 7.1.2); " +
+                                $"got [{cell.U0}, {cell.U1}].");
+                        }
+                    }
+                }
+
+                // A COURSE, not a STRAND: SkinBarrelNet is a ridge (two
+                // slopes), so a non-topmost course carries TWO physically
+                // separate traced components at once, both spanning the
+                // same signed U range, and SkinCell keeps no component id
+                // for the harness to read them apart by. What DOES tell
+                // them apart, without any engine change, is the one thing
+                // rule 7.1's own tiling guarantees and a repeat cannot:
+                // within one physical strand the pieces' U ranges are
+                // disjoint, because they tile the strand once. A cell
+                // whose U range OVERLAPS a range already claimed in the
+                // current strand can therefore only be the first cell of
+                // the NEXT strand, arriving right after the sort's
+                // Course-then-Order key moves on (rule 7.1's own "within
+                // each" from section 5). This split never fires on a
+                // single-strand course (the dome, and the barrel's own
+                // ridge course), and it never uses the very ordering
+                // property under test to decide where a strand ends, so a
+                // genuine ordering regression inside one strand still
+                // shows there rather than being read as a new strand.
+                var strands = new List<List<(int Course, double[][] Outline,
+                    bool Clipped, double U0, double U1, bool Cap)>>();
+                var claimed = new List<(double Lo, double Hi)>();
+                List<(int, double[][], bool, double, double, bool)>? current =
+                    null;
+                foreach (var cell in inBranch.Where(cell => !cell.Cap))
+                {
+                    double lo = Math.Min(cell.U0, cell.U1);
+                    double hi = Math.Max(cell.U0, cell.U1);
+                    bool overlapsClaimed = claimed.Any(range =>
+                        lo < range.Hi - 1.0e-9 && hi > range.Lo + 1.0e-9);
+                    if (current is null || overlapsClaimed)
+                    {
+                        current = new List<(int, double[][], bool, double,
+                            double, bool)>();
+                        strands.Add(current);
+                        claimed.Clear();
+                    }
+                    current.Add(cell);
+                    claimed.Add((lo, hi));
+                }
+
+                foreach (var strand in strands)
+                {
+                    double previous = -1.0;
+                    foreach (var cell in strand)
+                    {
+                        double mid = Math.Abs((cell.U0 + cell.U1) / 2.0);
+                        if (mid < previous - 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"On the {fixture.label}, cells within a " +
+                                "branch run FROM THE SEAM OUTWARD, so the " +
+                                "absolute mid-span is non-decreasing (rule " +
+                                $"7.1); course {cell.Course} goes " +
+                                $"{previous} then {mid}.");
+                        }
+                        previous = mid;
+                    }
+                    // A half-pitch-staggered ODD course can put one whole,
+                    // regular piece dead-centred on the seam (its own U
+                    // range straddling zero rather than sitting to one
+                    // side), the masonry bond's course-to-course joint
+                    // offset landing a full stone across the seam instead
+                    // of a joint at it. That piece IS the smallest-abs-mid
+                    // arrival, and it has no partner to alternate against:
+                    // the "opposite sides" bar only means something once
+                    // the seam itself is a JOINT rather than the middle of
+                    // a stone, so it is skipped exactly when the strand's
+                    // own first cell straddles zero.
+                    bool firstStraddles = strand.Count >= 1 &&
+                        Math.Min(strand[0].U0, strand[0].U1) < -1.0e-9 &&
+                        Math.Max(strand[0].U0, strand[0].U1) > 1.0e-9;
+                    if (strand.Count >= 2 && !firstStraddles)
+                    {
+                        double first = (strand[0].U0 + strand[0].U1) / 2.0;
+                        double second = (strand[1].U0 + strand[1].U1) / 2.0;
+                        if (!(first < 0.0 && second > 0.0) &&
+                            !(first > 0.0 && second < 0.0))
+                        {
+                            throw new InvalidOperationException(
+                                $"On the {fixture.label}, the order " +
+                                "alternates either side of the seam and a " +
+                                "tie goes to the NEGATIVE side first (rule " +
+                                $"7.1); course {strand[0].Course} opens " +
+                                $"with mids {first} and {second}.");
+                        }
+                        // OPPOSITE SIDES alone accepts either order; the
+                        // seam's own two flanking pieces are an EXACT
+                        // bit-tie on |mid| by construction (a clean
+                        // division either side of a shared joint), so
+                        // this is where "negative first" is actually
+                        // reachable, and it is asserted directly rather
+                        // than only implied by which one happens to
+                        // arrive first.
+                        if (first > 0.0)
+                        {
+                            throw new InvalidOperationException(
+                                $"On the {fixture.label}, a tie on |mid| " +
+                                "goes to the NEGATIVE side first (rule " +
+                                $"7.1); course {strand[0].Course} opens " +
+                                $"with mids {first} and {second}.");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private static void ValidateSkinCrownCap(Assembly plugin)
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
@@ -18224,8 +18410,11 @@ internal static class Program
     /// cells arrive sorted by course, outlines are real polygons, and
     /// the plan projections are pairwise disjoint and simple, the
     /// height-field guarantee. Groups are taken in ARRIVAL order, never
-    /// re-sorted, so the ascending joint and span pins also assert spec
-    /// section 3's within-course ordering, the studio's build sequence.
+    /// re-sorted, so the joint and span pins also assert spec section 3's
+    /// within-course ordering: SEAM OUTWARD, alternating either side of
+    /// it with the negative side first (rule 7.1), which serves the
+    /// Grasshopper author's reading and the overlap filter rather than
+    /// the studio's own build sequence.
     /// BandCount's sliver-merge branch is exercised directly (a 2.05 m
     /// rise merges its 0.05 sliver, a 2.2 m rise ships its 0.2 top
     /// band). Outlines are asserted OPEN rings, first point not
@@ -18275,18 +18464,21 @@ internal static class Program
             if (cells[at].Course < cells[at - 1].Course)
             {
                 throw new InvalidOperationException(
-                    "Cells arrive sorted by course then position, the " +
-                    "studio's build sequence.");
+                    "Cells arrive sorted by course then position, which " +
+                    "the Grasshopper author and the overlap filter read, " +
+                    "not the studio.");
             }
         }
         for (int course = 0; course < 4; course++)
         {
             foreach (bool front in new[] { true, false })
             {
-                // ARRIVAL order, deliberately un-sorted: the ascending
-                // joint comparison below then also asserts the
-                // within-course ordering the studio's build sequence
-                // depends on (the engine's ThenBy(U0)).
+                // ARRIVAL order, deliberately un-sorted: the joint
+                // comparison below then also asserts the within-course
+                // ordering the Grasshopper author and the overlap
+                // filter read (rule 7.1: seam outward, alternating
+                // either side of it with the negative side first), the
+                // engine's own OrderBy(abs mid).ThenBy(mid).
                 var group = cells
                     .Where(cell =>
                         cell.Course == course &&
@@ -18301,26 +18493,75 @@ internal static class Program
                             .Select(k => -2.7 + 0.6 * k))
                         .Concat(new[] { 3.0 })
                         .ToArray();
-                if (group.Length != joints.Length - 1)
+                // The geometric spans, unmoved (the open branch of
+                // CourseSpans is unchanged by this task), matched to the
+                // ARRIVED group as a SET, not position for position: two
+                // pieces can tie on |mid| to within floating noise (the
+                // seam's own two flanking pieces at k = 4, 5, say), and
+                // an independently re-derived joint array does not
+                // reproduce the engine's own tie-break bit for bit,
+                // whichever spans sorts a hair smaller by |mid| wins the
+                // OrderBy outright before the ThenBy ever runs. The SET
+                // of spans is what the pitch, the phase and the
+                // truncation actually pin; the ORDER is rule 7.1's own
+                // affair and is asserted separately below, the same
+                // seam-outward, negative-tie-first invariant
+                // ValidateSkinBuildOrder proves on the dome and the
+                // barrel alike.
+                (double U0, double U1)[] expectedSpans = Enumerable
+                    .Range(0, joints.Length - 1)
+                    .Select(at => (joints[at], joints[at + 1]))
+                    .ToArray();
+                if (group.Length != expectedSpans.Length)
                 {
                     throw new InvalidOperationException(
                         $"Course {course} on one strip carries " +
-                        $"{joints.Length - 1} pieces; got " +
+                        $"{expectedSpans.Length} pieces; got " +
                         $"{group.Length}.");
                 }
-                for (int at = 0; at < group.Length; at++)
+                var unmatched = expectedSpans.ToList();
+                foreach (var cell in group)
                 {
-                    if (Math.Abs(group[at].U0 - joints[at]) > 1.0e-9 ||
-                        Math.Abs(group[at].U1 - joints[at + 1]) > 1.0e-9)
+                    int at = unmatched.FindIndex(span =>
+                        Math.Abs(cell.U0 - span.U0) < 1.0e-9 &&
+                        Math.Abs(cell.U1 - span.U1) < 1.0e-9);
+                    if (at < 0)
                     {
                         throw new InvalidOperationException(
                             "The seam-anchored pitch grid: course " +
-                            $"{course} piece {at} must span " +
-                            $"[{joints[at]}, {joints[at + 1]}]; got " +
-                            $"[{group[at].U0}, {group[at].U1}]. Even " +
-                            "courses put a joint AT the seam, odd " +
-                            "courses centre a piece on it, and only " +
-                            "the end pieces absorb the phase.");
+                            $"{course} carries a span " +
+                            $"[{cell.U0}, {cell.U1}] the expected joint " +
+                            "set does not have. Even courses put a " +
+                            "joint AT the seam, odd courses centre a " +
+                            "piece on it, and only the end pieces absorb " +
+                            "the phase.");
+                    }
+                    unmatched.RemoveAt(at);
+                }
+                // Seam outward (rule 7.1), the same non-decreasing-|mid|
+                // invariant ValidateSkinBuildOrder proves; the strict
+                // negative-first TIE-BREAK is not separately re-asserted
+                // here against an independently re-derived joint array,
+                // because whether two spans land as a bit-exact tie on
+                // |mid| is the engine's own floating-point path, which a
+                // parallel computation over this test's own joints array
+                // does not reproduce bit for bit (two spans 2.4 m out
+                // measured 2.3999999999999995 against
+                // -2.4000000000000004 here, nine femtometres apart and
+                // no tie at all): ValidateSkinBuildOrder's dome and
+                // barrel fixtures are where the tie-break itself is
+                // pinned, off the engine's own numbers.
+                for (int at = 1; at < group.Length; at++)
+                {
+                    double previousMid =
+                        (group[at - 1].U0 + group[at - 1].U1) / 2.0;
+                    double mid = (group[at].U0 + group[at].U1) / 2.0;
+                    if (Math.Abs(mid) < Math.Abs(previousMid) - 1.0e-9)
+                    {
+                        throw new InvalidOperationException(
+                            "The pieces arrive seam outward (rule 7.1): " +
+                            $"course {course} piece {at - 1} has mid " +
+                            $"{previousMid} and piece {at} has mid {mid}.");
                     }
                 }
                 foreach (var cell in group)
@@ -18401,8 +18642,9 @@ internal static class Program
         }
         for (int course = 0; course < 4; course++)
         {
-            // ARRIVAL order here too: the indexed span pin below
-            // asserts the ordering along the loop.
+            // ARRIVAL order here too: the seam-outward pin below asserts
+            // the ordering along the loop (rule 7.1), matched to the
+            // re-centred pitch grid as a set below it.
             var ring = domeCells
                 .Where(cell => cell.Course == course)
                 .ToArray();
@@ -18452,19 +18694,58 @@ internal static class Program
             }
             double pitch = expectedLength / expectedPieces;
             double expectedPhase = course % 2 == 0 ? 0.0 : pitch / 2.0;
-            for (int at = 0; at < ring.Length; at++)
+            // The RAW pitch grid, re-centred at source exactly as
+            // CourseSpans now does (rule 7.1.1), then matched to the
+            // arrived ring as a SET rather than position for position:
+            // an independently re-derived array does not reproduce the
+            // engine's own floating-point tie-break bit for bit (the
+            // barrel's own pitch-grid check measures why, in its own
+            // comment), so the SET is what pitch, phase and re-centring
+            // pin, and the ORDER is rule 7.1's seam-outward invariant,
+            // asserted directly below and pinned independently by
+            // ValidateSkinBuildOrder.
+            var expectedSpans = new List<(double U0, double U1)>();
+            for (int at = 0; at < expectedPieces; at++)
             {
-                double expectedU0 = expectedPhase + at * pitch;
-                if (Math.Abs(ring[at].U0 - expectedU0) > 1.0e-9 ||
-                    Math.Abs(ring[at].U1 - ring[at].U0 - pitch) > 1.0e-9)
+                double u0 = expectedPhase + at * pitch;
+                double u1 = u0 + pitch;
+                if ((u0 + u1) / 2.0 > expectedLength / 2.0)
+                {
+                    u0 -= expectedLength;
+                    u1 -= expectedLength;
+                }
+                expectedSpans.Add((u0, u1));
+            }
+            var unmatchedSpans = new List<(double U0, double U1)>(
+                expectedSpans);
+            foreach (var cell in ring)
+            {
+                int at = unmatchedSpans.FindIndex(span =>
+                    Math.Abs(cell.U0 - span.U0) < 1.0e-9 &&
+                    Math.Abs(cell.U1 - span.U1) < 1.0e-9);
+                if (at < 0)
                 {
                     throw new InvalidOperationException(
                         "A closed course is EQUAL pieces of pitch " +
-                        $"{pitch:F4} in arrival order from the phase " +
-                        "(rotated half a pitch on odd courses): piece " +
-                        $"{at} of course {course} must span " +
-                        $"[{expectedU0:F4}, {expectedU0 + pitch:F4}]; " +
-                        $"got [{ring[at].U0:F4}, {ring[at].U1:F4}].");
+                        $"{pitch:F4}, re-centred at source into " +
+                        "(-L/2, +L/2] (rule 7.1.1): course " +
+                        $"{course} carries a span " +
+                        $"[{cell.U0:F4}, {cell.U1:F4}] the expected " +
+                        "pitch grid does not have.");
+                }
+                unmatchedSpans.RemoveAt(at);
+            }
+            for (int at = 1; at < ring.Length; at++)
+            {
+                double previousMid = (ring[at - 1].U0 + ring[at - 1].U1) /
+                    2.0;
+                double mid = (ring[at].U0 + ring[at].U1) / 2.0;
+                if (Math.Abs(mid) < Math.Abs(previousMid) - 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "The pieces arrive seam outward (rule 7.1): " +
+                        $"course {course} piece {at - 1} has mid " +
+                        $"{previousMid} and piece {at} has mid {mid}.");
                 }
             }
         }
@@ -18874,13 +19155,20 @@ internal static class Program
         // overlapping. It is the same pre-existing honeycomb defect on
         // closed level curves, compounded by covering ground the old
         // global refusal used to hole, and it belongs to the next
-        // sub-project with the dome crown's.
+        // sub-project with the dome crown's. Re-measured again for this
+        // task (rule 7.3): the overlap drop moved from 16 to 15, because
+        // KeepValidPlans runs in the NEW seam-outward emission order and
+        // which of an overlapping pair survives depends on which of the
+        // two the filter is handed first; this is a moved SURVIVOR, not
+        // a moved DEFECT, so the self-crossing count (a property of a
+        // single candidate's own plan, not of arrival order) is unmoved
+        // at 18.
         const string SplitAndDeathCoursesLine =
             "Transition bands skipped: 1 (level curves do not correspond " +
             "between z=0.594 and z=0.602; courses cannot bond across it)";
         RefusesTheMiddleBand(
             "split-and-death", SkinSplitAndDeathNet(),
-            SplitAndDeathCoursesLine, (0, 0), (18, 16));
+            SplitAndDeathCoursesLine, (0, 0), (18, 15));
 
         // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
         // world Z leaves every z, every face and every traced component
@@ -19014,7 +19302,7 @@ internal static class Program
                 // The PLANS, at every one of the ten cases. The courses
                 // engine drops nothing anywhere on this shell; the
                 // honeycomb drops 4 self-crossing and 2 overlapping
-                // cells at CH 0.5, 9 and 1 at CH 0.8 and 12 and 6 at CH
+                // cells at CH 0.5, 9 and 1 at CH 0.8 and 12 and 5 at CH
                 // 1.9, and nothing at CH 0.2 or 0.35. Those are not a
                 // correspondence defect: they are the same pre-existing
                 // family the dome crown and the split-and-death
@@ -19024,7 +19312,14 @@ internal static class Program
                 // while the outer's shrinks, which is the sharpest case
                 // of it in the harness. Pinned as measurements, not
                 // derivations, so the size of the inherited problem is
-                // on the record and cannot grow unseen.
+                // on the record and cannot grow unseen. Re-measured for
+                // this task (rule 7.3): the CH 1.9 overlap drop moved
+                // from 6 to 5, a moved SURVIVOR rather than a moved
+                // defect, because KeepValidPlans now runs in the
+                // seam-outward order and which of an overlapping pair
+                // it keeps depends on which it is handed first; the
+                // self-crossing counts (a property of one candidate's
+                // own plan) and the CH 0.5 and 0.8 cases are unmoved.
                 RequireDisjointSimplePlans(
                     ringCells.Select(cell => cell.Outline).ToArray(),
                     $"{engine.Name}/ring vault CH {ringHeight}");
@@ -19035,7 +19330,7 @@ internal static class Program
                         {
                             0.5 => (4, 2),
                             0.8 => (9, 1),
-                            1.9 => (12, 6),
+                            1.9 => (12, 5),
                             _ => (0, 0)
                         };
                 int ringDegenerate = Reading<int>(
@@ -19411,25 +19706,34 @@ internal static class Program
         // The plan-validity drops, per meshing and per course height,
         // MEASUREMENTS of the pre-existing absolute-arc-length defect
         // and not derivations. The courses engine drops nothing on any
-        // of the five, which is asserted rather than tabled.
+        // of the five, which is asserted rather than tabled. Re-measured
+        // for this task (rule 7.3): at CH 1.9, "quad, 16 a ring",
+        // "triangulated" and "ridge turned 0.1 degrees" each moved their
+        // OVERLAP count down by one (12, 6 to 12, 5 for the first two;
+        // 13, 6 to 13, 5 for the third), moved SURVIVORS and not moved
+        // defects, KeepValidPlans now running in the seam-outward order;
+        // the KEPT-plus-DROPPED total pinnedBuilt ties to is unmoved in
+        // every case; "rings 16/16/16/32/32" at CH 1.9 also moved its
+        // overlap count, from 5 to 4, and "ridge turned 11.25 degrees"
+        // is unmoved at every course height.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
                 { ("quad, 16 a ring", 0.35), (0, 0) },
                 { ("quad, 16 a ring", 0.5), (4, 2) },
-                { ("quad, 16 a ring", 1.9), (12, 6) },
+                { ("quad, 16 a ring", 1.9), (12, 5) },
                 { ("triangulated", 0.35), (1, 0) },
                 { ("triangulated", 0.5), (5, 2) },
-                { ("triangulated", 1.9), (12, 6) },
+                { ("triangulated", 1.9), (12, 5) },
                 { ("ridge turned 0.1 degrees", 0.35), (0, 0) },
                 { ("ridge turned 0.1 degrees", 0.5), (3, 1) },
-                { ("ridge turned 0.1 degrees", 1.9), (13, 6) },
+                { ("ridge turned 0.1 degrees", 1.9), (13, 5) },
                 { ("ridge turned 11.25 degrees", 0.35), (1, 1) },
                 { ("ridge turned 11.25 degrees", 0.5), (6, 2) },
                 { ("ridge turned 11.25 degrees", 1.9), (14, 9) },
                 { ("rings 16/16/16/32/32", 0.35), (0, 0) },
                 { ("rings 16/16/16/32/32", 0.5), (2, 2) },
-                { ("rings 16/16/16/32/32", 1.9), (12, 5) }
+                { ("rings 16/16/16/32/32", 1.9), (12, 4) }
             };
 
         foreach ((string label,
@@ -19704,20 +20008,30 @@ internal static class Program
             { ("Hexagonal", 0.5), 180 },
             { ("Hexagonal", 1.9), 108 }
         };
+        // Re-measured for this task (rule 7.3): at CH 1.9, "control" and
+        // "spiral" each moved their overlap count from 5 to 4, and
+        // "sheared band" from 7 to 6, moved SURVIVORS and not moved
+        // defects, KeepValidPlans now running in the seam-outward order;
+        // "jitter" at CH 0.5 also moved, its overlap count from 7 to 4
+        // (the largest single move this task's re-pinning found, three
+        // ties this fixture's own jitter apparently makes exact where
+        // the others make only one); the KEPT-plus-DROPPED total
+        // pinnedBuilt ties to is unmoved in every case, and "jitter" at
+        // CH 0.35 and 1.9 is unmoved.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
                 { ("control", 0.35), (1, 3) },
                 { ("control", 0.5), (5, 5) },
-                { ("control", 1.9), (9, 5) },
+                { ("control", 1.9), (9, 4) },
                 { ("spiral", 0.35), (1, 3) },
                 { ("spiral", 0.5), (5, 5) },
-                { ("spiral", 1.9), (9, 5) },
+                { ("spiral", 1.9), (9, 4) },
                 { ("sheared band", 0.35), (0, 4) },
                 { ("sheared band", 0.5), (5, 4) },
-                { ("sheared band", 1.9), (8, 7) },
+                { ("sheared band", 1.9), (8, 6) },
                 { ("jitter", 0.35), (0, 3) },
-                { ("jitter", 0.5), (7, 7) },
+                { ("jitter", 0.5), (7, 4) },
                 { ("jitter", 1.9), (10, 6) }
             };
 
