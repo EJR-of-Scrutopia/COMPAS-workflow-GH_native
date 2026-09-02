@@ -775,23 +775,31 @@ internal static class Program
             ValidateSkinTransitions(plugin);
             Console.WriteLine(
                 "PASS  Skin topology transitions: refused on the " +
-                "CORRESPONDENCE, not the count. A two-peak net whose one " +
-                "level loop splits into two above z 0.9, a two-hump " +
-                "barrel whose strips become hump loops, and a net where " +
-                "one island splits as another dies, all three holding " +
-                "their component count across the change, each have the " +
-                "one courses band and the two lattice rows that reach " +
-                "across it REFUSED whole, named in the diagnostics with " +
-                "their heights and counted for the component's Warning, " +
-                "every other band still built and every emitted plan " +
-                "disjoint and simple bar the ones named in the check; " +
-                "the same two-hump barrel TURNED 37 degrees in plan is " +
-                "refused identically, cell count for cell count, because " +
-                "a rotation about world Z cannot change which curves " +
-                "correspond; the barrel and the dome refuse nothing; and " +
-                "an ANNULAR shell, whose every cut is two nested loops, " +
-                "is refused NOWHERE and proposed on by both engines at " +
-                "five course heights.");
+                "CORRESPONDENCE, not the count, and now SPLIT rather than " +
+                "holed whole. A two-peak net whose one level loop splits " +
+                "into two above z 0.9, a two-hump barrel whose strips " +
+                "become hump loops, and a net where one island splits as " +
+                "another dies, all three holding their component count " +
+                "across the change, each have the one failing courses " +
+                "band BISECTED to a residual CH/64 sliver straddling the " +
+                "true change, named in the diagnostics with its heights " +
+                "and counted for the component's Warning, every course " +
+                "otherwise carrying cells and every emitted plan disjoint " +
+                "and simple bar the ones named in the check; the " +
+                "honeycomb does not split, and its refusal is LOCAL to a " +
+                "candidate's own chart (rule 8.2.7) rather than global, so " +
+                "on these three nets no chart's own chain ever breaks and " +
+                "every course carries cells there too; the same two-hump " +
+                "barrel TURNED 37 degrees in plan fails the same band and " +
+                "excludes the same rows, because a rotation about world Z " +
+                "cannot change which curves correspond, with the two " +
+                "alignments asserted equal in cells BUILT (kept plus " +
+                "dropped) rather than cell for cell; the barrel and the " +
+                "dome refuse nothing; a barrel seeded from both springings " +
+                "meets its ridge cut locus and is SPLIT there rather than " +
+                "holed for a whole course; and an ANNULAR shell, whose " +
+                "every cut is two nested loops, is refused NOWHERE and " +
+                "proposed on by both engines at five course heights.");
         }
         catch (Exception exception)
         {
@@ -924,6 +932,22 @@ internal static class Program
         {
             failures.Add(
                 $"Skin plan filter cost: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinBandSplitCost(plugin);
+            Console.WriteLine(
+                "PASS  Skin band splitting cost: the two nets a count test " +
+                "cannot see split inside rule 8.2.3b's cap of 128 extra " +
+                "levels and inside depth six's own pass count, and the " +
+                "measured levels and passes are printed beside this line.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin band splitting cost: " +
+                $"{DescribeException(exception)}");
         }
 
         try
@@ -18313,36 +18337,43 @@ internal static class Program
                 "The two-peak net's 2 m rise at CH 0.5 is four bands; " +
                 $"got {Reading<int>(built, "CourseCount")}.");
         }
+        // Band 1 [0.5, 0.75, 1.0] fails at depth 0 (its mid, at 1
+        // component, does not correspond to its upper level, at 2), and
+        // BISECTS rather than being refused whole (section 8). The true
+        // split sits at z 0.9, which the binary bisection of [0.5, 1.0]
+        // never lands on exactly (0.9 is not a dyadic fraction of that
+        // range), so it converges to the depth-six sub-band that still
+        // straddles it: measured at z 0.898 to 0.906, width 0.0078125 m,
+        // which is CH / 64 exactly (rule 8.2.3). Only that residual sliver
+        // is refused now; TransitionBands still counts 1.
         if (Reading<int>(built, "TransitionBands") != 1)
         {
             throw new InvalidOperationException(
-                "Exactly one courses band, band 1, spans the split (its " +
-                "three levels carry 1, 1 and 2 components); got " +
-                $"{Reading<int>(built, "TransitionBands")}.");
+                "Splitting narrows band 1's failure to one residual " +
+                "sub-band at depth six straddling the true split at " +
+                $"z 0.9; got {Reading<int>(built, "TransitionBands")}.");
         }
         const string CoursesLine =
             "Transition bands skipped: 1 (level curves do not correspond " +
-            "between z=0.500 and z=1.000; courses cannot bond across it)";
+            "between z=0.898 and z=0.906; courses cannot bond across it)";
         string diagnostics = Reading<string>(built, "Diagnostics");
         if (!diagnostics.Contains(CoursesLine, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "The diagnostics must NAME the refused band and the " +
+                "The diagnostics must NAME the refused residual and the " +
                 $"heights it sits between: '{CoursesLine}'; got " +
                 $"'{diagnostics}'.");
         }
-        if (cells.Any(cell => cell.Course == 1))
-        {
-            throw new InvalidOperationException(
-                "A transition band emits NO cells, so nothing may carry " +
-                "course 1; a stated hole beats overlapping cells.");
-        }
-        foreach (int course in new[] { 0, 2, 3 })
+        // Splitting is a PRECONDITION (rule 8.1), so band 1 now carries
+        // cells everywhere but the CH/64 sliver around the true split:
+        // course 1 must still have cells, unlike the whole-band refusal
+        // this wave replaces.
+        foreach (int course in new[] { 0, 1, 2, 3 })
         {
             if (!cells.Any(cell => cell.Course == course))
             {
                 throw new InvalidOperationException(
-                    "Only the transition band is refused: course " +
+                    "Splitting refuses only the residual sliver: course " +
                     $"{course} must still carry cells.");
             }
         }
@@ -18354,38 +18385,41 @@ internal static class Program
         object hexBuilt = hexagonal.Invoke(
             null, new object[] { twoPeak, 0.6, 0.5 })!;
         var hexCells = SkinCells(hexBuilt);
-        if (Reading<int>(hexBuilt, "TransitionBands") != 2)
+        // The honeycomb does NOT split (only Courses does); section 8
+        // instead makes its refusal LOCAL, testing one candidate's own
+        // three rows within its own chart (rule 8.2.7) rather than the
+        // whole net's component count. A chart's own row-to-row chain is
+        // built by BuildCharts choosing, at a split, ONE of the new
+        // components to continue the chart the old one carried; the other
+        // starts a chart of its own. ChainCorresponds then compares a
+        // single curve to a single curve, which Corresponds accepts
+        // whenever their Closed flags and nesting depths agree, with no
+        // way to see that a SIBLING chart also claims the same predecessor.
+        // On this net every chart's own chain stays closed throughout (or
+        // open throughout), so no candidate's own chain is ever broken and
+        // TransitionBands is 0, not the two rows the old global rule
+        // refused.
+        if (Reading<int>(hexBuilt, "TransitionBands") != 0)
         {
             throw new InvalidOperationException(
-                "Two lattice bands reach across the 0.500 to 1.000 " +
-                "transition, centre rows 1 and 2; got " +
-                $"{Reading<int>(hexBuilt, "TransitionBands")}.");
+                "A candidate's own chart never breaks its Closed/depth " +
+                "chain on this net, so the local refusal (rule 8.2.7) " +
+                $"skips no row; got {Reading<int>(hexBuilt, "TransitionBands")}.");
         }
-        const string HexagonalLine =
-            "Transition bands skipped: 2 (level curves do not correspond " +
-            "between z=0.500 and z=1.000; hexagonal cannot bond across it)";
         string hexDiagnostics = Reading<string>(hexBuilt, "Diagnostics");
-        if (!hexDiagnostics.Contains(
-                HexagonalLine, StringComparison.Ordinal))
+        if (hexDiagnostics.Contains(
+                "Transition bands skipped", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "The honeycomb names its refused bands the same way: " +
-                $"'{HexagonalLine}'; got '{hexDiagnostics}'.");
+                "With nothing refused, the honeycomb must say nothing " +
+                $"about transitions; got '{hexDiagnostics}'.");
         }
         if (hexCells.Length == 0)
         {
             throw new InvalidOperationException(
-                "Only the bands that span the split are refused; the " +
-                "rest of the honeycomb still grows.");
+                "The honeycomb must still propose a pattern on this net.");
         }
-        if (hexCells.Any(cell => cell.Course == 1 || cell.Course == 2))
-        {
-            throw new InvalidOperationException(
-                "The refused lattice rows are the ones whose clamped " +
-                "centres sit at z 0.5 and z 1.0, courses 1 and 2, so no " +
-                "surviving cell may carry either.");
-        }
-        foreach (int course in new[] { 0, 3 })
+        foreach (int course in new[] { 0, 1, 2, 3 })
         {
             if (!hexCells.Any(cell => cell.Course == course))
             {
@@ -18396,36 +18430,28 @@ internal static class Program
         RequireDisjointSimplePlans(
             hexCells.Select(cell => cell.Outline).ToArray(),
             "hexagonal/two peaks");
-        // The honeycomb on this net is NOT clean any more, and the
-        // reason is worth stating rather than hiding behind a relaxed
-        // assertion. CH 0.5 was the one course height of five where it
-        // happened to be: measured against the build before this wave it
-        // dropped 2 and 0 at CH 0.2, 6 and 2 at CH 0.3, 2 and 2 at CH
-        // 0.35, nothing at CH 0.5 and 2 and 0 at CH 0.8, and the check
-        // was written on the lucky one. Exact level curves are longer
-        // than the chords they replace, by different amounts on rows of
-        // different shape, so the honeycomb's lattice in ABSOLUTE arc
-        // length shears differently and 7 of the 32 cells it builds here
-        // now fold or land on one another. Two of those seven the
-        // crossing predicate owns rather than the setout: measuring a
-        // fold as a perpendicular DISTANCE instead of as a cross product
-        // sees folds on short edges that an area floor was blind to.
-        // That is the defect already
-        // parked for the setout redesign, at the magnitude it has
-        // everywhere else on this fixture, and the filter keeps every
-        // one of them out of the sidecar. Pinned as a MEASUREMENT so it
-        // cannot grow unseen; the courses engine on the same net is
-        // still required to drop NOTHING, above.
+        // The honeycomb on this net is NOT clean, and now for TWO reasons
+        // layered together. The pre-existing absolute-arc-length defect
+        // this note already named is still there; on top of it, the local
+        // refusal (above) no longer excludes the rows straddling the
+        // split, so far more candidates are built through the region where
+        // the surface's own shape changes fastest, and far more of them
+        // fold or land on one another. Measured against the build before
+        // this task, which excluded courses 1 and 2 outright and dropped
+        // 4 and 3: with nothing excluded this net drops 16 self-crossing
+        // and 18 overlapping. Pinned as a MEASUREMENT so it cannot grow
+        // unseen; the courses engine on the same net is still required to
+        // drop NOTHING, above.
         int peakDegenerate = Reading<int>(hexBuilt, "PlanDegenerateDropped");
         int peakOverlap = Reading<int>(hexBuilt, "PlanOverlapDropped");
-        if (peakDegenerate != 4 || peakOverlap != 3)
+        if (peakDegenerate != 16 || peakOverlap != 18)
         {
             throw new InvalidOperationException(
                 "The honeycomb on the two-peak net at CH 0.5 is pinned " +
-                "to drop 4 self-crossing and 3 overlapping cells, a " +
-                "MEASUREMENT of the absolute-arc-length defect the next " +
-                $"round inherits; it dropped {peakDegenerate} and " +
-                $"{peakOverlap}.");
+                "to drop 16 self-crossing and 18 overlapping cells, a " +
+                "MEASUREMENT of the absolute-arc-length defect compounded " +
+                "by the local refusal no longer excluding the split " +
+                $"region; it dropped {peakDegenerate} and {peakOverlap}.");
         }
 
         // ---- the refusal is a refusal, not a habit.
@@ -18466,28 +18492,25 @@ internal static class Program
         // split-and-death net gave 80 courses cells with 49 overlapping
         // pairs and 116 honeycomb cells with 24 self-crossing and 155).
         //
-        // Both refuse the SAME band as the two-peak net, and for the same
-        // arithmetic. COURSES: the nine heights are zMin + eps, 0.25,
-        // 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, zMax - eps, band r spans
-        // levels 2r, 2r + 1 and 2r + 2, and the change is between 0.75
-        // and 1.0 on the two-hump barrel (strips become hump loops) and
-        // between 0.5 and 0.75 on the split-and-death net (block loops
-        // become peak loops), so band 1, spanning z 0.500 to 1.000, is
-        // the one band whose three levels do not correspond.
-        // HEXAGONAL: its heights are the clamped lattice rows -1 to 5,
-        // which distinct gives zMin + eps, 0.5, 1.0, 1.5, zMax - eps, and
-        // the consecutive pair that fails to correspond is again 0.500 to
-        // 1.000. A lattice cell of centre row c reaches from
-        // z 0.5(c - 1) to z 0.5(c + 1), so that interval falls inside the
-        // span of rows c = 1 and c = 2 and of no other: TWO rows refused,
-        // their clamped centres at z 0.5 and z 1.0, which are courses 1
-        // and 2.
+        // Both fail the SAME band as the two-peak net at depth 0, and for
+        // the same arithmetic (band 1, spanning z 0.500 to 1.000). COURSES
+        // now BISECTS that band (section 8) rather than refusing it whole,
+        // converging on the residual sixty-fourth still straddling the
+        // true change: z 0.898 to 0.906 on the two-hump barrel (the change
+        // sits at 0.9, same as the two-peak net) and z 0.594 to 0.602 on
+        // the split-and-death net (its change sits at 0.6). TransitionBands
+        // stays 1 on both. HEXAGONAL does not split; its refusal is LOCAL
+        // now (rule 8.2.7, ChainCorresponds within one candidate's own
+        // chart) rather than the old global SpansTransition, and on both
+        // of these nets no chart's own Closed/depth chain is ever broken,
+        // so TransitionBands is 0 and every course carries cells.
         // The drops are given per fixture and per engine, and what comes
         // back is what each engine BUILT, kept plus dropped, which is
         // the quantity a rotation must leave alone.
         (int CoursesBuilt, int HexagonsBuilt) RefusesTheMiddleBand(
             string label,
             (double[][] Vertices, int[][] Faces) fixture,
+            string coursesLine,
             (int Degenerate, int Overlap) expectedCourseDrops,
             (int Degenerate, int Overlap) expectedHexagonDrops)
         {
@@ -18527,30 +18550,25 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     $"The {label} holds two components at every height " +
-                    "and changes which two across band 1, so exactly one " +
-                    "courses band is refused on the CORRESPONDENCE; got " +
+                    "and changes which two across band 1, so splitting " +
+                    "converges on exactly one residual sub-band; got " +
                     $"{Reading<int>(byCourses, "TransitionBands")}.");
             }
             string courseText = Reading<string>(byCourses, "Diagnostics");
-            if (!courseText.Contains(CoursesLine, StringComparison.Ordinal))
+            if (!courseText.Contains(coursesLine, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"The {label}'s refused courses band is named with " +
-                    $"its heights: '{CoursesLine}'; got '{courseText}'.");
+                    $"The {label}'s residual sub-band is named with its " +
+                    $"heights: '{coursesLine}'; got '{courseText}'.");
             }
-            if (courseCells.Any(cell => cell.Course == 1))
-            {
-                throw new InvalidOperationException(
-                    $"The {label}'s refused band emits NO cells, so " +
-                    "nothing may carry course 1.");
-            }
-            foreach (int course in new[] { 0, 2, 3 })
+            foreach (int course in new[] { 0, 1, 2, 3 })
             {
                 if (!courseCells.Any(cell => cell.Course == course))
                 {
                     throw new InvalidOperationException(
-                        "Only the transition band is refused: course " +
-                        $"{course} of the {label} must still carry cells.");
+                        "Splitting refuses only the residual sliver: " +
+                        $"course {course} of the {label} must still " +
+                        "carry cells.");
                 }
             }
             RequireDisjointSimplePlans(
@@ -18561,34 +18579,36 @@ internal static class Program
             object byHexagons = hexagonal.Invoke(
                 null, new object[] { subject, 0.6, 0.5 })!;
             var hexagons = SkinCells(byHexagons);
-            if (Reading<int>(byHexagons, "TransitionBands") != 2)
+            if (Reading<int>(byHexagons, "TransitionBands") != 0)
             {
                 throw new InvalidOperationException(
-                    $"Two lattice rows of the {label} reach across the " +
-                    "0.500 to 1.000 transition, centre rows 1 and 2; got " +
+                    "The honeycomb's local refusal (rule 8.2.7) never " +
+                    $"breaks a chart's own chain on the {label}; got " +
                     $"{Reading<int>(byHexagons, "TransitionBands")}.");
             }
             string hexagonText = Reading<string>(byHexagons, "Diagnostics");
-            if (!hexagonText.Contains(
-                    HexagonalLine, StringComparison.Ordinal))
+            if (hexagonText.Contains(
+                    "Transition bands skipped", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"The {label}'s honeycomb names its refused rows the " +
-                    $"same way: '{HexagonalLine}'; got '{hexagonText}'.");
+                    "With nothing refused, the honeycomb must say nothing " +
+                    $"about transitions on the {label}; got " +
+                    $"'{hexagonText}'.");
             }
             if (hexagons.Length == 0)
             {
                 throw new InvalidOperationException(
-                    "Only the rows that span the change are refused; the " +
-                    $"rest of the {label}'s honeycomb still grows.");
+                    $"The {label}'s honeycomb must still propose a " +
+                    "pattern.");
             }
-            if (hexagons.Any(
-                    cell => cell.Course == 1 || cell.Course == 2))
+            foreach (int course in new[] { 0, 1, 2, 3 })
             {
-                throw new InvalidOperationException(
-                    "The refused lattice rows are the ones whose clamped " +
-                    "centres sit at z 0.5 and z 1.0, courses 1 and 2, so " +
-                    $"no surviving {label} cell may carry either.");
+                if (!hexagons.Any(cell => cell.Course == course))
+                {
+                    throw new InvalidOperationException(
+                        $"The {label}'s honeycomb still carries course " +
+                        $"{course}.");
+                }
             }
             RequireDisjointSimplePlans(
                 hexagons.Select(cell => cell.Outline).ToArray(),
@@ -18602,30 +18622,36 @@ internal static class Program
                     expectedHexagonDrops.Degenerate +
                     expectedHexagonDrops.Overlap);
         }
+        // Both cells sets came back CLEANER on the courses engine before
+        // this task (0, 0 each): splitting now emits partial cells right
+        // up to the CH/64 residual, and a few of those thin end pieces
+        // self-cross or overlap in plan where the whole-band refusal used
+        // to leave nothing there at all. Measured, not assumed: pinned as
+        // the cost of covering the band instead of holing it.
         (int CoursesBuilt, int HexagonsBuilt) upright =
             RefusesTheMiddleBand(
-                "two-hump barrel", SkinTwoHumpBarrelNet(), (0, 0), (4, 0));
+                "two-hump barrel", SkinTwoHumpBarrelNet(), CoursesLine,
+                (2, 2), (6, 0));
         // The split-and-death HONEYCOMB's plans were left UNASSERTED in
         // the previous wave, because four of its cells self-crossed in
         // plan at the far ends of a square loop's u domain, where the
         // anti-seam cut folds the clipped outline back on itself. They
-        // are asserted now: the plan-validity filter drops those four
-        // before the pattern is emitted, and the four is pinned, so the
-        // defect underneath is measured rather than tolerated. It is a
-        // pre-existing honeycomb defect on closed level curves, not a
-        // transition defect, and it belongs to the next sub-project with
-        // the dome crown's.
-        // Four became SIX and TWO in this wave, four of them from the
-        // exact level curves and two from the crossing predicate. The
-        // rows of this net are square loops whose exact level set turns
-        // the corner instead of chording it, so every row is a little
-        // longer and the honeycomb's absolute-arc-length lattice shears
-        // a little differently; and a fold measured as a perpendicular
-        // distance is seen where a cross-product floor was blind to it
-        // on a short edge. Same defect, same place, same order of
-        // magnitude, and still pinned.
+        // were asserted from the previous task at 6 and 2. The local
+        // refusal this task ships no longer excludes courses 1 and 2 on
+        // this net (rule 8.2.7 never breaks either chart's own chain
+        // here), so far more candidates are built through the region
+        // where the two islands split and die, and far more of them fold
+        // or land on one another: measured now at 18 self-crossing and 16
+        // overlapping. It is the same pre-existing honeycomb defect on
+        // closed level curves, compounded by covering ground the old
+        // global refusal used to hole, and it belongs to the next
+        // sub-project with the dome crown's.
+        const string SplitAndDeathCoursesLine =
+            "Transition bands skipped: 1 (level curves do not correspond " +
+            "between z=0.594 and z=0.602; courses cannot bond across it)";
         RefusesTheMiddleBand(
-            "split-and-death", SkinSplitAndDeathNet(), (0, 0), (6, 2));
+            "split-and-death", SkinSplitAndDeathNet(),
+            SplitAndDeathCoursesLine, (0, 0), (18, 16));
 
         // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
         // world Z leaves every z, every face and every traced component
@@ -18654,29 +18680,29 @@ internal static class Program
         // and where the setout starts along a closed loop is a stated
         // convention.
         //
-        // Moving the seam is also why the turned fixture DROPS where the
-        // upright one does not: the top course's two hump loops each end
-        // up with one piece whose plan projection self-crosses, and five
-        // honeycomb cells go the same way against the upright fixture's
-        // four. It happens at 30, 37, 45, 90 and 137 degrees alike and
-        // not at 0 or 17. The two OVERLAPPING honeycomb cells this
-        // fixture used to drop are gone, because the exact level curve
-        // of a hump loop turns its corners instead of chording them and
-        // the two cells that used to land on a neighbour no longer reach
-        // it; the self-crossing count rose instead, because a fold is
-        // now measured as a perpendicular distance.
-        // It is NOT correspondence damage: TransitionBands is 1
-        // at every angle and the refused band carries no cells at any of
-        // them. It is a cell-shape defect on a re-entrant closed loop,
-        // the same family as the L-shaped shell's, and the filter is
-        // what answers it: the plans that survive ARE asserted disjoint
-        // and simple, on both engines, at both alignments.
+        // Moving the seam is also why the turned fixture drops MORE than
+        // the upright one on both engines now that splitting covers the
+        // residual sliver instead of holing the whole band: the courses
+        // engine's thin end pieces near the CH/64 residual, and the
+        // honeycomb's candidates through the region the local refusal no
+        // longer excludes, both land differently once the seam sits on a
+        // different vertex. TransitionBands is still 1 for courses at
+        // every angle (the residual sub-band the bisection converges on),
+        // and 0 for the honeycomb, matching the upright fixture above; the
+        // difference between the two alignments is only in which cells the
+        // plan filter drops, asserted below by the invariant that a
+        // rotation cannot add or remove a cell BUILT (kept plus dropped).
+        // It is a cell-shape defect on a re-entrant closed loop, the same
+        // family as the L-shaped shell's, and the filter is what answers
+        // it: the plans that survive ARE asserted disjoint and simple, on
+        // both engines, at both alignments.
         (int CoursesBuilt, int HexagonsBuilt) turned =
             RefusesTheMiddleBand(
                 "two-hump barrel rotated 37 degrees",
                 SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
-                (2, 0),
-                (5, 0));
+                CoursesLine,
+                (4, 2),
+                (7, 0));
         if (turned.CoursesBuilt != upright.CoursesBuilt ||
             turned.HexagonsBuilt != upright.HexagonsBuilt ||
             upright.CoursesBuilt == 0 ||
@@ -18797,6 +18823,162 @@ internal static class Program
                         $"{expectedDrops.Overlap} overlapping cells; it " +
                         $"dropped {ringDegenerate} and {ringOverlap}.");
                 }
+            }
+        }
+
+        // Check 12.8(a) and 12.8(c): the two nets a count test cannot see.
+        // Today each refuses exactly one band WHOLE. After splitting, each
+        // emits cells at every course including the one previously refused,
+        // TransitionBands counts only the RESIDUAL, and the refused
+        // interval named in the diagnostics is at most CH / 64 wide.
+        foreach ((double[][] vertices, int[][] faces, string label) fixture in
+                 new[]
+                 {
+                     (SkinTwoHumpBarrelNet().Vertices,
+                      SkinTwoHumpBarrelNet().Faces, "two-hump barrel"),
+                     (SkinSplitAndDeathNet().Vertices,
+                      SkinSplitAndDeathNet().Faces, "split-and-death")
+                 })
+        {
+            object net = Activator.CreateInstance(
+                netType,
+                new object[] { fixture.vertices, fixture.faces })!;
+            object splitBuilt = courses.Invoke(
+                null, new object[] { net, 0.6, 0.5 })!;
+            var splitCells = SkinCells(splitBuilt);
+            int courseCount = Reading<int>(splitBuilt, "CourseCount");
+            for (int course = 0; course < courseCount; course++)
+            {
+                if (!splitCells.Any(cell => cell.Course == course))
+                {
+                    throw new InvalidOperationException(
+                        $"After splitting, the {fixture.label} emits cells " +
+                        $"at EVERY course; course {course} is empty, which " +
+                        "is the whole-band refusal section 8 replaces.");
+                }
+            }
+            IList intervals = (IList)splitBuilt.GetType()
+                .GetProperty("TransitionIntervals")!.GetValue(splitBuilt)!;
+            foreach (object? item in intervals)
+            {
+                (double Low, double High) span =
+                    ((double, double))item!;
+                if (span.High - span.Low > 0.5 / 64.0 + 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "A residual interval still failing at depth six is " +
+                        "refused and named, and it is at most CH / 64 " +
+                        $"wide, which at CH 0.5 is 7.8 mm; the " +
+                        $"{fixture.label} names one {span.High - span.Low} " +
+                        "m wide.");
+                }
+            }
+            RequireDisjointSimplePlans(
+                splitCells.Select(cell => cell.Outline).ToList(),
+                $"{fixture.label} after splitting");
+        }
+        // Check 12.8(d): a BARREL under the rim field, whose ridge is a cut
+        // locus. The shipped rule would leave one course's worth of hole
+        // along the whole ridge, so both are measured.
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object ridgeNet = SkinNetWith(
+            netType,
+            RequireComponentType(plugin, "SkinNetEdge"),
+            barrelVertices,
+            barrelFaces,
+            SkinBarrelRim(),
+            Array.Empty<(int, int, double)>());
+        object ridge = courses.Invoke(
+            null, new object[] { ridgeNet, 0.6, 0.5 })!;
+        var ridgeCells = SkinCells(ridge);
+        int ridgeCourses = Reading<int>(ridge, "CourseCount");
+        for (int course = 0; course < ridgeCourses; course++)
+        {
+            if (!ridgeCells.Any(cell => cell.Course == course))
+            {
+                throw new InvalidOperationException(
+                    "A barrel seeded from BOTH springings meets at a cut " +
+                    "locus along its ridge, which is a topology event at " +
+                    "every point of it; section 8 splits the band there " +
+                    $"rather than refusing it, and course {course} must " +
+                    "carry cells.");
+            }
+        }
+
+        // Check 12.8(e). The two-hump barrel carries its transition on one
+        // side at a time; with the refusal restricted to the candidate's own
+        // CHART, the other side's cells are unaffected. Under the shipped
+        // global SpansTransition every row spanning the interval was refused
+        // anywhere on the net, so a transition on one side holed the other.
+        object humpNet = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                SkinTwoHumpBarrelNet().Vertices,
+                SkinTwoHumpBarrelNet().Faces
+            })!;
+        object hump = hexagonal.Invoke(
+            null, new object[] { humpNet, 0.6, 0.5 })!;
+        var humpCells = SkinCells(hump);
+        int refusedRows = Reading<int>(hump, "TransitionBands");
+        Console.WriteLine(
+            "      Skin honeycomb transition (check 12.8(e)): " +
+            $"{refusedRows} candidate rows refused on their own chart, " +
+            $"{humpCells.Length} cells kept.");
+        if (humpCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "Restricting the refusal to the cell's own chart makes the " +
+                "hole LOCAL (rule 8.2.7); the honeycomb must still cover " +
+                "the sides that carry no transition.");
+        }
+    }
+
+    /// <summary>
+    /// Check 12.9(c). Rule 8.2.3a states the cost as up to 2^depth - 1 new
+    /// levels per refused band, delivered in at most depth + 1 passes of
+    /// TraceAll over the whole ascending list, and rule 8.2.3b caps the
+    /// total at 128 extra levels for the whole solve. In practice a band's
+    /// failure is local and one half passes at each level, so the ordinary
+    /// cost is of order twelve traces; the bound is what must be budgeted,
+    /// and what is under test here is that the engine RETURNS with its
+    /// diagnostics rather than how long it takes.
+    /// </summary>
+    private static void ValidateSkinBandSplitCost(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        foreach ((double[][] vertices, int[][] faces, string label) fixture in
+                 new[]
+                 {
+                     (SkinTwoHumpBarrelNet().Vertices,
+                      SkinTwoHumpBarrelNet().Faces, "two-hump barrel"),
+                     (SkinSplitAndDeathNet().Vertices,
+                      SkinSplitAndDeathNet().Faces, "split-and-death")
+                 })
+        {
+            object net = Activator.CreateInstance(
+                netType,
+                new object[] { fixture.vertices, fixture.faces })!;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            object built = courses.Invoke(
+                null, new object[] { net, 0.6, 0.5 })!;
+            clock.Stop();
+            int extra = Reading<int>(built, "ExtraLevels");
+            int passes = Reading<int>(built, "TracePasses");
+            Console.WriteLine(
+                $"      Skin band splitting on the {fixture.label}: " +
+                $"{extra} extra levels in {passes} TraceAll passes, " +
+                $"{clock.ElapsedMilliseconds} ms.");
+            if (extra > 128 || passes > 8)
+            {
+                throw new InvalidOperationException(
+                    "No solve may introduce more than 128 extra levels " +
+                    "across all bands (rule 8.2.3b), delivered in at most " +
+                    "depth + 1 = 7 passes of TraceAll plus the first; the " +
+                    $"{fixture.label} took {extra} levels in {passes} " +
+                    "passes.");
             }
         }
     }

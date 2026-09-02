@@ -188,7 +188,9 @@ internal sealed record SkinPatternResult(
     int SevenSidedCells,
     IReadOnlyList<int> CountChangeRows,
     int MergedPieces,
-    int DegenerateCentroidsSkipped);
+    int DegenerateCentroidsSkipped,
+    int ExtraLevels,
+    int TracePasses);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -1469,6 +1471,18 @@ internal static class SkinPatterns
         return true;
     }
 
+    /// <summary>Rule 8.2.7's chain test, taken WITHIN ONE CHART. A candidate
+    /// hexagon is refused when the three rows it maps through do not
+    /// correspond as a chain within its own chart, which is a question about
+    /// the two curves it actually bonds across and not about the whole net.
+    /// The shipped test was global (SpansTransition against every recorded
+    /// interval), so a transition on one side of a two-sided vault holed the
+    /// other side too.</summary>
+    private static bool ChainCorresponds(
+        SkinLevelCurve upper,
+        SkinLevelCurve lower) =>
+        Corresponds(new[] { upper }, new[] { lower });
+
     private static int NearestInPlan(SkinLevelCurve curve, double[] target)
     {
         int best = 0;
@@ -2058,6 +2072,136 @@ internal static class SkinPatterns
 
     // ---- pattern 0: courses (spec section 5) ----------------------------
 
+    /// <summary>One band of a pattern: the course it belongs to, the three
+    /// field values it is built on, and how many times it has been bisected
+    /// (rule 8.2.2). Its MID is what every cell of it is set out on, so a
+    /// sub-band needs its OWN mid at a quarter point and one level of
+    /// bisection costs TWO new mid traces, not one.</summary>
+    private sealed record SkinBandInterval(
+        int Course,
+        double Low,
+        double Mid,
+        double High,
+        int Depth);
+
+    /// <summary>What ResolveBands returns: the ascending level list it
+    /// finished with, that list traced, the bands that correspond and may be
+    /// tiled, the residual intervals refused at depth six or at the cap, how
+    /// many extra levels the splitting introduced, how many TraceAll passes
+    /// it cost, and whether the cap of rule 8.2.3b was reached.</summary>
+    private sealed record SkinBandResolution(
+        IReadOnlyList<double> Levels,
+        IReadOnlyList<IReadOnlyList<SkinLevelCurve>> Traced,
+        IReadOnlyList<SkinBandInterval> Tileable,
+        IReadOnlyList<(double Low, double High)> Refused,
+        int ExtraLevels,
+        int Passes,
+        bool CapReached);
+
+    /// <summary>Add a level to the ascending list, or return the existing
+    /// one it coincides with, so the list never carries the same level
+    /// twice and a sub-band's mid always names a level that was actually
+    /// traced.</summary>
+    private static double AddLevel(List<double> levels, double level)
+    {
+        foreach (double at in levels)
+        {
+            if (Math.Abs(at - level) <= 1.0e-12)
+                return at;
+        }
+        levels.Add(level);
+        return level;
+    }
+
+    /// <summary>
+    /// Rules 8.2.1 to 8.2.9. A band whose three levels do not CORRESPOND one
+    /// for one is BISECTED rather than refused whole: the lower sub-band is
+    /// [a, m] with its own mid (a + m) / 2, the upper is [m, b] with its own
+    /// mid (m + b) / 2, each is tested by the same correspondence test, each
+    /// half that passes is tiled and each half that fails recurses.
+    ///
+    /// EVERY LEVEL THIS WAVE INTRODUCES ENTERS ONE ASCENDING LIST AND
+    /// TraceAll RUNS ONCE OVER THE WHOLE LIST (rule 8.2.9). Its contract is
+    /// that levels arrive ASCENDING, because nesting depth, direction
+    /// normalisation and seam assignment are one bottom-up pass and a closed
+    /// loop's seam is propagated from the loop below it. A sub-band mid
+    /// traced on its own would have no level beneath it, its seam would fall
+    /// to the +X rule instead of the propagated one, and its cells' u origin
+    /// would not agree with the rest of its own course. So splitting is a
+    /// STAGED solve: trace, test, insert the new mids of every failing band,
+    /// trace the whole list again, and so on.
+    ///
+    /// DEPTH SIX (rule 8.2.3), so the residual interval is CH / 64, about
+    /// 5.5 mm at the shipped CH of 0.35 m, which is below the coarsest
+    /// tolerance anything downstream uses and well above the 1e-9 arithmetic
+    /// floor. A full recursion to depth six costs up to 63 new mid traces on
+    /// ONE band, so no solve may introduce more than 128 extra levels across
+    /// all bands together (rule 8.2.3b): a pathological net must not be able
+    /// to lock Grasshopper's canvas thread.
+    /// </summary>
+    private static SkinBandResolution ResolveBands(
+        SkinNet net,
+        List<double> levels,
+        IReadOnlyList<SkinBandInterval> bands)
+    {
+        const int MaxDepth = 6;
+        const int MaxExtraLevels = 128;
+        var pending = new List<SkinBandInterval>(bands);
+        var tileable = new List<SkinBandInterval>();
+        var refused = new List<(double Low, double High)>();
+        IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
+            Array.Empty<IReadOnlyList<SkinLevelCurve>>();
+        int extra = 0;
+        int passes = 0;
+        bool capReached = false;
+        while (true)
+        {
+            levels.Sort();
+            traced = TraceAll(net, levels);
+            passes++;
+            var index = new Dictionary<double, int>();
+            for (int at = 0; at < levels.Count; at++)
+                index[levels[at]] = at;
+            var next = new List<SkinBandInterval>();
+            foreach (SkinBandInterval band in pending)
+            {
+                IReadOnlyList<SkinLevelCurve> mids = traced[index[band.Mid]];
+                IReadOnlyList<SkinLevelCurve> lowers =
+                    traced[index[band.Low]];
+                IReadOnlyList<SkinLevelCurve> uppers =
+                    traced[index[band.High]];
+                if (Corresponds(mids, lowers) && Corresponds(mids, uppers))
+                {
+                    tileable.Add(band);
+                    continue;
+                }
+                if (band.Depth >= MaxDepth || extra + 2 > MaxExtraLevels)
+                {
+                    capReached |= extra + 2 > MaxExtraLevels;
+                    refused.Add((band.Low, band.High));
+                    continue;
+                }
+                int before = levels.Count;
+                double lowerMid = AddLevel(
+                    levels, (band.Low + band.Mid) / 2.0);
+                double upperMid = AddLevel(
+                    levels, (band.Mid + band.High) / 2.0);
+                extra += levels.Count - before;
+                next.Add(new SkinBandInterval(
+                    band.Course, band.Low, lowerMid, band.Mid,
+                    band.Depth + 1));
+                next.Add(new SkinBandInterval(
+                    band.Course, band.Mid, upperMid, band.High,
+                    band.Depth + 1));
+            }
+            if (next.Count == 0)
+                break;
+            pending = next;
+        }
+        return new SkinBandResolution(
+            levels, traced, tileable, refused, extra, passes, capReached);
+    }
+
     /// <summary>
     /// Running-bond quads, the Bench Studio bonded-courses algorithm
     /// restated on the thrust surface. Bands of Course Height from the
@@ -2084,57 +2228,48 @@ internal static class SkinPatterns
         int bands = BandCount(dMin, dMax, courseHeight);
         double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
 
-        // Heights, ascending: the boundary of band r at index 2r, its
-        // mid-height at 2r + 1. The extreme cuts are pulled inside the
-        // surface by epsilon so the trace exists at the base and the
-        // crown; the top band's mid runs to the true crown height.
-        var heights = new List<double>();
-        for (int r = 0; r <= bands; r++)
+        // The band ladder, in FIELD values. Under a rim field dMin is 0 and
+        // this is rule 1.5.3's BandCount(0, dMax, CH) over a geodesic extent
+        // rather than a vertical one; under the Z fallback it is the ladder
+        // that shipped. The extreme cuts are pulled inside the surface by
+        // the epsilon of rule 1.5.2, which is a fraction of the FIELD range
+        // and in metres either way, so no tolerance moves with the change.
+        var levels = new List<double>();
+        var intervals = new List<SkinBandInterval>();
+        for (int r = 0; r < bands; r++)
         {
-            heights.Add(
-                r == 0 ? dMin + epsilon
-                : r == bands ? dMax - epsilon
-                : dMin + r * courseHeight);
-            if (r < bands)
-            {
-                double bandTop = r == bands - 1
-                    ? dMax
-                    : dMin + (r + 1) * courseHeight;
-                heights.Add((dMin + r * courseHeight + bandTop) / 2.0);
-            }
+            double low = AddLevel(
+                levels,
+                r == 0 ? dMin + epsilon : dMin + r * courseHeight);
+            double bandTop = r == bands - 1
+                ? dMax
+                : dMin + (r + 1) * courseHeight;
+            double high = AddLevel(
+                levels,
+                r == bands - 1 ? dMax - epsilon : bandTop);
+            double mid = AddLevel(
+                levels, (dMin + r * courseHeight + bandTop) / 2.0);
+            intervals.Add(new SkinBandInterval(r, low, mid, high, 0));
         }
-        IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
-            TraceAll(net, heights);
+        SkinBandResolution resolved = ResolveBands(net, levels, intervals);
+        var levelIndex = new Dictionary<double, int>();
+        for (int at = 0; at < resolved.Levels.Count; at++)
+            levelIndex[resolved.Levels[at]] = at;
 
         var keyed =
             new List<(int Course, int Order, double U0, SkinCell Cell)>();
         var transitions = new List<(double Low, double High)>();
-        int transitionBands = 0;
-        for (int r = 0; r < bands; r++)
+        foreach ((double low, double high) in resolved.Refused)
+            AddTransition(transitions, low, high);
+        int transitionBands = resolved.Refused.Count;
+        foreach (SkinBandInterval band in resolved.Tileable)
         {
-            IReadOnlyList<SkinLevelCurve> mids = traced[2 * r + 1];
-            IReadOnlyList<SkinLevelCurve> lowers = traced[2 * r];
-            IReadOnlyList<SkinLevelCurve> uppers = traced[2 * r + 2];
-            // A TOPOLOGY TRANSITION: the components of the three levels
-            // this band spans do not CORRESPOND one for one, so
-            // MatchBelow would pair curves that are not the same piece
-            // of surface and the band would be laid with overlapping and
-            // self-crossing cells. The mid curve is what every cell of
-            // the band is set out on, so the correspondence is tested
-            // from the mid DOWN to the lower level and from the mid UP
-            // to the upper. Refuse the band whole (spec is silent on
-            // transitions; the ruling is that a stated hole beats a
-            // poisoned sidecar, because Bench Studio rejects a whole
-            // tessellation for one self-crossing cell). Splitting the
-            // band at its transition height is the right long answer and
-            // belongs to a later wave.
-            if (!Corresponds(mids, lowers) || !Corresponds(mids, uppers))
-            {
-                transitionBands++;
-                AddTransition(
-                    transitions, heights[2 * r], heights[2 * r + 2]);
-                continue;
-            }
+            IReadOnlyList<SkinLevelCurve> mids =
+                resolved.Traced[levelIndex[band.Mid]];
+            IReadOnlyList<SkinLevelCurve> lowers =
+                resolved.Traced[levelIndex[band.Low]];
+            IReadOnlyList<SkinLevelCurve> uppers =
+                resolved.Traced[levelIndex[band.High]];
             for (int component = 0; component < mids.Count; component++)
             {
                 SkinLevelCurve mid = mids[component];
@@ -2144,30 +2279,29 @@ internal static class SkinPatterns
                     continue;
                 SkinLevelCurve lowerCurve = lowers[lowerAt];
                 SkinLevelCurve upperCurve = uppers[upperAt];
+                // A sub-band takes its OWN mid curve and its own pitch (rule
+                // 8.2.5), so a thin sub-band beside a cut locus gives short
+                // pieces, which section 6 then merges: a course that runs
+                // into a ridge closes with a short stone. Its COURSE is the
+                // band it came from and never a new one (rule 8.2.4),
+                // because the studio builds one stage per distinct course.
                 int pieces = Math.Max(
                     1, (int)Math.Round(mid.Length / size));
                 double pitch = mid.Length / pieces;
-                double phase = r % 2 == 0 ? 0.0 : 0.5 * pitch;
+                double phase = band.Course % 2 == 0 ? 0.0 : 0.5 * pitch;
                 foreach ((double u0, double u1) in
                          CourseSpans(mid, pieces, pitch, phase))
                 {
-                    // Only an open strip's end piece is shorter than the
-                    // pitch: it absorbed the phase, and it is the
-                    // "boundary-clipped" cell of this pattern.
                     bool endPiece = u1 - u0 < pitch - 1.0e-9;
                     SkinCell cell = BandCell(
-                        r, lowerCurve, mid, upperCurve, u0, u1, endPiece);
+                        band.Course, lowerCurve, mid, upperCurve,
+                        u0, u1, endPiece);
                     if (cell.Outline.Count < 3)
                         continue;
-                    keyed.Add((r, component, u0, cell));
+                    keyed.Add((band.Course, component, u0, cell));
                 }
             }
         }
-        // The plan guarantee is ENFORCED here, on the sorted list, so
-        // the cells that leave are the cells that were measured. Every
-        // diagnostics number below is then taken off the SURVIVORS, so
-        // the text describes what the component actually hands over
-        // rather than what it built before the filter looked at it.
         List<SkinCell> cells = KeepValidPlans(
             keyed
                 .OrderBy(item => item.Course)
@@ -2206,7 +2340,9 @@ internal static class SkinPatterns
             0,
             Array.Empty<int>(),
             0,
-            0);
+            0,
+            resolved.ExtraLevels,
+            resolved.Passes);
     }
 
     /// <summary>
@@ -2364,26 +2500,6 @@ internal static class SkinPatterns
     }
 
     /// <summary>
-    /// True when one of the recorded transition intervals lies WITHIN
-    /// the height span [low, high] a candidate cell reaches across, so
-    /// the cell would have to bond over a level whose component count
-    /// changes. Both ends of a lattice cell's span are themselves traced
-    /// heights, so the comparison is exact but for the usual tolerance.
-    /// </summary>
-    private static bool SpansTransition(
-        IReadOnlyList<(double Low, double High)> transitions,
-        double low,
-        double high)
-    {
-        foreach ((double at, double to) in transitions)
-        {
-            if (at >= low - 1.0e-12 && to <= high + 1.0e-12)
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
     /// The diagnostics line for refused transition bands, or null when
     /// there are none. It names how many bands were skipped and the
     /// heights each transition sits between, because the author needs to
@@ -2515,7 +2631,9 @@ internal static class SkinPatterns
             0,
             Array.Empty<int>(),
             0,
-            0);
+            0,
+            0,
+            1);
 
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
 
@@ -2686,11 +2804,14 @@ internal static class SkinPatterns
                         break;
                     if (centreRow < -1)
                         continue;
-                    if (transitions.Count > 0 &&
-                        SpansTransition(
-                            transitions,
-                            ClampedRowLevel(centreRow - 1),
-                            ClampedRowLevel(centreRow + 1)))
+                    SkinLevelCurve rowBelow =
+                        CurveAt(chart, ClampedRowLevel(centreRow - 1));
+                    SkinLevelCurve rowHere =
+                        CurveAt(chart, ClampedRowLevel(centreRow));
+                    SkinLevelCurve rowAbove =
+                        CurveAt(chart, ClampedRowLevel(centreRow + 1));
+                    if (!ChainCorresponds(rowHere, rowBelow) ||
+                        !ChainCorresponds(rowAbove, rowHere))
                     {
                         skippedRows.Add(centreRow);
                         continue;
@@ -2868,6 +2989,8 @@ internal static class SkinPatterns
             0,
             Array.Empty<int>(),
             0,
-            0);
+            0,
+            0,
+            1);
     }
 }
