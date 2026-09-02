@@ -147,7 +147,8 @@ internal sealed record SkinCell(
     bool Clipped,
     double U0,
     double U1,
-    bool Cap = false);
+    bool Cap = false,
+    int SetoutCorners = 0);
 
 /// <summary>One generated pattern. The cells sorted by course then by
 /// rule 7.1's seam-outward order, the band count, the readable diagnostics
@@ -188,6 +189,7 @@ internal sealed record SkinPatternResult(
     int FiveSidedCells,
     int SevenSidedCells,
     IReadOnlyList<int> CountChangeRows,
+    IReadOnlyList<int> ClosedRows,
     int MergedPieces,
     int DegenerateCentroidsSkipped,
     int ExtraLevels,
@@ -3044,6 +3046,7 @@ internal static class SkinPatterns
             0,
             0,
             Array.Empty<int>(),
+            Array.Empty<int>(),
             mergedPieces,
             degenerateCentroidsSkipped,
             resolved.ExtraLevels,
@@ -3467,6 +3470,7 @@ internal static class SkinPatterns
             0,
             0,
             Array.Empty<int>(),
+            Array.Empty<int>(),
             0,
             0,
             0,
@@ -3536,6 +3540,93 @@ internal static class SkinPatterns
             : chart.Curves[^1];
     }
 
+    /// <summary>Signed arc about the seam from a NORMALISED position on a
+    /// row: t in [0, 1) is normalised arc from the seam on a closed row and
+    /// from the strip's start on an open one, and an open strip's seam is
+    /// its arc-length midpoint, which is what makes the column set j / m
+    /// symmetric about t = 0.5 and keeps the strip mirror-symmetric.</summary>
+    private static double ArcOf(SkinLevelCurve curve, double t) =>
+        curve.Closed
+            ? t * curve.Length
+            : t * curve.Length - curve.Length / 2.0;
+
+    /// <summary>
+    /// How many of a neighbouring row's columns fall within the cell's own
+    /// span (rule 4.2.5's closing paragraph and rule 4.3): one column
+    /// within the span is the plain honeycomb; NONE marks a five-sided
+    /// cell; TWO a seven-sided one. Split out from vertex-building (below)
+    /// so a cell whose count changes on BOTH sides at once can be resolved
+    /// before either side commits to an odd shape; see the note on
+    /// <see cref="VerticesForWithin"/>.
+    /// </summary>
+    private static int WithinCount(
+        double t,
+        int columns,
+        bool closed,
+        double spanLeft,
+        double spanRight)
+    {
+        int within = 0;
+        for (int j = 0; j < columns; j++)
+        {
+            double at = (double)j / columns;
+            if (closed)
+            {
+                double shifted = at - t;
+                shifted -= Math.Floor(shifted + 0.5);
+                at = t + shifted;
+            }
+            if (at > spanLeft + 1.0e-12 && at < spanRight - 1.0e-12)
+                within++;
+        }
+        return within;
+    }
+
+    /// <summary>
+    /// The vertices a neighbouring row contributes for a given WithinCount
+    /// (rule 4.2.5's closing paragraph): one column within the span is the
+    /// plain honeycomb and gives two vertices at that row's own thirds;
+    /// NONE gives one vertex and a five-sided cell; TWO gives three
+    /// vertices and a seven-sided one. Where the extra vertex sits is this
+    /// engine's own resolution, stated because the spec states the count
+    /// and not the position: at the cell's own centre, so the extra corner
+    /// lies on the cell's axis and the cell stays symmetric about it.
+    ///
+    /// DEVIATION (recorded in progress.md): tried literally first with
+    /// each side's WithinCount committing independently, which rule 4.3.4
+    /// bounds only in MAGNITUDE (adjacent rows differ by at most one
+    /// centre) and not in WHICH side of a row it falls on. On a dome,
+    /// whose centre count tapers by exactly one every row, an interior
+    /// row differs from its row below AND its row above at once, at the
+    /// same meridian both transitions share, and the literal rule built
+    /// an 8-sided cell there, which check 12.4(d)/(e)'s converse
+    /// (rule 4.3, six/five/seven only) then caught. The smallest
+    /// correction: at most one side of a cell may be irregular; where
+    /// both are, the side closer to the ordinary count of one is treated
+    /// as ordinary (a tie keeps the below side irregular), capping every
+    /// cell at seven sides as rule 4.3.4 states.
+    /// </summary>
+    private static List<double> VerticesForWithin(
+        double t,
+        int columns,
+        int within,
+        ref int fiveSided,
+        ref int sevenSided)
+    {
+        double third = 1.0 / (3.0 * columns);
+        if (within <= 0)
+        {
+            fiveSided++;
+            return new List<double> { t };
+        }
+        if (within >= 2)
+        {
+            sevenSided++;
+            return new List<double> { t - third, t, t + third };
+        }
+        return new List<double> { t - third, t + third };
+    }
+
     /// <summary>
     /// A stretched honeycomb in the setout plane, width S and height
     /// 2 CH, so the bond reads at the same course rhythm as pattern 0.
@@ -3579,26 +3670,23 @@ internal static class SkinPatterns
         double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
         double dBottom = dMin + epsilon;
         double dTop = dMax - epsilon;
-        double clipTolerance = 10.0 * epsilon;
 
-        // Every lattice height is dMin + CH * row for an integer row:
-        // the base centre sits at zRef = dMin + CH (so the seam column's
-        // bottom row lands its lower edge on the base rim), and both
-        // lattice translations move by whole multiples of CH. Rows -1 to
-        // topRow + 1 cover every vertex a candidate cell can have; rows
-        // beyond the surface clamp to the epsilon-pulled extremes and
-        // collapse to shared traces.
+        // Rule 4.2.1: rows run 0 to K at k * CH, the two extremes pulled
+        // inside the surface by the epsilon of rule 1.5.2, and nothing
+        // clamped beyond the surface.
         int topRow = (int)Math.Ceiling(
             (dMax - dMin) / courseHeight - 1.0e-9);
-        double ClampedRowLevel(int row) =>
-            Math.Min(Math.Max(dMin + courseHeight * row, dBottom), dTop);
-        List<double> heights = Enumerable
-            .Range(-1, topRow + 3)
-            .Select(ClampedRowLevel)
+        double RowLevel(int row) =>
+            row <= 0 ? dBottom
+            : row >= topRow ? dTop
+            : dMin + courseHeight * row;
+        List<double> levels = Enumerable
+            .Range(0, topRow + 1)
+            .Select(RowLevel)
             .Distinct()
             .ToList();
         IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
-            TraceAll(net, heights);
+            TraceAll(net, levels);
         List<SkinChart> charts = BuildCharts(traced);
 
         // The TOPOLOGY TRANSITIONS, found once for the whole net: a pair
@@ -3609,181 +3697,209 @@ internal static class SkinPatterns
         // interval is refused whole, the same ruling the courses engine
         // follows and the same correspondence test.
         var transitions = new List<(double Low, double High)>();
-        for (int level = 0; level + 1 < heights.Count; level++)
+        for (int level = 0; level + 1 < levels.Count; level++)
         {
             if (!Corresponds(traced[level], traced[level + 1]))
             {
                 AddTransition(
-                    transitions, heights[level], heights[level + 1]);
+                    transitions, levels[level], levels[level + 1]);
             }
         }
         var skippedRows = new HashSet<int>();
 
         var keyed =
             new List<(int Course, int Chart, double U0, SkinCell Cell)>();
-
+        var closedRows = new HashSet<int>();
+        var countChangeRows = new HashSet<int>();
+        int fiveSided = 0;
+        int sevenSided = 0;
         for (int chartAt = 0; chartAt < charts.Count; chartAt++)
         {
             SkinChart chart = charts[chartAt];
-            double chartBottom = chart.Heights[0];
-            double chartTop = chart.Heights[^1];
-            double uMax =
-                chart.Curves.Max(curve => curve.Length) / 2.0;
-            int iMax = (int)Math.Ceiling(
-                (uMax + size / 2.0) / (0.75 * size));
-            for (int i = -iMax; i <= iMax; i++)
+            int rows = chart.Curves.Count;
+            // DEVIATION (recorded in progress.md): tried the brief's
+            // literal "fewer than three curves, skip the whole chart"
+            // guard first, kept from when the interior loop needed a
+            // below AND an above from OTHER rows. Both ends now
+            // self-clamp (above), so a chart of one or two curves still
+            // gets a below and an above; skipping it whole instead
+            // dropped every course a short-lived chart would have
+            // covered. Measured on the two-hump barrel, whose base
+            // chart runs only two levels before the topology transition
+            // splits it into the two hump charts: courses 0 and 1, which
+            // only that chart ever carries, came back with no cells at
+            // all. The smallest correction: only a chart with NO curves
+            // at all is skipped.
+            if (rows < 1)
+                continue;
+
+            // COUNTS, stated in CENTRES and not in columns (rule 4.2.2).
+            // Row k takes its own centre count n_k = max(1, round(L_k /
+            // (1.5 S))) from its own arc length and its column count is
+            // m_k = 2 n_k, so the column pitch is L_k / m_k against a
+            // target of 0.75 S. The count is taken in centres because
+            // rule 4.2.4 puts a centre on every other column, and on a
+            // CLOSED row that alternation only closes onto itself when
+            // the column count is EVEN: round a column count straight
+            // off the length and it is odd about half the time, two
+            // hexagons then sit side by side at the meridian and their
+            // cells overlap, which is the very defect this section
+            // exists to remove arriving by a different road.
+            var centres = new int[rows];
+            for (int k = 0; k < rows; k++)
             {
-                double uc = 0.75 * size * i;
-                for (int j = (int)Math.Floor((-2.0 - i) / 2.0);
-                     ;
-                     j++)
+                centres[k] = Math.Max(
+                    1,
+                    (int)Math.Round(chart.Curves[k].Length / (1.5 * size)));
+            }
+            // Rule 4.3.4: where two adjacent rows would differ by more
+            // than one CENTRE the difference is spread over the
+            // intervening rows one centre at a time, so no single row
+            // carries more than one centre change and no cell has more
+            // than seven sides. The adjustment is made in CENTRES and
+            // never in columns, because a closed row's column count must
+            // stay even and an even count can only change by two.
+            for (int pass = 0; pass < rows; pass++)
+            {
+                bool moved = false;
+                for (int k = 1; k < rows; k++)
                 {
-                    int centreRow = 1 + i + 2 * j;
-                    if (centreRow > topRow + 1)
-                        break;
-                    if (centreRow < -1)
-                        continue;
-                    SkinLevelCurve rowBelow =
-                        CurveAt(chart, ClampedRowLevel(centreRow - 1));
-                    SkinLevelCurve rowHere =
-                        CurveAt(chart, ClampedRowLevel(centreRow));
-                    SkinLevelCurve rowAbove =
-                        CurveAt(chart, ClampedRowLevel(centreRow + 1));
-                    if (!ChainCorresponds(rowHere, rowBelow) ||
-                        !ChainCorresponds(rowAbove, rowHere))
+                    if (centres[k] > centres[k - 1] + 1)
                     {
-                        skippedRows.Add(centreRow);
-                        continue;
+                        centres[k] = centres[k - 1] + 1;
+                        moved = true;
                     }
-
-                    // The six setout vertices: (u offset, row offset).
-                    (double U, int Row)[] setout =
+                    else if (centres[k] < centres[k - 1] - 1)
                     {
-                        (uc - size / 4.0, centreRow - 1),
-                        (uc + size / 4.0, centreRow - 1),
-                        (uc + size / 2.0, centreRow),
-                        (uc + size / 4.0, centreRow + 1),
-                        (uc - size / 4.0, centreRow + 1),
-                        (uc - size / 2.0, centreRow)
-                    };
-                    bool clipped = false;
-                    var mapped =
-                        new (double U, SkinLevelCurve Curve)[6];
-                    for (int v = 0; v < 6; v++)
-                    {
-                        double dRaw =
-                            dMin + courseHeight * setout[v].Row;
-                        double z = Math.Min(
-                            Math.Max(dRaw, chartBottom), chartTop);
-                        SkinLevelCurve curve = CurveAt(chart, z);
-                        double half = curve.Length / 2.0;
-                        double u = Math.Min(
-                            Math.Max(setout[v].U, -half), half);
-                        if (Math.Abs(z - dRaw) > clipTolerance ||
-                            Math.Abs(u - setout[v].U) > clipTolerance)
-                        {
-                            clipped = true;
-                        }
-                        mapped[v] = (u, curve);
+                        centres[k] = centres[k - 1] - 1;
+                        moved = true;
                     }
+                }
+                if (!moved)
+                    break;
+            }
 
-                    // The candidate's OWN level curve is the one at its
-                    // CENTRE row, clamped onto the chart the same way its
-                    // vertices are, and that curve's half-length is what
-                    // the u half of the membership test is measured
-                    // against.
-                    double halfAtCentre = CurveAt(
-                        chart,
-                        Math.Min(
-                            Math.Max(
-                                dMin + courseHeight * centreRow,
-                                chartBottom),
-                            chartTop))
-                        .Length / 2.0;
-
-                    // MEMBERSHIP by INTERVAL OVERLAP, not by vertex.
-                    // Asking whether any of the six mapped vertices lies
-                    // strictly inside the chart is a proxy, and it fails
-                    // on a shallow shell: when CH reaches the surface's
-                    // rise, which the shipped 0.35 default does on any
-                    // shell rising less than that, every lattice row
-                    // lands at or beyond the chart's z extremes, no
-                    // vertex is ever strictly inside, and the honeycomb
-                    // comes back EMPTY while the courses engine on the
-                    // same shell happily builds a band.
-                    //
-                    // The rule instead: a candidate is a cell when its
-                    // raw (u, z) extent INTERSECTS the chart's interior.
-                    // Its z extent is the two lattice rows the hexagon
-                    // reaches, CH either side of the centre; its u
-                    // extent is the flat-topped hexagon's own width, S,
-                    // centred on the column; the z half is measured
-                    // against chartBottom and chartTop; and the u half
-                    // is measured against the half-length of the curve
-                    // at the candidate's OWN CENTRE ROW.
-                    //
-                    // The centre row, and never the widest of the rows
-                    // the candidate maps through, because the widest is
-                    // where the second defect lived. On a barrel every
-                    // level curve is the same length and the two agree,
-                    // but on any shell whose curves shorten with height
-                    // the widest comes from the row BELOW and admits
-                    // candidates lying wholly beyond the curve the cell
-                    // actually sits on. Those then clamp their vertices
-                    // onto the short curve's ends together and the cells
-                    // land on top of one another. Measured over a
-                    // 210-configuration sweep of seven nets, three
-                    // sizes and five course heights: the widest rule
-                    // leaves 3716 overlapping pairs in plan and the
-                    // centre-row rule 2358, on nets with closed level
-                    // curves almost without exception.
-                    //
-                    // The clamp above has already pulled every vertex
-                    // onto the chart and Dedupe drops what collapsed, so
-                    // an intersecting candidate arrives as its CLIPPED
-                    // outline, which is the pattern's standing rule for
-                    // the rim. A candidate wholly outside its own curve
-                    // fails, so the ruling that off-surface lattice
-                    // cells are not cells stands.
-                    //
-                    // A closed loop's u domain is still cut at the
-                    // meridian opposite the seam rather than wrapped, so
-                    // the honeycomb never folds into itself.
-                    bool overlaps =
-                        dMin + courseHeight * (centreRow + 1)
-                            > chartBottom + 1.0e-9 &&
-                        dMin + courseHeight * (centreRow - 1)
-                            < chartTop - 1.0e-9 &&
-                        uc + size / 2.0 > -halfAtCentre + 1.0e-9 &&
-                        uc - size / 2.0 < halfAtCentre - 1.0e-9;
-                    if (!overlaps)
+            // DEVIATION (recorded in progress.md): tried the brief's
+            // literal interior range, k = 1 to rows - 2, first, which
+            // only ever reads a chart's own SECOND curve through its
+            // second-to-last as "here": the first and last curves feed a
+            // neighbour's below or above but are never a "here"
+            // themselves. Read off its own HEIGHT (the course line
+            // below), that loses whichever course the chart's own first
+            // curve names: measured on the two-peak net, whose one chart
+            // spans the whole net, course 0 came back with no cells,
+            // because the chart's first curve IS the net's own base.
+            // Widening the range to k = 0 to rows - 1 with BOTH ends
+            // self-clamping (a chart's own first curve stands in for its
+            // own below, its own last for its own above) fixed that
+            // fixture but then measured wrong the other way on the next
+            // one: a chart's LAST curve is, on every fixture tried, a
+            // dTop (or matched-transition) clamp that the surface itself
+            // pulls inside its already-covered top band rather than a
+            // new one of its own, so self-clamping it as a SECOND "here"
+            // built a duplicate top course, measured on the barrel as a
+            // row of 28 cells where its four other rows held 14. Rows
+            // read off a real, unclamped height never repeat a course
+            // this way, because each is a full course height from the
+            // last; only a clamped end can coincide with the row before
+            // it. The smallest correction: keep the widened range and
+            // the self-clamp, which is what let the two-hump barrel's
+            // hump chart (born partway up the net, so its own first
+            // curve is not the net's base either) reach ITS first
+            // course, and skip a "here" whose course repeats the one
+            // immediately before it in the same chart, which is what a
+            // genuine extra course never does and a redundant clamp
+            // always does.
+            int lastCourse = -1;
+            for (int k = 0; k < rows; k++)
+            {
+                int columns = 2 * centres[k];
+                SkinLevelCurve here = chart.Curves[k];
+                SkinLevelCurve below = chart.Curves[Math.Max(0, k - 1)];
+                SkinLevelCurve above =
+                    chart.Curves[Math.Min(rows - 1, k + 1)];
+                if (!ChainCorresponds(here, below) ||
+                    !ChainCorresponds(above, here))
+                {
+                    skippedRows.Add(k);
+                    continue;
+                }
+                int course = Math.Min(
+                    bands - 1,
+                    Math.Max(0, (int)Math.Floor(
+                        (here.Level - dMin) / courseHeight + 1.0e-9)));
+                if (course == lastCourse)
+                    continue;
+                lastCourse = course;
+                if (here.Closed)
+                    closedRows.Add(course);
+                int columnsBelow = 2 * centres[Math.Max(0, k - 1)];
+                int columnsAbove = 2 * centres[Math.Min(rows - 1, k + 1)];
+                for (int j = 0; j < columns; j++)
+                {
+                    // CENTRES (rule 4.2.4): a hexagon has its centre at
+                    // (row k, column j) with j + k EVEN, so adjacent
+                    // rows' centres are offset by exactly one column
+                    // pitch, 1 / m_k in normalised arc, which is half the
+                    // in-row centre spacing of 2 / m_k. That is the
+                    // honeycomb's own offset and rule 4.2.3 applies it in
+                    // this ONE place: there is no phase term in the
+                    // column set, because the phase and the parity are
+                    // two spellings of one rule.
+                    if ((j + k) % 2 != 0)
                         continue;
+                    double t = (double)j / columns;
+
+                    // VERTICES (rule 4.2.5), as fractions of each ROW'S
+                    // OWN column pitch, EACH EVALUATED ON ITS OWN ROW'S
+                    // parameterisation and never on the centre row's. Two
+                    // thirds and one third of a column pitch are, at a
+                    // pitch of 0.75 S, exactly S / 2 and S / 4, which is
+                    // the shipped flat-topped hexagon.
+                    double sideLeft = t - 2.0 / (3.0 * columns);
+                    double sideRight = t + 2.0 / (3.0 * columns);
+                    int belowWithin = WithinCount(
+                        t, columnsBelow, here.Closed, sideLeft, sideRight);
+                    int aboveWithin = WithinCount(
+                        t, columnsAbove, here.Closed, sideLeft, sideRight);
+                    // At most ONE side is irregular per cell (rule 4.3.4
+                    // caps every cell at seven sides); see the deviation
+                    // note on VerticesForWithin.
+                    if (belowWithin != 1 && aboveWithin != 1)
+                    {
+                        if (Math.Abs(belowWithin - 1) <= Math.Abs(aboveWithin - 1))
+                            aboveWithin = 1;
+                        else
+                            belowWithin = 1;
+                    }
+                    List<double> bottom = VerticesForWithin(
+                        t, columnsBelow, belowWithin,
+                        ref fiveSided, ref sevenSided);
+                    List<double> aboveVerts = VerticesForWithin(
+                        t, columnsAbove, aboveWithin,
+                        ref fiveSided, ref sevenSided);
 
                     var outline = new List<double[]>();
-                    outline.AddRange(Run(
-                        mapped[0].Curve, mapped[0].U, mapped[1].U));
-                    outline.Add(PointAt(mapped[2].Curve, mapped[2].U));
-                    List<double[]> top = Run(
-                        mapped[4].Curve, mapped[4].U, mapped[3].U);
-                    top.Reverse();
-                    outline.AddRange(top);
-                    outline.Add(PointAt(mapped[5].Curve, mapped[5].U));
+                    foreach (double at in bottom)
+                        outline.Add(PointAt(below, ArcOf(below, at)));
+                    outline.Add(PointAt(here, ArcOf(here, sideRight)));
+                    for (int at = aboveVerts.Count - 1; at >= 0; at--)
+                        outline.Add(
+                            PointAt(above, ArcOf(above, aboveVerts[at])));
+                    outline.Add(PointAt(here, ArcOf(here, sideLeft)));
                     List<double[]> cleaned = Dedupe(outline);
                     if (cleaned.Count < 3)
                         continue;
-
-                    double dcClamped = Math.Min(
-                        Math.Max(dMin + courseHeight * centreRow, dMin),
-                        dMax);
-                    int course = Math.Min(
-                        bands - 1,
-                        Math.Max(0, (int)Math.Floor(
-                            (dcClamped - dMin) / courseHeight
-                            + 1.0e-9)));
+                    bool clipped = !here.Closed &&
+                        (sideLeft < 0.0 || sideRight > 1.0);
+                    int setoutCorners = bottom.Count + aboveVerts.Count + 2;
+                    if (setoutCorners != 6)
+                        countChangeRows.Add(course);
                     var cell = new SkinCell(
                         course, cleaned, clipped,
-                        mapped[5].U, mapped[2].U);
-                    keyed.Add((course, chartAt, mapped[5].U, cell));
+                        ArcOf(here, sideLeft), ArcOf(here, sideRight),
+                        false, setoutCorners);
+                    keyed.Add((course, chartAt, cell.U0, cell));
                 }
             }
         }
@@ -3802,6 +3918,13 @@ internal static class SkinPatterns
             out int degenerateDropped,
             out int overlapDropped,
             out int degenerateCentroidsSkipped);
+        List<int> countChangeRowsSorted =
+            countChangeRows.OrderBy(row => row).ToList();
+        string? oddLine = fiveSided + sevenSided > 0
+            ? $"Odd cells: {fiveSided} five-sided, {sevenSided} seven-sided " +
+              "(row counts change at rows " +
+              string.Join(", ", countChangeRowsSorted) + ")"
+            : null;
         return new SkinPatternResult(
             cells,
             bands,
@@ -3814,7 +3937,8 @@ internal static class SkinPatterns
                 degenerateDropped, overlapDropped,
                 TransitionLine(
                     "hexagonal", skippedRows.Count, transitions,
-                    FieldKindOf(net))),
+                    FieldKindOf(net)),
+                oddLine),
             skippedRows.Count,
             transitions,
             degenerateDropped,
@@ -3828,9 +3952,10 @@ internal static class SkinPatterns
             Array.Empty<double>(),
             Array.Empty<int>(),
             0,
-            0,
-            0,
-            Array.Empty<int>(),
+            fiveSided,
+            sevenSided,
+            countChangeRowsSorted,
+            closedRows.OrderBy(row => row).ToList(),
             0,
             degenerateCentroidsSkipped,
             0,

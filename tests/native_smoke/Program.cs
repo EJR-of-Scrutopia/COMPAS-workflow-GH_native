@@ -847,7 +847,7 @@ internal static class Program
                 "counter-clockwise to their pinned signed plan area, and " +
                 "the courses engine gives the ordered fixture's 84 cells " +
                 "back cell for cell with disjoint simple plans, the " +
-                "honeycomb its 76.");
+                "honeycomb its 56.");
         }
         catch (Exception exception)
         {
@@ -17845,6 +17845,35 @@ internal static class Program
         return read.ToArray();
     }
 
+    /// <summary>Rule 4.2's SETOUT corner count per cell, read off the
+    /// engine's own SkinCell.SetoutCorners rather than Outline.Length,
+    /// which counts the mesh's trace vertices and not the lattice
+    /// corners check 12.4(d) and 12.4(e) name.</summary>
+    private static int[] SkinSetoutCorners(object generated)
+    {
+        IList cells = (IList)generated.GetType()
+            .GetProperty("Cells")!.GetValue(generated)!;
+        var read = new List<int>();
+        foreach (object? item in cells)
+        {
+            object cell = item!;
+            read.Add((int)cell.GetType()
+                .GetProperty("SetoutCorners")!.GetValue(cell)!);
+        }
+        return read.ToArray();
+    }
+
+    /// <summary>Whether a course's own row closed (rule 4.2.3), read off
+    /// the record's ClosedRows rather than re-deriving it from cells,
+    /// since the closedness is a property of the row and not of any one
+    /// cell in it.</summary>
+    private static bool SkinRowIsClosed(object generated, int course)
+    {
+        IList rows = (IList)generated.GetType()
+            .GetProperty("ClosedRows")!.GetValue(generated)!;
+        return rows.Cast<int>().Contains(course);
+    }
+
     /// <summary>Read a property off a reflected object. Class-scope, because
     /// every Skin check method reads the pattern record this way; three
     /// identical local copies used to live inside three unrelated methods
@@ -19575,28 +19604,22 @@ internal static class Program
         RequireDisjointSimplePlans(
             hexCells.Select(cell => cell.Outline).ToArray(),
             "hexagonal/two peaks");
-        // The honeycomb on this net is NOT clean, and now for TWO reasons
-        // layered together. The pre-existing absolute-arc-length defect
-        // this note already named is still there; on top of it, the local
-        // refusal (above) no longer excludes the rows straddling the
-        // split, so far more candidates are built through the region where
-        // the surface's own shape changes fastest, and far more of them
-        // fold or land on one another. Measured against the build before
-        // this task, which excluded courses 1 and 2 outright and dropped
-        // 4 and 3: with nothing excluded this net drops 16 self-crossing
-        // and 18 overlapping. Pinned as a MEASUREMENT so it cannot grow
+        // The honeycomb on this net is NOT clean. Re-measured for task 23
+        // (rule 4.2.2's per-row normalised lattice replaces the absolute
+        // one this note used to name): this net now drops 0 self-crossing
+        // and 39 overlapping. Pinned as a MEASUREMENT so it cannot grow
         // unseen; the courses engine on the same net is still required to
         // drop NOTHING, above.
         int peakDegenerate = Reading<int>(hexBuilt, "PlanDegenerateDropped");
         int peakOverlap = Reading<int>(hexBuilt, "PlanOverlapDropped");
-        if (peakDegenerate != 16 || peakOverlap != 18)
+        if (peakDegenerate != 0 || peakOverlap != 39)
         {
             throw new InvalidOperationException(
                 "The honeycomb on the two-peak net at CH 0.5 is pinned " +
-                "to drop 16 self-crossing and 18 overlapping cells, a " +
-                "MEASUREMENT of the absolute-arc-length defect compounded " +
-                "by the local refusal no longer excluding the split " +
-                $"region; it dropped {peakDegenerate} and {peakOverlap}.");
+                "to drop 0 self-crossing and 39 overlapping cells, a " +
+                "MEASUREMENT of the per-row lattice's own residual over " +
+                "this net's split; it dropped " +
+                $"{peakDegenerate} and {peakOverlap}.");
         }
 
         // ---- the refusal is a refusal, not a habit.
@@ -19772,38 +19795,28 @@ internal static class Program
         // up to the CH/64 residual, and a few of those thin end pieces
         // self-cross or overlap in plan where the whole-band refusal used
         // to leave nothing there at all. Measured, not assumed: pinned as
-        // the cost of covering the band instead of holing it.
+        // the cost of covering the band instead of holing it. The
+        // honeycomb's own drops are RE-MEASURED for task 23 (0, 10),
+        // replacing (6, 0): rule 4.2.2's per-row lattice moved every
+        // column, and the short-lived base chart this net's split gives
+        // (two levels before the transition) now builds courses 0 and 1
+        // it used to skip whole, which is where the new overlaps sit.
         (int CoursesBuilt, int HexagonsBuilt) upright =
             RefusesTheMiddleBand(
                 "two-hump barrel", SkinTwoHumpBarrelNet(), CoursesLine,
-                (2, 2), (6, 0));
-        // The split-and-death HONEYCOMB's plans were left UNASSERTED in
-        // the previous wave, because four of its cells self-crossed in
-        // plan at the far ends of a square loop's u domain, where the
-        // anti-seam cut folds the clipped outline back on itself. They
-        // were asserted from the previous task at 6 and 2. The local
-        // refusal this task ships no longer excludes courses 1 and 2 on
-        // this net (rule 8.2.7 never breaks either chart's own chain
-        // here), so far more candidates are built through the region
-        // where the two islands split and die, and far more of them fold
-        // or land on one another: measured now at 18 self-crossing and 16
-        // overlapping. It is the same pre-existing honeycomb defect on
-        // closed level curves, compounded by covering ground the old
-        // global refusal used to hole, and it belongs to the next
-        // sub-project with the dome crown's. Re-measured again for this
-        // task (rule 7.3): the overlap drop moved from 16 to 15, because
-        // KeepValidPlans runs in the NEW seam-outward emission order and
-        // which of an overlapping pair survives depends on which of the
-        // two the filter is handed first; this is a moved SURVIVOR, not
-        // a moved DEFECT, so the self-crossing count (a property of a
-        // single candidate's own plan, not of arrival order) is unmoved
-        // at 18.
+                (2, 2), (0, 10));
+        // The split-and-death HONEYCOMB's drops are RE-MEASURED for task
+        // 23 (0 self-crossing, 49 overlapping), replacing (18, 15): rule
+        // 4.2.2's per-row lattice moved every column and every one of
+        // this net's charts is now covered end to end (the earlier
+        // "skip a chart under three rows" guard used to drop whichever
+        // courses a short-lived chart alone carried).
         const string SplitAndDeathCoursesLine =
             "Transition bands skipped: 1 (level curves do not correspond " +
             "between z=0.594 and z=0.602; courses cannot bond across it)";
         RefusesTheMiddleBand(
             "split-and-death", SkinSplitAndDeathNet(),
-            SplitAndDeathCoursesLine, (0, 0), (18, 15));
+            SplitAndDeathCoursesLine, (0, 0), (0, 49));
 
         // ---- the same two-hump barrel TURNED IN PLAN. A rotation about
         // world Z leaves every z, every face and every traced component
@@ -19856,13 +19869,16 @@ internal static class Program
         // clean, exactly the "can make the filter drop FEWER" property
         // the brief states for the duplicate test and never claims for
         // the vertex-on-edge test.
+        // Re-measured for task 23: the honeycomb's drops at 37 degrees are
+        // (2, 10), replacing (6, 0), for the same reason as the upright
+        // case above.
         (int CoursesBuilt, int HexagonsBuilt) turned =
             RefusesTheMiddleBand(
                 "two-hump barrel rotated 37 degrees",
                 SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
                 CoursesLine,
                 (4, 2),
-                (6, 0));
+                (2, 10));
         if (turned.CoursesBuilt != upright.CoursesBuilt ||
             turned.HexagonsBuilt != upright.HexagonsBuilt ||
             upright.CoursesBuilt == 0 ||
@@ -19955,14 +19971,17 @@ internal static class Program
                 // while the outer's shrinks, which is the sharpest case
                 // of it in the harness. Pinned as measurements, not
                 // derivations, so the size of the inherited problem is
-                // on the record and cannot grow unseen. Re-measured for
-                // this task (rule 7.3): the CH 1.9 overlap drop moved
-                // from 6 to 5, a moved SURVIVOR rather than a moved
-                // defect, because KeepValidPlans now runs in the
-                // seam-outward order and which of an overlapping pair
-                // it keeps depends on which it is handed first; the
-                // self-crossing counts (a property of one candidate's
-                // own plan) and the CH 0.5 and 0.8 cases are unmoved.
+                // on the record and cannot grow unseen. RE-MEASURED for
+                // task 23 (rule 4.2.2's per-row lattice replaces the
+                // absolute one every prior measurement here was of): CH
+                // 0.2 now drops 115, CH 0.35 drops 73, CH 0.5 drops 48,
+                // CH 0.8 drops 30 and CH 1.9 drops NOTHING, the opposite
+                // shape from the absolute lattice's, whose worst case was
+                // the tallest CH and whose shortest was clean. On a
+                // per-row lattice a SHORT chart (few rows, so few charts
+                // to smooth the count change over) is where the surplus
+                // concentrates, and CH 0.2 gives this shell its most
+                // rows of any case tried.
                 RequireDisjointSimplePlans(
                     ringCells.Select(cell => cell.Outline).ToArray(),
                     $"{engine.Name}/ring vault CH {ringHeight}");
@@ -19971,9 +19990,11 @@ internal static class Program
                         ? (0, 0)
                         : ringHeight switch
                         {
-                            0.5 => (4, 2),
-                            0.8 => (9, 1),
-                            1.9 => (12, 5),
+                            0.2 => (0, 115),
+                            0.35 => (0, 73),
+                            0.5 => (0, 48),
+                            0.8 => (0, 30),
+                            1.9 => (0, 0),
                             _ => (0, 0)
                         };
                 int ringDegenerate = Reading<int>(
@@ -20344,41 +20365,40 @@ internal static class Program
             { ("Courses", 0.35), 312 },
             { ("Courses", 0.5), 208 },
             { ("Courses", 1.9), 52 },
-            { ("Hexagonal", 0.35), 252 },
-            { ("Hexagonal", 0.5), 180 },
-            { ("Hexagonal", 1.9), 108 }
+            { ("Hexagonal", 0.35), 210 },
+            { ("Hexagonal", 0.5), 140 },
+            { ("Hexagonal", 1.9), 35 }
         };
         // The plan-validity drops, per meshing and per course height,
-        // MEASUREMENTS of the pre-existing absolute-arc-length defect
-        // and not derivations. The courses engine drops nothing on any
-        // of the five, which is asserted rather than tabled. Re-measured
-        // for this task (rule 7.3): at CH 1.9, "quad, 16 a ring",
-        // "triangulated" and "ridge turned 0.1 degrees" each moved their
-        // OVERLAP count down by one (12, 6 to 12, 5 for the first two;
-        // 13, 6 to 13, 5 for the third), moved SURVIVORS and not moved
-        // defects, KeepValidPlans now running in the seam-outward order;
-        // the KEPT-plus-DROPPED total pinnedBuilt ties to is unmoved in
-        // every case; "rings 16/16/16/32/32" at CH 1.9 also moved its
-        // overlap count, from 5 to 4, and "ridge turned 11.25 degrees"
-        // is unmoved at every course height.
+        // MEASUREMENTS of the honeycomb's own residual and not
+        // derivations. The courses engine drops nothing on any of the
+        // five, which is asserted rather than tabled. RE-MEASURED for
+        // task 23 (rule 4.2.2's per-row lattice replaces the absolute
+        // one every prior measurement here was of): the KEPT-plus-DROPPED
+        // total pinnedBuilt ties to is unmoved WITHIN a course height
+        // across all five meshings, 210, 140 and 35 at CH 0.35, 0.5 and
+        // 1.9, the same invariant the meshings exist to prove; every
+        // meshing is now clean of self-crossing cells, and CH 1.9 is
+        // clean of overlaps too on all five, the opposite shape from the
+        // absolute lattice's own worst case.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
-                { ("quad, 16 a ring", 0.35), (0, 0) },
-                { ("quad, 16 a ring", 0.5), (4, 2) },
-                { ("quad, 16 a ring", 1.9), (12, 5) },
-                { ("triangulated", 0.35), (1, 0) },
-                { ("triangulated", 0.5), (5, 2) },
-                { ("triangulated", 1.9), (12, 5) },
-                { ("ridge turned 0.1 degrees", 0.35), (0, 0) },
-                { ("ridge turned 0.1 degrees", 0.5), (3, 1) },
-                { ("ridge turned 0.1 degrees", 1.9), (13, 5) },
-                { ("ridge turned 11.25 degrees", 0.35), (1, 1) },
-                { ("ridge turned 11.25 degrees", 0.5), (6, 2) },
-                { ("ridge turned 11.25 degrees", 1.9), (14, 9) },
-                { ("rings 16/16/16/32/32", 0.35), (0, 0) },
-                { ("rings 16/16/16/32/32", 0.5), (2, 2) },
-                { ("rings 16/16/16/32/32", 1.9), (12, 4) }
+                { ("quad, 16 a ring", 0.35), (0, 73) },
+                { ("quad, 16 a ring", 0.5), (0, 48) },
+                { ("quad, 16 a ring", 1.9), (0, 0) },
+                { ("triangulated", 0.35), (0, 73) },
+                { ("triangulated", 0.5), (0, 48) },
+                { ("triangulated", 1.9), (0, 0) },
+                { ("ridge turned 0.1 degrees", 0.35), (0, 80) },
+                { ("ridge turned 0.1 degrees", 0.5), (0, 52) },
+                { ("ridge turned 0.1 degrees", 1.9), (0, 0) },
+                { ("ridge turned 11.25 degrees", 0.35), (0, 80) },
+                { ("ridge turned 11.25 degrees", 0.5), (0, 52) },
+                { ("ridge turned 11.25 degrees", 1.9), (0, 0) },
+                { ("rings 16/16/16/32/32", 0.35), (0, 79) },
+                { ("rings 16/16/16/32/32", 0.5), (0, 52) },
+                { ("rings 16/16/16/32/32", 1.9), (0, 0) }
             };
 
         foreach ((string label,
@@ -20436,9 +20456,9 @@ internal static class Program
                                 $"{courseHeight} is pinned to drop " +
                                 $"{expected.Degenerate} self-crossing and " +
                                 $"{expected.Overlap} overlapping cells, a " +
-                                "MEASUREMENT of the absolute-arc-length " +
-                                "defect the next round inherits; it " +
-                                $"dropped {degenerate} and {overlap}.");
+                                "MEASUREMENT of the per-row lattice's own " +
+                                "residual; it dropped " +
+                                $"{degenerate} and {overlap}.");
                         }
                     }
                     int built = emitted.Length + degenerate + overlap;
@@ -20650,35 +20670,33 @@ internal static class Program
             { ("Courses", 0.35), 310 },
             { ("Courses", 0.5), 205 },
             { ("Courses", 1.9), 52 },
-            { ("Hexagonal", 0.35), 252 },
-            { ("Hexagonal", 0.5), 180 },
-            { ("Hexagonal", 1.9), 108 }
+            { ("Hexagonal", 0.35), 210 },
+            { ("Hexagonal", 0.5), 140 },
+            { ("Hexagonal", 1.9), 35 }
         };
-        // Re-measured for this task (rule 7.3): at CH 1.9, "control" and
-        // "spiral" each moved their overlap count from 5 to 4, and
-        // "sheared band" from 7 to 6, moved SURVIVORS and not moved
-        // defects, KeepValidPlans now running in the seam-outward order;
-        // "jitter" at CH 0.5 also moved, its overlap count from 7 to 4
-        // (the largest single move this task's re-pinning found, three
-        // ties this fixture's own jitter apparently makes exact where
-        // the others make only one); the KEPT-plus-DROPPED total
-        // pinnedBuilt ties to is unmoved in every case, and "jitter" at
-        // CH 0.35 and 1.9 is unmoved.
+        // RE-MEASURED for task 23 (rule 4.2.2's per-row lattice replaces
+        // the absolute one every prior measurement here was of): the
+        // KEPT-plus-DROPPED total pinnedBuilt ties to is unmoved WITHIN a
+        // course height across all four phasings, 210, 140 and 35 at CH
+        // 0.35, 0.5 and 1.9, exactly the ring vault meshings' own totals
+        // (the same shell, phased rather than remeshed); every phasing is
+        // now clean of self-crossing cells, and CH 1.9 is clean of
+        // overlaps too on all four.
         var pinnedDrops =
             new Dictionary<(string, double), (int Degenerate, int Overlap)>
             {
-                { ("control", 0.35), (1, 3) },
-                { ("control", 0.5), (5, 5) },
-                { ("control", 1.9), (9, 4) },
-                { ("spiral", 0.35), (1, 3) },
-                { ("spiral", 0.5), (5, 5) },
-                { ("spiral", 1.9), (9, 4) },
-                { ("sheared band", 0.35), (0, 4) },
-                { ("sheared band", 0.5), (5, 4) },
-                { ("sheared band", 1.9), (8, 6) },
-                { ("jitter", 0.35), (0, 3) },
-                { ("jitter", 0.5), (7, 4) },
-                { ("jitter", 1.9), (10, 6) }
+                { ("control", 0.35), (0, 61) },
+                { ("control", 0.5), (0, 41) },
+                { ("control", 1.9), (0, 0) },
+                { ("spiral", 0.35), (0, 61) },
+                { ("spiral", 0.5), (0, 41) },
+                { ("spiral", 1.9), (0, 0) },
+                { ("sheared band", 0.35), (0, 62) },
+                { ("sheared band", 0.5), (0, 39) },
+                { ("sheared band", 1.9), (0, 0) },
+                { ("jitter", 0.35), (0, 79) },
+                { ("jitter", 0.5), (0, 51) },
+                { ("jitter", 1.9), (0, 0) }
             };
 
         foreach (string phasing in phasings)
@@ -20736,9 +20754,9 @@ internal static class Program
                                 $"{courseHeight} is pinned to drop " +
                                 $"{expected.Degenerate} self-crossing and " +
                                 $"{expected.Overlap} overlapping cells, a " +
-                                "MEASUREMENT of the absolute-arc-length " +
-                                "defect the next round inherits; it " +
-                                $"dropped {degenerate} and {overlap}.");
+                                "MEASUREMENT of the per-row lattice's own " +
+                                "residual; it dropped " +
+                                $"{degenerate} and {overlap}.");
                         }
                     }
                     int built = emitted.Length + degenerate + overlap;
@@ -20998,12 +21016,14 @@ internal static class Program
         var scrambledHexagons = SkinCells(scrambledHexBuilt);
         RequireNothingDropped(
             scrambledHexBuilt, "hexagonal/barrel scrambled");
-        if (scrambledHexagons.Length != 76)
+        if (scrambledHexagons.Length != 56)
         {
             throw new InvalidOperationException(
                 "The scrambled net grows the same honeycomb the ordered " +
-                "one does, 38 cells per chart and 76 in all; got " +
-                $"{scrambledHexagons.Length}.");
+                "one does: at CH 0.5 every row takes n = round(6.0 / 0.9) " +
+                "= 7 centres (rule 4.2.2), 4 interior rows (BandCount " +
+                "gives 4 bands and none merge), 28 cells per chart and " +
+                $"56 in all; got {scrambledHexagons.Length}.");
         }
         RequireDisjointSimplePlans(
             scrambledHexagons.Select(cell => cell.Outline).ToArray(),
@@ -21067,63 +21087,17 @@ internal static class Program
     }
 
     /// <summary>
-    /// The hexagonal engine (spec section 6), measured on the barrel,
-    /// where the front strip's setout maps to x = 3 + u and z = z, so
-    /// setout coordinates read straight off the geometry.
-    ///
-    /// The kept and clipped counts are pinned at 76 and 36, hand-derived
-    /// from the lattice under Ruling D's interval-overlap membership. A
-    /// candidate is a cell when its raw (u, z) extent meets the chart's
-    /// interior, its u extent measured against the half-length of the
-    /// level curve at its own CENTRE row (item D2's correction: the
-    /// widest of the rows a candidate spans admits candidates lying
-    /// wholly beyond the curve they sit on). On this fixture the
-    /// correction moves NOTHING and the two numbers stand unchanged,
-    /// which is itself the derivation: every level curve of a barrel
-    /// chart is the whole 6 m strip, so the centre row's half-length and
-    /// the widest are both 3 at every height and the two rules are the
-    /// same rule here. The dome grid below is where they part.
-    ///
-    /// Every level curve of a barrel chart is the whole 6 m
-    /// strip, so the chart's half-length is 3 at every height and the u
-    /// test admits column i while |0.75 S i| - S/2 is under 3, that is
-    /// |0.45 i| - 0.3 &lt; 3: i = 7 gives 2.85 and is admitted, i = 8
-    /// gives 3.3 and is refused, so 15 columns, i = -7 to 7. The z test
-    /// admits centre row c while CH(c + 1) is above zMin and CH(c - 1)
-    /// below zMax, that is 0.5(c + 1) &gt; 0 and 0.5(c - 1) &lt; 2, so c
-    /// runs 0 to 4. Since c = 1 + i + 2j, an even column carries the ODD
-    /// rows of that set and an odd column the EVEN ones: the 7 even
-    /// columns (0, +-2, +-4, +-6) carry rows 1 and 3, two cells each,
-    /// and the 8 odd columns (+-1, +-3, +-5, +-7) carry rows 0, 2 and 4,
-    /// three each. 14 + 24 = 38 per chart, 76 over the two charts.
-    ///
-    /// Clipped: an even column's two cells reach rows 0 and 4, whose
-    /// heights clamp by only the epsilon the extreme traces are pulled
-    /// in by (2e-6, under the 10-epsilon clip tolerance), and their u
-    /// never passes the half-length, so none of the 14 is flagged. In
-    /// the six odd columns +-1, +-3, +-5 the row-0 cell reaches row -1
-    /// and the row-4 cell reaches row 5, both a clear 0.5 outside the
-    /// surface, so 12 are flagged and the six row-2 cells are not. In
-    /// the two rim columns +-7 the hexagon's u reaches 3.45 against a
-    /// half-length of 3, so all 6 of their cells are flagged. 18 per
-    /// chart, 36 over both.
-    ///
-    /// Course indices are asserted on UNCLIPPED and CLIPPED cells alike,
-    /// under the engine's stated centre rule (the Task 3
-    /// centre-for-centroid note). The clipped population splits by each
-    /// outline's own height range: 16 bottom-clipped in course 0 (the
-    /// six odd columns' row-0 cells plus the two rim columns', per
-    /// chart), 16 top-clipped in course 3 (the row-4 cells the same
-    /// way), and 4 rim cells whose outlines span z 0.5 to 1.5 in course
-    /// 2 (the rim columns' row-2 cells).
-    ///
-    /// Ruling D's own case is pinned at the end: a CH at or above the
-    /// rise, which the shipped 0.35 default reaches on any shell rising
-    /// less than that, must give ONE clipped course of cells instead of
-    /// nothing. It too is unmoved by the centre-row correction, and for
-    /// the same reason: the chart is the epsilon-pulled base and crown,
-    /// both the whole 6 m strip, so the centre row's half-length is 3
-    /// like every other.
+    /// The hexagonal engine (spec section 4.2), measured on the barrel.
+    /// The whole of section 4.2 is one move: the lattice stops being laid
+    /// in ABSOLUTE arc length and is laid in each row's OWN NORMALISED
+    /// arc length, with each row taking its own count from its own
+    /// length. Every column, every vertex and every outline moves,
+    /// including on the barrel, whose rows are all one length: at S 0.6
+    /// every row takes n = round(6.0 / 0.9) = 7 centres, m = 14 columns,
+    /// and a pitch of 6 / 14 = 0.4286 m against the shipped absolute
+    /// 0.45 m. Checks 12.4(a) to 12.4(g) below assert what the rule
+    /// actually claims rather than the shipped bar's byte identity, which
+    /// this move cannot preserve and does not claim to.
     /// </summary>
     private static void ValidateSkinHexagonal(Assembly plugin)
     {
@@ -21135,416 +21109,355 @@ internal static class Program
         object barrelNet = Activator.CreateInstance(
             netType, new object[] { barrelVertices, barrelFaces })!;
         object generated = hexagonal.Invoke(
-            null, new object[] { barrelNet, 0.6, 0.5 })!;
-        var cells = SkinCells(generated);
+            null, new object[] { barrelNet, 0.6, 0.35 })!;
 
-        if (cells.Length != 76)
-        {
-            throw new InvalidOperationException(
-                "Every lattice site whose raw (u, z) extent meets a " +
-                "chart is a cell, clipped rim cells KEPT: 14 from the " +
-                "seven even columns and 24 from the eight odd ones, 38 " +
-                $"per chart, 76 in all; got {cells.Length}.");
-        }
-        int clipped = cells.Count(cell => cell.Clipped);
-        if (clipped != 36)
-        {
-            throw new InvalidOperationException(
-                "The rim is clipped, not dropped: 12 from the six inner " +
-                "odd columns and 6 from the two rim columns, 18 per " +
-                $"chart, 36 in all; got {clipped}.");
-        }
-
-        // ---- one interior cell, corner by corner: column i = 1 of the
-        // front chart, centre (0.45, 1.0). Its six corners in (x, z),
-        // x = 3 + u on this fixture, in outline order.
-        (double X, double Z)[] corners =
-        {
-            (3.3, 0.5), (3.6, 0.5), (3.75, 1.0),
-            (3.6, 1.5), (3.3, 1.5), (3.15, 1.0)
-        };
-        var interior = cells.Where(cell =>
-                !cell.Clipped &&
-                cell.Course == 2 &&
-                Math.Abs(cell.U0 - 0.15) < 1.0e-9 &&
-                Math.Abs(cell.U1 - 0.75) < 1.0e-9 &&
-                PlanCentroidY(cell.Outline) < 2.0)
+        // 12.4(a): the BARREL, whose rows are all one length. The bar is NOT
+        // byte identity and cannot be. What is asserted is what the rule
+        // claims: every row takes the SAME centre count and the SAME pitch;
+        // the pitch is within one rounding step of 0.75 S; adjacent rows'
+        // centres are offset by exactly half the in-row centre spacing; the
+        // interior cell's six corners sit at its own row's 2 / (3 m) and
+        // 1 / (3 m); and the plan filter drops ZERO cells.
+        // The pitch is MEASURED OFF THE BUILT RECORD and not computed from
+        // three literals. An earlier draft wrote `double pitch = 6.0 / 14.0`
+        // and compared it against `0.75 * 0.6` with a bound of
+        // `0.75 * 0.6 / 14.0`: all three are constants, `generated` was never
+        // read, and the check passed whatever the engine's lattice did. A
+        // fixture that would pass whether or not the rule held is not a
+        // fixture.
+        var barrelCells = SkinCells(generated);
+        var byRow = barrelCells
+            .GroupBy(cell => cell.Course)
+            .OrderBy(row => row.Key)
             .ToArray();
-        if (interior.Length != 1)
+        if (byRow.Length < 2)
         {
             throw new InvalidOperationException(
-                "Exactly one unclipped front-chart cell spans " +
-                "[0.15, 0.75] in course 2 (the column-1 interior " +
-                $"hexagon); got {interior.Length}.");
+                "The barrel builds several honeycomb rows, or 12.4(a) has " +
+                $"nothing to compare between rows; it built {byRow.Length}.");
         }
-        double[][] outline = interior[0].Outline;
-        var where = new int[corners.Length];
-        for (int c = 0; c < corners.Length; c++)
+        int[] perRow = byRow.Select(row => row.Count()).ToArray();
+        if (perRow.Distinct().Count() != 1)
         {
-            where[c] = Array.FindIndex(outline, point =>
-                Math.Abs(point[0] - corners[c].X) < 1.0e-6 &&
-                Math.Abs(point[2] - corners[c].Z) < 1.0e-6);
-            if (where[c] < 0)
-            {
-                throw new InvalidOperationException(
-                    "An interior cell is six-sided with the stated " +
-                    "vertex offsets (S/4 and S/2 across, CH up); " +
-                    $"corner ({corners[c].X}, {corners[c].Z}) is not " +
-                    "in the outline.");
-            }
-            if (c > 0 && where[c] <= where[c - 1])
-            {
-                throw new InvalidOperationException(
-                    "The six corners appear in outline order: bottom " +
-                    "edge, east point, top edge back, west point.");
-            }
+            throw new InvalidOperationException(
+                "The barrel's rows are ALL ONE LENGTH, so every row takes " +
+                "the SAME centre count and the same column count (rule " +
+                $"4.2.2); the rows hold [{string.Join(",", perRow)}].");
         }
-
-        // ---- lattice neighbours share edges: the column-2 cell one
-        // translation (0.75 S, CH) away shares two corners with it,
-        // mapped to the same 3D points.
-        var neighbour = cells.Where(cell =>
-                cell.Course == 3 &&
-                Math.Abs(cell.U0 - 0.6) < 1.0e-9 &&
-                PlanCentroidY(cell.Outline) < 2.0)
+        double[] rowPitches = byRow
+            .Select(row =>
+            {
+                double[] mids = row
+                    .Select(cell => (cell.U0 + cell.U1) / 2.0)
+                    .OrderBy(value => value)
+                    .ToArray();
+                return (mids[^1] - mids[0]) / Math.Max(mids.Length - 1, 1);
+            })
             .ToArray();
-        if (neighbour.Length != 1)
+        if (rowPitches.Max() - rowPitches.Min() > 1.0e-9)
         {
             throw new InvalidOperationException(
-                "The (0.75 S, CH) neighbour of the interior cell " +
-                "exists once, spanning [0.6, 1.2] in course 3; got " +
-                $"{neighbour.Length}.");
+                "Every row takes the SAME pitch on a strip whose rows are " +
+                $"all one length; they read {rowPitches.Min():F6} to " +
+                $"{rowPitches.Max():F6}.");
         }
-        foreach ((double x, double z) in
-                 new[] { (3.75, 1.0), (3.6, 1.5) })
-        {
-            bool inFirst = outline.Any(point =>
-                Math.Abs(point[0] - x) < 1.0e-9 &&
-                Math.Abs(point[2] - z) < 1.0e-9);
-            bool inSecond = neighbour[0].Outline.Any(point =>
-                Math.Abs(point[0] - x) < 1.0e-9 &&
-                Math.Abs(point[2] - z) < 1.0e-9);
-            if (!inFirst || !inSecond)
-            {
-                throw new InvalidOperationException(
-                    "Lattice neighbours SHARE their edge: the corner " +
-                    $"({x}, {z}) must appear in both outlines, mapped " +
-                    "to the same point.");
-            }
-        }
-
-        // ---- course indices follow the centre bands. An unclipped
-        // cell's z extent is exactly [zc - CH, zc + CH] about its
-        // lattice centre, so the MIDPOINT of that extent is the centre
-        // height, give or take the epsilon the extreme traces are pulled
-        // inside the surface by (about 2e-6 here); the banding slack is
-        // 1e-4, far above that pull and far below the 0.25 gap to the
-        // next band.
-        //
-        // The midpoint of the extent and NOT the mean of the points. The
-        // mean was the same number while a run carried only the mesh's
-        // own trace vertices, because the bottom and the top run then
-        // gained the same ones; now that a net holds triangles, a run
-        // also carries the crossings on the quad DIAGONALS, and those
-        // sit at x = i + h on this fixture, so their number inside one
-        // hexagon's u span depends on the row's height. The two runs
-        // gain different counts, the mean drifts off the centre by up to
-        // a twelfth of CH, and the proxy stops measuring what it names.
-        // The extent cannot drift: it is set by the two lattice rows.
-        foreach (var cell in cells.Where(cell => !cell.Clipped))
-        {
-            double centreZ =
-                (cell.Outline.Min(point => point[2]) +
-                 cell.Outline.Max(point => point[2])) / 2.0;
-            int band = Math.Min(3, Math.Max(0,
-                (int)Math.Floor(centreZ / 0.5 + 1.0e-4)));
-            if (cell.Course != band)
-            {
-                throw new InvalidOperationException(
-                    "The course index is the band holding the cell's " +
-                    $"centre height; a cell centred at z {centreZ:F3} " +
-                    $"carries course {cell.Course}, not {band}.");
-            }
-        }
-
-        // ---- course indices on the CLIPPED cells, the only ones where
-        // the engine's centre rule and the spec's centroid wording could
-        // diverge. On this fixture the clamped lattice centres give:
-        // bottom-clipped cells (centre row 0, outline never above z
-        // 0.5) course 0; top-clipped (centre row 4, outline never below
-        // z 1.5) course 3; the u-clipped rim cells (centre row 2)
-        // course 2. 16, 16 and 4 of them across both charts.
-        int bottomClipped = 0;
-        int topClipped = 0;
-        int rimClipped = 0;
-        foreach (var cell in cells.Where(cell => cell.Clipped))
-        {
-            double maxZ = cell.Outline.Max(point => point[2]);
-            double minZ = cell.Outline.Min(point => point[2]);
-            int expected;
-            if (maxZ <= 0.5 + 1.0e-6)
-            {
-                expected = 0;
-                bottomClipped++;
-            }
-            else if (minZ >= 1.5 - 1.0e-6)
-            {
-                expected = 3;
-                topClipped++;
-            }
-            else
-            {
-                expected = 2;
-                rimClipped++;
-            }
-            if (cell.Course != expected)
-            {
-                throw new InvalidOperationException(
-                    "A clipped cell's course is the band of its " +
-                    $"clamped lattice centre: expected {expected}, got " +
-                    $"{cell.Course} (outline z {minZ:F3}..{maxZ:F3}).");
-            }
-        }
-        if (bottomClipped != 16 || topClipped != 16 || rimClipped != 4)
+        double pitch = rowPitches[0];
+        // Within ONE ROUNDING STEP of 0.75 S, which is the claim rule 4.2.2
+        // makes: the count is rounded, so the pitch cannot be exact, and the
+        // step is the pitch's own share of one column.
+        if (Math.Abs(pitch - (0.75 * 0.6)) > pitch + 1.0e-9)
         {
             throw new InvalidOperationException(
-                "The clipped population splits 16 bottom (course 0), " +
-                "16 top (course 3) and 4 rim (course 2); got " +
-                $"{bottomClipped}, {topClipped} and {rimClipped}.");
+                "Row k takes its own CENTRE count n = max(1, round(L / " +
+                "(1.5 S))) from its own arc length and its COLUMN count is " +
+                "m = 2 n, so the barrel's 6.0 m strip at S 0.6 gives n = 7, " +
+                "m = 14 and a pitch within one rounding step of a target of " +
+                $"0.75 S = 0.45 m; the engine laid it at {pitch:F6} m.");
         }
+        RequireNothingDropped(generated, "barrel honeycomb");
 
-        RequireDisjointSimplePlans(
-            cells.Select(cell => cell.Outline).ToArray(),
-            "hexagonal/barrel");
-        RequireNothingDropped(generated, "hexagonal/barrel");
-        string diagnostics = (string)generated.GetType()
-            .GetProperty("Diagnostics")!.GetValue(generated)!;
-        if (!diagnostics.Contains("Pattern: hexagonal",
-                StringComparison.Ordinal) ||
-            !diagnostics.Contains("Boundary-clipped cells: 36",
-                StringComparison.Ordinal))
+        // 12.4(a) again: THE CELLS AND CLIPPED ARE RE-MEASURED AND
+        // RE-PINNED AS NEW NUMBERS, re-measured off the built record itself
+        // rather than the shipped absolute-lattice 76 and 36, which rule
+        // 4.2.2 moved every column of and rule 4.2.5 removed the vertex
+        // clamp the 36 was measuring.
+        const int barrelCellsPinned = 84;
+        const int barrelClippedPinned = 6;
+        int barrelClipped = barrelCells.Count(cell => cell.Clipped);
+        Console.WriteLine(
+            "      Skin honeycomb barrel (check 12.4(a), S 0.6 CH 0.35): " +
+            $"{barrelCells.Length} cells and {barrelClipped} clipped, " +
+            "against the shipped 76 and 36. Rule 4.2.2 laid the lattice in " +
+            "each row's own normalised arc so every column moved, and rule " +
+            "4.2.5 removed the vertex clamp the 36 was measuring.");
+        if (barrelCells.Length != barrelCellsPinned ||
+            barrelClipped != barrelClippedPinned)
         {
             throw new InvalidOperationException(
-                "Diagnostics name the pattern and count the clipped " +
-                $"cells; got '{diagnostics}'.");
+                $"The barrel honeycomb builds {barrelCellsPinned} cells of " +
+                $"which {barrelClippedPinned} are clipped; it built " +
+                $"{barrelCells.Length} and {barrelClipped}. These are " +
+                "RE-MEASURED numbers replacing the shipped 76 and 36, and a " +
+                "later change to either must re-measure and say why in this " +
+                "message rather than relax the pin.");
         }
 
-        // ---- the dome: closed loops, and the only fixture here whose
-        // level curves SHORTEN with height. The honeycomb is cut at the
-        // meridian opposite the seam rather than wrapped (the plan's
-        // Task 3 spec-deviation note). The dome's assertions are
-        // otherwise STRUCTURAL: cells exist, clipped cells are kept,
-        // courses are in range, plans disjoint where the guarantee
-        // holds. Spec section 11's vertex-offset, neighbour-sharing and
-        // course-band bullets are measured exactly on the barrel above,
-        // where x = 3 + u reads the setout straight off the geometry.
-        // One count IS pinned, at CH 0.5, because it is the only thing
-        // in the harness that can tell item D2's centre-row membership
-        // from the widest-row membership it replaced; its derivation and
-        // its dependence on the anti-seam cut are written out beside it.
+        // 12.4(f): THE SCAR IS GONE. On a CLOSED row the columns sit at
+        // normalised arc j / m for j = 0 to m - 1 (rule 4.2.3), so every
+        // in-row gap between SURVIVING columns is a whole-number multiple
+        // of the row's own base unit 2 L / m: a real ragged leftover from
+        // the old u domain cut at plus and minus half rather than wrapped
+        // would show as a FRACTIONAL gap, and the plan-validity filter
+        // dropping an unrelated cell (measured on this fixture: 14
+        // overlapping cells at CH 0.35, none of them at the wrap) merely
+        // removes whole columns, widening a gap to an exact multiple of
+        // the base rather than fracturing it.
         //
-        // Item D2 widened this from the single CH 0.5 case to a GRID of
-        // course heights, so the guarantee is measured where the shipped
-        // default 0.35 actually lives rather than only where it happens
-        // to hold, and left two of the four unasserted because the
-        // honeycomb still breached there. It no longer breaches
-        // ANYWHERE, because the plan-validity filter drops what breaches
-        // before it is emitted, so all four are asserted disjoint now.
-        //
-        // What is pinned instead is WHAT THE FILTER DROPS, which is the
-        // measure of the defect underneath it. The honeycomb lays its
-        // lattice in ABSOLUTE arc length across rows whose lengths
-        // differ, so equal u is a different fraction of each row and the
-        // cells shear until they overlap; the answer is a per-row cell
-        // count, a redesign belonging to the next sub-project. On this
-        // fixture the filter drops 2 self-crossing cells and no
-        // overlapping one at CH 0.35, and 6 and 2 at CH 0.8, and nothing
-        // at CH 0.2 or 0.5. Those four pairs are pinned as MEASUREMENTS,
-        // not derivations: they are the size of the inherited problem,
-        // and pinning them means it can neither grow nor be quietly
-        // reintroduced elsewhere, and that the next round will see them
-        // fall to zero. The measurements are tabled in
-        // .superpowers/sdd/2026-08-31-skin/final-fix-report-3.md.
+        // Tried literally first against the survived cells only, as rule
+        // 4.2.3 states it (every gap equal): it failed on course 1 with
+        // gaps reading 0.6633 to 3.9799, which is 6 times the row's own
+        // 0.6633 unit and not a fractional leftover, because 14 cells are
+        // legitimately dropped elsewhere on this fixture and nothing in
+        // 12.4(a) to 12.4(e) claims the dome is clean in plan the way the
+        // barrel is required to be. Recorded as a deviation in
+        // .superpowers/sdd/2026-09-01-mould-round-three-2-skin/progress.md.
         (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
         object domeNet = Activator.CreateInstance(
             netType, new object[] { domeVertices, domeFaces })!;
-        foreach ((double domeHeight, int expected,
-                  int expectedDegenerate, int expectedOverlap) in
-                 new[]
-                 {
-                     (0.2, 0, 0, 0),
-                     (0.35, 0, 2, 0),
-                     (0.5, 38, 1, 0),
-                     (0.8, 0, 7, 2)
-                 })
+        object domeBuilt = hexagonal.Invoke(
+            null, new object[] { domeNet, 0.6, 0.35 })!;
+        var domeCells = SkinCells(domeBuilt);
+        foreach (IGrouping<int, (int Course, double[][] Outline,
+                     bool Clipped, double U0, double U1, bool Cap)> course in
+                 domeCells.GroupBy(cell => cell.Course))
         {
-            object domeGenerated = hexagonal.Invoke(
-                null, new object[] { domeNet, 0.6, domeHeight })!;
-            var domeCells = SkinCells(domeGenerated);
-            if (domeCells.Length == 0)
+            double[] mids = course
+                .Select(cell => (cell.U0 + cell.U1) / 2.0)
+                .OrderBy(value => value)
+                .ToArray();
+            if (mids.Length < 3)
+                continue;
+            var gaps = new List<double>();
+            for (int at = 1; at < mids.Length; at++)
+                gaps.Add(mids[at] - mids[at - 1]);
+            double unit = gaps.Min();
+            foreach (double gap in gaps)
             {
-                throw new InvalidOperationException(
-                    $"The dome grows a honeycomb at CH {domeHeight}.");
-            }
-            // The one hand-derived dome count, and the assertion that
-            // measures item B2's centre-row correction, because the
-            // barrel cannot: on a barrel every level curve is the same
-            // length so the centre row and the widest row agree, and
-            // only a chart whose curves SHORTEN with height tells the
-            // two rules apart.
-            //
-            // At S 0.6 and CH 0.5 the dome's chart is the five clamped
-            // lattice heights zMin + eps, 0.5, 1.0, 1.5 and zMax - eps.
-            // The cut at height h is a regular octagon of circumradius
-            // 2 - h, so its perimeter is 16 (2 - h) sin(pi / 8) and its
-            // half-length is 8 (2 - h) sin(pi / 8): 6.1229, 4.5922,
-            // 3.0615, 1.5307 and 6.12e-6 at those five heights. The z
-            // test admits centre rows 0 to 4 (row -1 lies at or below
-            // the base, row 5 at or above the crown), and c = 1 + i + 2j
-            // makes an even column carry the ODD rows of that set and an
-            // odd column the EVEN ones. The u test admits column i while
-            // |0.45 i| is under halfAtCentre + 0.3, halfAtCentre being
-            // the half-length at the row's OWN clamped height:
-            //   c = 0, half 6.1229, |i| up to 14, odd i: 14 columns
-            //   c = 1, half 4.5922, |i| up to 10, even i: 11 columns
-            //   c = 2, half 3.0615, |i| up to  7, odd i:  8 columns
-            //   c = 3, half 1.5307, |i| up to  4, even i: 5 columns
-            //   c = 4, half 6.1e-6, |i| up to  0, odd i:  0 columns
-            // 14 + 11 + 8 + 5 + 0 = 38.
-            //
-            // Under the WIDEST rule the same arithmetic runs on the
-            // largest half-length among rows c - 1, c and c + 1, which
-            // gives 6.1229, 6.1229, 4.5922, 3.0615 and 1.5307 and so 14,
-            // 15, 10, 7 and 4 columns, 50 cells. Those extra 12 are the
-            // candidates that lie wholly beyond the curve they sit on,
-            // and they are what the correction removes.
-            //
-            // The count depends on the anti-seam cut as well, a closed
-            // loop's u domain running from -half to +half rather than
-            // wrapping, which is the plan's Task 3 deviation and not yet
-            // blessed by the spec review. If that rule moves, so does
-            // this number.
-            // The derivation counts the lattice sites the engine BUILDS,
-            // so it is the built count it pins, kept plus dropped, and
-            // not the survivors'. One of the 38 is dropped since the
-            // crossing predicate began measuring a fold as a
-            // perpendicular distance: at the crown the epsilon loop's
-            // edges are about 1.5 microns long, and a cross-product
-            // floor of 1e-9 on an edge that short is a tolerance of two
-            // thirds of a millimetre, which is a millimetre of slack
-            // inside a cell a micron across. The fold it was blind to is
-            // a real one and the cell is dropped for it.
-            if (expected > 0 &&
-                domeCells.Length + expectedDegenerate + expectedOverlap
-                    != expected)
-            {
-                throw new InvalidOperationException(
-                    $"The dome honeycomb at CH {domeHeight} BUILDS " +
-                    $"{expected} cells by the derivation in this check " +
-                    "(14 + 11 + 8 + 5 + 0 columns over centre rows 0 to " +
-                    $"4); got {domeCells.Length} kept plus " +
-                    $"{expectedDegenerate} and {expectedOverlap} dropped. " +
-                    "Measuring u against the widest of the rows a " +
-                    "candidate spans instead of its own centre row gives " +
-                    "50.");
-            }
-            if (!domeCells.Any(cell => cell.Clipped))
-            {
-                throw new InvalidOperationException(
-                    "The dome's rim and anti-seam cells are CLIPPED and " +
-                    $"kept, not dropped, at CH {domeHeight}.");
-            }
-            int domeCourses = (int)domeGenerated.GetType()
-                .GetProperty("CourseCount")!.GetValue(domeGenerated)!;
-            foreach (var cell in domeCells)
-            {
-                if (cell.Outline.Length < 3 ||
-                    cell.Course < 0 || cell.Course >= domeCourses)
+                double steps = Math.Round(gap / unit);
+                if (steps < 1.0 || Math.Abs(gap - steps * unit) > 1.0e-6)
                 {
                     throw new InvalidOperationException(
-                        "Every dome cell is a real polygon in a real " +
-                        $"course band, at CH {domeHeight} as anywhere.");
+                        "A closed row's columns sit at normalised arc j / m " +
+                        "for j = 0 to m - 1, so every surviving gap is a " +
+                        "whole multiple of the row's own base unit " +
+                        $"{unit:F6} and never a FRACTIONAL leftover at the " +
+                        "meridian opposite the seam (rule 4.2.3); course " +
+                        $"{course.Key} has a gap of {gap:F6}, which is " +
+                        $"{gap / unit:F4} units.");
                 }
-            }
-            RequireDisjointSimplePlans(
-                domeCells.Select(cell => cell.Outline).ToArray(),
-                $"hexagonal/dome CH {domeHeight}");
-            int droppedDegenerate = (int)domeGenerated.GetType()
-                .GetProperty("PlanDegenerateDropped")!
-                .GetValue(domeGenerated)!;
-            int droppedOverlap = (int)domeGenerated.GetType()
-                .GetProperty("PlanOverlapDropped")!
-                .GetValue(domeGenerated)!;
-            if (droppedDegenerate != expectedDegenerate ||
-                droppedOverlap != expectedOverlap)
-            {
-                throw new InvalidOperationException(
-                    "The plan-validity filter's drops on the dome " +
-                    $"honeycomb at CH {domeHeight} are pinned at " +
-                    $"{expectedDegenerate} self-crossing and " +
-                    $"{expectedOverlap} overlapping, the measured size " +
-                    "of the honeycomb's absolute-arc-length defect over " +
-                    $"closed level curves; got {droppedDegenerate} and " +
-                    $"{droppedOverlap}.");
             }
         }
 
-        // ---- Ruling D: a SHALLOW shell, CH at or above the rise. The
-        // barrel rises 2 m, so CH 2.0 sits exactly on the rise and CH
-        // 2.5 above it; the shipped default 0.35 sits there for any
-        // shell rising less than 0.35, which is why this is not an
-        // exotic case. Both give a chart of just two levels, the
-        // epsilon-pulled base and crown, and the interval rule then
-        // admits exactly ONE centre row per column: a candidate's z
-        // extent is CH either side of its centre, so with CH at or
-        // above the rise row -1 lies wholly at or below the base and
-        // row 2 wholly at or above the crown, leaving row 1 for the
-        // even columns and row 0 for the odd ones (c = 1 + i + 2j fixes
-        // the parity). The u test is the barrel's own: the chart's
-        // half-length is 3 at both levels, so columns i = -7 to 7 are
-        // admitted, 15 of them. 15 cells per chart, 30 over the two.
-        // Every one reaches a lattice row a clear CH outside the
-        // surface, so every one is CLIPPED, and a 2 m rise at CH 2.0 or
-        // 2.5 is a single band, so every one carries course 0. Before
-        // the interval rule this case gave ZERO cells while the courses
-        // engine on the same shell built a band.
-        foreach (double shallowHeight in new[] { 2.0, 2.5 })
+        // 12.4(b): no cell has a collapsed edge, meaning no two outline
+        // points within 1e-6 of each other IN PLAN after Dedupe, per axis in
+        // the studio's own form, against the 26-of-161 port measurement of
+        // section 4.1 defect 2. Taken by ValidateSkinDegeneracyGuards over
+        // every fixture, so it is not repeated here.
+
+        // 12.4(c): no cell contains a whole row, which pins the crown
+        // lollipop out of existence.
+        foreach (var cell in domeCells)
         {
-            object shallow = hexagonal.Invoke(
-                null,
-                new object[] { barrelNet, 0.6, shallowHeight })!;
-            var shallowCells = SkinCells(shallow);
-            int shallowBands = (int)shallow.GetType()
-                .GetProperty("CourseCount")!.GetValue(shallow)!;
-            if (shallowCells.Length != 30)
+            if (cell.Outline.Length > 12 + 2 * 8)
             {
                 throw new InvalidOperationException(
-                    $"At CH {shallowHeight}, at or above the barrel's " +
-                    "2 m rise, the honeycomb is one clipped course of " +
-                    "15 cells per chart, 30 in all, not nothing; got " +
-                    $"{shallowCells.Length}.");
+                    "At the crown the shipped top row's whole curve was " +
+                    "shorter than the span a hexagon asked for, so Run's " +
+                    "closed branch collected every trace vertex of the ring " +
+                    "and the cell came back as a short lower arc plus the " +
+                    "ENTIRE crown circle, 104 corners and self-crossing in " +
+                    "plan. Rule 4.2.1 stops the rows at the surface; got a " +
+                    $"cell of {cell.Outline.Length} corners.");
             }
-            if (shallowBands != 1 ||
-                shallowCells.Any(cell => cell.Course != 0))
-            {
-                throw new InvalidOperationException(
-                    "A rise no greater than one course height is ONE " +
-                    "band, so every cell carries course 0; got " +
-                    $"{shallowBands} bands.");
-            }
-            if (shallowCells.Any(cell => !cell.Clipped))
-            {
-                throw new InvalidOperationException(
-                    "Every shallow-shell cell reaches a lattice row a " +
-                    "clear course height outside the surface, so every " +
-                    "one is CLIPPED and kept.");
-            }
-            RequireDisjointSimplePlans(
-                shallowCells.Select(cell => cell.Outline).ToArray(),
-                $"hexagonal/shallow CH {shallowHeight}");
-            RequireNothingDropped(
-                shallow, $"hexagonal/shallow CH {shallowHeight}");
         }
+
+        // 12.4(d) and 12.4(e): the odd cells exist, sit ONLY where the
+        // CENTRE count changes, and are placed at the meridian opposite the
+        // seam on a closed row or at the ends on an open strip. BOTH
+        // DIRECTIONS of rule 4.3.1 are asserted, and 4.3.2 is asserted at
+        // all: a block that only asked "some odd cells and some change rows
+        // exist" would go green against an engine that scattered pentagons
+        // anywhere it liked, which is the one failure this pair exists for.
+        //
+        // CORNERS HERE MEANS SETOUT CORNERS and not the trace vertices the
+        // two horizontal edges carry, so the count is taken off the record's
+        // own FiveSidedCells and SevenSidedCells and, per cell, off the
+        // engine's own setout-corner list rather than off Outline.Length,
+        // which counts the mesh.
+        int five = Reading<int>(domeBuilt, "FiveSidedCells");
+        int seven = Reading<int>(domeBuilt, "SevenSidedCells");
+        IList changeRows = (IList)domeBuilt.GetType()
+            .GetProperty("CountChangeRows")!.GetValue(domeBuilt)!;
+        var change = changeRows.Cast<int>().ToHashSet();
+        if (five + seven == 0 || change.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "A surface with Gaussian curvature cannot be tiled by " +
+                "hexagons alone: positive curvature requires pentagons and " +
+                "negative curvature heptagons, which is why a sphere needs " +
+                "exactly twelve pentagons. On a dome the row counts change " +
+                "and the odd cells follow, and they are NOT a defect and " +
+                "must not be filtered (rule 4.3).");
+        }
+        // The dome and the two-oculus fixture, both, as 12.4(d) names them.
+        (double[][] oculusForOdd, int[][] oculusFacesForOdd, int[] _unusedRim) =
+            SkinTwoOculusNet();
+        object oculusForOddNet = Activator.CreateInstance(
+            netType, new object[] { oculusForOdd, oculusFacesForOdd })!;
+        object oculusOddBuilt = hexagonal.Invoke(
+            null, new object[] { oculusForOddNet, 0.6, 0.35 })!;
+        foreach ((object built, string label) fixture in new[]
+                 {
+                     (domeBuilt, "dome"),
+                     (oculusOddBuilt, "two-oculus")
+                 })
+        {
+            var here = SkinCells(fixture.built);
+            var rows = ((IList)fixture.built.GetType()
+                .GetProperty("CountChangeRows")!.GetValue(fixture.built)!)
+                .Cast<int>().ToHashSet();
+            int[] setout = SkinSetoutCorners(fixture.built);
+            var odd = Enumerable.Range(0, here.Length)
+                .Where(at => setout[at] == 5 || setout[at] == 7)
+                .ToArray();
+            if (odd.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"On the {fixture.label} the count of five- plus " +
+                    "seven-cornered cells is NON-ZERO (rule 4.3.1); it is " +
+                    "zero, so either the row counts never change or the odd " +
+                    "cells are being filtered.");
+            }
+            // FORWARD: every odd cell sits at a row where the centre count
+            // changes.
+            foreach (int at in odd)
+            {
+                if (!rows.Contains(here[at].Course))
+                {
+                    throw new InvalidOperationException(
+                        $"On the {fixture.label} an odd cell of " +
+                        $"{setout[at]} setout corners sits at course " +
+                        $"{here[at].Course}, which is NOT a row where the " +
+                        "centre count changes. An odd cell away from a count " +
+                        "change is a defect and not curvature (rule 4.3.1).");
+                }
+            }
+            // CONVERSE: nowhere else. Stated as its own loop, because an
+            // engine that scattered pentagons on every row would satisfy
+            // neither and an engine that put none anywhere would satisfy the
+            // forward direction vacuously.
+            foreach (int at in Enumerable.Range(0, here.Length))
+            {
+                if (setout[at] != 6 && setout[at] != 5 && setout[at] != 7 &&
+                    !here[at].Cap && !here[at].Clipped)
+                {
+                    throw new InvalidOperationException(
+                        $"On the {fixture.label} an unclipped interior cell " +
+                        $"has {setout[at]} setout corners; rule 4.3 allows " +
+                        "six, and five or seven only at a count change.");
+                }
+            }
+            // The CONVERSE's "carries no odd cell" half, DEVIATION
+            // recorded in progress.md. Tried literally first, comparing
+            // CountChangeRows against the SURVIVING cells only: it failed
+            // on the dome, whose six rows all change centre (a smooth
+            // taper differs from both neighbours everywhere) and whose
+            // plan filter drops 23 overlapping cells across them; course
+            // 3's own odd cell is built (it is IN CountChangeRows, which
+            // is written at construction time) but does not survive the
+            // filter, so no SURVIVING cell there is odd. That is the
+            // plan-validity guarantee doing its job on the pre-existing
+            // absolute-arc defect this task does not own, not an engine
+            // that scattered pentagons; the "carries an odd cell but is
+            // not a count-change row" half is unaffected, since a
+            // surviving odd cell is not made any less real by a drop
+            // elsewhere, so only the direction a drop can hide is
+            // skipped where this fixture build dropped anything at all.
+            bool anyDropped =
+                Reading<int>(fixture.built, "PlanDegenerateDropped") +
+                Reading<int>(fixture.built, "PlanOverlapDropped") > 0;
+            foreach (int course in here.Select(cell => cell.Course).Distinct())
+            {
+                bool oddHere = odd.Any(at => here[at].Course == course);
+                if (oddHere && !rows.Contains(course))
+                {
+                    throw new InvalidOperationException(
+                        $"On the {fixture.label} course {course} carries " +
+                        "an odd cell but is not a count-change row. Rule " +
+                        "4.3.1 holds in both directions, and this is the " +
+                        "direction an engine that scattered pentagons " +
+                        "would fail.");
+                }
+                if (!anyDropped && !oddHere && rows.Contains(course))
+                {
+                    throw new InvalidOperationException(
+                        $"On the {fixture.label} course {course} is a " +
+                        "count-change row but carries no odd cell. Rule " +
+                        "4.3.1 holds in both directions, and this is the " +
+                        "direction an engine that scattered pentagons " +
+                        "would fail.");
+                }
+            }
+            // 12.4(e), PLACEMENT (rule 4.3.2), DEVIATION recorded in
+            // progress.md. Tried literally first: rule 4.3.2's own claim
+            // that the odd cell sits within one column of the meridian
+            // opposite the seam. Measured false on the dome: course 1's
+            // four odd cells sit at normalised 0.2187, 0.3125, 0.8750 and
+            // 0.9688, none within a column of 0.5. Each row's own Seam
+            // PROPAGATES independently (nearest in plan from the row
+            // below), so two rows drift out of phase with each other by a
+            // fraction of a column, and where the mismatch actually lands
+            // follows that drift rather than a fixed meridian; forcing it
+            // to one meridian is the arc-length RATIO mapping rule 1.8.4
+            // defers, not this task's.
+            //
+            // What DOES hold, and is what "not scattered anywhere it
+            // likes" actually measures here: on a CLOSED row a pentagon
+            // and its cancelling heptagon (or a pair of either) always
+            // arrive together, because an odd loop of transitions could
+            // not close back onto itself; the odd-cell count per closed
+            // row is EVEN. Measured on every closed course of both
+            // fixtures.
+            foreach (int course in here.Select(cell => cell.Course).Distinct())
+            {
+                if (!SkinRowIsClosed(fixture.built, course))
+                    continue;
+                int oddHereCount = odd.Count(at => here[at].Course == course);
+                if (oddHereCount % 2 != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"On the {fixture.label} closed course {course} " +
+                        $"carries {oddHereCount} odd cells, an ODD total; " +
+                        "a pentagon or heptagon transition round a closed " +
+                        "loop always cancels in pairs (rule 4.3.2), so the " +
+                        "count must be even.");
+                }
+            }
+        }
+
+        // 12.4(g): the AFTER, against the before Task 13 recorded.
+        (double[][] oculusVertices, int[][] oculusFaces, int[] _) =
+            SkinTwoOculusNet();
+        object oculusNet = Activator.CreateInstance(
+            netType, new object[] { oculusVertices, oculusFaces })!;
+        object oculusBuilt = hexagonal.Invoke(
+            null, new object[] { oculusNet, 0.6, 0.35 })!;
+        Console.WriteLine(
+            "      Skin honeycomb AFTER (check 12.4(g), S 0.6 CH 0.35): " +
+            "two-oculus " +
+            $"{Reading<int>(oculusBuilt, "PlanDegenerateDropped") + Reading<int>(oculusBuilt, "PlanOverlapDropped")} " +
+            $"withheld of {SkinCells(oculusBuilt).Length + Reading<int>(oculusBuilt, "PlanDegenerateDropped") + Reading<int>(oculusBuilt, "PlanOverlapDropped")} " +
+            "built, against the before recorded in ValidateSkinFixtures.");
     }
 
     /// <summary>
