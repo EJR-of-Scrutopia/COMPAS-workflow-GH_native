@@ -229,9 +229,27 @@ namespace Ananke.COMPAS.Native.Components
             /// symmetrised aim moved from this one.
             /// </summary>
             public Vector3d RawResultant;
-            /// <summary>Fixed foot, ring tree only.</summary>
+            /// <summary>
+            /// Fixed foot: the ring tree's, and the CENTRE COLUMN's of spec
+            /// section 10's last rule. A tree carrying one takes it whatever
+            /// the Type, stands outside every span row, and neither peel pass
+            /// nor either merge rule can move it.
+            /// </summary>
             public Point3d? FixedFoot;
             public bool Ring;
+            /// <summary>
+            /// The span frame whose OWN TERMS this tree is judged in where
+            /// <see cref="Span"/> is -1 and there is no row to read it from: a
+            /// CENTRE COLUMN's, handed over from the span that would otherwise
+            /// have annexed the node. Null everywhere else, where Span or Ring
+            /// answers instead. Without it <see cref="SpacingOf"/> falls
+            /// through its rim loop, which a tree of ONE notch cannot enter at
+            /// all, and returns the hardcoded 1.0: on a model in metres that
+            /// would mis-scale this column's collision clearance and its
+            /// close-foot clearance, and a collision gates Feasible, which
+            /// gates which Type Auto places.
+            /// </summary>
+            public SpanFrame? Scale;
             /// <summary>
             /// Whether this tree builds a member to that notch, aligned with
             /// <see cref="Nodes"/>. Spec section 10's three lists are not the
@@ -416,6 +434,16 @@ namespace Ananke.COMPAS.Native.Components
             public int SpanDegenerate;
             /// <summary>Notches held by two spans at once.</summary>
             public int SharedNotches;
+            /// <summary>
+            /// Shared notches taken out of the group that would have annexed
+            /// them and stood on a column of their own (PARAM'S RULING of
+            /// 2026-09-02). A SECOND KIND of central column, and deliberately
+            /// NOT folded into <c>Level.CentralColumns</c>, which counts the
+            /// standing column an odd tree row takes at an even Type and
+            /// nothing else: one is a property of the LAYOUT and per level,
+            /// this is a property of the NET and the same at every level.
+            /// </summary>
+            public int CentresExtracted;
         }
 
         // ------------------------------------------------------------------
@@ -1510,6 +1538,17 @@ namespace Ananke.COMPAS.Native.Components
 
             // Pass 2: the trees, span by span, over the same free lists and
             // frames Pass 1 built.
+            //
+            // THE LEFTOVER CENTRE NODES, gathered here and stood on their own
+            // columns after the loop (PARAM'S RULING of 2026-09-02, section 0
+            // of the design input). Each is a shared notch whose owning group
+            // is not BALANCED about it, so that group would have annexed it
+            // and gained a branch its mirror on the other line does not have.
+            // Each is extracted at most once, because a node has exactly one
+            // owner, and they are gathered in span-then-group-then-notch
+            // order, which reads no coordinate and so cannot depend on the
+            // trace.
+            var leftOver = new List<(int Node, Vector3d HeadPull, SpanFrame Frame)>();
             for (int s = 0; s < placement.Spans.Count; s++)
             {
                 Span span = placement.Spans[s];
@@ -1522,6 +1561,22 @@ namespace Ananke.COMPAS.Native.Components
                     int mainPosition = free[mains[g]];
                     var ordered = new List<int> { mainPosition };
                     ordered.AddRange(positions.Where(p => p != mainPosition));
+                    // The same order again in FREE-INDEX terms, which is what
+                    // the balance test below is stated in. `free` is strictly
+                    // increasing, so p != mainPosition holds exactly where
+                    // i != mains[g] and the two lists align index for index.
+                    var orderedFree = new List<int> { mains[g] };
+                    orderedFree.AddRange(groups[g].Where(i => i != mains[g]));
+                    // THE GROUP'S BALANCE STATION. A group is a contiguous run
+                    // of free indices, so its centre is the mean of its ends;
+                    // a group of ODD size is centred ON a notch and a group of
+                    // EVEN size on the gap between two. A notch the group is
+                    // balanced about is a genuinely central one, reached from
+                    // both sides alike, and is NOT left over: that is the
+                    // straddling tree of a crossing, which the engine already
+                    // handles and which this ruling does not touch. Every
+                    // other shared notch the group owns is annexed.
+                    double balance = groups[g][0] + ((groups[g].Length - 1) / 2.0);
                     int[] treeNodes = ordered.Select(p => bars[span.Bar][p]).ToArray();
                     var owned = new bool[treeNodes.Length];
                     var load = new double[treeNodes.Length];
@@ -1543,13 +1598,40 @@ namespace Ananke.COMPAS.Native.Components
                         else
                         {
                             bool isOwner = ownerOfNode[node] == s;
-                            owned[k] = isOwner;
+                            // PARAM'S RULING OF 2026-09-02. A CENTRE NODE THE
+                            // OWNING GROUP IS NOT BALANCED ABOUT IS LEFT OVER,
+                            // and a side never takes it: "when there is a
+                            // center node that is left over and a side want to
+                            // connect to it, just put a central column in and
+                            // keep the nodes connections the same". So the
+                            // owner does not build to it either. The node
+                            // STAYS in this tree's Nodes, borrowed exactly as
+                            // it is on every other line, which is what leaves
+                            // the layout, the pairing, the groups and every
+                            // Type 1 to 4 foot untouched: a group foot is a
+                            // function of notch POSITIONS and never of who
+                            // owns them. The head and its load move to a
+                            // column of the node's own, below.
+                            bool annexed = isOwner && Math.Abs(orderedFree[k] - balance) > 1.0e-9;
+                            owned[k] = isOwner && !annexed;
                             if (isOwner)
                             {
                                 var holderPairs = holders.Select(h => (h.Bar, h.Position)).ToList();
                                 Vector3d headPull = HeadPull(nodes, bars, pull, nodePull, node, holderPairs);
-                                load[k] = Math.Abs(headPull.Z);
-                                sum += headPull;
+                                if (annexed)
+                                {
+                                    // Nothing is created or destroyed: the
+                                    // whole term leaves this tree's Load and
+                                    // its Resultant and arrives, entire, on
+                                    // the centre column.
+                                    load[k] = 0.0;
+                                    leftOver.Add((node, headPull, frame));
+                                }
+                                else
+                                {
+                                    load[k] = Math.Abs(headPull.Z);
+                                    sum += headPull;
+                                }
                             }
                             else
                             {
@@ -1571,6 +1653,54 @@ namespace Ananke.COMPAS.Native.Components
                     tree.HeadMain = HeadMainOf(tree, frame, bars);
                     placement.Trees.Add(tree);
                 }
+            }
+
+            // THE CENTRE COLUMNS (PARAM'S RULING of 2026-09-02). One tree per
+            // leftover centre node: one notch, its own, standing PLUMB on its
+            // own foot directly beneath it. The arithmetic is a MOVE and not
+            // an addition. Total load is unchanged, the term having left the
+            // annexing tree above; the total member count is unchanged, the
+            // annexing tree building one fewer and this one building one; and
+            // the branch counts either side of a mirror become equal by
+            // construction rather than by any tolerance.
+            //
+            // ADDED AT THE END, so no existing tree's index moves: Level's
+            // MemberTree, the harness's foot-per-tree maps and every
+            // downstream reader index trees by position. And added BEFORE
+            // Symmetrise, whose guard keys on the tree count and would
+            // otherwise leave these standing on a raw aim.
+            //
+            // SPAN IS -1, AND THIS IS THE TRAP. BuildLevel's row already skips
+            // a tree with a fixed foot and MergeFeet's cross-line rule already
+            // refuses Span < 0, but the CENTRAL-PAIR rule builds its row from
+            // Ring and Span alone and does not consult FixedFoot: filing this
+            // column under the owner's span would flip that row's parity from
+            // odd to even, fire the central-pair merge and MOVE TWO FEET that
+            // Param has ruled must not move. With Span -1 nothing in the
+            // engine can mistake it for a station of a row.
+            //
+            // IT STANDS STRAIGHT, which is the same instinct as the standing
+            // column an odd row takes at an even Type and as the ladder's
+            // single stray at the centre: the centre is never leant into a
+            // side. Where the meeting bars' tangents span the vertical, which
+            // is every true crown, the head pull's projection is zero anyway,
+            // AimFrom returns plain vertical and this is the foot the tree
+            // would have taken by its own aim.
+            foreach ((int node, Vector3d headPull, SpanFrame frame) in leftOver)
+            {
+                placement.Trees.Add(new Tree
+                {
+                    Bar = -1,
+                    Span = -1,
+                    Nodes = new[] { node },
+                    Load = new[] { Math.Abs(headPull.Z) },
+                    Owned = new[] { true },
+                    Resultant = headPull,
+                    HeadMain = 0,
+                    FixedFoot = new Point3d(nodes[node].X, nodes[node].Y, ground),
+                    Scale = frame,
+                });
+                placement.CentresExtracted++;
             }
 
             // Spec 3.4: the resultants are mirrored about each span's
@@ -1793,13 +1923,17 @@ namespace Ananke.COMPAS.Native.Components
         /// The tree's own span spacing as a LENGTH. The ring tree has no
         /// span, so its scale R is the smallest plan distance between two of
         /// its own rim notches, which is in its own terms and needs no net
-        /// median.
+        /// median. A CENTRE COLUMN has no span either, and no second notch to
+        /// measure between, so it carries the frame of the span that would
+        /// have annexed its node and answers in that span's terms.
         /// </summary>
         private static double SpacingOf(Placement placement, Point3d[] nodes, int tree)
         {
             Tree t = placement.Trees[tree];
             if (!t.Ring && t.Span >= 0 && t.Span < placement.Frames.Count)
                 return placement.Frames[t.Span].G;
+            if (t.Scale is not null)
+                return t.Scale.G;
             double smallest = double.MaxValue;
             for (int i = 0; i < t.Nodes.Length; i++)
             {
@@ -2455,7 +2589,8 @@ namespace Ananke.COMPAS.Native.Components
 
         /// <summary>
         /// The tree's own weld tolerance: <see cref="SpanFrame.TauWeld"/> on
-        /// a span tree, or <c>1e-9 * R</c> on the ring tree, R its own
+        /// a span tree and on a CENTRE COLUMN, which carries the annexing
+        /// span's own frame, or <c>1e-9 * R</c> on the ring tree, R its own
         /// smallest rim spacing (<see cref="SpacingOf"/>'s answer for a tree
         /// with no span). Two feet's weld bound is the smaller of their two.
         /// </summary>
@@ -2464,6 +2599,8 @@ namespace Ananke.COMPAS.Native.Components
             Tree t = placement.Trees[tree];
             if (!t.Ring && t.Span >= 0 && t.Span < placement.Frames.Count)
                 return placement.Frames[t.Span].TauWeld;
+            if (t.Scale is not null)
+                return t.Scale.TauWeld;
             return 1.0e-9 * SpacingOf(placement, nodes, tree);
         }
 

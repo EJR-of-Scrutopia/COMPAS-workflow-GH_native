@@ -722,8 +722,20 @@ namespace Ananke.COMPAS.Native.Components
                     + "principal lines at once; both spans hold them for layout "
                     + "and symmetry, the owner rule of spec section 10 decides "
                     + "which span's tree builds the head, and the load there is "
-                    + "the node's own whole pull, counted once and in full.",
-                placement.SharedNotches, unit: "notches"));
+                    + "the node's own whole pull, counted once and in full."
+                    + (placement.CentresExtracted > 0
+                        ? $" {Count(placement.CentresExtracted, "of them is", "of them are")} "
+                            + "LEFT OVER, the owning group not balanced about it, so "
+                            + "rather than let one side annex it and carry a branch "
+                            + "its mirror across the form has not got, it stands on a "
+                            + "CENTRAL COLUMN of its own and every other connection is "
+                            + "as it was. Counted apart from the central column an odd "
+                            + "tree row takes at an even Type, which is a different "
+                            + "thing."
+                        : string.Empty),
+                placement.SharedNotches, unit: "notches",
+                context: ResultDiagnostics.Context(
+                    ("centres", placement.CentresExtracted.ToString(CultureInfo.InvariantCulture)))));
 
             d.Add(ResultDiagnostics.Entry(S, "columns.span_degenerate",
                 placement.SpanDegenerate > 0 ? "warning" : "ok",

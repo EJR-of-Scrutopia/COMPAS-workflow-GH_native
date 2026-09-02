@@ -1247,6 +1247,70 @@ Four measured consequences follow, and section 17 requires all four.
 - A crossing at the span's own centre, and a symmetric pair of crossings, both continue to place
   mirrored feet, which they already do today and which any new rule had to reproduce.
 
+### AMENDMENT, PARAM'S RULING OF 2026-09-02: A SIDE NEVER TAKES THE LEFTOVER CENTRE
+
+Param reviewed the installed build on his own arch and on a three-way vault. This rule is added
+on top of the owner rule above rather than in place of it. His words:
+
+    "no the symmetry isnt the angle its the amount of branches per side on an equal form. One
+    branch always reaches to the center while the other side doesnt ebcause we rule that only one
+    branch can touch the central node, this is where an additional branch is introduced on one
+    side. it is visible in the 3-4 screenshots. even in the 3 sided and beyond same problem. So i
+    am suggesting keep everything as it is, but when there is a center node that is left over and
+    a side want to connect to it, just put a central column in and keep the nodes connections the
+    same"
+
+THE DEFECT IS A COUNT AND NOT AN ANGLE. Where two principal lines MEET, the crown is a bar END
+and so a free notch of both spans, and the owner rule above hands it to one of them. That span's
+crown-end tree then builds one more branch than its mirror on the other line: four against three
+on a form that is otherwise symmetric. MEASURED before the rule, over Types 0 to 4 and Branching
+1 to 3: two lines meeting at a crown read [4, 5] at five free notches a side and [3, 4] at four,
+at Branching 2 and 3 and at every Type; the three-way vault reads [4, 4, 5] and [3, 3, 4] on the
+same grid. Fifty configurations in all. Branching 1 is already right, because the ladder gives
+the crown a tree of its own there, which is the answer this rule generalises.
+
+THE RULE. A shared notch is LEFT OVER when the group that owns it is not BALANCED about it: a
+group is a contiguous run of free indices, so it is balanced about the notch at the mean of its
+two ends, which is a notch at all only where the group's size is odd. A left-over notch is NOT
+built to by the side that owns it. It is taken out and stands on a CENTRE COLUMN of its own: one
+tree, one notch, its own foot directly beneath it, standing plumb at every Type.
+
+WHAT DOES NOT MOVE, and this is the whole of "keep the nodes connections the same".
+
+- THE NOTCH STAYS IN EVERY SPAN'S Tree.Nodes, borrowed on all of them. Group, Layout, the
+  pairing, the foot groups and the ladder therefore see the identical row.
+- NO GROUP FOOT MOVES. A Type 1 to 4 foot is a function of notch POSITIONS and the Type alone;
+  GroupFoot's candidates are gathered whether a notch is owned or borrowed, so ownership never
+  enters it. MEASURED across every crown fixture at every Type and Branching: not one existing
+  foot moves, and the only change is one tree added on one foot.
+- THE ARITHMETIC IS A MOVE, NOT AN ADDITION. The head pull leaves the annexing tree's Load and
+  Resultant entire and arrives entire on the centre column, so the total load is unchanged; the
+  annexing tree builds one member fewer and the centre column builds one, so the total member
+  count is unchanged. Feet gain one per extracted notch, unless the new foot welds.
+- A GENUINELY CENTRAL NOTCH IS LEFT ALONE. Where two lines CROSS rather than meet, the crossing
+  is interior and lands in a straddling tree that is balanced about it, so nothing is extracted
+  and the engine is untouched. That is the case whose branch counts were already equal.
+
+THE CENTRE COLUMN CARRIES Span = -1 AND Bar = -1, and this is the trap. BuildLevel's row already
+skips a tree with a fixed foot and the cross-line merge of section 12 already refuses Span < 0,
+but the CENTRAL-PAIR merge builds its row from Ring and Span alone and does not consult the fixed
+foot: filing this column under the owner's span would flip that row's parity from odd to even,
+fire that merge and move two feet. It carries the owner span's FRAME instead, so that its
+collision clearance and its weld and close tolerances are in that span's own terms; without it
+the ring tree's fallback would return the hardcoded 1.0, which on a model in metres would
+mis-scale a clearance, and a collision gates Feasible, which gates which Type Auto places.
+
+WHERE THE RULE REACHES FURTHEST, recorded because it is wider than the forms Param photographed.
+On a regularly ribbed grid the same predicate fires at off-centre crossings: on a 3 by 3 grid of
+nine-node lines, six of nine crossings at Branching 2 and 3, carrying 11.532 of vertical load.
+The branch counts either side were already equal there, because the annexations pair up about the
+plane, so this is the rule generalising rather than a fault being repaired. MEASURED consequence
+on that net: at Types 2, 3 and 4 nothing moves at all; at Type 0 six feet move, because a Type 0
+foot IS the tree's own force ray and that tree's force genuinely changed; and at Type 1 and
+Branching 2 six feet move because a tree that has lost a notch now leans past the cap from the
+shared foot and peels, taking its mirror with it. Every one of those movements is mirror-
+symmetric, and none of them is on a form of lines meeting.
+
 ## 11. The peel
 
 A trunk may not lean past MaxLeanDegrees, which is sixty degrees and is a limit of the machine's
@@ -1567,7 +1631,14 @@ On Placement: Partner, CentreTrees, Families, SpansWithTrees, AsymmetryRemoved, 
 SymmetrisedTrees keep their names and meanings, with CentreTrees now counting self-paired trees.
 AsymmetricSpans is REPLACED by UnpairedTrees. ClosedSpans is added, the spans every tree of which
 is paired or self-paired. SharedNotches is added, the notches held by two spans at once.
-CommonModeResidual is added, defined in 9.5, the largest along-chord common mode still standing
+CentresExtracted is added by the amendment to section 10, the shared notches taken out of the
+group that would have annexed them and stood on a column of their own; it is reported inside
+columns.shared_nodes with a `centres` context key, and it is deliberately NOT folded into
+Level.CentralColumns, which counts the standing column an odd tree row takes at an even Type and
+nothing else. One is a property of the LAYOUT and differs per level; the other is a property of
+the NET and is the same at every level, and a reader who cannot tell them apart cannot tell why a
+column is where it is. CommonModeResidual is added, defined in 9.5, the largest along-chord
+common mode still standing
 after placement as a fraction of its own span's mean pull, which reads zero when the rule ran.
 Clearance is RETIRED: it reported one number for the whole net, taken from the median, and there
 is no longer one number to report, since every clearance in this spec belongs to a span or to a
@@ -1767,6 +1838,30 @@ present cliff and each must now be quiet.
       borrowed notch is that tree's MAIN, its trunk runs to its head main and its fork lies on
       that segment; where every notch of a tree is borrowed, it builds nothing, carries no load,
       is unpaired, leaves its partner unpaired, and its span's palindrome still stands.
+- EQUAL BRANCH COUNTS EITHER SIDE OF THE MIRROR, which is the amendment to section 10 and which
+  NOTHING IN THE HARNESS MEASURED, which is why the defect shipped past every check above. A
+  BRANCH is a member built to a net notch; on a form of lines MEETING, each line is one side of
+  the mirror; and a column whose tree owns the centre notch and nothing else belongs to no side
+  and is counted apart, because that is a column in the middle rather than a branch of a flank.
+  Fixtures: a SINGLE-SPAN arch of nine free notches, one bar anchored both ends and no shared
+  node anywhere, the control; and lines MEETING at one crown, two arms and three, at five free
+  notches a side and at four, since the ladder lays an odd count out differently from an even
+  one. Every one of them at every Type 0 to 4 and every Branching 1 to 3, because Param's own
+  words are "even in the 3 sided and beyond same problem" and he did not confine it to a Type.
+      Assert on the single-span arch that four branches stand either side of its mirror plane and
+      one on it, and that every free notch carries exactly one head. Assert on the meeting forms
+      that the crown carries EXACTLY ONE head whoever builds it; that every arm builds the same
+      number of branches, which is its own free notch count less the crown; that exactly one
+      column stands apart from the arms; and, stating the rule rather than inferring it, that NO
+      TREE OWNS THE CROWN TOGETHER WITH NOTCHES OF ITS OWN FLANK.
+      Assert the arithmetic invariants beside the counts, since a fix that gets the count right
+      by creating or losing load would pass a count test: the total of every tree's Load equals
+      the load the fixture applies, the crown's own head pull being zero where the meeting
+      tangents span the vertical; and CentresExtracted reads ONE at Branching 2 and 3 and ZERO at
+      Branching 1, where the ladder already stands the crown alone and the ruling must therefore
+      change nothing at all. Where a centre column is made, assert its foot stands on the form's
+      own axis directly beneath the crown at every Type, and that the tree carries no bar and no
+      span, since filing it under the annexing span would fire the central-pair merge.
 - A COARSE NET WHOSE NODES ARE FAR APART. One geometry, a crest at 0.60 at rise over span 0.25,
   sampled at 3, 5, 9 and 17 notches. The present engine passes its symmetry test at 3 and 5 and
   fails it at 9 and 17, because the geometric defect barely moves from 0.0284 to 0.0300 while the
