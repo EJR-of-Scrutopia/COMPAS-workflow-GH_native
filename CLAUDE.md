@@ -94,6 +94,54 @@ failure modes that actually recur here:
 - an OneDrive clash file making a build false-green
 - a port description that asserts a downstream behaviour nobody verified
 
+## Dispatch and review discipline
+
+Settled 2026-09-02 after the columns wave, where six blocking defects survived
+per-task review. Each rule has a measured mechanism behind it, not a preference.
+
+**1. A TASK REVIEWER ALWAYS GETS ITS BRIEF.** Never dispatch a reviewer told to
+read the diff and not the brief. It was tried, to save tokens, and it cost three
+real engine defects in one task. All three were DEVIATIONS FROM THE BRIEF: a
+removed `Union`, a raw pre-guard snap, and a weld-tolerance skip that silently
+broke a mirror gate. A reviewer whose job is "does this match the brief" cannot
+do it without the brief. Measured: the tasks whose reviewers held the brief took
+two fix rounds each and caught their own brief's contradictions; the task whose
+reviewer did not took zero rounds and shipped three defects.
+
+**2. GIVE EVERY IMPLEMENTER ITS INFRASTRUCTURE.** Free, and large. Grep once
+before dispatching and put in the prompt: the exact line and anchor string where
+a harness check belongs, and the verbatim build and run commands. This took the
+last four tasks of a wave from twenty agents to five at no quality cost. An agent
+left to find its own way around a 17,000-line file spends its turns on search,
+and every turn resends the whole context.
+
+**3. A NEW CHECK MUST BE PROVED ABLE TO FAIL.** Implementer AND reviewer both:
+mutate the engine line the check covers, build, run, see RED, revert, verify the
+revert by hash, and report the mutation with the message it produced.
+
+  This is the highest-value rule here and NEITHER the cheap nor the expensive
+  review had it before. In one wave a verifier widened a clearance by nearly
+  double, another displaced every singular convergence by 1.4 kilometres, and a
+  third disabled an entire engine pass. In all three cases the output stayed
+  byte-identical and all 87 checks passed. GREEN MEANS ONLY THAT NOTHING TESTED
+  WHAT YOU BROKE.
+
+  Watch especially for a fixture that cannot discriminate what its own message
+  claims. Three candidates at (-0.1, 0), (0, 0) and (0.1, 0) are collinear and
+  symmetric, so a check asserting "the MEAN, not the bounding-box centre" passes
+  identically under either, while reading as though it proved something.
+
+**4. THE WHOLE-BRANCH REVIEW IS NOT NEGOTIABLE.** Strongest model, high effort,
+three independent lenses, then a SEPARATE adversarial verifier per finding whose
+default is to refute and which must REPRODUCE the failure to confirm it. Per-task
+review has never caught what this catches. If a budget forces a choice, cut
+TASKS, never this.
+
+**5. NEVER RUN TWO AGENTS THAT MUTATE ONE TREE.** Parallel mutation testing
+corrupted a working copy mid-wave and one agent watched a file change under it,
+which could have falsified findings in either direction. Fan out for READING;
+serialise anything that writes.
+
 ## Orchestrator responsibility
 
 - Read the excerpts directly rather than trusting any `NOTE:` field.
