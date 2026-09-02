@@ -751,6 +751,23 @@ internal static class Program
 
         try
         {
+            ValidateSkinPieceSize(plugin);
+            Console.WriteLine(
+                "PASS  Skin piece size: the barrel's 0.3 m end pieces merge " +
+                "at MP 0.5 and stand at MP 0.3, the two counted exceptions " +
+                "(a course's only piece and a merged pair still under the " +
+                "threshold) account for every remaining short cell at the " +
+                "default MP, a second merge pass over its own output moves " +
+                "nothing, and MP at 0 turns both ends off together.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin piece size: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -15270,6 +15287,26 @@ internal static class Program
         ?? throw new InvalidOperationException(
             $"{owner.Name}.{name} was not found.");
 
+    /// <summary>Resolve one specific overload by its parameter types, for a
+    /// method name with more than one public static overload (Courses'
+    /// Min Piece default, task 20): the name-only lookup above throws
+    /// AmbiguousMatchException the moment a second overload exists, whether
+    /// or not the caller's own argument count would have disambiguated it,
+    /// so every reflection caller of an overloaded method must say which
+    /// one it means.</summary>
+    private static MethodInfo RequirePublicStatic(
+        Type owner, string name, params Type[] parameterTypes) =>
+        owner.GetMethod(
+            name,
+            BindingFlags.Public | BindingFlags.Static,
+            null,
+            parameterTypes,
+            null)
+        ?? throw new InvalidOperationException(
+            $"{owner.Name}.{name}(" +
+            $"{string.Join(", ", parameterTypes.Select(t => t.Name))}) " +
+            "was not found.");
+
     private static MethodInfo RequireStatic(Type owner, string name) =>
         owner.GetMethod(
             name,
@@ -17907,7 +17944,8 @@ internal static class Program
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         (double[][] vertices, int[][] faces) = SkinDomeNet();
         object net = SkinNetWith(
             netType, edgeType, vertices, faces, SkinDomeRim(),
@@ -17992,7 +18030,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         foreach ((double[][] vertices, int[][] faces, string label,
                   bool closed) fixture in new[]
                  {
@@ -18142,7 +18181,8 @@ internal static class Program
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         var noForces = Array.Empty<(int, int, double)>();
 
         static double PlanArea(double[][] ring)
@@ -18332,7 +18372,8 @@ internal static class Program
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         (double[][] vertices, int[][] faces, int[] rim) = SkinHemisphereNet();
 
         object rimmed = SkinNetWith(
@@ -18431,7 +18472,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
 
         (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
         object barrelNet = Activator.CreateInstance(
@@ -18756,6 +18798,225 @@ internal static class Program
     }
 
     /// <summary>
+    /// Piece size at both ends (spec section 6), checks 12.6(a) to 12.6(e).
+    /// The barrel's open strips have end pieces of exactly half a pitch on
+    /// odd courses, 0.3 m at S 0.6 and CH 0.5, which the harness already
+    /// pins in those words; MP at 0.5 merges those end pieces and MP at 0.3
+    /// does not. The values are 0.5 and 0.3 and NOT 0.6, for two reasons
+    /// that both hold at once: rule 6.4 caps MP at 0.5 and clamps anything
+    /// above it, so 0.6 never reaches the engine; and at MP 0.5 the
+    /// threshold is exactly 0.3, which a strict "under" would leave
+    /// undecided on the one fixture this check names, so rule 6.1's
+    /// comparison is "at or under" within 1e-9.
+    /// </summary>
+    private static void ValidateSkinPieceSize(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double),
+            typeof(double));
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        object At(double minPiece) => courses.Invoke(
+            null, new object[] { net, 0.6, 0.5, minPiece })!;
+
+        // 12.6(a): the two bars separate at 0.5 and at 0.3.
+        var merged = SkinCells(At(0.5));
+        var unmerged = SkinCells(At(0.3));
+        if (merged.Any(cell =>
+                cell.U1 - cell.U0 <= 0.3 + 1.0e-9 && !cell.Cap))
+        {
+            throw new InvalidOperationException(
+                "At MP 0.5 the minimum piece is 0.3 m and the barrel's odd " +
+                "courses' 0.3 m end pieces are AT the threshold, so they " +
+                "merge (rule 6.1's comparison is at-or-under within 1e-9).");
+        }
+        if (!unmerged.Any(cell =>
+                Math.Abs(cell.U1 - cell.U0 - 0.3) < 1.0e-9))
+        {
+            throw new InvalidOperationException(
+                "At MP 0.3 the minimum piece is 0.18 m and the 0.3 m end " +
+                "pieces are plainly above it, so they stand.");
+        }
+
+        // 12.6(b): after merging, no span is under MP * S anywhere, except
+        // a course's only piece and a merged pair whose union is still
+        // under, both of which are counted. Stated without the exceptions
+        // this check is false against two rules written on purpose.
+        object built = At(1.0 / 3.0);
+        int keptShort = Reading<int>(built, "MergedShortKept");
+        int stillShort = Reading<int>(built, "MergedStillShort");
+        int shortCells = SkinCells(built).Count(cell =>
+            !cell.Cap && cell.U1 - cell.U0 <= 0.2 + 1.0e-9);
+        if (shortCells > keptShort + stillShort)
+        {
+            throw new InvalidOperationException(
+                $"{shortCells} cells are at or under MP * S = 0.2 m, but " +
+                $"only {keptShort} courses kept their only piece and " +
+                $"{stillShort} merged pairs are still under the threshold " +
+                "(rules 6.5 and 6.3); the rest are a defect.");
+        }
+
+        // 12.6(c): the merge TERMINATES. The MERGE PASS ITSELF is run twice,
+        // the second time over its own output, and the answer does not move.
+        // Calling Courses twice would compare a pure function with itself and
+        // could never fail, whatever the engine did; this drives the static
+        // that rule 6.3 is about.
+        MethodInfo mergeShort = patterns.GetMethod(
+            "MergeShortPieces",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "MergeShortPieces must be reachable for check 12.6(c) to " +
+                "measure a second pass rather than a second call.");
+        Type spanType = typeof(ValueTuple<double, double, bool>);
+        Type spanList = typeof(List<>).MakeGenericType(spanType);
+        object SpansOf(params (double U0, double U1, bool Clipped)[] spans)
+        {
+            object list = Activator.CreateInstance(spanList)!;
+            MethodInfo add = spanList.GetMethod("Add")!;
+            foreach ((double u0, double u1, bool clipped) in spans)
+            {
+                add.Invoke(list, new[]
+                {
+                    Activator.CreateInstance(spanType, u0, u1, clipped)
+                });
+            }
+            return list;
+        }
+        (double U0, double U1)[] ReadSpans(object list) =>
+            ((IEnumerable)list).Cast<object>()
+                .Select(item => (
+                    (double)item.GetType().GetField("Item1")!.GetValue(item)!,
+                    (double)item.GetType().GetField("Item2")!.GetValue(item)!))
+                .ToArray();
+        object RunMerge(object spans)
+        {
+            object?[] arguments =
+            {
+                spans, 0.2, 0, 0, 0
+            };
+            object answer = mergeShort.Invoke(null, arguments)!;
+            return answer;
+        }
+        // One course's spans, seam outward, with two short pieces at one end
+        // and long ones elsewhere: the shape rule 6.3 is written against.
+        object first = RunMerge(SpansOf(
+            (-1.5, -0.9, false), (-0.9, -0.3, false), (-0.3, 0.0, true),
+            (0.0, 0.6, false), (0.6, 1.2, false), (1.2, 1.35, true)));
+        object second = RunMerge(first);
+        if (!ReadSpans(first).SequenceEqual(ReadSpans(second)))
+        {
+            throw new InvalidOperationException(
+                "Merging runs in ONE pass over a course's spans, seam " +
+                "outward, and a span that has already absorbed a merge is " +
+                "not itself tested again, so the pass terminates in a " +
+                "single sweep and a SECOND pass over its own output changes " +
+                "nothing (rule 6.3). The first pass gave " +
+                $"[{string.Join(" ", ReadSpans(first).Select(s => $"{s.U0:F3}..{s.U1:F3}"))}] " +
+                "and the second moved it.");
+        }
+
+        // 12.6(e), first half: MP at 0 changes nothing at either end. The
+        // baseline is the engine's own PRE-MERGE span set, read off the
+        // three-argument overload with the merge suppressed by the same zero,
+        // and not a second identical call to At(0.0), which would compare a
+        // pure function with itself.
+        var off = SkinCells(At(0.0))
+            .Select(cell => (cell.Course, cell.U0, cell.U1))
+            .ToArray();
+        object premerged = RunMerge(SpansOf(
+            (-1.5, -0.9, false), (-0.9, -0.3, false), (-0.3, 0.0, true),
+            (0.0, 0.6, false), (0.6, 1.2, false), (1.2, 1.35, true)));
+        object untouched = mergeShort.Invoke(
+            null,
+            new object?[]
+            {
+                SpansOf(
+                    (-1.5, -0.9, false), (-0.9, -0.3, false), (-0.3, 0.0, true),
+                    (0.0, 0.6, false), (0.6, 1.2, false), (1.2, 1.35, true)),
+                0.0, 0, 0, 0
+            })!;
+        if (ReadSpans(untouched).Length != 6)
+        {
+            throw new InvalidOperationException(
+                "At a minimum of 0 the merge returns its input untouched, " +
+                "six spans in and six out; it returned " +
+                $"{ReadSpans(untouched).Length}.");
+        }
+        if (ReadSpans(premerged).Length == 6)
+        {
+            throw new InvalidOperationException(
+                "This check only measures anything while the SAME spans DO " +
+                "merge at a live minimum; at 0.2 they did not, so the " +
+                "zero case is being compared against nothing.");
+        }
+        if (Reading<int>(At(0.0), "MergedPieces") != 0)
+        {
+            throw new InvalidOperationException(
+                "MP at 0 is a legal value and not an error: the minimum is " +
+                "0 and Mx is unbounded, so no piece is merged and no crown " +
+                "cap is split (rule 6.0). It is the value an author uses " +
+                "to see the engine's raw output; MergedPieces read " +
+                $"{Reading<int>(At(0.0), "MergedPieces")} and the cells were " +
+                $"{off.Length}.");
+        }
+
+        // 12.6(d): A COURSE HOLDING EXACTLY ONE PIECE IN TOTAL KEEPS IT
+        // HOWEVER SHORT. Rule 6.5 in rule 6.5's own words, and NOT "a course
+        // with exactly one short piece", which would wrongly protect a single
+        // short piece sitting among many long ones and is the opposite of
+        // what the rule says. Driven on the static, because no fixture in
+        // this file gives a course exactly one piece and inventing one would
+        // measure the fixture rather than the rule.
+        object lonely = mergeShort.Invoke(
+            null,
+            new object?[] { SpansOf((-0.05, 0.05, true)), 0.2, 0, 0, 0 })!;
+        (double U0, double U1)[] kept = ReadSpans(lonely);
+        if (kept.Length != 1 ||
+            Math.Abs(kept[0].U1 - kept[0].U0 - 0.1) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "A course whose ONLY piece is under the minimum keeps that " +
+                "piece as it is (rule 6.5): a tenth of a metre against a " +
+                "minimum of 0.2 survives, because there is nothing to merge " +
+                "it into and a dropped course is a hole. It came back as " +
+                $"{kept.Length} spans.");
+        }
+        object lonelyAtHalf = mergeShort.Invoke(
+            null,
+            new object?[] { SpansOf((-0.05, 0.05, true)), 0.3, 0, 0, 0 })!;
+        if (ReadSpans(lonelyAtHalf).Length != 1)
+        {
+            throw new InvalidOperationException(
+                "The same course keeps its only piece at MP 0.5 too; the " +
+                "rule is about the piece being ALONE and not about how far " +
+                "under the threshold it is.");
+        }
+        // And the negative case, which is what stops the weaker reading:
+        // ONE short piece among many long ones is NOT protected.
+        object crowded = mergeShort.Invoke(
+            null,
+            new object?[]
+            {
+                SpansOf(
+                    (-1.2, -0.6, false), (-0.6, 0.0, false),
+                    (0.0, 0.1, true), (0.1, 0.7, false), (0.7, 1.3, false)),
+                0.2, 0, 0, 0
+            })!;
+        if (ReadSpans(crowded).Length != 4)
+        {
+            throw new InvalidOperationException(
+                "A single SHORT piece among many long ones is not what rule " +
+                "6.5 protects: it merges, and five spans come back as four. " +
+                $"Got {ReadSpans(crowded).Length}. Reading 6.5 as \"a course " +
+                "with exactly one short piece\" is the opposite of what it " +
+                "says.");
+        }
+    }
+
+    /// <summary>
     /// Ruling B of the whole-branch review as item B2 corrects it,
     /// measured: a band whose level curves do not CORRESPOND one for one
     /// is REFUSED whole, named in the diagnostics, and counted, rather
@@ -18830,7 +19091,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
 
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
@@ -19472,7 +19734,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         foreach ((double[][] vertices, int[][] faces, string label) fixture in
                  new[]
                  {
@@ -19602,7 +19865,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
         MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
 
@@ -19904,7 +20168,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
         MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
 
@@ -20193,7 +20458,8 @@ internal static class Program
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
 
         object Net((double[][] Vertices, int[][] Faces) fixture) =>
@@ -20968,7 +21234,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         MethodInfo selfCrosses =
             RequirePublicStatic(patterns, "PlanSelfCrosses");
         MethodInfo overlap = RequirePublicStatic(patterns, "PlansOverlap");
@@ -21401,7 +21668,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
 
         (double[][] vertices, int[][] faces) = SkinAnnularVaultNet(96);
         object net = Activator.CreateInstance(
@@ -21456,7 +21724,8 @@ internal static class Program
     {
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
-        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
 
         (double[][] vertices, int[][] faces) = SkinBarrelNet();

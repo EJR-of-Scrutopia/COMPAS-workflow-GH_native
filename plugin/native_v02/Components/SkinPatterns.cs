@@ -191,7 +191,9 @@ internal sealed record SkinPatternResult(
     int MergedPieces,
     int DegenerateCentroidsSkipped,
     int ExtraLevels,
-    int TracePasses);
+    int TracePasses,
+    int MergedShortKept,
+    int MergedStillShort);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -2453,12 +2455,32 @@ internal static class SkinPatterns
     /// courses carry the half-piece stagger. Cells map to the band
     /// boundary curves by normalised arc length from the matching seams.
     /// </summary>
+    /// <summary>The engine's own default for Min Piece, which is rule 9.5's
+    /// port default: a third of Size, giving a minimum piece of S / 3 and a
+    /// maximum of 3 S. An explicit overload and not an optional parameter,
+    /// so that every reflection call binds.</summary>
     public static SkinPatternResult Courses(
         SkinNet net,
         double size,
-        double courseHeight)
+        double courseHeight) =>
+        Courses(net, size, courseHeight, 1.0 / 3.0);
+
+    public static SkinPatternResult Courses(
+        SkinNet net,
+        double size,
+        double courseHeight,
+        double minPiece)
     {
         RequireSizes(size, courseHeight);
+        // Rule 6.4's bounds, applied in the engine so the harness can
+        // measure them without a canvas. The component clamps and WARNS
+        // (rule 9.5); the engine simply takes the clamped value, the same
+        // split the CH floor already keeps.
+        double clampedMinPiece =
+            double.IsFinite(minPiece)
+                ? Math.Min(Math.Max(minPiece, 0.0), 0.5)
+                : 1.0 / 3.0;
+        double minimumPiece = clampedMinPiece * size;
         (double dMin, double dMax) = LevelRange(net);
         if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
             return Empty("courses", net);
@@ -2497,6 +2519,9 @@ internal static class SkinPatterns
         var keyed =
             new List<(int Course, int Order, double U0, SkinCell Cell)>();
         var transitions = new List<(double Low, double High)>();
+        int mergedPieces = 0;
+        int mergedShortKept = 0;
+        int mergedStillShort = 0;
         var capGirths = new List<double>();
         var capRefusals = new List<string>();
         foreach ((double low, double high) in resolved.Refused)
@@ -2574,13 +2599,27 @@ internal static class SkinPatterns
                     1, (int)Math.Round(mid.Length / size));
                 double pitch = mid.Length / pieces;
                 double phase = band.Course % 2 == 0 ? 0.0 : 0.5 * pitch;
+                var spans = new List<(double U0, double U1, bool Clipped)>();
                 foreach ((double u0, double u1) in
                          CourseSpans(mid, pieces, pitch, phase))
                 {
-                    bool endPiece = u1 - u0 < pitch - 1.0e-9;
+                    // Only an open strip's end piece is shorter than the
+                    // pitch: it absorbed the phase, and it is the
+                    // "boundary-clipped" cell of this pattern.
+                    spans.Add((u0, u1, u1 - u0 < pitch - 1.0e-9));
+                }
+                // The merge runs BEFORE KeepValidPlans (rule 6.6), so the
+                // filter sees and judges the cells the author is actually
+                // handed.
+                spans = MergeShortPieces(
+                    spans, minimumPiece,
+                    ref mergedPieces, ref mergedShortKept,
+                    ref mergedStillShort);
+                foreach ((double u0, double u1, bool clipped) in spans)
+                {
                     SkinCell cell = BandCell(
                         band.Course, lowerCurve, mid, upperCurve,
-                        u0, u1, endPiece);
+                        u0, u1, clipped);
                     if (cell.Outline.Count < 3)
                         continue;
                     keyed.Add((band.Course, component, u0, cell));
@@ -2625,6 +2664,7 @@ internal static class SkinPatterns
                     .Select(cell => cell.U1 - cell.U0).ToList(),
                 "half a pitch on odd courses",
                 cells.Count(cell => cell.Clipped),
+                mergedPieces,
                 degenerateDropped, overlapDropped,
                 TransitionLine(
                     "courses", transitionBands, transitions,
@@ -2646,10 +2686,12 @@ internal static class SkinPatterns
             0,
             0,
             Array.Empty<int>(),
-            0,
+            mergedPieces,
             0,
             resolved.ExtraLevels,
-            resolved.Passes);
+            resolved.Passes,
+            mergedShortKept,
+            mergedStillShort);
     }
 
     /// <summary>
@@ -2774,6 +2816,111 @@ internal static class SkinPatterns
     }
 
     /// <summary>
+    /// Rules 6.1 to 6.7. A cell whose along-course span is AT OR UNDER the
+    /// minimum piece size is MERGED into a neighbour, and the merged cell is
+    /// REBUILT and not glued: this runs on the SPANS, before any outline
+    /// exists, so the BandCell construction is simply run again over the
+    /// union span. Gluing two outlines would leave the absorbed joint's two
+    /// points in the ring as a pair of collinear corners, which is exactly
+    /// the degeneracy rule 6.8 exists to guard PlanInteriorPoint against.
+    ///
+    /// WHICH NEIGHBOUR WINS: the neighbour ALONG THE COURSE with the SHORTER
+    /// span, so merging keeps the maximum piece length down rather than
+    /// growing one long piece. A tie goes to the neighbour with the lower
+    /// U0, which is deterministic and is the seam-ward one. A piece with
+    /// only one neighbour, which a strip end has, merges into that one.
+    ///
+    /// WHAT STOPS A CASCADE: ONE pass, seam outward, and a span that has
+    /// already absorbed a merge is not itself tested again. Each span can
+    /// therefore grow at most once per side and the pass terminates in a
+    /// single sweep. There is no iteration to convergence and no recursion.
+    ///
+    /// The neighbour walk is LINEAR and never wraps, even on a closed
+    /// course, and the reason is worth stating: within a closed course every
+    /// piece is exactly the pitch by construction, so the rule does not bite
+    /// there at all, and a span merged across the meridian opposite the seam
+    /// would not be one arc in signed U anyway. It is mostly a rim rule.
+    /// </summary>
+    private static List<(double U0, double U1, bool Clipped)>
+        MergeShortPieces(
+            List<(double U0, double U1, bool Clipped)> spans,
+            double minimum,
+            ref int merged,
+            ref int keptShort,
+            ref int stillShort)
+    {
+        if (!(minimum > 0.0) || spans.Count == 0)
+            return spans;
+        var working = spans
+            .OrderBy(span => span.U0)
+            .ToList();
+        if (working.Count == 1)
+        {
+            // A course whose ONLY piece is under the threshold keeps that
+            // piece as it is (rule 6.5), and the fact is counted.
+            if (working[0].U1 - working[0].U0 <= minimum + 1.0e-9)
+                keptShort++;
+            return working;
+        }
+        var absorbed = new bool[working.Count];
+        var grown = new bool[working.Count];
+        int[] order = Enumerable
+            .Range(0, working.Count)
+            .OrderBy(at => Math.Abs(
+                (working[at].U0 + working[at].U1) / 2.0))
+            .ThenBy(at => (working[at].U0 + working[at].U1) / 2.0)
+            .ToArray();
+        foreach (int at in order)
+        {
+            if (absorbed[at] || grown[at])
+                continue;
+            if (working[at].U1 - working[at].U0 > minimum + 1.0e-9)
+                continue;
+            int left = at - 1;
+            while (left >= 0 && absorbed[left])
+                left--;
+            int right = at + 1;
+            while (right < working.Count && absorbed[right])
+                right++;
+            bool hasLeft = left >= 0;
+            bool hasRight = right < working.Count;
+            if (!hasLeft && !hasRight)
+                continue;
+            int into;
+            if (!hasLeft)
+            {
+                into = right;
+            }
+            else if (!hasRight)
+            {
+                into = left;
+            }
+            else
+            {
+                double leftSpan = working[left].U1 - working[left].U0;
+                double rightSpan = working[right].U1 - working[right].U0;
+                into = rightSpan < leftSpan - 1.0e-12 ? right : left;
+            }
+            double u0 = Math.Min(working[into].U0, working[at].U0);
+            double u1 = Math.Max(working[into].U1, working[at].U1);
+            working[into] = (
+                u0, u1, working[into].Clipped || working[at].Clipped);
+            absorbed[at] = true;
+            grown[into] = true;
+            merged++;
+            if (u1 - u0 <= minimum + 1.0e-9)
+                stillShort++;
+        }
+        var kept = new List<(double U0, double U1, bool Clipped)>();
+        for (int at = 0; at < working.Count; at++)
+        {
+            if (!absorbed[at])
+                kept.Add(working[at]);
+        }
+        return kept;
+    }
+
+    /// <summary>
     /// Spec section 5's cell: the lower boundary curve's sampled run
     /// between the two joints, the straight joint edge up, the upper
     /// curve's run back, and the implicit closing edge down. A joint at
@@ -2875,6 +3022,7 @@ internal static class SkinPatterns
         IReadOnlyList<double> pieceLengths,
         string stagger,
         int clipped,
+        int mergedPieces,
         int planDegenerateDropped,
         int planOverlapDropped,
         string? transitions = null,
@@ -2897,6 +3045,9 @@ internal static class SkinPatterns
         }
         lines.Add($"Stagger: {stagger}");
         lines.Add($"Boundary-clipped cells: {clipped}");
+        lines.Add(
+            $"Merged pieces: {mergedPieces} (spans at or under the minimum " +
+            "piece size, merged into the shorter neighbour along the course)");
         lines.Add(
             $"Plan-degenerate cells dropped: {planDegenerateDropped} " +
             "(self-crossing in plan; excluded automatically so the " +
@@ -2941,7 +3092,7 @@ internal static class SkinPatterns
                 name == "courses"
                     ? "half a pitch on odd courses"
                     : "0.75 x S per course row",
-                0, 0, 0),
+                0, 0, 0, 0),
             0,
             Array.Empty<(double, double)>(),
             0,
@@ -2961,7 +3112,9 @@ internal static class SkinPatterns
             0,
             0,
             0,
-            1);
+            1,
+            0,
+            0);
 
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
 
@@ -3298,6 +3451,7 @@ internal static class SkinPatterns
                 cells.Select(cell => cell.U1 - cell.U0).ToList(),
                 "0.75 x S per course row",
                 cells.Count(cell => cell.Clipped),
+                0,
                 degenerateDropped, overlapDropped,
                 TransitionLine(
                     "hexagonal", skippedRows.Count, transitions,
@@ -3321,6 +3475,8 @@ internal static class SkinPatterns
             0,
             0,
             0,
-            1);
+            1,
+            0,
+            0);
     }
 }
