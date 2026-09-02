@@ -631,6 +631,25 @@ internal static class Program
 
         try
         {
+            ValidateSkinField(plugin);
+            Console.WriteLine(
+                "PASS  Skin rim-distance field: a rimmed flat plate reads " +
+                "its own perpendicular distance to within 2 per cent and " +
+                "its rim reads zero; a plate carried on four pairwise " +
+                "non-adjacent supports is FINITE at every vertex, which is " +
+                "the one-frozen edge relaxation doing the starting; and a " +
+                "net built through the two-argument constructor has an " +
+                "EMPTY rim, so its field is the vertices' own Z byte for " +
+                "byte and every shipped pin still measures what it did.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin rim-distance field: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -14172,6 +14191,102 @@ internal static class Program
     }
 
     /// <summary>
+    /// A flat rectangular plate, x 0 to 10 and y 0 to 4 at a 0.25 m pitch,
+    /// z = 0 throughout, with the y = 0 long edge as its rim. Check 12.1(b)
+    /// measures the field on it against the perpendicular distance, which
+    /// pins the triangle update rather than the edge fallback; check 12.1(a)
+    /// reads the rim's own zeros off it, and rule 1.5.4 reads its Z range,
+    /// which is nothing at all.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim) SkinPlateNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 16; j++)
+        {
+            for (int i = 0; i <= 40; i++)
+                vertices.Add(new double[] { 0.25 * i, 0.25 * j, 0.0 });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 16; j++)
+        {
+            for (int i = 0; i < 40; i++)
+            {
+                int a = j * 41 + i;
+                faces.Add(new[] { a, a + 1, a + 42, a + 41 });
+            }
+        }
+        var rim = new List<int>();
+        for (int i = 0; i <= 40; i++)
+            rim.Add(i);
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
+    /// A square-plan plate, 8 by 8 at 1 m, carried on FOUR PAIRWISE
+    /// NON-ADJACENT support vertices: its own corners. It is the fixture
+    /// rule 1.4.1(b) exists for. No triangle anywhere has two frozen corners
+    /// at the first pop, so an update rule written only as the two-frozen
+    /// triangle case never relaxes anything and leaves every non-rim vertex
+    /// at positive infinity.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinFourSupportNet()
+    {
+        var vertices = new List<double[]>();
+        for (int j = 0; j <= 8; j++)
+        {
+            for (int i = 0; i <= 8; i++)
+                vertices.Add(new double[] { i, j, 0.0 });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < 8; j++)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                int a = j * 9 + i;
+                faces.Add(new[] { a, a + 1, a + 10, a + 9 });
+            }
+        }
+        return (
+            vertices.ToArray(),
+            faces.ToArray(),
+            new[] { 0, 8, 72, 80 });
+    }
+
+    /// <summary>The Levels array off a constructed net.</summary>
+    private static double[] SkinLevels(object net) =>
+        ((IEnumerable)net.GetType().GetProperty("Levels")!.GetValue(net)!)
+            .Cast<double>()
+            .ToArray();
+
+    /// <summary>A rim-bearing, force-bearing net through the four-argument
+    /// constructor.</summary>
+    private static object SkinNetWith(
+        Type netType,
+        Type edgeType,
+        double[][] vertices,
+        int[][] faces,
+        int[] rim,
+        (int A, int B, double Force)[] forces)
+    {
+        Array edges = Array.CreateInstance(edgeType, forces.Length);
+        for (int at = 0; at < forces.Length; at++)
+        {
+            edges.SetValue(
+                Activator.CreateInstance(
+                    edgeType,
+                    new object[]
+                    {
+                        forces[at].A, forces[at].B, forces[at].Force
+                    }),
+                at);
+        }
+        return Activator.CreateInstance(
+            netType,
+            new object[] { vertices, faces, rim, edges })!;
+    }
+
+    /// <summary>
     /// The dome fixture: two octagonal rings and an apex. Ring 0 has
     /// radius 2 at z 0, ring 1 radius 1 at z 1, the apex (0, 0, 2);
     /// quads between the rings, triangles to the apex. The radius at
@@ -15144,6 +15259,95 @@ internal static class Program
             throw new InvalidOperationException(
                 "An FD Result carries no faces and must give a NULL net, " +
                 "so the component can name the reason.");
+        }
+    }
+
+    /// <summary>
+    /// The rim-distance field (spec 2026-09-01 section 1), checks 12.1(a),
+    /// (b), (e) and (i). The field is the scalar the tracer will cut, so it
+    /// is measured on the net itself, before anything downstream reads it.
+    /// </summary>
+    private static void ValidateSkinField(Assembly plugin)
+    {
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        var noForces = Array.Empty<(int, int, double)>();
+
+        // 12.1(a) and 12.1(b): the plate.
+        (double[][] plateVertices, int[][] plateFaces, int[] plateRim) =
+            SkinPlateNet();
+        object plate = SkinNetWith(
+            netType, edgeType, plateVertices, plateFaces, plateRim, noForces);
+        double[] plateLevels = SkinLevels(plate);
+        foreach (int seed in plateRim)
+        {
+            if (plateLevels[seed] != 0.0)
+            {
+                throw new InvalidOperationException(
+                    "Every rim vertex is seeded at 0 (rule 1.4.1); vertex " +
+                    $"{seed} reads {plateLevels[seed]}.");
+            }
+        }
+        for (int at = 0; at < plateLevels.Length; at++)
+        {
+            double expected = plateVertices[at][1];
+            if (plateLevels[at] < 0.0 ||
+                Math.Abs(plateLevels[at] - expected) > 0.02 * expected + 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "On a flat plate rimmed along y = 0 the field is the " +
+                    "PERPENDICULAR distance from that edge to within 2 per " +
+                    $"cent (check 12.1(b)); vertex {at} at y = {expected} " +
+                    $"reads {plateLevels[at]}.");
+            }
+        }
+
+        // 12.1(i): a rim of pairwise non-adjacent vertices.
+        (double[][] cornerVertices, int[][] cornerFaces, int[] cornerRim) =
+            SkinFourSupportNet();
+        object corners = SkinNetWith(
+            netType, edgeType, cornerVertices, cornerFaces, cornerRim,
+            noForces);
+        double[] cornerLevels = SkinLevels(corners);
+        for (int at = 0; at < cornerLevels.Length; at++)
+        {
+            if (!double.IsFinite(cornerLevels[at]))
+            {
+                throw new InvalidOperationException(
+                    "A rim of FOUR pairwise non-adjacent supports must give " +
+                    "a finite field at every vertex (check 12.1(i)): the " +
+                    "one-frozen edge relaxation of rule 1.4.1(b) is what " +
+                    "STARTS the front, and without it nothing is ever " +
+                    $"relaxed. Vertex {at} reads {cornerLevels[at]}.");
+            }
+        }
+
+        // 12.1(e): an EMPTY rim keeps the field identical, byte for byte.
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        foreach ((double[][] vertices, int[][] faces, string label) fixture in
+                 new[]
+                 {
+                     (barrelVertices, barrelFaces, "barrel"),
+                     (domeVertices, domeFaces, "dome")
+                 })
+        {
+            object bare = Activator.CreateInstance(
+                netType,
+                new object[] { fixture.vertices, fixture.faces })!;
+            double[] levels = SkinLevels(bare);
+            for (int at = 0; at < levels.Length; at++)
+            {
+                if (levels[at] != fixture.vertices[at][2])
+                {
+                    throw new InvalidOperationException(
+                        "With an EMPTY rim the field IS the vertices' own Z " +
+                        "(rule 1.2.3), byte for byte, which is what keeps " +
+                        "six adversarial rounds of pins alive; on the " +
+                        $"{fixture.label} vertex {at} reads {levels[at]} " +
+                        $"against z {fixture.vertices[at][2]}.");
+                }
+            }
         }
     }
 

@@ -28,15 +28,57 @@ namespace Ananke.COMPAS.Native.Components;
 /// constructor, so a rule that lived in ReadNet alone would be a rule no
 /// fixture could measure.
 /// </summary>
+/// <summary>One force edge of the net: two NET vertex indices, A less than
+/// B, and the member force in kN (spec 2026-09-01 rule 1.2.2(b)). The
+/// indices are NET indices and not equilibrium ones; ReadNet maps them, and
+/// rule 1.3.5 says what goes wrong silently when it does not.</summary>
+internal sealed record SkinNetEdge(int A, int B, double Force);
+
 internal sealed record SkinNet(
     IReadOnlyList<double[]> Vertices,
-    IReadOnlyList<int[]> Faces)
+    IReadOnlyList<int[]> Faces,
+    IReadOnlyList<int> Rim,
+    IReadOnlyList<SkinNetEdge> Edges)
 {
+    /// <summary>The bare net: no rim, no forces. Rule 1.2.2 asks for
+    /// defaults so that every existing two-argument construction goes on
+    /// compiling AND goes on measuring what it measures today. An optional
+    /// parameter would only honour the first half: the smoke harness builds
+    /// its nets through Activator.CreateInstance, whose default binder does
+    /// not fill optional parameters, so a two-argument construction there
+    /// would stop finding a constructor at all. This one is found by both.
+    /// </summary>
+    public SkinNet(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces)
+        : this(
+            vertices,
+            faces,
+            Array.Empty<int>(),
+            Array.Empty<SkinNetEdge>())
+    {
+    }
+
     /// <summary>The faces, triangulated. An all-triangle face list comes
     /// through untouched, so the invariant is idempotent and a net built
     /// from another net's faces is the same net.</summary>
     public IReadOnlyList<int[]> Faces { get; } =
         SkinPatterns.Triangulate(Vertices, Faces);
+
+    /// <summary>The scalar the tracer cuts: geodesic distance from the rim
+    /// in metres, or the vertices' own Z where the rim is empty (rules 1.2.1
+    /// to 1.2.3). Computed once here, for the same reason the triangulation
+    /// is: the harness builds its nets straight through this constructor, so
+    /// a field that lived in ReadNet alone would be a field no fixture could
+    /// measure. Triangulate is called a second time rather than the Faces
+    /// property being read, because an instance property initialiser cannot
+    /// see `this`; it is idempotent and returns the same list unchanged when
+    /// every face is already a triangle.</summary>
+    public IReadOnlyList<double> Levels { get; } =
+        SkinPatterns.RimDistanceField(
+            Vertices,
+            SkinPatterns.Triangulate(Vertices, Faces),
+            Rim);
 }
 
 /// <summary>
@@ -295,6 +337,186 @@ internal static class SkinPatterns
     {
         foreach (int[] triangle in SplitPolygonInOrder(vertices, ring))
             into.Add(triangle);
+    }
+
+    // ---- the rim-distance field (spec 2026-09-01 section 1) -------------
+
+    /// <summary>
+    /// GEODESIC DISTANCE FROM THE RIM, one value per vertex, in metres
+    /// (rule 1.2.1), by FAST MARCHING on the triangulated net: Dijkstra's
+    /// structure with the edge relaxation replaced by the Kimmel and
+    /// Sethian triangle update (rule 1.4.1).
+    ///
+    /// An EMPTY rim gives the vertices' own Z, which is rule 1.2.3 and the
+    /// honest fallback of rule 1.7.4. A vertex unreachable from the rim
+    /// across the triangulation keeps positive infinity, which rule 1.7.3
+    /// excludes from the field range and counts.
+    ///
+    /// The field the engine DEFINES is the piecewise-linear interpolant of
+    /// these vertex values over the triangles (rule 1.4.4). The chord the
+    /// tracer draws between two edge crossings is the exact level set of
+    /// that interpolant on a planar triangle, for the same reason it was
+    /// the exact level set of Z: a function affine on a plane has straight
+    /// level sets. What is approximate is the relation between the
+    /// interpolant and the true geodesic distance, and that approximation
+    /// is the field's own definition rather than an error downstream of it.
+    ///
+    /// Cost is O(V log V) with a small constant, run once per net. It must
+    /// NOT be cached across solves (rule 1.4.5): a Result whose vertices
+    /// moved is a different field.
+    /// </summary>
+    public static IReadOnlyList<double> RimDistanceField(
+        IReadOnlyList<double[]> vertices,
+        IReadOnlyList<int[]> faces,
+        IReadOnlyList<int> rim)
+    {
+        int count = vertices.Count;
+        var levels = new double[count];
+        if (rim.Count == 0)
+        {
+            for (int at = 0; at < count; at++)
+                levels[at] = vertices[at][2];
+            return levels;
+        }
+        for (int at = 0; at < count; at++)
+            levels[at] = double.PositiveInfinity;
+
+        var facesAt = new List<int>?[count];
+        for (int face = 0; face < faces.Count; face++)
+        {
+            foreach (int corner in faces[face])
+            {
+                if (corner < 0 || corner >= count)
+                    continue;
+                (facesAt[corner] ??= new List<int>()).Add(face);
+            }
+        }
+
+        var frozen = new bool[count];
+        // A SortedSet of (value, vertex) IS the min-heap with rule 1.4.3's
+        // tie-break built in: the tuple comparer falls through to the vertex
+        // index when two tentative values are equal, so the field is a
+        // property of the mesh's own numbering rather than of any traversal.
+        // A vertex whose value improves is added again; the stale entry is
+        // skipped when it pops, because the vertex is frozen by then.
+        var heap = new SortedSet<(double Value, int Vertex)>();
+        foreach (int seed in rim)
+        {
+            if (seed < 0 || seed >= count || levels[seed] == 0.0)
+                continue;
+            levels[seed] = 0.0;
+            heap.Add((0.0, seed));
+        }
+        while (heap.Count > 0)
+        {
+            (double Value, int Vertex) top = heap.Min;
+            heap.Remove(top);
+            if (frozen[top.Vertex])
+                continue;
+            frozen[top.Vertex] = true;
+            List<int>? incident = facesAt[top.Vertex];
+            if (incident is null)
+                continue;
+            foreach (int face in incident)
+            {
+                int[] triangle = faces[face];
+                if (triangle.Length != 3)
+                    continue;
+                for (int corner = 0; corner < 3; corner++)
+                {
+                    int c = triangle[corner];
+                    if (frozen[c])
+                        continue;
+                    int a = triangle[(corner + 1) % 3];
+                    int b = triangle[(corner + 2) % 3];
+                    double offer;
+                    if (frozen[a] && frozen[b])
+                    {
+                        offer = TriangleUpdate(
+                            vertices[c], vertices[a], vertices[b],
+                            levels[a], levels[b]);
+                    }
+                    else if (frozen[a])
+                    {
+                        offer = levels[a] +
+                            Distance(vertices[a], vertices[c]);
+                    }
+                    else if (frozen[b])
+                    {
+                        offer = levels[b] +
+                            Distance(vertices[b], vertices[c]);
+                    }
+                    else
+                    {
+                        // Neither end frozen: this triangle offers nothing
+                        // on this pop (rule 1.4.1(c)).
+                        continue;
+                    }
+                    if (offer < levels[c] - 1.0e-12)
+                    {
+                        levels[c] = offer;
+                        heap.Add((offer, c));
+                    }
+                }
+            }
+        }
+        return levels;
+    }
+
+    /// <summary>
+    /// Rule 1.4.2: the planar wavefront solved on the triangle itself, which
+    /// is planar by the net's own invariant. Where the characteristic
+    /// direction falls outside the triangle, which an obtuse angle at the
+    /// updated corner gives, the update falls back to the plain edge
+    /// relaxation min(dA + |CA|, dB + |CB|). No unfolding across neighbours:
+    /// the fallback is bounded, stated and cheap, and the cost of getting it
+    /// slightly wrong is a course boundary a few millimetres off on a badly
+    /// shaped triangle, against a CH of order 0.35 m on mesh edges of order
+    /// 0.2 m.
+    /// </summary>
+    private static double TriangleUpdate(
+        double[] c,
+        double[] pa,
+        double[] pb,
+        double da,
+        double db)
+    {
+        // A carries the SMALLER of the two known values; u is the difference.
+        if (db < da)
+        {
+            (pa, pb) = (pb, pa);
+            (da, db) = (db, da);
+        }
+        double b = Distance(c, pa);
+        double a = Distance(c, pb);
+        double fallback = Math.Min(da + b, db + a);
+        if (!(a > 1.0e-12) || !(b > 1.0e-12))
+            return fallback;
+        double cos =
+            ((pa[0] - c[0]) * (pb[0] - c[0]) +
+             (pa[1] - c[1]) * (pb[1] - c[1]) +
+             (pa[2] - c[2]) * (pb[2] - c[2])) / (a * b);
+        cos = Math.Min(Math.Max(cos, -1.0), 1.0);
+        double u = db - da;
+        double quadA = a * a + b * b - 2.0 * a * b * cos;
+        if (!(quadA > 1.0e-18))
+            return fallback;
+        double quadB = 2.0 * b * u * (a * cos - b);
+        double quadC = b * b * (u * u - a * a * (1.0 - cos * cos));
+        double discriminant = quadB * quadB - 4.0 * quadA * quadC;
+        if (discriminant < 0.0)
+            return fallback;
+        double t = (-quadB + Math.Sqrt(discriminant)) / (2.0 * quadA);
+        if (!(t > u) || !(t > 0.0))
+            return fallback;
+        double lower = a * cos;
+        double upper = Math.Abs(cos) > 1.0e-12
+            ? a / cos
+            : double.PositiveInfinity;
+        double middle = b * (t - u) / t;
+        if (!(middle > lower) || !(middle < upper))
+            return fallback;
+        return Math.Min(fallback, da + t);
     }
 
     /// <summary>
