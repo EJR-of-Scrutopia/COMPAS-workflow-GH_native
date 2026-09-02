@@ -16,28 +16,41 @@ Param reviewed the installed phase-one plugin on his own arch, at four Types. Hi
 > types but yes it should just always preference symmetry and use a single column in center for
 > these instances."
 
-THE RULE. Where a layout would let ONE SIDE claim the middle, it must not. The centre is either
-shared by both sides or it stands alone as a single column, and the groups either side of it mirror
-each other. A layout is never permitted to be asymmetric because one flank absorbed the central
-tree while the other did not.
+HE THEN CORRECTED THE READING TAKEN FROM THAT, AND THE CORRECTION GOVERNS. The first reading, that
+this was about which side a straddling GROUP belongs to, was wrong. His words:
 
-He offers two readings and prefers whichever is simpler: both sides converge on ONE central foot, or
-a single column stands at the centre. He says "use a single column in center for these instances",
-so where the two readings differ, ONE COLUMN AT THE CENTRE governs.
+> "no the symmetry isnt the angle its the amount of branches per side on an equal form. One branch
+> always reaches to the center while the other side doesnt ebcause we rule that only one branch can
+> touch the central node, this is where an additional branch is introduced on one side. it is
+> visible in the 3-4 screenshots. even in the 3 sided and beyond same problem. So i am suggesting
+> keep everything as it is, but when there is a center node that is left over and a side want to
+> connect to it, just put a central column in and keep the nodes connections the same"
+
+THE DEFECT, in his terms. The asymmetry is NOT angular and it is not about where a foot stands. It
+is a COUNT: on a form that is otherwise symmetric, one side ends up with one more branch than the
+other. The cause is the rule that only ONE tree may hold the central node. Whichever side claims it
+gains a branch; the other side does not. Four branches against three on a mirror-symmetric arch.
+
+THE RULE, and it is deliberately the smallest possible change. KEEP EVERYTHING ELSE AS IT IS. Where
+a CENTRAL NODE is left over and a side wants to connect to it, do not let that side take it. Give
+that node ITS OWN COLUMN, standing on its own foot, and leave every other node's connections
+untouched. The two flanks then carry equal branch counts and the centre carries one column.
+
+WHAT MUST NOT CHANGE, in his words "keep the nodes connections the same": no other tree gains or
+loses a member, no other foot moves, no grouping is recomputed, and no tolerance is widened. The
+only change is that the leftover central node is extracted from whichever group would have annexed
+it and stands alone.
+
+WHERE IT APPLIES. He names the third and fourth screenshots, and adds "even in the 3 sided and
+beyond same problem", so it is NOT confined to one Type or to two-sided arches: it occurs at higher
+Branching and on the three-way vault as well. The fix must be checked across Types and Branching
+values and on a multi-span form, not only where he happened to photograph it.
 
 WHAT THIS GENERALISES. It is the same instinct as his ruling earlier the same day that the standing
 column at an even Type stands straight rather than folding into the nearer flank group, and as the
-ladder's rule that a single stray takes the centre. The three are one principle: THE CENTRE IS
-NEVER ANNEXED BY A SIDE. Symmetry outranks group tidiness everywhere, at every Type, not only where
-the ladder happens to reach.
-
-HE CALLS IT RARE and confined to the cases with no straight column already, and he says it happens
-"on a few column types". The fix must therefore be checked at EVERY Type and on both an odd and an
-even tree row, not only at the Type where he saw it.
-
-WHAT HE IS NOT ASKING FOR. He is not asking to widen any tolerance, and he is not asking for the
-centre to gain a column where the layout already places one there symmetrically. This is a rule about
-which side a straddling group belongs to, not about adding columns.
+ladder's rule that a single stray takes the centre. All three say THE CENTRE IS NEVER ANNEXED BY A
+SIDE. What this ruling adds is the mechanism: the centre gets its own column rather than the groups
+being rebalanced around it.
 
 ## 1. The current behaviour is confirmed wrong
 
