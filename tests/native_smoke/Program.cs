@@ -10995,8 +10995,15 @@ internal static class Program
             // The merge clearance is therefore 0.25 and a spread of 0.1 is
             // comfortably inside it, while the FEET-CLOSE clearance is the same
             // number, so the moved-apart case of Step 2 needs a spread above 0.25.
-            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) DomeRibs(
-                double spread, double fan)
+            // The three ribs' middle notches stand at the plan abscissae `at`
+            // gives, one per rib, and NOT at a single symmetric spread: the
+            // fallback's whole claim is that it takes the MEAN, and a mean
+            // cannot be told from a bounding-box centre or from a median while
+            // the three candidates are symmetric about the middle one. The
+            // symmetric reading is DomeRibs below, which is what every fixture
+            // written before this one asks for.
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) DomeRibsAt(
+                double[] at, double fan)
             {
                 const int perRib = 5;
                 Array nodes = Array.CreateInstance(point3d, 3 * perRib);
@@ -11009,7 +11016,7 @@ internal static class Program
                     double turn = (r - 1) * fan * Math.PI / 180.0;
                     double ux = Math.Sin(turn);
                     double uy = Math.Cos(turn);
-                    double cx = (r - 1) * spread;
+                    double cx = at[r];
                     Array ribAcross = Array.CreateInstance(vector3d, perRib);
                     var bar = new int[perRib];
                     for (int i = 0; i < perRib; i++)
@@ -11034,6 +11041,10 @@ internal static class Program
                 edges.Add(((1 * perRib) + 2, (2 * perRib) + 2));
                 return (nodes, bars, anchors.ToArray(), across, edges.ToArray());
             }
+
+            (Array Nodes, int[][] Bars, int[] Anchors, Array Across, (int, int)[] Edges) DomeRibs(
+                double spread, double fan) =>
+                DomeRibsAt(new[] { -spread, 0.0, spread }, fan);
 
             // Each rib's own candidate point and its plan tangent, read straight
             // off the fixture. The tangent is the rule's own: the unit plan
@@ -11289,6 +11300,77 @@ internal static class Program
                     throw new InvalidOperationException(
                         $"The SINGULAR answer is the plan MEAN of the candidate points, ({parallelMean.X:0.#########}, {parallelMean.Y:0.#########}); "
                         + $"it stands at ({X(parallelNodes[parallelFeet[0]]):0.#########}, {Y(parallelNodes[parallelFeet[0]]):0.#########}).");
+                }
+
+                // ---- THE MEAN, ON CANDIDATES THAT ARE ASYMMETRIC IN PLAN,
+                // and this is what makes the two checks above mean anything.
+                // Both of them run on DomeRibs' symmetric spread, whose three
+                // candidates stand at -0.1, 0 and +0.1 with y = 0: collinear
+                // and symmetric about the middle one, so the plan mean, the
+                // centre of the axis-aligned bounding box and the median are
+                // ONE POINT and no assertion can tell them apart. VERIFIED:
+                // substituting the bounding-box centre for the mean in the
+                // engine left the whole suite green and its output
+                // byte-identical.
+                //
+                // The ribs here stand at -0.10, -0.02 and +0.10 instead. The
+                // gaps, 0.08 and 0.12, are both inside the merge clearance of
+                // 0.25 * g = 0.25, so the three still resolve as ONE connected
+                // component. But the mean is now -0.00666..., the bounding-box
+                // centre is 0 and the median is -0.02: three different answers
+                // to nine decimal places. The engine's own reason for the mean,
+                // which its doc comment states, is that the mean COMMUTES WITH
+                // ANY REFLECTION and a bounding-box centre does not; the claim
+                // is only testable where the two differ, so here they do.
+                //
+                // BOTH fallback roads are driven, because they are different
+                // returns in the same method and the earlier pair of fixtures
+                // exists precisely so that losing one cannot pass as the other:
+                // OUT OF REACH at a fan of 0.01 degrees, counted in
+                // ConvergenceFallback, and SINGULAR at 1e-7 degrees, not
+                // counted.
+                {
+                    double[] uneven = { -0.10, -0.02, 0.10 };
+                    double unevenMeanX = uneven.Average();
+                    double boxCentreX = 0.5 * (uneven.Min() + uneven.Max());
+                    double medianX = uneven.OrderBy(v => v).ElementAt(1);
+                    if (Math.Abs(unevenMeanX - boxCentreX) < 1.0e-6 || Math.Abs(unevenMeanX - medianX) < 1.0e-6)
+                    {
+                        throw new InvalidOperationException(
+                            $"This fixture only measures the MEAN while the mean, {unevenMeanX:0.#########}, the bounding-box centre, {boxCentreX:0.#########}, "
+                            + $"and the median, {medianX:0.#########}, are DIFFERENT points; on these ribs they are not.");
+                    }
+                    foreach ((double unevenFan, int wantFallback, string road) in new[]
+                    {
+                        (0.01, 1, "OUT OF REACH"),
+                        (1.0e-7, 0, "SINGULAR"),
+                    })
+                    {
+                        var lopsided = DomeRibsAt(uneven, unevenFan);
+                        object placedLopsided = Run(lopsided, Array.Empty<int[]>(), 1, 1);
+                        object builtLopsided = Get<object>(placedLopsided, "Built");
+                        var lopsidedNodes = ((IEnumerable)Get<object>(builtLopsided, "Nodes")).Cast<object>().ToArray();
+                        var lopsidedFeet = ((IEnumerable)Get<object>(builtLopsided, "Feet")).Cast<int>().ToArray();
+                        string lopsidedState =
+                            $"{lopsidedFeet.Length} feet, FeetMerged={Get<int>(builtLopsided, "FeetMerged")}, "
+                            + $"ConvergenceFallback={Get<int>(builtLopsided, "ConvergenceFallback")}";
+                        if (lopsidedFeet.Length != 1 || Get<int>(builtLopsided, "FeetMerged") != 1)
+                            throw new InvalidOperationException($"The {road} road: three ribs 0.08 and 0.12 apart against a clearance of 0.25 are ONE connected component and ONE column; {lopsidedState}.");
+                        if (Get<int>(builtLopsided, "ConvergenceFallback") != wantFallback)
+                            throw new InvalidOperationException($"The {road} road at a fan of {unevenFan} degrees counts {wantFallback} in ConvergenceFallback; {lopsidedState}.");
+                        (double X, double Y) lopsidedMean = DomeCandidateMean(lopsided);
+                        if (Math.Abs(lopsidedMean.X - unevenMeanX) > 1.0e-12)
+                            throw new InvalidOperationException($"The {road} road: the check's own mean of the candidate notches must be the mean of the offsets it built them at; {lopsidedMean.X:0.#########} against {unevenMeanX:0.#########}.");
+                        if (Math.Abs(X(lopsidedNodes[lopsidedFeet[0]]) - lopsidedMean.X) > 1.0e-9 ||
+                            Math.Abs(Y(lopsidedNodes[lopsidedFeet[0]]) - lopsidedMean.Y) > 1.0e-9)
+                        {
+                            throw new InvalidOperationException(
+                                $"The {road} fallback is the plan MEAN of the candidate points, ({lopsidedMean.X:0.#########}, {lopsidedMean.Y:0.#########}), and NOT the centre of "
+                                + $"their bounding box, ({boxCentreX:0.#########}, 0), nor their median, ({medianX:0.#########}, 0); it stands at "
+                                + $"({X(lopsidedNodes[lopsidedFeet[0]]):0.#########}, {Y(lopsidedNodes[lopsidedFeet[0]]):0.#########}). The mean commutes with any reflection, "
+                                + $"which the centre of an axis-aligned bounding box does not.");
+                        }
+                    }
                 }
 
                 // Two ribs crossing at a SHARED NODE two spacings below the
