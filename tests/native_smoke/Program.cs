@@ -700,6 +700,22 @@ internal static class Program
 
         try
         {
+            ValidateSkinBedSpacing(plugin);
+            Console.WriteLine(
+                "PASS  Skin bed spacing: on a rimmed hemisphere every " +
+                "interior course is CH apart along the SURFACE to within " +
+                "5 per cent, against the same net under world Z, whose " +
+                "courses stretch towards the crown in the measured ratio " +
+                "printed beside this line.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin bed spacing: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -17883,6 +17899,93 @@ internal static class Program
                 "and the engine names the fallback, because a silent " +
                 "change of what CH means is worse than an empty output; " +
                 $"got '{Reading<string>(fallback, "FieldKind")}'.");
+        }
+    }
+
+    /// <summary>
+    /// Check 12.1(d), the whole point of section 1. On a hemisphere of
+    /// R = 3 rimmed at its base ring, at S 0.6 and CH 0.35, the along-surface
+    /// distance between consecutive course boundaries is CH to within 5 per
+    /// cent at every joint of every INTERIOR course, and the same net with
+    /// an EMPTY rim, which is the shipped Z field, is measured beside it.
+    ///
+    /// Two scopes, and each is stated because they differ. The rim field's
+    /// bar is taken over courses 0 to CourseCount - 2: the TOP band is
+    /// whatever the field range leaves after the sliver merge, which rule
+    /// 2.4.2 bounds at 1.25 CH rather than fixing at CH, so a bar on it
+    /// would be measuring the merge and not the field. The shipped ratio is
+    /// taken over ALL cells, because that is the number the author sees.
+    /// The spec quotes a shipped ratio above 5; that figure was taken on a
+    /// shallower shell than this one, and the discipline of check 12.4(g)
+    /// applies, so what is pinned here is the ratio this repository can
+    /// rebuild, with a floor of 2.5 well under it.
+    ///
+    /// The measurement itself is the CHORD from a cell's first outline
+    /// point, its low-U corner on the lower bed, to its last, the same
+    /// corner on the upper bed. On concentric similar circles the
+    /// proportional mapping of rule 1.8.1 is exact, so the two points lie on
+    /// one meridian, and the chord is under the along-surface distance only
+    /// by the sagitta, which at 0.35 m over R = 3 is under a per cent.
+    /// </summary>
+    private static void ValidateSkinBedSpacing(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(patterns, "Courses");
+        (double[][] vertices, int[][] faces, int[] rim) = SkinHemisphereNet();
+
+        object rimmed = SkinNetWith(
+            netType, edgeType, vertices, faces, rim,
+            Array.Empty<(int, int, double)>());
+        object built = courses.Invoke(
+            null, new object[] { rimmed, 0.6, 0.35 })!;
+        var cells = SkinCells(built);
+        int courseCount = Reading<int>(built, "CourseCount");
+        double Chord((int Course, double[][] Outline, bool Clipped,
+            double U0, double U1) cell)
+        {
+            double[] first = cell.Outline[0];
+            double[] last = cell.Outline[^1];
+            return Math.Sqrt(
+                (first[0] - last[0]) * (first[0] - last[0]) +
+                (first[1] - last[1]) * (first[1] - last[1]) +
+                (first[2] - last[2]) * (first[2] - last[2]));
+        }
+        foreach (var cell in cells)
+        {
+            if (cell.Course >= courseCount - 1)
+                continue;
+            double chord = Chord(cell);
+            if (Math.Abs(chord - 0.35) > 0.05 * 0.35)
+            {
+                throw new InvalidOperationException(
+                    "Under a rim-distance field CH is the true BED-TO-BED " +
+                    "spacing measured along the surface, to within 5 per " +
+                    "cent (check 12.1(d)); a cell of course " +
+                    $"{cell.Course} spans {chord} m against CH 0.35.");
+            }
+        }
+
+        object bare = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        object shipped = courses.Invoke(
+            null, new object[] { bare, 0.6, 0.35 })!;
+        var shippedCells = SkinCells(shipped);
+        double widest = shippedCells.Max(Chord);
+        double narrowest = shippedCells.Min(Chord);
+        Console.WriteLine(
+            "      Skin bed spacing (check 12.1(d)): world Z on the same " +
+            $"hemisphere spans {narrowest:F3} m to {widest:F3} m, a ratio " +
+            $"of {widest / narrowest:F2}; the rim field holds every " +
+            "interior course to 0.35 m within 5 per cent.");
+        if (!(widest / narrowest > 2.5))
+        {
+            throw new InvalidOperationException(
+                "The shipped Z field stretches the beds towards the crown " +
+                "by construction, since a rise of CH is a distance along " +
+                "the surface of CH / sin(theta); the measured ratio must " +
+                $"stay above 2.5 on this fixture, got {widest / narrowest}.");
         }
     }
 

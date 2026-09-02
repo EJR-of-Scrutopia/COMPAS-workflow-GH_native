@@ -102,7 +102,13 @@ internal sealed record SkinNet(
 /// </summary>
 internal sealed class SkinLevelCurve
 {
-    public double Height { get; set; }
+    /// <summary>The FIELD value this curve is the level set of: a rim
+    /// distance in metres where the net carries a rim, and the world Z it
+    /// used to be where it does not (rules 1.2.1 and 1.2.5). Renamed from
+    /// Height with the field, because an author shown a rim distance
+    /// labelled as a height has been given a worse defect than the one this
+    /// wave fixes.</summary>
+    public double Level { get; set; }
 
     public List<double[]> Points { get; set; } = new();
 
@@ -779,11 +785,11 @@ internal static class SkinPatterns
     /// </summary>
     public static IReadOnlyList<IReadOnlyList<SkinLevelCurve>> TraceAll(
         SkinNet net,
-        IReadOnlyList<double> heights)
+        IReadOnlyList<double> levels)
     {
         var working = new List<List<SkinLevelCurve>>();
-        foreach (double height in heights)
-            working.Add(Trace(net, height));
+        foreach (double level in levels)
+            working.Add(Trace(net, level));
         AssignNestingDepths(working);
         NormaliseDirections(working);
         AssignSeams(working);
@@ -802,7 +808,7 @@ internal static class SkinPatterns
     /// touched is OPEN. Crossing indices are assigned in face-walk order,
     /// so the component order is deterministic.
     /// </summary>
-    private static List<SkinLevelCurve> Trace(SkinNet net, double height)
+    private static List<SkinLevelCurve> Trace(SkinNet net, double level)
     {
         var crossingByEdge = new Dictionary<(int, int), int>();
         var crossingPoints = new List<double[]>();
@@ -815,10 +821,13 @@ internal static class SkinPatterns
             (int, int) key = EdgeKey(a, b);
             if (crossingByEdge.TryGetValue(key, out int index))
                 return index;
-            double za = net.Vertices[key.Item1][2];
-            double zb = net.Vertices[key.Item2][2];
-            double t = (height - za) / (zb - za);
+            double da = net.Levels[key.Item1];
+            double db = net.Levels[key.Item2];
+            double t = (level - da) / (db - da);
             crossingByEdge[key] = crossingPoints.Count;
+            // The crossing POSITION stays a three-dimensional Lerp between
+            // the two vertices (rule 1.2.4); only the parameter t changes
+            // source.
             crossingPoints.Add(
                 Lerp(net.Vertices[key.Item1], net.Vertices[key.Item2], t));
             return crossingPoints.Count - 1;
@@ -826,10 +835,10 @@ internal static class SkinPatterns
 
         bool Crosses(int a, int b)
         {
-            double za = net.Vertices[a][2];
-            double zb = net.Vertices[b][2];
-            return (za < height && zb >= height) ||
-                   (zb < height && za >= height);
+            double da = net.Levels[a];
+            double db = net.Levels[b];
+            return (da < level && db >= level) ||
+                   (db < level && da >= level);
         }
 
         var linksByCrossing = new Dictionary<int, List<int>>();
@@ -841,6 +850,22 @@ internal static class SkinPatterns
         }
         foreach (int[] face in net.Faces)
         {
+            // A face touching an UNREACHABLE vertex produces no cells (rule
+            // 1.7.3). Its level is positive infinity, so every edge to it
+            // would read as a crossing and the trace would draw a curve
+            // along the edge of a region the field never reached.
+            bool reachable = true;
+            foreach (int corner in face)
+            {
+                if (!double.IsFinite(net.Levels[corner]))
+                {
+                    reachable = false;
+                    break;
+                }
+            }
+            if (!reachable)
+                continue;
+
             var hits = new List<int>();
             for (int corner = 0; corner < face.Length; corner++)
             {
@@ -910,7 +935,7 @@ internal static class SkinPatterns
                 ? links.Count
                 : 0;
             if (degree == 1)
-                curves.Add(Finish(Walk(index, out bool closed), height, closed));
+                curves.Add(Finish(Walk(index, out bool closed), level, closed));
         }
         for (int index = 0; index < crossingPoints.Count; index++)
         {
@@ -923,7 +948,7 @@ internal static class SkinPatterns
                 visited.Add(index);
                 continue;
             }
-            curves.Add(Finish(Walk(index, out bool closed), height, closed));
+            curves.Add(Finish(Walk(index, out bool closed), level, closed));
         }
         return curves
             .Where(curve => curve.Points.Count >= 2 && curve.Length > 1.0e-12)
@@ -932,7 +957,7 @@ internal static class SkinPatterns
 
     private static SkinLevelCurve Finish(
         List<double[]> points,
-        double height,
+        double level,
         bool closed)
     {
         var cumulative = new double[points.Count];
@@ -946,7 +971,7 @@ internal static class SkinPatterns
             length += Distance(points[^1], points[0]);
         return new SkinLevelCurve
         {
-            Height = height,
+            Level = level,
             Points = points,
             Closed = closed,
             Cumulative = cumulative,
@@ -1181,7 +1206,7 @@ internal static class SkinPatterns
     {
         var points = new List<double[]>(curve.Points);
         points.Reverse();
-        SkinLevelCurve rebuilt = Finish(points, curve.Height, curve.Closed);
+        SkinLevelCurve rebuilt = Finish(points, curve.Level, curve.Closed);
         curve.Points = rebuilt.Points;
         curve.Cumulative = rebuilt.Cumulative;
         curve.Length = rebuilt.Length;
@@ -2052,12 +2077,12 @@ internal static class SkinPatterns
         double courseHeight)
     {
         RequireSizes(size, courseHeight);
-        (double zMin, double zMax) = HeightRange(net);
-        if (net.Faces.Count == 0 || !(zMax - zMin > 1.0e-9))
+        (double dMin, double dMax) = LevelRange(net);
+        if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
             return Empty("courses", net);
 
-        int bands = BandCount(zMin, zMax, courseHeight);
-        double epsilon = Math.Max((zMax - zMin) * 1.0e-6, 1.0e-9);
+        int bands = BandCount(dMin, dMax, courseHeight);
+        double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
 
         // Heights, ascending: the boundary of band r at index 2r, its
         // mid-height at 2r + 1. The extreme cuts are pulled inside the
@@ -2067,15 +2092,15 @@ internal static class SkinPatterns
         for (int r = 0; r <= bands; r++)
         {
             heights.Add(
-                r == 0 ? zMin + epsilon
-                : r == bands ? zMax - epsilon
-                : zMin + r * courseHeight);
+                r == 0 ? dMin + epsilon
+                : r == bands ? dMax - epsilon
+                : dMin + r * courseHeight);
             if (r < bands)
             {
                 double bandTop = r == bands - 1
-                    ? zMax
-                    : zMin + (r + 1) * courseHeight;
-                heights.Add((zMin + r * courseHeight + bandTop) / 2.0);
+                    ? dMax
+                    : dMin + (r + 1) * courseHeight;
+                heights.Add((dMin + r * courseHeight + bandTop) / 2.0);
             }
         }
         IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
@@ -2161,7 +2186,9 @@ internal static class SkinPatterns
                 "half a pitch on odd courses",
                 cells.Count(cell => cell.Clipped),
                 degenerateDropped, overlapDropped,
-                TransitionLine("courses", transitionBands, transitions)),
+                TransitionLine(
+                    "courses", transitionBands, transitions,
+                    FieldKindOf(net))),
             transitionBands,
             transitions,
             degenerateDropped,
@@ -2227,14 +2254,20 @@ internal static class SkinPatterns
         }
     }
 
-    private static (double Min, double Max) HeightRange(SkinNet net)
+    /// <summary>The FIELD's range over the net, unreachable vertices
+    /// excluded (rules 1.2.4 and 1.7.3). Both ends are in metres whether the
+    /// field is a rim distance or the Z fallback, so no tolerance
+    /// anywhere moves with the change.</summary>
+    private static (double Min, double Max) LevelRange(SkinNet net)
     {
         double min = double.PositiveInfinity;
         double max = double.NegativeInfinity;
-        foreach (double[] vertex in net.Vertices)
+        foreach (double level in net.Levels)
         {
-            min = Math.Min(min, vertex[2]);
-            max = Math.Max(max, vertex[2]);
+            if (!double.IsFinite(level))
+                continue;
+            min = Math.Min(min, level);
+            max = Math.Max(max, level);
         }
         return (min, max);
     }
@@ -2359,16 +2392,22 @@ internal static class SkinPatterns
     private static string? TransitionLine(
         string name,
         int skipped,
-        IReadOnlyList<(double Low, double High)> transitions)
+        IReadOnlyList<(double Low, double High)> transitions,
+        string fieldKind)
     {
         if (skipped == 0 || transitions.Count == 0)
             return null;
         static string F(double value) =>
             value.ToString("F3", CultureInfo.InvariantCulture);
+        // Rule 8.2.8: a rim distance is a DISTANCE and is named as one, in
+        // metres; the "z=" wording survives only under the fallback of rule
+        // 1.7.4, where it is still true.
         string where = string.Join(
             " and ",
             transitions.Select(item =>
-                $"between z={F(item.Low)} and z={F(item.High)}"));
+                fieldKind == "world Z"
+                    ? $"between z={F(item.Low)} and z={F(item.High)}"
+                    : $"between d={F(item.Low)} m and d={F(item.High)} m"));
         // "do not correspond" rather than "splits": the refusal is decided
         // on the matching, so it fires for a curve that splits, one that
         // dies, and two that swap places at an unchanged count, and the
@@ -2516,7 +2555,7 @@ internal static class SkinPatterns
                     chart = new SkinChart();
                     charts.Add(chart);
                 }
-                chart.Heights.Add(curve.Height);
+                chart.Heights.Add(curve.Level);
                 chart.Curves.Add(curve);
                 chartOf[curve] = chart;
             }
@@ -2575,30 +2614,30 @@ internal static class SkinPatterns
         double courseHeight)
     {
         RequireSizes(size, courseHeight);
-        (double zMin, double zMax) = HeightRange(net);
-        if (net.Faces.Count == 0 || !(zMax - zMin > 1.0e-9))
+        (double dMin, double dMax) = LevelRange(net);
+        if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
             return Empty("hexagonal", net);
 
-        int bands = BandCount(zMin, zMax, courseHeight);
-        double epsilon = Math.Max((zMax - zMin) * 1.0e-6, 1.0e-9);
-        double zBottom = zMin + epsilon;
-        double zTop = zMax - epsilon;
+        int bands = BandCount(dMin, dMax, courseHeight);
+        double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
+        double dBottom = dMin + epsilon;
+        double dTop = dMax - epsilon;
         double clipTolerance = 10.0 * epsilon;
 
-        // Every lattice height is zMin + CH * row for an integer row:
-        // the base centre sits at zRef = zMin + CH (so the seam column's
+        // Every lattice height is dMin + CH * row for an integer row:
+        // the base centre sits at zRef = dMin + CH (so the seam column's
         // bottom row lands its lower edge on the base rim), and both
         // lattice translations move by whole multiples of CH. Rows -1 to
         // topRow + 1 cover every vertex a candidate cell can have; rows
         // beyond the surface clamp to the epsilon-pulled extremes and
         // collapse to shared traces.
         int topRow = (int)Math.Ceiling(
-            (zMax - zMin) / courseHeight - 1.0e-9);
-        double ClampedRowHeight(int row) =>
-            Math.Min(Math.Max(zMin + courseHeight * row, zBottom), zTop);
+            (dMax - dMin) / courseHeight - 1.0e-9);
+        double ClampedRowLevel(int row) =>
+            Math.Min(Math.Max(dMin + courseHeight * row, dBottom), dTop);
         List<double> heights = Enumerable
             .Range(-1, topRow + 3)
-            .Select(ClampedRowHeight)
+            .Select(ClampedRowLevel)
             .Distinct()
             .ToList();
         IReadOnlyList<IReadOnlyList<SkinLevelCurve>> traced =
@@ -2650,8 +2689,8 @@ internal static class SkinPatterns
                     if (transitions.Count > 0 &&
                         SpansTransition(
                             transitions,
-                            ClampedRowHeight(centreRow - 1),
-                            ClampedRowHeight(centreRow + 1)))
+                            ClampedRowLevel(centreRow - 1),
+                            ClampedRowLevel(centreRow + 1)))
                     {
                         skippedRows.Add(centreRow);
                         continue;
@@ -2672,15 +2711,15 @@ internal static class SkinPatterns
                         new (double U, SkinLevelCurve Curve)[6];
                     for (int v = 0; v < 6; v++)
                     {
-                        double zRaw =
-                            zMin + courseHeight * setout[v].Row;
+                        double dRaw =
+                            dMin + courseHeight * setout[v].Row;
                         double z = Math.Min(
-                            Math.Max(zRaw, chartBottom), chartTop);
+                            Math.Max(dRaw, chartBottom), chartTop);
                         SkinLevelCurve curve = CurveAt(chart, z);
                         double half = curve.Length / 2.0;
                         double u = Math.Min(
                             Math.Max(setout[v].U, -half), half);
-                        if (Math.Abs(z - zRaw) > clipTolerance ||
+                        if (Math.Abs(z - dRaw) > clipTolerance ||
                             Math.Abs(u - setout[v].U) > clipTolerance)
                         {
                             clipped = true;
@@ -2697,7 +2736,7 @@ internal static class SkinPatterns
                         chart,
                         Math.Min(
                             Math.Max(
-                                zMin + courseHeight * centreRow,
+                                dMin + courseHeight * centreRow,
                                 chartBottom),
                             chartTop))
                         .Length / 2.0;
@@ -2751,9 +2790,9 @@ internal static class SkinPatterns
                     // meridian opposite the seam rather than wrapped, so
                     // the honeycomb never folds into itself.
                     bool overlaps =
-                        zMin + courseHeight * (centreRow + 1)
+                        dMin + courseHeight * (centreRow + 1)
                             > chartBottom + 1.0e-9 &&
-                        zMin + courseHeight * (centreRow - 1)
+                        dMin + courseHeight * (centreRow - 1)
                             < chartTop - 1.0e-9 &&
                         uc + size / 2.0 > -halfAtCentre + 1.0e-9 &&
                         uc - size / 2.0 < halfAtCentre - 1.0e-9;
@@ -2773,13 +2812,13 @@ internal static class SkinPatterns
                     if (cleaned.Count < 3)
                         continue;
 
-                    double zcClamped = Math.Min(
-                        Math.Max(zMin + courseHeight * centreRow, zMin),
-                        zMax);
+                    double dcClamped = Math.Min(
+                        Math.Max(dMin + courseHeight * centreRow, dMin),
+                        dMax);
                     int course = Math.Min(
                         bands - 1,
                         Math.Max(0, (int)Math.Floor(
-                            (zcClamped - zMin) / courseHeight
+                            (dcClamped - dMin) / courseHeight
                             + 1.0e-9)));
                     var cell = new SkinCell(
                         course, cleaned, clipped,
@@ -2810,7 +2849,8 @@ internal static class SkinPatterns
                 cells.Count(cell => cell.Clipped),
                 degenerateDropped, overlapDropped,
                 TransitionLine(
-                    "hexagonal", skippedRows.Count, transitions)),
+                    "hexagonal", skippedRows.Count, transitions,
+                    FieldKindOf(net))),
             skippedRows.Count,
             transitions,
             degenerateDropped,
