@@ -4,6 +4,41 @@ This is the design input for the columns priority spec. Param's own words are qu
 everything outside a quote is the reading taken from them and is subordinate to the quote. Where
 the two disagree, the quote governs.
 
+## 0. RULING OF 2026-09-02, AFTER SEEING THE INSTALLED BUILD. This governs.
+
+Param reviewed the installed phase-one plugin on his own arch, at four Types. His words:
+
+> "This is so much better. nearly perfect, but one thing type 2 you can see in the screenshot doesnt
+> have the symmetry because one side goes to center and the other doesnt, i think we can also make
+> both sides touch center, but this is rare, and only on these cases where we dont hve any straight
+> columns. In fact i think to make this simpler, any case where theres a scenario like this we just
+> never let one side preference the middle and have a straight column. it happens on a few column
+> types but yes it should just always preference symmetry and use a single column in center for
+> these instances."
+
+THE RULE. Where a layout would let ONE SIDE claim the middle, it must not. The centre is either
+shared by both sides or it stands alone as a single column, and the groups either side of it mirror
+each other. A layout is never permitted to be asymmetric because one flank absorbed the central
+tree while the other did not.
+
+He offers two readings and prefers whichever is simpler: both sides converge on ONE central foot, or
+a single column stands at the centre. He says "use a single column in center for these instances",
+so where the two readings differ, ONE COLUMN AT THE CENTRE governs.
+
+WHAT THIS GENERALISES. It is the same instinct as his ruling earlier the same day that the standing
+column at an even Type stands straight rather than folding into the nearer flank group, and as the
+ladder's rule that a single stray takes the centre. The three are one principle: THE CENTRE IS
+NEVER ANNEXED BY A SIDE. Symmetry outranks group tidiness everywhere, at every Type, not only where
+the ladder happens to reach.
+
+HE CALLS IT RARE and confined to the cases with no straight column already, and he says it happens
+"on a few column types". The fix must therefore be checked at EVERY Type and on both an odd and an
+even tree row, not only at the Type where he saw it.
+
+WHAT HE IS NOT ASKING FOR. He is not asking to widen any tolerance, and he is not asking for the
+centre to gain a column where the layout already places one there symmetrically. This is a rule about
+which side a straddling group belongs to, not about adding columns.
+
 ## 1. The current behaviour is confirmed wrong
 
 > "The column logic you described and said its how they perform in the screenshot is confirmed to
