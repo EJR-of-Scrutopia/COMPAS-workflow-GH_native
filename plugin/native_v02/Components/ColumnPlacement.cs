@@ -2725,6 +2725,9 @@ namespace Ananke.COMPAS.Native.Components
         /// is the fallback everywhere because the mean commutes with any
         /// reflection, whatever the chords' directions, which the centre of
         /// an axis-aligned bounding box does not.
+        ///
+        /// AT LEAST ONE CANDIDATE, which the caller checks. There is nowhere
+        /// for a foot with no candidates to stand.
         /// </summary>
         private static Point3d Converge(
             Point3d[] nodes,
@@ -2733,12 +2736,22 @@ namespace Ananke.COMPAS.Native.Components
             double ground,
             out bool fellBack)
         {
+            // AT LEAST ONE CANDIDATE IS A PRECONDITION, and the one caller
+            // checks it two lines before the call. There used to be a guard
+            // here, `if (candidates.Count == 0) return mean;`, placed AFTER
+            // the two Averages above it; Enumerable.Average throws on an empty
+            // sequence, so it could never fire and it read as a protection it
+            // did not provide. It is DELETED rather than reordered, because
+            // reordering it would have to invent a point to return, and the
+            // only points available are the plan origin and the ground plane's
+            // own zero: standing a column at (0, 0) because nothing said where
+            // it goes is the exact fault section 8 exists to remove, and a
+            // throw naming an empty candidate set is a truer answer than a
+            // silent foot in the middle of the model.
             fellBack = false;
             double meanX = candidates.Average(c => c.Point.X);
             double meanY = candidates.Average(c => c.Point.Y);
             var mean = new Point3d(meanX, meanY, ground);
-            if (candidates.Count == 0)
-                return mean;
 
             if (!SolveIntersection(candidates, out double x, out double y))
             {
