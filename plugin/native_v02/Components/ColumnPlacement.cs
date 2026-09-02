@@ -291,6 +291,18 @@ namespace Ananke.COMPAS.Native.Components
             public int MergeRefused;
             /// <summary>Convergences that fell back to the plan mean.</summary>
             public int ConvergenceFallback;
+            /// <summary>
+            /// Feet folded onto an EARLIER foot by positional identity alone,
+            /// counted where the fold happens (MergeFeet's own Rule 1 loop)
+            /// rather than derived from a difference of tree and foot counts
+            /// afterward. A tree that folds onto another because THIS level
+            /// decided to put them on the same converged foot (Rule 2's
+            /// central pair, Rule 3's accepted cross-line component) is not
+            /// counted here, whatever the size of that group: it is
+            /// FeetMerged's story, not this one. Only a fold between two
+            /// trees no decision joined is a weld.
+            /// </summary>
+            public int Welds;
             /// <summary>Trunks that stepped off a shared foot onto their own.</summary>
             public int Peeled;
             /// <summary>
@@ -2072,11 +2084,12 @@ namespace Ananke.COMPAS.Native.Components
             int[] footIndex = MergeFeet(
                 placement, nodes, bars, edges, foot, spacing, groupIndex, groupCount,
                 result.Nodes, footSpacing,
-                out int merged, out int refused, out int fallbacks, out int close);
+                out int merged, out int refused, out int fallbacks, out int close, out int welds);
             result.FeetMerged = merged;
             result.MergeRefused = refused;
             result.ConvergenceFallback = fallbacks;
             result.FeetClose = close;
+            result.Welds = welds;
 
             // ---- THE SECOND PEEL PASS (spec section 11). A merged foot is a
             // fresh convergence and it MOVES, so a trunk sitting just inside
@@ -2735,12 +2748,14 @@ namespace Ananke.COMPAS.Native.Components
             out int merged,
             out int refused,
             out int fallbacks,
-            out int close)
+            out int close,
+            out int welds)
         {
             merged = 0;
             refused = 0;
             fallbacks = 0;
             close = 0;
+            welds = 0;
             int treeCount = placement.Trees.Count;
             var group = new int[treeCount];
             for (int t = 0; t < treeCount; t++)
@@ -2753,6 +2768,18 @@ namespace Ananke.COMPAS.Native.Components
                 if (ra != rb)
                     group[Math.Max(ra, rb)] = Math.Min(ra, rb);
             }
+
+            // Which trees THIS LEVEL actually decided to stand on the same
+            // foot, tracked separately from the union-find above: that
+            // structure also joins the members of a CROSS-LINE group Rule 3
+            // goes on to REFUSE (over the lean cap), and a refused group's
+            // feet never moved, so two of its members found close by pure
+            // chance would wrongly read as "already decided" rather than as
+            // the weld they are. Defaults to each tree's own index, so two
+            // trees neither decision touched can never compare equal.
+            var decisionGroup = new int[treeCount];
+            for (int t = 0; t < treeCount; t++)
+                decisionGroup[t] = t;
 
             // The feet AS STEP 8 PLACED THEM, kept apart from the working
             // copy, because every mirror test below reads the placed feet and
@@ -2797,6 +2824,12 @@ namespace Ananke.COMPAS.Native.Components
                     placed[left].Z);
                 foot[left] = mean;
                 foot[right] = mean;
+                // Decided onto one foot, so a later weld against a THIRD
+                // tree at this same point is counted, and a later weld
+                // check between left and right themselves is not: this pair
+                // becoming one node is Rule 2's doing, not positional luck.
+                decisionGroup[left] = left;
+                decisionGroup[right] = left;
                 // UNIONED, so that the pair is ONE thing from here on. Rule 3
                 // re-reads the STEP-8 feet, not these, and without the union it
                 // would put the two into different connected components
@@ -2984,7 +3017,14 @@ namespace Ananke.COMPAS.Native.Components
                     continue;
                 }
                 foreach (int t in members)
+                {
                     foot[t] = where;
+                    // The WHOLE component is decided onto `where` together,
+                    // superseding any central-pair sub-grouping a member of
+                    // it already carried: that pair's own mean is not where
+                    // it stands any more, this convergence is.
+                    decisionGroup[t] = members[0];
+                }
                 merged++;
             }
 
@@ -3009,6 +3049,15 @@ namespace Ananke.COMPAS.Native.Components
                         Math.Abs(foot[t].Z - foot[u].Z) <= tol)
                     {
                         node[t] = node[u];
+                        // Counted HERE, at the fold, against the population
+                        // this same loop is folding (every tree with an
+                        // owned notch, the ring tree included, since the
+                        // skip above is HeadMain < 0 and never Ring): a
+                        // decision already folded t and u together exactly
+                        // when they share a decisionGroup, and what is left
+                        // over is positional identity nobody decided.
+                        if (decisionGroup[t] != decisionGroup[u])
+                            welds++;
                         break;
                     }
                 }

@@ -11415,6 +11415,14 @@ internal static class Program
                     var feet = ((IEnumerable)Get<object>(built, "Feet")).Cast<int>().ToArray();
                     if (feet.Length != 1 || Get<int>(built, "FeetMerged") != 1)
                         throw new InvalidOperationException($"Case 1: three ribs whose feet fall inside a quarter of the tighter spacing become one column as a CONNECTED COMPONENT; {feet.Length} feet, FeetMerged {Get<int>(built, "FeetMerged")}.");
+                    // Nine owned trees fold onto ONE foot here, all nine by
+                    // this SAME decision, not by chance: a subtraction that
+                    // charges a k-member group only one folding against the
+                    // k-1 it causes would report 9 - 1 (folded) - 1 (the
+                    // group) = 7 welds where none happened. Welds is REPORTED
+                    // by the engine now, and it must read zero.
+                    if (Get<int>(built, "Welds") != 0)
+                        throw new InvalidOperationException($"Case 1: nine trees fold onto one foot by ONE merge decision, so nothing here is a weld; Welds is {Get<int>(built, "Welds")}.");
                 }
 
                 // Case 2: the same three ribs moved apart, spread 0.4 against
@@ -12229,6 +12237,62 @@ internal static class Program
                 }
                 everyPlacement.Add((placed, built, $"free rim Type {type}", ringNodes, SpanSpacingOf(ringNet)));
             }
+
+            // A SEPARATE fixture for finding 17: a RING TREE present in the
+            // SAME placement as a genuine WELD elsewhere in the net, so the
+            // two sides of columns.feet's count are populations that must
+            // include the ring tree the same way or not at all. The ring
+            // bars above are reused UNCHANGED (nodes 0-6, the {2, 5, 6}
+            // rim loop) so the ring tree itself is the already-proven
+            // construction; two FURTHER, ISOLATED single-notch spans (no
+            // edge to each other, none to the ring bars) are added, each
+            // anchored from a different direction but sharing the one free
+            // notch's plan position under an identical plumb pull, so they
+            // stand on the IDENTICAL foot by positional luck alone: neither
+            // is a candidate for any rule (Rule 2 needs an even ROW of more
+            // than one within one span, Rule 3 needs two spans the net
+            // actually joins), so this is a weld and nothing else,
+            // FeetMerged 0, and Welds must read 1. Deriving it from
+            // ownedTrees-without-the-ring against distinctFeet-with-it, as
+            // before, cancelled this exact fold against the ring tree's own
+            // extra foot and reported 0.
+            {
+                Array weldNodes = Array.CreateInstance(point3d, 13);
+                for (int i = 0; i < 7; i++)
+                    weldNodes.SetValue(ringNodes.GetValue(i)!, i);
+                weldNodes.SetValue(P(8.0, 0.0, 0.0), 7);
+                weldNodes.SetValue(P(10.0, 0.0, 2.0), 8);
+                weldNodes.SetValue(P(12.0, 0.0, 0.0), 9);
+                weldNodes.SetValue(P(10.0, -2.0, 0.0), 10);
+                weldNodes.SetValue(P(10.0, 0.0, 2.0), 11);
+                weldNodes.SetValue(P(10.0, 2.0, 0.0), 12);
+                Array weldAcrossExtra1 = Array.CreateInstance(vector3d, 3);
+                Array weldAcrossExtra2 = Array.CreateInstance(vector3d, 3);
+                for (int i = 0; i < 3; i++)
+                {
+                    weldAcrossExtra1.SetValue(V(0.0, 0.0, -1.0), i);
+                    weldAcrossExtra2.SetValue(V(0.0, 0.0, -1.0), i);
+                }
+                Array weldAcross = Array.CreateInstance(vector3d.MakeArrayType(), 4);
+                weldAcross.SetValue(ringAcrossA, 0);
+                weldAcross.SetValue(ringAcrossB, 1);
+                weldAcross.SetValue(weldAcrossExtra1, 2);
+                weldAcross.SetValue(weldAcrossExtra2, 3);
+                var weldNet = (
+                    weldNodes,
+                    new[] { new[] { 0, 1, 2 }, new[] { 3, 4, 5 }, new[] { 7, 8, 9 }, new[] { 10, 11, 12 } },
+                    new[] { 0, 3, 7, 9, 10, 12 },
+                    weldAcross,
+                    new[] { (0, 1), (1, 2), (3, 4), (4, 5), (2, 6), (5, 6), (2, 5), (7, 8), (8, 9), (10, 11), (11, 12) });
+                object placedWeld = Run(weldNet, new[] { new[] { 2, 5, 6 } }, 1, 1);
+                object builtWeld = Get<object>(placedWeld, "Built");
+                if (Get<object?>(placedWeld, "RingTree") is null)
+                    throw new InvalidOperationException("This fixture must still get a ring tree from the reused {2, 5, 6} rim loop.");
+                if (Get<int>(builtWeld, "FeetMerged") != 0)
+                    throw new InvalidOperationException($"Nothing here is a decision: the ring bars never merge on their own (measured above), and the isolated pair is neither adjacent nor a Rule 2 row; FeetMerged must be 0, it is {Get<int>(builtWeld, "FeetMerged")}.");
+                if (Get<int>(builtWeld, "Welds") != 1)
+                    throw new InvalidOperationException($"The two isolated single-notch trees share one plan position under a plumb pull and fold onto ONE foot with no merge decision behind it, which is exactly one weld, alongside a ring tree that never merges or welds with anything; Welds is {Get<int>(builtWeld, "Welds")}.");
+            }
             // The ring tree's own tolerances come from its own rim scale R,
             // never a net median: structurally guaranteed, because
             // ColumnPlacement.Place no longer TAKES a median argument at all
@@ -12347,14 +12411,56 @@ internal static class Program
                 object builtCrowded = Get<object>(placedCrowded, "Built");
                 allDiags.AddRange(RunDiagnostics(placedCrowded, builtCrowded, 1, 1, 0));
             }
+            // A fixture for columns.alignment. Every OTHER fixture in this
+            // file declares its pull as (0, 0, -load), plumb by
+            // construction, which a Type 0 foot follows exactly and which
+            // Section 9.1's common-mode subtraction removes even where a
+            // gathered foot moves: an along-chord tilt washes out and can
+            // never trip this measure, whichever Type is asked. A pull that
+            // leans ACROSS the chord does not wash out: the inversion
+            // places a foot from the span's own notch geometry alone
+            // (ColumnPlacement.cs, spec 8.1) and consults no tree's aim, so
+            // at a gathered Type the foot's push is whatever that geometry
+            // gives while the thrust the trees ask for still leans, and the
+            // two part company past the cap.
+            {
+                const double alignTilt = 1.6;
+                Array alignNodes = Array.CreateInstance(point3d, 5);
+                Array alignAcross = Array.CreateInstance(vector3d, 5);
+                var alignEdges = new List<(int, int)>();
+                for (int i = 0; i < 5; i++)
+                {
+                    double s = i / 4.0;
+                    alignNodes.SetValue(P(8.0 * s, 0.0, 5.0 * 4.0 * s * (1.0 - s)), i);
+                    alignAcross.SetValue(V(0.0, alignTilt, -1.0), i);
+                    if (i > 0)
+                        alignEdges.Add((i - 1, i));
+                }
+                Array alignAcrossBars = Array.CreateInstance(vector3d.MakeArrayType(), 1);
+                alignAcrossBars.SetValue(alignAcross, 0);
+                var leaning = (alignNodes, new[] { Enumerable.Range(0, 5).ToArray() }, new[] { 0, 4 },
+                    alignAcrossBars, alignEdges.ToArray());
+                object placedAlign = Run(leaning, Array.Empty<int[]>(), 1, 1);
+                object builtAlign = Get<object>(placedAlign, "Built");
+                if (Get<double>(builtAlign, "WorstAlignment") <= alignmentCap)
+                {
+                    throw new InvalidOperationException(
+                        $"A five-notch arch whose pull leans across the chord must push a gathered Type's shared foot past the alignment cap of {alignmentCap:0} degrees; WorstAlignment is {Get<double>(builtAlign, "WorstAlignment"):0.###}.");
+                }
+                allDiags.AddRange(RunDiagnostics(placedAlign, builtAlign, 1, 1, 0));
+            }
 
             string[] codes = allDiags.Select(CodeOf).Distinct().ToArray();
-            // columns.alignment and columns.plumb_fallback are UNCHANGED
-            // legacy codes this task does not touch, and neither condition
-            // (a foot's push astray of its trees' thrust past the cap; a
-            // net that pulls every notch onto its own column) is reached by
-            // any fixture this file builds; their absence here is a gap in
-            // this test's coverage and not a claim that the code is gone.
+            // columns.plumb_fallback is an UNCHANGED legacy code this task
+            // does not touch, and its condition (a net that pulls every
+            // notch onto its own column) is not reached by any fixture
+            // this file builds; its absence here is a gap in this test's
+            // coverage and not a claim that the code is gone.
+            // columns.alignment, the SAME kind of gap until the fixture
+            // just above, IS reached now: an across-chord pull is the one
+            // shape that reaches it, because every other fixture's pull is
+            // plumb by construction and Section 9.1 removes an along-chord
+            // tilt before it ever gets the chance.
             string[] mustBePresent =
             {
                 "columns.overlap", "columns.bar_shape", "columns.spans", "columns.grouping",
@@ -12363,7 +12469,7 @@ internal static class Program
                 "columns.span_degenerate", "columns.branch_off_thrust", "columns.head_load_total",
                 "columns.load_split", "columns.principal_source", "columns.demand_only",
                 "columns.load_path", "columns.ring_tree", "columns.force_max", "columns.head_load",
-                "columns.lean", "columns.collision",
+                "columns.lean", "columns.collision", "columns.alignment",
             };
             string[] missing = mustBePresent.Where(c => !codes.Contains(c)).ToArray();
             if (missing.Length > 0)

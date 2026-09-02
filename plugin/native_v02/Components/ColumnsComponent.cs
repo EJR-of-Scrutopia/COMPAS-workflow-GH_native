@@ -676,10 +676,16 @@ namespace Ananke.COMPAS.Native.Components
                     ("closedSpans", placement.ClosedSpans.ToString(CultureInfo.InvariantCulture)),
                     ("residual", Inv(placement.CommonModeResidual, "0.####")))));
 
-            int ownedTrees = placement.Trees.Count(t => !t.Ring && t.HeadMain >= 0);
+            // Welds are REPORTED by the engine, not derived here: MergeFeet
+            // counts a fold at the point it happens, in its own Rule 1 loop,
+            // against decisionGroup rather than against a difference of two
+            // counts taken from different populations. A subtraction here
+            // charged a k-member merge group only one folding against the
+            // k-1 it actually causes, and separately counted the ring
+            // tree's foot on one side of the subtraction and not the other;
+            // both are gone along with the subtraction itself.
             int distinctFeet = built.Feet.Count;
-            int folded = Math.Max(0, ownedTrees - distinctFeet);
-            int welds = Math.Max(0, folded - built.FeetMerged);
+            int welds = built.Welds;
             int convergencesAccepted = Math.Max(0, built.FeetMerged - built.ConvergenceFallback);
             d.Add(ResultDiagnostics.Entry(S, "columns.feet", "info",
                 $"{Count(built.FeetMerged, "merge group", "merge groups")} of both "
