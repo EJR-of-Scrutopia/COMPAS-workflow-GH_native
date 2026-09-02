@@ -768,6 +768,23 @@ internal static class Program
 
         try
         {
+            ValidateSkinDegeneracyGuards(plugin);
+            Console.WriteLine(
+                "PASS  Skin degeneracy guards: the dome at S 2, CH 0.1 " +
+                "forces PlanInteriorPoint's triangulation branch and fires " +
+                "the zero-area centroid guard with nothing dropped as " +
+                "degenerate, and no surviving outline on the barrel, dome, " +
+                "two-oculus or serpentine fixture holds two points the " +
+                "studio would reject.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin degeneracy guards: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinSetout(plugin);
             Console.WriteLine(
                 "PASS  Skin setout map: the barrel cut gives two OPEN " +
@@ -19017,6 +19034,188 @@ internal static class Program
     }
 
     /// <summary>
+    /// Checks 12.6(f) and 12.6(g). The zero-area candidate centroid is
+    /// Param's own carried ruling in his own words: "a candidate interior
+    /// point can be the centroid of three collinear trace corners lying
+    /// exactly ON the joint, where the containment test is a coin flip.
+    /// Named fix: refuse a candidate centroid whose triangle has no area."
+    ///
+    /// The DOME at S 2 and CH 0.1 is the fixture, measured rather than
+    /// assumed. The brief's own reasoning names the BARREL for check
+    /// 12.6(f), because every one of its level cuts is a straight strip;
+    /// that reasoning is correct about the barrel's TRACE CORNERS but
+    /// misses that PlanInteriorPoint tries the plan MEAN first and only
+    /// triangulates where the mean falls outside its own outline (the
+    /// shipped rule immediately above this one). A barrel cell is a
+    /// trapezoid built from two straight, mutually parallel runs, which
+    /// is convex with or without extra collinear points on either run,
+    /// and the unweighted vertex mean of ANY convex polygon is a convex
+    /// combination of its own vertices and so always lies inside it: the
+    /// mean branch always answers, the triangulation branch is never
+    /// reached, and DegenerateCentroidsSkipped stays exactly 0 on the
+    /// barrel at every (Size, Course Height, Min Piece) this check swept
+    /// (a full grid from 0.05 to 3.0 m and 0.05 to 2.0 m on both engines,
+    /// confirmed by mutation below). Check 12.6(f) as the brief states it
+    /// is consequently unsatisfiable on its own named fixture: the barrel
+    /// is a fixture the guard cannot ever be exercised against, on the
+    /// shipped mean-first PlanInteriorPoint that section 6.8 explicitly
+    /// keeps in place. Smallest correction, per the brief's own deviation
+    /// rule: swap in a fixture whose cells the mean genuinely fails on.
+    /// The dome's hemisphere loops are non-convex enough at a coarse S
+    /// relative to CH to force triangulation, and at S 2 / CH 0.1 the
+    /// same sweep found it fires exactly once with nothing dropped as
+    /// degenerate and no overlap dropped either, on 63 built cells: the
+    /// cleanest instance in the swept grid, and the deviation is recorded
+    /// in the SDD ledger under "## Deviations" with the sweep's own
+    /// numbers.
+    ///
+    /// A build without the guard is not something this harness can
+    /// produce, so what is measured instead is that the guard FIRES (the
+    /// skipped count is above zero) while nothing is dropped, which is
+    /// the same claim in one build rather than two.
+    /// </summary>
+    private static void ValidateSkinDegeneracyGuards(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        object net = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        object built = courses.Invoke(
+            null, new object[] { net, 2.0, 0.1 })!;
+        if (Reading<int>(built, "DegenerateCentroidsSkipped") <= 0)
+        {
+            throw new InvalidOperationException(
+                "The dome's hemisphere loops are non-convex enough at S 2 " +
+                "and CH 0.1 to force PlanInteriorPoint's triangulation " +
+                "branch, and a candidate triangle taken there is exactly " +
+                "zero-area; a count of zero means the check is measuring " +
+                "the fixture's luck and not the guard (rule 6.8).");
+        }
+        if (Reading<int>(built, "PlanDegenerateDropped") != 0)
+        {
+            throw new InvalidOperationException(
+                "The guard turns an ARBITRARY containment answer into a " +
+                "defined one and can only stop a cell being dropped for a " +
+                "reason that was never real; no cell is dropped as " +
+                "degenerate on the dome at S 2, CH 0.1.");
+        }
+
+        // The studio's second ring test, PlanVertexOnEdge, direct: no cell
+        // built by any fixture in this whole harness happens to carry a
+        // vertex sitting exactly on a non-adjacent edge of its own ring
+        // (the full 95-check suite still passes with the call removed from
+        // KeepValidPlans's degenerate branch, which is not this method
+        // proved able to fail), so the predicate is measured on a ring
+        // built to have exactly that shape: a five-cornered "staple" that
+        // dips from (2, 4) down to (2, 0), a point sitting exactly on the
+        // NON-ADJACENT bottom edge from (0, 0) to (4, 0), with no edge of
+        // the ring properly crossing another (PlanSelfCrosses stays
+        // false, so the studio's first ring test alone would let it
+        // through).
+        MethodInfo selfCrosses =
+            RequirePublicStatic(
+                patterns, "PlanSelfCrosses",
+                typeof(IReadOnlyList<double[]>));
+        MethodInfo vertexOnEdge =
+            RequirePublicStatic(
+                patterns, "PlanVertexOnEdge",
+                typeof(IReadOnlyList<double[]>));
+        double[][] staple =
+        {
+            new double[] { 0.0, 0.0, 0.0 },
+            new double[] { 4.0, 0.0, 0.0 },
+            new double[] { 4.0, 4.0, 0.0 },
+            new double[] { 2.0, 4.0, 0.0 },
+            new double[] { 2.0, 0.0, 0.0 },
+            new double[] { 0.0, 4.0, 0.0 }
+        };
+        if ((bool)selfCrosses.Invoke(null, new object[] { staple })!)
+        {
+            throw new InvalidOperationException(
+                "The staple ring is built with no edge properly crossing " +
+                "another; PlanSelfCrosses saying otherwise means the " +
+                "fixture, not the guard, is what this check would be " +
+                "measuring.");
+        }
+        if (!(bool)vertexOnEdge.Invoke(null, new object[] { staple })!)
+        {
+            throw new InvalidOperationException(
+                "The staple ring's fifth corner (2, 0) sits exactly on " +
+                "its own bottom edge from (0, 0) to (4, 0), a NON-ADJACENT " +
+                "edge in the ring; PlanVertexOnEdge must say true, and a " +
+                "cell built to this shape must be dropped by " +
+                "KeepValidPlans's degenerate branch even though " +
+                "PlanSelfCrosses alone would let it through.");
+        }
+        double[][] plainQuad =
+        {
+            new double[] { 0.0, 0.0, 0.0 },
+            new double[] { 4.0, 0.0, 0.0 },
+            new double[] { 4.0, 4.0, 0.0 },
+            new double[] { 0.0, 4.0, 0.0 }
+        };
+        if ((bool)vertexOnEdge.Invoke(null, new object[] { plainQuad })!)
+        {
+            throw new InvalidOperationException(
+                "An ordinary axis-aligned square has no vertex on any " +
+                "non-adjacent edge of its own; PlanVertexOnEdge saying " +
+                "true here would drop cells rule 11.11(a) requires the " +
+                "filter to keep, on every fixture already asserting zero " +
+                "drops.");
+        }
+
+        // 12.6(g): THE STUDIO'S OWN TEST, per axis in plan, over the whole
+        // ring, on every fixture. A three-dimensional distance check here
+        // would pass while the studio rejected the file, which is the gap
+        // rule 3.5.4 was written to close.
+        foreach ((double[][] v, int[][] f, string label) fixture in new[]
+                 {
+                     (SkinBarrelNet().Vertices, SkinBarrelNet().Faces,
+                      "barrel"),
+                     (SkinDomeNet().Vertices, SkinDomeNet().Faces, "dome"),
+                     (SkinTwoOculusNet().Vertices,
+                      SkinTwoOculusNet().Faces, "two-oculus"),
+                     (SkinSerpentineNet().Vertices,
+                      SkinSerpentineNet().Faces, "serpentine")
+                 })
+        {
+            object fixtureNet = Activator.CreateInstance(
+                netType, new object[] { fixture.v, fixture.f })!;
+            foreach (MethodInfo engine in new[] { courses, hexagonal })
+            {
+                object pattern = engine.Invoke(
+                    null, new object[] { fixtureNet, 0.6, 0.35 })!;
+                foreach (var cell in SkinCells(pattern))
+                {
+                    double[][] ring = cell.Outline;
+                    for (int i = 0; i < ring.Length; i++)
+                    {
+                        for (int j = i + 1; j < ring.Length; j++)
+                        {
+                            if (Math.Abs(ring[i][0] - ring[j][0]) <= 1.0e-6 &&
+                                Math.Abs(ring[i][1] - ring[j][1]) <= 1.0e-6)
+                            {
+                                throw new InvalidOperationException(
+                                    "The studio rejects any ring with two " +
+                                    "points within 1e-6 of each other IN " +
+                                    "PLAN, compared per axis over the " +
+                                    "whole ring, and it rejects the WHOLE " +
+                                    "sidecar on the first offender " +
+                                    $"(check 12.6(g)); the {fixture.label} " +
+                                    $"has one at course {cell.Course}.");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Ruling B of the whole-branch review as item B2 corrects it,
     /// measured: a band whose level curves do not CORRESPOND one for one
     /// is REFUSED whole, named in the diagnostics, and counted, rather
@@ -19475,13 +19674,21 @@ internal static class Program
         // family as the L-shaped shell's, and the filter is what answers
         // it: the plans that survive ARE asserted disjoint and simple, on
         // both engines, at both alignments.
+        // Re-measured again for task 21 (rule 7.3): the honeycomb's
+        // self-crossing count here moved from 7 to 6, because the raised
+        // Dedupe (check 12.6(g)) now removes a duplicate PLAN point the
+        // old consecutive-only Dedupe left standing, and removing that
+        // point is what turns this one candidate's self-crossing ring
+        // clean, exactly the "can make the filter drop FEWER" property
+        // the brief states for the duplicate test and never claims for
+        // the vertex-on-edge test.
         (int CoursesBuilt, int HexagonsBuilt) turned =
             RefusesTheMiddleBand(
                 "two-hump barrel rotated 37 degrees",
                 SkinRotatedInPlan(SkinTwoHumpBarrelNet(), 37.0),
                 CoursesLine,
                 (4, 2),
-                (7, 0));
+                (6, 0));
         if (turned.CoursesBuilt != upright.CoursesBuilt ||
             turned.HexagonsBuilt != upright.HexagonsBuilt ||
             upright.CoursesBuilt == 0 ||
@@ -21422,7 +21629,9 @@ internal static class Program
         // pair of nulls, which is what an outline with no interior at
         // all offers, must leave the crossing walk to answer alone.
         MethodInfo interiorPoint =
-            RequirePublicStatic(patterns, "PlanInteriorPoint");
+            RequirePublicStatic(
+                patterns, "PlanInteriorPoint",
+                typeof(IReadOnlyList<double[]>));
         MethodInfo overlapWith =
             RequirePublicStatic(patterns, "PlansOverlapWithInteriors");
         double[]? Interior(double[][] outline) =>

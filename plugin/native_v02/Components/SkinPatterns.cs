@@ -1763,6 +1763,41 @@ internal static class SkinPatterns
         return false;
     }
 
+    /// <summary>The studio's second ring test (rule 3.5.4(d)): does a vertex
+    /// lie STRICTLY on a non-adjacent edge of its own ring? Adding it makes
+    /// the filter drop MORE cells and never fewer, so it cannot hide a
+    /// defect, and every fixture asserting zero drops must still assert zero
+    /// after it (rule 11.11(a)).</summary>
+    public static bool PlanVertexOnEdge(IReadOnlyList<double[]> outline)
+    {
+        int count = outline.Count;
+        for (int at = 0; at < count; at++)
+        {
+            double[] point = outline[at];
+            for (int edge = 0; edge < count; edge++)
+            {
+                int next = (edge + 1) % count;
+                if (at == edge || at == next)
+                    continue;
+                double[] from = outline[edge];
+                double[] to = outline[next];
+                if (Math.Abs(PlanSide(from, to, point)) > 1.0e-12)
+                    continue;
+                double dx = to[0] - from[0];
+                double dy = to[1] - from[1];
+                double lengthSquared = dx * dx + dy * dy;
+                if (!(lengthSquared > 1.0e-18))
+                    continue;
+                double t =
+                    ((point[0] - from[0]) * dx +
+                     (point[1] - from[1]) * dy) / lengthSquared;
+                if (t > 1.0e-9 && t < 1.0 - 1.0e-9)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     /// <summary>
     /// A point that is certainly INSIDE an outline in plan, as {x, y};
     /// null when the outline has no interior to find one in.
@@ -1806,8 +1841,31 @@ internal static class SkinPatterns
     /// interior at all.
     /// </summary>
     public static double[]? PlanInteriorPoint(
-        IReadOnlyList<double[]> outline)
+        IReadOnlyList<double[]> outline) =>
+        PlanInteriorPoint(outline, out int _);
+
+    /// <summary>
+    /// ... (the shipped comment stands, and this is added to it.)
+    ///
+    /// RULE 6.8. Before PlanContains is called on a candidate centroid, the
+    /// candidate triangle's PLAN AREA is computed by the centred signed
+    /// shoelace of rule 11.2 and the triangle is SKIPPED where the absolute
+    /// area is at or below 1e-12 square metres. Skipping a triangle is free,
+    /// because SplitPolygonInOrder yields them one at a time and the method
+    /// already walks on to the next one; what is not free is accepting a
+    /// point whose containment answer is arbitrary, because
+    /// PlansOverlapWithInteriors then decides an overlap on it and a good
+    /// cell is dropped where two courses touch. The guard goes INSIDE this
+    /// one call and not beside it (rule 11.7): it is a constant-time test
+    /// per candidate triangle, taken before the containment walk it would
+    /// otherwise pay for, so it makes the method cheaper on a degenerate
+    /// outline and unchanged on every other.
+    /// </summary>
+    public static double[]? PlanInteriorPoint(
+        IReadOnlyList<double[]> outline,
+        out int degenerateSkipped)
     {
+        degenerateSkipped = 0;
         int count = outline.Count;
         if (count < 3)
             return null;
@@ -1827,16 +1885,22 @@ internal static class SkinPatterns
             ring[at] = at;
         foreach (int[] triangle in SplitPolygonInOrder(outline, ring))
         {
-            double cx =
-                (outline[triangle[0]][0] +
-                 outline[triangle[1]][0] +
-                 outline[triangle[2]][0]) / 3.0;
-            double cy =
-                (outline[triangle[0]][1] +
-                 outline[triangle[1]][1] +
-                 outline[triangle[2]][1]) / 3.0;
-            if (PlanContains(cx, cy, outline))
-                return new[] { cx, cy };
+            double[] a = outline[triangle[0]];
+            double[] b = outline[triangle[1]];
+            double[] c = outline[triangle[2]];
+            double mx = (a[0] + b[0] + c[0]) / 3.0;
+            double my = (a[1] + b[1] + c[1]) / 3.0;
+            double twice =
+                (a[0] - mx) * (b[1] - my) - (b[0] - mx) * (a[1] - my) +
+                (b[0] - mx) * (c[1] - my) - (c[0] - mx) * (b[1] - my) +
+                (c[0] - mx) * (a[1] - my) - (a[0] - mx) * (c[1] - my);
+            if (Math.Abs(twice / 2.0) <= 1.0e-12)
+            {
+                degenerateSkipped++;
+                continue;
+            }
+            if (PlanContains(mx, my, outline))
+                return new[] { mx, my };
         }
         return null;
     }
@@ -1982,17 +2046,21 @@ internal static class SkinPatterns
     private static List<SkinCell> KeepValidPlans(
         IReadOnlyList<SkinCell> cells,
         out int degenerateDropped,
-        out int overlapDropped)
+        out int overlapDropped,
+        out int degenerateCentroidsSkipped)
     {
         degenerateDropped = 0;
         overlapDropped = 0;
+        degenerateCentroidsSkipped = 0;
         var kept = new List<SkinCell>(cells.Count);
         var boxes = new List<(double MinX, double MinY,
             double MaxX, double MaxY)>(cells.Count);
         var insides = new List<double[]?>(cells.Count);
         foreach (SkinCell cell in cells)
         {
-            if (cell.Outline.Count < 3 || PlanSelfCrosses(cell.Outline))
+            if (cell.Outline.Count < 3 ||
+                PlanSelfCrosses(cell.Outline) ||
+                PlanVertexOnEdge(cell.Outline))
             {
                 degenerateDropped++;
                 continue;
@@ -2008,7 +2076,9 @@ internal static class SkinPatterns
                 maxX = Math.Max(maxX, point[0]);
                 maxY = Math.Max(maxY, point[1]);
             }
-            double[]? inside = PlanInteriorPoint(cell.Outline);
+            double[]? inside = PlanInteriorPoint(
+                cell.Outline, out int skippedHere);
+            degenerateCentroidsSkipped += skippedHere;
             bool overlaps = false;
             for (int at = 0; at < kept.Count && !overlaps; at++)
             {
@@ -2053,8 +2123,20 @@ internal static class SkinPatterns
         a[2] + (b[2] - a[2]) * t
     };
 
-    /// <summary>Drop consecutive duplicates and a closing repeat, so an
-    /// outline is a clean open ring the component closes itself.</summary>
+    /// <summary>
+    /// Drop a closing repeat and every duplicate the STUDIO would reject, so
+    /// an outline is a clean open ring the component closes itself.
+    ///
+    /// Rule 3.5.4. The studio's import rule is stricter than the plugin's
+    /// filter and the gap becomes likelier under this wave's patterns. The
+    /// raised test is a PLAN test in the STUDIO'S PER-AXIS FORM, not a
+    /// three-dimensional distance: raising a three-dimensional test to 1e-6
+    /// does NOT close the gap, because two outline points 1e-7 apart in plan
+    /// and 1e-3 apart in z pass a three-dimensional 1e-6 test comfortably
+    /// and still fail the studio, which is the exact case a cell spanning a
+    /// steep band produces. And it runs over the WHOLE RING and not only
+    /// over consecutive points, again as the studio's does.
+    /// </summary>
     private static List<double[]> Dedupe(List<double[]> outline)
     {
         var cleaned = new List<double[]>();
@@ -2070,6 +2152,17 @@ internal static class SkinPatterns
                Distance(cleaned[0], cleaned[^1]) <= 1.0e-9)
         {
             cleaned.RemoveAt(cleaned.Count - 1);
+        }
+        for (int i = 0; i < cleaned.Count; i++)
+        {
+            for (int j = cleaned.Count - 1; j > i; j--)
+            {
+                if (Math.Abs(cleaned[i][0] - cleaned[j][0]) <= 1.0e-6 &&
+                    Math.Abs(cleaned[i][1] - cleaned[j][1]) <= 1.0e-6)
+                {
+                    cleaned.RemoveAt(j);
+                }
+            }
         }
         return cleaned;
     }
@@ -2636,7 +2729,8 @@ internal static class SkinPatterns
                 .Select(item => item.Cell)
                 .ToList(),
             out int degenerateDropped,
-            out int overlapDropped);
+            out int overlapDropped,
+            out int degenerateCentroidsSkipped);
         // Rule 2.3.2a: a cap's girth is metres against ordinary pieces of
         // order S, so a cap left in the piece-length statistics dominates
         // the maximum and the max-over-min ratio single-handedly.
@@ -2687,7 +2781,7 @@ internal static class SkinPatterns
             0,
             Array.Empty<int>(),
             mergedPieces,
-            0,
+            degenerateCentroidsSkipped,
             resolved.ExtraLevels,
             resolved.Passes,
             mergedShortKept,
@@ -3442,7 +3536,8 @@ internal static class SkinPatterns
                 .Select(item => item.Cell)
                 .ToList(),
             out int degenerateDropped,
-            out int overlapDropped);
+            out int overlapDropped,
+            out int degenerateCentroidsSkipped);
         return new SkinPatternResult(
             cells,
             bands,
@@ -3473,7 +3568,7 @@ internal static class SkinPatterns
             0,
             Array.Empty<int>(),
             0,
-            0,
+            degenerateCentroidsSkipped,
             0,
             1,
             0,
