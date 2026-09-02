@@ -16152,12 +16152,20 @@ internal static class Program
         object equilibrium = CreateInstance(equilibriumType);
         SetContractProperty(equilibrium, equilibriumType, "Vertices",
             Of(point, P(0, 1, 1), P(1, 1, 1), P(1, 0, 0), P(0, 0, 0)));
+        // A third edge, (0, 3), is added deliberately: composed through
+        // equilibriumToNet = {3:0, 2:1, 1:2, 0:3} it maps to net (3, 0),
+        // the WRONG way round, so this is the one edge in the fixture that
+        // rule 1.3.6's A-below-B canonicalisation actually has to act on.
+        // The other two edges already land ordered before Math.Min/Max is
+        // applied, so without this one the check cannot tell the ordering
+        // guarantee apart from no ordering at all.
         SetContractProperty(equilibrium, equilibriumType, "Edges",
             Of(edgeDtoType,
                 Activator.CreateInstance(edgeDtoType, 3, 2)!,
-                Activator.CreateInstance(edgeDtoType, 2, 1)!));
+                Activator.CreateInstance(edgeDtoType, 2, 1)!,
+                Activator.CreateInstance(edgeDtoType, 0, 3)!));
         SetContractProperty(equilibrium, equilibriumType, "MemberForces",
-            new[] { 7.0, -3.0 });
+            new[] { 7.0, -3.0, 4.0 });
 
         object GraphVertex(int id)
         {
@@ -16258,15 +16266,23 @@ internal static class Program
         // (2, 1) is net (1, 2) and carries -3 kN. Stored raw, they would be
         // (2, 3) and (1, 2), which is a different pair of net vertices on a
         // net whose two index spaces happen to have the same count.
-        if (read.Count != 2 ||
+        // Edge (0, 3) carries 4 kN and maps to net (3, 0) BEFORE ordering,
+        // the WRONG way round; it must come out (0, 3) after rule 1.3.6's
+        // A-below-B canonicalisation runs, which is the only one of the
+        // three edges this fixture can use to prove that canonicalisation
+        // is actually happening rather than being a no-op on data that was
+        // already ordered.
+        if (read.Count != 3 ||
             read[0] != (0, 1, 7.0) ||
-            read[1] != (1, 2, -3.0))
+            read[1] != (1, 2, -3.0) ||
+            read[2] != (0, 3, 4.0))
         {
             throw new InvalidOperationException(
                 "Force edges arrive in EQUILIBRIUM index space and must be " +
-                "mapped into NET space, both ends, A below B (rule 1.3.5): " +
-                "(3,2) at 7 kN is net (0,1) and (2,1) at -3 kN is net " +
-                "(1,2); got [" +
+                "mapped into NET space, both ends, A below B (rules 1.3.5 " +
+                "and 1.3.6): (3,2) at 7 kN is net (0,1), (2,1) at -3 kN is " +
+                "net (1,2), and (0,3) at 4 kN maps to net (3,0) before " +
+                "ordering and must read (0,3) after it; got [" +
                 string.Join(
                     ", ",
                     read.Select(e => $"({e.A},{e.B},{e.Force})")) + "].");
