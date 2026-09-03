@@ -1579,7 +1579,10 @@ internal static class Program
                 "ONE winding, so the field is one-sided by construction " +
                 "and needs no upward-hemisphere correction; before the " +
                 "field replaced the Newell sum, one Th gave 546 cells up " +
-                "and 486 down.");
+                "and 486 down. The corners with NO face under them in " +
+                "plan are counted by asking FaceUnder, not by recognising " +
+                "an offset of (0, 0, Th) that a level crown facet " +
+                "produces honestly, and they no longer offset vertically.");
         }
         catch (Exception exception)
         {
@@ -28248,25 +28251,37 @@ internal static class Program
             (double[])offsetMethod.Invoke(
                 null, new object?[] { net, point, 0.10, true })!;
 
-        // A corner that lands OFF the net in plan takes rule 2's (0, 0, 1)
-        // fallback, and that answer is nothing to do with the surface at
-        // that corner. It is separated from the measurement rather than
-        // averaged into it, and COUNTED, because the count is a real
-        // finding about this engine and not an artefact of the check: a
-        // traced level curve runs along the net's own boundary edges, and
-        // the plan-containment test claims a boundary point for a face
-        // only about half the time. The fallback is a function of the
-        // POINT alone, so two cells that share such a corner still move it
-        // identically and the skin stays welded; what suffers is the
-        // DIRECTION of the thickness at the rim, which goes vertical.
-        static bool IsFallback(double[] offset, double thickness) =>
-            offset[0] == 0.0 && offset[1] == 0.0 && offset[2] == thickness;
+        // A corner that lands OFF THE NET IN PLAN is counted, because the
+        // count is a real finding about this engine and not an artefact of
+        // the check: a traced level curve runs along the net's own
+        // boundary edges, and the plan-containment test claims a boundary
+        // point for a face only about half the time.
+        //
+        // IT IS CLASSIFIED BY ASKING FACEUNDER, not by reading the offset's
+        // VALUE. The sub-check that stood here until 2026-09-04 called an
+        // offset of exactly (0, 0, Th) a fallback, which is also what a
+        // genuine world-Z normal on a level crown facet produces, so it
+        // counted honest answers as failures of the lookup and could have
+        // reported the fallback where there was none. The lookup is the
+        // thing being classified, so the lookup is what is asked.
+        //
+        // WHAT THE OFF-MESH CORNERS NOW GET (rule 2 as amended 2026-09-04):
+        // the NEAREST face's own answer, not a vertical (0, 0, 1). That is
+        // asserted here on Param's own net rather than argued: if every
+        // one of them still came back within a hair of straight up, the
+        // amended branch would not be reading the surface at all and the
+        // rim would keep the vertical thickness this change removes.
+        MethodInfo faceUnderMethod = RequireStatic(patterns, "FaceUnder");
+        int FaceUnder(double[] at) =>
+            (int)faceUnderMethod.Invoke(null, new object?[] { net, at })!;
 
         int cellsTurned = 0;
         double leastWithinCell = double.PositiveInfinity;
         int cornersMeasured = 0;
-        int cornersOnField = 0;
-        int cornersFallenBack = 0;
+        int cornersOnFace = 0;
+        int cornersOffMesh = 0;
+        double leastVerticalOffMesh = double.PositiveInfinity;
+        double leastVerticalOnFace = double.PositiveInfinity;
         foreach ((_, double[][] outline, _, _, _, _) in cells)
         {
             if (outline.Length < 2)
@@ -28276,12 +28291,18 @@ internal static class Program
             {
                 double[] offset = Offset(corner);
                 cornersMeasured++;
-                if (IsFallback(offset, 0.10))
+                if (FaceUnder(corner) < 0)
                 {
-                    cornersFallenBack++;
-                    continue;
+                    cornersOffMesh++;
+                    leastVerticalOffMesh =
+                        Math.Min(leastVerticalOffMesh, offset[2] / 0.10);
                 }
-                cornersOnField++;
+                else
+                {
+                    cornersOnFace++;
+                    leastVerticalOnFace =
+                        Math.Min(leastVerticalOnFace, offset[2] / 0.10);
+                }
                 read.Add(offset);
             }
             bool turned = false;
@@ -28297,13 +28318,25 @@ internal static class Program
             if (turned)
                 cellsTurned++;
         }
-        if (cornersOnField * 2 < cornersMeasured)
+        if (cornersOnFace * 2 < cornersMeasured)
         {
             throw new InvalidOperationException(
-                $"Only {cornersOnField} of {cornersMeasured} cell corners " +
+                $"Only {cornersOnFace} of {cornersMeasured} cell corners " +
                 "on Param's net found a face under them in plan, so the " +
                 "one-sidedness below would be measured mostly on rule 2's " +
-                "(0, 0, 1) fallback rather than on the field.");
+                "OFF-MESH branch rather than on the faces themselves.");
+        }
+        if (cornersOffMesh > 0 && leastVerticalOffMesh > 0.99)
+        {
+            throw new InvalidOperationException(
+                $"All {cornersOffMesh} of {cornersMeasured} cell corners " +
+                "that find NO face under them in plan still offset within " +
+                "8 degrees of straight up, the least vertical agreeing " +
+                $"{leastVerticalOffMesh:F6} with world Z. Rule 2's " +
+                "off-mesh branch (amended 2026-09-04) reads the NEAREST " +
+                "face, so at the steep rim of this vault it must give a " +
+                "direction the surface owns and not the vertical one it " +
+                "gave before.");
         }
         if (cellsTurned != 0)
         {
@@ -28320,11 +28353,18 @@ internal static class Program
             "      Skin offset one-sidedness on Param's own net: " +
             $"{facesTested} faces, every one of them agreeing with its own " +
             $"winding, the least at {leastAgreement:F6}; " +
-            $"{cells.Length} course cells, {cornersOnField} of " +
-            $"{cornersMeasured} corners on the field and " +
-            $"{cornersFallenBack} off it taking rule 2's vertical " +
-            "fallback, and no cell turned, the least agreement within a " +
-            $"cell {leastWithinCell:F6}.");
+            $"{cells.Length} course cells, {cornersOnFace} of " +
+            $"{cornersMeasured} corners with a face under them in plan, " +
+            $"classified by asking FaceUnder, and {cornersOffMesh} with " +
+            "none, answered from the NEAREST face rather than vertically " +
+            "(rule 2 as amended 2026-09-04). Those off-mesh corners agree " +
+            $"with world Z down to {leastVerticalOffMesh:F6}, inside the " +
+            "range the ON-FACE corners of this vault already span (down " +
+            $"to {leastVerticalOnFace:F6}), so they are answers of the " +
+            "same field and not artefacts of being off it; before the " +
+            "amendment every one of the " + cornersOffMesh +
+            " was exactly (0, 0, Th). No cell turned, the least " +
+            $"agreement within a cell {leastWithinCell:F6}.");
     }
 
     /// <summary>
