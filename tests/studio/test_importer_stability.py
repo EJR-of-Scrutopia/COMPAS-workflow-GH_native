@@ -629,3 +629,32 @@ def test_a_triangulated_export_is_served_not_refused(tmp_path, monkeypatch):
     body = served.json()
     assert body["pieces"], "a triangulated export must still cut"
     assert body["provenance"]["render_subdivision"] == "skipped: 8 non-quad faces"
+
+
+def test_a_cache_hit_serves_the_cached_bytes_without_re_encoding(tmp_path, monkeypatch):
+    """The warm path, measured live on the Column diagnosis study: the
+    cached bundle is 80 MB, and every hit parsed it, walked it through
+    fastapi's encoder and re-serialised it, 8.3 s per poll. The parse
+    earns its keep (the freshness gate reads the document); the re-encode
+    does not, so a fresh hit returns the file's own bytes.
+
+    Byte identity is the assertion because it cannot hold unless the
+    encoder was skipped: JSONResponse writes compact separators and the
+    cache is written with json.dumps' defaults, so a re-encoded response
+    can never equal the file.
+    """
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    warm = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    assert warm.status_code == 200, warm.text
+
+    path = bundle.bundle_path("tiny", "concrete", "bonded-courses", 1.2, 0.2)
+    raw = path.read_bytes()
+    hit = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    assert hit.status_code == 200
+    assert hit.content == raw, (
+        "a fresh cache hit must serve the cached file verbatim, not "
+        "re-encode the same 80 MB it just parsed")
+    assert hit.json() == json.loads(raw)

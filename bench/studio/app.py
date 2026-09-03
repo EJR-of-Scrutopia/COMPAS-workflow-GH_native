@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import bundle
@@ -187,6 +187,15 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     ):
         _validate(export, material, pattern, size, thickness)
         try:
+            # A fresh cache hit answers with the file's own bytes: the
+            # freshness gate still runs on the parsed document inside
+            # cached_bundle_bytes, and only fastapi's re-encoding of an
+            # 80 MB dict is skipped (measured at 8.3 s per warm poll on
+            # the Column diagnosis study). None falls through unchanged.
+            raw = bundle.cached_bundle_bytes(
+                export, material, pattern, size, thickness, source)
+            if raw is not None:
+                return Response(content=raw, media_type="application/json")
             return bundle.load_or_build_bundle(
                 export, material, pattern, size, thickness, source)
         except ValueError as error:

@@ -546,6 +546,55 @@ def _pieces_are_uniquely_keyed(document: Dict) -> bool:
     return len(set(keys)) == len(keys)
 
 
+def _cache_is_fresh(cached) -> bool:
+    """Every gate a cached bundle must pass to be served without a rebuild.
+
+    One predicate, shared by load_or_build_bundle and the raw-bytes fast
+    path below, so the two can never drift apart.
+    """
+
+    if not isinstance(cached, dict):
+        return False
+    return (
+        all(_has_key_path(cached, key) for key in REQUIRED_BUNDLE_KEYS)
+        and _pieces_are_uniquely_keyed(cached)
+    )
+
+
+def cached_bundle_bytes(
+    export_name: str, material: str, pattern: str, size: float,
+    thickness: float = 0.2, source: Optional[str] = None,
+) -> Optional[bytes]:
+    """The cached bundle's ORIGINAL bytes, when the cache is usable.
+
+    Measured live on the Column diagnosis study: the cached bundle is
+    80 MB, and a warm GET parsed it, walked it through fastapi's encoder
+    and re-serialised it, 8.3 seconds per poll for bytes that were
+    already on disk. The parse stays, because the freshness gate reads
+    the parsed document; the re-encode goes. None means the fast path
+    does not apply and the caller falls through to load_or_build_bundle
+    unchanged, so a missing, stale or torn cache reaches exactly the
+    verdict it reaches today.
+    """
+
+    pairs = geometry.available_exports(UPLOAD_DIR)
+    if export_name not in pairs:
+        return None
+    contract = geometry.load_contract(pairs[export_name]["contract"])
+    key_pattern = cut_cache_pattern(
+        pattern, resolve_cut_source(export_name, contract, source))
+    path = bundle_path(
+        geometry.slugify(export_name), material, key_pattern, size, thickness)
+    try:
+        if not path.is_file():
+            return None
+        raw = path.read_bytes()
+        cached = json.loads(raw)
+    except (OSError, ValueError):
+        return None
+    return raw if _cache_is_fresh(cached) else None
+
+
 def load_or_build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2,
     source: Optional[str] = None,
@@ -563,10 +612,6 @@ def load_or_build_bundle(
     cached = _read_optional(
         bundle_path(geometry.slugify(export_name), material, key_pattern, size, thickness)
     )
-    if (
-        cached is not None
-        and all(_has_key_path(cached, key) for key in REQUIRED_BUNDLE_KEYS)
-        and _pieces_are_uniquely_keyed(cached)
-    ):
+    if _cache_is_fresh(cached):
         return cached
     return build_bundle(export_name, material, pattern, size, thickness, source)
