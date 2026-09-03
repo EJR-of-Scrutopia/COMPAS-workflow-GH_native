@@ -793,19 +793,7 @@ public sealed class ExportComponent :
 
         errors = new List<string>(resultValue.Validate());
         var derivedCourses = new List<int>();
-        foreach (GH_Path branchPath in cellTree.Paths)
-        {
-            int course = branchPath.Indices.Length > 0
-                ? branchPath.Indices[^1]
-                : 0;
-            foreach (GH_Curve? item in cellTree.get_Branch(branchPath))
-            {
-                if (item?.Value is null)
-                    continue;
-                cellInput.Add(item.Value);
-                derivedCourses.Add(course);
-            }
-        }
+        WalkCellTree(cellTree, cellInput, derivedCourses);
         string? branchConflict = DeriveBranchCourses(
             cellTree.Paths.Count, derivedCourses, courseInput);
         if (branchConflict is not null)
@@ -940,6 +928,57 @@ public sealed class ExportComponent :
             radius,
             PatternFor(cellSource));
         return true;
+    }
+
+    /// <summary>
+    /// The course of a branch path is its LAST index (rule 10.2.1), not
+    /// its first: Skin's own Cells tree only ever nests one level deep
+    /// (<c>GH_Path(course)</c>, <c>PiecesComponents.cs</c>'s sibling
+    /// convention), so the two coincide for every wire this component
+    /// actually receives from Skin today, and this is the one place that
+    /// distinction is decided, in case a future author grafts Cells into a
+    /// deeper tree before wiring it here. A path with no indices at all
+    /// (the tree's own root) is course 0, which is what a single flat
+    /// branch means.
+    /// </summary>
+    private static int CourseForPath(GH_Path branchPath)
+    {
+        return branchPath.Indices.Length > 0
+            ? branchPath.Indices[^1]
+            : 0;
+    }
+
+    /// <summary>
+    /// Flattens <paramref name="tree"/> into <paramref name="values"/> and
+    /// <paramref name="derivedCourses"/>, path order preserved and each
+    /// branch's own items lined up against <see cref="CourseForPath"/> of
+    /// that branch's path. Generic over the Goo wrapper and its value so
+    /// this harness's own reflection-only reach can drive it against a
+    /// <c>GH_Structure&lt;GH_Integer&gt;</c> (a plain int, no native Rhino
+    /// core, the same ground <c>Point3d</c> already stands on for
+    /// <c>SnapSampledLineToNodes</c>) and prove the walk itself -- not
+    /// only <see cref="CourseForPath"/> in isolation -- can fail; this
+    /// component always calls it with <c>GH_Structure&lt;GH_Curve&gt;</c>,
+    /// which needs the native core this harness deliberately never
+    /// launches and so cannot drive directly with real curve values.
+    /// </summary>
+    private static void WalkCellTree<TGoo, TValue>(
+        GH_Structure<TGoo> tree,
+        List<TValue> values,
+        List<int> derivedCourses)
+        where TGoo : GH_Goo<TValue>
+    {
+        foreach (GH_Path branchPath in tree.Paths)
+        {
+            int course = CourseForPath(branchPath);
+            foreach (TGoo? item in tree.get_Branch(branchPath))
+            {
+                if (item is null || item.Value is null)
+                    continue;
+                values.Add(item.Value);
+                derivedCourses.Add(course);
+            }
+        }
     }
 
     /// <summary>

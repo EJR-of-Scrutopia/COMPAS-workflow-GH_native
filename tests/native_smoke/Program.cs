@@ -24116,6 +24116,110 @@ internal static class Program
                 "refusing the conflict, not resolve it by guessing; got " +
                 $"[{string.Join(", ", courseInputC)}].");
         }
+
+        // The three cases above hand-supply an already-correct
+        // derivedCourses list, so they never exercise the tree-walking
+        // derivation code itself (TryReadInputs' GH_Path/GH_Structure
+        // read). That code is factored into two static helpers,
+        // CourseForPath(GH_Path) and the generic WalkCellTree, driven
+        // here against REAL GH_Path and GH_Structure<GH_Integer> objects
+        // built off the loaded Grasshopper assembly: GH_Path is a bare
+        // int[] wrapper and GH_Integer wraps a plain int, so both build
+        // without the native Rhino core this harness deliberately never
+        // launches (the same ground SnapSampledLineToNodes already
+        // stands on for Point3d; a real GH_Curve needs that core for its
+        // Curve value, which is why WalkCellTree is generic rather than
+        // hard-wired to GH_Curve).
+        Assembly grasshopper = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(item => item.GetName().Name == "Grasshopper")
+            ?? throw new InvalidOperationException(
+                "Grasshopper is not loaded, so the real branch-path walk " +
+                "cannot be driven at all.");
+        Type ghPathType = grasshopper.GetType(
+            "Grasshopper.Kernel.Data.GH_Path", throwOnError: true)!;
+        Type ghIntegerType = grasshopper.GetType(
+            "Grasshopper.Kernel.Types.GH_Integer", throwOnError: true)!;
+        Type ghStructureOpenType = grasshopper.GetType(
+            "Grasshopper.Kernel.Data.GH_Structure`1", throwOnError: true)!;
+        Type ghIntStructureType = ghStructureOpenType.MakeGenericType(ghIntegerType);
+        ConstructorInfo pathIndicesCtor = ghPathType.GetConstructor(
+            new[] { typeof(int[]) })
+            ?? throw new InvalidOperationException(
+                "GH_Path(int[]) was not found.");
+
+        // CourseForPath, on a real NESTED path: {2, 0, 3} is course 3 (the
+        // LAST index, rule 10.2.1), not 3's course-0 first index. Skin
+        // itself only ever emits single-level paths, so this is the one
+        // case that distinguishes Indices[^1] from Indices[0] at all --
+        // exactly the mutation a prior review round proved this suite
+        // could not catch.
+        MethodInfo courseForPath = RequireStatic(exportType, "CourseForPath");
+        object nestedPath = pathIndicesCtor.Invoke(
+            new object[] { new[] { 2, 0, 3 } });
+        object? nestedCourse = courseForPath.Invoke(null, new[] { nestedPath });
+        if (nestedCourse is not int nestedCourseValue || nestedCourseValue != 3)
+        {
+            throw new InvalidOperationException(
+                "CourseForPath must return a branch path's LAST index " +
+                "(rule 10.2.1), not its first: a path of {2, 0, 3} is " +
+                $"course 3; got '{nestedCourse}'.");
+        }
+        object rootPath = pathIndicesCtor.Invoke(
+            new object[] { Array.Empty<int>() });
+        object? rootCourse = courseForPath.Invoke(null, new[] { rootPath });
+        if (rootCourse is not int rootCourseValue || rootCourseValue != 0)
+        {
+            throw new InvalidOperationException(
+                "CourseForPath must return 0 for a path with no indices " +
+                $"at all; got '{rootCourse}'.");
+        }
+
+        // WalkCellTree, on a REAL three-branch GH_Structure<GH_Integer>
+        // (paths {0}, {1}, {2}, two items each), driven through
+        // GH_Structure.Paths and get_Branch exactly as TryReadInputs
+        // drives GH_Structure<GH_Curve>: proves path order, in-branch
+        // item order, and the per-item course line-up all survive the
+        // real tree walk, not only a hand-fed derivedCourses list.
+        MethodInfo walk = RequireStatic(exportType, "WalkCellTree")
+            .MakeGenericMethod(ghIntegerType, typeof(int));
+        object intTree = Activator.CreateInstance(ghIntStructureType)!;
+        MethodInfo append = ghIntStructureType.GetMethod(
+            "Append", new[] { ghIntegerType, ghPathType })
+            ?? throw new InvalidOperationException(
+                "GH_Structure<GH_Integer>.Append(GH_Integer, GH_Path) " +
+                "was not found.");
+        ConstructorInfo ghIntegerCtor = ghIntegerType.GetConstructor(
+            new[] { typeof(int) })
+            ?? throw new InvalidOperationException(
+                "GH_Integer(int) was not found.");
+        foreach ((int value, int course) in new[]
+                 {
+                     (10, 0), (11, 0), (20, 1), (21, 1), (30, 2), (31, 2)
+                 })
+        {
+            object item = ghIntegerCtor.Invoke(new object[] { value });
+            object path = pathIndicesCtor.Invoke(new object[] { new[] { course } });
+            append.Invoke(intTree, new[] { item, path });
+        }
+        object walkedValues = Activator.CreateInstance(
+            typeof(List<>).MakeGenericType(typeof(int)))!;
+        var walkedCourses = new List<int>();
+        walk.Invoke(null, new object[] { intTree, walkedValues, walkedCourses });
+        var flattenedValues = ((IEnumerable)walkedValues).Cast<int>().ToList();
+        if (!flattenedValues.SequenceEqual(new[] { 10, 11, 20, 21, 30, 31 }))
+        {
+            throw new InvalidOperationException(
+                "WalkCellTree must flatten a real multi-branch " +
+                "GH_Structure in path order, item order preserved " +
+                $"within each branch; got [{string.Join(", ", flattenedValues)}].");
+        }
+        if (!walkedCourses.SequenceEqual(new[] { 0, 0, 1, 1, 2, 2 }))
+        {
+            throw new InvalidOperationException(
+                "WalkCellTree must derive each item's course from its " +
+                "OWN branch's path, lined up item for item with the " +
+                $"values it walked; got [{string.Join(", ", walkedCourses)}].");
+        }
     }
 
     /// <summary>
