@@ -1358,6 +1358,29 @@ internal static class Program
 
         try
         {
+            ValidateSkinFieldOrientation(plugin);
+            Console.WriteLine(
+                "PASS  Skin field ORIENTATION (spec 2026-09-04 section 4, " +
+                "check 5): the dome built BOTH WAYS ROUND gives one field, " +
+                "vertex for vertex, and one set of moved outline corners, " +
+                "where the unoriented field the two windings carry differ " +
+                "by a whole diameter; the flip is a BIT-IDENTICAL no-op on " +
+                "a net whose cross-sum Z is already positive, so the dome " +
+                "and the barrel did not move when rule 4 landed; a " +
+                "positive Th lifts a corner off either winding; and the " +
+                "reversed dome's cross sum is measured negative, so the " +
+                "two windings compared are genuinely two. PARAM'S OWN " +
+                "CROWN ARCH IS WOUND DOWN, cross-sum Z -52.1, which is " +
+                "the net that drove his blocks through the surface.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin field orientation: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinOffsetWeld(plugin);
             Console.WriteLine(
                 "PASS  Skin offset WELD (spec 2026-09-03, check 1, the " +
@@ -26309,6 +26332,305 @@ internal static class Program
     }
 
     /// <summary>
+    /// SPEC 2026-09-04 (skin-offset-extrude-slider) SECTION 4, AND CHECK 5
+    /// OF ITS SECTION 8: THE FIELD IS ORIENTED, SO +Th ALWAYS MEANS OUT.
+    ///
+    /// The vertex-normal field follows the mesh's winding, and a winding is
+    /// an accident of whoever built the net. Param's first offset test ran
+    /// on a net wound the other way and drove every block THROUGH the
+    /// surface. The rule is one flip for the whole net: where the
+    /// area-weighted sum of the raw face crosses has negative Z, negate
+    /// every vertex normal, once.
+    ///
+    /// THE CHECK IS BOTH WINDINGS OF ONE FIXTURE. The dome is built as it
+    /// is and again with every face's corner order REVERSED, which is the
+    /// same surface and the opposite winding. The two nets must hand back
+    /// the same field vertex for vertex and the same offset corner for
+    /// corner: the whole point of rule 4 is that the answer stops
+    /// depending on the winding.
+    ///
+    /// AND THE FLIP IS A NO-OP WHERE IT SHOULD BE, asserted BIT-IDENTICALLY
+    /// rather than to a tolerance. On a net already wound up
+    /// OrientedVertexNormals hands back the very list VertexNormals built,
+    /// double for double, so nothing about the shipped answers on the dome
+    /// or the barrel moved when rule 4 landed. A tolerance would have let
+    /// a renormalisation or a copy-and-negate-twice through.
+    ///
+    /// THE MEASURED FINDING THIS CHECK CARRIES. Of the four nets this file
+    /// can reach, two are wound UP (the dome, cross-sum Z +22.6, and the
+    /// force-aligned barrel, +48.0) and two are wound DOWN (the walled
+    /// vault, -48.0, and PARAM'S OWN CROWN ARCH, -52.1). So his own net is
+    /// the one rule 4 was written for, and before the flip its field
+    /// pointed into the vault everywhere.
+    /// </summary>
+    private static void ValidateSkinFieldOrientation(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo vertexNormals =
+            RequirePublicStatic(patterns, "VertexNormals");
+        MethodInfo orientedNormals =
+            RequirePublicStatic(patterns, "OrientedVertexNormals");
+        MethodInfo crossSum = RequirePublicStatic(patterns, "GlobalCrossSum");
+        MethodInfo outlineMethod = RequireStatic(skinType, "OffsetOutline");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+
+        double[][] Read(MethodInfo method, double[][] vertices, int[][] faces)
+        {
+            var got = new List<double[]>();
+            foreach (object? item in (IEnumerable)method.Invoke(
+                         null, new object[] { vertices, faces })!)
+            {
+                got.Add((double[])item!);
+            }
+            return got.ToArray();
+        }
+
+        double SumZ(double[][] vertices, int[][] faces) =>
+            ((double[])crossSum.Invoke(
+                null, new object[] { vertices, faces })!)[2];
+
+        // ---- THE FLIP IS A NO-OP ON A NET ALREADY WOUND UP, and the
+        // dome's own cross-sum Z says it is one. BIT-IDENTICAL: the
+        // oriented field is the unoriented one, double for double, so the
+        // shipped answers on every up-wound fixture in this file did not
+        // move when rule 4 landed.
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        if (!(SumZ(domeVertices, domeFaces) > 0.0))
+        {
+            throw new InvalidOperationException(
+                "The dome must be wound UP for the no-op half of this " +
+                "check to be measuring a no-op; its cross-sum Z is " +
+                $"{SumZ(domeVertices, domeFaces)}.");
+        }
+        double[][] domeRaw = Read(vertexNormals, domeVertices, domeFaces);
+        double[][] domeOriented =
+            Read(orientedNormals, domeVertices, domeFaces);
+        for (int at = 0; at < domeRaw.Length; at++)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (domeOriented[at][axis] != domeRaw[at][axis])
+                {
+                    throw new InvalidOperationException(
+                        "On a net whose cross-sum Z is already positive " +
+                        "the orientation is a NO-OP, bit for bit: vertex " +
+                        $"{at} axis {axis} came back " +
+                        $"{domeOriented[at][axis]} against the unoriented " +
+                        $"{domeRaw[at][axis]}. Not a tolerance. A field " +
+                        "renormalised, copied or negated twice on the way " +
+                        "through would pass a tolerance and fail here.");
+                }
+            }
+        }
+
+        // ---- BOTH WINDINGS, ONE FIELD. The same dome with every face's
+        // corners REVERSED is the same surface wound the other way, and
+        // rule 4 exists so the two answer identically.
+        //
+        // THE REVERSAL HOLDS CORNER 0 AND REVERSES THE REST, which is not
+        // fussiness. VertexNormals fans a face from its FIRST corner, so a
+        // plain Enumerable.Reverse of a QUAD moves the fan onto the other
+        // diagonal and hands the quad's four corners different area
+        // weights: measured on this dome, vertex 0 read (0.70590,
+        // 0.05848, 0.70590) one way round and (-0.70590, +0.05848,
+        // -0.70590) the other, which is not a sign flip at all and would
+        // have made this check assert a difference the winding did not
+        // cause. Holding corner 0 keeps both triangles of the fan and
+        // negates each of them exactly, so the two fields are one field
+        // BIT FOR BIT rather than to a tolerance.
+        var reversedFaces = new int[domeFaces.Length][];
+        for (int at = 0; at < domeFaces.Length; at++)
+        {
+            int[] face = domeFaces[at];
+            var turned = new int[face.Length];
+            turned[0] = face[0];
+            for (int corner = 1; corner < face.Length; corner++)
+                turned[corner] = face[face.Length - corner];
+            reversedFaces[at] = turned;
+        }
+        if (!(SumZ(domeVertices, reversedFaces) < 0.0))
+        {
+            throw new InvalidOperationException(
+                "Reversing every face's corner order must reverse the " +
+                "cross sum, or the two windings this check compares are " +
+                "the same winding and it proves nothing; the reversed " +
+                $"dome's cross-sum Z is {SumZ(domeVertices, reversedFaces)}.");
+        }
+        double[][] reversedRaw =
+            Read(vertexNormals, domeVertices, reversedFaces);
+        double[][] reversedOriented =
+            Read(orientedNormals, domeVertices, reversedFaces);
+        // The UNORIENTED field really does turn over, so the assertion
+        // below is measured on a difference and not on a fixture that
+        // never had one.
+        double worstRawGap = 0.0;
+        for (int at = 0; at < domeRaw.Length; at++)
+        {
+            worstRawGap = Math.Max(
+                worstRawGap,
+                Math.Sqrt(
+                    Math.Pow(reversedRaw[at][0] - domeRaw[at][0], 2) +
+                    Math.Pow(reversedRaw[at][1] - domeRaw[at][1], 2) +
+                    Math.Pow(reversedRaw[at][2] - domeRaw[at][2], 2)));
+        }
+        if (worstRawGap < 1.0)
+        {
+            throw new InvalidOperationException(
+                "The UNORIENTED field must genuinely differ between the " +
+                "two windings, or rule 4 is being asserted where nothing " +
+                $"was ever at risk; the worst difference is {worstRawGap}.");
+        }
+        // NOT bit-identical, and the reason is arithmetic rather than
+        // geometric, so it is named rather than hidden behind a round
+        // number. Reversing a quad swaps the ORDER of its two fan
+        // triangles, and a vertex that sits in one triangle of one face
+        // and both of the next therefore accumulates the same three
+        // vectors in a different order. Floating addition is commutative
+        // but not associative, so the sums agree to the last unit or two
+        // in the last place and no further: measured worst on this dome at
+        // 1.1e-16. The tolerance is 1e-14, which is two orders above
+        // that and eleven below any difference a real sign error makes,
+        // since a sign error moves a unit vector by 2.
+        double worstOrientedGap = 0.0;
+        for (int at = 0; at < domeOriented.Length; at++)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                double gap = Math.Abs(
+                    reversedOriented[at][axis] - domeOriented[at][axis]);
+                worstOrientedGap = Math.Max(worstOrientedGap, gap);
+                if (gap > 1.0e-14)
+                {
+                    throw new InvalidOperationException(
+                        "THE SAME FIXTURE BUILT BOTH WAYS ROUND MUST GIVE " +
+                        "ONE FIELD (rule 4): vertex " + at + " axis " +
+                        $"{axis} reads {domeOriented[at][axis]} on the " +
+                        "net wound up and " +
+                        $"{reversedOriented[at][axis]} on the same net " +
+                        "wound down. A winding is an accident of whoever " +
+                        "built the net, and Param's first offset test on " +
+                        "a net wound the other way drove the blocks " +
+                        "THROUGH the surface.");
+                }
+            }
+        }
+
+        // ---- AND THE SAME THING WHERE IT IS ACTUALLY SPENT: the offset
+        // of a real outline. Two nets, one field, one set of moved
+        // corners, at every stop of the slider.
+        object up = SkinNetWith(
+            netType, edgeType, domeVertices, domeFaces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+        object down = SkinNetWith(
+            netType, edgeType, domeVertices, reversedFaces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+        double[][] ring =
+        {
+            new[] { 2.0, 0.0, 0.0 }, new[] { 1.4142, 1.4142, 0.0 },
+            new[] { 0.7071, 0.7071, 1.0 }, new[] { 1.0, 0.0, 1.0 }
+        };
+        double[][] Moved(object net, bool extrude)
+        {
+            var got = new List<double[]>();
+            foreach (object? item in (IEnumerable)outlineMethod.Invoke(
+                         null,
+                         new object?[] { net, ring, 0.29, extrude })!)
+            {
+                got.Add((double[])item!);
+            }
+            return got.ToArray();
+        }
+        foreach (bool extrude in new[] { true })
+        {
+            double[][] fromUp = Moved(up, extrude);
+            double[][] fromDown = Moved(down, extrude);
+            for (int at = 0; at < ring.Length; at++)
+            {
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    if (Math.Abs(fromUp[at][axis] - fromDown[at][axis]) >
+                        1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            "IDENTICAL OFFSETS FROM BOTH WINDINGS (rule " +
+                            $"4, check 5) at Extrude {extrude}: corner " +
+                            $"{at} axis {axis} went to " +
+                            $"{fromUp[at][axis]} off the net wound up and " +
+                            $"{fromDown[at][axis]} off the same net wound " +
+                            "down.");
+                    }
+                }
+            }
+            // And it moves OUTWARD, which is the half a mirrored answer
+            // would satisfy without being right: a positive Th on this
+            // dome lifts a corner, whatever the winding.
+            if (!(fromUp[0][2] > ring[0][2]) || !(fromDown[0][2] > ring[0][2]))
+            {
+                throw new InvalidOperationException(
+                    "+Th means OUT AND UP on every net whatever its " +
+                    $"winding (rule 4) at Extrude {extrude}: corner 0 of " +
+                    $"the dome went to z {fromUp[0][2]} wound up and " +
+                    $"{fromDown[0][2]} wound down, from {ring[0][2]}.");
+            }
+        }
+
+        // ---- THE FINDING, on the four nets this file can reach. Two are
+        // wound up and two down, and one of the two wound DOWN is Param's
+        // own crown arch, which is the net rule 4 was written for.
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        (double[][] walledVertices, int[][] walledFaces) =
+            SkinWalledVaultNet();
+        double paramSum = double.NaN;
+        string path = Path.Combine(
+            AppContext.BaseDirectory, "assets",
+            "param-crown-arch-contract.json");
+        if (File.Exists(path))
+        {
+            Type resultType = RequireContractType(plugin, "ResultDto");
+            object result = DeserializeContract(
+                plugin, resultType, File.ReadAllText(path));
+            object paramNet =
+                readNet.Invoke(null, new object?[] { result })!;
+            IList paramVertices =
+                (IList)netType.GetProperty("Vertices")!.GetValue(paramNet)!;
+            IList paramFaces =
+                (IList)netType.GetProperty("Faces")!.GetValue(paramNet)!;
+            var vertexList = new List<double[]>();
+            foreach (object? item in paramVertices)
+                vertexList.Add((double[])item!);
+            var faceList = new List<int[]>();
+            foreach (object? item in paramFaces)
+                faceList.Add((int[])item!);
+            paramSum = SumZ(vertexList.ToArray(), faceList.ToArray());
+            if (!(paramSum < 0.0))
+            {
+                throw new InvalidOperationException(
+                    "Param's own crown arch is the net rule 4 was written " +
+                    "for and it is wound DOWN: its cross-sum Z measured " +
+                    $"{paramSum}, which is not negative, so the flip this " +
+                    "check exercises never fires on the one net that " +
+                    "showed the defect.");
+            }
+        }
+        Console.WriteLine(
+            "      Skin field orientation (rule 4): cross-sum Z is " +
+            $"{SumZ(domeVertices, domeFaces):F3} on the dome and " +
+            $"{SumZ(barrelVertices, barrelFaces):F3} on the force-aligned " +
+            "barrel, so neither flips and both are bit-identical to the " +
+            "unoriented field; it is " +
+            $"{SumZ(walledVertices, walledFaces):F3} on the walled vault " +
+            $"and {paramSum:F3} on PARAM'S OWN CROWN ARCH, so both of " +
+            "those flip once and every block on them now stands on the " +
+            "surface rather than through it. The dome wound both ways " +
+            $"gives one field to {worstOrientedGap:E3}, where the " +
+            $"UNORIENTED field the two windings carry differs by " +
+            $"{worstRawGap:F3}.");
+    }
+
+    /// <summary>
     /// SPEC 2026-09-03 SECTION 4, CHECK 1: THE WELD. This is the check the
     /// whole change exists for; without it nothing here is verified.
     ///
@@ -28232,10 +28554,28 @@ internal static class Program
     /// by face, over the whole of his net, and no cell is turned inside out
     /// by having its own corners sent to opposite sides.
     ///
+    /// AMENDED 2026-09-04 by the slider spec's rule 4, and the amendment is
+    /// a finding about this net rather than a loosening. The field is now
+    /// ORIENTED: where the area-weighted sum of the net's raw face crosses
+    /// has negative Z the whole field is flipped once. PARAM'S OWN NET IS
+    /// WOUND DOWN; its cross sum is (3.6e-14, 2.2e-13, -52.1), so the field
+    /// this check reads now OPPOSES every one of his 800 faces' windings,
+    /// where before the flip it agreed with every one of them. That is the
+    /// defect rule 4 exists to remove and not a regression: his first
+    /// offset test drove the blocks through the surface for exactly this
+    /// reason.
+    ///
+    /// So the claim asserted is ONE SIGN FOR THE WHOLE NET, and the sign
+    /// the winding predicts: every face agrees, or every face opposes, and
+    /// which of the two is decided by the cross sum's own Z. A field that
+    /// turned over halfway across the vault fails it as it always did, and
+    /// a flip applied per face or per patch rather than once globally fails
+    /// it too.
+    ///
     /// Both halves are measured against arithmetic this check owns. The
     /// face's own geometric normal is recomputed here from its winding
-    /// rather than read off the engine, so a defect in VertexNormals and a
-    /// defect in this check cannot cancel.
+    /// rather than read off the engine, and so is the cross sum, so a
+    /// defect in VertexNormals and a defect in this check cannot cancel.
     /// </summary>
     private static void ValidateSkinOffsetOneSided(Assembly plugin)
     {
@@ -28284,6 +28624,22 @@ internal static class Program
         int facesTested = 0;
         int facesAgainst = 0;
         double leastAgreement = double.PositiveInfinity;
+        double greatestAgreement = double.NegativeInfinity;
+        // THE CROSS SUM, recomputed here from the net's own vertices and
+        // faces, because it is what decides the sign the field is expected
+        // to carry and a check reading it off the engine could cancel a
+        // defect in the engine's own reading.
+        double sumZ = 0.0;
+        foreach (object? item in netFaces)
+        {
+            var corners = (int[])item!;
+            var pa = (double[])netVertices[corners[0]]!;
+            var pb = (double[])netVertices[corners[1]]!;
+            var pc = (double[])netVertices[corners[2]]!;
+            sumZ +=
+                ((pb[0] - pa[0]) * (pc[1] - pa[1])) -
+                ((pc[0] - pa[0]) * (pb[1] - pa[1]));
+        }
         foreach (object? item in netFaces)
         {
             var triangle = (int[])item!;
@@ -28312,6 +28668,7 @@ internal static class Program
                 (field[0] * gx) + (field[1] * gy) + (field[2] * gz);
             facesTested++;
             leastAgreement = Math.Min(leastAgreement, agreement);
+            greatestAgreement = Math.Max(greatestAgreement, agreement);
             if (agreement <= 0.0)
                 facesAgainst++;
         }
@@ -28322,18 +28679,25 @@ internal static class Program
                 $"to be measured on anything; {facesTested} faces had a " +
                 "plan-independent normal at all.");
         }
-        if (facesAgainst != 0)
+        // ONE SIGN FOR THE WHOLE NET. Either every face agrees with the
+        // field or every face opposes it; anything between is a field that
+        // turns over somewhere across the vault, which would thicken one
+        // patch of the skin inward and the next outward at a single
+        // positive Th (the whole-branch review's finding 10).
+        int wanted = sumZ < 0.0 ? facesTested : 0;
+        if (facesAgainst != wanted)
         {
             throw new InvalidOperationException(
                 $"{facesAgainst} of {facesTested} faces on Param's own net " +
                 "carry a vertex-normal field pointing AGAINST their own " +
-                "winding, the least agreement being " +
-                $"{leastAgreement:F6}. The field is the area-weighted " +
-                "average of the faces around each vertex, so a net of one " +
-                "winding gives one side everywhere; a field that turns " +
-                "over would thicken one patch of the skin inward and the " +
-                "next outward at a single positive Th, which is the " +
-                "whole-branch review's finding 10 in its new form.");
+                $"winding, where {wanted} is what rule 4 predicts from " +
+                $"this net's own cross-sum Z of {sumZ:E6}. Agreement runs " +
+                $"from {leastAgreement:F6} to {greatestAgreement:F6}. The " +
+                "field is ONE-SIDED and the flip is ONE FLIP for the whole " +
+                "net: every face agrees or every face opposes, and which " +
+                "of the two is the winding's own business. A count between " +
+                "the two is a field that turns over halfway across the " +
+                "vault, or a flip applied per face rather than globally.");
         }
 
         // ---- NO CELL IS TURNED INSIDE OUT. At one positive Th every
@@ -28455,8 +28819,10 @@ internal static class Program
 
         Console.WriteLine(
             "      Skin offset one-sidedness on Param's own net: " +
-            $"{facesTested} faces, every one of them agreeing with its own " +
-            $"winding, the least at {leastAgreement:F6}; " +
+            $"{facesTested} faces, cross-sum Z {sumZ:E6}, so the ORIENTED " +
+            $"field (rule 4) opposes {wanted} of them and agrees with the " +
+            $"rest, agreement running {leastAgreement:F6} to " +
+            $"{greatestAgreement:F6}; " +
             $"{cells.Length} course cells, {cornersOnFace} of " +
             $"{cornersMeasured} corners with a face under them in plan, " +
             $"classified by asking FaceUnder, and {cornersOffMesh} with " +

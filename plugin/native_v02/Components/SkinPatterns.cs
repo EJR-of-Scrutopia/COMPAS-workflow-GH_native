@@ -81,14 +81,17 @@ internal sealed record SkinNet(
             Rim);
 
     /// <summary>The AREA-WEIGHTED UNIT NORMAL at every vertex (spec
-    /// 2026-09-03, skin-offset-surface, rule 1). Computed once here, beside
-    /// the Levels field, because it is the same shape of data and has the
-    /// same lifetime: one double[3] per vertex, valid for as long as the net
-    /// is. Triangulate is called again rather than the Faces property read,
-    /// for the reason Levels gives: an instance property initialiser cannot
-    /// see `this`, and Triangulate is idempotent.</summary>
+    /// 2026-09-03, skin-offset-surface, rule 1), ORIENTED so that a
+    /// positive Thickness is outward and up whatever the net's winding
+    /// (spec 2026-09-04, skin-offset-extrude-slider, rule 4). Computed once
+    /// here, beside the Levels field, because it is the same shape of data
+    /// and has the same lifetime: one double[3] per vertex, valid for as
+    /// long as the net is. Triangulate is called again rather than the
+    /// Faces property read, for the reason Levels gives: an instance
+    /// property initialiser cannot see `this`, and Triangulate is
+    /// idempotent.</summary>
     public IReadOnlyList<double[]> Normals { get; } =
-        SkinPatterns.VertexNormals(
+        SkinPatterns.OrientedVertexNormals(
             Vertices,
             SkinPatterns.Triangulate(Vertices, Faces));
 
@@ -4501,6 +4504,98 @@ internal static class SkinPatterns
                 : new[] { 0.0, 0.0, 1.0 };
         }
         return normals;
+    }
+
+    /// <summary>
+    /// THE AREA-WEIGHTED SUM OF EVERY RAW FACE CROSS over a net, which is
+    /// the quantity spec 2026-09-04 (skin-offset-extrude-slider) rule 4
+    /// reads the winding off. A raw cross is TWICE the triangle's area, so
+    /// summing the raw crosses weights each face by its own area without
+    /// any area being computed, exactly as VertexNormals does per vertex.
+    ///
+    /// It is the SUM over the whole net and not a vote per face, because a
+    /// net whose faces disagree among themselves has no winding to read at
+    /// all and the largest surface is the honest tie-break.
+    ///
+    /// Public so the harness can build a fixture BOTH WAYS ROUND and
+    /// measure that the two give one field, which is rule 4's own check.
+    /// </summary>
+    public static double[] GlobalCrossSum(
+        IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces)
+    {
+        double sx = 0.0, sy = 0.0, sz = 0.0;
+        foreach (int[] face in faces)
+        {
+            if (face.Length < 3)
+                continue;
+            for (int corner = 1; corner + 1 < face.Length; corner++)
+            {
+                int a = face[0];
+                int b = face[corner];
+                int c = face[corner + 1];
+                if (a < 0 || a >= vertices.Count ||
+                    b < 0 || b >= vertices.Count ||
+                    c < 0 || c >= vertices.Count)
+                {
+                    continue;
+                }
+                double[] pa = vertices[a];
+                double[] pb = vertices[b];
+                double[] pc = vertices[c];
+                double ux = pb[0] - pa[0];
+                double uy = pb[1] - pa[1];
+                double uz = pb[2] - pa[2];
+                double vx = pc[0] - pa[0];
+                double vy = pc[1] - pa[1];
+                double vz = pc[2] - pa[2];
+                sx += (uy * vz) - (uz * vy);
+                sy += (uz * vx) - (ux * vz);
+                sz += (ux * vy) - (uy * vx);
+            }
+        }
+        return new[] { sx, sy, sz };
+    }
+
+    /// <summary>
+    /// THE FIELD, ORIENTED (spec 2026-09-04, skin-offset-extrude-slider,
+    /// rule 4). <see cref="VertexNormals"/> follows the mesh's own
+    /// winding, and a winding is an accident of whoever built the net:
+    /// Param's first offset test ran on a net wound the other way and
+    /// drove every block through the surface instead of standing it on
+    /// the surface.
+    ///
+    /// THE RULE IS ONE FLIP FOR THE WHOLE NET. Where the area-weighted sum
+    /// of the raw face crosses (<see cref="GlobalCrossSum"/>) has NEGATIVE
+    /// Z, every vertex normal is negated, once, globally. A positive Th is
+    /// then outward and up on every net whatever its winding, and a
+    /// negative one inward.
+    ///
+    /// ONE GLOBAL FLIP PRESERVES THE WELD EXACTLY. Rule 3 of spec
+    /// 2026-09-03 rests on the field being a continuous function of the
+    /// POINT alone; negating every vertex normal by one constant sign
+    /// leaves it continuous and leaves it a function of the point, so two
+    /// cells sharing a corner still move it to one place. A per-face or
+    /// per-cell correction would not, which is why the rule is written
+    /// this way and not as a hemisphere test.
+    ///
+    /// A ZERO OR POSITIVE Z IS LEFT ALONE, so a net already wound up comes
+    /// back BIT-IDENTICAL rather than merely equal: the very list the
+    /// unoriented field built, untouched. A flat net whose sum is exactly
+    /// zero has no winding to read and is left as it is.
+    /// </summary>
+    public static IReadOnlyList<double[]> OrientedVertexNormals(
+        IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces)
+    {
+        IReadOnlyList<double[]> normals = VertexNormals(vertices, faces);
+        if (GlobalCrossSum(vertices, faces)[2] >= 0.0)
+            return normals;
+        var flipped = new double[normals.Count][];
+        for (int at = 0; at < normals.Count; at++)
+        {
+            double[] normal = normals[at];
+            flipped[at] = new[] { -normal[0], -normal[1], -normal[2] };
+        }
+        return flipped;
     }
 
     /// <summary>
