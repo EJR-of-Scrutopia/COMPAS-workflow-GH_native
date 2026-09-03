@@ -929,3 +929,71 @@ def test_a_damaged_scene_is_listed_rather_than_hidden(tmp_path, monkeypatch):
     assert damaged.status_code == 400
     assert "scene-0123456789ab.json" in damaged.json()["detail"]
     assert client.delete("/api/scenes/scene-0123456789ab").status_code == 200
+
+
+def test_the_folder_is_a_setting_and_the_list_follows_it(tmp_path, monkeypatch):
+    """Param's ask: choose a folder, and every vault saved in it becomes
+    selectable. One assignment moves the whole studio, because the study
+    list, the sidecars, the uploads the exporter sends and the deletes all
+    resolve through UPLOAD_DIR. The dialog that picks the folder is opened
+    by the SERVER (a browser cannot hand over a path), so what the route
+    takes is a path, and it is refused unless it is a folder that exists."""
+
+    client, uploads, _studies = make_client(tmp_path, monkeypatch)
+    app_module = studio()[0]
+    monkeypatch.setattr(app_module, "SETTINGS_PATH", tmp_path / "settings.json")
+    upload_pair(client, "Here")
+    first = client.get("/api/folder").json()
+    assert first["path"] == str(uploads)
+    assert first["studies"] == 1
+
+    elsewhere = tmp_path / "another folder"
+    elsewhere.mkdir()
+    (elsewhere / "Over there.json").write_text(
+        json.dumps(tiny_contract()), encoding="utf-8")
+
+    moved = client.post("/api/folder", json={"path": str(elsewhere)})
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["path"] == str(elsewhere)
+    assert moved.json()["studies"] == 1
+    listed = [row["export"] for row in client.get("/api/studies").json()["studies"]]
+    assert listed == ["Over there"], listed
+    # Remembered, so the next run opens where this one left off.
+    assert json.loads((tmp_path / "settings.json").read_text(encoding="utf-8")) == {
+        "upload_folder": str(elsewhere)}
+
+    missing = client.post("/api/folder", json={"path": str(tmp_path / "nowhere")})
+    assert missing.status_code == 400
+    assert "not a folder" in missing.json()["detail"]
+    assert client.post("/api/folder", json={"path": "   "}).status_code == 400
+    # A file is not a folder, whatever its name says.
+    a_file = tmp_path / "not-a-folder.json"
+    a_file.write_text("{}", encoding="utf-8")
+    assert client.post("/api/folder", json={"path": str(a_file)}).status_code == 400
+
+
+def test_the_saved_folder_is_applied_at_startup_not_at_app_build(tmp_path, monkeypatch):
+    """apply_saved_folder is called by serve.py and never by create_app.
+    Inside create_app it would overwrite the temporary folder every test
+    monkeypatches in before building the app, and point the whole suite at
+    the real one. A remembered folder that has since been deleted is
+    ignored rather than obeyed."""
+
+    _client, uploads, _studies = make_client(tmp_path, monkeypatch)
+    app_module = studio()[0]
+    monkeypatch.setattr(app_module, "SETTINGS_PATH", tmp_path / "settings.json")
+    assert app_module.apply_saved_folder() is None, "no settings file, no change"
+
+    elsewhere = tmp_path / "remembered"
+    elsewhere.mkdir()
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"upload_folder": str(elsewhere)}), encoding="utf-8")
+    assert app_module.apply_saved_folder() == elsewhere
+    import bundle as bundle_module
+    assert bundle_module.UPLOAD_DIR == elsewhere
+
+    bundle_module.UPLOAD_DIR = uploads
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"upload_folder": str(tmp_path / "gone")}), encoding="utf-8")
+    assert app_module.apply_saved_folder() is None
+    assert bundle_module.UPLOAD_DIR == uploads, "a folder that is gone is not obeyed"

@@ -132,3 +132,35 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
   color: #c9ccd1; font-size: 12px; line-height: 18px; cursor: pointer; }
 .scene-delete:hover { background: #7a2b2b; color: #fff; }
 .scene-empty { color: #7d838c; font-size: 11px; grid-column: 1 / -1; }
+
+/* The import panel: where the vaults are, which one is up, which skin cuts
+   it, and whether the studio is following Grasshopper. */
+#folder-row, #vault-row, #vault-tools { display: flex; align-items: center;
+  gap: 6px; margin: 5px 0; }
+#vault-row select { flex: 1 1 auto; min-width: 0; }
+#folder-path { flex: 1 1 auto; min-width: 0; color: #9aa1a9; font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl;
+  text-align: left; }
+#import-upload { margin: 6px 0; color: #8b9199; }
+#import-upload summary { cursor: pointer; font-size: 11px; }
+
+/* The skin choice is one switch between two named ends, not a list of two:
+   a study either wears the skin Grasshopper authored or the one the studio
+   cuts, and a toggle says that in a glance. */
+#source-row { display: grid; grid-template-columns: auto auto auto;
+  align-items: center; gap: 7px; margin: 7px 0; }
+.toggle-end { font-size: 11px; color: #7d838c; }
+#source-row.authored #source-end-authored,
+#source-row.generated #source-end-generated { color: #e8eaed; }
+.toggle { position: relative; display: inline-block; width: 34px; height: 16px; }
+.toggle input { position: absolute; opacity: 0; width: 100%; height: 100%;
+  margin: 0; cursor: pointer; }
+.toggle .track { position: absolute; inset: 0; border-radius: 8px;
+  background: #3a3f47; transition: background 120ms linear; pointer-events: none; }
+.toggle .track::before { content: ""; position: absolute; top: 2px; left: 2px;
+  width: 12px; height: 12px; border-radius: 50%; background: #d8dade;
+  transition: transform 120ms ease; }
+.toggle input:checked + .track { background: #4a6a8a; }
+.toggle input:checked + .track::before { transform: translateX(18px); }
+.toggle input:disabled + .track { opacity: 0.4; }
+#source-row #source-note { grid-column: 1 / -1; font-size: 11px; color: #7d838c; }

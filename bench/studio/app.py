@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import urllib.parse
 import uuid
@@ -39,6 +40,10 @@ COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
 # root beside the studio, like columns and hdri, because a scene is authored
 # by hand and cannot be rebuilt from anything.
 SCENES_DIR = Path(__file__).resolve().parent / "scenes"
+# The one setting the studio remembers between runs: which folder the
+# vaults are read from. Beside the studio, not in the folder itself, so
+# pointing at a new folder cannot lose the way back.
+SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 SCENE_SCHEMA = "bench.scene/1"
 # The id is minted here, never taken from the caller, so no scene name can
 # reach the filesystem. The pattern is asserted on every route anyway.
@@ -162,6 +167,73 @@ def _slug_owner(slug: str, name: str) -> Optional[str]:
         if existing != name and geometry.slugify(existing) == slug:
             return existing
     return None
+
+
+# A browser cannot hand a server a folder path: file inputs withhold it
+# deliberately, and no dialog in the page can return one. The studio and
+# the browser are the same machine here, so the SERVER opens the native
+# Windows folder dialog on the user's own desktop and reads the answer.
+FOLDER_DIALOG = (
+    "import tkinter, tkinter.filedialog as dialog\n"
+    "root = tkinter.Tk()\n"
+    "root.withdraw()\n"
+    "root.attributes('-topmost', True)\n"
+    "print(dialog.askdirectory(title='Choose the folder your vault JSONs are in') or '')\n"
+)
+
+
+def ask_for_folder(timeout: float = 300.0):
+    """The chosen folder, or None if the dialog was cancelled or closed.
+
+    In a subprocess, not in this process: a Tk main loop owns the thread it
+    runs on, and a dialog nobody answers would wedge the server until it
+    was killed. A subprocess can be waited on with a timeout and abandoned.
+    """
+
+    try:
+        finished = subprocess.run(
+            [sys.executable, "-c", FOLDER_DIALOG],
+            capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise HTTPException(
+            503, "the folder dialog could not be opened ({})".format(error))
+    chosen = finished.stdout.strip()
+    return chosen or None
+
+
+def remember_folder(directory: Path) -> None:
+    """Persist the chosen folder. A failure here is not a reason to refuse
+    the change: the studio still reads that folder for this run, it simply
+    will not remember it next time, and saying so is better than refusing
+    a choice the user has already made."""
+
+    try:
+        bundle.write_json_atomically(SETTINGS_PATH, {"upload_folder": str(directory)})
+    except OSError as error:
+        print("could not remember the folder choice: {}".format(error))
+
+
+def apply_saved_folder():
+    """Point UPLOAD_DIR at the remembered folder, if there is one and it is
+    still there. Called by serve.py at startup and NEVER by create_app: the
+    tests point UPLOAD_DIR at a temporary folder before they build the app,
+    and a settings file applied inside create_app would silently overwrite
+    that and send every test at the real folder."""
+
+    try:
+        stored = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    raw = (stored or {}).get("upload_folder")
+    if not raw:
+        return None
+    directory = Path(raw)
+    if not directory.is_dir():
+        print("the remembered folder {} is gone; staying with {}".format(
+            raw, bundle.UPLOAD_DIR))
+        return None
+    bundle.UPLOAD_DIR = directory
+    return directory
 
 
 def create_app(runner=None, cra_runner=None) -> FastAPI:
@@ -462,6 +534,52 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 413, "the thumbnail is {} bytes; the limit is {}.".format(
                     len(raw), MAX_THUMBNAIL_BYTES))
         return raw
+
+    def _folder_row():
+        directory = bundle.UPLOAD_DIR
+        present = directory.is_dir()
+        return {
+            "path": str(directory),
+            "exists": present,
+            "studies": len(geometry.available_exports(directory)) if present else 0,
+        }
+
+    @app.get("/api/folder")
+    def folder():
+        return _folder_row()
+
+    @app.post("/api/folder")
+    def set_folder(body: dict):
+        """Read the vaults from somewhere else from now on.
+
+        Everything downstream follows UPLOAD_DIR, so this one assignment
+        moves the study list, the sidecars, the uploads the exporter sends
+        and the deletes. The cut memo is dropped because its keys are study
+        slugs, and two folders can hold different vaults under one name.
+        """
+
+        raw = str(body.get("path") or "").strip().strip('"')
+        if not raw:
+            raise HTTPException(400, "a folder path is required")
+        directory = Path(raw)
+        if not directory.is_dir():
+            raise HTTPException(
+                400, "{} is not a folder on this machine".format(raw))
+        bundle.UPLOAD_DIR = directory
+        bundle.clear_cut_memo()
+        remember_folder(directory)
+        return _folder_row()
+
+    @app.post("/api/folder/browse")
+    def browse_folder():
+        """Open the native folder dialog on the machine the server runs on.
+
+        Returns the chosen path without setting it: the caller posts it back
+        to /api/folder, so the validation and the remembering live in one
+        place rather than two.
+        """
+
+        return {"path": ask_for_folder()}
 
     @app.get("/api/scenes")
     def scene_list():

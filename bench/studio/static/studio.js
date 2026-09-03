@@ -1572,11 +1572,16 @@ function applyCut(preserve) {
   // make, so a study without a Skin looks exactly as it always has.
   const available = state.bundle.source_available || ["generated"];
   const row = document.getElementById("source-row");
-  const select = document.getElementById("source-select");
+  const toggle = document.getElementById("source-toggle");
   const note = document.getElementById("source-note");
-  if (row && select) {
+  if (row && toggle) {
+    // The switch appears only where there is a choice to make, and it says
+    // which end it is at whether or not the study offers both.
     row.classList.toggle("hidden", available.length < 2);
-    select.value = state.bundle.source;
+    toggle.checked = state.bundle.source === "generated";
+    toggle.disabled = available.length < 2;
+    row.classList.toggle("authored", state.bundle.source === "authored");
+    row.classList.toggle("generated", state.bundle.source === "generated");
     state.source = state.bundle.source;
     if (note) {
       note.textContent = state.bundle.source === "authored"
@@ -2899,6 +2904,80 @@ async function boot(preferredExport) {
   }
 }
 
+// ---------- the folder the vaults are read from ----------
+// The studio reads one folder. Choosing it opens the native Windows dialog
+// on the server, because a browser cannot be made to hand over a path: file
+// inputs withhold it by design, and here the server and the browser are the
+// same machine anyway.
+async function showFolder() {
+  const row = document.getElementById("folder-path");
+  try {
+    const folder = await fetchJson("/api/folder");
+    row.textContent = folder.path;
+    row.title = folder.path + " (" + folder.studies + " vaults)";
+    return folder;
+  } catch (error) {
+    row.textContent = "could not read the folder";
+    return null;
+  }
+}
+
+// Re-read the folder and refill the vault list, keeping the vault on screen
+// selected if it is still there. This is what the Refresh button is for:
+// new saves appear without a page reload.
+async function refreshStudies(preferred) {
+  const payload = await fetchJson("/api/studies");
+  state.studies = payload.studies;
+  state.columnFiles = payload.columns || [];
+  const select = document.getElementById("study-select");
+  const wanted = preferred || select.value;
+  const names = populateStudySelect(payload.studies, null);
+  if (names.includes(wanted)) select.value = wanted;
+  await showFolder();
+  return names;
+}
+
+document.getElementById("folder-choose").addEventListener("click", async () => {
+  const status = document.getElementById("import-status");
+  status.textContent = "waiting for the folder dialog...";
+  let chosen = null;
+  try {
+    chosen = (await (await fetch("/api/folder/browse", { method: "POST" })).json()).path;
+  } catch (error) {
+    status.textContent = "the folder dialog could not be opened";
+    return;
+  }
+  if (!chosen) { status.textContent = "no folder chosen"; return; }
+  const response = await fetch("/api/folder", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: chosen }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    status.textContent = "not a folder: " + (body.detail || response.status);
+    return;
+  }
+  const folder = await response.json();
+  logStudio("reading vaults from " + folder.path);
+  status.textContent = folder.studies + " vaults in this folder";
+  // The vault on screen came from the old folder and may not exist in the
+  // new one, so the scene is emptied rather than left standing under a
+  // list it no longer belongs to.
+  clearScene();
+  liveStamp = null;
+  const names = await refreshStudies(null);
+  if (names.length) {
+    document.getElementById("study-select").value = names[0];
+    await loadStudy(names[0]);
+  }
+});
+
+document.getElementById("study-refresh").addEventListener("click", async () => {
+  const names = await refreshStudies(null);
+  logStudio("folder re-read: " + names.length + " vaults");
+});
+
 // ---------- browser import: export pairs and columns ----------
 async function putFile(url, file) {
   const text = await file.text();
@@ -3108,9 +3187,9 @@ document.getElementById("material-reset").addEventListener("click", () => {
 // Exactly the pattern select's shape, and for the same reason: the cut
 // source is a server-side cut parameter, so changing it re-requests the
 // bundle rather than touching the scene.
-document.getElementById("source-select").addEventListener("change", async (e) => {
+document.getElementById("source-toggle").addEventListener("change", async (e) => {
   const previous = state.source;
-  state.source = e.target.value;
+  state.source = e.target.checked ? "generated" : "authored";
   const study = document.getElementById("study-select");
   if (!study.value) return;
   const loaded = await loadStudy(study.value);
@@ -3122,7 +3201,8 @@ document.getElementById("source-select").addEventListener("change", async (e) =>
     // loaded, and the refusal is written under the control, where it
     // stays after the banner has gone rather than reading as a fault.
     state.source = previous;
-    e.target.value = state.bundle ? state.bundle.source : previous;
+    e.target.checked =
+      (state.bundle ? state.bundle.source : previous) === "generated";
     const note = document.getElementById("source-note");
     if (note && state.lastRefusal) {
       note.textContent = state.lastRefusal;

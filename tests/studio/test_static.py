@@ -2297,3 +2297,30 @@ def test_a_refusal_reaches_the_screen_in_the_servers_own_words():
     assert "lastRefusal: null," in js
     assert "state.lastRefusal = error.detail || error.message;" in js
     assert "#source-note.refused" in css
+
+
+def test_the_import_panel_is_the_way_in():
+    """Param's reorganisation: everything about getting a vault on screen
+    lives in Import. The folder it is read from, the vault list with a
+    refresh for new saves, Live, Delete, and the skin choice, which is one
+    switch between two named ends rather than a list of two, because a
+    study either wears the skin Grasshopper authored or the one the studio
+    cuts."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    imports = html[html.index('id="import-section"'):html.index('id="study-section"')]
+    for control in ('id="folder-choose"', 'id="folder-path"', 'id="study-select"',
+                    'id="study-refresh"', 'id="live-toggle"', 'id="delete-study"',
+                    'id="source-toggle"'):
+        assert control in imports, control + " belongs in the Import panel"
+    # The old select is gone, both in the markup and in the wiring.
+    assert 'id="source-select"' not in html
+    assert 'getElementById("source-select")' not in js
+    assert 'class="toggle"' in html and ".toggle input:checked + .track" in css
+    # Checked is the studio's own cut, at the right-hand end of the switch.
+    assert 'state.source = e.target.checked ? "generated" : "authored";' in js
+    # Refresh re-reads the folder rather than reloading the page.
+    body = _function_body(js, "refreshStudies")
+    assert '"/api/studies"' in body and "populateStudySelect" in body

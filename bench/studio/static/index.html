@@ -28,19 +28,37 @@
 <aside id="panel">
   <details id="import-section">
     <summary>Import</summary>
-    <label>Grasshopper export pair (*-contract.json + *-compas.json)
-      <input id="import-export-input" type="file" multiple accept=".json"></label>
-    <button id="import-export-button">Upload export pair</button>
-    <label>Column geometry
-      <input id="import-columns-input" type="file" accept=".json"></label>
-    <button id="import-columns-button">Upload columns file</button>
+    <div id="folder-row">
+      <button id="folder-choose" title="Pick the folder your vault JSONs are saved in">Choose folder</button>
+      <span id="folder-path" title="">no folder chosen</span>
+    </div>
+    <div id="vault-row">
+      <select id="study-select"></select>
+      <button id="study-refresh" title="Re-read the folder for new saves">Refresh</button>
+    </div>
+    <div id="vault-tools">
+      <button id="live-toggle" class="on" title="Live: follow Grasshopper"><span class="beacon"></span>LIVE</button>
+      <button id="delete-study" title="Delete this vault's JSON from the folder">Delete</button>
+    </div>
+    <div id="source-row" class="hidden">
+      <span class="toggle-end" id="source-end-authored">Grasshopper skin</span>
+      <label class="toggle"><input id="source-toggle" type="checkbox"><span class="track"></span></label>
+      <span class="toggle-end" id="source-end-generated">Studio skin</span>
+      <div id="source-note"></div>
+    </div>
+    <details id="import-upload">
+      <summary>Upload files by hand</summary>
+      <label>Grasshopper export pair (*-contract.json + *-compas.json)
+        <input id="import-export-input" type="file" multiple accept=".json"></label>
+      <button id="import-export-button">Upload export pair</button>
+      <label>Column geometry
+        <input id="import-columns-input" type="file" accept=".json"></label>
+      <button id="import-columns-button">Upload columns file</button>
+    </details>
     <div id="import-status"></div>
   </details>
   <details id="study-section" open>
     <summary>Study</summary>
-    <select id="study-select"></select>
-    <button id="live-toggle" class="on" title="Live: reload this study as Grasshopper pushes it"><span class="beacon"></span>LIVE</button>
-    <button id="delete-study" title="Delete this study and its files">Delete</button>
     <select id="material-select">
       <option value="concrete">Concrete C30/37</option>
       <option value="concrete-c50">Concrete C50/60</option>
@@ -60,13 +78,6 @@
     <label>Finish <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note">Skin, tint and finish are render tint only, analysis unchanged: none of it reaches the server.</div>
-    <label id="source-row" class="hidden">Cut from
-      <select id="source-select">
-        <option value="authored">the Grasshopper Skin</option>
-        <option value="generated">the studio pattern</option>
-      </select>
-      <span id="source-note"></span>
-    </label>
     <select id="pattern-select"></select>
     <div id="pattern-note"></div>
     <label>Piece size <input id="size-slider" type="range" min="0.3" max="3" step="0.05" value="0.9">
