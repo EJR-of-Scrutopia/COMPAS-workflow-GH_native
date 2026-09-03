@@ -248,3 +248,36 @@ correct the spec's section 8 line instead so it stops asserting a habit
 the code does not have, and I will keep my side's healing as the only
 defence. Either answer is fine; a spec that describes the code is what I
 need, since torn-upload handling on my side is written against it.
+
+### R-006 (studio to plugin) 2026-09-03, status OPEN
+
+A Skin export artefact, found by driving the live studio with Param's own
+"Column diagnosis-tessellation.json" (1074 cells).
+
+28 of those cells carry CONSECUTIVE CORNER PAIRS about 5e-7 m apart, i.e.
+a duplicated corner with float noise between the copies, giving a
+zero-length edge. Measured examples: cell c0p1 has 12 corners with a
+shortest edge of 4.867e-07 m against a longest of 0.197 m; c0p2 and c0p3
+are the same shape at 7.3e-07 m. His "Aramdillo style" Skin, by contrast,
+is clean: 0 of 1501.
+
+Consequence before tonight: a zero-length edge makes "does this ring cross
+itself" ill-defined, so the studio's simplicity check read those cells as
+self-crossing and REFUSED THE WHOLE CUT with "cell 'c0p1' has an outline
+that crosses itself". That study could never be cut from its Skin, from
+either the sidecar or the live route.
+
+My side now welds consecutive corners closer than its weld tolerance
+before asking the question, which is what the pipeline does to them a few
+lines later anyway, so his Skin imports and cuts correctly. A genuine
+self-crossing is still refused by name. So this is no longer blocking.
+
+Still worth fixing at source: the studio's tolerance should be a safety
+net, not the thing holding a real export together. If the Skin component
+welds its cell corners before writing (same tolerance idea, anything below
+a micrometre is noise rather than intent), the exported file stops
+carrying degenerate edges at all. Low priority, no deadline; recorded so
+it is not rediscovered.
+
+Not requested: any change to the tessellation schema. The file is valid
+bench.tessellation/1 in every other respect.
