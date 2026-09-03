@@ -27526,7 +27526,15 @@ internal static class Program
         SetContractProperty(result, resultType, "Mould", mould);
 
         const string Study = "Column diagnosis";
-        string document = (string)json.Invoke(null, new object?[] { result, Study })!;
+        // The unit factor is DECLARED and never applied (whole-branch
+        // review finding 16), so the sidecar is driven at a factor that is
+        // NOT 1 and the coordinates are then asserted unchanged below: a
+        // fixture at 1.0 could not tell a declared factor from an applied
+        // one. 0.001 is a millimetre document, which is the case the
+        // finding named.
+        const double MillimetreDocument = 0.001;
+        string document = (string)json.Invoke(
+            null, new object?[] { result, Study, MillimetreDocument })!;
         JsonNode root = JsonNode.Parse(document)
             ?? throw new InvalidOperationException("The frames sidecar did not parse.");
 
@@ -27536,6 +27544,42 @@ internal static class Program
             throw new InvalidOperationException($"The schema must be bench.frames/1; got '{schema}'.");
         if (root["units"]!.GetValue<string>() != "m")
             throw new InvalidOperationException("The units key must read 'm'.");
+
+        // 1b. AND THE FACTOR BESIDE IT, which is the whole-branch review's
+        // finding 16. This was the only kind in the export set that
+        // neither converted document units to metres nor declared the
+        // factor, and it asserted "m" unconditionally: a Result's
+        // coordinates are in whatever unit the document was in when it was
+        // solved, SpineComponents scaling nothing, so a millimetre study
+        // with a Mould block wrote a frames file claiming metres over
+        // millimetre numbers and the studio's reader, which rejects any
+        // units value but "m", took the claim at face value.
+        //
+        // The factor is DECLARED and the coordinates are left alone, the
+        // way the columns kind already does it. Converting would break the
+        // reader's own integrity check at step 5 below, that the time-100
+        // frame EQUALS the contract's equilibrium vertices. This fixture
+        // is driven at 0.001, a millimetre document, so a factor that was
+        // silently applied to the coordinates would show up as a
+        // thousandfold error there.
+        JsonNode? declaredFactor = root["lengthUnitToMetres"];
+        if (declaredFactor is null)
+        {
+            throw new InvalidOperationException(
+                "The frames sidecar declares lengthUnitToMetres beside " +
+                "its units, the way the columns kind does, because its " +
+                "coordinates are the contract's own and unscaled and the " +
+                "studio has no other way to tell a metre document from a " +
+                "millimetre one. The key is missing.");
+        }
+        double readFactor = declaredFactor.GetValue<double>();
+        if (Math.Abs(readFactor - MillimetreDocument) > 1.0e-15)
+        {
+            throw new InvalidOperationException(
+                "The declared lengthUnitToMetres is the factor the " +
+                $"component was given, {MillimetreDocument}; got " +
+                $"{readFactor}.");
+        }
         if (root["study"]!.GetValue<string>() != Study)
             throw new InvalidOperationException("The study key must be the export Name, which is how the studio pairs the kinds of one set.");
 
@@ -27747,7 +27791,8 @@ internal static class Program
             throw new InvalidOperationException($"The sweep must be a build rather than a still: the furthest node travels {travel:0.######} between frame zero and frame 100.");
 
         // 7. Deterministic for a given Result: byte-identical on a second run.
-        string again = (string)json.Invoke(null, new object?[] { result, Study })!;
+        string again = (string)json.Invoke(
+            null, new object?[] { result, Study, MillimetreDocument })!;
         if (!string.Equals(document, again, StringComparison.Ordinal))
             throw new InvalidOperationException("The sidecar must be byte-identical for the same Result; two runs differ.");
 

@@ -291,10 +291,39 @@ internal static class MouldFrames
     /// deterministic for a given Result, so the sweep is written at the value
     /// an author sees when they drop an Animate on the canvas and touch only
     /// the Time slider.
+    ///
+    /// UNITFACTOR IS DECLARED AND NEVER APPLIED, which is the
+    /// whole-branch review's finding 16. This kind was the only one in
+    /// the export set that neither converted document units to metres nor
+    /// declared the factor, and it asserted units "m" unconditionally.
+    /// SpineComponents builds a Result's pattern vertices straight from
+    /// the Rhino geometry with no scaling anywhere, so a Result's
+    /// coordinates are in whatever unit the document was in when it was
+    /// solved; a millimetre study with a Mould block therefore wrote a
+    /// frames file claiming metres over millimetre numbers, and the
+    /// studio's own reader rejects any units value but "m" and so took
+    /// the false claim at face value.
+    ///
+    /// The factor is DECLARED and the coordinates are left alone, which
+    /// is what the columns kind already does and the opposite of what the
+    /// tessellation kind does. Converting here would break the reader's
+    /// own integrity check, which is that the time-100 frame EQUALS the
+    /// contract's equilibrium vertices: converting one side of an equality
+    /// and not the other is not a fix. The studio's reader needs one line
+    /// added to read the new key, which is request R-007.
     /// </summary>
-    public static string Json(ResultDto result, string study)
+    public static string Json(
+        ResultDto result, string study, double unitFactor)
     {
         ArgumentNullException.ThrowIfNull(result);
+        if (!double.IsFinite(unitFactor) || unitFactor <= 0.0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(unitFactor),
+                unitFactor,
+                "The length unit factor is how many metres one document " +
+                "unit is, so it is finite and positive.");
+        }
         MouldAnimation.Setup setup = MouldAnimation.Prepare(result);
         double[] times = Times();
         var frames = new List<Dictionary<string, object?>>(times.Length);
@@ -338,10 +367,13 @@ internal static class MouldFrames
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["schema"] = Schema,
-            // Always metres today, and the reader is told to read it anyway.
-            // The coordinates are the contract's own, unscaled, which is what
-            // makes the time-100 equality checkable at all.
+            // The unit the coordinates are IN, and how many metres one of
+            // them is. The coordinates are the contract's own, unscaled,
+            // which is what makes the time-100 equality checkable at all,
+            // so the factor is the studio's only way to know whether it is
+            // reading metres or millimetres.
             ["units"] = "m",
+            ["lengthUnitToMetres"] = unitFactor,
             ["study"] = study,
             ["vertexCount"] = setup.Count,
             ["columnNodeCount"] = columnNodeCount,

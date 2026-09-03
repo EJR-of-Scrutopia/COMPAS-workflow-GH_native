@@ -1487,6 +1487,30 @@ public sealed class ExportComponent :
             string[] kinds = ExportPlan.Kinds(hasCells, hasColumns);
             var payloads = new List<(string Kind, string Json)>(kinds.Length);
             var warnings = new List<string>();
+
+            // THE UNIT FACTOR IS DISCLOSED FOR THE WHOLE SET, not inside
+            // one kind, which is the whole-branch review's finding 16.
+            // This warning used to live inside `case "tessellation"`, so a
+            // study with a Mould block and no wired cells never reached it:
+            // ExportPlan.Kinds gives that study contract, compas, columns
+            // and frames, with no tessellation among them, and it wrote a
+            // frames file in millimetres with no message anywhere on the
+            // component. Every kind of the set is affected by the document
+            // unit, three of them by declaring it and one by converting, so
+            // the disclosure belongs to the set. Disclosed the way
+            // ImportPiecesComponent discloses its own factor: a silent
+            // scale is the thing that makes a units mismatch hard to find
+            // later.
+            if (Math.Abs(unitFactor - 1.0) > 1e-12)
+            {
+                warnings.Add(
+                    "Document units converted to metres by a factor of " +
+                    unitFactor.ToString(
+                        "0.################",
+                        System.Globalization.CultureInfo.InvariantCulture) +
+                    ".");
+            }
+
             foreach (string kind in kinds)
             {
                 switch (kind)
@@ -1543,19 +1567,6 @@ public sealed class ExportComponent :
                                 cells!, unitFactor, tessellationPattern)));
                         if (!string.IsNullOrEmpty(cellWarning))
                             warnings.Add(cellWarning!);
-                        if (Math.Abs(unitFactor - 1.0) > 1e-12)
-                        {
-                            // Disclosed the way ImportPiecesComponent
-                            // discloses its own factor: a silent scale is
-                            // the thing that makes a units mismatch hard
-                            // to find later.
-                            warnings.Add(
-                                "Document units converted to metres by a " +
-                                "factor of " + unitFactor.ToString(
-                                    "0.################",
-                                    System.Globalization.CultureInfo
-                                        .InvariantCulture) + ".");
-                        }
                         break;
                     }
                     case "columns":
@@ -1579,7 +1590,9 @@ public sealed class ExportComponent :
                         try
                         {
                             payloads.Add((
-                                kind, MouldFrames.Json(result, studyName)));
+                                kind,
+                                MouldFrames.Json(
+                                    result, studyName, unitFactor)));
                         }
                         catch (OperationCanceledException)
                         {
