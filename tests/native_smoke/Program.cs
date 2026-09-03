@@ -1381,6 +1381,23 @@ internal static class Program
 
         try
         {
+            ValidateSkinForceAlignedComponents(plugin);
+            Console.WriteLine(
+                "PASS  Skin force-aligned components (rule 3.3.1a, " +
+                "whole-branch finding 9): on Param's own crown arch, " +
+                "whose beds carry TWO traced components, the engine " +
+                "keeps a crossings list per COMPONENT and tiles both " +
+                "springings.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin force-aligned components: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinRealNetCornerHygiene(plugin);
             Console.WriteLine(
                 "PASS  Skin R-006 on Param's own net (assets/" +
@@ -25104,6 +25121,146 @@ internal static class Program
                     $"plan-validity habits; got '{diagnostics}'.");
             }
         }
+    }
+
+    /// <summary>
+    /// RULE 3.3.1a ON A NET THAT HAS MORE THAN ONE CONTOUR PER BED, which
+    /// is the whole-branch review's finding 9. A bed is a LIST of traced
+    /// components; the force-aligned engine's own comment claimed to work
+    /// per component and did not, keeping one crossings list per bed index
+    /// and building every cell on component 0. On Param's own crown arch,
+    /// where 26 of the 28 beds carry two components, that tiled one
+    /// springing and left the other bare, and let a span take one end from
+    /// an arc measured on one component and the other from an arc measured
+    /// on the other, closing a ring across the whole vault.
+    ///
+    /// The check is written so that RE-POOLING makes it fail: send every
+    /// crossing to component 0 and the whole tiling collapses onto the
+    /// springing at negative x, so the positive-x count goes to zero.
+    /// </summary>
+    private static void ValidateSkinForceAlignedComponents(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned", netType, typeof(double),
+            typeof(double));
+        MethodInfo traceAll = RequirePublicStatic(patterns, "TraceAll");
+
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the build " +
+                "output (assets/param-crown-arch-contract.json): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(path));
+        object net = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so rule 3.3.1a would be measured on nothing.");
+
+        // THE FIXTURE EARNS ITS NAME FIRST. A check about more than one
+        // component per bed is worthless on a net that has one, so the
+        // level that carries two is counted before anything is asserted
+        // about the cells.
+        var levels = new List<double> { 1.0e-5, 3.0 };
+        object traced = traceAll.Invoke(
+            null, new object[] { net, levels })!;
+        int twoComponentLevels = 0;
+        foreach (object? atLevel in (IList)traced)
+        {
+            if (((IList)atLevel!).Count >= 2)
+                twoComponentLevels++;
+        }
+        if (twoComponentLevels != 2)
+        {
+            throw new InvalidOperationException(
+                "Rule 3.3.1a is about a bed that is a LIST of components. " +
+                "Param's crown arch traces TWO components at rim distance " +
+                "1e-5 (the two springings) and TWO at 3.0; this fixture " +
+                $"gave {twoComponentLevels} such levels of 2, so the " +
+                "measurement below would hold vacuously on a net with one " +
+                "contour a bed.");
+        }
+
+        object built = forceAligned.Invoke(
+            null, new object[] { net, 0.17, 0.375 })!;
+        var cells = SkinCells(built);
+        int left = 0;
+        int right = 0;
+        double widest = 0.0;
+        foreach ((_, double[][] outline, _, _, _, _) in cells)
+        {
+            double sum = 0.0;
+            double low = double.PositiveInfinity;
+            double high = double.NegativeInfinity;
+            foreach (double[] corner in outline)
+            {
+                sum += corner[0];
+                low = Math.Min(low, corner[0]);
+                high = Math.Max(high, corner[0]);
+            }
+            if (sum / outline.Length < 0.0)
+                left++;
+            else
+                right++;
+            widest = Math.Max(widest, high - low);
+        }
+        // BOTH SPRINGINGS ARE TILED. Pooled, the engine gave 23 cells and
+        // every one of them had a plan centroid at negative x; per
+        // component it gives 78, 35 of them left of the crown and 43 right
+        // of it. The bar is a QUARTER of the cells a side, which is far
+        // under the measured 35 of 78 and 43 of 78 and far over the zero
+        // that re-pooling the crossings into one list per bed produces.
+        if (left * 4 < cells.Length || right * 4 < cells.Length)
+        {
+            throw new InvalidOperationException(
+                "Rule 3.3.1a: a bed is a LIST of components and EVERY one " +
+                "of them is tiled. Param's crown arch carries two " +
+                $"springings; the pattern put {left} cells left of the " +
+                $"crown and {right} right of it out of {cells.Length}, " +
+                "and a side under a quarter of the cells means a " +
+                "component went untiled. Pooling the crossings into one " +
+                "list per bed builds every cell on component 0 and leaves " +
+                "the other springing bare.");
+        }
+        if (cells.Length < 40)
+        {
+            throw new InvalidOperationException(
+                "Rule 3.3.1a: the force-aligned engine emits 78 cells on " +
+                "Param's own crown arch at S 0.17 and CH 0.375, against " +
+                "the 23 it gave while every bed's components were pooled " +
+                $"into one crossings list. Got {cells.Length}, under the " +
+                "40 this check will accept.");
+        }
+
+        // NO CELL SPANS THE VAULT. A piece whose two ends were arcs
+        // measured on two different components closes a ring across the
+        // whole net, and this net is 16 m wide in plan. The widest
+        // legitimate cell measures 2.2165 m, so the bar is 4 m.
+        if (widest > 4.0)
+        {
+            throw new InvalidOperationException(
+                "Rule 3.3.1a: a piece's two ends are two arcs on ONE " +
+                "component. A cell whose plan x-extent is " +
+                $"{widest:F4} m, against the 2.2165 m the widest " +
+                "legitimate cell measures on this net and the 16 m the " +
+                "net itself spans, is a ring closed between the two " +
+                "springings out of arcs that were never measured on the " +
+                "same curve.");
+        }
+
+        Console.WriteLine(
+            $"      Skin rule 3.3.1a on Param's own net: {cells.Length} " +
+            $"force-aligned cells, {left} left of the crown and {right} " +
+            $"right, widest plan x-extent {widest:F4} m.");
     }
 
     /// <summary>

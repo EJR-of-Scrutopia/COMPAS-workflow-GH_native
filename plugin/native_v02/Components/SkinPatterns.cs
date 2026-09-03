@@ -3317,6 +3317,25 @@ internal static class SkinPatterns
         IReadOnlyList<double[]> directions = SkinFlowField.Directions(net);
         IReadOnlyList<int>[] neighbours = SkinFlowField.Neighbours(net);
 
+        // THE BEDS, ONCE (rule 3.3.1a). A bed is a LIST of traced components
+        // and not one curve, and the cell loop below reads bed r as its
+        // lower and bed r + 1 as its upper. Resolving every bed here, from
+        // the one level expression, is what guarantees a crossing's
+        // component index means the same thing in the crossings table, in
+        // the insertion walk and in the run that finally uses the curve.
+        var bedLevels = new List<double>();
+        var bedsAt = new List<IReadOnlyList<SkinLevelCurve>>();
+        for (int r = 0; r <= bands; r++)
+        {
+            double level = r == 0
+                ? intervals[0].Low
+                : r == bands
+                    ? intervals[bands - 1].High
+                    : intervals[r].Low;
+            bedLevels.Add(level);
+            bedsAt.Add(resolved.Traced[levelIndex[level]]);
+        }
+
         // SEEDING, on BED 0 and never on the rim (rule 3.3.1). There is no
         // curve at field value 0 to place a seed on: the tracer's crossing
         // rule is half-open, so at level 0 every rim vertex is at-or-above,
@@ -3325,8 +3344,7 @@ internal static class SkinPatterns
         // P0 = L0 / max(1, round(L0 / (S / 2))), that is at HALF the target
         // piece length, because rule 3.3.4's course takes every OTHER line.
         var lines = new List<(double[][] Points, int Parity)>();
-        IReadOnlyList<SkinLevelCurve> bed0 =
-            resolved.Traced[levelIndex[intervals[0].Low]];
+        IReadOnlyList<SkinLevelCurve> bed0 = bedsAt[0];
         double clearance = 0.5 * (size / 2.0);
         var accepted = new List<double[][]>();
         foreach (SkinLevelCurve component in bed0)
@@ -3361,13 +3379,34 @@ internal static class SkinPatterns
         // curve, so L_k, P_k, the seam-outward walk, the insertion and
         // termination tests and the parity are all taken per component,
         // each with its own length and its own seam.
-        var crossings = new List<List<(double U, int Line)>>();
+        //
+        // ONE LIST PER COMPONENT of each bed, not one per bed. An arc is
+        // measured from the seam of the component it landed on, and two
+        // components of one level have different lengths and different
+        // seams, so pooling them lets a sorted walk pair an arc measured on
+        // one springing with an arc measured on the other and close a
+        // "piece" across the whole vault. Param's own crown arch carries two
+        // components on 26 of its 28 beds.
+        //
+        // A LINE MEETS A BED ONCE PER COMPONENT. A head joint on an arch
+        // runs springing to springing over the crown, so it crosses every
+        // bed TWICE, once on each side. Recording only the first crossing
+        // and stopping put the whole barrel's arcs on whichever component
+        // the walk happened to reach first and left the other bare; the
+        // pooled list hid it because the two components of a symmetric
+        // fixture are congruent and their arcs coincide.
+        var crossings = new List<List<List<SkinCrossing>>>();
         for (int r = 0; r <= bands; r++)
-            crossings.Add(new List<(double, int)>());
+        {
+            var perComponent = new List<List<SkinCrossing>>();
+            for (int c = 0; c < bedsAt[r].Count; c++)
+                perComponent.Add(new List<SkinCrossing>());
+            crossings.Add(perComponent);
+        }
         for (int at = 0; at < lines.Count; at++)
         {
             RecordCrossings(
-                net, resolved, levelIndex, intervals, bands, crossings,
+                net, bedLevels, bedsAt, bands, crossings,
                 lines[at].Points, at);
         }
 
@@ -3394,54 +3433,58 @@ internal static class SkinPatterns
         var retired = new HashSet<int>();
         for (int r = 0; r <= bands; r++)
         {
-            IReadOnlyList<SkinLevelCurve> bed =
-                resolved.Traced[levelIndex[
-                    r == 0 ? intervals[0].Low
-                    : r == bands ? intervals[bands - 1].High
-                    : intervals[r].Low]];
-            if (bed.Count == 0)
-                continue;
-            double target = bed[0].Length /
-                Math.Max(1.0, Math.Round(bed[0].Length / (size / 2.0)));
-            List<(double U, int Line)> here = crossings[r]
-                .Where(item => !retired.Contains(item.Line))
-                .OrderBy(item => item.U)
-                .ToList();
-            for (int at = 1; at < here.Count; at++)
+            IReadOnlyList<SkinLevelCurve> bed = bedsAt[r];
+            // PER COMPONENT (rule 3.3.1a): L_k, P_k and the seam-outward
+            // walk all belong to one component, so a springing with three
+            // crossings does not have its gaps measured against the other
+            // springing's arcs.
+            for (int c = 0; c < bed.Count; c++)
             {
-                double gap = here[at].U - here[at - 1].U;
-                if (gap < 0.5 * target)
+                double target = bed[c].Length /
+                    Math.Max(1.0, Math.Round(bed[c].Length / (size / 2.0)));
+                List<SkinCrossing> here = crossings[r][c]
+                    .Where(item => !retired.Contains(item.Line))
+                    .OrderBy(item => item.U)
+                    .ToList();
+                for (int at = 1; at < here.Count; at++)
                 {
-                    retired.Add(here[at].Line);
-                    terminated++;
-                }
-                else if (gap > 1.5 * target)
-                {
-                    double middle = (here[at].U + here[at - 1].U) / 2.0;
-                    double[] from = PointAt(bed[0], middle);
-                    int face = FaceUnder(net, from);
-                    if (face < 0)
-                        continue;
-                    double[][] line = SkinFlowField.Streamline(
-                        net, directions, neighbours, from, face,
-                        AscentHint(net, face), clearance, accepted);
-                    if (line.Length < 2)
-                        continue;
-                    accepted.Add(line);
-                    int parity = 1 - lines[here[at].Line].Parity;
-                    lines.Add((line, parity));
-                    // An inserted line is a head joint on every bed it
-                    // reaches and not only on the one it was inserted on: a
-                    // line whose crossings above bed k were never recorded
-                    // would stop being a joint the moment it left bed k,
-                    // which is the property rule 3.3.4 anchors on the LINE
-                    // for. Its own bed's crossing is the exact midpoint,
-                    // taken from the gap rather than re-derived.
-                    RecordCrossings(
-                        net, resolved, levelIndex, intervals, bands,
-                        crossings, line, lines.Count - 1, r);
-                    crossings[r].Add((middle, lines.Count - 1));
-                    inserted++;
+                    double gap = here[at].U - here[at - 1].U;
+                    if (gap < 0.5 * target)
+                    {
+                        retired.Add(here[at].Line);
+                        terminated++;
+                    }
+                    else if (gap > 1.5 * target)
+                    {
+                        double middle = (here[at].U + here[at - 1].U) / 2.0;
+                        double[] from = PointAt(bed[c], middle);
+                        int face = FaceUnder(net, from);
+                        if (face < 0)
+                            continue;
+                        double[][] line = SkinFlowField.Streamline(
+                            net, directions, neighbours, from, face,
+                            AscentHint(net, face), clearance, accepted);
+                        if (line.Length < 2)
+                            continue;
+                        accepted.Add(line);
+                        int parity = 1 - lines[here[at].Line].Parity;
+                        lines.Add((line, parity));
+                        // An inserted line is a head joint on every bed it
+                        // reaches and not only on the one it was inserted
+                        // on: a line whose crossings above bed k were never
+                        // recorded would stop being a joint the moment it
+                        // left bed k, which is the property rule 3.3.4
+                        // anchors on the LINE for. Its own bed's crossing is
+                        // the exact midpoint, taken from the gap rather than
+                        // re-derived, and it belongs to the component the
+                        // gap was measured on.
+                        RecordCrossings(
+                            net, bedLevels, bedsAt, bands,
+                            crossings, line, lines.Count - 1, r, c);
+                        crossings[r][c].Add(new SkinCrossing(
+                            middle, lines.Count - 1, c, 0, from, true));
+                        inserted++;
+                    }
                 }
             }
         }
@@ -3459,10 +3502,11 @@ internal static class SkinPatterns
             flowLines.Add(points);
         for (int r = 0; r < bands; r++)
         {
-            IReadOnlyList<SkinLevelCurve> lowerBed =
-                resolved.Traced[levelIndex[intervals[r].Low]];
-            IReadOnlyList<SkinLevelCurve> upperBed = resolved.Traced[levelIndex[
-                r == bands - 1 ? intervals[r].High : intervals[r + 1].Low]];
+            // Bed r is this band's lower and bed r + 1 its upper, by the same
+            // level expression the crossings table was built from, so a
+            // component index here indexes the same curve it did there.
+            IReadOnlyList<SkinLevelCurve> lowerBed = bedsAt[r];
+            IReadOnlyList<SkinLevelCurve> upperBed = bedsAt[r + 1];
             if (lowerBed.Count == 0 || upperBed.Count == 0)
                 continue;
             foreach (SkinLevelCurve component in lowerBed)
@@ -3470,140 +3514,211 @@ internal static class SkinPatterns
             foreach (SkinLevelCurve component in upperBed)
                 bedCurves.Add(BedPolyline(component));
 
-            // THE PAIRING IS BY LINE AND NOT BY INDEX (rule 3.3.4). A course
-            // takes the crossings of the lines whose parity is r mod 2, and a
-            // piece runs between two ADJACENT such crossings, so its two head
-            // joints are two whole streamlines and not two positions in a
-            // sorted list. Anchoring on the index instead would let a head
-            // joint stop running along one streamline between its own two
-            // beds, which is the single property check 12.3(b) exists for.
-            var onLower = crossings[r]
-                .Where(item => lines[item.Line].Parity == (r % 2))
-                .Where(item => !retired.Contains(item.Line))
-                .OrderBy(item => item.U)
-                .ToList();
-            var onUpper = crossings[r + 1]
-                .Where(item => lines[item.Line].Parity == (r % 2))
-                .ToDictionary(item => item.Line, item => item.U);
-            if (onLower.Count < 2)
-                continue;
-
-            // The spans, seam outward, then section 6's own merge, which
-            // rule 3.3.6 inherits whole rather than reimplementing.
-            var spans = new List<(double U0, double U1, bool Clipped)>();
-            var spanLines = new List<(int Left, int Right)>();
-            for (int at = 1; at < onLower.Count; at++)
+            // ONE COURSE PER COMPONENT of the lower bed (rule 3.3.1a). A
+            // vault with two springings, an oculus or a ridge carries more
+            // than one contour at a level; tiling only the first left the
+            // rest of the shell bare, and a span could take one end from an
+            // arc measured on one component and the other from an arc
+            // measured on another.
+            for (int c = 0; c < lowerBed.Count; c++)
             {
-                spans.Add((onLower[at - 1].U, onLower[at].U, false));
-                spanLines.Add((onLower[at - 1].Line, onLower[at].Line));
-            }
-            List<(double U0, double U1, bool Clipped)> keptSpans =
-                MergeShortPieces(
-                    spans, clampedMinPiece * size,
-                    ref mergedPieces, ref mergedShortKept, ref mergedStillShort);
-
-            foreach ((double u0, double u1, bool clipped) in keptSpans)
-            {
-                // The two head joints this piece actually runs between, found
-                // by their own arc rather than by their place in the list, so
-                // a merged span picks up the outer two lines and not the two
-                // it started with.
-                int leftLine = NearestCrossingLine(onLower, u0);
-                int rightLine = NearestCrossingLine(onLower, u1);
-                if (leftLine < 0 || rightLine < 0)
+                // THE PAIRING IS BY LINE AND NOT BY INDEX (rule 3.3.4). A
+                // course takes the crossings of the lines whose parity is r
+                // mod 2, and a piece runs between two ADJACENT such
+                // crossings, so its two head joints are two whole streamlines
+                // and not two positions in a sorted list. Anchoring on the
+                // index instead would let a head joint stop running along one
+                // streamline between its own two beds, which is the single
+                // property check 12.3(b) exists for.
+                var onLower = crossings[r][c]
+                    .Where(item => lines[item.Line].Parity == (r % 2))
+                    .Where(item => !retired.Contains(item.Line))
+                    .OrderBy(item => item.U)
+                    .ToList();
+                if (onLower.Count < 2)
                     continue;
-
-                // FOUR CHAINS, in the order rule 5.2.1 records them: the
-                // lower bed's Run between the two joints, the right-hand
-                // streamline segment upward, the upper bed's Run reversed,
-                // and the left-hand streamline segment downward.
-                // Run takes a SIGNED offset from the seam and adds the seam
-                // itself, and a crossing is recorded seam-relative already,
-                // so the arcs go in as they stand: adding the seam here
-                // would add it twice, which on an open strip (seam L / 2)
-                // clamps both ends of every run to the far end of the bed.
-                double[][] lowerRun = Run(lowerBed[0], u0, u1).ToArray();
-                bool rightReaches = onUpper.TryGetValue(rightLine, out double rightTop);
-                bool leftReaches = onUpper.TryGetValue(leftLine, out double leftTop);
-                // The upper run is walked the increasing-u way and REVERSED,
-                // because the ring closes right to left along the top; Run
-                // itself refuses to walk backwards.
-                double[][] upperRun = rightReaches && leftReaches
-                    ? Run(upperBed[0],
-                          Math.Min(leftTop, rightTop),
-                          Math.Max(leftTop, rightTop))
-                        .AsEnumerable().Reverse().ToArray()
-                    : Array.Empty<double[]>();
-                double[][] rightSegment = SegmentBetween(
-                    lines[rightLine].Points, LevelAt(net, PointAt(lowerBed[0], u0)), intervals, r, net);
-                double[][] leftSegment = SegmentBetween(
-                    lines[leftLine].Points, LevelAt(net, PointAt(lowerBed[0], u1)), intervals, r, net);
-                // The left-hand joint is walked DOWNWARD (rule 3.3.6's
-                // fourth chain), so the ring closes on the lower bed where
-                // it started instead of doubling back up the same line.
-                // Enumerable.Reverse by name: an array binds
-                // MemoryExtensions.Reverse(Span) first, which reverses in
-                // place and returns void.
-                leftSegment = Enumerable.Reverse(leftSegment).ToArray();
-
-                var outline = new List<double[]>();
-                outline.AddRange(lowerRun);
-                outline.AddRange(rightSegment);
-                outline.AddRange(upperRun);
-                outline.AddRange(leftSegment);
-                List<double[]> ring = Dedupe(outline);
-                if (ring.Count < 3)
+                // Every crossing of the UPPER bed, by line and whatever
+                // component it landed on. A joint leaving THIS component of
+                // the lower bed meets the upper bed at the crossing NEAREST
+                // ALONG ITS OWN POLYLINE, which is the only reading that
+                // survives a joint running over the crown and down the far
+                // side: the far side's crossings belong to the far side's
+                // cells, not to this one.
+                var above = new Dictionary<int, List<SkinCrossing>>();
+                for (int uc = 0; uc < upperBed.Count; uc++)
                 {
-                    // R-006: welded below three distinct corners.
-                    weldCollapsed++;
-                    continue;
+                    foreach (SkinCrossing item in crossings[r + 1][uc])
+                    {
+                        if (!above.TryGetValue(
+                                item.Line, out List<SkinCrossing>? found))
+                        {
+                            found = new List<SkinCrossing>();
+                            above[item.Line] = found;
+                        }
+                        found.Add(item);
+                    }
+                }
+                SkinCrossing? Above(SkinCrossing from)
+                {
+                    if (!above.TryGetValue(
+                            from.Line, out List<SkinCrossing>? found))
+                    {
+                        return null;
+                    }
+                    SkinCrossing? best = null;
+                    int bestGap = int.MaxValue;
+                    foreach (SkinCrossing item in found)
+                    {
+                        int gap = Math.Abs(item.At - from.At);
+                        if (gap < bestGap)
+                        {
+                            bestGap = gap;
+                            best = item;
+                        }
+                    }
+                    return best;
                 }
 
-                // RULE 3.3.5. A cell gains or loses a side only where a line
-                // BEGINS OR ENDS within its own band: a line that does not
-                // reach the upper bed closes the cell against the upper bed's
-                // own arc and the cell comes back with three or five setout
-                // corners rather than four. They are the pattern's honest
-                // response to a flow that converges, and refusing them would
-                // put a hole where a mason puts a closer.
-                int setout = 4;
-                if (!rightReaches || !leftReaches)
-                    setout = 3;
-                else if (InsertedWithin(lines, crossings, r, leftLine, rightLine))
-                    setout = 5;
-                if (setout == 5)
-                    fiveSided++;
-                else if (setout == 3)
-                    sevenSided++;
+                // The spans, seam outward, then section 6's own merge, which
+                // rule 3.3.6 inherits whole rather than reimplementing.
+                var spans = new List<(double U0, double U1, bool Clipped)>();
+                for (int at = 1; at < onLower.Count; at++)
+                    spans.Add((onLower[at - 1].U, onLower[at].U, false));
+                List<(double U0, double U1, bool Clipped)> keptSpans =
+                    MergeShortPieces(
+                        spans, clampedMinPiece * size,
+                        ref mergedPieces, ref mergedShortKept,
+                        ref mergedStillShort);
 
-                // RULE 5.2.3(c). A four-cornered force-aligned cell is a
-                // courses cell by rule 3.2.3 and takes route (a): a loft of
-                // TWO sections, the lower bed run and the upper bed run,
-                // both in the SAME direction. The ring holds the upper run
-                // reversed, because the outline closes right to left along
-                // the top, so the loft pair un-reverses it. Handing the
-                // component the ring's four chains instead would loft the
-                // cell's four EDGES in cyclic order, bottom to right to top
-                // to left, which is the opposite of what a loft is for; the
-                // chains go on their own field for check 12.3(b) and the two
-                // never share one.
-                //
-                // A three- or five-cornered cell (rule 3.3.5) carries no
-                // sections and takes the deterministic fan of route (e):
-                // route (a) is written for a cell with exactly two bed
-                // edges, and a cell that lost or gained a side has an odd
-                // corner with nothing on the opposite run to loft against.
-                IReadOnlyList<IReadOnlyList<double[]>>? loftSections =
-                    setout == 4 && lowerRun.Length >= 2 && upperRun.Length >= 2
-                        ? new IReadOnlyList<double[]>[]
-                          {
-                              lowerRun,
-                              Enumerable.Reverse(upperRun).ToArray()
-                          }
-                        : null;
-                cells.Add(new SkinCell(
-                    r, ring, clipped, u0, u1, false, setout, loftSections,
-                    new[] { lowerRun, rightSegment, upperRun, leftSegment }));
+                foreach ((double u0, double u1, bool clipped) in keptSpans)
+                {
+                    // The two head joints this piece actually runs between,
+                    // found by their own arc rather than by their place in
+                    // the list, so a merged span picks up the outer two lines
+                    // and not the two it started with.
+                    int leftAt = NearestCrossingLine(onLower, u0);
+                    int rightAt = NearestCrossingLine(onLower, u1);
+                    if (leftAt < 0 || rightAt < 0)
+                        continue;
+                    SkinCrossing leftLower = onLower[leftAt];
+                    SkinCrossing rightLower = onLower[rightAt];
+                    int leftLine = leftLower.Line;
+                    int rightLine = rightLower.Line;
+
+                    // FOUR CHAINS, in the order rule 5.2.1 records them: the
+                    // lower bed's Run between the two joints, the right-hand
+                    // streamline segment upward, the upper bed's Run
+                    // reversed, and the left-hand streamline segment
+                    // downward. Run takes a SIGNED offset from the seam and
+                    // adds the seam itself, and a crossing is recorded
+                    // seam-relative already, so the arcs go in as they stand:
+                    // adding the seam here would add it twice, which on an
+                    // open strip (seam L / 2) clamps both ends of every run
+                    // to the far end of the bed.
+                    double[][] lowerRun = Run(lowerBed[c], u0, u1).ToArray();
+                    SkinCrossing? rightUpper = Above(rightLower);
+                    SkinCrossing? leftUpper = Above(leftLower);
+                    // Two joints that land on DIFFERENT components of the
+                    // upper bed have no run of that bed between them at all
+                    // (rule 3.3.1a). The cell closes against the upper bed
+                    // the way a cell whose joint simply stopped does, which
+                    // is rule 3.3.5's three-cornered closer, rather than
+                    // splicing two unrelated arcs into one edge.
+                    int upperComponent =
+                        rightUpper is not null && leftUpper is not null &&
+                        rightUpper.Component == leftUpper.Component
+                            ? rightUpper.Component
+                            : -1;
+                    // The upper run is walked the increasing-u way and
+                    // REVERSED, because the ring closes right to left along
+                    // the top; Run itself refuses to walk backwards.
+                    double[][] upperRun = upperComponent >= 0
+                        ? Run(upperBed[upperComponent],
+                              Math.Min(leftUpper!.U, rightUpper!.U),
+                              Math.Max(leftUpper.U, rightUpper.U))
+                            .AsEnumerable().Reverse().ToArray()
+                        : Array.Empty<double[]>();
+                    double[][] rightSegment = ChainBetween(
+                        lines[rightLine].Points, rightLower, rightUpper);
+                    double[][] leftSegment = ChainBetween(
+                        lines[leftLine].Points, leftLower, leftUpper);
+                    // The left-hand joint is walked DOWNWARD (rule 3.3.6's
+                    // fourth chain), so the ring closes on the lower bed
+                    // where it started instead of doubling back up the same
+                    // line. Enumerable.Reverse by name: an array binds
+                    // MemoryExtensions.Reverse(Span) first, which reverses in
+                    // place and returns void.
+                    leftSegment = Enumerable.Reverse(leftSegment).ToArray();
+
+                    var outline = new List<double[]>();
+                    outline.AddRange(lowerRun);
+                    outline.AddRange(rightSegment);
+                    outline.AddRange(upperRun);
+                    outline.AddRange(leftSegment);
+                    List<double[]> ring = Dedupe(outline);
+                    if (ring.Count < 3)
+                    {
+                        // R-006: welded below three distinct corners.
+                        weldCollapsed++;
+                        continue;
+                    }
+
+                    // RULE 3.3.5. A cell gains or loses a side only where a
+                    // line BEGINS OR ENDS within its own band: a line that
+                    // does not reach the upper bed closes the cell against
+                    // the upper bed's own arc and the cell comes back with
+                    // three or five setout corners rather than four. They are
+                    // the pattern's honest response to a flow that converges,
+                    // and refusing them would put a hole where a mason puts a
+                    // closer.
+                    int setout = 4;
+                    if (upperComponent < 0)
+                        setout = 3;
+                    else if (InsertedWithin(
+                                 lines, crossings[r + 1][upperComponent],
+                                 crossings[r], leftLine, rightLine))
+                    {
+                        setout = 5;
+                    }
+                    if (setout == 5)
+                        fiveSided++;
+                    else if (setout == 3)
+                        sevenSided++;
+
+                    // RULE 5.2.3(c). A four-cornered force-aligned cell is a
+                    // courses cell by rule 3.2.3 and takes route (a): a loft
+                    // of TWO sections, the lower bed run and the upper bed
+                    // run, both in the SAME direction. The ring holds the
+                    // upper run reversed, because the outline closes right to
+                    // left along the top, so the loft pair un-reverses it.
+                    // Handing the component the ring's four chains instead
+                    // would loft the cell's four EDGES in cyclic order,
+                    // bottom to right to top to left, which is the opposite
+                    // of what a loft is for; the chains go on their own field
+                    // for check 12.3(b) and the two never share one.
+                    //
+                    // A three- or five-cornered cell (rule 3.3.5) carries no
+                    // sections and takes the deterministic fan of route (e):
+                    // route (a) is written for a cell with exactly two bed
+                    // edges, and a cell that lost or gained a side has an odd
+                    // corner with nothing on the opposite run to loft
+                    // against.
+                    IReadOnlyList<IReadOnlyList<double[]>>? loftSections =
+                        setout == 4 && lowerRun.Length >= 2 &&
+                        upperRun.Length >= 2
+                            ? new IReadOnlyList<double[]>[]
+                              {
+                                  lowerRun,
+                                  Enumerable.Reverse(upperRun).ToArray()
+                              }
+                            : null;
+                    cells.Add(new SkinCell(
+                        r, ring, clipped, u0, u1, false, setout, loftSections,
+                        new[]
+                        {
+                            lowerRun, rightSegment, upperRun, leftSegment
+                        }));
+                }
             }
         }
         // Rule 3.3.6's "sorted by the same rule as section 7": course, then
@@ -3696,14 +3811,14 @@ internal static class SkinPatterns
     /// for.</summary>
     private static void RecordCrossings(
         SkinNet net,
-        SkinBandResolution resolved,
-        IReadOnlyDictionary<double, int> levelIndex,
-        IReadOnlyList<SkinBandInterval> intervals,
+        IReadOnlyList<double> bedLevels,
+        IReadOnlyList<IReadOnlyList<SkinLevelCurve>> bedsAt,
         int bands,
-        List<List<(double U, int Line)>> crossings,
+        List<List<List<SkinCrossing>>> crossings,
         double[][] line,
         int index,
-        int skipBed = -1)
+        int skipBed = -1,
+        int skipComponent = -1)
     {
         // The field under each polyline point, taken ONCE: LevelAt locates a
         // face in plan and every bed would otherwise pay for the same walk.
@@ -3712,17 +3827,16 @@ internal static class SkinPatterns
             value[at] = LevelAt(net, line[at]);
         for (int r = 0; r <= bands; r++)
         {
-            if (r == skipBed)
-                continue;
-            double level = r == 0
-                ? intervals[0].Low
-                : r == bands
-                    ? intervals[bands - 1].High
-                    : intervals[r].Low;
-            IReadOnlyList<SkinLevelCurve> bed =
-                resolved.Traced[levelIndex[level]];
+            double level = bedLevels[r];
+            IReadOnlyList<SkinLevelCurve> bed = bedsAt[r];
             if (bed.Count == 0)
                 continue;
+            // ONE crossing per COMPONENT of this bed, and the FIRST one the
+            // walk meets on each. A head joint on an arch runs springing to
+            // springing over the crown, so it meets every bed again coming
+            // down the far side, and that second meeting is the far side's
+            // head joint rather than a duplicate of this one.
+            var taken = new bool[bed.Count];
             for (int point = 0; point + 1 < line.Length; point++)
             {
                 // A crossing lands between two polyline points whose
@@ -3733,17 +3847,17 @@ internal static class SkinPatterns
                 double[] b = line[point + 1];
                 double la = value[point];
                 double lb = value[point + 1];
-                if (!((la < level && lb >= level) ||
-                      (lb < level && la >= level)))
-                {
+                bool up = la < level && lb >= level;
+                if (!up && !(lb < level && la >= level))
                     continue;
-                }
                 double t = (level - la) / (lb - la);
                 double[] on = Lerp(a, b, t);
                 SkinLevelCurve component = bed[0];
+                int componentAt = 0;
                 double best = double.PositiveInfinity;
-                foreach (SkinLevelCurve candidate in bed)
+                for (int candidateAt = 0; candidateAt < bed.Count; candidateAt++)
                 {
+                    SkinLevelCurve candidate = bed[candidateAt];
                     double arc = NearestArcInPlan(candidate, on);
                     double[] near = PointAtArcPublic(candidate, arc);
                     double distance =
@@ -3753,22 +3867,78 @@ internal static class SkinPatterns
                     {
                         best = distance;
                         component = candidate;
+                        componentAt = candidateAt;
                     }
                 }
-                crossings[r].Add((
+                if (taken[componentAt])
+                    continue;
+                taken[componentAt] = true;
+                if (r == skipBed && componentAt == skipComponent)
+                    continue;
+                // Rule 3.3.1a: the arc goes on the list of the COMPONENT it
+                // was measured against, because it is signed from that
+                // component's own seam and scaled by that component's own
+                // length. The polyline index rides with it, so a cell can
+                // follow ONE joint from this bed to the next rather than
+                // guessing which of its crossings above is the right one.
+                crossings[r][componentAt].Add(new SkinCrossing(
                     NearestArcInPlan(component, on) - component.Seam,
-                    index));
-                break;
+                    index, componentAt, point, on, up));
             }
         }
     }
 
-    /// <summary>The line whose crossing arc is nearest a given arc, within a
-    /// thousandth of the bed's own pitch, or -1. A merged span's ends are
-    /// still two real crossings, so the piece picks up the OUTER two lines
-    /// and not the two it started with.</summary>
+    /// <summary>Rule 3.3.2's crossing: where one streamline meets one
+    /// component of one bed. <c>U</c> is the arc signed from that
+    /// component's own seam, <c>At</c> the index of the polyline segment the
+    /// crossing lies in and <c>Point</c> the exact point within it, and
+    /// <c>Up</c> whether the field was rising along the walk there, which is
+    /// what tells a joint coming down the far side of a crown from one
+    /// climbing this side.</summary>
+    private sealed record SkinCrossing(
+        double U, int Line, int Component, int At, double[] Point, bool Up);
+
+    /// <summary>The stretch of one streamline between its crossing of a
+    /// band's lower bed and its crossing of that band's upper bed, taken by
+    /// POLYLINE INDEX and not by field value: a joint that runs over the
+    /// crown re-enters the band's field range on the far side, and clipping
+    /// by value alone would hand this side's chain to a far-side cell. Where
+    /// the joint has no upper crossing at all (rule 3.3.5's closer) it is
+    /// walked to its own end, the way the field was rising.</summary>
+    private static double[][] ChainBetween(
+        double[][] line,
+        SkinCrossing from,
+        SkinCrossing? to)
+    {
+        var chain = new List<double[]> { from.Point };
+        if (to is null)
+        {
+            if (from.Up)
+                for (int at = from.At + 1; at < line.Length; at++)
+                    chain.Add(line[at]);
+            else
+                for (int at = from.At; at >= 0; at--)
+                    chain.Add(line[at]);
+            return chain.ToArray();
+        }
+        if (to.At >= from.At)
+            for (int at = from.At + 1; at <= to.At; at++)
+                chain.Add(line[at]);
+        else
+            for (int at = from.At; at > to.At; at--)
+                chain.Add(line[at]);
+        chain.Add(to.Point);
+        return chain.ToArray();
+    }
+
+    /// <summary>The POSITION in the list of the crossing whose arc is
+    /// nearest a given arc, within a thousandth of the bed's own pitch, or
+    /// -1. A merged span's ends are still two real crossings, so the piece
+    /// picks up the OUTER two lines and not the two it started with. The
+    /// position and not the line, because the cell needs the crossing's
+    /// polyline index as well as which streamline it belongs to.</summary>
     private static int NearestCrossingLine(
-        IReadOnlyList<(double U, int Line)> crossings,
+        IReadOnlyList<SkinCrossing> crossings,
         double at)
     {
         if (crossings.Count == 0)
@@ -3779,73 +3949,16 @@ internal static class SkinPatterns
         double tolerance = Math.Max(Math.Abs(pitch) / 1000.0, 1.0e-9);
         int best = -1;
         double bestDistance = double.PositiveInfinity;
-        foreach ((double u, int line) in crossings)
+        for (int position = 0; position < crossings.Count; position++)
         {
-            double distance = Math.Abs(u - at);
+            double distance = Math.Abs(crossings[position].U - at);
             if (distance < bestDistance)
             {
                 bestDistance = distance;
-                best = line;
+                best = position;
             }
         }
         return bestDistance <= tolerance ? best : -1;
-    }
-
-    /// <summary>A streamline clipped to the two field values bounding band
-    /// r, its own points read through LevelAt and its two ends interpolated
-    /// exactly, so the segment starts and finishes ON the two beds rather
-    /// than at the nearest polyline vertex to them.</summary>
-    private static double[][] SegmentBetween(
-        double[][] line,
-        double atLevel,
-        IReadOnlyList<SkinBandInterval> intervals,
-        int r,
-        SkinNet net)
-    {
-        double low = atLevel;
-        double high = r + 1 < intervals.Count
-            ? intervals[r + 1].Low
-            : intervals[r].High;
-        if (!(high > low) || line.Length < 2)
-            return Array.Empty<double[]>();
-        var chain = new List<double[]>();
-        double previous = LevelAt(net, line[0]);
-        bool inside = false;
-        for (int at = 0; at + 1 < line.Length; at++)
-        {
-            double la = previous;
-            double lb = LevelAt(net, line[at + 1]);
-            previous = lb;
-            if (!inside)
-            {
-                if (la >= low && la <= high)
-                {
-                    chain.Add(line[at]);
-                    inside = true;
-                }
-                else if (la < low && lb >= low)
-                {
-                    chain.Add(Lerp(line[at], line[at + 1], (low - la) / (lb - la)));
-                    inside = true;
-                }
-                else
-                {
-                    continue;
-                }
-            }
-            if (lb > high)
-            {
-                chain.Add(Lerp(line[at], line[at + 1], (high - la) / (lb - la)));
-                break;
-            }
-            if (lb < low)
-            {
-                chain.Add(Lerp(line[at], line[at + 1], (low - la) / (lb - la)));
-                break;
-            }
-            chain.Add(line[at + 1]);
-        }
-        return chain.ToArray();
     }
 
     /// <summary>Rule 3.3.5, the five-sided half: did a line BEGIN within
@@ -3856,37 +3969,42 @@ internal static class SkinPatterns
     /// the line rather than on an index buys.</summary>
     private static bool InsertedWithin(
         IReadOnlyList<(double[][] Points, int Parity)> lines,
-        IReadOnlyList<List<(double U, int Line)>> crossings,
-        int r,
+        IReadOnlyList<SkinCrossing> upper,
+        IReadOnlyList<List<SkinCrossing>> lowerBed,
         int leftLine,
         int rightLine)
     {
-        if (r + 1 >= crossings.Count)
-            return false;
+        // The upper list is ONE component's (rule 3.3.1a), because the two
+        // arcs bracketing the candidate have to be measured on the curve the
+        // candidate's own arc was measured on. The lower is every component
+        // of the bed below: a line that crosses that bed ANYWHERE did not
+        // begin inside this band, whichever component it crossed on.
         double leftTop = double.NaN;
         double rightTop = double.NaN;
-        foreach ((double u, int line) in crossings[r + 1])
+        foreach (SkinCrossing item in upper)
         {
-            if (line == leftLine)
-                leftTop = u;
-            if (line == rightLine)
-                rightTop = u;
+            if (item.Line == leftLine)
+                leftTop = item.U;
+            if (item.Line == rightLine)
+                rightTop = item.U;
         }
         if (double.IsNaN(leftTop) || double.IsNaN(rightTop))
             return false;
         double low = Math.Min(leftTop, rightTop);
         double high = Math.Max(leftTop, rightTop);
         var below = new HashSet<int>();
-        foreach ((double _, int line) in crossings[r])
-            below.Add(line);
-        foreach ((double u, int line) in crossings[r + 1])
+        foreach (List<SkinCrossing> component in lowerBed)
+            foreach (SkinCrossing item in component)
+                below.Add(item.Line);
+        foreach (SkinCrossing item in upper)
         {
-            if (line == leftLine || line == rightLine ||
-                line < 0 || line >= lines.Count || below.Contains(line))
+            if (item.Line == leftLine || item.Line == rightLine ||
+                item.Line < 0 || item.Line >= lines.Count ||
+                below.Contains(item.Line))
             {
                 continue;
             }
-            if (u > low + 1.0e-12 && u < high - 1.0e-12)
+            if (item.U > low + 1.0e-12 && item.U < high - 1.0e-12)
                 return true;
         }
         return false;
