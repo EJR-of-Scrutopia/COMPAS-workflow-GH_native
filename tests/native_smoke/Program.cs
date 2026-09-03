@@ -24073,51 +24073,129 @@ internal static class Program
             ((a[0] - b[0]) * (a[0] - b[0])) +
             ((a[1] - b[1]) * (a[1] - b[1])) +
             ((a[2] - b[2]) * (a[2] - b[2])));
-        object built = courses.Invoke(
-            null, new object[] { net, 0.6, 0.35, 1.0 / 3.0 })!;
-        IList cells = (IList)built.GetType()
-            .GetProperty("Cells")!.GetValue(built)!;
-        foreach (object? item in cells)
+        // BOTH CAP ARMS, which this check used to run only one of. At CH
+        // 0.35 the hemisphere's crown girth stays under the maximum piece
+        // and the cap comes out WHOLE, route 5.2.3(d), carrying no
+        // sections. At CH 1.2, the setting ValidateSkinCapSplit already
+        // uses on this very net, rule 2.6 splits the cap into wedges about
+        // a centre disc, and a WEDGE carries the two sections BandCell
+        // built it with: by rule 2.6.4(a) it is an ordinary band cell and
+        // takes route (a). The old check read the Cap FLAG where the rule
+        // speaks of the ROUTE and asserted a cap carries no sections at
+        // all, so it was a false RED armed and waiting: moving this very
+        // fixture to CH 1.2 threw on correct engine output. It is silent
+        // today only because it never ran at a scale that splits a cap.
+        //
+        // So the invariant is stated as the route: a Cap cell carries NO
+        // sections (the whole cap, or the centre disc of a split one) or
+        // exactly TWO (a wedge), and never one or three. And the split arm
+        // is now MEASURED rather than avoided.
+        foreach ((double courseHeight, bool splits) in
+                 new[] { (0.35, false), (1.2, true) })
         {
-            object cell = item!;
-            bool cap = Reading<bool>(cell, "Cap");
-            int sections = SectionCount(cell);
-            if (cap && sections != 0)
+            object built = courses.Invoke(
+                null,
+                new object[] { net, 0.6, courseHeight, 1.0 / 3.0 })!;
+            IList cells = (IList)built.GetType()
+                .GetProperty("Cells")!.GetValue(built)!;
+            int wedges = 0;
+            foreach (object? item in cells)
             {
-                throw new InvalidOperationException(
-                    "A CAP is the one cell that cannot be a single face: it " +
-                    "is emitted as a Brep of triangular faces fanned from " +
-                    "the net vertex of greatest field value inside its loop " +
-                    "to each segment of the loop, joined (route 5.2.3(d)), " +
-                    "so it carries no loft sections. A WEDGE of a split cap " +
-                    "is NOT a cap for this purpose: by rule 2.6.4(a) it is " +
-                    "an ordinary band cell and takes route (a).");
+                object cell = item!;
+                bool cap = Reading<bool>(cell, "Cap");
+                int sections = SectionCount(cell);
+                if (cap && sections == 2)
+                {
+                    wedges++;
+                    continue;
+                }
+                if (cap && sections != 0)
+                {
+                    throw new InvalidOperationException(
+                        "A CAP takes one of exactly two routes. Emitted " +
+                        "WHOLE, or as the centre disc of a cap rule 2.6 " +
+                        "split, it is a Brep of triangular faces fanned to " +
+                        "each segment of its loop (route 5.2.3(d)) and " +
+                        "carries NO sections. As a WEDGE of a split cap it " +
+                        "is by rule 2.6.4(a) an ordinary band cell taking " +
+                        "route (a), so it carries exactly TWO. It carries " +
+                        $"{sections} at CH {courseHeight}, which is " +
+                        "neither.");
+                }
+                if (!cap && sections != 2)
+                {
+                    throw new InvalidOperationException(
+                        "A courses cell is a loft of TWO sections, the " +
+                        "lower run and the upper run (route 5.2.3(a)); got " +
+                        $"{sections} at CH {courseHeight}.");
+                }
             }
-            if (!cap && sections != 2)
+            if (splits != wedges > 0)
             {
                 throw new InvalidOperationException(
-                    "A courses cell is a loft of TWO sections, the lower " +
-                    $"run and the upper run (route 5.2.3(a)); got {sections}.");
+                    "The two cap arms are measured on two settings of the " +
+                    "SAME hemisphere and the fixture must actually reach " +
+                    $"both: at CH {courseHeight} rule 2.6 " +
+                    (splits ? "splits" : "does not split") +
+                    $" the crown cap, yet {wedges} cells came back Cap " +
+                    "with two sections. Without the split arm the wedge " +
+                    "route goes untested, which is how a check reading the " +
+                    "Cap flag where the rule speaks of the route stayed " +
+                    "green for so long.");
             }
         }
+        // THE BIJECTION, and not a union. This read "sections is 0 or 3"
+        // and named the corner count only in its message, so it could not
+        // fail for the claim it made: a six-cornered cell that lost its
+        // sections and fell back to the fan passed, and so did a
+        // seven-cornered cell that wrongly gained three. MEASURED
+        // 2026-09-03: moving the engine's own emission from
+        // setoutCorners == 6 to == 7 left the whole suite green. Each
+        // direction is now its own assertion, keyed on the cell's SETOUT
+        // corner count, which is the number the engine's route reads and
+        // which the courses half above already keys on.
         object honeycomb = hexagonal.Invoke(
             null, new object[] { net, 0.6, 0.35 })!;
+        int hexagons = 0;
+        int fanned = 0;
         foreach (object? item in (IList)honeycomb.GetType()
                      .GetProperty("Cells")!.GetValue(honeycomb)!)
         {
             object cell = item!;
-            int corners = ((IList)cell.GetType()
-                .GetProperty("Outline")!.GetValue(cell)!).Count;
+            int setout = Reading<int>(cell, "SetoutCorners");
             int sections = SectionCount(cell);
-            if (sections != 0 && sections != 3)
+            if (setout == 6)
+            {
+                hexagons++;
+                if (sections != 3)
+                {
+                    throw new InvalidOperationException(
+                        "A HEXAGON is a loft of THREE sections, the bottom " +
+                        "run, the two-point section from the left side " +
+                        "vertex to the right and the top run (route " +
+                        $"5.2.3(b)); a cell of {setout} setout corners " +
+                        $"carries {sections}.");
+                }
+                continue;
+            }
+            fanned++;
+            if (sections != 0)
             {
                 throw new InvalidOperationException(
-                    "A hexagon is a loft of THREE sections (route " +
-                    $"5.2.3(b)); a cell of {corners} corners carries " +
-                    $"{sections}, and a cell whose corner count its own " +
-                    "route does not fit carries NONE and takes the " +
-                    "deterministic fan of route (e).");
+                    "A cell whose SETOUT corner count route 5.2.3(b) does " +
+                    "not fit carries NO sections and takes the " +
+                    "deterministic fan of route (e); a cell of " +
+                    $"{setout} setout corners carries {sections}.");
             }
+        }
+        if (hexagons == 0 || fanned == 0)
+        {
+            throw new InvalidOperationException(
+                "The honeycomb bijection needs both sides present on this " +
+                $"fixture: got {hexagons} six-cornered cells and " +
+                $"{fanned} of any other count. Rule 4.3's five- and " +
+                "seven-sided rim cells are what make the second half of " +
+                "the assertion mean anything.");
         }
 
         // ROUTE (c), the one this check first shipped without measuring. A
