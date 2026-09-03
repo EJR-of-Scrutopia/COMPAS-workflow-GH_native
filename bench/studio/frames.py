@@ -70,11 +70,12 @@ def _triples(value: Any, count: int, label: str, count_name: str) -> List[List[f
     return out
 
 
-def _positive_count(document: Mapping[str, Any], key: str) -> int:
+def _count(document: Mapping[str, Any], key: str, minimum: int) -> int:
     value = document.get(key)
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(
-            "{} must be a positive integer; found {!r}.".format(key, value))
+            "{} must be an integer of at least {}; found {!r}.".format(
+                key, minimum, value))
     return value
 
 
@@ -105,8 +106,11 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
             "frames units {!r} are not 'm'. This schema version reads "
             "metres only, so a conversion is the writer's to make.".format(units))
 
-    vertex_count = _positive_count(document, "vertexCount")
-    column_node_count = _positive_count(document, "columnNodeCount")
+    vertex_count = _count(document, "vertexCount", 1)
+    # Zero is a machine with no members, which the writer's own invariant
+    # permits (its ColumnNodes can be empty while the net still moves);
+    # the act then draws the net alone. A net of nothing is refused above.
+    column_node_count = _count(document, "columnNodeCount", 0)
 
     raw_frames = document.get("frames")
     if not isinstance(raw_frames, list) or not raw_frames:

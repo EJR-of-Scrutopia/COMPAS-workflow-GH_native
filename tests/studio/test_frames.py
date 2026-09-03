@@ -209,3 +209,26 @@ def test_pairing_refuses_a_stale_frames_file_by_the_time_100_check():
     reason = f.pairing_error(document, contract)
     assert reason is not None
     assert "100" in reason, reason
+
+
+def test_a_machine_with_no_column_nodes_is_a_valid_if_bare_animation():
+    """The writer's own invariant permits zero column nodes (its
+    ColumnNodes array can be empty while the net still moves), and the
+    reader must accept what the writer can write: the act then draws the
+    net alone. vertexCount stays strictly positive, because a net of
+    nothing is not an animation of anything."""
+
+    f = studio()
+    document = complete_fixture()
+    document["columnNodeCount"] = 0
+    for frame in document["frames"]:
+        frame["columnNodes"] = []
+    validated = f.validate_frames_document(document)
+    assert validated["columnNodeCount"] == 0
+
+    empty_net = complete_fixture()
+    empty_net["vertexCount"] = 0
+    for frame in empty_net["frames"]:
+        frame["vertices"] = []
+    with pytest.raises(ValueError):
+        f.validate_frames_document(empty_net)
