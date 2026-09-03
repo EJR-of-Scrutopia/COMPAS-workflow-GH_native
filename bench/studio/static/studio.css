@@ -88,3 +88,9 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
                border: 3px solid #34373d; border-top-color: #9aa0a6;
                animation: cut-spin 0.9s linear infinite; }
 @keyframes cut-spin { to { transform: rotate(360deg); } }
+
+#live-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin: 0 4px; background: #555; vertical-align: middle; }
+#live-dot.watching { background: #2e7d32; }
+#live-dot.fresh { background: #66ff66; box-shadow: 0 0 6px #66ff66; }
+#delete-study, #clear-scene { margin-left: 4px; }

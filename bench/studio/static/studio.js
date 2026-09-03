@@ -913,6 +913,14 @@ async function loadColumns(names) {
 // to call boot(), and boot() used to add a fresh group with no dispose,
 // so each re-import stacked one more copy of the columns into the scene.
 // Both call sites now share this one dispose-then-reload path.
+// Only the LOADED study's own columns file draws. The columns folder is
+// server-global, so every study's exported columns rendered into every
+// scene at once, which is the stray column geometry Param saw.
+function columnsForStudy(names, exportName) {
+  if (!exportName) return [];
+  return (names || []).filter((n) => n === exportName + "-columns.json");
+}
+
 async function reloadColumns(names) {
   if (state.objects.columns) {
     scene.remove(state.objects.columns);
@@ -2191,6 +2199,31 @@ function scheduleReload() {
   }, RELOAD_SETTLE_MS);
 }
 
+// One fill of the study select, shared by boot and the delete button. A
+// null selection leaves the choice to the caller; "" leaves the select
+// blank with a placeholder so a just-deleted study is not silently
+// replaced by whichever study sorts first.
+function populateStudySelect(studies, selection) {
+  const select = document.getElementById("study-select");
+  select.innerHTML = "";
+  if (selection === "") {
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "(no study selected)";
+    select.appendChild(blank);
+  }
+  const names = [];
+  for (const study of studies) {
+    const option = document.createElement("option");
+    option.value = study.export;
+    option.textContent = study.export + (study.has_verification ? " (verified)" : "");
+    select.appendChild(option);
+    names.push(study.export);
+  }
+  if (selection !== null) select.value = selection;
+  return names;
+}
+
 async function loadStudy(exportName) {
   // An immediate load supersedes a pending settle timer: without this, a
   // size commit followed within the settle window by a material, pattern
@@ -2261,6 +2294,7 @@ async function loadStudy(exportName) {
     // opens empty until the first play.
     rebuildFormworkObjects();
     buildScene(fresh, preserve);
+    await reloadColumns(columnsForStudy(state.columnFiles || [], exportName));
     loaded = true;
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
@@ -2291,16 +2325,8 @@ async function boot(preferredExport) {
     state.patternNotes = payload.pattern_notes;
     populatePatternSelect(payload);
     updatePatternForMaterial(document.getElementById("material-select").value);
+    const names = populateStudySelect(payload.studies, null);
     const select = document.getElementById("study-select");
-    select.innerHTML = "";
-    const names = [];
-    for (const study of payload.studies) {
-      const option = document.createElement("option");
-      option.value = study.export;
-      option.textContent = study.export + (study.has_verification ? " (verified)" : "");
-      select.appendChild(option);
-      names.push(study.export);
-    }
     // M2 fix: after an export-pair import, boot() must land on the export
     // that was just imported, not silently fall back to studies[0]. The
     // preferred name only wins when it actually exists in the fresh list
@@ -2312,7 +2338,8 @@ async function boot(preferredExport) {
       select.value = toLoad;
       await loadStudy(toLoad);
     }
-    await reloadColumns(payload.columns);
+    state.columnFiles = payload.columns || [];
+    await reloadColumns(columnsForStudy(state.columnFiles, document.getElementById("study-select").value));
   } catch (error) {
     showBanner("Server not reachable: " + error.message, "error");
   }
@@ -2386,7 +2413,8 @@ async function importColumns() {
     input.value = "";
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
-    await reloadColumns(payload.columns);
+    state.columnFiles = payload.columns || [];
+    await reloadColumns(columnsForStudy(state.columnFiles, document.getElementById("study-select").value));
   } catch (error) {
     status.textContent = "import failed: " + error.message;
     logStudio("columns import failed: " + error.message);
@@ -2394,7 +2422,75 @@ async function importColumns() {
 }
 
 // ---------- UI wiring ----------
+document.getElementById("delete-study").addEventListener("click", async () => {
+  const select = document.getElementById("study-select");
+  const name = select.value;
+  if (!name) return;
+  if (!window.confirm("Delete the study \"" + name + "\" and its files?")) return;
+  const response = await fetch("/api/uploads/exports/" + encodeURIComponent(name),
+    { method: "DELETE" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    showBanner("Delete refused: " + (body.detail || response.status), "error");
+    return;
+  }
+  logStudio("deleted " + name);
+  clearScene();
+  const payload = await fetchJson("/api/studies");
+  state.studies = payload.studies;
+  populateStudySelect(payload.studies, "");
+});
+
+// Clear scene: deselect everything and empty the viewport without
+// touching any file. Selecting a study again brings it straight back.
+function clearScene() {
+  state.source = null;
+  state.formwork = null;
+  state.bundle = null;
+  selectProp(null);
+  rebuildFormworkObjects();
+  disposeShell();
+  disposeWiresAndNodes();
+  for (const key of Object.keys(state.objects)) {
+    const object = state.objects[key];
+    if (object) scene.remove(object);
+    state.objects[key] = null;
+  }
+  const select = document.getElementById("study-select");
+  select.value = "";
+  const row = document.getElementById("source-row");
+  if (row) row.classList.add("hidden");
+}
+document.getElementById("clear-scene").addEventListener("click", clearScene);
+
+// LIVE: poll the studies list and reload the moment the loaded study's
+// files change on disk, which is exactly what a Grasshopper Live push
+// does. The dot glows while polling sees a fresh stamp arrive.
+let liveStamp = null;
+setInterval(async () => {
+  const select = document.getElementById("study-select");
+  const name = select.value;
+  const dot = document.getElementById("live-dot");
+  if (!name) { if (dot) dot.className = "idle"; return; }
+  try {
+    const payload = await fetchJson("/api/studies");
+    state.studies = payload.studies;
+    state.columnFiles = payload.columns || [];
+    const row = payload.studies.find((r) => r.export === name);
+    if (!row) return;
+    if (liveStamp !== null && row.stamp !== liveStamp) {
+      if (dot) dot.className = "fresh";
+      logStudio("live: " + name + " changed in Grasshopper, reloading");
+      await loadStudy(name);
+    } else if (dot && dot.className !== "fresh") {
+      dot.className = "watching";
+    }
+    liveStamp = row.stamp;
+  } catch (error) { /* the next tick retries */ }
+}, 2000);
+
 document.getElementById("study-select").addEventListener("change", (e) => {
+  liveStamp = null;
   // A source choice belongs to the study it was made on. Carried across,
   // the previous study's "authored" rode into the next study's request
   // and 400'd every study without a Skin: basic navigation broke after

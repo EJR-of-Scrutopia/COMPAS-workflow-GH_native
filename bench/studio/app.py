@@ -151,6 +151,20 @@ def _slug_owner(slug: str, name: str) -> Optional[str]:
 def create_app(runner=None, cra_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
+    def _study_stamp(name: str) -> float:
+        """The newest mtime across this study's uploaded kinds: a Live
+        push rewrites at least the contract, so the stamp moves and the
+        browser's poll knows to reload."""
+
+        newest = 0.0
+        for kind in ("contract", "compas", "tessellation", "frames"):
+            path = bundle.UPLOAD_DIR / "{}-{}.json".format(name, kind)
+            try:
+                newest = max(newest, path.stat().st_mtime)
+            except OSError:
+                continue
+        return newest
+
     @app.get("/api/studies")
     def studies():
         pairs = geometry.available_exports(bundle.UPLOAD_DIR)
@@ -161,6 +175,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             rows.append({
                 "export": export,
                 "slug": slug,
+                "stamp": _study_stamp(export),
                 "has_verification": (
                     bundle.STUDIES_DIR / slug / "fea-verification.json"
                 ).is_file(),
@@ -427,6 +442,41 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         HDRI_DIR.mkdir(parents=True, exist_ok=True)
         (HDRI_DIR / filename).write_bytes(body)
         return {"stored": filename}
+
+    @app.delete("/api/uploads/exports/{name}")
+    def delete_export(name: str):
+        """Delete one study: its uploaded kinds and its cached studio dir.
+
+        The columns file beside the studio (the exporter's columns kind)
+        goes too, because it is part of the same set. Nothing outside
+        this study's own files is touched.
+        """
+
+        if "/" in name or "\\" in name or ".." in name or ":" in name:
+            raise HTTPException(400, "bad export name")
+        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if name not in pairs:
+            raise HTTPException(404, "no export named {!r}".format(name))
+        slug = geometry.slugify(name)
+        with RUNS_LOCK:
+            for run in RUNS.values():
+                if run["slug"] == slug and run["state"] in ("queued", "running"):
+                    raise HTTPException(409, "a run is in flight for this study")
+        removed = []
+        for kind in ("contract", "compas", "tessellation", "frames"):
+            path = bundle.UPLOAD_DIR / "{}-{}.json".format(name, kind)
+            if path.is_file():
+                path.unlink()
+                removed.append(path.name)
+        columns_file = COLUMNS_DIR / "{}-columns.json".format(name)
+        if columns_file.is_file():
+            columns_file.unlink()
+            removed.append(columns_file.name)
+        study_dir = bundle.STUDIES_DIR / slug
+        if study_dir.is_dir():
+            shutil.rmtree(study_dir, ignore_errors=True)
+        bundle.clear_cut_memo(slug)
+        return {"deleted": name, "removed": removed}
 
     @app.put("/api/uploads/exports/{name}/{kind}")
     async def upload_export(name: str, kind: str, request: Request):
