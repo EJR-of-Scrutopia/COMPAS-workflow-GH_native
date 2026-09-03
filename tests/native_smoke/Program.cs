@@ -1304,6 +1304,42 @@ internal static class Program
 
         try
         {
+            ValidateSkinWeldConsecutiveCorners(plugin);
+            Console.WriteLine(
+                "PASS  Skin weld consecutive corners (studio request " +
+                "R-006): a consecutive corner pair 5e-7 m apart, the " +
+                "studio's own measurement, welds to one; the ring's own " +
+                "closing seam welds the same way; a pair 2e-6 m apart, " +
+                "just outside the 1e-6 tolerance, stays distinct; and an " +
+                "outline welded below three distinct corners is measured " +
+                "as such.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin weld consecutive corners: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinWeldCollapsedDropped(plugin);
+            Console.WriteLine(
+                "PASS  Skin weld-collapsed drop count (studio request " +
+                "R-006): SkinPatternResult carries WeldCollapsedDropped " +
+                "on both native engines, reading 0 on the dome fixture " +
+                "exactly as the other two plan-validity counts do, and " +
+                "the Diagnostics text names it alongside them.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin weld-collapsed drop count: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinFieldCost(plugin);
             Console.WriteLine(
                 "PASS  Skin field cost (check 12.9(b)): the field is " +
@@ -24506,6 +24542,175 @@ internal static class Program
                 "translation (the whole of the connectedness claim); " +
                 $"got ({wallA[0]}, {wallA[1]}, {wallA[2]}) and " +
                 $"({wallB[0]}, {wallB[1]}, {wallB[2]}).");
+        }
+    }
+
+    /// <summary>
+    /// Studio request R-006, fixed AT EMISSION (2026-09-03): two
+    /// consecutive outline corners -- and the ring's own closing seam,
+    /// last back to first, counted as consecutive too -- closer than
+    /// 1e-6 m are float noise, not two distinct corners, and are welded
+    /// to one. Pinned with the studio's own measured fixture: a
+    /// duplicated corner about 5e-7 m apart, comfortably under the new
+    /// 1e-6 m tolerance and comfortably OVER the 1e-9 m the old Dedupe
+    /// welded at, which is exactly the gap that gave 28 of 1074 exported
+    /// COURSE cells a zero-length edge their simplicity check read as
+    /// self-crossing (the real contrast: Param's own courses export
+    /// against his armadillo-style, force-aligned export, which came
+    /// back clean, 0 of 1501). A pair just OUTSIDE the tolerance is
+    /// pinned staying distinct, so the fix is not shown to be merely
+    /// wider without a bound.
+    /// </summary>
+    private static void ValidateSkinWeldConsecutiveCorners(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo weld = RequireStatic(patterns, "WeldConsecutiveCorners");
+
+        List<double[]> Welded(params double[][] outline) =>
+            (List<double[]>)weld.Invoke(
+                null, new object?[] { new List<double[]>(outline) })!;
+
+        // ---- the studio's own measured defect.
+        double[][] studioCase =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0 + 5.0e-7, 0.0 },
+            new[] { 0.0, 1.0, 0.0 }
+        };
+        List<double[]> studioWelded = Welded(studioCase);
+        if (studioWelded.Count != 4)
+        {
+            throw new InvalidOperationException(
+                "A consecutive corner pair 5e-7 m apart -- the studio's " +
+                "own measurement on 28 of 1074 exported course cells -- " +
+                "must weld to one, leaving 4 distinct corners of the 5 " +
+                $"raw points; got {studioWelded.Count}.");
+        }
+
+        // ---- the CLOSING SEAM (last point back to first) is
+        // consecutive too.
+        double[][] seamCase =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 3.0e-7, 0.0, 0.0 }
+        };
+        List<double[]> seamWelded = Welded(seamCase);
+        if (seamWelded.Count != 4)
+        {
+            throw new InvalidOperationException(
+                "The ring's own closing seam, last point back to first, " +
+                "is consecutive too and must weld the same way; a fifth " +
+                "point 3e-7 m from the first must be dropped, leaving 4 " +
+                $"distinct corners; got {seamWelded.Count}.");
+        }
+
+        // ---- just OUTSIDE the tolerance must NOT weld: the fix widens
+        // the gap Dedupe left, it does not swallow genuinely distinct
+        // corners.
+        double[][] distinctCase =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0 + 2.0e-6, 0.0 },
+            new[] { 0.0, 1.0, 0.0 }
+        };
+        List<double[]> distinctWelded = Welded(distinctCase);
+        if (distinctWelded.Count != 5)
+        {
+            throw new InvalidOperationException(
+                "Two consecutive corners 2e-6 m apart, just OUTSIDE the " +
+                "1e-6 tolerance, must stay distinct; welding them would " +
+                $"be over-aggressive. Got {distinctWelded.Count} of 5.");
+        }
+
+        // ---- a cell whose outline collapses below three distinct
+        // corners: the caller's own habit (matching
+        // PlanDegenerateDropped and PlanOverlapDropped) is to drop it
+        // and count it, never to hand a two-point sliver on to
+        // KeepValidPlans or a port.
+        double[][] collapsingCase =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 0.0, 0.0, 4.0e-7 },
+            new[] { 1.0, 1.0, 1.0 }
+        };
+        List<double[]> collapsed = Welded(collapsingCase);
+        if (collapsed.Count >= 3)
+        {
+            throw new InvalidOperationException(
+                "A triangle whose first two corners are 4e-7 m apart " +
+                "must weld to two distinct corners, below the three a " +
+                $"plan needs; got {collapsed.Count}.");
+        }
+    }
+
+    /// <summary>
+    /// Studio request R-006's other half: the weld happens at emission,
+    /// so a cell it collapses below three corners never reaches
+    /// KeepValidPlans or a port, and the drop is COUNTED like the other
+    /// two plan-validity habits rather than absorbed in silence.
+    /// Measured on a real generated pattern rather than re-derived:
+    /// WeldCollapsedDropped is 0 on the dome fixture both native engines
+    /// already build clean cells from, matching PlanDegenerateDropped
+    /// and PlanOverlapDropped's own 0 there, and the Diagnostics text
+    /// names it either way, so an author reading D always sees the
+    /// count and not just the two older kinds.
+    /// </summary>
+    private static void ValidateSkinWeldCollapsedDropped(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+
+        foreach ((string label, object built) in new (string, object)[]
+                 {
+                     ("courses", courses.Invoke(
+                         null, new object[] { net, 0.6, 0.5 })!),
+                     ("hexagonal", hexagonal.Invoke(
+                         null, new object[] { net, 0.6, 0.5 })!)
+                 })
+        {
+            PropertyInfo? property =
+                built.GetType().GetProperty("WeldCollapsedDropped");
+            if (property is null)
+            {
+                throw new InvalidOperationException(
+                    "SkinPatternResult must carry WeldCollapsedDropped " +
+                    "(studio request R-006); missing on the " +
+                    $"{label} engine.");
+            }
+            int weldCollapsedDropped = (int)property.GetValue(built)!;
+            if (weldCollapsedDropped != 0)
+            {
+                throw new InvalidOperationException(
+                    "The dome fixture builds only clean cells on the " +
+                    $"{label} engine, exactly as PlanDegenerateDropped " +
+                    "and PlanOverlapDropped both read 0 there; " +
+                    $"WeldCollapsedDropped read {weldCollapsedDropped}.");
+            }
+            string diagnostics = Reading<string>(built, "Diagnostics");
+            if (!diagnostics.Contains(
+                    "Weld-collapsed cells dropped: 0",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The {label} engine's Diagnostics must name the " +
+                    "weld drop count alongside the other two " +
+                    $"plan-validity habits; got '{diagnostics}'.");
+            }
         }
     }
 

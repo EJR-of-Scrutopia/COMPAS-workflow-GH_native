@@ -196,7 +196,22 @@ internal sealed record SkinCell(
 /// The three piece lengths are DERIVED from the surviving cells and need no
 /// member, excluding Cap cells by rule 2.3.2a. skin.surface_failed is
 /// deliberately NOT here: the Brep build happens on the solve thread beside
-/// ClosedOutlineCurve and never in this file, which is rule 5.2.4.</summary>
+/// ClosedOutlineCurve and never in this file, which is rule 5.2.4.
+///
+/// WELDCOLLAPSEDDROPPED is studio request R-006: at cell emission, every
+/// outline is welded (consecutive corners, and the closing seam, closer
+/// than 1e-6 m are collapsed to one) before it ever reaches KeepValidPlans
+/// or a port, matching the third plan-validity habit the other two drop
+/// counts already keep. A cell whose outline collapses below three
+/// distinct corners after welding cannot be a plan at all and is dropped
+/// here, counted, and never silently absorbed the way it was before this
+/// task: the studio measured 28 of 1074 exported COURSE cells carrying a
+/// consecutive corner pair some 5e-7 m apart, a gap the plugin's own
+/// filter never saw because Dedupe's consecutive pass welded only within
+/// 1e-9 m, well under the float noise the studio's own import actually
+/// rejects; the force-aligned ("armadillo-style") export was already
+/// clean, 0 of 1501, because its own outline happens not to accumulate
+/// that noise, not because it was ever welded any wider.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
@@ -225,7 +240,8 @@ internal sealed record SkinPatternResult(
     int MergedShortKept,
     int MergedStillShort,
     IReadOnlyList<double[][]> FlowLines,
-    IReadOnlyList<double[][]> BedCurves);
+    IReadOnlyList<double[][]> BedCurves,
+    int WeldCollapsedDropped = 0);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -2253,8 +2269,53 @@ internal static class SkinPatterns
     };
 
     /// <summary>
-    /// Drop a closing repeat and every duplicate the STUDIO would reject, so
-    /// an outline is a clean open ring the component closes itself.
+    /// Studio request R-006, fixed AT EMISSION: two CONSECUTIVE outline
+    /// corners (the ring's own closing seam, last back to first, counted
+    /// as consecutive too) closer than 1e-6 m are float noise, not two
+    /// distinct corners, and are collapsed to the first of the pair. The
+    /// studio measured 28 of 1074 exported COURSE cells carrying exactly
+    /// this kind of pair, about 5e-7 m apart, which reads as a
+    /// zero-length edge and makes its simplicity check call the cell
+    /// self-crossing; the real contrast is Param's own courses export
+    /// against his armadillo-style (force-aligned) export, which came
+    /// back clean, 0 of 1501, because that pattern's own outline
+    /// arithmetic happens not to accumulate noise this coarse, not
+    /// because it was ever welded any wider than 1e-9 m either. Both
+    /// patterns are welded at the same 1e-6 m here, so neither is a
+    /// second, looser rule.
+    ///
+    /// A three-dimensional distance and ONLY EVER a corner against its
+    /// immediate neighbour, which is what distinguishes it from Dedupe's
+    /// own further pass below (rule 3.5.4): a genuine float-noise
+    /// duplicate is adjacent by construction, the tracer having written
+    /// the same point twice, and not two unrelated corners that merely
+    /// coincide in plan.
+    /// </summary>
+    internal static List<double[]> WeldConsecutiveCorners(
+        List<double[]> outline)
+    {
+        var welded = new List<double[]>(outline.Count);
+        foreach (double[] point in outline)
+        {
+            if (welded.Count == 0 ||
+                Distance(welded[^1], point) > 1.0e-6)
+            {
+                welded.Add(point);
+            }
+        }
+        while (welded.Count > 1 &&
+               Distance(welded[0], welded[^1]) <= 1.0e-6)
+        {
+            welded.RemoveAt(welded.Count - 1);
+        }
+        return welded;
+    }
+
+    /// <summary>
+    /// Weld consecutive corners (<see cref="WeldConsecutiveCorners"/>),
+    /// then drop every duplicate the STUDIO would reject over the WHOLE
+    /// ring, so an outline is a clean open ring the component closes
+    /// itself.
     ///
     /// Rule 3.5.4. The studio's import rule is stricter than the plugin's
     /// filter and the gap becomes likelier under this wave's patterns. The
@@ -2264,24 +2325,13 @@ internal static class SkinPatterns
     /// and 1e-3 apart in z pass a three-dimensional 1e-6 test comfortably
     /// and still fail the studio, which is the exact case a cell spanning a
     /// steep band produces. And it runs over the WHOLE RING and not only
-    /// over consecutive points, again as the studio's does.
+    /// over consecutive points, again as the studio's does; the weld above
+    /// is what covers consecutive points, in three dimensions, before this
+    /// pass ever runs.
     /// </summary>
     private static List<double[]> Dedupe(List<double[]> outline)
     {
-        var cleaned = new List<double[]>();
-        foreach (double[] point in outline)
-        {
-            if (cleaned.Count == 0 ||
-                Distance(cleaned[^1], point) > 1.0e-9)
-            {
-                cleaned.Add(point);
-            }
-        }
-        while (cleaned.Count > 1 &&
-               Distance(cleaned[0], cleaned[^1]) <= 1.0e-9)
-        {
-            cleaned.RemoveAt(cleaned.Count - 1);
-        }
+        List<double[]> cleaned = WeldConsecutiveCorners(outline);
         for (int i = 0; i < cleaned.Count; i++)
         {
             for (int j = cleaned.Count - 1; j > i; j--)
@@ -2895,6 +2945,7 @@ internal static class SkinPatterns
         int mergedPieces = 0;
         int mergedShortKept = 0;
         int mergedStillShort = 0;
+        int weldCollapsed = 0;
         var capGirths = new List<double>();
         var capWedges = new List<int>();
         foreach ((double low, double high) in resolved.Refused)
@@ -2967,6 +3018,12 @@ internal static class SkinPatterns
                                     -outer.Length / 2.0,
                                     outer.Length / 2.0, true)));
                         }
+                        else
+                        {
+                            // R-006: welded below three distinct corners,
+                            // so there is no plan left to keep.
+                            weldCollapsed++;
+                        }
                         continue;
                     }
                     // THE RING is the band [L_top, Li] tiled by the band
@@ -3010,6 +3067,11 @@ internal static class SkinPatterns
                                     -outer.Length / 2.0,
                                     outer.Length / 2.0, true)));
                         }
+                        else
+                        {
+                            // R-006: welded below three distinct corners.
+                            weldCollapsed++;
+                        }
                         continue;
                     }
                     // BandCell's u0/u1 are always MID-CURVE arc length, the
@@ -3034,7 +3096,11 @@ internal static class SkinPatterns
                             band.Course, outer, ringMidCurve, innerCurve,
                             u0, u1, false);
                         if (wedge.Outline.Count < 3)
+                        {
+                            // R-006: welded below three distinct corners.
+                            weldCollapsed++;
                             continue;
+                        }
                         keyed.Add((
                             band.Course, component, u0,
                             wedge with { Cap = true }));
@@ -3049,6 +3115,11 @@ internal static class SkinPatterns
                                 band.Course, disc, false,
                                 -innerCurve.Length / 2.0,
                                 innerCurve.Length / 2.0, true)));
+                    }
+                    else
+                    {
+                        // R-006: welded below three distinct corners.
+                        weldCollapsed++;
                     }
                     capGirths.Add(innerCurve.Length);
                     capWedges.Add(plan.Wedges);
@@ -3087,7 +3158,11 @@ internal static class SkinPatterns
                         band.Course, lowerCurve, mid, upperCurve,
                         u0, u1, clipped);
                     if (cell.Outline.Count < 3)
+                    {
+                        // R-006: welded below three distinct corners.
+                        weldCollapsed++;
                         continue;
+                    }
                     keyed.Add((band.Course, component, u0, cell));
                 }
             }
@@ -3141,7 +3216,8 @@ internal static class SkinPatterns
                 TransitionLine(
                     "courses", transitionBands, transitions,
                     FieldKindOf(net)),
-                capLine),
+                capLine,
+                weldCollapsed),
             transitionBands,
             transitions,
             degenerateDropped,
@@ -3166,7 +3242,8 @@ internal static class SkinPatterns
             mergedShortKept,
             mergedStillShort,
             Array.Empty<double[][]>(),
-            Array.Empty<double[][]>());
+            Array.Empty<double[][]>(),
+            weldCollapsed);
     }
 
     // ---- pattern 2: force aligned (spec section 3) ----------------------
@@ -3377,6 +3454,7 @@ internal static class SkinPatterns
         int mergedPieces = 0;
         int mergedShortKept = 0;
         int mergedStillShort = 0;
+        int weldCollapsed = 0;
         foreach ((double[][] points, int _) in lines)
             flowLines.Add(points);
         for (int r = 0; r < bands; r++)
@@ -3475,7 +3553,11 @@ internal static class SkinPatterns
                 outline.AddRange(leftSegment);
                 List<double[]> ring = Dedupe(outline);
                 if (ring.Count < 3)
+                {
+                    // R-006: welded below three distinct corners.
+                    weldCollapsed++;
                     continue;
+                }
 
                 // RULE 3.3.5. A cell gains or loses a side only where a line
                 // BEGINS OR ENDS within its own band: a line that does not
@@ -3553,7 +3635,8 @@ internal static class SkinPatterns
                 TransitionLine(
                     "force aligned", resolved.Refused.Count, resolved.Refused,
                     FieldKindOf(net)),
-                oddLine),
+                oddLine,
+                weldCollapsed),
             resolved.Refused.Count,
             resolved.Refused,
             degenerateDropped,
@@ -3578,7 +3661,8 @@ internal static class SkinPatterns
             mergedShortKept,
             mergedStillShort,
             flowLines,
-            bedCurves);
+            bedCurves,
+            weldCollapsed);
     }
 
     /// <summary>The accepted streamlines and the traced beds this pattern
@@ -4227,14 +4311,17 @@ internal static class SkinPatterns
 
     /// <summary>The D output's text for a native pattern: the pattern
     /// name, cell and course counts, mean/min/max piece length, the
-    /// stagger, the count of boundary-clipped cells, the two
+    /// stagger, the count of boundary-clipped cells, the THREE
     /// plan-validity drop counts and, where the level curves do not
     /// correspond, the refused transition bands. The key of every line
     /// is capitalised, so the transition line reads beside the rest
-    /// rather than under it. The two drop lines are worded exactly as
-    /// the force-aligned pattern words its own, because they mean the
-    /// same thing and an author reading D should not have to notice
-    /// which pattern produced it.</summary>
+    /// rather than under it. The drop lines are worded exactly as the
+    /// force-aligned pattern words its own, because they mean the same
+    /// thing and an author reading D should not have to notice which
+    /// pattern produced it. weldCollapsedDropped is studio request R-006:
+    /// an outline welded (rule: consecutive corners within 1e-6 m) below
+    /// three distinct corners at emission, before it ever reached the
+    /// other two filters.</summary>
     private static string PatternDiagnostics(
         string name,
         int cellCount,
@@ -4246,7 +4333,8 @@ internal static class SkinPatterns
         int planDegenerateDropped,
         int planOverlapDropped,
         string? transitions = null,
-        string? caps = null)
+        string? caps = null,
+        int weldCollapsedDropped = 0)
     {
         static string F(double value) =>
             value.ToString("F3", CultureInfo.InvariantCulture);
@@ -4275,6 +4363,11 @@ internal static class SkinPatterns
         lines.Add(
             $"Plan-overlap cells dropped: {planOverlapDropped} " +
             "(overlapped another surviving cell in plan; excluded " +
+            "automatically so the sidecar imports)");
+        lines.Add(
+            $"Weld-collapsed cells dropped: {weldCollapsedDropped} " +
+            "(outline fell below three distinct corners once consecutive " +
+            "corners within 1e-6 m were welded at emission; excluded " +
             "automatically so the sidecar imports)");
         if (transitions is not null)
             lines.Add(transitions);
@@ -4574,6 +4667,7 @@ internal static class SkinPatterns
         var countChangeRows = new HashSet<int>();
         int fiveSided = 0;
         int sevenSided = 0;
+        int weldCollapsed = 0;
         for (int chartAt = 0; chartAt < charts.Count; chartAt++)
         {
             SkinChart chart = charts[chartAt];
@@ -4750,7 +4844,11 @@ internal static class SkinPatterns
                     outline.Add(PointAt(here, ArcOf(here, sideLeft)));
                     List<double[]> cleaned = Dedupe(outline);
                     if (cleaned.Count < 3)
+                    {
+                        // R-006: welded below three distinct corners.
+                        weldCollapsed++;
                         continue;
+                    }
                     bool clipped = !here.Closed &&
                         (sideLeft < 0.0 || sideRight > 1.0);
                     int setoutCorners = bottom.Count + aboveVerts.Count + 2;
@@ -4825,7 +4923,8 @@ internal static class SkinPatterns
                 TransitionLine(
                     "hexagonal", skippedRows.Count, transitions,
                     FieldKindOf(net)),
-                oddLine),
+                oddLine,
+                weldCollapsed),
             skippedRows.Count,
             transitions,
             degenerateDropped,
@@ -4850,6 +4949,7 @@ internal static class SkinPatterns
             0,
             0,
             Array.Empty<double[][]>(),
-            Array.Empty<double[][]>());
+            Array.Empty<double[][]>(),
+            weldCollapsed);
     }
 }

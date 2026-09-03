@@ -353,13 +353,16 @@ public sealed class SkinComponent : NativeComponentBase
             }
 
             // A cell the engine DROPPED because its plan projection
-            // self-crossed, or overlapped a cell already kept. Spec
-            // section 4 claims the native patterns cannot produce
-            // either, and the claim is now enforced rather than argued,
-            // because ONE bad cell makes Bench Studio reject the whole
-            // tessellation. The drop is never silent: the author is told
-            // how many and of which kind, exactly as the force-aligned
-            // pattern already tells him.
+            // self-crossed, overlapped a cell already kept, or (studio
+            // request R-006) welded below three distinct corners once
+            // consecutive corners within 1e-6 m were collapsed at
+            // emission. Spec section 4 claims the native patterns cannot
+            // produce a self-crossing or overlapping cell, and the claim
+            // is now enforced rather than argued, because ONE bad cell
+            // makes Bench Studio reject the whole tessellation. The drop
+            // is never silent: the author is told how many and of which
+            // kind, exactly as the force-aligned pattern already tells
+            // him.
             // The sentence is SCALED TO THE FRACTION DROPPED, because a
             // warning that promises a small hole while handing back an
             // empty tree is worse than no warning at all. A HELICOIDAL
@@ -380,7 +383,8 @@ public sealed class SkinComponent : NativeComponentBase
             // told the pattern is EMPTY rather than holed.
             int dropped =
                 generated.PlanDegenerateDropped +
-                generated.PlanOverlapDropped;
+                generated.PlanOverlapDropped +
+                generated.WeldCollapsedDropped;
             if (dropped > 0)
             {
                 int built = dropped + generated.Cells.Count;
@@ -402,10 +406,13 @@ public sealed class SkinComponent : NativeComponentBase
                     $"{dropped} of the {built} cell" +
                     (built == 1 ? "" : "s") + " this pattern built " +
                     (dropped == 1 ? "was" : "were") +
-                    " DROPPED to keep it valid in plan: " +
-                    $"{generated.PlanDegenerateDropped} self-crossing " +
-                    $"and {generated.PlanOverlapDropped} overlapping a " +
-                    $"cell already kept. {scale} Diagnostics counts them.");
+                    " DROPPED to keep it valid: " +
+                    $"{generated.PlanDegenerateDropped} self-crossing, " +
+                    $"{generated.PlanOverlapDropped} overlapping a cell " +
+                    "already kept and " +
+                    $"{generated.WeldCollapsedDropped} welded below " +
+                    $"three distinct corners. {scale} Diagnostics counts " +
+                    "them.");
             }
 
             var cellBranches = new List<List<Curve>>();
