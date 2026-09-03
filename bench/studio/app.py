@@ -468,6 +468,14 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             if path.is_file():
                 path.unlink()
                 removed.append(path.name)
+        # The study may have been listed from a file under its own name
+        # rather than the four suffixed kinds (see available_exports), and
+        # deleting a study has to delete the file it was read from or it
+        # walks straight back into the list.
+        listed = pairs[name].get("contract")
+        if listed is not None and listed.is_file():
+            listed.unlink()
+            removed.append(listed.name)
         columns_file = COLUMNS_DIR / "{}-columns.json".format(name)
         if columns_file.is_file():
             columns_file.unlink()

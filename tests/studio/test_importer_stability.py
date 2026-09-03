@@ -798,3 +798,34 @@ def test_frames_pairing_checks_the_columns_too(tmp_path, monkeypatch):
     moved["mould"]["columns"]["nodes"][1]["z"] = 2.0
     reason = f_mod.pairing_error(validated, moved)
     assert reason is not None and "column" in reason.lower(), reason
+
+
+def test_a_json_dropped_into_the_folder_is_a_study(tmp_path, monkeypatch):
+    """Param's ask: the scene list reads whatever JSON is in the folder, not
+    only files named to the studio's own kind convention. A file dropped in
+    under its own name is a study when it reads like a contract, it opens
+    like any other, and deleting it removes the file it was listed from
+    rather than leaving it to walk straight back into the list."""
+
+    client, uploads, _studies = make_client(tmp_path, monkeypatch)
+    (uploads / "Dropped in.json").write_text(
+        json.dumps(tiny_contract()), encoding="utf-8")
+    (uploads / "notes.json").write_text('{"hello": "world"}', encoding="utf-8")
+
+    listed = client.get("/api/studies").json()["studies"]
+    names = [row["export"] for row in listed]
+    assert "Dropped in" in names, names
+    assert "notes" not in names, "a JSON that is not a contract is not a study"
+
+    bundle = client.get(
+        "/api/studies/Dropped%20in/bundle",
+        params={"material": "concrete", "pattern": "bonded-courses",
+                "size": 0.9, "thickness": 0.2})
+    assert bundle.status_code == 200, bundle.text
+
+    removed = client.delete("/api/uploads/exports/Dropped in")
+    assert removed.status_code == 200, removed.text
+    assert "Dropped in.json" in removed.json()["removed"]
+    assert not (uploads / "Dropped in.json").exists()
+    assert "Dropped in" not in [
+        row["export"] for row in client.get("/api/studies").json()["studies"]]

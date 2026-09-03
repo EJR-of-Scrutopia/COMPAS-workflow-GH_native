@@ -89,8 +89,23 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
                animation: cut-spin 0.9s linear infinite; }
 @keyframes cut-spin { to { transform: rotate(360deg); } }
 
-#live-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-  margin: 0 4px; background: #555; vertical-align: middle; }
-#live-dot.watching { background: #2e7d32; }
-#live-dot.fresh { background: #66ff66; box-shadow: 0 0 6px #66ff66; }
+/* Live reads as a state, not a control: the word and a red beacon while
+   it is following Grasshopper, the word alone and dimmed when it is not.
+   The beacon breathes so a still screenshot and a live window are told
+   apart, and flares on the frame a push actually lands. */
+#live-toggle { display: inline-flex; align-items: center; gap: 5px;
+  margin: 0 4px; padding: 2px 7px; border: 1px solid #3a3f47; border-radius: 3px;
+  background: #23262c; color: #6b7079; font-size: 10px; letter-spacing: 0.12em;
+  cursor: pointer; }
+#live-toggle .beacon { width: 7px; height: 7px; border-radius: 50%;
+  background: transparent; }
+#live-toggle.on { color: #e8eaed; border-color: #6a2f33; }
+#live-toggle.on .beacon { background: #e03a3a; box-shadow: 0 0 5px #e03a3a;
+  animation: live-breathe 2s ease-in-out infinite; }
+#live-toggle.fresh .beacon { background: #ff6b6b; box-shadow: 0 0 10px #ff5252;
+  animation: none; }
+@keyframes live-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* A refusal stays under the control that caused it, in the colour of an
+   answer rather than of a fault. */
+#source-note.refused { color: #e0a03a; }
 #delete-study, #clear-scene { margin-left: 4px; }

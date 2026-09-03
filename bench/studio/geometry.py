@@ -50,16 +50,78 @@ def load_contract(path) -> Dict[str, Any]:
         ) from error
 
 
+# The four names the studio writes into the upload folder itself. A file
+# ending in one of these belongs to a study; anything else in the folder is
+# a candidate study of its own.
+KIND_SUFFIXES = (
+    "-contract.json", "-compas.json", "-tessellation.json", "-frames.json")
+
+# Verdicts for the loose scan below, keyed by path, size and mtime. The
+# browser polls the study list every two seconds and a contract runs to
+# megabytes, so each file is read once and re-read only when it changes.
+_LOOKS_LIKE_CONTRACT: Dict[Any, bool] = {}
+
+
+def reads_like_a_contract(path) -> bool:
+    """True when this file carries the two blocks a study is built from."""
+
+    path = Path(path)
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    key = (str(path), stat.st_size, stat.st_mtime)
+    verdict = _LOOKS_LIKE_CONTRACT.get(key)
+    if verdict is None:
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            verdict = False
+        else:
+            verdict = (
+                isinstance(document, Mapping)
+                and isinstance(document.get("equilibrium"), Mapping)
+                and isinstance(document.get("formGraph"), Mapping)
+            )
+        # A scan cache, not a store: a long session in a busy folder is
+        # capped rather than allowed to grow with every rewrite.
+        if len(_LOOKS_LIKE_CONTRACT) > 256:
+            _LOOKS_LIKE_CONTRACT.clear()
+        _LOOKS_LIKE_CONTRACT[key] = verdict
+    return verdict
+
+
 def available_exports(directory) -> Dict[str, Dict[str, Path]]:
-    """Map export name to its file pair, for every complete pair present."""
+    """Map export name to its files, for every contract in the folder.
+
+    A contract is enough. The compas half used to be required, and it is a
+    passenger: nothing in the studio parses it, it is carried through to
+    the stage plan as a path and no further, and Round trip check ships one
+    whose every field is null and opens exactly like the others. Requiring
+    it hid whole studies from the list over a file that says nothing.
+
+    A JSON that carries no kind suffix counts as a contract when it reads
+    like one, so a file dropped into the folder under its own name is
+    offered as a study rather than ignored. Suffixed files are matched
+    first, so a study never appears twice.
+    """
 
     directory = Path(directory)
     pairs: Dict[str, Dict[str, Path]] = {}
     for contract in sorted(directory.glob("*-contract.json")):
         name = contract.name[: -len("-contract.json")]
+        entry: Dict[str, Path] = {"contract": contract}
         geometry = directory / (name + "-compas.json")
         if geometry.is_file():
-            pairs[name] = {"contract": contract, "geometry": geometry}
+            entry["geometry"] = geometry
+        pairs[name] = entry
+    for path in sorted(directory.glob("*.json")):
+        if any(path.name.endswith(suffix) for suffix in KIND_SUFFIXES):
+            continue
+        if path.stem in pairs:
+            continue
+        if reads_like_a_contract(path):
+            pairs[path.stem] = {"contract": path}
     return pairs
 
 

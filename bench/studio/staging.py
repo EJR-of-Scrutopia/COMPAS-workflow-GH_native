@@ -384,7 +384,10 @@ def run_staging(
         # convergence failure that never happened.
         struck = runner({
             "contract_path": str(export_pair["contract"]),
-            "geometry_path": str(export_pair["geometry"]),
+            # Optional since the pair became a contract plus passengers:
+            # the FEA runner takes the path and the studio never parses the
+            # file, so a study without one still solves.
+            "geometry_path": str(export_pair.get("geometry") or ""),
             "material": material,
             "thickness": thickness,
             "include_export_loads": True,

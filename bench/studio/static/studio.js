@@ -21,6 +21,8 @@ const state = {
   source: null,        // deliverable B: null = whatever the study has (Skin wins), else "authored" | "generated"
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
   columnRadius: null,  // bench.columns/1 "radius" from the loaded study's columns file: the width the exporter swept the column solids along, and the width the act's animated members take (see columnRadius())
+  live: true,          // the Live button: while on, a Grasshopper push reloads the study on screen
+  lastRefusal: null,   // the server's own words for the last refused load, shown under the cut source control
   studies: [],
   layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
   showMode: "timeline", // R4: "framework" | "shell" | "both" | "timeline" (see applyShowMode)
@@ -1181,6 +1183,9 @@ function applyCut(preserve) {
       note.textContent = state.bundle.source === "authored"
         ? "cells authored in Grasshopper, with their own courses"
         : "the studio's own cut, from the pattern and size above";
+      // A cut that loaded clears the last refusal off the control.
+      note.classList.remove("refused");
+      state.lastRefusal = null;
     }
   }
   document.getElementById("piece-count").textContent = state.bundle.pieces.length;
@@ -2256,8 +2261,24 @@ function renderDataPanel(v) {
 // ---------- data plumbing ----------
 async function fetchJson(url) {
   const response = await fetch(url);
-  if (!response.ok) throw new Error(url + " -> " + response.status + " " + (await response.text()));
-  return response.json();
+  if (response.ok) return response.json();
+  // The server refuses in sentences ("this plan is not star shaped about
+  // its axis..."), and every one of them used to reach the banner wrapped
+  // in a URL and a JSON envelope, which reads as a crash rather than as an
+  // answer. The sentence is the message; the address stays in the log,
+  // where a diagnosis wants it.
+  const text = await response.text();
+  let detail = text;
+  try {
+    const body = JSON.parse(text);
+    if (body && typeof body.detail === "string") detail = body.detail;
+  } catch (parseError) { /* not JSON: the raw text is the best there is */ }
+  logStudio("request refused " + response.status + ": " + url);
+  const error = new Error(detail);
+  error.status = response.status;
+  error.detail = detail;
+  error.url = url;
+  throw error;
 }
 
 // ---------- pattern control (Task 9) ----------
@@ -2436,6 +2457,7 @@ async function loadStudy(exportName) {
     if (sequence !== state.loadSequence) return;
     overlay.classList.add("hidden");
     status.textContent = "";
+    state.lastRefusal = error.detail || error.message;
     showBanner("Failed to load study: " + error.message, "error");
     // A failed SWITCH leaves the previous study's scene on screen, and
     // the source row would otherwise sit there labelled with that
@@ -2600,11 +2622,31 @@ document.getElementById("clear-scene").addEventListener("click", clearScene);
 // files change on disk, which is exactly what a Grasshopper Live push
 // does. The dot glows while polling sees a fresh stamp arrive.
 let liveStamp = null;
+let liveFlash = 0;
+function paintLive(fresh) {
+  const button = document.getElementById("live-toggle");
+  if (!button) return;
+  if (fresh) liveFlash = Date.now() + 1200;
+  const flaring = state.live && Date.now() < liveFlash;
+  button.className = state.live ? (flaring ? "on fresh" : "on") : "off";
+  button.title = state.live
+    ? "Live: this study reloads as Grasshopper pushes it. Click to stop following."
+    : "Live is off: Grasshopper pushes are ignored. Click to follow again.";
+}
+document.getElementById("live-toggle").addEventListener("click", () => {
+  state.live = !state.live;
+  // The stamp is forgotten on the way back in, so switching Live on adopts
+  // whatever is on disk NOW as the baseline rather than reloading once for
+  // every push that happened while nobody was watching.
+  liveStamp = null;
+  paintLive(false);
+  logStudio(state.live ? "live: following Grasshopper" : "live: off");
+});
+paintLive(false);
 setInterval(async () => {
   const select = document.getElementById("study-select");
   const name = select.value;
-  const dot = document.getElementById("live-dot");
-  if (!name) { if (dot) dot.className = "idle"; return; }
+  if (!state.live || !name) { paintLive(false); return; }
   try {
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
@@ -2612,13 +2654,14 @@ setInterval(async () => {
     const row = payload.studies.find((r) => r.export === name);
     if (!row) return;
     if (liveStamp !== null && row.stamp !== liveStamp) {
-      if (dot) dot.className = "fresh";
+      paintLive(true);
       logStudio("live: " + name + " changed in Grasshopper, reloading");
+      liveStamp = row.stamp;
       await loadStudy(name);
-    } else if (dot && dot.className !== "fresh") {
-      dot.className = "watching";
+    } else {
+      paintLive(false);
+      liveStamp = row.stamp;
     }
-    liveStamp = row.stamp;
   } catch (error) { /* the next tick retries */ }
 }, 2000);
 
@@ -2675,11 +2718,17 @@ document.getElementById("source-select").addEventListener("change", async (e) =>
   if (loaded === false) {
     // A source can exist and still be uncuttable: this vault's plan is
     // not star shaped, so the studio's polar generator refuses it by
-    // name and only the Skin can cut it. The banner carries that
-    // message; the control goes back to the cut still on screen rather
-    // than sitting on a source the study never loaded.
+    // name and only the Skin can cut it. The control goes back to the cut
+    // still on screen rather than sitting on a source the study never
+    // loaded, and the refusal is written under the control, where it
+    // stays after the banner has gone rather than reading as a fault.
     state.source = previous;
     e.target.value = state.bundle ? state.bundle.source : previous;
+    const note = document.getElementById("source-note");
+    if (note && state.lastRefusal) {
+      note.textContent = state.lastRefusal;
+      note.classList.add("refused");
+    }
   }
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {

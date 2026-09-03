@@ -2251,3 +2251,49 @@ def test_the_ground_takes_its_size_from_one_slider():
     assert "groundRepeat(state.groundRadius" in body
     assert "material.dispose()" not in body
     assert "rebuildGround()" in _function_body(js, "buildScene")
+
+
+def test_live_is_a_button_that_says_which_state_it_is_in():
+    """Param asked for live text with a red beacon beside it when on and
+    nothing when off. Live is a state the window is in, so it reads as a
+    word and a light rather than a coloured dot with no label: on means this
+    window follows Grasshopper's pushes, off means it ignores them, and the
+    poll obeys the button rather than the button merely reporting on the
+    poll."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'id="live-toggle"' in html
+    assert '<span class="beacon"></span>LIVE' in html
+    assert 'id="live-dot"' not in html, "the unlabelled dot is gone"
+    # Red, and only when on. Off carries no beacon at all.
+    assert "#live-toggle.on .beacon { background: #e03a3a" in css
+    assert "#live-toggle .beacon { width: 7px; height: 7px; border-radius: 50%;" in css
+    assert "background: transparent; }" in css
+    assert "live: true," in js
+    body = _function_body(js, "paintLive")
+    assert 'state.live ? (flaring ? "on fresh" : "on") : "off"' in body
+    # The poll obeys the button: Live off is not a label, it is a stop.
+    assert "if (!state.live || !name)" in js
+
+
+def test_a_refusal_reaches_the_screen_in_the_servers_own_words():
+    """The server refuses in sentences: this plan is not star shaped about
+    its axis, this rim is more than one loop. Every one of them used to
+    arrive wrapped in a URL and a JSON envelope, which reads as a crash
+    rather than an answer, and switching between the Grasshopper Skin and
+    the studio's own cut is where Param met them. The sentence is the
+    message, the address goes to the log, and the reason stays under the
+    control that caused it after the banner has gone."""
+
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "fetchJson")
+    assert "body.detail" in body
+    assert "new Error(detail)" in body
+    assert "logStudio(" in body
+    assert "url + \" -> \"" not in body, "the URL is not the message"
+    assert "lastRefusal: null," in js
+    assert "state.lastRefusal = error.detail || error.message;" in js
+    assert "#source-note.refused" in css

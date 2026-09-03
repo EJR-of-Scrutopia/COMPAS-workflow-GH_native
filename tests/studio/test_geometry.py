@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -101,11 +102,28 @@ def test_the_real_export_parses_to_the_known_shape():
     assert max(v[2] for v in arrays["vertices"]) > 6.0
 
 
-def test_available_exports_requires_the_pair(tmp_path):
+def test_available_exports_lists_every_contract_in_the_folder(tmp_path):
+    """Re-pinned 2026-09-04 on Param's ask that the study list read whatever
+    is in the folder. The pair requirement is gone: a contract is enough,
+    because the compas half is a passenger nothing in the studio parses
+    (staging carries its path to the FEA runner and stops there), and
+    requiring it hid whole studies over a file that says nothing. A JSON
+    with no kind suffix is offered when it reads like a contract, so a file
+    dropped in under its own name is a study; a file that carries a kind
+    suffix never is, even when its content would pass."""
+
     g = studio()
-    (tmp_path / "A-contract.json").write_text("{}", encoding="utf-8")
+    contract = json.dumps(tiny_contract())
+    (tmp_path / "A-contract.json").write_text(contract, encoding="utf-8")
     (tmp_path / "A-compas.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "B-contract.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "B-contract.json").write_text(contract, encoding="utf-8")
+    (tmp_path / "Dropped in.json").write_text(contract, encoding="utf-8")
+    (tmp_path / "notes.json").write_text('{"hello": "world"}', encoding="utf-8")
+    (tmp_path / "A-tessellation.json").write_text(contract, encoding="utf-8")
     pairs = g.available_exports(tmp_path)
-    assert sorted(pairs) == ["A"]
+    assert sorted(pairs) == ["A", "B", "Dropped in"]
     assert pairs["A"]["contract"].name == "A-contract.json"
+    assert pairs["A"]["geometry"].name == "A-compas.json"
+    # B has no compas half at all and is listed anyway, without the key.
+    assert "geometry" not in pairs["B"]
+    assert pairs["Dropped in"]["contract"].name == "Dropped in.json"
