@@ -288,3 +288,43 @@ export function interpolateFormworkFrame(frames, time) {
     phase: a.phase,
   };
 }
+
+// The machine's own clock, 0 to 100, read off the timeline clock. The
+// writer stamps frames on a 0-100 scale that is deliberately not seconds
+// (FRAMES-WRITER-SPEC section 1): the writer owns the motion, the reader
+// owns how fast it plays. Clamped at both ends, so a timeline scrubbed
+// past the act holds the finished pose rather than running off the frames.
+export function machineTime(t, seconds) {
+  if (!(seconds > 0)) return 100;
+  return Math.min(100, Math.max(0, (t / seconds) * 100));
+}
+
+// What is on screen during and after the raise. Pure, and kept away from
+// three.js, because it carries two rules that are easy to break by
+// accident while editing scene code:
+//
+//   1. The columns are structure, not falsework. The machine raises them
+//      and they STAND for the rest of the build, through the strike that
+//      takes the net away. Nothing here reads the strike.
+//   2. Exactly one drawing of the columns is ever on screen. The animated
+//      members and the exported solids are the same tubes at the same
+//      radius, so drawn together they z-fight; the members carry the
+//      timeline, the solids carry every other mode.
+//
+// The net is the third actor: it follows the frames until the act ends and
+// then yields to the finished instanced wires, whose pose at that instant
+// is identical by the writer's time-100 guarantee.
+export function formworkVisibility({ t, seconds, showMode, hasMembers, hasColumnMesh }) {
+  const act = seconds > 0 && showMode === "timeline";
+  if (!act) {
+    return { group: false, net: false, members: false, columnMesh: !!hasColumnMesh };
+  }
+  const net = t < seconds;
+  const members = !!hasMembers;
+  return {
+    group: net || members,
+    net,
+    members,
+    columnMesh: !!hasColumnMesh && !members,
+  };
+}

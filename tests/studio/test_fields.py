@@ -266,3 +266,79 @@ def test_formwork_frame_interpolation_matches_hand_computed_values(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+VISIBILITY_CHECK = textwrap.dedent("""
+    import { machineTime, formworkVisibility } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) < 1e-9; }
+
+    // The machine's clock: the timeline clock scaled to the writer's 0-100
+    // and clamped at both ends.
+    expect(near(machineTime(0, 12), 0), "the act opens on the first frame");
+    expect(near(machineTime(6, 12), 50), "half the act is halfway through the frames");
+    expect(near(machineTime(12, 12), 100), "the act ends on the last frame");
+    expect(near(machineTime(400, 12), 100), "a scrubbed-past act holds its finished pose");
+    expect(near(machineTime(-3, 12), 0), "before the start is the start");
+    expect(near(machineTime(5, 0), 100), "no act reads as finished, never a divide by zero");
+
+    const act = { seconds: 12, showMode: "timeline", hasMembers: true, hasColumnMesh: true };
+
+    // Mid-raise: the net is up, the columns ARE the animated members, and
+    // the exported solids stay off so the two never draw over each other.
+    const raising = formworkVisibility({ ...act, t: 5 });
+    expect(raising.group && raising.net && raising.members,
+      "the machine is on screen while it raises");
+    expect(raising.columnMesh === false,
+      "the exported solids yield to the animated members");
+
+    // The handover instant: the net goes, the columns stay.
+    const handover = formworkVisibility({ ...act, t: 12 });
+    expect(handover.net === false, "at act end the net yields to the finished wires");
+    expect(handover.members === true && handover.group === true,
+      "the columns stand through the handover");
+
+    // Deep into the build, long after the strike has taken the net away.
+    const struck = formworkVisibility({ ...act, t: 400 });
+    expect(struck.members === true, "the columns stay for the whole process");
+    expect(struck.columnMesh === false, "and still only one drawing of them");
+
+    // Frames but no column members: the exported solids are the only
+    // columns there are, so they draw.
+    const noMembers = formworkVisibility({ ...act, t: 5, hasMembers: false });
+    expect(noMembers.members === false, "no members, nothing to animate");
+    expect(noMembers.columnMesh === true, "the exported solids carry the columns instead");
+    expect(noMembers.group === true, "the raising net alone is still worth a group");
+
+    // No frames at all: a study without an act is untouched by any of this.
+    const noAct = formworkVisibility({ ...act, t: 5, seconds: 0 });
+    expect(!noAct.group && !noAct.net && !noAct.members, "no frames, no machine");
+    expect(noAct.columnMesh === true, "and the exported columns show as they always did");
+
+    // The other three Show modes are rest states: the solids stand in.
+    const rest = formworkVisibility({ ...act, t: 5, showMode: "both" });
+    expect(rest.group === false, "the act belongs to the timeline");
+    expect(rest.columnMesh === true, "outside the timeline the exported solids draw");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_formwork_visibility_keeps_the_columns_and_one_drawing_of_them(tmp_path):
+    """Param's two rules for the act, pinned where scene code cannot quietly
+    lose them: the columns are structure, so they stand for the whole build
+    and no strike touches them; and exactly one drawing of them is on screen,
+    because the animated members and the exported solids are the same tubes
+    at the same radius and coincident surfaces z-fight."""
+
+    script = tmp_path / "check_visibility.mjs"
+    script.write_text(
+        VISIBILITY_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

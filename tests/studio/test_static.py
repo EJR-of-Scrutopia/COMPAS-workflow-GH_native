@@ -1762,8 +1762,11 @@ def test_the_show_select_offers_four_exclusive_modes():
     # test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam),
     # since a shared wireRadius-only clearance under-cleared the nodes.
     assert 'state.showMode === "both"' in body
-    assert "position.z = wireClearance" in body
-    assert "position.z = nodeClearance" in body
+    # Re-pinned 2026-09-04: the two locals became the one netClearance()
+    # record that the finished net, Both mode and the formwork act all read.
+    # Still two lifts, still one per object's own radius.
+    assert 'position.z = state.showMode === "both" ? clearance.wires' in body
+    assert 'position.z = state.showMode === "both" ? clearance.nodes' in body
 
 
 def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam():
@@ -1798,13 +1801,23 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
     # growing Node size alone could push the white dots back through the
     # shell: the exact reported symptom. Each object now clears by its own
     # radius, both sites.
+    # Re-pinned 2026-09-04: the same two expressions, now written once in
+    # netClearance() and read by all three callers. The third caller is the
+    # formwork act, whose raising net has to ride the SAME lift as the
+    # finished net or the handover at the end of the act jumps by the
+    # clearance. Each object still clears by its OWN radius, which is the
+    # invariant this test exists for.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    clearance_body = _function_body(js, "netClearance")
+    assert "wires: thickness / 2 + state.wireRadius," in clearance_body
+    assert "nodes: thickness / 2 + state.nodeRadius," in clearance_body
     show_body = _function_body(js, "applyShowMode")
-    assert "state.bundle.provenance.thickness / 2 + state.wireRadius" in show_body
-    assert "state.bundle.provenance.thickness / 2 + state.nodeRadius" in show_body
+    assert "clearance.wires" in show_body and "clearance.nodes" in show_body
+    assert "netClearance()" in show_body
     scene_body = _function_body(js, "applySceneAtTime")
-    assert "wires: state.bundle.provenance.thickness / 2 + state.wireRadius," in scene_body
-    assert "nodes: state.bundle.provenance.thickness / 2 + state.nodeRadius," in scene_body
+    assert "netClearance()" in scene_body
+    act_body = _function_body(js, "applyFormworkAct")
+    assert "netClearance()" in act_body
     # The strike's own drop is additive with the clearance, so the net still
     # lands 1.5 m clear of the shell once fully struck (strikeU = 1).
     assert "clearance[key] - 1.5 * strikeU" in scene_body

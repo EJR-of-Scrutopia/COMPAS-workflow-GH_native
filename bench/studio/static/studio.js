@@ -12,7 +12,7 @@ import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContras
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
-  interpolateFormworkFrame,
+  interpolateFormworkFrame, machineTime, formworkVisibility,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -20,6 +20,7 @@ const state = {
   bundle: null,
   source: null,        // deliverable B: null = whatever the study has (Skin wins), else "authored" | "generated"
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
+  columnRadius: null,  // bench.columns/1 "radius" from the loaded study's columns file: the width the exporter swept the column solids along, and the width the act's animated members take (see columnRadius())
   studies: [],
   layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
   showMode: "timeline", // R4: "framework" | "shell" | "both" | "timeline" (see applyShowMode)
@@ -771,10 +772,16 @@ function meshGeometry(meshData) {
   return geometry;
 }
 
-function buildWiresAndNodes(bundle) {
-  const { vertices, edges } = bundle.analysis_mesh;
-  const wireRadius = state.wireRadius, nodeRadius = state.nodeRadius;
-  const cylinder = new THREE.CylinderGeometry(wireRadius, wireRadius, 1, 8, 1, true);
+// The recipe for a thrust-net drawing: instanced cylinders at the wire
+// radius, instanced spheres at the node radius, both on cloned steel with
+// per-instance colour armed. The finished net (buildWiresAndNodes) and the
+// net the machine is raising (rebuildFormworkObjects) both come from here,
+// so the two are literally the same drawing and the handover at the end of
+// the raise shows nothing. Flat LineSegments, which the act used to draw,
+// read as another medium entirely: no thickness, no material, no nodes.
+function netInstances(edgeCount, vertexCount) {
+  const cylinder = new THREE.CylinderGeometry(
+    state.wireRadius, state.wireRadius, 1, 8, 1, true);
   cylinder.translate(0, 0.5, 0);
   const wireMaterial = materials.steel.clone();
   // Task 6 fix: InstancedMesh.setColorAt writes the instanceColor buffer,
@@ -784,41 +791,96 @@ function buildWiresAndNodes(bundle) {
   // so the plain steel look is unchanged until applyWireForces tints it.
   wireMaterial.vertexColors = true;
   wireMaterial.transparent = true;
-  const wires = new THREE.InstancedMesh(cylinder, wireMaterial, edges.length);
-  const up = new THREE.Vector3(0, 1, 0);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+  const wires = new THREE.InstancedMesh(cylinder, wireMaterial, edgeCount);
   const white = new THREE.Color(0xffffff);
-  const baseMatrices = [];
-  edges.forEach(([u, v], i) => {
-    const a = new THREE.Vector3(...vertices[u]);
-    const b = new THREE.Vector3(...vertices[v]);
-    const d = b.clone().sub(a);
-    q.setFromUnitVectors(up, d.clone().normalize());
-    s.set(1, d.length(), 1);
-    m.compose(a, q, s);
-    wires.setMatrixAt(i, m);
-    wires.setColorAt(i, white);
-    baseMatrices.push(m.clone());
-  });
-  wires.instanceColor.needsUpdate = true;
-  // Task 6: the forces layer rebuilds instance matrices (thicker wire =
-  // bigger force) and restores them on toggle-off; the base endpoints/
-  // orientation/length live here so that restore is exact.
-  wires.userData.baseMatrices = baseMatrices;
-  const sphere = new THREE.SphereGeometry(nodeRadius, 12, 8);
+  for (let i = 0; i < edgeCount; i++) wires.setColorAt(i, white);
+  // setColorAt is what allocates instanceColor, so a net with no edges at
+  // all leaves it null.
+  if (wires.instanceColor) wires.instanceColor.needsUpdate = true;
   const nodeMaterial = materials.steel.clone();
   nodeMaterial.transparent = true;
-  const nodes = new THREE.InstancedMesh(sphere, nodeMaterial, vertices.length);
-  vertices.forEach((v, i) => {
-    m.makeTranslation(v[0], v[1], v[2]);
-    nodes.setMatrixAt(i, m);
-  });
+  const nodes = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(state.nodeRadius, 12, 8), nodeMaterial, vertexCount);
   // The thrust network is a diagram of the analysis, not a scene object.
   // Once the vault closes, the wires sit hidden inside the shell, and
   // shadow maps ignore both occlusion and opacity, so with castShadow on
   // they projected a grid shadow of an invisible net through the finished
   // vault onto the ground. Overlays cast nothing; castings and columns do.
   wires.castShadow = nodes.castShadow = false;
+  return { wires, nodes };
+}
+
+// Scratch instances: the two writers below run per edge per frame for the
+// whole formwork act, and allocating inside those loops is what turns a
+// 1200-edge net into garbage-collector pressure at 60 fps.
+const SEGMENT_UP = new THREE.Vector3(0, 1, 0);
+const segmentScratch = {
+  m: new THREE.Matrix4(), q: new THREE.Quaternion(),
+  a: new THREE.Vector3(), b: new THREE.Vector3(),
+  d: new THREE.Vector3(), s: new THREE.Vector3(),
+};
+
+// One unit cylinder per pair, stood between its two points. `collect`, when
+// given, receives a copy of every matrix: that is the forces layer's
+// restore record (applyWireForces), and it is filled here so the finished
+// net and the act's net are composed by the same arithmetic rather than by
+// two copies of it that can drift.
+function writeInstancedSegments(mesh, pairs, points, collect) {
+  const { m, q, a, b, d, s } = segmentScratch;
+  const count = Math.min(mesh.count, pairs.length);
+  for (let i = 0; i < count; i++) {
+    const p = points[pairs[i][0]];
+    const r = points[pairs[i][1]];
+    a.set(p[0], p[1], p[2]);
+    b.set(r[0], r[1], r[2]);
+    d.copy(b).sub(a);
+    const length = d.length();
+    // A member with no length has no direction to orient by, and a zero
+    // scale makes the instance matrix singular -- three derives its normal
+    // matrix from it and the mesh renders unlit. Both are real at t = 0,
+    // where the machine's net starts reeled onto itself.
+    if (length > 1e-9) q.setFromUnitVectors(SEGMENT_UP, d.divideScalar(length));
+    s.set(1, Math.max(length, 1e-6), 1);
+    m.compose(a, q, s);
+    mesh.setMatrixAt(i, m);
+    if (collect) collect.push(m.clone());
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+function writeInstancedPoints(mesh, points) {
+  const m = segmentScratch.m;
+  const count = Math.min(mesh.count, points.length);
+  for (let i = 0; i < count; i++) {
+    m.makeTranslation(points[i][0], points[i][1], points[i][2]);
+    mesh.setMatrixAt(i, m);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+}
+
+// The lift that keeps the net clear of the shell drawn over it, one value
+// per instanced mesh because the two carry different radii (the full
+// diagnosis is in applySceneAtTime, where it is applied to the finished
+// net). The act's net rides the same lift, so the handover moves nothing.
+function netClearance() {
+  const thickness = state.bundle && state.bundle.provenance
+    ? state.bundle.provenance.thickness : 0;
+  return {
+    wires: thickness / 2 + state.wireRadius,
+    nodes: thickness / 2 + state.nodeRadius,
+  };
+}
+
+function buildWiresAndNodes(bundle) {
+  const { vertices, edges } = bundle.analysis_mesh;
+  const { wires, nodes } = netInstances(edges.length, vertices.length);
+  // Task 6: the forces layer rebuilds instance matrices (thicker wire =
+  // bigger force) and restores them on toggle-off; the base endpoints,
+  // orientation and length are collected here so that restore is exact.
+  const baseMatrices = [];
+  writeInstancedSegments(wires, edges, vertices, baseMatrices);
+  writeInstancedPoints(nodes, vertices);
+  wires.userData.baseMatrices = baseMatrices;
   return { wires, nodes };
 }
 
@@ -865,6 +927,10 @@ function rebuildWiresAndNodes() {
   scene.add(wires);
   scene.add(nodes);
   applyWireForces();
+  // The act's net is cut from the same two radii, so a slider drag has to
+  // rebuild it as well or the machine raises a net that no longer matches
+  // the one it hands over to.
+  rebuildFormworkObjects();
   // Scene-only recompute: a size-slider rebuild must not move the camera.
   if (state.timeline) applySceneAtTime(state.timeline.t);
 }
@@ -897,7 +963,14 @@ async function loadColumns(names) {
   const group = new THREE.Group();
   for (const name of names) {
     try {
-      const geometry = columnGeometryFrom(await fetchJson("/api/columns/" + encodeURIComponent(name)));
+      const columnDocument = await fetchJson("/api/columns/" + encodeURIComponent(name));
+      // bench.columns/1 stamps the radius the exporter swept these solids
+      // along. The act's animated members read it, so the two drawings of
+      // one set of columns are the same thickness.
+      if (typeof columnDocument.radius === "number" && columnDocument.radius > 0) {
+        state.columnRadius = columnDocument.radius;
+      }
+      const geometry = columnGeometryFrom(columnDocument);
       const mesh = new THREE.Mesh(geometry, materials.steel);
       mesh.castShadow = mesh.receiveShadow = true;
       group.add(mesh);
@@ -926,9 +999,18 @@ async function reloadColumns(names) {
     scene.remove(state.objects.columns);
     state.objects.columns = null;
   }
+  const previousRadius = state.columnRadius;
+  state.columnRadius = null;
   if (names.length) {
     state.objects.columns = await loadColumns(names);
     scene.add(state.objects.columns);
+  }
+  // boot() learns which columns file belongs to the study only AFTER the
+  // first study load, so the act's members are first built on the fallback
+  // radius. A radius that arrives or changes rebuilds them at the width the
+  // exporter actually swept, at whatever instant the timeline is showing.
+  if (state.columnRadius !== previousRadius && formworkObjects) {
+    rebuildFormworkObjects();
   }
 }
 
@@ -3347,96 +3429,119 @@ function applyInflation(u) {
 // real and exactly one group ever exists.
 let formworkObjects = null;
 
+// The width of a column when the study ships no columns file to read it
+// from: the exporter's own figure, which every export to date carries.
+const COLUMN_RADIUS = 0.05;
+
+function columnRadius() {
+  return state.columnRadius > 0 ? state.columnRadius : COLUMN_RADIUS;
+}
+
 function rebuildFormworkObjects() {
   if (formworkObjects) {
     scene.remove(formworkObjects.group);
     for (const child of formworkObjects.group.children) {
       child.geometry.dispose();
       child.material.dispose();
+      // InstancedMesh owns instanceMatrix/instanceColor GPU buffers that
+      // neither of those frees: the rule disposeWiresAndNodes documents.
+      if (child.dispose) child.dispose();
     }
     formworkObjects = null;
   }
   const doc = state.formwork;
   if (!doc || !Array.isArray(doc.frames) || !doc.frames.length) return;
-  // Line segments, not tubes: cheap enough to rewrite every frame (one
-  // Float32 write per endpoint), and the machine reads as scaffolding
-  // rather than competing with the shell for weight.
   const group = new THREE.Group();
-  const handles = { group, net: null, members: null };
-  const first = doc.frames[0];
+  const handles = { group, net: null, nodes: null, members: null };
   const edges = Array.isArray(doc.edges) ? doc.edges : [];
+  const members = doc.columns && Array.isArray(doc.columns.members)
+    ? doc.columns.members : [];
+  const vertexCount = doc.vertexCount || doc.frames[0].vertices.length;
   if (edges.length) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
-    const net = new THREE.LineSegments(
-      geometry,
-      new THREE.LineBasicMaterial({ color: 0x9aa4b0, transparent: true, opacity: 0.9 }));
-    net.frustumCulled = false;
-    handles.net = net;
-    group.add(net);
+    const net = netInstances(edges.length, vertexCount);
+    // Every instance moves every frame, and an InstancedMesh keeps the
+    // bounding sphere it was first culled against: left on, the net
+    // vanishes the moment the machine carries it outside that sphere.
+    net.wires.frustumCulled = net.nodes.frustumCulled = false;
+    handles.net = net.wires;
+    handles.nodes = net.nodes;
+    group.add(net.wires);
+    group.add(net.nodes);
   }
-  const members = doc.columns && Array.isArray(doc.columns.members) ? doc.columns.members : [];
   if (members.length) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      "position", new THREE.BufferAttribute(new Float32Array(members.length * 6), 3));
-    const bars = new THREE.LineSegments(
-      geometry,
-      new THREE.LineBasicMaterial({ color: 0x8a6a4a, transparent: true, opacity: 1 }));
+    const radius = columnRadius();
+    const cylinder = new THREE.CylinderGeometry(radius, radius, 1, 8, 1, true);
+    cylinder.translate(0, 0.5, 0);
+    const bars = new THREE.InstancedMesh(
+      cylinder, materials.steel.clone(), members.length);
+    // Columns are structure: they cast and receive shadows exactly as the
+    // exported solids do in loadColumns, which is half of looking the same.
+    bars.castShadow = bars.receiveShadow = true;
     bars.frustumCulled = false;
     handles.members = bars;
     group.add(bars);
   }
-  // Seeded with the first frame, not zeros: a zero-filled buffer is a
-  // degenerate, invisible net until the first timeline apply, which is
-  // exactly the empty viewport the review reproduced.
-  if (handles.net) writeSegmentPositions(handles.net, edges, first.vertices);
-  if (handles.members) writeSegmentPositions(handles.members, members, first.columnNodes);
+  // Seeded at the CURRENT instant, not at zeros and not at frame 0: a
+  // rebuild mid-scrub (a radius slider, a columns import) must not snap the
+  // machine back to the start, and a zero-filled buffer is a degenerate,
+  // invisible net until the first apply.
+  const seed = interpolateFormworkFrame(
+    doc.frames,
+    machineTime(state.timeline ? state.timeline.t : 0, formworkSeconds()));
+  if (handles.net) writeInstancedSegments(handles.net, edges, seed.vertices);
+  if (handles.nodes) writeInstancedPoints(handles.nodes, seed.vertices);
+  if (handles.members) {
+    writeInstancedSegments(handles.members, members, seed.columnNodes);
+  }
   formworkObjects = handles;
   scene.add(group);
 }
 
-function writeSegmentPositions(object, pairs, points) {
-  const positions = object.geometry.attributes.position;
-  for (let i = 0; i < pairs.length; i++) {
-    const a = points[pairs[i][0]];
-    const b = points[pairs[i][1]];
-    positions.setXYZ(i * 2, a[0], a[1], a[2]);
-    positions.setXYZ(i * 2 + 1, b[0], b[1], b[2]);
-  }
-  positions.needsUpdate = true;
-}
-
 // The formwork act's whole scene contribution, pure in t like everything
-// else on this clock. During the act the machine's net and members follow
-// the interpolated frame; at act end the net yields to the instanced
-// thrust wires (its final pose IS theirs, the writer's time-100
-// guarantee), while the members stand through the build and strike away
-// on the same clock as the wires. Early-returns on missing objects for
-// the same render-loop reason applySceneAtTime documents.
-function applyFormworkAct(t, strikeU) {
-  if (!formworkObjects) return;
-  const group = formworkObjects.group;
+// else on this clock. The net follows the interpolated frame and then
+// yields to the finished instanced wires at act end: its final pose IS
+// theirs by the writer's time-100 guarantee, and now its drawing is theirs
+// too, so the handover is invisible. The columns are not falsework -- the
+// machine raises them and they stand for the rest of the build, through
+// the strike that takes the net away. formworkVisibility (fields.js) owns
+// those rules and is tested on its own; this function only applies them.
+function applyFormworkAct(t) {
   const doc = state.formwork;
   const seconds = formworkSeconds();
-  if (!doc || seconds <= 0 || state.showMode !== "timeline") {
-    group.visible = false;
-    return;
+  const show = formworkVisibility({
+    t, seconds, showMode: state.showMode,
+    hasMembers: !!(formworkObjects && formworkObjects.members),
+    hasColumnMesh: !!state.objects.columns,
+  });
+  // The exported column solids and the animated members are the same tubes
+  // at the same radius, so drawn together they z-fight: exactly one of the
+  // two is on screen at any instant.
+  if (state.objects.columns) state.objects.columns.visible = show.columnMesh;
+  if (!formworkObjects || !doc) return;
+  formworkObjects.group.visible = show.group;
+  if (!show.group) return;
+  const frame = interpolateFormworkFrame(doc.frames, machineTime(t, seconds));
+  const lift = netClearance();
+  if (formworkObjects.net) {
+    formworkObjects.net.visible = show.net;
+    if (show.net) {
+      writeInstancedSegments(formworkObjects.net, doc.edges, frame.vertices);
+      formworkObjects.net.position.z = lift.wires;
+    }
   }
-  group.visible = strikeU < 1;
-  const machineTime = Math.min(100, Math.max(0, (t / seconds) * 100));
-  const frame = interpolateFormworkFrame(doc.frames, machineTime);
-  const net = formworkObjects.net;
-  if (net) {
-    net.visible = t < seconds;
-    if (net.visible) writeSegmentPositions(net, doc.edges, frame.vertices);
+  if (formworkObjects.nodes) {
+    formworkObjects.nodes.visible = show.net;
+    if (show.net) {
+      writeInstancedPoints(formworkObjects.nodes, frame.vertices);
+      formworkObjects.nodes.position.z = lift.nodes;
+    }
   }
-  const bars = formworkObjects.members;
-  if (bars) {
-    bars.material.opacity = 1 - strikeU;
-    bars.position.z = -1.5 * strikeU;
-    writeSegmentPositions(bars, doc.columns.members, frame.columnNodes);
+  if (formworkObjects.members) {
+    formworkObjects.members.visible = show.members;
+    if (show.members) {
+      writeInstancedSegments(
+        formworkObjects.members, doc.columns.members, frame.columnNodes);
+    }
   }
 }
 
@@ -3556,10 +3661,7 @@ function applySceneAtTime(t) {
   // Node size slider alone could push the white dots back through the
   // shell at any clearance computed from wireRadius. Each object clears by
   // its own radius.
-  const clearance = {
-    wires: state.bundle.provenance.thickness / 2 + state.wireRadius,
-    nodes: state.bundle.provenance.thickness / 2 + state.nodeRadius,
-  };
+  const clearance = netClearance();
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
@@ -3576,7 +3678,7 @@ function applySceneAtTime(t) {
   // unconditionally left the last frame's emissive tint stuck on the shell
   // after switching Show mode away from Timeline; applyShowMode's own
   // sweep, below, clears that residue on entry to the other three modes.
-  applyFormworkAct(t, strikeU);
+  applyFormworkAct(t);
   if (state.showMode === "timeline") applyPulse(build);
   applyShowMode();
 }
@@ -3647,14 +3749,9 @@ function applyShowMode() {
   // state.nodeRadius), so each clears the shell by its OWN radius -- a
   // shared clearance under-cleared whichever one was bigger, and growing
   // the Node size slider alone could push the white dots back through.
-  const wireClearance = state.showMode === "both"
-    ? state.bundle.provenance.thickness / 2 + state.wireRadius
-    : 0;
-  const nodeClearance = state.showMode === "both"
-    ? state.bundle.provenance.thickness / 2 + state.nodeRadius
-    : 0;
-  state.objects.wires.position.z = wireClearance;
-  state.objects.nodes.position.z = nodeClearance;
+  const clearance = netClearance();
+  state.objects.wires.position.z = state.showMode === "both" ? clearance.wires : 0;
+  state.objects.nodes.position.z = state.showMode === "both" ? clearance.nodes : 0;
   const falsework = state.objects.falsework;
   if (falsework) {
     const wanted = state.formworkMode === "always" && state.showMode !== "framework";
