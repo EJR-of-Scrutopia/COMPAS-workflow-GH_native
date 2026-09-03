@@ -9,6 +9,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
+using Grasshopper.Kernel.Data;
+using Grasshopper.Kernel.Types;
 using Rhino;
 using Rhino.Geometry;
 
@@ -225,6 +227,56 @@ public sealed class ExportComponent :
             "RES",
             "Solved FD or TNA result to export.",
             GH_ParamAccess.item);
+        parameters.AddCurveParameter(
+            "Cells",
+            "C",
+            "One closed planar outline per cutting cell (a brick), " +
+            "authored against the solved form the Result still carries. " +
+            "Wire Skin's Cells (C) straight in as a TREE: each branch's " +
+            "path index is the course of every cell in that branch, which " +
+            "is what the studio stages the build animation by. Any " +
+            "Flatten, graft or regraft between Skin and here DESTROYS the " +
+            "courses, and a Flatten specifically sends every cell to " +
+            "course 0, which is one studio stage instead of many. " +
+            "Projected to plan (z dropped) into the sidecar's outline " +
+            "points; non-polyline curves are approximated at a 5 mm chord. " +
+            "Wiring them is what adds the tessellation kind to the export.",
+            GH_ParamAccess.tree);
+        parameters[1].Optional = true;
+        parameters.AddIntegerParameter(
+            "Courses",
+            "CO",
+            "The course (row) index per cell, same length as Cells, from " +
+            "Skin's Courses (CO); the tree is flattened here, on every " +
+            "open, so a graft set on this port by hand is wiped when the " +
+            "file is reopened. The studio stages the build animation " +
+            "course by course. Empty puts every cell in course 0, one " +
+            "single stage.",
+            GH_ParamAccess.list);
+        parameters[2].Optional = true;
+        parameters[2].DataMapping = GH_DataMapping.Flatten;
+        parameters.AddNumberParameter(
+            "Column Radius",
+            "R",
+            "Radius of the prism each column member is drawn as in the " +
+            "columns mesh, in document units (0.05 suits metres; scale it " +
+            "for millimetres).",
+            GH_ParamAccess.item,
+            DefaultColumnRadius);
+        parameters[3].Optional = true;
+        parameters.AddTextParameter(
+            "Name",
+            "N",
+            "The study name. Files are <Name>-<kind>.json under Path and " +
+            "the studio's export name is <Name>; blank uses " +
+            "ananke-export. ONE path segment: a Name carrying a slash, a " +
+            "backslash, a colon or a dot-dot is refused with a warning, " +
+            "and nothing is written or sent. Two Exports sharing a Name " +
+            "and a Studio write over each other's files and each other's " +
+            "study.",
+            GH_ParamAccess.item,
+            string.Empty);
+        parameters[4].Optional = true;
         parameters.AddTextParameter(
             "Path",
             "P",
@@ -238,56 +290,14 @@ public sealed class ExportComponent :
             "refused: a study is not scattered across the top of a disk.",
             GH_ParamAccess.item,
             string.Empty);
-        parameters[1].Optional = true;
-        parameters.AddBooleanParameter(
-            "Write",
-            "W",
-            "Push the export to disk: while True, every kind this Result " +
-            "carries is written under Path on every solve. Wire a button " +
-            "for one-shot writes. The JSON outputs themselves are always " +
-            "live.",
-            GH_ParamAccess.item,
-            false);
-        parameters[2].Optional = true;
-        parameters.AddTextParameter(
-            "Name",
-            "N",
-            "The study name. Files are <Name>-<kind>.json under Path and " +
-            "the studio's export name is <Name>; blank uses " +
-            "ananke-export. ONE path segment: a Name carrying a slash, a " +
-            "backslash, a colon or a dot-dot is refused with a warning, " +
-            "and nothing is written or sent. Two Exports sharing a Name " +
-            "and a Studio write over each other's files and each other's " +
-            "study.",
-            GH_ParamAccess.item,
-            string.Empty);
-        parameters[3].Optional = true;
-        parameters.AddCurveParameter(
-            "Cells",
-            "C",
-            "One closed planar outline per cutting cell (a brick), " +
-            "authored against the solved form the Result still carries. " +
-            "Wire Skin's Cells (C) straight in; the tree is " +
-            "flattened here, on every open, so a graft set on this port " +
-            "by hand is wiped when the file is reopened. Projected to " +
-            "plan (z dropped) into the sidecar's outline points; " +
-            "non-polyline curves are approximated at a 5 mm chord. Wiring " +
-            "them is what adds the tessellation kind to the export.",
-            GH_ParamAccess.list);
-        parameters[4].Optional = true;
-        parameters[4].DataMapping = GH_DataMapping.Flatten;
-        parameters.AddIntegerParameter(
-            "Courses",
-            "CO",
-            "The course (row) index per cell, same length as Cells, from " +
-            "Skin's Courses (CO); the tree is flattened here, on every " +
-            "open, so a graft set on this port by hand is wiped when the " +
-            "file is reopened. The studio stages the build animation " +
-            "course by course. Empty puts every cell in course 0, one " +
-            "single stage.",
-            GH_ParamAccess.list);
         parameters[5].Optional = true;
-        parameters[5].DataMapping = GH_DataMapping.Flatten;
+        parameters.AddTextParameter(
+            "Studio",
+            "S",
+            "The studio's base URL.",
+            GH_ParamAccess.item,
+            DefaultStudio);
+        parameters[6].Optional = true;
         parameters.AddBooleanParameter(
             "Live",
             "L",
@@ -303,22 +313,16 @@ public sealed class ExportComponent :
             "study on the first solve.",
             GH_ParamAccess.item,
             false);
-        parameters[6].Optional = true;
-        parameters.AddTextParameter(
-            "Studio",
-            "S",
-            "The studio's base URL.",
-            GH_ParamAccess.item,
-            DefaultStudio);
         parameters[7].Optional = true;
-        parameters.AddNumberParameter(
-            "Column Radius",
-            "R",
-            "Radius of the prism each column member is drawn as in the " +
-            "columns mesh, in document units (0.05 suits metres; scale it " +
-            "for millimetres).",
+        parameters.AddBooleanParameter(
+            "Write",
+            "W",
+            "Push the export to disk: while True, every kind this Result " +
+            "carries is written under Path on every solve. Wire a button " +
+            "for one-shot writes. The JSON outputs themselves are always " +
+            "live.",
             GH_ParamAccess.item,
-            DefaultColumnRadius);
+            false);
         parameters[8].Optional = true;
     }
 
@@ -767,6 +771,7 @@ public sealed class ExportComponent :
         bool liveInput = false;
         string studioInput = DefaultStudio;
         double radiusInput = DefaultColumnRadius;
+        List<string> errors;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -777,18 +782,37 @@ public sealed class ExportComponent :
                 Message = "No Result";
             return false;
         }
-        data.GetData(1, ref pathInput);
-        data.GetData(2, ref writeInput);
-        data.GetData(3, ref nameInput);
-        data.GetDataList(4, cellInput);
-        data.GetDataList(5, courseInput);
-        data.GetData(6, ref liveInput);
-        data.GetData(7, ref studioInput);
-        data.GetData(8, ref radiusInput);
+        data.GetDataTree(1, out GH_Structure<GH_Curve> cellTree);
+        data.GetDataList(2, courseInput);
+        data.GetData(3, ref radiusInput);
+        data.GetData(4, ref nameInput);
+        data.GetData(5, ref pathInput);
+        data.GetData(6, ref studioInput);
+        data.GetData(7, ref liveInput);
+        data.GetData(8, ref writeInput);
+
+        errors = new List<string>(resultValue.Validate());
+        var derivedCourses = new List<int>();
+        foreach (GH_Path branchPath in cellTree.Paths)
+        {
+            int course = branchPath.Indices.Length > 0
+                ? branchPath.Indices[^1]
+                : 0;
+            foreach (GH_Curve? item in cellTree.get_Branch(branchPath))
+            {
+                if (item?.Value is null)
+                    continue;
+                cellInput.Add(item.Value);
+                derivedCourses.Add(course);
+            }
+        }
+        string? branchConflict = DeriveBranchCourses(
+            cellTree.Paths.Count, derivedCourses, courseInput);
+        if (branchConflict is not null)
+            errors.Add(branchConflict);
 
         IReadOnlyList<TessellationCell>? cells = null;
         string? cellWarning = null;
-        var errors = new List<string>(resultValue.Validate());
         var notes = new List<string>();
         var remarks = new List<string>();
         if (writeInput && string.IsNullOrWhiteSpace(pathInput))
@@ -916,6 +940,48 @@ public sealed class ExportComponent :
             radius,
             PatternFor(cellSource));
         return true;
+    }
+
+    /// <summary>
+    /// Cells arrived as a tree of one or more branches, each already
+    /// carrying, in <paramref name="derivedCourses"/>, the course every
+    /// one of its cells belongs to (the branch path's last index; rule
+    /// 10.2.1), which reproduces exactly what a hand-authored Courses
+    /// list supplies today for Skin-sourced cells, since Skin already
+    /// branches Cells by course. Pure and taking only the branch count
+    /// and the two lists, so check 12.10(e) can drive it directly without
+    /// a live IGH_DataAccess/GH_Structure, the same reach
+    /// <see cref="HasNegativeCourse"/> above is held to.
+    ///
+    /// Courses SURVIVES on Export for the one case branch-path derivation
+    /// cannot serve: an author wiring a FLAT list of hand-authored cells
+    /// (one branch) with an explicit per-item course list, which passes
+    /// through untouched. The two are mutually exclusive when Cells
+    /// arrives as more than one branch, and the conflict is REFUSED, not
+    /// resolved: guessing which the author meant is how a study silently
+    /// loses its stages (rule 10.2.3). Returns the refusal message, or
+    /// null having applied the derived courses (or having left a single
+    /// branch's Courses alone).
+    /// </summary>
+    private static string? DeriveBranchCourses(
+        int branchCount,
+        IReadOnlyList<int> derivedCourses,
+        List<int> courseInput)
+    {
+        if (branchCount > 1 && courseInput.Count > 0)
+        {
+            return
+                "Cells arrived as more than one branch AND Courses is not " +
+                "empty. The branch path IS the course when a tree is " +
+                "wired, so wire one or the other: Skin's Cells straight " +
+                "in, or a FLAT list of cells with your own Courses list.";
+        }
+        if (branchCount > 1)
+        {
+            courseInput.Clear();
+            courseInput.AddRange(derivedCourses);
+        }
+        return null;
     }
 
     /// <summary>

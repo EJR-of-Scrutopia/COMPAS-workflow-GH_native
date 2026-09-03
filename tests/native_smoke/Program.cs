@@ -33,7 +33,7 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.FdSolveComponent"] =
                 new[] { 1 },
             ["Ananke.COMPAS.Native.Components.ExportComponent"] =
-                new[] { 4, 5 }
+                new[] { 2 }
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
@@ -184,16 +184,19 @@ internal static class Program
                         // existing wire moved.
                         "Anchor Lines"
                     }),
-                // Export's ports are pinned because Format's removal moved
-                // every input after slot 0 up one: the order below IS the
-                // canvas contract. The outputs are one JSON list and one
+                // Export's ports are pinned because the skin phase's branch
+                // -read Cells reorder moved every input: the order below IS
+                // the canvas contract, Path immediately after Name by the
+                // controller's ruling. The outputs are one JSON list and one
                 // Status, and a reader tells the kinds apart by the schema
-                // key each text carries rather than by slot.
+                // key each text carries rather than by slot; the output side
+                // is untouched so phase three's silent Status migration
+                // still lands on the same slots.
                 ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
                     new[]
                     {
-                        "Result", "Path", "Write", "Name", "Cells", "Courses",
-                        "Live", "Studio", "Column Radius"
+                        "Result", "Cells", "Courses", "Column Radius", "Name",
+                        "Path", "Studio", "Live", "Write"
                     },
                     new[] { "JSON", "Status" })
             };
@@ -598,6 +601,24 @@ internal static class Program
         {
             failures.Add(
                 $"ExportComponent.BuildTessellationJson: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportBranchCourses(plugin);
+            Console.WriteLine(
+                "PASS  ExportComponent branch-read Cells: the nine inputs " +
+                "land in {Result, Cells, Courses, Column Radius, Name, " +
+                "Path, Studio, Live, Write} order, Cells is a TREE read " +
+                "with GetDataTree whose branch path is the course, and " +
+                "Courses keeps its Flatten for the hand-authored flat-list " +
+                "case.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"ExportComponent branch-read Cells: " +
                 $"{DescribeException(exception)}");
         }
 
@@ -23960,6 +23981,140 @@ internal static class Program
                 "BuildTessellationJson did not convert document units to " +
                 $"metres; expected '{expectedMillimetres}', received " +
                 $"'{millimetres}'.");
+        }
+    }
+
+    /// <summary>
+    /// Check 12.10(b) and 12.10(e). Export's inputs are reordered and its
+    /// Cells port becomes a TREE whose branch path is the course, which
+    /// reproduces exactly what Courses supplies today for Skin-sourced
+    /// cells, since Skin already branches Cells by course. Courses SURVIVES
+    /// on Export for the one case branch-path derivation cannot serve: an
+    /// author wiring a FLAT list of hand-authored cells with an explicit
+    /// per-item course list.
+    ///
+    /// The three cases of 12.10(e) are driven directly against
+    /// <c>DeriveBranchCourses</c>, the pure branch-shape helper
+    /// <c>TryReadInputs</c> calls: it takes only the branch count and the
+    /// two lists, the same reach <c>HasNegativeCourse</c> above is held to,
+    /// since <c>SolveInstance</c> needs a live <c>IGH_DataAccess</c>/
+    /// <c>GH_Structure</c> this harness never launches.
+    /// </summary>
+    private static void ValidateExportBranchCourses(Assembly plugin)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        object export = Activator.CreateInstance(exportType)!;
+        object parameters = exportType.GetProperty("Params")!.GetValue(export)!;
+        IList inputs = (IList)parameters.GetType()
+            .GetProperty("Input")!.GetValue(parameters)!;
+        string[] expected =
+        {
+            "Result", "Cells", "Courses", "Column Radius", "Name", "Path",
+            "Studio", "Live", "Write"
+        };
+        for (int at = 0; at < expected.Length; at++)
+        {
+            object port = inputs[at]!;
+            string name = (string)port.GetType()
+                .GetProperty("Name")!.GetValue(port)!;
+            if (name != expected[at])
+            {
+                throw new InvalidOperationException(
+                    "Export's inputs are {Result, Cells, Courses, Column " +
+                    "Radius, Name, Path, Studio, Live, Write}, Path " +
+                    "immediately AFTER Name by the ruling of section 10.1; " +
+                    $"slot {at} is '{name}' and should be " +
+                    $"'{expected[at]}'.");
+            }
+        }
+        object cellsPort = inputs[1]!;
+        object mapping = cellsPort.GetType()
+            .GetProperty("DataMapping")!.GetValue(cellsPort)!;
+        if (mapping.ToString() == "Flatten")
+        {
+            throw new InvalidOperationException(
+                "Export's Cells port drops its Flatten and becomes a TREE " +
+                "read with GetDataTree (rule 10.2.1): each branch's path " +
+                "index is the course of every cell in that branch. A " +
+                "Flatten there sends every cell to course 0, which is ONE " +
+                "studio stage instead of many.");
+        }
+        object coursesPort = inputs[2]!;
+        object coursesMapping = coursesPort.GetType()
+            .GetProperty("DataMapping")!.GetValue(coursesPort)!;
+        if (coursesMapping.ToString() != "Flatten")
+        {
+            throw new InvalidOperationException(
+                "Export's Courses port KEEPS its Flatten and its list " +
+                "access (rule 10.2.2): it exists for the one case " +
+                "branch-path derivation cannot serve, and removing it " +
+                "would forbid that case outright.");
+        }
+
+        MethodInfo derive = RequireStatic(exportType, "DeriveBranchCourses");
+
+        // Case 1: a tree of three branches with two cells each gives
+        // courses 0, 0, 1, 1, 2, 2 (Skin-sourced Cells; Courses empty).
+        var derivedCourses = new List<int> { 0, 0, 1, 1, 2, 2 };
+        var courseInputA = new List<int>();
+        object?[] treeArgs = { 3, derivedCourses, courseInputA };
+        object? conflictA = derive.Invoke(null, treeArgs);
+        if (conflictA is not null)
+        {
+            throw new InvalidOperationException(
+                "DeriveBranchCourses raised a conflict for a plain " +
+                $"three-branch tree with no Courses wired: '{conflictA}'.");
+        }
+        if (!courseInputA.SequenceEqual(new[] { 0, 0, 1, 1, 2, 2 }))
+        {
+            throw new InvalidOperationException(
+                "DeriveBranchCourses did not derive courses 0, 0, 1, 1, " +
+                "2, 2 from a three-branch tree of two cells each; got " +
+                $"[{string.Join(", ", courseInputA)}].");
+        }
+
+        // Case 2: a flat list (one branch) with a hand-authored Courses
+        // list gives that list back untouched.
+        var courseInputB = new List<int> { 5, 5, 7 };
+        object?[] flatArgs = { 1, new List<int>(), courseInputB };
+        object? conflictB = derive.Invoke(null, flatArgs);
+        if (conflictB is not null)
+        {
+            throw new InvalidOperationException(
+                "DeriveBranchCourses raised a conflict for a single-" +
+                $"branch Cells with a hand-authored Courses list: " +
+                $"'{conflictB}'.");
+        }
+        if (!courseInputB.SequenceEqual(new[] { 5, 5, 7 }))
+        {
+            throw new InvalidOperationException(
+                "DeriveBranchCourses altered a hand-authored Courses list " +
+                "on a single-branch Cells; the flat-list case must pass " +
+                $"it through untouched, got [{string.Join(", ", courseInputB)}].");
+        }
+
+        // Case 3: both together (more than one branch AND a non-empty
+        // Courses) give the Error, and the Courses list is left exactly
+        // as wired, not silently forced to course 0.
+        var courseInputC = new List<int> { 1, 2, 3 };
+        object?[] bothArgs = { 3, derivedCourses, courseInputC };
+        object? conflictC = derive.Invoke(null, bothArgs);
+        if (conflictC is not string conflictMessage ||
+            !conflictMessage.Contains(
+                "more than one branch AND Courses is not empty",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "DeriveBranchCourses did not refuse a tree of more than " +
+                "one branch wired alongside a non-empty Courses list; " +
+                $"got '{conflictC}'.");
+        }
+        if (!courseInputC.SequenceEqual(new[] { 1, 2, 3 }))
+        {
+            throw new InvalidOperationException(
+                "DeriveBranchCourses must leave Courses untouched when " +
+                "refusing the conflict, not resolve it by guessing; got " +
+                $"[{string.Join(", ", courseInputC)}].");
         }
     }
 
