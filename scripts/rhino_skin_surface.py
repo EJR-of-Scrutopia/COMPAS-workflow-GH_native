@@ -617,9 +617,24 @@ def run_thickness_checks():
             System.Array[object](
                 [face, outline, net, thickness, offset_surface]))
 
+    offset_method = _method(
+        skin_component_type, "ThicknessOffset", nonpublic=True)
+
     reports = []
     vertices, faces, rim = _hemisphere()
     net = _make_net(skin_net_type, skin_net_edge_type, vertices, faces, rim)
+
+    def point_offset(point, thickness, offset_surface):
+        """The translation ONE point is copied by, taken straight off the
+        engine, so that the exact numbers asserted below are read from the
+        same arithmetic the solid was built with rather than from a second
+        implementation of it that could drift."""
+        return offset_method.Invoke(
+            None,
+            System.Array[object](
+                [net, System.Array[float](list(point)), thickness,
+                 offset_surface]))
+
     built = courses(net, 0.6, 0.35)
     cells = list(_property(built, "Cells"))
     if not cells:
@@ -695,13 +710,76 @@ def run_thickness_checks():
                 box = solid.GetBoundingBox(True)
                 low, high = box.Min.Z, box.Max.Z
                 if offset_surface:
+                    # NO VOLUME IS PREDICTED for this mode, the direction
+                    # being the net's and not the square's. But the
+                    # DISTANCE is exact and is asserted: the offset is a
+                    # UNIT normal times Th, so every moved corner stands
+                    # exactly |Th| from the corner it came from, whatever
+                    # direction it went, and the solid must carry a vertex
+                    # at each of them. Restored 2026-09-04: a mode whose
+                    # only assertion is "it closed" is the weaker half of
+                    # what this branch owes.
+                    faults = []
+                    corners = [v.Location for v in solid.Vertices]
+                    moved = []
+                    for point in planar_outline:
+                        step = point_offset(point, thickness, True)
+                        moved.append((
+                            point[0] + step[0],
+                            point[1] + step[1],
+                            point[2] + step[2]))
+                        walked = math.sqrt(
+                            (step[0] * step[0]) + (step[1] * step[1]) +
+                            (step[2] * step[2]))
+                        if abs(walked - abs(thickness)) > 1.0e-9:
+                            faults.append(
+                                "the corner (%.6f, %.6f, %.6f) moved "
+                                "%.12f rather than |Th| = %.12f, so the "
+                                "direction it moved in was not a UNIT "
+                                "normal"
+                                % (point[0], point[1], point[2],
+                                   walked, abs(thickness)))
+                    for point in moved:
+                        seat = rg.Point3d(point[0], point[1], point[2])
+                        if not any(
+                                seat.DistanceTo(at) <= 1.0e-9
+                                for at in corners):
+                            faults.append(
+                                "the solid carries no vertex at the moved "
+                                "corner (%.9f, %.9f, %.9f), so its top "
+                                "does not stand on the outline its walls "
+                                "were built from"
+                                % (point[0], point[1], point[2]))
+                    # ONE WALL'S TWO ENDS. The wall on outline edge 0 runs
+                    # from that corner to the corner it moved to, and that
+                    # span is |Th| exactly, which is the thickness this
+                    # cell actually carries at that corner.
+                    span = rg.Point3d(
+                        planar_outline[0][0], planar_outline[0][1],
+                        planar_outline[0][2]).DistanceTo(
+                            rg.Point3d(moved[0][0], moved[0][1], moved[0][2]))
+                    if abs(span - abs(thickness)) > 1.0e-9:
+                        faults.append(
+                            "the first wall's two ends span %.12f rather "
+                            "than |Th| = %.12f" % (span, abs(thickness)))
+                    if faults:
+                        reports.append(
+                            "FAIL (12.5(f), NEW, planar): Th %+.1f in %s "
+                            "mode: %s"
+                            % (thickness, mode, "; ".join(faults)))
+                        continue
                     reports.append(
                         "PASS (12.5(f), NEW, UNVERIFIED BY ITS AUTHOR, "
                         "planar): Th %+.1f in %s mode is a watertight "
                         "outward solid of volume %.9f spanning z %.6f to "
-                        "%.6f; no volume is predicted for this mode, the "
-                        "direction being the net's and not the square's"
-                        % (thickness, mode, volume, low, high))
+                        "%.6f, every one of its %d moved corners standing "
+                        "exactly |Th| from the corner it came from and "
+                        "carried as a vertex of the solid, the first "
+                        "wall's two ends spanning %.9f; no volume is "
+                        "predicted for this mode, the direction being the "
+                        "net's and not the square's"
+                        % (thickness, mode, volume, low, high, len(moved),
+                           span))
                     continue
                 if abs(volume - abs(thickness)) > 1.0e-6:
                     reports.append(
@@ -800,16 +878,6 @@ def run_thickness_checks():
             "outline corner, so the coincidence claim was measured on "
             "nothing")
     else:
-        offset_method = _method(
-            skin_component_type, "ThicknessOffset", nonpublic=True)
-
-        def point_offset(point, thickness, offset_surface):
-            return offset_method.Invoke(
-                None,
-                System.Array[object](
-                    [net, System.Array[float](list(point)), thickness,
-                     offset_surface]))
-
         left_cell, right_cell, corner = shared
         thickness = 0.2
         for offset_surface in (False, True):
