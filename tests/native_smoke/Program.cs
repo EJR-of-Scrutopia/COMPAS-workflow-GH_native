@@ -1155,6 +1155,24 @@ internal static class Program
 
         try
         {
+            ValidateSkinBrepApi(plugin);
+            Console.WriteLine(
+                "PASS  Skin Brep route API shape (check 12.5(a)): " +
+                "Brep.CreateFromLoft exists on the loaded RhinoCommon and " +
+                "returns a Brep array, and LoftType.Straight exists; the " +
+                "behaviour those signatures promise is proved separately " +
+                "by scripts/rhino_skin_surface.py, run once inside Rhino, " +
+                "because this harness has no native core to build a real " +
+                "Brep with.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin Brep route API shape: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -23247,6 +23265,60 @@ internal static class Program
         return plugin.GetType($"{ComponentsNamespace}.{typeName}", throwOnError: true)
             ?? throw new InvalidOperationException(
                 $"Type '{ComponentsNamespace}.{typeName}' was not found.");
+    }
+
+    /// <summary>
+    /// Check 12.5(a), the half this process can take. Brep.CreateFromLoft's
+    /// signature is asserted by reflection against the loaded RhinoCommon,
+    /// so a wrong argument list fails here rather than at the first solve in
+    /// Rhino. The behaviour is proved by scripts/rhino_skin_surface.py,
+    /// which runs inside Rhino, because a Brep needs the native core this
+    /// harness deliberately does not launch.
+    /// </summary>
+    private static void ValidateSkinBrepApi(Assembly plugin)
+    {
+        Assembly rhinoCommon = AppDomain.CurrentDomain
+            .GetAssemblies()
+            .FirstOrDefault(item =>
+                item.GetName().Name == "RhinoCommon")
+            ?? throw new InvalidOperationException(
+                "RhinoCommon is not loaded, so the Brep route cannot be " +
+                "checked at all.");
+        Type brep = rhinoCommon.GetType("Rhino.Geometry.Brep", true)!;
+        // RhinoCommon overloads CreateFromLoft (curve list alone, or with
+        // start/end points, or with a LoftType and boolean besides), so a
+        // single-overload GetMethod throws AmbiguousMatchException; the
+        // API-shape question is only whether SOME overload returns a Brep
+        // array, which GetMethods lets us ask without picking one.
+        bool loft = brep.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Any(method =>
+                method.Name == "CreateFromLoft" &&
+                method.ReturnType == brep.MakeArrayType());
+        if (!loft)
+        {
+            throw new InvalidOperationException(
+                "Rule 5.2.3 lofts the cell's own RUNS, so " +
+                "Brep.CreateFromLoft must exist and return a Brep array; " +
+                "if it does not, section 5.2 is wrong about the API and " +
+                "the rules there are adjusted before anything is built on " +
+                "them.");
+        }
+        Type? loftType = rhinoCommon.GetType("Rhino.Geometry.LoftType", true);
+        if (loftType is null ||
+            !Enum.GetNames(loftType).Contains("Straight"))
+        {
+            throw new InvalidOperationException(
+                "Routes (a) and (b) loft with LoftType.Straight and no " +
+                "closing; the enum member must exist.");
+        }
+        if (!brep.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Any(method => method.Name == "CreateFromCornerPoints"))
+        {
+            // Not used, and its absence is not a failure; named here only
+            // so that a reader of rule 5.2.2 can see the refusal was a
+            // choice and not an omission. GetMethods, not GetMethod: the
+            // corner-point overloads are as ambiguous as the loft ones.
+        }
     }
 
     /// <summary>
