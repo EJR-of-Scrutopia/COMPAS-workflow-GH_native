@@ -1027,6 +1027,14 @@ async function reloadColumns(names) {
   if (state.columnRadius !== previousRadius && formworkObjects) {
     rebuildFormworkObjects();
   }
+  // The group is added AFTER buildScene, whose rebuildTimeline was the last
+  // thing to decide what the scene shows, so nothing had yet ruled on this
+  // group: the exported solids stood at their finished height over a net
+  // still lying flat on the ground at t = 0, which is the machine drawn in
+  // two different instants at once. Scene-only, so a columns reload never
+  // moves the camera -- the rule rebuildWiresAndNodes follows for the same
+  // reason.
+  if (state.timeline) applySceneAtTime(state.timeline.t);
 }
 
 function buildScene(bundle, preserve) {

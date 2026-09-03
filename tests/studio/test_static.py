@@ -2207,3 +2207,20 @@ def test_appearance_overrides_are_render_only_and_persist():
     body = _function_body(js, "appearanceMaterialBase")
     assert "SKINS" in body
     assert "state.appearance.skin" not in _function_body(js, "loadStudy")
+
+
+def test_a_columns_reload_settles_the_scene_it_joins():
+    """The columns group is added AFTER buildScene, whose rebuildTimeline was
+    the last thing to rule on what the scene shows. Nothing then decided
+    anything about the group just added, so on every study load the exported
+    column solids stood at their finished height above a net still lying flat
+    on the ground at t = 0: one machine drawn in two instants at once
+    (reported from the screen, 2026-09-04). Ending the reload with the
+    scene-only applier hands the new group to the one function that owns
+    machine visibility, and, being scene-only, never moves the camera."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    body = _function_body(js, "reloadColumns")
+    assert "applySceneAtTime(state.timeline.t)" in body
+    # Scene-only: a columns reload is not a timeline event.
+    assert "applyTimeline(" not in body
