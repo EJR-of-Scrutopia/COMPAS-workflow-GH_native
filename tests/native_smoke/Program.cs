@@ -1396,8 +1396,9 @@ internal static class Program
             ValidateSkinThickenReach(plugin);
             Console.WriteLine(
                 "PASS  Skin thickened solid, THE REACHABLE HALF ONLY: " +
-                "ThickenCellSurface takes the face, the outline, Th and " +
-                "the flag in the order scripts/rhino_skin_surface.py " +
+                "ThickenCellSurface takes the face, the outline, the NET, " +
+                "Th and the flag in the order " +
+                "scripts/rhino_skin_surface.py " +
                 "binds, refuses an outline under three corners with a " +
                 "null before the face is touched, and DEREFERENCES its " +
                 "face on a valid outline, which is what tells the " +
@@ -25418,12 +25419,12 @@ internal static class Program
     }
 
     /// <summary>
-    /// Spec 2026-09-02 (skin-thickness-input): Th and Along Normal are a
-    /// PURE APPEND after Min Piece. Every earlier port keeps its own
+    /// Spec 2026-09-02 (skin-thickness-input): Th and the port beside it
+    /// are a PURE APPEND after Min Piece. Every earlier port keeps its own
     /// name, nickname and position exactly, so a definition saved before
     /// this task keeps every wire on the port it left and simply finds no
     /// data on ports 5 and 6, which read their defaults (Th = 0, no
-    /// thickening; Along Normal = false). An insertion instead of an
+    /// thickening; Offset true). An insertion instead of an
     /// append, or a rename anywhere earlier, would move every port after
     /// it and fail here rather than only in Grasshopper.
     ///
@@ -25486,9 +25487,10 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"Input {at} must be '{expected[at].Name}' " +
                     $"('{expected[at].NickName}'); got '{name}' " +
-                    $"('{nick}'). Th and Along Normal must be a PURE " +
-                    "APPEND, so every earlier port keeps its own name, " +
-                    "nickname and position.");
+                    $"('{nick}'). Th and Offset must be a PURE APPEND at " +
+                    "5 and 6, so every earlier port keeps its own name, " +
+                    "nickname and position, and Offset keeps the INDEX " +
+                    "'Along Normal' held rather than moving.");
             }
         }
 
