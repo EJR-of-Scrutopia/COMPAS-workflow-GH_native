@@ -58,6 +58,13 @@
     <label>Finish <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note">Skin, tint and finish are render tint only, analysis unchanged: none of it reaches the server.</div>
+    <label id="source-row" class="hidden">Cut from
+      <select id="source-select">
+        <option value="authored">the Grasshopper Skin</option>
+        <option value="generated">the studio pattern</option>
+      </select>
+      <span id="source-note"></span>
+    </label>
     <select id="pattern-select"></select>
     <div id="pattern-note"></div>
     <label>Piece size <input id="size-slider" type="range" min="0.3" max="3" step="0.05" value="0.9">

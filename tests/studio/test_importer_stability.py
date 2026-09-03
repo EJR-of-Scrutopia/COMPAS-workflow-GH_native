@@ -448,3 +448,105 @@ def frames_document_for_tiny():
         ],
         "columns": {"members": [[0, 1]]},
     }
+
+
+# ------------------------------------------------- deliverable B, the source
+
+
+AUTHORED_CELLS = {
+    "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+    "pattern": "authored",
+    "cells": [
+        {"key": "skin0", "course": 0,
+         "outline": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]},
+        {"key": "skin1", "course": 1,
+         "outline": [[0.0, 1.0], [2.0, 1.0], [2.0, 2.0], [0.0, 2.0]]},
+    ],
+}
+
+
+def test_a_skin_study_defaults_to_the_authored_cut(tmp_path, monkeypatch):
+    """Param's choice: the toggle starts on Skin where a Skin exists, so
+    no study he already has changes appearance when he opens it."""
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    upload_pair(client)
+    client.put("/api/uploads/exports/Tiny/tessellation",
+               content=json.dumps(AUTHORED_CELLS).encode())
+    served = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    assert served.status_code == 200, served.text
+    body = served.json()
+    assert body["source"] == "authored"
+    assert body["source_available"] == ["authored", "generated"]
+    assert sorted(p["key"] for p in body["pieces"]) == ["skin0", "skin1"]
+
+
+def test_the_toggle_forces_the_studio_generated_cut(tmp_path, monkeypatch):
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    upload_pair(client)
+    client.put("/api/uploads/exports/Tiny/tessellation",
+               content=json.dumps(AUTHORED_CELLS).encode())
+    served = client.get("/api/studies/Tiny/bundle",
+                        params={**BUNDLE_PARAMS, "source": "generated"})
+    assert served.status_code == 200, served.text
+    body = served.json()
+    assert body["source"] == "generated"
+    assert "skin0" not in [p["key"] for p in body["pieces"]]
+
+
+def test_the_two_sources_never_share_a_cache_file(tmp_path, monkeypatch):
+    """The survey's own warning: a source that does not enter BOTH cache
+    keys silently serves the other source's cut."""
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    client.put("/api/uploads/exports/Tiny/tessellation",
+               content=json.dumps(AUTHORED_CELLS).encode())
+
+    authored = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).json()
+    generated = client.get("/api/studies/Tiny/bundle",
+                           params={**BUNDLE_PARAMS, "source": "generated"}).json()
+    assert authored["source"] == "authored"
+    assert generated["source"] == "generated"
+    again = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).json()
+    assert again["source"] == "authored", "the second read must not serve the generated cut"
+    assert sorted(p["key"] for p in again["pieces"]) == ["skin0", "skin1"]
+
+    studio_dir = bundle.STUDIES_DIR / "tiny" / "studio"
+    names = sorted(p.name for p in studio_dir.glob("bundle-*.json"))
+    assert len(names) == 2, names
+
+
+def test_an_authored_cut_caches_once_across_requested_patterns(tmp_path, monkeypatch):
+    """An authored cut IGNORES the requested pattern, so keying the cache
+    by that pattern wrote an identical file per pattern the user tried."""
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    client.put("/api/uploads/exports/Tiny/tessellation",
+               content=json.dumps(AUTHORED_CELLS).encode())
+    client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    client.get("/api/studies/Tiny/bundle",
+               params={**BUNDLE_PARAMS, "pattern": "monolithic-bands"})
+    studio_dir = bundle.STUDIES_DIR / "tiny" / "studio"
+    names = sorted(p.name for p in studio_dir.glob("bundle-*.json"))
+    assert len(names) == 1, names
+
+
+def test_asking_for_a_skin_a_study_does_not_have_says_so(tmp_path, monkeypatch):
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    upload_pair(client)
+    answer = client.get("/api/studies/Tiny/bundle",
+                        params={**BUNDLE_PARAMS, "source": "authored"})
+    assert answer.status_code == 400
+    assert "no authored" in answer.json()["detail"].lower()
+
+
+def test_a_study_without_a_skin_reports_only_the_generated_source(tmp_path, monkeypatch):
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    upload_pair(client)
+    body = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).json()
+    assert body["source"] == "generated"
+    assert body["source_available"] == ["generated"]

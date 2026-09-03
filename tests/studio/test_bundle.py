@@ -289,6 +289,24 @@ def authored_sidecar():
     }
 
 
+def staging_key(bundle, upload, pattern="bonded-courses"):
+    """The pattern slot the staging document belongs under.
+
+    An authored cut ignores the requested pattern entirely, so it caches
+    under "authored" instead (bundle.cut_cache_pattern); app.py's run
+    resolves the same way before writing. Resolved here rather than
+    hard-coded because these tests exercise BOTH cases: one stages with a
+    sidecar present, the other without. Re-pinned 2026-09-03, when the
+    cut source became a per-request choice.
+    """
+
+    import geometry as geometry_module
+
+    contract = geometry_module.load_contract(upload / "Tiny-contract.json")
+    return bundle.cut_cache_pattern(
+        pattern, bundle.resolve_cut_source("Tiny", contract))
+
+
 def staged_against(bundle, upload):
     import staging as staging_module
 
@@ -296,8 +314,8 @@ def staged_against(bundle, upload):
         {"contract": upload / "Tiny-contract.json",
          "geometry": upload / "Tiny-compas.json"},
         material="concrete", pattern="bonded-courses", size=0.9,
-        out_path=bundle.staging_path("tiny", "concrete", "bonded-courses",
-                                     0.9, 0.2),
+        out_path=bundle.staging_path(
+            "tiny", "concrete", staging_key(bundle, upload), 0.9, 0.2),
         runner=lambda request: {"converged": True, "message": ""},
         include_cra=False,
     )
@@ -340,11 +358,14 @@ def test_staging_built_from_another_cut_is_dropped_not_embedded(
     # app._invalidate_studio_cache on every re-upload; here, in the same
     # process as the first cut, it has to be cleared explicitly to reach
     # the state a real re-upload would leave behind.
+    # The staging document was written under the AUTHORED key, since the
+    # sidecar was in place when it was staged; it stays there untouched
+    # while the sidecar and the authored bundle go.
+    staged_path = bundle.staging_path("tiny", "concrete", "authored", 0.9, 0.2)
+    bundle.bundle_path("tiny", "concrete", "authored", 0.9, 0.2).unlink()
     sidecar.unlink()
-    bundle.bundle_path("tiny", "concrete", "bonded-courses", 0.9, 0.2).unlink()
     bundle.clear_cut_memo()
-    assert bundle.staging_path(
-        "tiny", "concrete", "bonded-courses", 0.9, 0.2).is_file()
+    assert staged_path.is_file()
 
     rebuilt = bundle.build_bundle("Tiny", "concrete", "bonded-courses", 0.9, 0.2)
     drawn = {piece["key"] for piece in rebuilt["pieces"]}

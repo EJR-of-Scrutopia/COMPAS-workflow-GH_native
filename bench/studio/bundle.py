@@ -231,7 +231,63 @@ def clear_cut_memo() -> None:
         _cut_memo.clear()
 
 
-def build_tessellation_for(export_name, contract, arrays, render, pattern, size):
+# The two places a cut can come from. "authored" is the tessellation
+# Grasshopper's Skin component exports (a contract-embedded block or the
+# sidecar beside the pair); "generated" is the studio's own polar cut.
+CUT_SOURCES = ("authored", "generated")
+
+
+def available_cut_sources(export_name, contract) -> List[str]:
+    """Which sources this study could be cut from, authored first."""
+
+    if tessellation.read_tessellation(contract, tessellation_sidecar(export_name)) is not None:
+        return ["authored", "generated"]
+    return ["generated"]
+
+
+def resolve_cut_source(export_name, contract, requested=None) -> str:
+    """Which source to cut from, given what the caller asked for.
+
+    None means "whatever this study has", which prefers the authored cut
+    when one exists. That is deliberately today's behaviour: a study with
+    a Skin has always drawn the Skin, and Param's choice was that opening
+    a study must not change what it looks like. The toggle exists to
+    force the studio's own cut instead, and asking for a Skin that is not
+    there is an error worth naming rather than a silent fallback.
+    """
+
+    available = available_cut_sources(export_name, contract)
+    if requested is None:
+        return available[0]
+    if requested not in CUT_SOURCES:
+        raise ValueError(
+            "unknown cut source {!r}: use one of {}".format(
+                requested, ", ".join(CUT_SOURCES)))
+    if requested == "authored" and "authored" not in available:
+        raise ValueError(
+            "this study has no authored tessellation to cut from: no "
+            "contract-embedded block and no {} beside the export. Upload "
+            "one from the Skin component, or ask for the generated "
+            "cut.".format(tessellation_sidecar(export_name).name))
+    return requested
+
+
+def cut_cache_pattern(pattern: str, source: str) -> str:
+    """The pattern slot of a cache key, for a cut from this source.
+
+    An authored cut ignores the requested pattern AND the requested size
+    entirely (see build_tessellation_for), so keying its cache by the
+    pattern wrote a byte-identical file for every pattern the user
+    happened to have selected. "authored" occupies the slot instead: the
+    filename then says what the cut actually is, an authored study caches
+    once, and a generated cut keeps exactly the name it has always had.
+    """
+
+    return "authored" if source == "authored" else pattern
+
+
+def build_tessellation_for(export_name, contract, arrays, render, pattern, size,
+                           source=None):
     """The one cut, built once, for the drawing and for the analysis alike.
 
     staging.py calls this too. Two builders would be two cuts, and a
@@ -240,9 +296,9 @@ def build_tessellation_for(export_name, contract, arrays, render, pattern, size)
     """
 
     surface = cutting.Surface(render["vertices"], render["faces"])
-    authored = tessellation.read_tessellation(
-        contract, tessellation_sidecar(export_name))
-    if authored is not None:
+    if resolve_cut_source(export_name, contract, source) == "authored":
+        authored = tessellation.read_tessellation(
+            contract, tessellation_sidecar(export_name))
         tess = tessellation.from_document(authored, surface.height)
     else:
         plan = domain.plan_domain(
@@ -255,15 +311,19 @@ def build_tessellation_for(export_name, contract, arrays, render, pattern, size)
     return tess, surface, binding
 
 
-def _cut_for(export_name, contract, arrays, render, pattern, size):
-    key = (export_name, pattern, size)
+def _cut_for(export_name, contract, arrays, render, pattern, size, source=None):
+    # The source enters the key through the pattern slot, for the same
+    # reason it enters the filename: without it the two sources share one
+    # memo entry and the second request is silently served the first
+    # one's cut.
+    key = (export_name, cut_cache_pattern(pattern, source or "generated"), size)
     with _cut_memo_lock:
         generation = _cut_memo_generation
         if key in _cut_memo:
             _cut_memo.move_to_end(key)
             return _cut_memo[key]
     tess, surface, binding = build_tessellation_for(
-        export_name, contract, arrays, render, pattern, size)
+        export_name, contract, arrays, render, pattern, size, source)
     supports = geometry.support_ids(contract)
     support_points = [
         [arrays["vertices"][i][0], arrays["vertices"][i][1]] for i in supports
@@ -283,7 +343,8 @@ def _cut_for(export_name, contract, arrays, render, pattern, size):
 
 
 def build_bundle(
-    export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2
+    export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2,
+    source: Optional[str] = None,
 ) -> Dict:
     # Captured BEFORE any input is read, so an invalidation landing at
     # any point during this build is seen by the persist check below.
@@ -300,8 +361,12 @@ def build_bundle(
     arrays = geometry.mesh_arrays(contract)
     render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
 
+    cut_source = resolve_cut_source(export_name, contract, source)
+    # Every cache key below goes through this, never the raw pattern, so
+    # the two sources can never share a file or a memo entry.
+    key_pattern = cut_cache_pattern(pattern, cut_source)
     tess, binding, supports, made, report = _cut_for(
-        export_name, contract, arrays, render, pattern, size)
+        export_name, contract, arrays, render, pattern, size, cut_source)
 
     # backward_turn/backward_steps only exist on a generated cut (the
     # domain they are measured from is never built for an imported one),
@@ -338,7 +403,7 @@ def build_bundle(
     # The stage plan is embedded only if it was solved against THIS cut.
     # A stale plan is worse than no plan: see _staging_matches.
     staged = _read_optional(
-        staging_path(slug, material, pattern, size, thickness))
+        staging_path(slug, material, key_pattern, size, thickness))
     if not _staging_matches(staged, made):
         staged = None
 
@@ -346,6 +411,12 @@ def build_bundle(
         "export": export_name,
         "slug": slug,
         "material": material,
+        # Which cut this is, and which the study could offer. The viewer's
+        # source toggle reads both: it used to INFER the answer from
+        # target_size being null, which is a side effect rather than a
+        # statement, and could not know whether a Skin existed at all.
+        "source": cut_source,
+        "source_available": available_cut_sources(export_name, contract),
         # tess["pattern"], not the requested pattern: an authored (imported)
         # tessellation ignores it, and the document states what the cut
         # actually is, not what was asked for. For a generated cut this is
@@ -395,7 +466,7 @@ def build_bundle(
                     "stage plan names cells this cut does not draw",
         },
     }
-    target = bundle_path(slug, material, pattern, size, thickness)
+    target = bundle_path(slug, material, key_pattern, size, thickness)
     # The same guard _cut_for applies to the memo, applied to the DISK.
     # A re-upload that landed while this build was running deleted this
     # very file and bumped the generation; without this check the build
@@ -424,10 +495,21 @@ def _pieces_are_uniquely_keyed(document: Dict) -> bool:
 
 
 def load_or_build_bundle(
-    export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2
+    export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2,
+    source: Optional[str] = None,
 ) -> Dict:
+    # The cache key needs the resolved source, which needs the contract,
+    # so a cache HIT still reads the contract. That is a few milliseconds
+    # against the seconds a cut costs, and it is what keeps the two
+    # sources' caches apart.
+    pairs = geometry.available_exports(UPLOAD_DIR)
+    key_pattern = pattern
+    if export_name in pairs:
+        contract = geometry.load_contract(pairs[export_name]["contract"])
+        key_pattern = cut_cache_pattern(
+            pattern, resolve_cut_source(export_name, contract, source))
     cached = _read_optional(
-        bundle_path(geometry.slugify(export_name), material, pattern, size, thickness)
+        bundle_path(geometry.slugify(export_name), material, key_pattern, size, thickness)
     )
     if (
         cached is not None
@@ -435,4 +517,4 @@ def load_or_build_bundle(
         and _pieces_are_uniquely_keyed(cached)
     ):
         return cached
-    return build_bundle(export_name, material, pattern, size, thickness)
+    return build_bundle(export_name, material, pattern, size, thickness, source)

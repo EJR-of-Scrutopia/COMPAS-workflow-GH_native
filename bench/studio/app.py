@@ -183,10 +183,12 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     def get_bundle(
         export: str, material: str = Query(...), pattern: str = Query(...),
         size: float = Query(...), thickness: float = Query(0.2),
+        source: str = Query(None),
     ):
         _validate(export, material, pattern, size, thickness)
         try:
-            return bundle.load_or_build_bundle(export, material, pattern, size, thickness)
+            return bundle.load_or_build_bundle(
+                export, material, pattern, size, thickness, source)
         except ValueError as error:
             # domain.boundary_ring, generators.generate and
             # tessellation.from_document all raise ValueError with a message
@@ -309,9 +311,18 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                     run["phase"] = "staging"
                     run["message"] = "fea + cra per stage"
 
+                # The staging document must land on the SAME cache key the
+                # bundle will look for it under, which for an authored cut
+                # is "authored" rather than the requested pattern (see
+                # bundle.cut_cache_pattern). Written to the raw pattern, a
+                # Skin study's stage plan was solved, stored, and then
+                # never found again.
+                contract = geometry.load_contract(pairs[export]["contract"])
+                cut_source = bundle.resolve_cut_source(export, contract)
+                key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
                 staging.run_staging(
                     pairs[export], material, pattern, size,
-                    bundle.staging_path(slug, material, pattern, size, thickness),
+                    bundle.staging_path(slug, material, key_pattern, size, thickness),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
                 )
                 run["phase"] = "bundling"

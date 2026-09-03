@@ -18,6 +18,7 @@ import {
 // ---------- app state ----------
 const state = {
   bundle: null,
+  source: null,        // deliverable B: null = whatever the study has (Skin wins), else "authored" | "generated"
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
   studies: [],
   layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
@@ -1021,6 +1022,25 @@ function applyCut(preserve) {
   if (typeof pattern === "string" && state.patterns.includes(pattern)) {
     state.pattern = pattern;
     document.getElementById("pattern-select").value = pattern;
+  }
+  // The bundle STATES which cut it is and which the study could offer;
+  // the viewer used to infer this from target_size being null, a side
+  // effect that could not tell a study with no Skin from one whose Skin
+  // was overridden. The control appears only where there is a choice to
+  // make, so a study without a Skin looks exactly as it always has.
+  const available = state.bundle.source_available || ["generated"];
+  const row = document.getElementById("source-row");
+  const select = document.getElementById("source-select");
+  const note = document.getElementById("source-note");
+  if (row && select) {
+    row.classList.toggle("hidden", available.length < 2);
+    select.value = state.bundle.source;
+    state.source = state.bundle.source;
+    if (note) {
+      note.textContent = state.bundle.source === "authored"
+        ? "cells authored in Grasshopper, with their own courses"
+        : "the studio's own cut, from the pattern and size above";
+    }
   }
   document.getElementById("piece-count").textContent = state.bundle.pieces.length;
   document.getElementById("course-count").textContent = state.bundle.tessellation.courses;
@@ -2198,9 +2218,14 @@ async function loadStudy(exportName) {
   // status text above already assembled (materialLabel, the pattern, the
   // size) rather than recomputing them a second way.
   const startedAt = Date.now();
-  const url = "/api/studies/" + encodeURIComponent(exportName) +
+  let url = "/api/studies/" + encodeURIComponent(exportName) +
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
+  // Omitted entirely when null, so the server applies its own default
+  // (the Skin when the study has one). Sending a source the study cannot
+  // offer is a 400 that names the problem, which is what the control's
+  // own note is for.
+  if (state.source) url += "&source=" + encodeURIComponent(state.source);
   try {
     // Fetched alongside the bundle: a missing or unpaired formwork
     // document is an expected state (404 with the reason), never a load
@@ -2381,6 +2406,14 @@ document.getElementById("material-reset").addEventListener("click", () => {
   localStorage.removeItem(appearanceStorageKey(document.getElementById("material-select").value));
   syncAppearanceControls();
   rebuildAppearance();
+});
+// Exactly the pattern select's shape, and for the same reason: the cut
+// source is a server-side cut parameter, so changing it re-requests the
+// bundle rather than touching the scene.
+document.getElementById("source-select").addEventListener("change", (e) => {
+  state.source = e.target.value;
+  const study = document.getElementById("study-select");
+  if (study.value) loadStudy(study.value);
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;
