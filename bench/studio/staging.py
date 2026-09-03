@@ -325,7 +325,11 @@ def run_staging(
         )
     contract = geometry.load_contract(export_pair["contract"])
     arrays = geometry.mesh_arrays(contract)
-    render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
+    # bundle.render_mesh, not subdivide_quads directly: a triangulated
+    # export raises out of that pass, and staging must absorb exactly
+    # the meshes the bundle does or a study can be drawn but never
+    # staged.
+    render = bundle.render_mesh(arrays["vertices"], arrays["faces"])
     # The export name (for the tessellation sidecar path), recovered from
     # the contract filename the same way geometry.available_exports names
     # it: run_staging is only ever handed the file pair, not the name.

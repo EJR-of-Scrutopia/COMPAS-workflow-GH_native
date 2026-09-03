@@ -550,3 +550,82 @@ def test_a_study_without_a_skin_reports_only_the_generated_source(tmp_path, monk
     body = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).json()
     assert body["source"] == "generated"
     assert body["source_available"] == ["generated"]
+
+
+def test_a_skin_cell_with_a_doubled_corner_is_welded_not_refused(tmp_path, monkeypatch):
+    """Param's real Skin export: 28 of 1074 cells carry corner pairs about
+    5e-7 m apart, which the simplicity check read as self-crossing and
+    which therefore refused the whole cut.
+
+    A zero-length edge makes "does this ring cross itself" ill-defined,
+    and the pipeline welds points within TOL a few lines later anyway
+    (PointWeld, _weld_ring), so the pre-check was asking a question about
+    a ring the cut never builds. Dropping repeated corners first makes
+    the check agree with the geometry that is actually cut. It is a
+    normalisation, not a relaxation: the simplicity rule still applies to
+    the welded ring, and a genuine crossing is still refused.
+    """
+
+    _, bundle, _ = studio()
+    import tessellation
+
+    doubled = {
+        "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+        "cells": [{
+            "key": "doubled", "course": 0,
+            "outline": [
+                [0.0, 0.0],
+                [2.0, 0.0],
+                [2.0, 0.0000005],
+                [2.0, 1.0],
+                [0.0, 1.0],
+            ],
+        }],
+    }
+    built = tessellation.validate_document(doubled)
+    assert len(built["cells"]) == 1
+
+    crossing = {
+        "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+        "cells": [{
+            "key": "bowtie", "course": 0,
+            "outline": [[0.0, 0.0], [2.0, 2.0], [2.0, 0.0], [0.0, 2.0]],
+        }],
+    }
+    with pytest.raises(ValueError) as caught:
+        tessellation.validate_document(crossing)
+    assert "bowtie" in str(caught.value)
+
+
+def triangulated_contract():
+    """tiny_contract with every quad split into two triangles."""
+
+    document = tiny_contract()
+    tris = []
+    for face in document["formGraph"]["faces"]:
+        a, b, c, d = face["vertices"]
+        tris.append({"id": len(tris), "vertices": [a, b, c]})
+        tris.append({"id": len(tris), "vertices": [a, c, d]})
+    document["formGraph"]["faces"] = tris
+    return document
+
+
+def test_a_triangulated_export_is_served_not_refused(tmp_path, monkeypatch):
+    """Param's real Armadillo is all triangles, and subdivide_quads raises
+    on any face that is not a quad.
+
+    Measured against the live server: every bundle GET for that study
+    answered 400 "face 0 has 3 vertices; this pass subdivides quads
+    only", from BOTH cut sources, so the study could not be opened at
+    all. The subdivision is a render refinement; skipping it costs
+    resolution, never correctness, because the cut and the pieces
+    fan-triangulate internally and are face-count agnostic.
+    """
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    upload_pair(client, contract=triangulated_contract())
+    served = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS)
+    assert served.status_code == 200, served.text
+    body = served.json()
+    assert body["pieces"], "a triangulated export must still cut"
+    assert body["provenance"]["render_subdivision"] == "skipped: 8 non-quad faces"

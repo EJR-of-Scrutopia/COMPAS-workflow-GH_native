@@ -2206,6 +2206,9 @@ async function loadStudy(exportName) {
   // comes back to find a newer sequence number is dropped silently, so
   // two overlapping cuts can never race each other onto the canvas.
   const sequence = ++state.loadSequence;
+  // Reported back so a caller that CHANGED something to trigger this
+  // load can put its control back when the load was refused.
+  let loaded = false;
   const status = document.getElementById("cut-status");
   const overlay = document.getElementById("cut-overlay");
   const materialLabel = document.querySelector(
@@ -2250,6 +2253,7 @@ async function loadStudy(exportName) {
       : null;
     buildScene(fresh, preserve);
     rebuildFormworkObjects();
+    loaded = true;
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
       + ((Date.now() - startedAt) / 1000).toFixed(1) + "s");
@@ -2259,6 +2263,7 @@ async function loadStudy(exportName) {
     status.textContent = "";
     showBanner("Failed to load study: " + error.message, "error");
   }
+  return loaded;
 }
 
 async function boot(preferredExport) {
@@ -2410,10 +2415,21 @@ document.getElementById("material-reset").addEventListener("click", () => {
 // Exactly the pattern select's shape, and for the same reason: the cut
 // source is a server-side cut parameter, so changing it re-requests the
 // bundle rather than touching the scene.
-document.getElementById("source-select").addEventListener("change", (e) => {
+document.getElementById("source-select").addEventListener("change", async (e) => {
+  const previous = state.source;
   state.source = e.target.value;
   const study = document.getElementById("study-select");
-  if (study.value) loadStudy(study.value);
+  if (!study.value) return;
+  const loaded = await loadStudy(study.value);
+  if (!loaded) {
+    // A source can exist and still be uncuttable: this vault's plan is
+    // not star shaped, so the studio's polar generator refuses it by
+    // name and only the Skin can cut it. The banner carries that
+    // message; the control goes back to the cut still on screen rather
+    // than sitting on a source the study never loaded.
+    state.source = previous;
+    e.target.value = state.bundle ? state.bundle.source : previous;
+  }
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
   state.pattern = e.target.value;

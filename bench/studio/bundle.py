@@ -51,6 +51,13 @@ REQUIRED_BUNDLE_KEYS = (
     "tessellation.clamped_max_m",
     "tessellation.clamped_median_m",
     "tessellation.report.folded",
+    # Added 2026-09-03 with the cut source and the render fallback. A
+    # bundle cached before them carries neither, and the viewer's source
+    # control reads both, so an old cache is stale in exactly the way
+    # this list exists to catch.
+    "source",
+    "source_available",
+    "provenance.render_subdivision",
 )
 
 
@@ -286,6 +293,50 @@ def cut_cache_pattern(pattern: str, source: str) -> str:
     return "authored" if source == "authored" else pattern
 
 
+def render_mesh(vertices, faces):
+    """The render mesh: the subdivided surface, or the analysis mesh itself.
+
+    subdivide_quads raises on any face that is not a quad, by its own
+    design ("this pass subdivides quads only"), and a real export can be
+    triangulated: Param's Armadillo is 1481 triangles, and against the
+    live server every bundle GET for it answered 400 from BOTH cut
+    sources, so the study could not be opened at all.
+
+    Skipping the subdivision costs render and heatmap RESOLUTION, never
+    correctness. The cut itself (cutting.Surface, domain.plan_domain,
+    pieces.segment_pieces) fan-triangulates internally and is already
+    face-count agnostic, and the identity parent_face/vertex_sources
+    below keep both dict shapes exactly what subdivide_quads' own callers
+    expect. Catmull-Clark has no honest triangle analogue to fall back to
+    instead, which is why this skips rather than substitutes.
+    """
+
+    try:
+        return subdivision.subdivide_quads(vertices, faces)
+    except ValueError:
+        return {
+            "vertices": [list(v) for v in vertices],
+            "faces": [list(f) for f in faces],
+            "parent_face": list(range(len(faces))),
+            "vertex_sources": [[i] for i in range(len(vertices))],
+        }
+
+
+def render_subdivision_note(faces) -> str:
+    """Disclosure, not behaviour, for the fallback above.
+
+    The fallback is silent by construction: a skipped subdivision reads
+    identically to a quad export with nothing left to subdivide. Counts
+    the non-quad faces on the ANALYSIS mesh, which are exactly the faces
+    that forced it.
+    """
+
+    non_quad = sum(1 for face in faces if len(face) != 4)
+    if not non_quad:
+        return "catmull-clark, one pass"
+    return "skipped: {} non-quad faces".format(non_quad)
+
+
 def build_tessellation_for(export_name, contract, arrays, render, pattern, size,
                            source=None):
     """The one cut, built once, for the drawing and for the analysis alike.
@@ -359,7 +410,7 @@ def build_bundle(
     slug = geometry.slugify(export_name)
     contract = geometry.load_contract(pairs[export_name]["contract"])
     arrays = geometry.mesh_arrays(contract)
-    render = subdivision.subdivide_quads(arrays["vertices"], arrays["faces"])
+    render = render_mesh(arrays["vertices"], arrays["faces"])
 
     cut_source = resolve_cut_source(export_name, contract, source)
     # Every cache key below goes through this, never the raw pattern, so
@@ -458,6 +509,7 @@ def build_bundle(
         ),
         "provenance": {
             "contract_file": pairs[export_name]["contract"].name,
+            "render_subdivision": render_subdivision_note(arrays["faces"]),
             "thickness": thickness,
             "combination": "ULS",
             "combination_factor": 1.35,

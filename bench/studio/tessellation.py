@@ -620,6 +620,25 @@ def _segments_cross(a, b, c, d) -> bool:
     )
 
 
+def _drop_repeated_corners(ring, tol: float = TOL):
+    """The ring with consecutive corners closer than tol collapsed to one.
+
+    Consecutive INCLUDING the wrap from last to first, so a ring that
+    closes onto a near-duplicate of its own start loses the repeat too.
+    Geometry preserving: every corner removed sat within tol of the one
+    before it, so only zero-length edges go.
+    """
+
+    out = []
+    for point in ring:
+        if out and abs(out[-1][0] - point[0]) <= tol and abs(out[-1][1] - point[1]) <= tol:
+            continue
+        out.append(point)
+    while len(out) > 1 and abs(out[0][0] - out[-1][0]) <= tol             and abs(out[0][1] - out[-1][1]) <= tol:
+        out.pop()
+    return out
+
+
 def _is_simple(ring) -> bool:
     """Check that a ring is a simple polygon: no self-intersection.
 
@@ -788,6 +807,21 @@ def from_document(document: Dict, surface_height) -> Dict:
                             offset_max = abs(z - surface)
                         else:
                             offset_max = max(offset_max, abs(z - surface))
+            # Repeated corners go before the question is asked. Param's
+            # own Skin export carries corner pairs about 5e-7 m apart in
+            # 28 of its 1074 cells: a zero-length edge, which makes "does
+            # this ring cross itself" ill-defined and refused the whole
+            # cut. The pipeline welds points within TOL a few lines below
+            # (PointWeld, _weld_ring) regardless, so the check was asking
+            # about a ring the cut never builds. This is a normalisation,
+            # not a relaxation: the rule still applies to the welded ring,
+            # and a genuine crossing is still refused by name.
+            plan = _drop_repeated_corners(plan)
+            if len(plan) < 3:
+                raise ValueError(
+                    "cell {!r} has fewer than 3 distinct plan corners "
+                    "once repeated ones are welded".format(key)
+                )
             if not _is_simple(plan):
                 raise ValueError(
                     "cell {!r} has an outline that crosses itself".format(key)
