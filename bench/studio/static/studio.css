@@ -109,3 +109,26 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
    answer rather than of a fault. */
 #source-note.refused { color: #e0a03a; }
 #delete-study, #clear-scene { margin-left: 4px; }
+
+/* Saved scenes. The picker is a grid of stills rather than a select,
+   because a scene is a picture and a name is a poor substitute for one. */
+#scene-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+#scene-count { color: #7d838c; font-size: 11px; }
+#scene-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  margin: 4px 0 8px; max-height: 320px; overflow-y: auto; }
+.scene-tile { position: relative; padding: 0; border: 1px solid #3a3f47;
+  border-radius: 3px; background: #1c1f24; color: #d8dade; cursor: pointer;
+  text-align: left; overflow: hidden; }
+.scene-tile:hover { border-color: #6d7885; }
+.scene-tile img { display: block; width: 100%; aspect-ratio: 16 / 9;
+  object-fit: cover; background: #14161a; }
+.scene-tile .scene-name { display: block; padding: 3px 5px 0; font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-tile .scene-study { display: block; padding: 0 5px 4px; font-size: 10px;
+  color: #7d838c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-tile .scene-elsewhere { color: #c8a44a; }
+.scene-delete { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px;
+  padding: 0; border: none; border-radius: 3px; background: rgba(20, 22, 26, 0.75);
+  color: #c9ccd1; font-size: 12px; line-height: 18px; cursor: pointer; }
+.scene-delete:hover { background: #7a2b2b; color: #fff; }
+.scene-empty { color: #7d838c; font-size: 11px; grid-column: 1 / -1; }

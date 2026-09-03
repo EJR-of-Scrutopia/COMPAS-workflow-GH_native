@@ -15,6 +15,7 @@ would be exotic in a hand-driven tool are routine here.
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import threading
@@ -54,6 +55,7 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.setattr(bundle, "UPLOAD_DIR", uploads)
     monkeypatch.setattr(bundle, "STUDIES_DIR", studies)
     monkeypatch.setattr(app, "COLUMNS_DIR", tmp_path / "columns")
+    monkeypatch.setattr(app, "SCENES_DIR", tmp_path / "scenes")
     monkeypatch.setattr(app, "HDRI_DIR", tmp_path / "hdri")
     bundle.clear_cut_memo()
     client = TestClient(app.create_app(runner=lambda request: {
@@ -829,3 +831,101 @@ def test_a_json_dropped_into_the_folder_is_a_study(tmp_path, monkeypatch):
     assert not (uploads / "Dropped in.json").exists()
     assert "Dropped in" not in [
         row["export"] for row in client.get("/api/studies").json()["studies"]]
+
+
+# The server sniffs the first three bytes for the JPEG marker and never
+# decodes the image, exactly as the hdri route sniffs for #?RADIANCE, so a
+# marker plus a few bytes is a faithful stand-in for a real still here.
+JPEG = base64.b64encode(bytes([0xFF, 0xD8, 0xFF]) + b"a still").decode()
+THUMBNAIL = "data:image/jpeg;base64," + JPEG
+
+
+def test_a_scene_survives_a_round_trip(tmp_path, monkeypatch):
+    """Save the viewport and everything around it, list it with its still,
+    read it back whole, and delete both halves. The state block is stored
+    verbatim: the server is a filing cabinet for it and never interprets a
+    field, so the viewer can add settings without the server knowing."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    settings = {"camera": {"position": [1.0, 2.0, 3.0], "target": [0, 0, 1]},
+                "ground": {"preset": "tiles", "radius": 24},
+                "cut": {"material": "stone", "size": 0.9}}
+    saved = client.post("/api/scenes", json={
+        "name": "Crown, evening", "study": "Tiny",
+        "state": settings, "thumbnail": THUMBNAIL})
+    assert saved.status_code == 201, saved.text
+    row = saved.json()["scene"]
+    scene_id = row["id"]
+    assert scene_id.startswith("scene-") and len(scene_id) == len("scene-") + 12
+    assert row["thumbnail"] is True
+
+    listed = client.get("/api/scenes").json()["scenes"]
+    assert [r["id"] for r in listed] == [scene_id]
+    assert listed[0]["name"] == "Crown, evening"
+    assert listed[0]["study"] == "Tiny"
+
+    whole = client.get("/api/scenes/" + scene_id).json()
+    assert whole["state"] == settings
+    assert whole["schema"] == "bench.scene/1"
+
+    image = client.get("/api/scenes/" + scene_id + "/thumbnail")
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/jpeg"
+    assert image.content.startswith(bytes([0xFF, 0xD8, 0xFF]))
+
+    removed = client.delete("/api/scenes/" + scene_id)
+    assert removed.status_code == 200
+    assert sorted(removed.json()["removed"]) == [scene_id + ".jpg", scene_id + ".json"]
+    assert client.get("/api/scenes").json()["scenes"] == []
+    assert client.get("/api/scenes/" + scene_id).status_code == 404
+
+
+def test_a_scene_refuses_what_it_cannot_store(tmp_path, monkeypatch):
+    """Every refusal names the thing that is wrong. The thumbnail guards
+    matter most: the field is a data URL from a browser canvas, so its mime
+    type is the caller's word for it and the first three bytes are not."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    good = {"name": "A", "study": "Tiny", "state": {"camera": {}}}
+    assert client.post("/api/scenes", json={**good, "name": "  "}).status_code == 400
+    assert client.post("/api/scenes", json={**good, "name": "x" * 81}).status_code == 400
+    assert client.post("/api/scenes", json={**good, "state": {}}).status_code == 400
+    assert client.post("/api/scenes", json={**good, "state": "everything"}).status_code == 400
+    not_a_url = client.post("/api/scenes", json={**good, "thumbnail": "hello"})
+    assert not_a_url.status_code == 400
+    assert "data URL" in not_a_url.json()["detail"]
+    not_base64 = client.post(
+        "/api/scenes", json={**good, "thumbnail": "data:image/jpeg;base64,not base64!"})
+    assert not_base64.status_code == 400
+    not_a_jpeg = client.post("/api/scenes", json={
+        **good,
+        "thumbnail": "data:image/jpeg;base64," + base64.b64encode(b"GIF89a").decode()})
+    assert not_a_jpeg.status_code == 400
+    assert "not a JPEG" in not_a_jpeg.json()["detail"]
+    huge = base64.b64encode(bytes([0xFF, 0xD8, 0xFF]) + b"0" * (400 * 1024)).decode()
+    assert client.post(
+        "/api/scenes", json={**good, "thumbnail": "data:image/jpeg;base64," + huge}
+    ).status_code == 413
+    # A scene id is minted by the server, so nothing else is even a name.
+    assert client.get("/api/scenes/../secrets/thumbnail").status_code in (400, 404)
+    assert client.get("/api/scenes/scene-not-hex-here").status_code == 400
+    assert client.delete("/api/scenes/scene-0123456789ab").status_code == 404
+
+
+def test_a_damaged_scene_is_listed_rather_than_hidden(tmp_path, monkeypatch):
+    """A scene is the user's own work and cannot be rebuilt from anything,
+    so a file that will not parse is shown as damaged and can be deleted. A
+    scene that silently vanished from the picker would look like the studio
+    had eaten it."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    scenes = tmp_path / "scenes"
+    scenes.mkdir(parents=True, exist_ok=True)
+    (scenes / "scene-0123456789ab.json").write_text("{ truncated", encoding="utf-8")
+    listed = client.get("/api/scenes").json()["scenes"]
+    assert [r["id"] for r in listed] == ["scene-0123456789ab"]
+    assert listed[0]["unreadable"] is True
+    damaged = client.get("/api/scenes/scene-0123456789ab")
+    assert damaged.status_code == 400
+    assert "scene-0123456789ab.json" in damaged.json()["detail"]
+    assert client.delete("/api/scenes/scene-0123456789ab").status_code == 200

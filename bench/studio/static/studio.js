@@ -21,6 +21,7 @@ const state = {
   source: null,        // deliverable B: null = whatever the study has (Skin wins), else "authored" | "generated"
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
   columnRadius: null,  // bench.columns/1 "radius" from the loaded study's columns file: the width the exporter swept the column solids along, and the width the act's animated members take (see columnRadius())
+  scenes: [],          // saved scenes, newest first, from /api/scenes
   live: true,          // the Live button: while on, a Grasshopper push reloads the study on screen
   lastRefusal: null,   // the server's own words for the last refused load, shown under the cut source control
   studies: [],
@@ -1110,6 +1111,404 @@ function buildScene(bundle, preserve) {
   restoreProps();
   updateHud();
 }
+
+// ---------- saved scenes ----------
+// A scene is every setting that decides what the viewport looks like, plus
+// the still it looked like when it was saved. It lives on the server rather
+// than in browser storage: it is authored by hand, it cannot be rebuilt
+// from anything, and a cleared cache is not a reason to lose one.
+
+// The still, cropped to what the eye actually composed (the panel is a
+// 300 CSS px overlay over the right of the viewport, so the scene behind it
+// was never part of the picture).
+//
+// The renderer is built with preserveDrawingBuffer (see the WebGLRenderer
+// above), which is what makes reading the canvas legal at all. It is NOT
+// permission to read whenever: resize() runs first thing every frame and
+// its guard compares the DPR-scaled backing store against CSS pixels, so on
+// any display scaled above 100% it reassigns canvas.width every frame, and
+// assigning that width resets the drawing buffer. Render and read in one
+// synchronous block, never across a callback.
+function captureThumbnail(width = 240) {
+  // The recorder owns the canvas while it runs: it forces 1920x1080 and
+  // disables the corrective resize, and an extra render here would land on
+  // the frame it is about to upload.
+  if (state.recording) return null;
+  renderView();
+  const sourceHeight = canvas.height;
+  const cut = Math.min(canvas.width - 1,
+    Math.round(300 * renderer.getPixelRatio()));
+  const sourceWidth = canvas.width - cut;
+  if (sourceWidth < 8 || sourceHeight < 8) return null;
+  const target = document.createElement("canvas");
+  target.width = width;
+  target.height = Math.max(1, Math.round(width * sourceHeight / sourceWidth));
+  // One intermediate at twice the target: the reduction is 10x or more on a
+  // full-screen viewport, and browsers only box-filter a single drawImage
+  // approximately at that ratio, which turns a net of wires into moire.
+  const middle = document.createElement("canvas");
+  middle.width = target.width * 2;
+  middle.height = target.height * 2;
+  const middleContext = middle.getContext("2d");
+  middleContext.imageSmoothingQuality = "high";
+  middleContext.drawImage(
+    canvas, 0, 0, sourceWidth, sourceHeight, 0, 0, middle.width, middle.height);
+  const context = target.getContext("2d");
+  context.imageSmoothingQuality = "high";
+  context.drawImage(middle, 0, 0, target.width, target.height);
+  // JPEG, not the recorder's PNG: a 240px still of a lit render is 5 to 9 kB
+  // at this quality and 40 to 70 kB as a PNG, and the server caps it.
+  return target.toDataURL("image/jpeg", 0.8);
+}
+
+// Everything worth keeping, and nothing that cannot be rebuilt: no bundle,
+// no THREE handles, no derived exposure base, no HDRI texture (its NAME is
+// enough to load it again).
+function collectScene() {
+  const control = (id) => document.getElementById(id);
+  return {
+    camera: { position: camera.position.toArray(), target: controls.target.toArray() },
+    showMode: state.showMode,
+    formworkMode: state.formworkMode,
+    environmentMode: state.environmentMode,
+    weatherPreset: state.weatherPreset,
+    backgroundTone: +control("background-tone").value,
+    brightness: state.brightness,
+    contrast: state.contrast,
+    hdri: {
+      name: state.hdriName, projection: state.hdriProjection,
+      scale: state.hdriScale, height: state.hdriHeight, rotation: state.hdriRotation,
+    },
+    sun: {
+      azimuth: +control("sun-azimuth").value,
+      elevation: +control("sun-elevation").value,
+      elevationSetting: state.sunElevationSetting,
+      colour: control("sun-colour").value,
+      colourOverride: state.sunColourOverride,
+      intensity: sun.intensity,
+      intensityOverride: state.sunIntensityOverride,
+    },
+    dayCycle: {
+      seconds: state.dayCycle.seconds,
+      peakElevation: state.dayCycle.peakElevation,
+      record: state.dayCycle.record,
+    },
+    ground: { preset: state.groundPreset, radius: state.groundRadius },
+    net: { wireRadius: state.wireRadius, nodeRadius: state.nodeRadius },
+    props: state.props.map((record) => ({
+      type: record.type, x: record.x, y: record.y, rotation: record.rotation,
+    })),
+    layers: Object.assign({}, state.layers),
+    cut: {
+      material: control("material-select").value,
+      pattern: state.pattern, size: state.size, thickness: state.thickness,
+      jointGap: state.jointGap, taper: state.taper, source: state.source,
+    },
+    appearance: Object.assign({}, state.appearance),
+    timeline: state.timeline ? {
+      t: state.timeline.t, speed: state.timeline.speed,
+      inflateSeconds: state.timeline.inflateSeconds,
+      orbitSpeed: state.timeline.orbitSpeed,
+      orbitDistance: state.timeline.orbitDistance,
+    } : null,
+  };
+}
+
+// Replaying a scene is an ordering problem, not a copying one. Three rules
+// decide the sequence below:
+//   1. The cut lives in the bundle URL, so every cut parameter is written
+//      into state BEFORE the single loadStudy call. Restoring by poking the
+//      controls instead would fire six change handlers, six overlapping
+//      server cuts, and two of them through a 1.5 s settle timer that would
+//      land after the restore had finished.
+//   2. Anything buildScene reads (ground, net radii, joint gap, taper,
+//      layers, appearance) has to be in state before it builds, or be
+//      rebuilt afterwards.
+//   3. The camera goes LAST, after everything that moves it.
+async function applyScene(record) {
+  const scene_ = record.state || {};
+  const control = (id) => document.getElementById(id);
+  const cut = scene_.cut || {};
+  if (cut.material) control("material-select").value = cut.material;
+  if (cut.pattern) { state.pattern = cut.pattern; state.patternChosen = true; }
+  if (typeof cut.size === "number") {
+    state.size = cut.size; control("size-slider").value = cut.size;
+  }
+  if (typeof cut.thickness === "number") {
+    state.thickness = cut.thickness; control("thickness-input").value = cut.thickness;
+  }
+  if (typeof cut.jointGap === "number") {
+    state.jointGap = cut.jointGap; control("joint-gap").value = cut.jointGap;
+  }
+  if (typeof cut.taper === "number") {
+    state.taper = cut.taper; control("taper").value = cut.taper;
+  }
+  state.source = cut.source || null;
+  if (scene_.ground) {
+    if (scene_.ground.preset) {
+      state.groundPreset = scene_.ground.preset;
+      control("ground-preset").value = scene_.ground.preset;
+    }
+    if (typeof scene_.ground.radius === "number") {
+      state.groundRadius = scene_.ground.radius;
+      control("ground-radius").value = scene_.ground.radius;
+      control("ground-radius-value").textContent = scene_.ground.radius;
+    }
+  }
+  if (scene_.net) {
+    if (typeof scene_.net.wireRadius === "number") state.wireRadius = scene_.net.wireRadius;
+    if (typeof scene_.net.nodeRadius === "number") state.nodeRadius = scene_.net.nodeRadius;
+    control("wire-radius").value = state.wireRadius;
+    control("node-radius").value = state.nodeRadius;
+    control("wire-radius-value").textContent = Math.round(state.wireRadius * 1000);
+    control("node-radius-value").textContent = Math.round(state.nodeRadius * 1000);
+  }
+  if (scene_.layers) state.layers = Object.assign({}, state.layers, scene_.layers);
+  if (scene_.appearance) state.appearance = Object.assign({}, scene_.appearance);
+
+  const study = record.study || control("study-select").value;
+  if (study) control("study-select").value = study;
+  const loaded = await loadStudy(study);
+  if (loaded === false) {
+    showBanner("The scene's study would not load: " + (state.lastRefusal || ""), "error");
+    return false;
+  }
+
+  // Props: cleared and replaced rather than merged, because a scene is a
+  // whole picture. placeProp with save=false keeps the per-study layout in
+  // localStorage untouched until the user moves one themselves.
+  if (Array.isArray(scene_.props)) {
+    for (const existing of state.props) {
+      disposeProp(existing.object);
+      propsGroup.remove(existing.object);
+    }
+    state.props = [];
+    state.selectedProp = null;
+    for (const entry of scene_.props) {
+      placeProp(entry.type, +entry.x || 0, +entry.y || 0, +entry.rotation || 0, false);
+    }
+  }
+
+  // The environment owns background, fog, exposure base and the sun's
+  // defaults, so it goes before the sun and before the grade.
+  if (scene_.environmentMode) state.environmentMode = scene_.environmentMode;
+  if (scene_.weatherPreset) state.weatherPreset = scene_.weatherPreset;
+  control("environment-mode").value = state.environmentMode;
+  control("weather-preset").value = state.weatherPreset;
+  if (typeof scene_.backgroundTone === "number") {
+    control("background-tone").value = scene_.backgroundTone;
+  }
+  if (typeof scene_.brightness === "number") {
+    state.brightness = scene_.brightness; control("brightness").value = scene_.brightness;
+  }
+  if (typeof scene_.contrast === "number") {
+    state.contrast = scene_.contrast; control("contrast").value = scene_.contrast;
+  }
+  const hdri = scene_.hdri || {};
+  if (hdri.projection) {
+    state.hdriProjection = hdri.projection; control("hdri-projection").value = hdri.projection;
+  }
+  for (const [key, id] of [["scale", "hdri-scale"], ["height", "hdri-height"],
+                           ["rotation", "hdri-rotation"]]) {
+    if (typeof hdri[key] === "number") {
+      state["hdri" + key[0].toUpperCase() + key.slice(1)] = hdri[key];
+      control(id).value = hdri[key];
+    }
+  }
+  if (state.environmentMode === "hdri" && hdri.name && state.hdriName !== hdri.name) {
+    // loadHdri stamps the sun sliders from the photograph, which is why the
+    // sun is restored after it, below.
+    await refreshHdriList(hdri.name);
+    await loadHdri(hdri.name);
+  }
+  applyEnvironment();
+  regenerateEnvironment();
+
+  // The sun last of the light, because both the weather preset and an HDRI
+  // load write over it. The two overrides are guards that stop a preset
+  // writing, not appliers, so the colour and intensity are written here too.
+  const sunState = scene_.sun || {};
+  if (typeof sunState.azimuth === "number") control("sun-azimuth").value = sunState.azimuth;
+  if (typeof sunState.elevation === "number") control("sun-elevation").value = sunState.elevation;
+  if (typeof sunState.elevationSetting === "number") {
+    state.sunElevationSetting = sunState.elevationSetting;
+  }
+  state.sunColourOverride = sunState.colourOverride || null;
+  state.sunIntensityOverride = typeof sunState.intensityOverride === "number"
+    ? sunState.intensityOverride : null;
+  if (sunState.colour) {
+    control("sun-colour").value = sunState.colour;
+    sun.color.set(sunState.colour);
+  }
+  if (typeof sunState.intensity === "number") sun.intensity = sunState.intensity;
+  applySunFromSliders();
+  applyGrade();
+
+  // The scene's own instant, through the scene-only applier: applyTimeline
+  // would fling the camera onto its orbit ring, and the camera is the point
+  // of a saved scene.
+  if (scene_.timeline && state.timeline) {
+    for (const [key, id] of [["speed", "timeline-speed"],
+                             ["inflateSeconds", "inflate-seconds"],
+                             ["orbitSpeed", "orbit-speed"],
+                             ["orbitDistance", "orbit-distance"]]) {
+      if (typeof scene_.timeline[key] === "number") {
+        state.timeline[key] = scene_.timeline[key];
+        control(id).value = scene_.timeline[key];
+      }
+    }
+    state.timeline.playing = false;
+    document.getElementById("play-button").textContent = "Play";
+    const t = Math.min(timelineDuration(),
+      Math.max(0, +scene_.timeline.t || 0));
+    applySceneAtTime(t);
+    document.getElementById("scrubber").value =
+      Math.round(1000 * (timelineDuration() ? t / timelineDuration() : 0));
+  }
+  if (scene_.showMode) { state.showMode = scene_.showMode; control("show-mode").value = scene_.showMode; }
+  if (scene_.formworkMode) {
+    state.formworkMode = scene_.formworkMode;
+    control("formwork-mode").value = scene_.formworkMode;
+  }
+  if (state.timeline) applySceneAtTime(state.timeline.t);
+  rebuildAppearance();
+  syncAppearanceControls();
+  buildLayerToggles();
+  updateVectorLayers();
+
+  // The camera last, and then held: the build clock drives its own orbit
+  // (applyTimeline's autoSpin), which would throw a restored framing away
+  // the moment Play was pressed. A saved scene is a framing somebody chose,
+  // so playing it keeps that framing. A study loaded fresh still starts on
+  // the orbit, exactly as it always has.
+  const view = scene_.camera;
+  if (view && Array.isArray(view.position) && Array.isArray(view.target)) {
+    camera.position.fromArray(view.position);
+    controls.target.fromArray(view.target);
+    controls.update();
+    if (state.timeline) state.timeline.autoSpin = false;
+  }
+  logStudio("restored scene " + record.name);
+  return true;
+}
+
+async function refreshScenes() {
+  const payload = await fetchJson("/api/scenes");
+  state.scenes = payload.scenes || [];
+  renderSceneList();
+}
+
+function renderSceneList() {
+  const list = document.getElementById("scene-list");
+  const count = document.getElementById("scene-count");
+  if (count) {
+    count.textContent = state.scenes.length
+      ? state.scenes.length + " saved" : "none saved yet";
+  }
+  if (!list) return;
+  list.innerHTML = "";
+  if (!state.scenes.length) {
+    const empty = document.createElement("div");
+    empty.className = "scene-empty";
+    empty.textContent = "No saved scenes yet. Frame a view and press Save scene.";
+    list.appendChild(empty);
+    return;
+  }
+  const current = document.getElementById("study-select").value;
+  for (const row of state.scenes) {
+    const tile = document.createElement("button");
+    tile.className = "scene-tile";
+    tile.title = row.unreadable
+      ? "This scene file is damaged and cannot be restored"
+      : "Restore " + row.name;
+    if (row.thumbnail) {
+      const image = document.createElement("img");
+      image.src = "/api/scenes/" + encodeURIComponent(row.id) + "/thumbnail";
+      image.alt = "";
+      tile.appendChild(image);
+    }
+    const name = document.createElement("span");
+    name.className = "scene-name";
+    name.textContent = row.name;
+    tile.appendChild(name);
+    const study = document.createElement("span");
+    study.className = "scene-study";
+    // A scene carries its study, and restoring one saved on a DIFFERENT
+    // study loads that study first. Saying so on the tile is the difference
+    // between a deliberate switch and a surprise.
+    if (row.unreadable) {
+      study.textContent = "damaged";
+      study.classList.add("scene-elsewhere");
+    } else if (row.study && row.study !== current) {
+      study.textContent = "loads " + row.study;
+      study.classList.add("scene-elsewhere");
+    } else {
+      study.textContent = row.study || "";
+    }
+    tile.appendChild(study);
+    tile.addEventListener("click", async () => {
+      if (row.unreadable) {
+        showBanner("That scene file is damaged; delete it and save a new one", "error");
+        return;
+      }
+      try {
+        await applyScene(await fetchJson("/api/scenes/" + encodeURIComponent(row.id)));
+      } catch (error) {
+        showBanner("Could not restore that scene: " + error.message, "error");
+      }
+    });
+    const remove = document.createElement("button");
+    remove.className = "scene-delete";
+    remove.textContent = "x";
+    remove.title = "Delete this scene";
+    remove.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!window.confirm("Delete the scene \"" + row.name + "\"?")) return;
+      await fetch("/api/scenes/" + encodeURIComponent(row.id), { method: "DELETE" });
+      logStudio("deleted scene " + row.name);
+      await refreshScenes();
+    });
+    const holder = document.createElement("div");
+    holder.style.position = "relative";
+    holder.appendChild(tile);
+    holder.appendChild(remove);
+    list.appendChild(holder);
+  }
+}
+
+document.getElementById("scene-save").addEventListener("click", async () => {
+  if (!state.bundle) {
+    showBanner("Load a study before saving a scene", "error");
+    return;
+  }
+  const study = document.getElementById("study-select").value;
+  const suggested = study + " " + new Date().toLocaleTimeString([], {
+    hour: "2-digit", minute: "2-digit",
+  });
+  const name = window.prompt("Name this scene", suggested);
+  if (!name) return;
+  const thumbnail = captureThumbnail();
+  const response = await fetch("/api/scenes", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, study, state: collectScene(), thumbnail }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    showBanner("Scene not saved: " + (body.detail || response.status), "error");
+    return;
+  }
+  logStudio("saved scene " + name);
+  document.getElementById("scene-list").classList.remove("hidden");
+  await refreshScenes();
+});
+
+document.getElementById("scene-open").addEventListener("click", async () => {
+  const list = document.getElementById("scene-list");
+  const opening = list.classList.contains("hidden");
+  list.classList.toggle("hidden", !opening);
+  if (opening) await refreshScenes();
+});
 
 // ---------- the cut (Task 8: pieces and their course/size come from the server) ----------
 // Mirrors app.py's own SIZE_MIN/SIZE_MAX. The bundle's top level "size" is

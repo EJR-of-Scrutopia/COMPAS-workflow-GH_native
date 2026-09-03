@@ -7,12 +7,16 @@ stub while the real server shells to .venv-fea.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import re
 import shutil
 import subprocess
 import threading
 import urllib.parse
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +34,18 @@ import tessellation
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
+# Saved scenes: a viewpoint and every setting that decides what the viewport
+# looks like, plus the thumbnail it looked like when it was saved. An asset
+# root beside the studio, like columns and hdri, because a scene is authored
+# by hand and cannot be rebuilt from anything.
+SCENES_DIR = Path(__file__).resolve().parent / "scenes"
+SCENE_SCHEMA = "bench.scene/1"
+# The id is minted here, never taken from the caller, so no scene name can
+# reach the filesystem. The pattern is asserted on every route anyway.
+SCENE_ID = re.compile(r"^scene-[0-9a-f]{12}$")
+MAX_SCENE_BYTES = 4 * 1024 * 1024
+MAX_THUMBNAIL_BYTES = 400 * 1024
+THUMBNAIL_PREFIX = "data:image/jpeg;base64,"
 HDRI_DIR = Path(__file__).resolve().parent / "hdri"
 
 
@@ -409,6 +425,143 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         if not path.is_file():
             raise HTTPException(404, "no column file {}".format(name))
         return FileResponse(path)
+
+    def _scene_row(document, has_thumbnail):
+        return {
+            "id": document.get("id"),
+            "name": document.get("name"),
+            "study": document.get("study"),
+            "saved": document.get("saved"),
+            "thumbnail": bool(has_thumbnail),
+        }
+
+    def _scene_path(scene_id: str, suffix: str) -> Path:
+        if not SCENE_ID.match(scene_id):
+            raise HTTPException(400, "bad scene id")
+        return SCENES_DIR / (scene_id + suffix)
+
+    def _decode_thumbnail(value):
+        """The saved still, as a JPEG data URL, or a refusal saying why.
+
+        Sniffed for the JPEG marker the way the hdri route sniffs for
+        #?RADIANCE: the extension and the mime type in the URL are both
+        the caller's word for it, and the first three bytes are not.
+        """
+
+        if not isinstance(value, str) or not value.startswith(THUMBNAIL_PREFIX):
+            raise HTTPException(
+                400, "the thumbnail must be a {}... data URL".format(THUMBNAIL_PREFIX))
+        try:
+            raw = base64.b64decode(value[len(THUMBNAIL_PREFIX):], validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(400, "the thumbnail is not valid base64")
+        if not raw.startswith(b"\xff\xd8\xff"):
+            raise HTTPException(400, "the thumbnail is not a JPEG")
+        if len(raw) > MAX_THUMBNAIL_BYTES:
+            raise HTTPException(
+                413, "the thumbnail is {} bytes; the limit is {}.".format(
+                    len(raw), MAX_THUMBNAIL_BYTES))
+        return raw
+
+    @app.get("/api/scenes")
+    def scene_list():
+        """Every saved scene, newest first.
+
+        A scene that will not parse is LISTED, marked unreadable, rather
+        than skipped: it is the user's own work, it cannot be rebuilt from
+        anything, and a scene that silently vanishes from the picker is
+        worse than one that says it is damaged and can be deleted.
+        """
+
+        rows = []
+        if SCENES_DIR.is_dir():
+            for path in sorted(SCENES_DIR.glob("scene-*.json")):
+                thumbnail = path.with_suffix(".jpg").is_file()
+                try:
+                    document = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    rows.append({
+                        "id": path.stem, "name": path.stem, "study": None,
+                        "saved": None, "thumbnail": thumbnail, "unreadable": True,
+                    })
+                    continue
+                rows.append(_scene_row(document, thumbnail))
+        rows.sort(key=lambda row: row.get("saved") or "", reverse=True)
+        return {"scenes": rows}
+
+    @app.post("/api/scenes", status_code=201)
+    async def save_scene(request: Request):
+        body = await request.body()
+        if len(body) > MAX_SCENE_BYTES:
+            raise HTTPException(
+                413, "the scene is {} bytes; the limit is {}.".format(
+                    len(body), MAX_SCENE_BYTES))
+        try:
+            document = json.loads(body)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "not valid JSON")
+        if not isinstance(document, dict):
+            raise HTTPException(400, "a scene must be a JSON object")
+        name = str(document.get("name") or "").strip()
+        if not name:
+            raise HTTPException(400, "a scene needs a name")
+        if len(name) > 80:
+            raise HTTPException(400, "a scene name is at most 80 characters")
+        settings = document.get("state")
+        if not isinstance(settings, dict) or not settings:
+            raise HTTPException(400, "a scene needs a state block")
+        image = None
+        if document.get("thumbnail") is not None:
+            image = _decode_thumbnail(document["thumbnail"])
+        scene_id = "scene-" + uuid.uuid4().hex[:12]
+        record = {
+            "schema": SCENE_SCHEMA,
+            "id": scene_id,
+            "name": name,
+            "study": str(document.get("study") or ""),
+            "saved": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "state": settings,
+        }
+        SCENES_DIR.mkdir(parents=True, exist_ok=True)
+        # The image first, the record second: the record is what makes a
+        # scene exist, so a crash between the two leaves an orphan image
+        # nobody lists rather than a listed scene with a broken thumbnail.
+        if image is not None:
+            (SCENES_DIR / (scene_id + ".jpg")).write_bytes(image)
+        bundle.write_json_atomically(SCENES_DIR / (scene_id + ".json"), record)
+        return {"scene": _scene_row(record, image is not None)}
+
+    @app.get("/api/scenes/{scene_id}")
+    def scene(scene_id: str):
+        path = _scene_path(scene_id, ".json")
+        if not path.is_file():
+            raise HTTPException(404, "no scene {}".format(scene_id))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            # Named, not swallowed: this is user data, and the reply has to
+            # say which file to look at rather than pretend it never existed.
+            raise HTTPException(
+                400, "{} is damaged and cannot be read ({})".format(path.name, error))
+
+    @app.get("/api/scenes/{scene_id}/thumbnail")
+    def scene_thumbnail(scene_id: str):
+        path = _scene_path(scene_id, ".jpg")
+        if not path.is_file():
+            raise HTTPException(404, "scene {} has no thumbnail".format(scene_id))
+        return FileResponse(path, media_type="image/jpeg")
+
+    @app.delete("/api/scenes/{scene_id}")
+    def delete_scene(scene_id: str):
+        record = _scene_path(scene_id, ".json")
+        if not record.is_file():
+            raise HTTPException(404, "no scene {}".format(scene_id))
+        removed = []
+        for path in (record, _scene_path(scene_id, ".jpg")):
+            if path.is_file():
+                path.unlink()
+                removed.append(path.name)
+        return {"deleted": scene_id, "removed": removed}
 
     @app.get("/api/hdri")
     def hdri_list():
