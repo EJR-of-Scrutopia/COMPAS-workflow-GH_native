@@ -27362,6 +27362,86 @@ internal static class Program
             $"refused at emission, {cells.Length} kept, against the 78 kept " +
             "and 64 deleted by the plan filter before the chain was clipped.");
 
+        // THE SAME NUMBER ON THE COMPONENT'S FACE, which is where the author
+        // reads it. A counter that reaches only the engine's Diagnostics
+        // string is a counter no canvas can see: before the refusal was put
+        // on the record, this net's drop warning was built from the plan
+        // drops alone and read 6 of 77, an 8 per cent hole scaled "a small
+        // hole where each one was", for a pattern that had refused 65 more
+        // cells and delivered half of what it proposed. Worse, the same
+        // warning read 64 of 142 BEFORE task 2 refused anything, so the
+        // number an author sees would have FALLEN by an order of magnitude
+        // for a skin that covers less. The four counts are read off the
+        // result and the sentence is the component's own.
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo lostLine = RequireStatic(skinType, "LostCellsWarningLine");
+        string? Lost(
+            int degenerate, int overlap, int weld, int escaped, int kept) =>
+            (string?)lostLine.Invoke(
+                null,
+                new object[] { degenerate, overlap, weld, escaped, kept });
+        int degenerateDropped = Reading<int>(built, "PlanDegenerateDropped");
+        int overlapDropped = Reading<int>(built, "PlanOverlapDropped");
+        int weldDropped = Reading<int>(built, "WeldCollapsedDropped");
+        int escapedRefused = Reading<int>(built, "BandEscapedRefused");
+        if (escapedRefused != EscapedRefusedPinned)
+        {
+            throw new InvalidOperationException(
+                "The refusals are a FIELD on the result and not a private " +
+                "counter inside the engine, because the component sizes " +
+                "its hole warning by the fraction of the pattern that did " +
+                "not survive. This net refuses " +
+                $"{EscapedRefusedPinned} cells and the record must carry " +
+                $"the same number; BandEscapedRefused reads {escapedRefused}.");
+        }
+        // 65 refused, 2 self-crossing, 4 overlapping, 0 welded, 71 kept:
+        // 71 of the 142 cells the pattern proposed, which is 50 per cent
+        // and so takes the LARGE-hole branch. Re-measured 2026-09-03.
+        const int LostPinned = 71;
+        const int ProposedPinned = 142;
+        string lost = Lost(
+            degenerateDropped, overlapDropped, weldDropped, escapedRefused,
+            cells.Length)!;
+        string lostHead =
+            $"{LostPinned} of the {ProposedPinned} cells this pattern " +
+            "proposed";
+        if (!lost.Contains(lostHead, StringComparison.Ordinal) ||
+            !lost.Contains(
+                $"{EscapedRefusedPinned} refused at emission for leaving " +
+                "their band", StringComparison.Ordinal) ||
+            !lost.Contains("LARGE hole", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The component's own warning must count the refusals with " +
+                "the drops and scale itself by the total: this net must " +
+                $"read '{lostHead}', must name the " +
+                $"{EscapedRefusedPinned} refused at emission, and at half " +
+                "the pattern lost must call the hole LARGE. Got:\n" + lost);
+        }
+        // AND THE FIELD IS LOAD-BEARING IN THAT SENTENCE. Feed the same
+        // call the drops alone, which is exactly what the component had
+        // before this fix, and it slides down to the small-hole branch.
+        string blind = Lost(
+            degenerateDropped, overlapDropped, weldDropped, 0,
+            cells.Length)!;
+        if (!blind.Contains("small hole", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "This check is worthless unless the refusals are what move " +
+                "the sentence. Without them the same net must fall to the " +
+                "small-hole branch, which is the understatement this fix " +
+                "removes; got:\n" + blind);
+        }
+        Console.WriteLine(
+            "      Skin force-aligned lost-cell warning on Param's own " +
+            $"net: {LostPinned} of {ProposedPinned} proposed " +
+            $"({degenerateDropped} self-crossing, {overlapDropped} " +
+            $"overlapping, {weldDropped} welded, {escapedRefused} refused " +
+            "at emission), LARGE hole; the drops alone would read " +
+            $"{degenerateDropped + overlapDropped + weldDropped} of " +
+            $"{degenerateDropped + overlapDropped + weldDropped + cells.Length}" +
+            " and call it small.");
+
         // STEP 3: THE PATTERN STOPS CLAIMING A BAND WAS SKIPPED WHEN NONE
         // WAS. The courses engine reads resolved.Tileable and tiles only
         // the bands that correspond; the force-aligned band loop iterates
@@ -27412,7 +27492,6 @@ internal static class Program
                 "beds, so an author reading D knows a course spanning a " +
                 $"merge was tiled straight across it. Got:\n{diagnostics}");
         }
-        Type skinType = RequireComponentType(plugin, "SkinComponent");
         MethodInfo warningLine = RequireStatic(
             skinType, "TransitionWarningLine");
         if (warningLine.Invoke(

@@ -223,7 +223,21 @@ internal sealed record SkinCell(
 /// only what it says: the honeycomb's genuine seven-cornered rim cell of
 /// rule 4.3. It is appended LAST, after WELDCOLLAPSEDDROPPED and with a
 /// default of 0, so every existing construction site keeps its
-/// positions.</summary>
+/// positions.
+///
+/// BANDESCAPEDREFUSED is the fourth way a cell fails to reach the author,
+/// beside the three drops above: the force-aligned pattern REFUSES a cell
+/// at emission when one of its head joints stands outside the band's own
+/// two beds (plan 2026-09-03 task 2, step 2), because such a cell closes
+/// with an implicit chord across whatever lies between. It is a field and
+/// not a diagnostics-only counter because the component sizes its drop
+/// warning by the fraction of the pattern that did not survive, and a
+/// refusal the component cannot read makes that fraction understate the
+/// hole: on Param's own crown arch 65 of the 142 cells the pattern
+/// proposed are refused here, against 6 dropped by the plan filter, so a
+/// component reading only the drops would call a half-empty pattern an 8
+/// per cent hole. Appended LAST, after THREESIDEDCELLS and with a default
+/// of 0, on the same rule.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
@@ -254,7 +268,8 @@ internal sealed record SkinPatternResult(
     IReadOnlyList<double[][]> FlowLines,
     IReadOnlyList<double[][]> BedCurves,
     int WeldCollapsedDropped = 0,
-    int ThreeSidedCells = 0);
+    int ThreeSidedCells = 0,
+    int BandEscapedRefused = 0);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -3986,7 +4001,14 @@ internal static class SkinPatterns
             flowLines,
             bedCurves,
             weldCollapsed,
-            threeSided);
+            threeSided,
+            // The refusals reach the COMPONENT and not only the diagnostics
+            // string. A cell refused here never enters Cells and is not a
+            // plan drop, so a component that sizes its hole warning by the
+            // drops alone reports a fraction of the truth: on Param's own
+            // crown arch that is 6 of 77 against the 71 of 142 the pattern
+            // actually failed to deliver.
+            bandEscaped);
     }
 
     /// <summary>The accepted streamlines and the traced beds this pattern

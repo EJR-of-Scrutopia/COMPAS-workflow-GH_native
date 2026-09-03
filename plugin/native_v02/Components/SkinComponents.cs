@@ -360,68 +360,17 @@ public sealed class SkinComponent : NativeComponentBase
                     GH_RuntimeMessageLevel.Warning, transitionLine);
             }
 
-            // A cell the engine DROPPED because its plan projection
-            // self-crossed, overlapped a cell already kept, or (studio
-            // request R-006) welded below three distinct corners once
-            // consecutive corners within 1e-6 m were collapsed at
-            // emission. Spec section 4 claims the native patterns cannot
-            // produce a self-crossing or overlapping cell, and the claim
-            // is now enforced rather than argued, because ONE bad cell
-            // makes Bench Studio reject the whole tessellation. The drop
-            // is never silent: the author is told how many and of which
-            // kind, exactly as the force-aligned pattern already tells
-            // him.
-            // The sentence is SCALED TO THE FRACTION DROPPED, because a
-            // warning that promises a small hole while handing back an
-            // empty tree is worse than no warning at all. A HELICOIDAL
-            // shell is the case: its level curves are radial segments at
-            // an angle that keeps turning, so a course two turns up lies
-            // over a course two turns down and every cell overlaps
-            // something already kept. Measured on a three-turn ramp of
-            // inner radius 1 and outer radius 2 climbing 2 m, at S 0.6:
-            // the honeycomb drops 11 of 11 at CH 0.35 and 8 of 8 at CH
-            // 0.5, so the pattern is EMPTY, and the courses engine drops
-            // 10 of 15 and 3 of 10. Dropping everything there is the
-            // right answer, since a level curve that wraps is not a
-            // height field's and the surface is outside the spec's
-            // domain; only the sentence was wrong. So the count is
-            // always given against the TOTAL the pattern built; "a small
-            // hole where each one was" is reserved for at most a TENTH
-            // of that total; and where nothing survives the author is
-            // told the pattern is EMPTY rather than holed.
-            int dropped =
-                generated.PlanDegenerateDropped +
-                generated.PlanOverlapDropped +
-                generated.WeldCollapsedDropped;
-            if (dropped > 0)
-            {
-                int built = dropped + generated.Cells.Count;
-                int percent = (int)Math.Round(100.0 * dropped / built);
-                string scale =
-                    generated.Cells.Count == 0
-                        ? "NOTHING survived, so this pattern is EMPTY " +
-                          "and covers none of the surface."
-                        : dropped * 10 <= built
-                            ? "The skin has a small hole where each one " +
-                              "was, and the tessellation Export writes " +
-                              "still imports."
-                            : $"That is {percent} per cent of this " +
-                              "pattern, so the skin has a LARGE hole and " +
-                              "it covers only part of the surface; the " +
-                              "tessellation Export writes still imports.";
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    $"{dropped} of the {built} cell" +
-                    (built == 1 ? "" : "s") + " this pattern built " +
-                    (dropped == 1 ? "was" : "were") +
-                    " DROPPED to keep it valid: " +
-                    $"{generated.PlanDegenerateDropped} self-crossing, " +
-                    $"{generated.PlanOverlapDropped} overlapping a cell " +
-                    "already kept and " +
-                    $"{generated.WeldCollapsedDropped} welded below " +
-                    $"three distinct corners. {scale} Diagnostics counts " +
-                    "them.");
-            }
+            // Every cell the pattern proposed and did not deliver, of all
+            // four kinds, in one sentence sized by the fraction lost.
+            // LostCellsWarningLine carries the reasoning.
+            string? lostLine = LostCellsWarningLine(
+                generated.PlanDegenerateDropped,
+                generated.PlanOverlapDropped,
+                generated.WeldCollapsedDropped,
+                generated.BandEscapedRefused,
+                generated.Cells.Count);
+            if (lostLine is not null)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, lostLine);
 
             var cellBranches = new List<List<Curve>>();
             for (int course = 0; course < generated.CourseCount; course++)
@@ -728,6 +677,87 @@ public sealed class SkinComponent : NativeComponentBase
             " skipped where the level curves split, so the skin has a " +
             "HOLE at those heights and this pattern does not cover the " +
             "surface." + where;
+    }
+
+    /// <summary>
+    /// EVERY CELL THE PATTERN PROPOSED AND DID NOT DELIVER, in one
+    /// sentence, or null where it delivered them all.
+    ///
+    /// Three of the four are DROPS taken after emission: a cell whose plan
+    /// projection self-crossed, one that overlapped a cell already kept,
+    /// or (studio request R-006) one that welded below three distinct
+    /// corners once consecutive corners within 1e-6 m were collapsed at
+    /// emission. Spec section 4 claims the native patterns cannot produce
+    /// a self-crossing or overlapping cell, and the claim is enforced
+    /// rather than argued, because ONE bad cell makes Bench Studio reject
+    /// the whole tessellation. The loss is never silent: the author is
+    /// told how many and of which kind.
+    ///
+    /// The fourth is a REFUSAL taken at emission, and it is here rather
+    /// than in the engine's diagnostics alone because of what the sentence
+    /// below does with it. The force-aligned pattern refuses a cell whose
+    /// head joint stands outside its own band (plan 2026-09-03 task 2,
+    /// step 2). Before this, a refused cell reached the canvas nowhere:
+    /// on Param's own crown arch at S 0.17 and CH 0.375 the pattern
+    /// proposed 142 cells and delivered 71, and a warning built from the
+    /// drops alone read 6 of 77, an 8 per cent hole, for a skin that had
+    /// lost half of itself. Counting the refusals restores 71 of 142, and
+    /// the same net read 64 of 142 before the refusal existed at all, so
+    /// the number an author sees no longer FALLS when the pattern starts
+    /// covering less.
+    ///
+    /// The sentence is SCALED TO THE FRACTION LOST, because a warning
+    /// that promises a small hole while handing back an empty tree is
+    /// worse than no warning at all. A HELICOIDAL shell is the case: its
+    /// level curves are radial segments at an angle that keeps turning, so
+    /// a course two turns up lies over a course two turns down and every
+    /// cell overlaps something already kept. Measured on a three-turn ramp
+    /// of inner radius 1 and outer radius 2 climbing 2 m, at S 0.6: the
+    /// honeycomb drops 11 of 11 at CH 0.35 and 8 of 8 at CH 0.5, so the
+    /// pattern is EMPTY, and the courses engine drops 10 of 15 and 3 of
+    /// 10. Dropping everything there is the right answer, since a level
+    /// curve that wraps is not a height field's and the surface is outside
+    /// the spec's domain; only the sentence was wrong. So the count is
+    /// always given against the TOTAL the pattern proposed; "a small hole
+    /// where each one was" is reserved for at most a TENTH of that total;
+    /// and where nothing survives the author is told the pattern is EMPTY
+    /// rather than holed.
+    /// </summary>
+    internal static string? LostCellsWarningLine(
+        int degenerateDropped,
+        int overlapDropped,
+        int weldCollapsedDropped,
+        int bandEscapedRefused,
+        int kept)
+    {
+        int lost =
+            degenerateDropped + overlapDropped + weldCollapsedDropped +
+            bandEscapedRefused;
+        if (lost <= 0)
+            return null;
+        int proposed = lost + kept;
+        int percent = (int)Math.Round(100.0 * lost / proposed);
+        string scale =
+            kept == 0
+                ? "NOTHING survived, so this pattern is EMPTY and covers " +
+                  "none of the surface."
+                : lost * 10 <= proposed
+                    ? "The skin has a small hole where each one was, and " +
+                      "the tessellation Export writes still imports."
+                    : $"That is {percent} per cent of this pattern, so " +
+                      "the skin has a LARGE hole and it covers only part " +
+                      "of the surface; the tessellation Export writes " +
+                      "still imports.";
+        return
+            $"{lost} of the {proposed} cell" +
+            (proposed == 1 ? "" : "s") + " this pattern proposed " +
+            (lost == 1 ? "was" : "were") +
+            " REFUSED or DROPPED to keep it valid: " +
+            $"{degenerateDropped} self-crossing, " +
+            $"{overlapDropped} overlapping a cell already kept, " +
+            $"{weldCollapsedDropped} welded below three distinct corners " +
+            $"and {bandEscapedRefused} refused at emission for leaving " +
+            $"their band. {scale} Diagnostics counts them.";
     }
 
     /// <summary>
