@@ -858,16 +858,31 @@ function writeInstancedPoints(mesh, points) {
   mesh.instanceMatrix.needsUpdate = true;
 }
 
-// The lift that keeps the net clear of the shell drawn over it, one value
-// per instanced mesh because the two carry different radii (the full
-// diagnosis is in applySceneAtTime, where it is applied to the finished
-// net). The act's net rides the same lift, so the handover moves nothing.
+// Where the net is DRAWN, against the analysis mid-surface it is solved
+// on. The vault is cast on the formwork, so the mould's face is the
+// vault's intrados: the net hangs half the built thickness below the
+// mid-surface, plus its own radius, which puts the tubes just under the
+// face the first course lands on. Each object still clears by its OWN
+// radius, which is why there are two values.
+//
+// This used to be a LIFT of the same size. It was written to cure the
+// crown seam (the net breaking through the extrados at the shallow crown)
+// and it did, but by drawing the whole vault hanging underneath its own
+// formwork -- half a thickness the wrong way. Hanging the net below cures
+// the same seam by the same margin and reads the way the thing is built.
+// It also agrees with the falsework ghost, which has always sat at
+// -(thickness / 2) - 0.05 (see applySceneAtTime).
+//
+// Same approximation as before: the shift is along +Z rather than the
+// local normal, so it is exact where the surface is shallow -- the crown,
+// where the seam showed -- and approximate near a steep springing, where
+// the net was already comfortably inside the shell either way.
 function netClearance() {
   const thickness = state.bundle && state.bundle.provenance
     ? state.bundle.provenance.thickness : 0;
   return {
-    wires: thickness / 2 + state.wireRadius,
-    nodes: thickness / 2 + state.nodeRadius,
+    wires: -(thickness / 2 + state.wireRadius),
+    nodes: -(thickness / 2 + state.nodeRadius),
   };
 }
 
@@ -3472,8 +3487,11 @@ function rebuildFormworkObjects() {
     const radius = columnRadius();
     const cylinder = new THREE.CylinderGeometry(radius, radius, 1, 8, 1, true);
     cylinder.translate(0, 0.5, 0);
-    const bars = new THREE.InstancedMesh(
-      cylinder, materials.steel.clone(), members.length);
+    const barMaterial = materials.steel.clone();
+    // Transparent so the columns can fade out with the rest of the machine
+    // on the strike, the same way the finished net's material does.
+    barMaterial.transparent = true;
+    const bars = new THREE.InstancedMesh(cylinder, barMaterial, members.length);
     // Columns are structure: they cast and receive shadows exactly as the
     // exported solids do in loadColumns, which is half of looking the same.
     bars.castShadow = bars.receiveShadow = true;
@@ -3501,15 +3519,16 @@ function rebuildFormworkObjects() {
 // else on this clock. The net follows the interpolated frame and then
 // yields to the finished instanced wires at act end: its final pose IS
 // theirs by the writer's time-100 guarantee, and now its drawing is theirs
-// too, so the handover is invisible. The columns are not falsework -- the
-// machine raises them and they stand for the rest of the build, through
-// the strike that takes the net away. formworkVisibility (fields.js) owns
-// those rules and is tested on its own; this function only applies them.
-function applyFormworkAct(t) {
+// too, so the handover is invisible. The columns are the machine's other
+// half: raised with the net, standing through the build while the vault is
+// cast on it, and taken away with the formwork on the strike, on the same
+// fade and the same drop. formworkVisibility (fields.js) owns those rules
+// and is tested on its own; this function only applies them.
+function applyFormworkAct(t, strikeU) {
   const doc = state.formwork;
   const seconds = formworkSeconds();
   const show = formworkVisibility({
-    t, seconds, showMode: state.showMode,
+    t, seconds, strikeU, showMode: state.showMode,
     hasMembers: !!(formworkObjects && formworkObjects.members),
     hasColumnMesh: !!state.objects.columns,
   });
@@ -3537,10 +3556,18 @@ function applyFormworkAct(t) {
     }
   }
   if (formworkObjects.members) {
-    formworkObjects.members.visible = show.members;
+    const bars = formworkObjects.members;
+    bars.visible = show.members;
     if (show.members) {
-      writeInstancedSegments(
-        formworkObjects.members, doc.columns.members, frame.columnNodes);
+      writeInstancedSegments(bars, doc.columns.members, frame.columnNodes);
+      // The column heads meet the net at the net's own nodes, so they
+      // carry the net's display shift or the joint that holds the whole
+      // machine together comes apart by half a thickness. The feet go the
+      // same distance under the ground plane, where nothing sees them.
+      // Then the strike: the same fade and the same 1.5 m drop the net
+      // takes in applySceneAtTime, because it is one machine leaving.
+      bars.material.opacity = 1 - strikeU;
+      bars.position.z = lift.wires - 1.5 * strikeU;
     }
   }
 }
@@ -3678,7 +3705,7 @@ function applySceneAtTime(t) {
   // unconditionally left the last frame's emissive tint stuck on the shell
   // after switching Show mode away from Timeline; applyShowMode's own
   // sweep, below, clears that residue on entry to the other three modes.
-  applyFormworkAct(t);
+  applyFormworkAct(t, strikeU);
   if (state.showMode === "timeline") applyPulse(build);
   applyShowMode();
 }

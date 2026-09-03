@@ -1801,16 +1801,22 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
     # growing Node size alone could push the white dots back through the
     # shell: the exact reported symptom. Each object now clears by its own
     # radius, both sites.
-    # Re-pinned 2026-09-04: the same two expressions, now written once in
-    # netClearance() and read by all three callers. The third caller is the
-    # formwork act, whose raising net has to ride the SAME lift as the
-    # finished net or the handover at the end of the act jumps by the
-    # clearance. Each object still clears by its OWN radius, which is the
-    # invariant this test exists for.
+    # Re-pinned 2026-09-04, twice. First: the same two expressions moved
+    # into netClearance(), read by all three callers, the third being the
+    # formwork act, whose raising net has to sit exactly where the finished
+    # net sits or the handover at the end of the act jumps. Second, and the
+    # reason for the minus signs: the offset was a LIFT, which cured this
+    # seam by drawing the whole vault hanging underneath its own formwork.
+    # The net is the mould, so it hangs BELOW the surface it is solved on
+    # and the vault is cast on top of it. The seam is cured by the same
+    # margin, from the other side, and the placement now agrees with the
+    # falsework ghost, which has always sat at -(thickness / 2) - 0.05.
+    # Each object still clears by its OWN radius, which is the invariant
+    # this test exists for.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     clearance_body = _function_body(js, "netClearance")
-    assert "wires: thickness / 2 + state.wireRadius," in clearance_body
-    assert "nodes: thickness / 2 + state.nodeRadius," in clearance_body
+    assert "wires: -(thickness / 2 + state.wireRadius)," in clearance_body
+    assert "nodes: -(thickness / 2 + state.nodeRadius)," in clearance_body
     show_body = _function_body(js, "applyShowMode")
     assert "clearance.wires" in show_body and "clearance.nodes" in show_body
     assert "netClearance()" in show_body

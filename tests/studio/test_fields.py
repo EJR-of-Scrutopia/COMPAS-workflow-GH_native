@@ -285,7 +285,10 @@ VISIBILITY_CHECK = textwrap.dedent("""
     expect(near(machineTime(-3, 12), 0), "before the start is the start");
     expect(near(machineTime(5, 0), 100), "no act reads as finished, never a divide by zero");
 
-    const act = { seconds: 12, showMode: "timeline", hasMembers: true, hasColumnMesh: true };
+    const act = {
+      seconds: 12, showMode: "timeline", strikeU: 0,
+      hasMembers: true, hasColumnMesh: true,
+    };
 
     // Mid-raise: the net is up, the columns ARE the animated members, and
     // the exported solids stay off so the two never draw over each other.
@@ -301,10 +304,30 @@ VISIBILITY_CHECK = textwrap.dedent("""
     expect(handover.members === true && handover.group === true,
       "the columns stand through the handover");
 
-    // Deep into the build, long after the strike has taken the net away.
-    const struck = formworkVisibility({ ...act, t: 400 });
-    expect(struck.members === true, "the columns stay for the whole process");
-    expect(struck.columnMesh === false, "and still only one drawing of them");
+    // Deep into the build, before the strike: the columns stand while the
+    // vault is cast on the net they hold up.
+    const standing = formworkVisibility({ ...act, t: 400 });
+    expect(standing.members === true, "the columns stand through the build");
+    expect(standing.columnMesh === false, "and still only one drawing of them");
+
+    // Mid-strike the machine is still leaving, so it is still on screen,
+    // fading and dropping with the net.
+    const leaving = formworkVisibility({ ...act, t: 400, strikeU: 0.5 });
+    expect(leaving.members === true, "half struck is still on screen");
+
+    // Struck: the machine has gone and the vault stands on its own.
+    const gone = formworkVisibility({ ...act, t: 400, strikeU: 1 });
+    expect(gone.members === false, "the columns leave with the formwork");
+    expect(gone.columnMesh === false,
+      "and the exported solids do not walk back on in their place");
+    expect(gone.group === false, "nothing of the machine is left behind");
+
+    // The same, for a study whose columns are only ever the exported
+    // solids: they are the machine's columns too, and they leave with it.
+    const goneNoMembers = formworkVisibility({
+      ...act, t: 400, strikeU: 1, hasMembers: false,
+    });
+    expect(goneNoMembers.columnMesh === false, "one machine, one exit");
 
     // Frames but no column members: the exported solids are the only
     // columns there are, so they draw.
@@ -330,10 +353,11 @@ VISIBILITY_CHECK = textwrap.dedent("""
 @needs_node
 def test_formwork_visibility_keeps_the_columns_and_one_drawing_of_them(tmp_path):
     """Param's two rules for the act, pinned where scene code cannot quietly
-    lose them: the columns are structure, so they stand for the whole build
-    and no strike touches them; and exactly one drawing of them is on screen,
-    because the animated members and the exported solids are the same tubes
-    at the same radius and coincident surfaces z-fight."""
+    lose them: the columns belong to the machine, so they are raised with the
+    net, stand through the build, and leave with the formwork on the strike;
+    and exactly one drawing of them is on screen at a time, because the
+    animated members and the exported solids are the same tubes at the same
+    radius and coincident surfaces z-fight."""
 
     script = tmp_path / "check_visibility.mjs"
     script.write_text(

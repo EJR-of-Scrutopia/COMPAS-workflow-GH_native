@@ -303,9 +303,10 @@ export function machineTime(t, seconds) {
 // three.js, because it carries two rules that are easy to break by
 // accident while editing scene code:
 //
-//   1. The columns are structure, not falsework. The machine raises them
-//      and they STAND for the rest of the build, through the strike that
-//      takes the net away. Nothing here reads the strike.
+//   1. The columns are part of the machine. They are raised with the net,
+//      they stand through the build while the vault is cast on it, and
+//      they go with the formwork on the strike -- the whole machine
+//      leaves together and the vault is left standing on its own.
 //   2. Exactly one drawing of the columns is ever on screen. The animated
 //      members and the exported solids are the same tubes at the same
 //      radius, so drawn together they z-fight; the members carry the
@@ -314,17 +315,23 @@ export function machineTime(t, seconds) {
 // The net is the third actor: it follows the frames until the act ends and
 // then yields to the finished instanced wires, whose pose at that instant
 // is identical by the writer's time-100 guarantee.
-export function formworkVisibility({ t, seconds, showMode, hasMembers, hasColumnMesh }) {
+export function formworkVisibility({
+  t, seconds, showMode, strikeU, hasMembers, hasColumnMesh,
+}) {
   const act = seconds > 0 && showMode === "timeline";
   if (!act) {
     return { group: false, net: false, members: false, columnMesh: !!hasColumnMesh };
   }
+  const standing = !(strikeU >= 1);
   const net = t < seconds;
-  const members = !!hasMembers;
+  const members = !!hasMembers && standing;
   return {
     group: net || members,
     net,
     members,
-    columnMesh: !!hasColumnMesh && !members,
+    // hasMembers, not members: once the strike has taken the animated
+    // columns away the exported solids must not walk back on in their
+    // place. They are the same columns, and the machine has left.
+    columnMesh: !!hasColumnMesh && !hasMembers && standing,
   };
 }
