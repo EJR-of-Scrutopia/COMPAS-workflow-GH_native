@@ -1120,6 +1120,28 @@ internal static class Program
 
         try
         {
+            ValidateSkinForceAligned(plugin);
+            Console.WriteLine(
+                "PASS  Skin force-aligned pattern (checks 12.3(b) to " +
+                "12.3(e)): every head joint of every cell lies on an " +
+                "accepted STREAMLINE and every bed edge on a traced LEVEL " +
+                "CURVE to within S / 100; the max-over-min piece length is " +
+                "at or under 2.5; no pair of vertically adjacent cells " +
+                "shares a joint pair, so the bond is a running bond; and a " +
+                "converging dome answers with odd-sided cells rather than " +
+                "with a hole. And the scale parameter DILATES rather than " +
+                "re-seeds: doubling S leaves the contour family standing " +
+                "point for point and roughly doubles the piece, while it " +
+                "is the contour spacing that halves the course count.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin force-aligned pattern: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidatePrincipalLineSnapping(plugin);
             Console.WriteLine(
                 "PASS  MouldGeometry.SnapSampledLineToNodes: a line drawn down the "
@@ -16341,6 +16363,35 @@ internal static class Program
         return forces.ToArray();
     }
 
+    /// <summary>
+    /// The barrel again, with the thrust running ACROSS it instead of along
+    /// it: every edge between (i, j) and (i, j + 1), which runs eave to eave
+    /// over the arch, carries a compression of 1 kN, and every edge along
+    /// the generators carries 0.1 kN. That is what a barrel vault actually
+    /// does, and check 12.3(b) needs it, MEASURED: under check 12.3(a)'s own
+    /// force list the field lies along the generators, the rim is both
+    /// eaves, so the bed curves lie along the generators too, and every
+    /// streamline then runs exactly PARALLEL to every bed and crosses none
+    /// of them. The pattern came back with 42 accepted lines, every one of
+    /// them a straight run at constant y, and ZERO cells. See the
+    /// "## Deviations" entry against Task 26.
+    /// </summary>
+    private static (int A, int B, double Force)[] SkinBarrelArchForces()
+    {
+        var forces = new List<(int, int, double)>();
+        for (int j = 0; j <= 4; j++)
+        {
+            for (int i = 0; i < 6; i++)
+                forces.Add((j * 7 + i, j * 7 + i + 1, 0.1));
+        }
+        for (int j = 0; j < 4; j++)
+        {
+            for (int i = 0; i <= 6; i++)
+                forces.Add((j * 7 + i, (j + 1) * 7 + i, 1.0));
+        }
+        return forces.ToArray();
+    }
+
     /// <summary>The dome's rim: ring 0, the eight base vertices.</summary>
     private static int[] SkinDomeRim() =>
         new[] { 0, 1, 2, 3, 4, 5, 6, 7 };
@@ -17992,6 +18043,45 @@ internal static class Program
                 (bool)type.GetProperty("Cap")!.GetValue(cell)!));
         }
         return read.ToArray();
+    }
+
+    /// <summary>The smallest distance from a point to a polyline, in THREE
+    /// dimensions, taken over the polyline's own segments: a bed and a
+    /// streamline both lie on the surface, so a plan-only distance would
+    /// read zero across a fold. Check 12.3(b)'s only measuring
+    /// instrument.</summary>
+    private static double PolylineDistance(double[] point, double[][] line)
+    {
+        if (line.Length == 0)
+            return double.PositiveInfinity;
+        if (line.Length == 1)
+        {
+            return Math.Sqrt(
+                (point[0] - line[0][0]) * (point[0] - line[0][0]) +
+                (point[1] - line[0][1]) * (point[1] - line[0][1]) +
+                (point[2] - line[0][2]) * (point[2] - line[0][2]));
+        }
+        double best = double.PositiveInfinity;
+        for (int at = 0; at + 1 < line.Length; at++)
+        {
+            double[] a = line[at];
+            double[] b = line[at + 1];
+            double dx = b[0] - a[0];
+            double dy = b[1] - a[1];
+            double dz = b[2] - a[2];
+            double lengthSquared = dx * dx + dy * dy + dz * dz;
+            double t = lengthSquared > 1.0e-18
+                ? ((point[0] - a[0]) * dx +
+                   (point[1] - a[1]) * dy +
+                   (point[2] - a[2]) * dz) / lengthSquared
+                : 0.0;
+            t = Math.Min(Math.Max(t, 0.0), 1.0);
+            double qx = a[0] + dx * t - point[0];
+            double qy = a[1] + dy * t - point[1];
+            double qz = a[2] + dz * t - point[2];
+            best = Math.Min(best, Math.Sqrt(qx * qx + qy * qy + qz * qz));
+        }
+        return best;
     }
 
     /// <summary>Rule 4.2's SETOUT corner count per cell, read off the
@@ -22834,6 +22924,277 @@ internal static class Program
                     "1.0, so a fixed default is never discounted as a " +
                     $"contested vote; face {face} got {coherence}.");
             }
+        }
+    }
+
+    /// <summary>
+    /// The force-aligned pattern (spec section 3), checks 12.3(b) to
+    /// 12.3(e).
+    /// </summary>
+    private static void ValidateSkinForceAligned(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        // The brief's own name-only lookup, RequirePublicStatic(patterns,
+        // "ForceAligned"), throws AmbiguousMatchException the moment the
+        // brief's OWN three-argument overload exists beside the four; it is
+        // the same trap Task 20 hit on Courses and fixed across fourteen
+        // sites. Measured, not reasoned: "Ambiguous match found for
+        // '...ForceAligned(SkinNet, Double, Double)'".
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned",
+            netType, typeof(double), typeof(double), typeof(double));
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinBarrelRim(),
+            SkinBarrelArchForces());
+        object built = forceAligned.Invoke(
+            null, new object[] { net, 0.6, 0.5, 1.0 / 3.0 })!;
+        var cells = SkinCells(built);
+        if (cells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The force-aligned pattern is NATIVE and synchronous like " +
+                "the other two (rule 3.2.4); it must build cells on a " +
+                "force-bearing barrel.");
+        }
+
+        // 12.3(b): EVERY HEAD JOINT OF EVERY CELL LIES ON A STREAMLINE, and
+        // every bed edge lies on a level curve. This is the property the
+        // pattern exists for and the one that would silently not hold: the
+        // ratio, the bond and the odd cells can all be right on a pattern
+        // whose joints have quietly drifted off the flow. The tolerance is
+        // stated and it is ONE HUNDREDTH OF A PIECE, S / 100 = 6 mm at the
+        // sizes this check runs at, which is far under the setout accuracy
+        // any of this is built to and far over the tracer's own rounding.
+        const double onStreamline = 0.6 / 100.0;
+        MethodInfo acceptedLines = RequirePublicStatic(
+            patterns, "ForceAlignedLines");
+        MethodInfo acceptedBeds = RequirePublicStatic(
+            patterns, "ForceAlignedBeds");
+        void RequireJointsOnFlow(object generated, string label)
+        {
+            double[][][] flow = (double[][][])acceptedLines.Invoke(
+                null, new[] { generated })!;
+            double[][][] beds = (double[][][])acceptedBeds.Invoke(
+                null, new[] { generated })!;
+            foreach (object cell in (IList)generated.GetType()
+                         .GetProperty("Cells")!.GetValue(generated)!)
+            {
+                if (Reading<bool>(cell, "Cap"))
+                    continue;
+                IList sections = (IList)cell.GetType()
+                    .GetProperty("Sections")!.GetValue(cell)!;
+                // A force-aligned cell carries four chains: the lower bed
+                // run, the upper streamline segment, the upper bed run and
+                // the lower streamline segment, in that order (rule 3.3.6).
+                double[][] lowerBed = ((IList)sections[0]!).Cast<double[]>().ToArray();
+                double[][] upFlow = ((IList)sections[1]!).Cast<double[]>().ToArray();
+                double[][] upperBed = ((IList)sections[2]!).Cast<double[]>().ToArray();
+                double[][] downFlow = ((IList)sections[3]!).Cast<double[]>().ToArray();
+                foreach ((double[][] chain, double[][][] family, string what) in
+                         new[]
+                         {
+                             (upFlow, flow, "head joint"),
+                             (downFlow, flow, "head joint"),
+                             (lowerBed, beds, "bed edge"),
+                             (upperBed, beds, "bed edge")
+                         })
+                {
+                    foreach (double[] sample in chain)
+                    {
+                        double nearest = family.Min(
+                            line => PolylineDistance(sample, line));
+                        if (nearest > onStreamline)
+                        {
+                            throw new InvalidOperationException(
+                                $"On the {label} a {what} sample stands " +
+                                $"{nearest:F5} m from the nearest accepted " +
+                                (what == "head joint" ? "STREAMLINE" : "LEVEL CURVE") +
+                                $", against a stated tolerance of {onStreamline:F5} m " +
+                                "(check 12.3(b)). Every head joint of every " +
+                                "cell lies on a streamline and every bed " +
+                                "edge lies on a level curve; that is the " +
+                                "property the pattern exists for and the one " +
+                                "that would silently not hold.");
+                        }
+                    }
+                }
+            }
+        }
+        RequireJointsOnFlow(built, "force-bearing barrel");
+
+        // 12.3(d): UNIFORMITY. Max piece length over min is at or under 2.5,
+        // measured over the non-Cap cells by rule 2.3.2a, against the 0.377
+        // to 3.889 ratio of over 10 his screenshot recorded. The bar is 2.5
+        // and not 3 because the construction's own bound IS 3 and a check
+        // set at its own bound cannot fail meaningfully: rules 3.3.3 and
+        // 3.3.4 hold a gap between 0.5 P_k and 1.5 P_k and a piece is two
+        // gaps, so a piece lies between P_k and 3 P_k.
+        double[] spans = cells
+            .Where(cell => !cell.Cap)
+            .Select(cell => cell.U1 - cell.U0)
+            .ToArray();
+        double ratio = spans.Max() / spans.Min();
+        Console.WriteLine(
+            "      Skin force-aligned uniformity (check 12.3(d)): piece " +
+            $"{spans.Min():F3} m to {spans.Max():F3} m, ratio " +
+            $"{ratio:F2}.");
+        if (ratio > 2.5)
+        {
+            throw new InvalidOperationException(
+                "A pattern whose min and max piece lengths read 0.377 m " +
+                "against 3.889 m fails the fourth property of section 3.4 " +
+                "and must be visible as failing it; the ratio is " +
+                $"{ratio}. Where a fixture measures between 2.5 and 3, " +
+                "re-pin the bar as a measurement with the reason written " +
+                "beside it rather than bending the engine to reach it.");
+        }
+
+        // 12.3(c): BOND. For every pair of vertically adjacent cells the
+        // head joints of the upper do not coincide with those of the lower,
+        // to within a tenth of a piece. That pins rule 3.3.4's parity, which
+        // is anchored on the STREAMLINE and never on a bed's crossing index.
+        foreach (var lower in cells.Where(cell => !cell.Cap))
+        {
+            foreach (var upper in cells.Where(cell =>
+                         cell.Course == lower.Course + 1 && !cell.Cap))
+            {
+                double tolerance = (lower.U1 - lower.U0) / 10.0;
+                if (Math.Abs(upper.U0 - lower.U0) < tolerance &&
+                    Math.Abs(upper.U1 - lower.U1) < tolerance)
+                {
+                    throw new InvalidOperationException(
+                        "Course r takes as its head joints the crossings of " +
+                        "the lines whose parity is r mod 2, so no head " +
+                        "joint runs through two consecutive courses and no " +
+                        "joint becomes a crack line up the form (rule " +
+                        $"3.3.4); courses {lower.Course} and " +
+                        $"{upper.Course} share a joint pair.");
+                }
+            }
+        }
+
+        // 12.3(e): INSERTION AND TERMINATION. A fanning fixture whose rows
+        // lengthen produces at least one insertion and a converging one at
+        // least one termination, each producing exactly one odd-sided cell,
+        // each counted in skin.odd_cells.
+        (double[][] domeVertices, int[][] domeFaces, int[] domeRim) =
+            SkinFineDomeNet();
+        object dome = SkinNetWith(
+            netType, edgeType, domeVertices, domeFaces, domeRim,
+            Array.Empty<(int, int, double)>());
+        object domeBuilt = forceAligned.Invoke(
+            null, new object[] { dome, 0.6, 0.35, 1.0 / 3.0 })!;
+        if (Reading<int>(domeBuilt, "FiveSidedCells") +
+            Reading<int>(domeBuilt, "SevenSidedCells") == 0)
+        {
+            throw new InvalidOperationException(
+                "A converging dome must TERMINATE lines, and a cell gains " +
+                "or loses a side only where a line begins or ends within " +
+                "its own band (rule 3.3.5). Those cells are the pattern's " +
+                "honest response to a flow that converges, and refusing " +
+                "them would put a hole where a mason puts a closer.");
+        }
+        RequireJointsOnFlow(domeBuilt, "fine dome");
+
+        // PARAM'S MID-PHASE INPUT, from the Armadillo Vault tessellation
+        // figures: the scale parameter DILATES the contour family and does
+        // NOT re-seed or re-jitter the pattern into a different-looking
+        // tessellation, which is the "chaotic when i choose different sizes"
+        // complaint from his original review.
+        //
+        // The input's literal sentence, "doubling S on the same net roughly
+        // halves the course count", was tried first and MEASURED FALSE on
+        // the honest engine: 6 courses at S 0.6 and 6 at S 1.2, because a
+        // course count is BandCount(dMin, dMax, CH) and S is nowhere in it.
+        // The two spacings are separate ports here (rule 9.1), so it is CH
+        // that moves the contours apart and S that sets the head-joint pitch
+        // at S / 2. The three bars below are that sentence's true form on
+        // these ports, and together they are the whole of what the input
+        // asks for. See the "## Deviations" entry against Task 26.
+        object doubledSize = forceAligned.Invoke(
+            null, new object[] { net, 1.2, 0.5, 1.0 / 3.0 })!;
+        object doubledHeight = forceAligned.Invoke(
+            null, new object[] { net, 0.6, 1.0, 1.0 / 3.0 })!;
+
+        // 1. THE CONTOUR FAMILY IS INVARIANT UNDER S. The beds at S 1.2 are
+        // the SAME curves as at S 0.6, point for point: growing the piece
+        // size cannot move, re-seed or re-jitter the family the pieces are
+        // set out on.
+        double[][][] bedsAtOne = (double[][][])acceptedBeds.Invoke(
+            null, new[] { built })!;
+        double[][][] bedsAtTwo = (double[][][])acceptedBeds.Invoke(
+            null, new[] { doubledSize })!;
+        if (bedsAtOne.Length != bedsAtTwo.Length)
+        {
+            throw new InvalidOperationException(
+                "Doubling S must not change the CONTOUR FAMILY the pieces " +
+                "sit on: the dual's edges follow the force-flow contours " +
+                "and its scale parameter dilates the pieces, it does not " +
+                $"re-seed the family. Got {bedsAtOne.Length} bed curves at " +
+                $"S 0.6 and {bedsAtTwo.Length} at S 1.2.");
+        }
+        for (int at = 0; at < bedsAtOne.Length; at++)
+        {
+            if (bedsAtOne[at].Length != bedsAtTwo[at].Length)
+            {
+                throw new InvalidOperationException(
+                    $"Bed curve {at} came back with " +
+                    $"{bedsAtOne[at].Length} points at S 0.6 and " +
+                    $"{bedsAtTwo[at].Length} at S 1.2; the contour family " +
+                    "is the same family at either size.");
+            }
+            for (int point = 0; point < bedsAtOne[at].Length; point++)
+            {
+                double moved = PolylineDistance(
+                    bedsAtOne[at][point], new[] { bedsAtTwo[at][point] });
+                if (moved > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        $"Bed curve {at} point {point} moved {moved} m when " +
+                        "S alone was doubled. The contours are the setout " +
+                        "and they hold still; only the pieces laid along " +
+                        "them grow.");
+                }
+            }
+        }
+
+        // 2. THE PIECES GROW WITH S, in the along-course direction, because
+        // the head joints follow S / 2. Half the ratio S takes, not a
+        // constant: a bed of a given length rounds to a whole number of
+        // half-pitches at either size.
+        double meanAtOne = cells.Where(cell => !cell.Cap)
+            .Average(cell => cell.U1 - cell.U0);
+        double meanAtTwo = SkinCells(doubledSize).Where(cell => !cell.Cap)
+            .Average(cell => cell.U1 - cell.U0);
+        Console.WriteLine(
+            "      Skin force-aligned scaling: mean piece " +
+            $"{meanAtOne:F3} m at S 0.6 and {meanAtTwo:F3} m at S 1.2, " +
+            $"{Reading<int>(built, "CourseCount")} courses at CH 0.5 and " +
+            $"{Reading<int>(doubledHeight, "CourseCount")} at CH 1.0.");
+        if (meanAtTwo < 1.6 * meanAtOne || meanAtTwo > 2.4 * meanAtOne)
+        {
+            throw new InvalidOperationException(
+                "When S grows the PIECES grow with it, roughly in " +
+                "proportion, because rule 3.3.1 seeds the head joints at " +
+                $"S / 2; the mean piece went {meanAtOne} m to {meanAtTwo} " +
+                "m, which is not roughly a doubling.");
+        }
+
+        // 3. AND THE CONTOURS DO MOVE APART when the parameter that spaces
+        // them moves. This is the input's own sentence with CH in S's place,
+        // which is where this engine's ports actually put it.
+        int atHalf = Reading<int>(built, "CourseCount");
+        int atWhole = Reading<int>(doubledHeight, "CourseCount");
+        if (atWhole > atHalf / 2 + 1 || atWhole < atHalf / 2 - 1)
+        {
+            throw new InvalidOperationException(
+                "Doubling the contour spacing roughly halves the course " +
+                $"count: got {atHalf} courses at CH 0.5 and {atWhole} at " +
+                "CH 1.0. The bands ARE the setout and their spacing is the " +
+                "one thing that widens a course.");
         }
     }
 

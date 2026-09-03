@@ -280,4 +280,196 @@ internal static class SkinFlowField
         }
         return read;
     }
+
+    /// <summary>
+    /// Rule 3.2.10. ADVECTION IS A FACE-EXIT WALK AND NOT A FIXED STEP, so
+    /// there is no step length to choose and none is specified. From a point
+    /// inside a face, take that face's own field direction, project it into
+    /// the face's plane, normalise, cast the ray from the point along it,
+    /// and find where it EXITS the triangle. That exit point is the next
+    /// polyline point and the face across the exited edge is the next face.
+    /// A streamline therefore carries exactly one point per face crossed,
+    /// which is the same discipline Run keeps for a level curve.
+    ///
+    /// The sign ambiguity a line field carries is resolved by CONTINUATION:
+    /// the next face's direction is negated where its dot product with the
+    /// direction just used is negative, and the very first face takes an
+    /// orientation hint.
+    ///
+    /// TERMINATION (rule 3.2.11): a mesh boundary edge, a field that
+    /// projects to nothing, 20000 steps, or coming within the termination
+    /// radius of an already-accepted line, measured point to SEGMENT against
+    /// the accepted lines resampled at the same radius.
+    /// </summary>
+    public static double[][] Streamline(
+        SkinNet net,
+        IReadOnlyList<double[]> directions,
+        IReadOnlyList<int>[] neighbours,
+        double[] from,
+        int face,
+        double[] hint,
+        double clearance,
+        IReadOnlyList<double[][]> accepted)
+    {
+        var line = new List<double[]> { from };
+        double[] previous = hint;
+        double[] at = from;
+        int current = face;
+        for (int step = 0; step < 20000; step++)
+        {
+            double[] direction = directions[current];
+            double dot =
+                direction[0] * previous[0] +
+                direction[1] * previous[1] +
+                direction[2] * previous[2];
+            if (dot < 0.0)
+                direction = new[]
+                    { -direction[0], -direction[1], -direction[2] };
+            if (Length(direction) <= 1.0e-12)
+                break;
+            (double[]? exit, int through) = ExitOf(net, current, at, direction);
+            if (exit is null)
+                break;
+            line.Add(exit);
+            if (TooClose(exit, accepted, clearance))
+                break;
+            int next = -1;
+            foreach (int candidate in neighbours[current])
+            {
+                if (candidate != current && SharesEdge(
+                        net, candidate, net.Faces[current], through))
+                {
+                    next = candidate;
+                    break;
+                }
+            }
+            if (next < 0)
+                break;
+            previous = direction;
+            at = exit;
+            current = next;
+        }
+        return line.ToArray();
+    }
+
+    /// <summary>Where a ray from a point inside a triangle, along a
+    /// direction lying in its plane, leaves it: the exit point and the index
+    /// of the exited edge within the face.</summary>
+    private static (double[]? Exit, int Edge) ExitOf(
+        SkinNet net,
+        int face,
+        double[] from,
+        double[] direction)
+    {
+        int[] triangle = net.Faces[face];
+        (double[] e1, double[] e2, double[] _) = Basis(net, triangle);
+        (double px, double py) = Project(
+            new[]
+            {
+                from[0] - net.Vertices[triangle[0]][0],
+                from[1] - net.Vertices[triangle[0]][1],
+                from[2] - net.Vertices[triangle[0]][2]
+            },
+            e1, e2);
+        (double dx, double dy) = Project(direction, e1, e2);
+        double best = double.PositiveInfinity;
+        int bestEdge = -1;
+        for (int corner = 0; corner < 3; corner++)
+        {
+            double[] a = net.Vertices[triangle[corner]];
+            double[] b = net.Vertices[triangle[(corner + 1) % 3]];
+            (double ax, double ay) = Project(
+                new[]
+                {
+                    a[0] - net.Vertices[triangle[0]][0],
+                    a[1] - net.Vertices[triangle[0]][1],
+                    a[2] - net.Vertices[triangle[0]][2]
+                },
+                e1, e2);
+            (double bx, double by) = Project(
+                new[]
+                {
+                    b[0] - net.Vertices[triangle[0]][0],
+                    b[1] - net.Vertices[triangle[0]][1],
+                    b[2] - net.Vertices[triangle[0]][2]
+                },
+                e1, e2);
+            double ex = bx - ax;
+            double ey = by - ay;
+            double denominator = dx * ey - dy * ex;
+            if (Math.Abs(denominator) <= 1.0e-15)
+                continue;
+            double t = ((ax - px) * ey - (ay - py) * ex) / denominator;
+            double s = ((ax - px) * dy - (ay - py) * dx) / denominator;
+            if (t <= 1.0e-12 || s < -1.0e-9 || s > 1.0 + 1.0e-9)
+                continue;
+            if (t < best)
+            {
+                best = t;
+                bestEdge = corner;
+            }
+        }
+        if (bestEdge < 0)
+            return (null, -1);
+        return (
+            new[]
+            {
+                from[0] + direction[0] * best,
+                from[1] + direction[1] * best,
+                from[2] + direction[2] * best
+            },
+            bestEdge);
+    }
+
+    private static bool SharesEdge(
+        SkinNet net,
+        int candidate,
+        int[] face,
+        int edge)
+    {
+        int a = face[edge];
+        int b = face[(edge + 1) % 3];
+        int[] other = net.Faces[candidate];
+        bool hasA = false;
+        bool hasB = false;
+        foreach (int corner in other)
+        {
+            if (corner == a)
+                hasA = true;
+            if (corner == b)
+                hasB = true;
+        }
+        return hasA && hasB;
+    }
+
+    private static bool TooClose(
+        double[] point,
+        IReadOnlyList<double[][]> accepted,
+        double clearance)
+    {
+        foreach (double[][] line in accepted)
+        {
+            for (int at = 0; at + 1 < line.Length; at++)
+            {
+                double[] a = line[at];
+                double[] b = line[at + 1];
+                double dx = b[0] - a[0];
+                double dy = b[1] - a[1];
+                double dz = b[2] - a[2];
+                double lengthSquared = dx * dx + dy * dy + dz * dz;
+                double t = lengthSquared > 1.0e-18
+                    ? ((point[0] - a[0]) * dx +
+                       (point[1] - a[1]) * dy +
+                       (point[2] - a[2]) * dz) / lengthSquared
+                    : 0.0;
+                t = Math.Min(Math.Max(t, 0.0), 1.0);
+                double qx = a[0] + dx * t - point[0];
+                double qy = a[1] + dy * t - point[1];
+                double qz = a[2] + dz * t - point[2];
+                if (Math.Sqrt(qx * qx + qy * qy + qz * qz) < clearance)
+                    return true;
+            }
+        }
+        return false;
+    }
 }

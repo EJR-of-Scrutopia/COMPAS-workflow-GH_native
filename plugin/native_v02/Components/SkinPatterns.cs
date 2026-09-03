@@ -140,6 +140,15 @@ internal sealed class SkinLevelCurve
 /// the course band, whether the boundary clipped it, and the setout span
 /// [U0, U1] along the course direction, seam-relative, which is what the
 /// harness measures the pitch, the phase and the stagger on.
+///
+/// SECTIONS is the outline broken into its own named chains, in the order
+/// the engine laid them: for a force-aligned cell the lower bed run, the
+/// upward streamline segment, the upper bed run and the downward streamline
+/// segment (rule 3.3.6). Check 12.3(b) measures each chain against the
+/// family it is meant to lie on, which cannot be done on a single flattened
+/// ring, and Task 29's Brep route builds its edges from the same chains. It
+/// is null on a pattern that has not filled it and on a cap, which the
+/// component fans instead.
 /// </summary>
 internal sealed record SkinCell(
     int Course,
@@ -148,7 +157,8 @@ internal sealed record SkinCell(
     double U0,
     double U1,
     bool Cap = false,
-    int SetoutCorners = 0);
+    int SetoutCorners = 0,
+    IReadOnlyList<IReadOnlyList<double[]>>? Sections = null);
 
 /// <summary>One generated pattern. The cells sorted by course then by
 /// rule 7.1's seam-outward order, the band count, the readable diagnostics
@@ -164,6 +174,12 @@ internal sealed record SkinCell(
 /// where it did not; CapWedgeCounts carries that cap's W, zero where it was
 /// not split; and CapsOversized counts the caps rule 2.6.6 emitted whole
 /// above the maximum.
+///
+/// FLOWLINES and BEDCURVES are the force-aligned pattern's own ACCEPTED
+/// streamlines and its TRACED beds, kept on the record because check 12.3(b)
+/// cannot be taken without them: a check that re-derived the streamlines in
+/// the harness would be comparing the engine with a second engine. They are
+/// empty on the other two patterns and on Empty.
 ///
 /// The three piece lengths are DERIVED from the surviving cells and need no
 /// member, excluding Cap cells by rule 2.3.2a. skin.surface_failed is
@@ -195,7 +211,9 @@ internal sealed record SkinPatternResult(
     int ExtraLevels,
     int TracePasses,
     int MergedShortKept,
-    int MergedStillShort);
+    int MergedStillShort,
+    IReadOnlyList<double[][]> FlowLines,
+    IReadOnlyList<double[][]> BedCurves);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -3102,8 +3120,722 @@ internal static class SkinPatterns
             resolved.ExtraLevels,
             resolved.Passes,
             mergedShortKept,
-            mergedStillShort);
+            mergedStillShort,
+            Array.Empty<double[][]>(),
+            Array.Empty<double[][]>());
     }
+
+    // ---- pattern 2: force aligned (spec section 3) ----------------------
+
+    public static SkinPatternResult ForceAligned(
+        SkinNet net,
+        double size,
+        double courseHeight) =>
+        ForceAligned(net, size, courseHeight, 1.0 / 3.0);
+
+    /// <summary>
+    /// Pattern 2, native (spec section 3). Its BED joints are the SAME
+    /// curves pattern 0 uses, level sets of the rim-distance field at
+    /// spacing CH: they are continuous, they run across the thrust, and the
+    /// thrust closes them rather than sliding along them. Its HEAD joints
+    /// are STREAMLINES of the line field, and every head joint of every cell
+    /// lies on one, which is what makes the pattern force-aligned in the
+    /// sense he can see: the sinusoidal curves running up his form become
+    /// the joints instead of being ignored by them.
+    ///
+    /// Everything downstream is pattern 0's (rule 3.3.6): the same
+    /// KeepValidPlans, the same section 6 merge, the same section 7 order.
+    /// It therefore INHERITS the proportional arc mapping of rule 1.8.1
+    /// along with the rest, which is his first cause of the setout
+    /// distortion and is deferred by rule 1.8.4. Said here rather than left
+    /// to be found: pattern 2 does not escape a defect merely by being new.
+    ///
+    /// A cell's course is its BED index (rule 3.6.1), the rim-distance band
+    /// it sits in, and never its seed's along-flow band: the Python's
+    /// docstring records 7 of 39 streamlines rising then falling by more
+    /// than 0.5 m, and Bench Studio runs a formwork weight and an FEA solve
+    /// per stage, so this is a structural choice and not a labelling one.
+    /// </summary>
+    public static SkinPatternResult ForceAligned(
+        SkinNet net,
+        double size,
+        double courseHeight,
+        double minPiece)
+    {
+        RequireSizes(size, courseHeight);
+        double clampedMinPiece =
+            double.IsFinite(minPiece)
+                ? Math.Min(Math.Max(minPiece, 0.0), 0.5)
+                : 1.0 / 3.0;
+        (double dMin, double dMax) = LevelRange(net);
+        if (net.Faces.Count == 0 || !(dMax - dMin > 1.0e-9))
+            return Empty("force aligned", net);
+
+        int bands = BandCount(dMin, dMax, courseHeight);
+        double epsilon = Math.Max((dMax - dMin) * 1.0e-6, 1.0e-9);
+        var levels = new List<double>();
+        var intervals = new List<SkinBandInterval>();
+        for (int r = 0; r < bands; r++)
+        {
+            double low = AddLevel(
+                levels, r == 0 ? dMin + epsilon : dMin + r * courseHeight);
+            double bandTop = r == bands - 1
+                ? dMax
+                : dMin + (r + 1) * courseHeight;
+            double high = AddLevel(
+                levels, r == bands - 1 ? dMax - epsilon : bandTop);
+            double mid = AddLevel(
+                levels, (dMin + r * courseHeight + bandTop) / 2.0);
+            intervals.Add(new SkinBandInterval(r, low, mid, high, 0));
+        }
+        SkinBandResolution resolved = ResolveBands(net, levels, intervals);
+        var levelIndex = new Dictionary<double, int>();
+        for (int at = 0; at < resolved.Levels.Count; at++)
+            levelIndex[resolved.Levels[at]] = at;
+
+        IReadOnlyList<double[]> directions = SkinFlowField.Directions(net);
+        IReadOnlyList<int>[] neighbours = SkinFlowField.Neighbours(net);
+
+        // SEEDING, on BED 0 and never on the rim (rule 3.3.1). There is no
+        // curve at field value 0 to place a seed on: the tracer's crossing
+        // rule is half-open, so at level 0 every rim vertex is at-or-above,
+        // no edge crosses anywhere and Trace returns nothing. Seeds go on
+        // the traced curve at the epsilon, at uniform pitch
+        // P0 = L0 / max(1, round(L0 / (S / 2))), that is at HALF the target
+        // piece length, because rule 3.3.4's course takes every OTHER line.
+        var lines = new List<(double[][] Points, int Parity)>();
+        IReadOnlyList<SkinLevelCurve> bed0 =
+            resolved.Traced[levelIndex[intervals[0].Low]];
+        double clearance = 0.5 * (size / 2.0);
+        var accepted = new List<double[][]>();
+        foreach (SkinLevelCurve component in bed0)
+        {
+            int seeds = Math.Max(
+                1, (int)Math.Round(component.Length / (size / 2.0)));
+            double pitch = component.Length / seeds;
+            for (int at = 0; at < seeds; at++)
+            {
+                double u = component.Closed
+                    ? at * pitch
+                    : at * pitch - component.Length / 2.0;
+                double[] from = PointAt(component, u);
+                int face = FaceUnder(net, from);
+                if (face < 0)
+                    continue;
+                double[] hint = AscentHint(net, face);
+                double[][] line = SkinFlowField.Streamline(
+                    net, directions, neighbours, from, face, hint,
+                    clearance, accepted);
+                if (line.Length < 2)
+                    continue;
+                accepted.Add(line);
+                lines.Add((line, at % 2));
+            }
+        }
+
+        // CROSSINGS. Each line's crossing with each bed is the candidate
+        // head joint of that bed, recorded as a signed arc on the bed's own
+        // component (rule 3.3.2). Everything from here is PER TRACED
+        // COMPONENT (rule 3.3.1a): a bed is a LIST of components and not one
+        // curve, so L_k, P_k, the seam-outward walk, the insertion and
+        // termination tests and the parity are all taken per component,
+        // each with its own length and its own seam.
+        var crossings = new List<List<(double U, int Line)>>();
+        for (int r = 0; r <= bands; r++)
+            crossings.Add(new List<(double, int)>());
+        for (int at = 0; at < lines.Count; at++)
+        {
+            RecordCrossings(
+                net, resolved, levelIndex, intervals, bands, crossings,
+                lines[at].Points, at);
+        }
+
+        // INSERTION AND TERMINATION (rule 3.3.3), which is the difference
+        // between a force-aligned pattern and a mess. On bed k let
+        // Pk = Lk / max(1, round(Lk / (S / 2))) be that bed's own target
+        // half-pitch. Walk the bed's crossings seam-outward. Where two
+        // consecutive crossings are more than 1.5 Pk apart, INSERT a new
+        // streamline at the midpoint of that gap and advect it upward from
+        // there; where two are less than 0.5 Pk apart, TERMINATE the later
+        // of the two at bed k. Both events are counted and both are what a
+        // mason does when he adds or drops a course.
+        //
+        // PARITY IS ANCHORED ON THE STREAMLINE AND NEVER ON A BED'S
+        // CROSSING INDEX (rule 3.3.4). A line inserted takes the parity
+        // opposite to both of its neighbours, which is always well defined
+        // because the two crossings bracketing a gap of more than 1.5 P_k
+        // carry opposite parities; a line terminated retires its parity with
+        // it. Anchoring on the index instead would make a head joint stop
+        // running along one streamline between its own two beds, which is
+        // the single property rule 3.2.2 and check 12.3(b) exist for.
+        int inserted = 0;
+        int terminated = 0;
+        var retired = new HashSet<int>();
+        for (int r = 0; r <= bands; r++)
+        {
+            IReadOnlyList<SkinLevelCurve> bed =
+                resolved.Traced[levelIndex[
+                    r == 0 ? intervals[0].Low
+                    : r == bands ? intervals[bands - 1].High
+                    : intervals[r].Low]];
+            if (bed.Count == 0)
+                continue;
+            double target = bed[0].Length /
+                Math.Max(1.0, Math.Round(bed[0].Length / (size / 2.0)));
+            List<(double U, int Line)> here = crossings[r]
+                .Where(item => !retired.Contains(item.Line))
+                .OrderBy(item => item.U)
+                .ToList();
+            for (int at = 1; at < here.Count; at++)
+            {
+                double gap = here[at].U - here[at - 1].U;
+                if (gap < 0.5 * target)
+                {
+                    retired.Add(here[at].Line);
+                    terminated++;
+                }
+                else if (gap > 1.5 * target)
+                {
+                    double middle = (here[at].U + here[at - 1].U) / 2.0;
+                    double[] from = PointAt(bed[0], middle);
+                    int face = FaceUnder(net, from);
+                    if (face < 0)
+                        continue;
+                    double[][] line = SkinFlowField.Streamline(
+                        net, directions, neighbours, from, face,
+                        AscentHint(net, face), clearance, accepted);
+                    if (line.Length < 2)
+                        continue;
+                    accepted.Add(line);
+                    int parity = 1 - lines[here[at].Line].Parity;
+                    lines.Add((line, parity));
+                    // An inserted line is a head joint on every bed it
+                    // reaches and not only on the one it was inserted on: a
+                    // line whose crossings above bed k were never recorded
+                    // would stop being a joint the moment it left bed k,
+                    // which is the property rule 3.3.4 anchors on the LINE
+                    // for. Its own bed's crossing is the exact midpoint,
+                    // taken from the gap rather than re-derived.
+                    RecordCrossings(
+                        net, resolved, levelIndex, intervals, bands,
+                        crossings, line, lines.Count - 1, r);
+                    crossings[r].Add((middle, lines.Count - 1));
+                    inserted++;
+                }
+            }
+        }
+
+        var cells = new List<SkinCell>();
+        var flowLines = new List<double[][]>();
+        var bedCurves = new List<double[][]>();
+        int fiveSided = 0;
+        int sevenSided = 0;
+        int mergedPieces = 0;
+        int mergedShortKept = 0;
+        int mergedStillShort = 0;
+        foreach ((double[][] points, int _) in lines)
+            flowLines.Add(points);
+        for (int r = 0; r < bands; r++)
+        {
+            IReadOnlyList<SkinLevelCurve> lowerBed =
+                resolved.Traced[levelIndex[intervals[r].Low]];
+            IReadOnlyList<SkinLevelCurve> upperBed = resolved.Traced[levelIndex[
+                r == bands - 1 ? intervals[r].High : intervals[r + 1].Low]];
+            if (lowerBed.Count == 0 || upperBed.Count == 0)
+                continue;
+            foreach (SkinLevelCurve component in lowerBed)
+                bedCurves.Add(BedPolyline(component));
+            foreach (SkinLevelCurve component in upperBed)
+                bedCurves.Add(BedPolyline(component));
+
+            // THE PAIRING IS BY LINE AND NOT BY INDEX (rule 3.3.4). A course
+            // takes the crossings of the lines whose parity is r mod 2, and a
+            // piece runs between two ADJACENT such crossings, so its two head
+            // joints are two whole streamlines and not two positions in a
+            // sorted list. Anchoring on the index instead would let a head
+            // joint stop running along one streamline between its own two
+            // beds, which is the single property check 12.3(b) exists for.
+            var onLower = crossings[r]
+                .Where(item => lines[item.Line].Parity == (r % 2))
+                .Where(item => !retired.Contains(item.Line))
+                .OrderBy(item => item.U)
+                .ToList();
+            var onUpper = crossings[r + 1]
+                .Where(item => lines[item.Line].Parity == (r % 2))
+                .ToDictionary(item => item.Line, item => item.U);
+            if (onLower.Count < 2)
+                continue;
+
+            // The spans, seam outward, then section 6's own merge, which
+            // rule 3.3.6 inherits whole rather than reimplementing.
+            var spans = new List<(double U0, double U1, bool Clipped)>();
+            var spanLines = new List<(int Left, int Right)>();
+            for (int at = 1; at < onLower.Count; at++)
+            {
+                spans.Add((onLower[at - 1].U, onLower[at].U, false));
+                spanLines.Add((onLower[at - 1].Line, onLower[at].Line));
+            }
+            List<(double U0, double U1, bool Clipped)> keptSpans =
+                MergeShortPieces(
+                    spans, clampedMinPiece * size,
+                    ref mergedPieces, ref mergedShortKept, ref mergedStillShort);
+
+            foreach ((double u0, double u1, bool clipped) in keptSpans)
+            {
+                // The two head joints this piece actually runs between, found
+                // by their own arc rather than by their place in the list, so
+                // a merged span picks up the outer two lines and not the two
+                // it started with.
+                int leftLine = NearestCrossingLine(onLower, u0);
+                int rightLine = NearestCrossingLine(onLower, u1);
+                if (leftLine < 0 || rightLine < 0)
+                    continue;
+
+                // FOUR CHAINS, in the order rule 5.2.1 records them: the
+                // lower bed's Run between the two joints, the right-hand
+                // streamline segment upward, the upper bed's Run reversed,
+                // and the left-hand streamline segment downward.
+                // Run takes a SIGNED offset from the seam and adds the seam
+                // itself, and a crossing is recorded seam-relative already,
+                // so the arcs go in as they stand: adding the seam here
+                // would add it twice, which on an open strip (seam L / 2)
+                // clamps both ends of every run to the far end of the bed.
+                double[][] lowerRun = Run(lowerBed[0], u0, u1).ToArray();
+                bool rightReaches = onUpper.TryGetValue(rightLine, out double rightTop);
+                bool leftReaches = onUpper.TryGetValue(leftLine, out double leftTop);
+                // The upper run is walked the increasing-u way and REVERSED,
+                // because the ring closes right to left along the top; Run
+                // itself refuses to walk backwards.
+                double[][] upperRun = rightReaches && leftReaches
+                    ? Run(upperBed[0],
+                          Math.Min(leftTop, rightTop),
+                          Math.Max(leftTop, rightTop))
+                        .AsEnumerable().Reverse().ToArray()
+                    : Array.Empty<double[]>();
+                double[][] rightSegment = SegmentBetween(
+                    lines[rightLine].Points, LevelAt(net, PointAt(lowerBed[0], u0)), intervals, r, net);
+                double[][] leftSegment = SegmentBetween(
+                    lines[leftLine].Points, LevelAt(net, PointAt(lowerBed[0], u1)), intervals, r, net);
+                // The left-hand joint is walked DOWNWARD (rule 3.3.6's
+                // fourth chain), so the ring closes on the lower bed where
+                // it started instead of doubling back up the same line.
+                // Enumerable.Reverse by name: an array binds
+                // MemoryExtensions.Reverse(Span) first, which reverses in
+                // place and returns void.
+                leftSegment = Enumerable.Reverse(leftSegment).ToArray();
+
+                var outline = new List<double[]>();
+                outline.AddRange(lowerRun);
+                outline.AddRange(rightSegment);
+                outline.AddRange(upperRun);
+                outline.AddRange(leftSegment);
+                List<double[]> ring = Dedupe(outline);
+                if (ring.Count < 3)
+                    continue;
+
+                // RULE 3.3.5. A cell gains or loses a side only where a line
+                // BEGINS OR ENDS within its own band: a line that does not
+                // reach the upper bed closes the cell against the upper bed's
+                // own arc and the cell comes back with three or five setout
+                // corners rather than four. They are the pattern's honest
+                // response to a flow that converges, and refusing them would
+                // put a hole where a mason puts a closer.
+                int setout = 4;
+                if (!rightReaches || !leftReaches)
+                    setout = 3;
+                else if (InsertedWithin(lines, crossings, r, leftLine, rightLine))
+                    setout = 5;
+                if (setout == 5)
+                    fiveSided++;
+                else if (setout == 3)
+                    sevenSided++;
+
+                cells.Add(new SkinCell(
+                    r, ring, clipped, u0, u1, false, setout,
+                    new[] { lowerRun, rightSegment, upperRun, leftSegment }));
+            }
+        }
+        // Rule 3.3.6's "sorted by the same rule as section 7": course, then
+        // seam outward, then the seam-ward side first on a tie.
+        List<SkinCell> valid = KeepValidPlans(
+            cells
+                .OrderBy(cell => cell.Course)
+                .ThenBy(cell => Math.Abs((cell.U0 + cell.U1) / 2.0))
+                .ThenBy(cell => (cell.U0 + cell.U1) / 2.0)
+                .ToList(),
+            out int degenerateDropped, out int overlapDropped,
+            out int degenerateCentroidsSkipped);
+
+        string? oddLine = fiveSided + sevenSided > 0
+            ? $"Odd cells: {fiveSided} five-sided, {sevenSided} three-sided " +
+              $"({inserted} lines inserted, {terminated} terminated)"
+            : null;
+        return new SkinPatternResult(
+            valid,
+            bands,
+            PatternDiagnostics(
+                "force aligned", valid.Count, bands,
+                valid.Where(cell => !cell.Cap)
+                    .Select(cell => cell.U1 - cell.U0).ToList(),
+                "alternate streamline parity per course",
+                valid.Count(cell => cell.Clipped),
+                mergedPieces,
+                degenerateDropped, overlapDropped,
+                TransitionLine(
+                    "force aligned", resolved.Refused.Count, resolved.Refused,
+                    FieldKindOf(net)),
+                oddLine),
+            resolved.Refused.Count,
+            resolved.Refused,
+            degenerateDropped,
+            overlapDropped,
+            FieldKindOf(net),
+            net.Rim.Count,
+            net.RimDropped,
+            net.EdgesDropped,
+            UnreachableCount(net),
+            valid.Count(cell => cell.Clipped),
+            Array.Empty<double>(),
+            Array.Empty<int>(),
+            0,
+            fiveSided,
+            sevenSided,
+            Array.Empty<int>(),
+            Array.Empty<int>(),
+            mergedPieces,
+            degenerateCentroidsSkipped,
+            resolved.ExtraLevels,
+            resolved.Passes,
+            mergedShortKept,
+            mergedStillShort,
+            flowLines,
+            bedCurves);
+    }
+
+    /// <summary>The accepted streamlines and the traced beds this pattern
+    /// actually used, which is what check 12.3(b) measures every head joint
+    /// and every bed edge against. A check that re-derived them in the
+    /// harness would be comparing the engine with a second engine.</summary>
+    public static double[][][] ForceAlignedLines(SkinPatternResult pattern) =>
+        pattern.FlowLines.ToArray();
+
+    public static double[][][] ForceAlignedBeds(SkinPatternResult pattern) =>
+        pattern.BedCurves.ToArray();
+
+    /// <summary>A traced bed as a polyline, with a closed loop's own closing
+    /// segment present: a cell's bed run may cross the seam, and a distance
+    /// measured to an unclosed ring would read the whole chord across that
+    /// gap.</summary>
+    private static double[][] BedPolyline(SkinLevelCurve curve)
+    {
+        var points = new List<double[]>(curve.Points);
+        if (curve.Closed && points.Count > 1)
+            points.Add(points[0]);
+        return points.ToArray();
+    }
+
+    /// <summary>Rule 3.3.2. One line's crossing with each bed, recorded as a
+    /// signed arc on the nearest component of that bed. Written once and
+    /// called for a seeded line and for an inserted one alike: an inserted
+    /// line that carried a crossing on its own bed and on no bed above it
+    /// would stop being a head joint the moment it left the bed it was
+    /// inserted on, which is the property rule 3.3.4 anchors on the line
+    /// for.</summary>
+    private static void RecordCrossings(
+        SkinNet net,
+        SkinBandResolution resolved,
+        IReadOnlyDictionary<double, int> levelIndex,
+        IReadOnlyList<SkinBandInterval> intervals,
+        int bands,
+        List<List<(double U, int Line)>> crossings,
+        double[][] line,
+        int index,
+        int skipBed = -1)
+    {
+        // The field under each polyline point, taken ONCE: LevelAt locates a
+        // face in plan and every bed would otherwise pay for the same walk.
+        var value = new double[line.Length];
+        for (int at = 0; at < line.Length; at++)
+            value[at] = LevelAt(net, line[at]);
+        for (int r = 0; r <= bands; r++)
+        {
+            if (r == skipBed)
+                continue;
+            double level = r == 0
+                ? intervals[0].Low
+                : r == bands
+                    ? intervals[bands - 1].High
+                    : intervals[r].Low;
+            IReadOnlyList<SkinLevelCurve> bed =
+                resolved.Traced[levelIndex[level]];
+            if (bed.Count == 0)
+                continue;
+            for (int point = 0; point + 1 < line.Length; point++)
+            {
+                // A crossing lands between two polyline points whose
+                // interpolated field values straddle the level; the
+                // point is taken on the bed itself, by exact plan
+                // projection, so a head joint LIES on its bed.
+                double[] a = line[point];
+                double[] b = line[point + 1];
+                double la = value[point];
+                double lb = value[point + 1];
+                if (!((la < level && lb >= level) ||
+                      (lb < level && la >= level)))
+                {
+                    continue;
+                }
+                double t = (level - la) / (lb - la);
+                double[] on = Lerp(a, b, t);
+                SkinLevelCurve component = bed[0];
+                double best = double.PositiveInfinity;
+                foreach (SkinLevelCurve candidate in bed)
+                {
+                    double arc = NearestArcInPlan(candidate, on);
+                    double[] near = PointAtArcPublic(candidate, arc);
+                    double distance =
+                        (near[0] - on[0]) * (near[0] - on[0]) +
+                        (near[1] - on[1]) * (near[1] - on[1]);
+                    if (distance < best)
+                    {
+                        best = distance;
+                        component = candidate;
+                    }
+                }
+                crossings[r].Add((
+                    NearestArcInPlan(component, on) - component.Seam,
+                    index));
+                break;
+            }
+        }
+    }
+
+    /// <summary>The line whose crossing arc is nearest a given arc, within a
+    /// thousandth of the bed's own pitch, or -1. A merged span's ends are
+    /// still two real crossings, so the piece picks up the OUTER two lines
+    /// and not the two it started with.</summary>
+    private static int NearestCrossingLine(
+        IReadOnlyList<(double U, int Line)> crossings,
+        double at)
+    {
+        if (crossings.Count == 0)
+            return -1;
+        double pitch = crossings.Count > 1
+            ? (crossings[^1].U - crossings[0].U) / (crossings.Count - 1)
+            : 0.0;
+        double tolerance = Math.Max(Math.Abs(pitch) / 1000.0, 1.0e-9);
+        int best = -1;
+        double bestDistance = double.PositiveInfinity;
+        foreach ((double u, int line) in crossings)
+        {
+            double distance = Math.Abs(u - at);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = line;
+            }
+        }
+        return bestDistance <= tolerance ? best : -1;
+    }
+
+    /// <summary>A streamline clipped to the two field values bounding band
+    /// r, its own points read through LevelAt and its two ends interpolated
+    /// exactly, so the segment starts and finishes ON the two beds rather
+    /// than at the nearest polyline vertex to them.</summary>
+    private static double[][] SegmentBetween(
+        double[][] line,
+        double atLevel,
+        IReadOnlyList<SkinBandInterval> intervals,
+        int r,
+        SkinNet net)
+    {
+        double low = atLevel;
+        double high = r + 1 < intervals.Count
+            ? intervals[r + 1].Low
+            : intervals[r].High;
+        if (!(high > low) || line.Length < 2)
+            return Array.Empty<double[]>();
+        var chain = new List<double[]>();
+        double previous = LevelAt(net, line[0]);
+        bool inside = false;
+        for (int at = 0; at + 1 < line.Length; at++)
+        {
+            double la = previous;
+            double lb = LevelAt(net, line[at + 1]);
+            previous = lb;
+            if (!inside)
+            {
+                if (la >= low && la <= high)
+                {
+                    chain.Add(line[at]);
+                    inside = true;
+                }
+                else if (la < low && lb >= low)
+                {
+                    chain.Add(Lerp(line[at], line[at + 1], (low - la) / (lb - la)));
+                    inside = true;
+                }
+                else
+                {
+                    continue;
+                }
+            }
+            if (lb > high)
+            {
+                chain.Add(Lerp(line[at], line[at + 1], (high - la) / (lb - la)));
+                break;
+            }
+            if (lb < low)
+            {
+                chain.Add(Lerp(line[at], line[at + 1], (low - la) / (lb - la)));
+                break;
+            }
+            chain.Add(line[at + 1]);
+        }
+        return chain.ToArray();
+    }
+
+    /// <summary>Rule 3.3.5, the five-sided half: did a line BEGIN within
+    /// this cell's own span, meaning it carries a crossing on the band's
+    /// upper bed strictly between the two named lines' crossings there and
+    /// none at all on the band's lower bed? A line that begins nowhere near
+    /// the cell changes no side count, which is what anchoring the parity on
+    /// the line rather than on an index buys.</summary>
+    private static bool InsertedWithin(
+        IReadOnlyList<(double[][] Points, int Parity)> lines,
+        IReadOnlyList<List<(double U, int Line)>> crossings,
+        int r,
+        int leftLine,
+        int rightLine)
+    {
+        if (r + 1 >= crossings.Count)
+            return false;
+        double leftTop = double.NaN;
+        double rightTop = double.NaN;
+        foreach ((double u, int line) in crossings[r + 1])
+        {
+            if (line == leftLine)
+                leftTop = u;
+            if (line == rightLine)
+                rightTop = u;
+        }
+        if (double.IsNaN(leftTop) || double.IsNaN(rightTop))
+            return false;
+        double low = Math.Min(leftTop, rightTop);
+        double high = Math.Max(leftTop, rightTop);
+        var below = new HashSet<int>();
+        foreach ((double _, int line) in crossings[r])
+            below.Add(line);
+        foreach ((double u, int line) in crossings[r + 1])
+        {
+            if (line == leftLine || line == rightLine ||
+                line < 0 || line >= lines.Count || below.Contains(line))
+            {
+                continue;
+            }
+            if (u > low + 1.0e-12 && u < high - 1.0e-12)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Which net face contains a point in plan, or -1.</summary>
+    private static int FaceUnder(SkinNet net, double[] at)
+    {
+        for (int face = 0; face < net.Faces.Count; face++)
+        {
+            int[] triangle = net.Faces[face];
+            var ring = new[]
+            {
+                net.Vertices[triangle[0]],
+                net.Vertices[triangle[1]],
+                net.Vertices[triangle[2]]
+            };
+            if (PlanContains(at[0], at[1], ring))
+                return face;
+        }
+        return -1;
+    }
+
+    /// <summary>The ASCENDING direction of the Levels field on a face, which
+    /// is the orientation hint rule 3.2.10 asks for, since rule 3.3.2
+    /// advects upward. Constant on each triangle, because the field is the
+    /// piecewise-linear interpolant of rule 1.4.4.</summary>
+    private static double[] AscentHint(SkinNet net, int face)
+    {
+        int[] triangle = net.Faces[face];
+        int low = triangle[0];
+        int high = triangle[0];
+        foreach (int corner in triangle)
+        {
+            if (net.Levels[corner] < net.Levels[low])
+                low = corner;
+            if (net.Levels[corner] > net.Levels[high])
+                high = corner;
+        }
+        double[] from = net.Vertices[low];
+        double[] to = net.Vertices[high];
+        return new[] { to[0] - from[0], to[1] - from[1], to[2] - from[2] };
+    }
+
+    /// <summary>
+    /// The field of rule 1.4.4 evaluated at a point: the piecewise-linear
+    /// interpolant of the vertex Levels over the triangles. The point's face
+    /// is found in plan and the value is the barycentric combination of that
+    /// face's three vertex levels. Off the mesh in plan it returns the value
+    /// at the nearest face's own centroid, which is the honest answer for a
+    /// point the field is not defined at and never happens on a streamline,
+    /// since every streamline point is an exit point on an edge.
+    /// </summary>
+    public static double LevelAt(SkinNet net, double[] at)
+    {
+        int face = FaceUnder(net, at);
+        if (face < 0)
+        {
+            int nearest = 0;
+            double best = double.PositiveInfinity;
+            for (int candidate = 0; candidate < net.Faces.Count; candidate++)
+            {
+                int[] corners = net.Faces[candidate];
+                double cx = corners.Average(c => net.Vertices[c][0]);
+                double cy = corners.Average(c => net.Vertices[c][1]);
+                double distance =
+                    ((cx - at[0]) * (cx - at[0])) + ((cy - at[1]) * (cy - at[1]));
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = candidate;
+                }
+            }
+            face = nearest;
+        }
+        int[] triangle = net.Faces[face];
+        double[] a = net.Vertices[triangle[0]];
+        double[] b = net.Vertices[triangle[1]];
+        double[] c = net.Vertices[triangle[2]];
+        double area =
+            ((b[0] - a[0]) * (c[1] - a[1])) - ((c[0] - a[0]) * (b[1] - a[1]));
+        if (Math.Abs(area) <= 1.0e-15)
+        {
+            // A triangle with no plan area: its three levels average, which
+            // is what a vertical face gives and is finite.
+            return triangle.Average(corner => net.Levels[corner]);
+        }
+        double wb =
+            (((at[0] - a[0]) * (c[1] - a[1])) - ((c[0] - a[0]) * (at[1] - a[1]))) / area;
+        double wc =
+            (((b[0] - a[0]) * (at[1] - a[1])) - ((at[0] - a[0]) * (b[1] - a[1]))) / area;
+        double wa = 1.0 - wb - wc;
+        return (wa * net.Levels[triangle[0]]) +
+               (wb * net.Levels[triangle[1]]) +
+               (wc * net.Levels[triangle[2]]);
+    }
+
+    /// <summary>The existing private PointAtArc, reachable from this file's
+    /// own crossing walk. A wrapper and not a second implementation, so a
+    /// head joint's point and a bed's own point cannot disagree.</summary>
+    internal static double[] PointAtArcPublic(SkinLevelCurve curve, double arc) =>
+        PointAtArc(curve, arc);
 
     /// <summary>
     /// Spec section 5's banding: course r spans
@@ -3526,7 +4258,9 @@ internal static class SkinPatterns
             0,
             1,
             0,
-            0);
+            0,
+            Array.Empty<double[][]>(),
+            Array.Empty<double[][]>());
 
     // ---- pattern 1: hexagonal (spec section 6) --------------------------
 
@@ -4011,6 +4745,8 @@ internal static class SkinPatterns
             0,
             1,
             0,
-            0);
+            0,
+            Array.Empty<double[][]>(),
+            Array.Empty<double[][]>());
     }
 }
