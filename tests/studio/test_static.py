@@ -1165,28 +1165,64 @@ def test_hdri_failures_reach_the_banner():
     assert "finally" in upload_handler
 
 
-def test_the_props_row_is_a_type_a_place_and_a_clear():
-    """Re-pinned 2026-09-04. The five prop buttons were a column of
-    identical full-width buttons that ran straight into the three view
-    buttons below them with nothing to say where one thing stopped and the
-    other started (photographed by Param). The five are a select now, since
-    a type is one choice rather than five, and the row is a type, a Place
-    and a Clear. All five types survive, and the placing flow is unchanged:
-    arm, then click the ground."""
+def test_props_come_from_a_library_of_real_models():
+    """Replaced 2026-09-04. Param: "we should also massively work on bringing
+    in way better props. like using serious 3d asset libraries instead of
+    random ugly props we have made right now."
+
+    The props are GLB models now, listed by a manifest that carries three
+    things the file itself cannot: what the model is called, how tall it
+    stands in the world, and who made it. The height is the one that matters
+    structurally: a GLB carries whatever units its author worked in, so a
+    figure is only a SCALE figure if the studio scales it to a stated
+    height. Everything in the library is CC0 and credited anyway.
+
+    The row is a Library button, a Place and a Clear; the library opens as
+    the same tile grid the materials use, because a model is a look too. The
+    hand-modelled props remain as the fallback for a studio whose library
+    folder is empty, which is also what makes this change safe to ship."""
 
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    css = (STATIC / "studio.css").read_text(encoding="utf-8")
-    for control in ("prop-type", "prop-place", "props-clear"):
+    for control in ("prop-browse", "prop-place", "props-clear", "prop-tiles",
+                    "prop-credit", "prop-type"):
         assert 'id="{}"'.format(control) in html, control
-    for kind in ("figure", "tree", "pallets", "barrier", "cone"):
-        assert '<option value="{}"'.format(kind) in html, kind
     assert 'id="prop-figure"' not in html, "the five buttons are gone"
-    assert 'armProp(document.getElementById("prop-type").value)' in js
-    # The armed state has one home now, and the view buttons have a floor
-    # of their own so they cannot read as more props.
-    assert 'getElementById("prop-place").classList.add("armed")' in js
-    assert "#mode-row" in css and "border-top: 1px solid" in css
+    # The manifest, not the file, is the authority on scale.
+    loader = _function_body(js, "loadPropTemplate")
+    assert "entry.heightMetres" in loader
+    assert "model.scale.multiplyScalar(wanted / height)" in loader
+    assert "model.rotation.x = Math.PI / 2" in loader, "glTF is Y-up, the studio is Z-up"
+    assert "model.position.z -= stood.min.z" in loader, "a prop stands on the ground"
+    # Clones share the template's geometry, which is what makes twenty
+    # figures cost one model, and is why disposing one must not free it.
+    assert "template ? template.clone() : makeProp(type)" in js
+    assert "if (object.userData.fromLibrary) return;" in _function_body(js, "disposeProp")
+    # An empty library leaves the studio exactly as it was.
+    assert "if (!entries.length) return;" in _function_body(js, "loadPropLibrary")
+    assert "function makeProp(" in js, "the fallback props stay"
+
+
+def test_the_prop_library_is_credited_and_reachable():
+    """Everything in the library is CC0, so nothing has to be credited. It is
+    credited anyway, in the manifest, on the tile and in a NOTICE beside the
+    files: a studio that shows somebody else's work without saying whose is
+    not to be trusted about anything else either."""
+
+    import json as json_module
+
+    props = STATIC.parent / "props"
+    manifest = json_module.loads((props / "props.json").read_text(encoding="utf-8"))
+    assert manifest["props"], "the library has models in it"
+    for entry in manifest["props"]:
+        assert (props / entry["file"]).is_file(), entry["file"]
+        assert entry["credit"] and entry["licence"].startswith("CC0"), entry["key"]
+        assert entry["heightMetres"] > 0, entry["key"]
+        assert entry["source"].startswith("https://"), entry["key"]
+    assert (props / "NOTICE.txt").is_file()
+    # A person is a person's height, and the scale figure is the whole point.
+    figure = next(e for e in manifest["props"] if e["key"] == "figure-standing")
+    assert 1.6 <= figure["heightMetres"] <= 1.9
 
 
 def test_props_persist_per_study_and_stay_out_of_the_analysis():

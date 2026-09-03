@@ -242,3 +242,11 @@ body { overflow: hidden;
   align-items: center; margin: 4px 0 8px; }
 #day-cycle-row button { width: auto; margin: 0; }
 #day-cycle-row label { margin: 0; }
+
+/* The prop library: the same tiles the materials use, because a model is a
+   look too, and a name in a dropdown is no way to choose one. */
+#props-row { grid-template-columns: auto auto auto; }
+#prop-library { margin: 4px 0 8px; }
+#prop-library .tile-grid { grid-template-columns: 1fr 1fr 1fr; max-height: 260px;
+  overflow-y: auto; }
+#prop-credit { color: #6b7078; margin-top: 4px; }

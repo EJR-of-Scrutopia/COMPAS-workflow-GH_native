@@ -3,6 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
@@ -81,6 +82,8 @@ const state = {
   source: null,        // deliverable B: null = whatever the study has (Skin wins), else "authored" | "generated"
   formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
   columnRadius: null,  // bench.columns/1 "radius" from the loaded study's columns file: the width the exporter swept the column solids along, and the width the act's animated members take (see columnRadius())
+  propLibrary: [],     // the manifest entries that loaded, from /api/props
+  propCredits: null,   // what the library as a whole is, and where it came from
   scenes: [],          // saved scenes, newest first, from /api/scenes
   live: true,          // the Live button: while on, a Grasshopper push reloads the study on screen
   lastRefusal: null,   // the server's own words for the last refused load, shown under the cut source control
@@ -790,6 +793,10 @@ function saveProps() {
 
 // Mirrors disposeShell's rule: whatever is replaced owns GPU buffers.
 function disposeProp(object) {
+  // Library props are clones sharing one template's geometry and materials,
+  // so freeing them here would empty the template every other clone is
+  // still drawing from. The template owns its resources for the session.
+  if (object.userData.fromLibrary) return;
   object.traverse((child) => {
     if (child.isMesh) {
       child.geometry.dispose();
@@ -815,11 +822,139 @@ function restoreProps() {
   }
 }
 
+// ---------- the prop library ----------
+// Props are real models now: GLB files in bench/studio/props, listed by a
+// manifest that says what each one is, how tall it stands in the world and
+// who made it. The height matters more than it looks: a GLB carries
+// whatever units its author worked in, so a figure is only a SCALE figure
+// if the studio scales it to a stated height rather than trusting the file.
+const propLoader = new GLTFLoader();
+const propTemplates = new Map();
+
+async function loadPropLibrary() {
+  let payload = null;
+  try {
+    payload = await fetchJson("/api/props");
+  } catch (error) {
+    return;                              // no library, the old props stand
+  }
+  const entries = (payload.props || []).filter((entry) => entry && entry.key && entry.file);
+  if (!entries.length) return;
+  state.propLibrary = entries;
+  state.propCredits = payload.library || null;
+  for (const entry of entries) {
+    try {
+      propTemplates.set(entry.key, await loadPropTemplate(entry));
+    } catch (error) {
+      logStudio("prop " + entry.key + " would not load: " + error.message);
+    }
+  }
+  buildPropTiles();
+  // The type select is still the source of truth for what Place will place,
+  // exactly as the material select is behind the material tiles.
+  const select = document.getElementById("prop-type");
+  select.innerHTML = "";
+  for (const entry of entries) {
+    if (!propTemplates.has(entry.key)) continue;
+    const option = document.createElement("option");
+    option.value = entry.key;
+    option.textContent = entry.label || entry.key;
+    select.appendChild(option);
+  }
+  if (select.options.length) select.value = select.options[0].value;
+  logStudio("prop library: " + select.options.length + " models");
+}
+
+async function loadPropTemplate(entry) {
+  const gltf = await propLoader.loadAsync("/api/props/" + encodeURIComponent(entry.file));
+  const model = gltf.scene;
+  // glTF is Y-up by convention and the studio is Z-up.
+  model.rotation.x = Math.PI / 2;
+  model.updateMatrixWorld(true);
+  const measured = new THREE.Box3().setFromObject(model);
+  const height = measured.max.z - measured.min.z;
+  const wanted = +entry.heightMetres > 0 ? +entry.heightMetres : 1;
+  if (height > 0.0001) model.scale.multiplyScalar(wanted / height);
+  model.updateMatrixWorld(true);
+  // Stood on the ground rather than centred on it: a prop's feet are its
+  // origin as far as the scene is concerned.
+  const stood = new THREE.Box3().setFromObject(model);
+  model.position.z -= stood.min.z;
+  model.traverse((child) => {
+    if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
+  });
+  const template = new THREE.Group();
+  template.add(model);
+  return template;
+}
+
+function buildPropTiles() {
+  const holder = document.getElementById("prop-tiles");
+  const select = document.getElementById("prop-type");
+  if (!holder) return;
+  holder.innerHTML = "";
+  for (const entry of state.propLibrary) {
+    const template = propTemplates.get(entry.key);
+    if (!template) continue;
+    const tile = previewTile(entry.key, entry.label || entry.key,
+      (canvasEl) => renderObjectPreview(template, canvasEl));
+    tile.title = (entry.label || entry.key)
+      + (entry.credit ? " -- " + entry.credit : "");
+    tile.addEventListener("click", () => {
+      select.value = entry.key;
+      paintTileSelection(holder, entry.key);
+      showPropCredit(entry);
+    });
+    holder.appendChild(tile);
+  }
+  paintTileSelection(holder, select.value);
+}
+
+function showPropCredit(entry) {
+  const line = document.getElementById("prop-credit");
+  if (!line) return;
+  line.textContent = entry.credit
+    ? entry.credit + (entry.licence ? " (" + entry.licence + ")" : "")
+    : "";
+}
+
+// A prop preview is the same rig the materials use, with the ball hidden
+// and the model framed by its own bounding box.
+function renderObjectPreview(object, canvasEl) {
+  if (!previewRig) {
+    fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+    return;
+  }
+  const shown = object.clone();
+  previewRig.holder.add(shown);
+  previewRig.ball.visible = false;
+  const box = new THREE.Box3().setFromObject(shown);
+  const size = box.getSize(new THREE.Vector3());
+  const centre = box.getCenter(new THREE.Vector3());
+  const reach = Math.max(size.x, size.y, size.z) || 1;
+  // Framed from the same three-quarter angle every time, so a row of props
+  // reads as a set rather than as a pile of unrelated photographs.
+  const distance = reach * 2.6;
+  previewRig.camera.position.set(
+    centre.x + distance * 0.62, centre.y - distance * 0.72, centre.z + distance * 0.42);
+  previewRig.camera.lookAt(centre);
+  drawPreview(canvasEl);
+  previewRig.holder.remove(shown);
+  previewRig.ball.visible = true;
+  previewRig.camera.position.set(0, -3.05, 1.02);
+  previewRig.camera.lookAt(0, 0, 0);
+}
+
 function placeProp(type, x, y, rotation, save) {
-  const object = makeProp(type);
+  const template = propTemplates.get(type);
+  // A clone shares geometry and materials with its template, which is what
+  // makes twenty figures cost one model; it is also why disposeProp does
+  // not free anything for a library prop (see there).
+  const object = template ? template.clone() : makeProp(type);
   object.position.set(x, y, 0);
   object.rotation.z = rotation;
   propsGroup.add(object);
+  object.userData.fromLibrary = !!template;
   const record = { type, x, y, rotation, object };
   state.props.push(record);
   if (save) saveProps();
@@ -3951,6 +4086,11 @@ document.getElementById("ground-preset").addEventListener("change", (e) => {
   state.groundPreset = e.target.value;
   if (state.objects.ground) rebuildGround();
 });
+document.getElementById("prop-browse").addEventListener("click", () => {
+  const library = document.getElementById("prop-library");
+  library.classList.toggle("hidden");
+});
+
 document.getElementById("prop-place").addEventListener("click", () => {
   if (!state.bundle) return;
   armProp(document.getElementById("prop-type").value);
@@ -5250,6 +5390,9 @@ function frame(now) {
 
 // The tile grids are built here, after SKINS and skinMaterialCache exist.
 guarded("the material tiles", buildMaterialTiles);
+// The library loads in the background: the studio is usable before it
+// arrives, and a folder with nothing in it simply leaves the old props.
+loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
 boot();
 requestAnimationFrame(frame);
 

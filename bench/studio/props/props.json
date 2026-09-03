@@ -1,0 +1,170 @@
+{
+  "library": "poly.pizza, the surviving home of the Google Poly archive together with the Kenney and Quaternius CC0 packs",
+  "props": [
+    {
+      "key": "figure-standing",
+      "label": "Figure",
+      "file": "figure-standing.glb",
+      "group": "scale",
+      "heightMetres": 1.75,
+      "credit": "Man by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/HMnuH5geEG",
+      "triangles": 1216
+    },
+    {
+      "key": "figure-walking",
+      "label": "Figure walking",
+      "file": "figure-walking.glb",
+      "group": "scale",
+      "heightMetres": 1.78,
+      "credit": "Human Dude Guy by hat_my_guy",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/83DpVkzvWk",
+      "triangles": 1151
+    },
+    {
+      "key": "tree-pine",
+      "label": "Pine",
+      "file": "tree-pine.glb",
+      "group": "planting",
+      "heightMetres": 8.0,
+      "credit": "Pine by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/79gmlLnweB",
+      "triangles": 3370
+    },
+    {
+      "key": "tree-broadleaf",
+      "label": "Tree",
+      "file": "tree-broadleaf.glb",
+      "group": "planting",
+      "heightMetres": 5.5,
+      "credit": "Tree by hat_my_guy",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/BiWaLAItBx",
+      "triangles": 210
+    },
+    {
+      "key": "bush",
+      "label": "Bush",
+      "file": "bush.glb",
+      "group": "planting",
+      "heightMetres": 0.8,
+      "credit": "Bush by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/ooG6CkLyE8",
+      "triangles": 360
+    },
+    {
+      "key": "hedge",
+      "label": "Hedge",
+      "file": "hedge.glb",
+      "group": "planting",
+      "heightMetres": 1.2,
+      "credit": "Hedge by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/df8uCl1YpK",
+      "triangles": 956
+    },
+    {
+      "key": "bench",
+      "label": "Bench",
+      "file": "bench.glb",
+      "group": "furniture",
+      "heightMetres": 0.85,
+      "credit": "Bench by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/7uSlZo3n9Y",
+      "triangles": 276
+    },
+    {
+      "key": "table",
+      "label": "Table",
+      "file": "table.glb",
+      "group": "furniture",
+      "heightMetres": 0.75,
+      "credit": "Table Cross by Kenney",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/wKoIHI7aZE",
+      "triangles": 356
+    },
+    {
+      "key": "planter",
+      "label": "Planter",
+      "file": "planter.glb",
+      "group": "furniture",
+      "heightMetres": 0.5,
+      "credit": "Medium Pot by Isa Lousberg",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/y05UXwo0fM",
+      "triangles": 216
+    },
+    {
+      "key": "lamp-column",
+      "label": "Lamp column",
+      "file": "lamp-column.glb",
+      "group": "street",
+      "heightMetres": 4.5,
+      "credit": "Streetlight by Kay Lousberg",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/vPFSLYh6sg",
+      "triangles": 176
+    },
+    {
+      "key": "car",
+      "label": "Car",
+      "file": "car.glb",
+      "group": "street",
+      "heightMetres": 1.5,
+      "credit": "Car Hatchback by Kay Lousberg",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/BG0KAhmGDt",
+      "triangles": 1194
+    },
+    {
+      "key": "cone",
+      "label": "Cone",
+      "file": "cone.glb",
+      "group": "site",
+      "heightMetres": 0.5,
+      "credit": "Traffic Cone by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/aDIrUbMbW3",
+      "triangles": 134
+    },
+    {
+      "key": "barrier",
+      "label": "Barrier",
+      "file": "barrier.glb",
+      "group": "site",
+      "heightMetres": 1.0,
+      "credit": "Traffic Barrier by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/nugx3heueH",
+      "triangles": 732
+    },
+    {
+      "key": "fence",
+      "label": "Fence",
+      "file": "fence.glb",
+      "group": "site",
+      "heightMetres": 2.0,
+      "credit": "Metal Fence by Quaternius",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/qWKhREFj7H",
+      "triangles": 218
+    },
+    {
+      "key": "pallet",
+      "label": "Pallet",
+      "file": "pallet.glb",
+      "group": "site",
+      "heightMetres": 0.14,
+      "credit": "Pallet by Kenney",
+      "licence": "CC0 1.0",
+      "source": "https://poly.pizza/m/J6bhnc2wFP",
+      "triangles": 108
+    }
+  ]
+}

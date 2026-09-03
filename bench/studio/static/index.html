@@ -179,16 +179,15 @@
 
     <span class="row-heading">Props</span>
     <div id="props-row">
-      <select id="prop-type">
-        <option value="figure" selected>Figure</option>
-        <option value="tree">Tree</option>
-        <option value="pallets">Pallets</option>
-        <option value="barrier">Barrier</option>
-        <option value="cone">Cone</option>
-      </select>
+      <button id="prop-browse" title="Choose a prop">Library</button>
       <button id="prop-place" title="Then click the ground where it goes">Place</button>
       <button id="props-clear" title="Remove every placed prop">Clear</button>
     </div>
+    <div id="prop-library" class="hidden">
+      <div id="prop-tiles" class="tile-grid"></div>
+      <div id="prop-credit"></div>
+    </div>
+    <select id="prop-type" class="hidden"></select>
   </details>
   <div id="mode-row">
     <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>
