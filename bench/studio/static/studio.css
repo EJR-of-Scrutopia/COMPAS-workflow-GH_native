@@ -175,9 +175,17 @@ body { overflow: hidden;
 /* The three ways of looking at the vault, at the foot of the panel where
    the eye returns to them. Equal columns so the words sit level, and the
    longest of them (Formwork) fits without wrapping at this size. */
-#mode-row { position: sticky; bottom: 0; display: grid;
-  grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 10px;
-  padding: 8px 0 4px; background: rgba(24, 26, 30, 0.94); }
+/* The three views are the panel's floor, not its last section: a rule and
+   a band of its own hold them apart from whatever the last panel happens to
+   end with, which is otherwise a column of identical buttons and no way to
+   tell where one thing stops and another starts. */
+#mode-row { position: sticky; bottom: 0; z-index: 5; display: grid;
+  grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 18px -14px 0;
+  padding: 10px 14px 12px; background: rgba(18, 20, 24, 0.97);
+  border-top: 1px solid #34373d; }
+/* The panel's blanket button rule would otherwise put a 4px margin between
+   grid cells that already have a gap, and stretch each to the full width. */
+#mode-row .mode, #material-swatches .swatch { width: auto; margin: 0; }
 #mode-row .mode { padding: 7px 2px; border: 1px solid #3a3f47; border-radius: 3px;
   background: #23262c; color: #9aa1a9; letter-spacing: 0.02em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
@@ -198,3 +206,9 @@ body { overflow: hidden;
   overflow: hidden; text-overflow: ellipsis; }
 .swatch:hover { border-color: #6f7074; color: #d8dade; }
 .swatch.active { border-color: #8fa4b8; color: #f0f2f4; background: #2b3038; }
+
+/* Props on one line: what to place, the placing, and the clearing. */
+#props-row { display: grid; grid-template-columns: 1fr auto auto; gap: 5px;
+  align-items: center; margin: 6px 0 4px; }
+#props-row select, #props-row button { width: auto; margin: 0; }
+#props-row button.armed { outline: 2px solid #7ab3e0; }

@@ -1165,11 +1165,28 @@ def test_hdri_failures_reach_the_banner():
     assert "finally" in upload_handler
 
 
-def test_the_props_row_offers_the_five_props_and_a_clear():
+def test_the_props_row_is_a_type_a_place_and_a_clear():
+    """Re-pinned 2026-09-04. The five prop buttons were a column of
+    identical full-width buttons that ran straight into the three view
+    buttons below them with nothing to say where one thing stopped and the
+    other started (photographed by Param). The five are a select now, since
+    a type is one choice rather than five, and the row is a type, a Place
+    and a Clear. All five types survive, and the placing flow is unchanged:
+    arm, then click the ground."""
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    for button in ("prop-figure", "prop-tree", "prop-pallets",
-                   "prop-barrier", "prop-cone", "props-clear"):
-        assert 'id="{}"'.format(button) in html
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    for control in ("prop-type", "prop-place", "props-clear"):
+        assert 'id="{}"'.format(control) in html, control
+    for kind in ("figure", "tree", "pallets", "barrier", "cone"):
+        assert '<option value="{}"'.format(kind) in html, kind
+    assert 'id="prop-figure"' not in html, "the five buttons are gone"
+    assert 'armProp(document.getElementById("prop-type").value)' in js
+    # The armed state has one home now, and the view buttons have a floor
+    # of their own so they cannot read as more props.
+    assert 'getElementById("prop-place").classList.add("armed")' in js
+    assert "#mode-row" in css and "border-top: 1px solid" in css
 
 
 def test_props_persist_per_study_and_stay_out_of_the_analysis():
@@ -2427,3 +2444,55 @@ def test_the_hdri_ground_sits_below_the_studio_floor():
     assert "ground.position.z = level;" in ground, (
         "the studio's own floor stays at the level everything stands on"
     )
+
+
+def test_the_studio_opens_where_it_was_left():
+    """Param: "can we get the bench studio to remember the last vault that
+    was selected and shown, and the same view and scene too". It keeps the
+    same record a saved scene carries, in browser storage rather than beside
+    the scenes on disk: this is a per-window convenience, not a document,
+    and it must never turn up in the scene picker as a scene nobody saved.
+
+    A freshly imported export still wins over the memory, because that is
+    the studio being asked to show something now. And a remembered cut that
+    is no longer possible (a Skin that has gone, a re-export the studio's
+    own cutter refuses) falls back to opening the study plainly rather than
+    leaving the viewport empty."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert 'const SESSION_KEY = "bench-studio-session";' in js
+    remember = _function_body(js, "rememberSession")
+    assert "collectScene()" in remember
+    # The whole line, indentation included: a text pin that matched the
+    # call anywhere would pass a write that had been commented out or
+    # guarded off, which is exactly the mutation this was proved against.
+    assert "\n    localStorage.setItem(SESSION_KEY, JSON.stringify({" in remember
+    assert '"beforeunload", rememberSession' in js
+    boot = _function_body(js, "boot")
+    assert "rememberedSession()" in boot
+    assert "applyScene(remembered)" in boot
+    assert "const remembered = preferredExport ? null : rememberedSession();" in boot, (
+        "a fresh import beats the memory"
+    )
+    assert "if (restored === false && toLoad)" in boot, (
+        "a remembered cut that is no longer possible must not leave an empty viewport"
+    )
+
+
+def test_the_take_ends_on_the_vault_not_on_the_strike():
+    """Param: "at the end of the animation when the form work drops away,
+    can we continue the rotation one more time so we look at the final form
+    once too". The timeline gains a last act after the strike, one
+    revolution at the spin rate in force, floored so a still camera still
+    pauses on the result and capped so a very slow spin cannot quietly add a
+    minute to every take and every recording."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    duration = _function_body(js, "timelineDuration")
+    assert "admireSeconds()" in duration
+    admire = _function_body(js, "admireSeconds")
+    assert "(2 * Math.PI) / spin" in admire
+    assert "ADMIRE_MIN_SECONDS" in admire and "ADMIRE_MAX_SECONDS" in admire
+    # The strike itself is unchanged: it still clamps at 1, so the tail
+    # holds the struck state rather than replaying it.
+    assert "Math.min(1, (build - buildEnd) / STRIKE_SECONDS)" in js

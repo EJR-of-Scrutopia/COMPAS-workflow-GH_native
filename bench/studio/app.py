@@ -1004,6 +1004,20 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
     def index():
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.middleware("http")
+    async def no_stale_static(request: Request, call_next):
+        """The studio is a local tool under daily edit, and a browser that
+        keeps yesterday's studio.css is a bug report about a fix that has
+        already shipped. It has happened twice: a panel that looked
+        unchanged because only the stylesheet was stale. Nothing here is
+        worth caching, so nothing is.
+        """
+
+        response = await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path == "/":
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

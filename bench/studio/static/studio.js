@@ -816,13 +816,15 @@ function armProp(type) {
   if (already) return;
   state.armedPropType = type;
   controls.enabled = false;
-  document.getElementById("prop-" + type).classList.add("armed");
+  // One Place button now, whatever the type select is showing: the row of
+  // five buttons it replaced could not be told apart from the three view
+  // buttons beneath it, and a type is one choice, not five.
+  document.getElementById("prop-place").classList.add("armed");
 }
 
 function disarmProp() {
-  if (state.armedPropType) {
-    document.getElementById("prop-" + state.armedPropType).classList.remove("armed");
-  }
+  const place = document.getElementById("prop-place");
+  if (place) place.classList.remove("armed");
   state.armedPropType = null;
   if (!state.propDrag) controls.enabled = true;
 }
@@ -1469,9 +1471,48 @@ async function applyScene(record) {
     // framing it was saved at rather than from a ring of its own.
     if (state.timeline) state.timeline.orbitBase = null;
   }
-  logStudio("restored scene " + record.name);
+  logStudio("restored scene " + (record.name || "the last view"));
+  rememberSession();
   return true;
 }
+
+// ---------- the studio opens where it was left ----------
+// The same record a saved scene carries, kept for the last thing on screen
+// rather than for a name the user chose: the vault, the framing, the floor,
+// the light and the cut. Param asked for it in those words, "remember the
+// last vault that was selected and shown, and the same view and scene too".
+//
+// In browser storage rather than beside the scenes on disk, deliberately.
+// This is a per-window convenience, not a document: two windows open on two
+// vaults should each reopen on their own, and it must never appear in the
+// scene picker as a scene nobody saved.
+const SESSION_KEY = "bench-studio-session";
+
+function rememberSession() {
+  if (!state.bundle) return;
+  const study = document.getElementById("study-select").value;
+  if (!study) return;
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({
+      study, state: collectScene(), when: new Date().toISOString(),
+    }));
+  } catch (error) { /* a full or blocked store is not worth a banner */ }
+}
+
+function rememberedSession() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    if (stored && typeof stored.study === "string" && stored.state) return stored;
+  } catch (error) { /* corrupt entry: open as if there were none */ }
+  return null;
+}
+
+// Written when the window goes away and whenever the view settles, so a
+// crash or a killed server loses at most the last camera move.
+window.addEventListener("beforeunload", rememberSession);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") rememberSession();
+});
 
 async function refreshScenes() {
   const payload = await fetchJson("/api/scenes");
@@ -3048,10 +3089,29 @@ async function boot(preferredExport) {
     // that was just imported, not silently fall back to studies[0]. The
     // preferred name only wins when it actually exists in the fresh list
     // (an incomplete pair, for instance, never appears here at all).
+    // Where the studio was left, if it was left anywhere that still
+    // exists. An explicitly preferred export still wins: that is a fresh
+    // import asking to be shown, which beats a memory of yesterday.
+    const remembered = preferredExport ? null : rememberedSession();
     const toLoad = preferredExport && names.includes(preferredExport)
       ? preferredExport
       : (names.length ? names[0] : null);
-    if (toLoad) {
+    if (remembered && names.includes(remembered.study)) {
+      select.value = remembered.study;
+      state.columnFiles = payload.columns || [];
+      // The whole record, not just the name: applyScene loads the study
+      // once with the remembered cut and then puts the floor, the light
+      // and the camera back, in that order.
+      const restored = await applyScene(remembered);
+      if (restored === false && toLoad) {
+        // The remembered cut may no longer be possible: the Skin could
+        // have gone, or the study could have been re-exported with a plan
+        // the studio's own cutter refuses. Fall back to opening it plainly.
+        logStudio("could not reopen where we left off; opening " + toLoad);
+        select.value = toLoad;
+        await loadStudy(toLoad);
+      }
+    } else if (toLoad) {
       select.value = toLoad;
       await loadStudy(toLoad);
     }
@@ -3485,13 +3545,13 @@ document.getElementById("ground-preset").addEventListener("change", (e) => {
   state.groundPreset = e.target.value;
   if (state.objects.ground) rebuildGround();
 });
-for (const [id, type] of [["prop-figure", "figure"], ["prop-tree", "tree"],
-                          ["prop-pallets", "pallets"], ["prop-barrier", "barrier"],
-                          ["prop-cone", "cone"]]) {
-  document.getElementById(id).addEventListener("click", () => {
-    if (state.bundle) armProp(type);
-  });
-}
+document.getElementById("prop-place").addEventListener("click", () => {
+  if (!state.bundle) return;
+  armProp(document.getElementById("prop-type").value);
+  logStudio(state.armedPropType
+    ? "click the ground to place the " + state.armedPropType
+    : "placing cancelled");
+});
 document.getElementById("props-clear").addEventListener("click", () => {
   if (!state.bundle) return;
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
@@ -3800,10 +3860,29 @@ function placementCount() {
 // setting worth a control.
 const INFLATE_SECONDS = 3;
 
+// The last act. Once the formwork has dropped away the take carries on
+// turning, so the finished vault is seen once on its own rather than the
+// film ending on the frame the strike finishes. Param asked for exactly
+// this: "at the end of the animation when the form work drops away, can we
+// continue the rotation one more time so we look at the final form".
+//
+// One revolution at the spin rate in force, floored so a still camera still
+// pauses on the result, and capped so a very slow spin does not quietly add
+// a minute to every take and every recording.
+const ADMIRE_MIN_SECONDS = 4;
+const ADMIRE_MAX_SECONDS = 40;
+
+function admireSeconds() {
+  const spin = state.timeline ? state.timeline.orbitSpeed : 0;
+  if (!(spin > 0)) return ADMIRE_MIN_SECONDS;
+  return Math.min(ADMIRE_MAX_SECONDS,
+    Math.max(ADMIRE_MIN_SECONDS, (2 * Math.PI) / spin));
+}
+
 function timelineDuration() {
   const step = placementStep();
   return openingSeconds() + placementCount() * step
-    + DROP_SECONDS + STRIKE_SECONDS;
+    + DROP_SECONDS + STRIKE_SECONDS + admireSeconds();
 }
 
 function pieceTint(key) {
@@ -4621,6 +4700,7 @@ function resize() {
 controls.addEventListener("start", () => { state.userDragging = true; });
 controls.addEventListener("end", () => {
   state.userDragging = false;
+  rememberSession();
   // Moving the camera mid-take moves the take with it: the orbit carries on
   // from where the drag left off instead of snapping back to where it began.
   if (state.timeline && state.timeline.playing) captureOrbitBase();
