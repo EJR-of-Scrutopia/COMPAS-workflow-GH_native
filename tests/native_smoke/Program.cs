@@ -1338,10 +1338,15 @@ internal static class Program
                 "normals; a degenerate fan and a vertex no face mentions " +
                 "both fall back to (0, 0, 1); SkinNet.Normals carries " +
                 "exactly this field, cached beside the level field; and " +
-                "NormalAt renormalises, answers the same on either side " +
-                "of a shared edge, falls back off the net, and walks the " +
-                "dome CONTINUOUSLY, which is rule 3 and the reason no " +
-                "weld pass is needed.");
+                "NormalAt renormalises, weighs a shared edge's two " +
+                "DIFFERING endpoint normals 0.75 to 0.25 a quarter of the " +
+                "way along it, the same combination from either face, " +
+                "answers an off-mesh point from the NEAREST face as " +
+                "LevelAt does rather than vertically (rule 2 as amended " +
+                "2026-09-04), keeps (0, 0, 1) only for a net with no faces " +
+                "and a face whose plan area is below LevelAt's own 1e-15, " +
+                "and walks the dome CONTINUOUSLY, which is rule 3 and the " +
+                "reason no weld pass is needed.");
         }
         catch (Exception exception)
         {
@@ -26015,32 +26020,98 @@ internal static class Program
             }
         }
 
-        // ---- THE NORMAL AT A POINT, and the continuity rule 3 rests on.
-        // A point in the middle of face A gets face A's own normal, since
-        // every corner of A carries a different one and the barycentric
-        // combination is what makes them agree; a point ON the shared edge
-        // gets the SAME answer whichever face the lookup picks, because
-        // the third weight is zero on both sides. That is why no weld pass
-        // is needed anywhere.
+        // ---- THE NORMAL AT A POINT, and the interpolation rule 3 rests
+        // on, measured on a SHARED EDGE WHOSE TWO ENDPOINT NORMALS DIFFER
+        // and at an INTERIOR parameter of it.
+        //
+        // The sub-check that stood here until 2026-09-04 sampled the
+        // leaning fixture's shared edge, whose two endpoints both carry
+        // (-3, 0, 1)/sqrt(10). Every weighting of two equal vectors is
+        // that same vector, so no error in the barycentric weights could
+        // ever have reddened it: a check that cannot fail is the defect
+        // class this whole plan hunts, and it is replaced rather than
+        // reworded.
+        //
+        // THE WEDGE. Three faces, so that the shared edge's two endpoints
+        // do NOT belong to the same set of faces and therefore do not
+        // carry the same normal (on a two-triangle fixture they must,
+        // which is why the old one was vacuous):
+        //
+        //   v0 (0,0,0)  v1 (1,0,0)  v2 (0,1,0)  v3 (1,1,1)  v4 (2,0,2)
+        //   A = v0 v1 v2    B = v1 v3 v2    C = v1 v4 v3
+        //
+        // Raw crosses, hand-computed: A (0, 0, 1), B (-1, -1, 1),
+        // C (-2, -1, 1). So v1, which belongs to all three, sums to
+        // (-3, -2, 3) and v2, which belongs to A and B, sums to
+        // (-1, -1, 2). The edge v1 v2 is shared by A and B.
+        //
+        // The sample sits a QUARTER of the way from v1 to v2, at
+        // (0.75, 0.25, 0), so a swapped or symmetric weighting reddens it.
+        // Face A reads it as (wa, wb, wc) = (0, 0.75, 0.25) over
+        // (v0, v1, v2) and face B as (0.75, 0, 0.25) over (v1, v3, v2):
+        // the SAME combination, 0.75 of v1's normal and 0.25 of v2's, with
+        // the third weight zero on each side. That is rule 3 in one
+        // number, and it is why the expected value below does not depend
+        // on which face the lookup happened to pick.
         double[] Normal(object net, double[] at) =>
             (double[])normalAt.Invoke(null, new object?[] { net, at })!;
 
-        double[] onEdge = { 0.0, 0.5, 0.0 };
-        double[] edgeNormal = Normal(leaningNet, onEdge);
-        // v0 and v2 both carry (-3, 0, 1)/sqrt(10), so anywhere on the
-        // shared edge the interpolation is that same vector, whichever
-        // triangle claims the point.
+        static double[] Unit(double[] raw)
+        {
+            double length = Math.Sqrt(
+                (raw[0] * raw[0]) + (raw[1] * raw[1]) + (raw[2] * raw[2]));
+            return new[] { raw[0] / length, raw[1] / length, raw[2] / length };
+        }
+
+        double[][] wedgeVertices =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 1.0, 1.0, 1.0 },
+            new[] { 2.0, 0.0, 2.0 }
+        };
+        int[][] wedgeFaces =
+        {
+            new[] { 0, 1, 2 }, new[] { 1, 3, 2 }, new[] { 1, 4, 3 }
+        };
+        object wedge = SkinNetWith(
+            netType, edgeType, wedgeVertices, wedgeFaces, Array.Empty<int>(),
+            Array.Empty<(int, int, double)>());
+        double[] endA = Unit(new[] { -3.0, -2.0, 3.0 });
+        double[] endB = Unit(new[] { -1.0, -1.0, 2.0 });
+        double endAgreement =
+            (endA[0] * endB[0]) + (endA[1] * endB[1]) + (endA[2] * endB[2]);
+        if (endAgreement > 0.999)
+        {
+            throw new InvalidOperationException(
+                "The shared edge this check samples must have endpoint " +
+                "normals that GENUINELY DIFFER, or every weighting of them " +
+                "gives the same answer and the interpolation is measured " +
+                $"on nothing; the two agree to {endAgreement}.");
+        }
+        double[] quarter =
+            Unit(new[]
+            {
+                (0.75 * endA[0]) + (0.25 * endB[0]),
+                (0.75 * endA[1]) + (0.25 * endB[1]),
+                (0.75 * endA[2]) + (0.25 * endB[2])
+            });
+        double[] edgeNormal = Normal(wedge, new[] { 0.75, 0.25, 0.0 });
         for (int axis = 0; axis < 3; axis++)
         {
-            if (Math.Abs(edgeNormal[axis] - wanted[axis]) > 1.0e-12)
+            if (Math.Abs(edgeNormal[axis] - quarter[axis]) > 1.0e-12)
             {
                 throw new InvalidOperationException(
-                    "A point on the edge SHARED by both faces must " +
-                    "interpolate the two vertex normals that edge carries, " +
-                    "which are equal here, so the answer is independent of " +
-                    "which face the lookup picked: got " +
-                    $"({edgeNormal[0]}, {edgeNormal[1]}, {edgeNormal[2]}) " +
-                    $"rather than ({wanted[0]}, {wanted[1]}, {wanted[2]}).");
+                    "A point a QUARTER of the way along the edge SHARED by " +
+                    "two faces must interpolate that edge's two vertex " +
+                    "normals with the weights 0.75 and 0.25, and those two " +
+                    "normals DIFFER here, so a wrong weighting cannot hide: " +
+                    $"got ({edgeNormal[0]}, {edgeNormal[1]}, " +
+                    $"{edgeNormal[2]}) rather than ({quarter[0]}, " +
+                    $"{quarter[1]}, {quarter[2]}). Both faces read this " +
+                    "point as the same combination, the third weight being " +
+                    "zero on each side, which is rule 3.");
             }
         }
         double edgeLength = Math.Sqrt(
@@ -26053,12 +26124,93 @@ internal static class Program
                 "The interpolated normal is RENORMALISED, so it comes " +
                 $"back unit length; got {edgeLength}.");
         }
-        double[] offNet = Normal(leaningNet, new[] { 40.0, 40.0, 0.0 });
-        if (offNet[0] != 0.0 || offNet[1] != 0.0 || offNet[2] != 1.0)
+
+        // ---- OFF THE MESH IN PLAN, the NEAREST face answers (rule 2 as
+        // amended 2026-09-04). The old rule returned (0, 0, 1) here, and
+        // that fired on 172 of the 8870 cell corners of Param's own net,
+        // at the steep rim, where a vertical thickness direction is the
+        // very defect this branch removes.
+        //
+        // On the leaning fixture the point (0.6, 0.6) lies outside both
+        // triangles in plan (x + y > 1). Face A's plan centroid is
+        // (1/3, 1/3) and face B's is (0, 1/3), so A is the nearer and the
+        // answer is A's own field EVALUATED AT THE POINT: the weights are
+        // wb = x = 0.6, wc = y = 0.6 and wa = -0.2, hand-computed here so
+        // that a check reading them off the engine cannot cancel a defect
+        // in it. Returning (0, 0, 1) instead reddens this.
+        double[] cornerNormal = Unit(new[] { -3.0, 0.0, 1.0 });
+        double[] offMesh =
+            Unit(new[]
+            {
+                (-0.2 * cornerNormal[0]) + (0.6 * 0.0) + (0.6 * cornerNormal[0]),
+                (-0.2 * cornerNormal[1]) + (0.6 * 0.0) + (0.6 * cornerNormal[1]),
+                (-0.2 * cornerNormal[2]) + (0.6 * 1.0) + (0.6 * cornerNormal[2])
+            });
+        double[] offNet = Normal(leaningNet, new[] { 0.6, 0.6, 0.0 });
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (Math.Abs(offNet[axis] - offMesh[axis]) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "A point with NO face under it in plan takes the " +
+                    "NEAREST face's own answer, by the same rule LevelAt " +
+                    "already answers an off-mesh point with, and not a " +
+                    "vertical (0, 0, 1): got " +
+                    $"({offNet[0]}, {offNet[1]}, {offNet[2]}) rather than " +
+                    $"({offMesh[0]}, {offMesh[1]}, {offMesh[2]}).");
+            }
+        }
+
+        // (0, 0, 1) survives exactly where there is no usable face to read
+        // at all. A net with NO FACES is that case, and it must answer
+        // finitely rather than index a face that is not there.
+        object bare = SkinNetWith(
+            netType, edgeType, leaning, Array.Empty<int[]>(),
+            Array.Empty<int>(), Array.Empty<(int, int, double)>());
+        double[] noFace = Normal(bare, new[] { 0.2, 0.2, 0.0 });
+        if (noFace[0] != 0.0 || noFace[1] != 0.0 || noFace[2] != 1.0)
         {
             throw new InvalidOperationException(
-                "A point with NO face under it in plan falls back to " +
-                $"(0, 0, 1); got ({offNet[0]}, {offNet[1]}, {offNet[2]}).");
+                "A net with NO FACES has no normal to read anywhere, so " +
+                "the answer is the finite fallback (0, 0, 1); got " +
+                $"({noFace[0]}, {noFace[1]}, {noFace[2]}).");
+        }
+
+        // ---- AND A FACE WITH NO PLAN AREA TO SPEAK OF, at the SAME 1e-15
+        // LevelAt refuses to divide by on the SAME triangle. Barycentric
+        // coordinates over a plan-degenerate face are that face's own plan
+        // area divided into everything, so a face of twice-area 1e-16
+        // multiplies a point's offsets by 1e16 and answers with noise; one
+        // tolerance for one geometric fact, and 1e-18 here against 1e-15
+        // there was two.
+        //
+        // The fixture is a near-VERTICAL triangle, twice-plan-area exactly
+        // 1e-16 and a real 3D area, whose own normal is (0, -1, 1e-16): so
+        // an engine that interpolated it would answer with that and the
+        // difference is visible. The sample sits INSIDE it in plan, at
+        // barycentric (0.1, 0.4, 0.5), where the weights are ordinary
+        // numbers, so this measures the TOLERANCE and not a cancellation.
+        double[][] sliverVertices =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0e-16, 1.0 }
+        };
+        object sliver = SkinNetWith(
+            netType, edgeType, sliverVertices, new[] { new[] { 0, 1, 2 } },
+            Array.Empty<int>(), Array.Empty<(int, int, double)>());
+        double[] onSliver = Normal(sliver, new[] { 0.4, 5.0e-17, 0.0 });
+        if (onSliver[0] != 0.0 || onSliver[1] != 0.0 || onSliver[2] != 1.0)
+        {
+            throw new InvalidOperationException(
+                "A face whose PLAN area is 1e-16, below the 1e-15 LevelAt " +
+                "refuses to divide by on the same triangle, carries no " +
+                "usable barycentric coordinates and takes the (0, 0, 1) " +
+                "fallback rather than dividing a point's offsets by it: " +
+                $"got ({onSliver[0]}, {onSliver[1]}, {onSliver[2]}), which " +
+                "is this face's own normal interpolated, so the guard is " +
+                "at 1e-18 and the two siblings disagree about the same " +
+                "geometry.");
         }
 
         // ---- CONTINUITY, MEASURED rather than argued, on the dome, whose
@@ -26072,9 +26224,12 @@ internal static class Program
         // The walk stays INSIDE the dome's plan. Its footprint is an
         // OCTAGON whose vertices sit at radius 2, so its inscribed circle
         // is 2 cos(22.5 degrees) = 1.848, and a walk to radius 1.9 leaves
-        // the net near the ends and takes rule 2's (0, 0, 1) fallback,
-        // which IS a step and is not the thing this measures. Rule 2's
-        // fallback is measured on its own two lines above.
+        // the net near the ends, where rule 2 answers from the NEAREST
+        // face instead. That answer is a function of the point alone, so
+        // the weld holds there too, but the choice of nearest face is a
+        // discrete one and steps when it changes, which is not the
+        // continuity this line measures. Rule 2's off-mesh branch is
+        // measured on its own lines above.
         (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
         object dome = SkinNetWith(
             netType, edgeType, domeVertices, domeFaces, SkinDomeRim(),

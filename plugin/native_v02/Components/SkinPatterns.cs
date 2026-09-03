@@ -4501,14 +4501,47 @@ internal static class SkinPatterns
     /// may enter this method, or that argument fails and the change is
     /// worthless.
     ///
-    /// No face under the point, a face with no plan area, or an
-    /// interpolated vector shorter than 1e-12 all fall back to (0, 0, 1).
+    /// OFF THE MESH IN PLAN, the answer is the NEAREST face's own, by the
+    /// same rule LevelAt already answers an off-mesh point with: the face
+    /// whose plan centroid is closest, evaluated at the point. This is not
+    /// a nicety. A traced level curve runs along the net's own boundary
+    /// edges, and PlanContains claims a boundary point for a face only
+    /// about half the time, so 172 of the 8870 cell corners on Param's own
+    /// crown arch found no face at all and took a VERTICAL thickness
+    /// direction at the steep rim, which is exactly the defect this whole
+    /// change removes. Amended 2026-09-04; rule 2's continuity argument is
+    /// untouched, because the nearest-face answer is still a function of
+    /// the POINT alone and two cells sharing such a corner still get the
+    /// same three doubles back.
+    ///
+    /// (0, 0, 1) survives only where there is no usable face to read at
+    /// all: a net with no faces, a face with no plan area, or an
+    /// interpolated vector shorter than 1e-12.
     /// </summary>
     public static double[] NormalAt(SkinNet net, double[] at)
     {
+        if (net.Faces.Count == 0)
+            return new[] { 0.0, 0.0, 1.0 };
         int face = FaceUnder(net, at);
         if (face < 0)
-            return new[] { 0.0, 0.0, 1.0 };
+        {
+            int nearest = 0;
+            double best = double.PositiveInfinity;
+            for (int candidate = 0; candidate < net.Faces.Count; candidate++)
+            {
+                int[] corners = net.Faces[candidate];
+                double cx = corners.Average(c => net.Vertices[c][0]);
+                double cy = corners.Average(c => net.Vertices[c][1]);
+                double distance =
+                    ((cx - at[0]) * (cx - at[0])) + ((cy - at[1]) * (cy - at[1]));
+                if (distance < best)
+                {
+                    best = distance;
+                    nearest = candidate;
+                }
+            }
+            face = nearest;
+        }
         int[] triangle = net.Faces[face];
         double[] a = net.Vertices[triangle[0]];
         double[] b = net.Vertices[triangle[1]];
@@ -4516,7 +4549,10 @@ internal static class SkinPatterns
         double twice =
             ((b[0] - a[0]) * (c[1] - a[1])) -
             ((c[0] - a[0]) * (b[1] - a[1]));
-        if (Math.Abs(twice) <= 1.0e-18)
+        // The same 1e-15 LevelAt refuses to divide by on the SAME triangle
+        // (see above): a plan-degenerate face carries no barycentric
+        // coordinates, and one tolerance for one geometric fact.
+        if (Math.Abs(twice) <= 1.0e-15)
             return new[] { 0.0, 0.0, 1.0 };
         double wb =
             (((at[0] - a[0]) * (c[1] - a[1])) -
