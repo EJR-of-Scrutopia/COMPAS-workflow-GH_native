@@ -158,6 +158,20 @@ public sealed class SkinComponent : NativeComponentBase
                 + "heights each refusal sits between. Force aligned: the "
                 + "worker's diagnostics verbatim.",
             GH_ParamAccess.item);
+        parameters.AddBrepParameter(
+            "Surface",
+            "SF",
+            "One Brep per cell (spec section 5), branched and ordered "
+                + "EXACTLY as Cells, item for item: a two-section cell "
+                + "(courses, force aligned) lofts its lower and upper "
+                + "runs, a three-section hexagon lofts its bottom run, "
+                + "its side pair and its top run, and a cap or an odd-"
+                + "cornered cell is fanned from its own interior point "
+                + "lifted onto the surface. A cell that will not close "
+                + "into a Brep carries a NULL here rather than a missing "
+                + "item, so this tree stays aligned with Cells even where "
+                + "a cell failed.",
+            GH_ParamAccess.tree);
     }
 
     protected override void SolveInstance(IGH_DataAccess data)
@@ -208,6 +222,8 @@ public sealed class SkinComponent : NativeComponentBase
                 data.SetDataTree(
                     2, OutputTree.Curves(Array.Empty<List<Curve>>()));
                 data.SetData(3, string.Empty);
+                data.SetDataTree(
+                    4, OutputTree.Breps(Array.Empty<List<Brep?>>()));
                 Message = $"0 cells · 0 courses · {PatternName(pattern)}";
                 return;
             }
@@ -301,6 +317,11 @@ public sealed class SkinComponent : NativeComponentBase
                 cellBranches.Add(new List<Curve>());
                 courseBranches.Add(new List<int>());
             }
+            var surfaceBranches = new List<List<Brep?>>();
+            for (int course = 0; course < generated.CourseCount; course++)
+                surfaceBranches.Add(new List<Brep?>());
+            int surfaceFailed = 0;
+            int firstFailedCourse = -1;
             foreach (SkinCell cell in generated.Cells)
             {
                 int course = Math.Min(
@@ -308,12 +329,33 @@ public sealed class SkinComponent : NativeComponentBase
                     Math.Max(generated.CourseCount - 1, 0));
                 cellBranches[course].Add(ClosedOutlineCurve(cell.Outline));
                 courseBranches[course].Add(course);
+                Brep? surface = CellSurface(cell, net);
+                surfaceBranches[course].Add(surface);
+                if (surface is null)
+                {
+                    surfaceFailed++;
+                    if (firstFailedCourse < 0)
+                        firstFailedCourse = course;
+                }
+            }
+            if (surfaceFailed > 0)
+            {
+                // A failure is a defect in this engine, not a fact about the
+                // geometry, so it is counted, reported and raised.
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{surfaceFailed} cell" +
+                    (surfaceFailed == 1 ? "" : "s") +
+                    " would not close into a surface, the first at course " +
+                    $"{firstFailedCourse}; those slots carry a NULL so the " +
+                    "Surface tree stays aligned with Cells item for item.");
             }
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
             data.SetDataTree(1, OutputTree.Integers(courseBranches));
             data.SetDataTree(
                 2, OutputTree.Curves(Array.Empty<List<Curve>>()));
             data.SetData(3, generated.Diagnostics);
+            data.SetDataTree(4, OutputTree.Breps(surfaceBranches));
             Message =
                 $"{generated.Cells.Count} cells · " +
                 $"{generated.CourseCount} courses · " +
@@ -369,6 +411,66 @@ public sealed class SkinComponent : NativeComponentBase
                 coordinate[2]));
         }
         return new PolylineCurve(points);
+    }
+
+    /// <summary>
+    /// One cell's surface (spec section 5). On the SOLVE thread and only
+    /// here, the split the component already keeps: nothing in
+    /// SkinPatterns.cs may reference RhinoCommon.
+    ///
+    /// A cell carrying two sections is a straight, unclosed loft of them,
+    /// which is route 5.2.3(a) and (c); three sections is route (b); no
+    /// sections is the deterministic fan of routes (d) and (e), from the
+    /// cell's own interior point lifted onto the surface, to each segment of
+    /// the outline, joined. Brep.CreatePatch is NOT used: it is a fitting
+    /// solver, its output is not the surface the cell describes, and a
+    /// deterministic fan is worth more here than a smooth guess.
+    /// </summary>
+    private static Brep? CellSurface(SkinCell cell, SkinNet net)
+    {
+        if (cell.Sections is not null && cell.Sections.Count >= 2)
+        {
+            var sections = new List<Curve>(cell.Sections.Count);
+            foreach (IReadOnlyList<double[]> section in cell.Sections)
+            {
+                if (section.Count < 2)
+                    return null;
+                sections.Add(OpenOutlineCurve(section));
+            }
+            Brep[] lofted = Brep.CreateFromLoft(
+                sections,
+                Point3d.Unset,
+                Point3d.Unset,
+                LoftType.Straight,
+                false);
+            return lofted is { Length: 1 } && lofted[0].IsValid
+                ? lofted[0]
+                : null;
+        }
+        double[]? inside = SkinPatterns.PlanInteriorPoint(cell.Outline);
+        if (inside is null)
+            return null;
+        double[]? apex = SkinPatterns.LiftPlanPoint(net, inside[0], inside[1]);
+        if (apex is null)
+            return null;
+        var pieces = new List<Brep>(cell.Outline.Count);
+        for (int at = 0; at < cell.Outline.Count; at++)
+        {
+            double[] a = cell.Outline[at];
+            double[] b = cell.Outline[(at + 1) % cell.Outline.Count];
+            Brep? piece = Brep.CreateFromCornerPoints(
+                new Point3d(a[0], a[1], a[2]),
+                new Point3d(b[0], b[1], b[2]),
+                new Point3d(apex[0], apex[1], apex[2]),
+                1.0e-9);
+            if (piece is null)
+                return null;
+            pieces.Add(piece);
+        }
+        Brep[] joined = Brep.JoinBreps(pieces, 1.0e-9);
+        return joined is { Length: 1 } && joined[0].IsValid
+            ? joined[0]
+            : null;
     }
 
     /// <summary>

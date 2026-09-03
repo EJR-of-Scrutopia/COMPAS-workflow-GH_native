@@ -97,9 +97,16 @@ internal static class Program
                 // slider must move to slot 3, and the outputs renamed with
                 // their meanings kept. The names below are what the
                 // ports-moved warning compares a saved definition against.
+                // "Surface" is task 29's own PURE APPEND (spec section 5):
+                // a new output at the end, so a saved definition wired only
+                // to the first four outputs keeps every existing wire.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[] { "Result", "Pattern", "Size", "Course Height" },
-                    new[] { "Cells", "Courses", "Flowlines", "Diagnostics" }),
+                    new[]
+                    {
+                        "Cells", "Courses", "Flowlines", "Diagnostics",
+                        "Surface"
+                    }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
                 // member and form lines, the load and reaction points and
                 // vectors) and to Diagnose (the report), which carry them
@@ -1072,7 +1079,8 @@ internal static class Program
                 "Armadillo Dual class and GUID gone from every " +
                 "component, the Pattern value list pinned (input 1, " +
                 "default 0, courses/hexagonal/force aligned), and all " +
-                "four outputs VISIBLE, the proposer convention.");
+                "five outputs VISIBLE (Surface appended by task 29), the " +
+                "proposer convention.");
         }
         catch (Exception exception)
         {
@@ -1169,6 +1177,26 @@ internal static class Program
         {
             failures.Add(
                 $"Skin Brep route API shape: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinSurfaceSections(plugin);
+            Console.WriteLine(
+                "PASS  Skin surface sections (spec section 5): a COURSES " +
+                "cell carries two sections, the lower run and the upper " +
+                "run, both in the same direction (route (a)/(c)); a " +
+                "HEXAGON cell of six setout corners carries three, the " +
+                "bottom run, the two-point section from the left side " +
+                "vertex to the right, and the top run (route (b)); a CAP " +
+                "carries none, so the component fans it (route (d)); and " +
+                "any other corner count carries none, so the component " +
+                "fans that too (route (e)).");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin surface sections: {DescribeException(exception)}");
         }
 
         try
@@ -22647,10 +22675,11 @@ internal static class Program
                         "the point of the component.");
                 }
             }
-            if (outputCount != 4)
+            if (outputCount != 5)
             {
                 throw new InvalidOperationException(
-                    $"Four outputs (C, CO, FL, D); got {outputCount}.");
+                    "Five outputs (C, CO, FL, D, SF), Surface appended " +
+                    $"by task 29 (spec section 5); got {outputCount}.");
             }
 
             // Ruling C's premise (an iteration-indexed TaskList a
@@ -23318,6 +23347,91 @@ internal static class Program
             // so that a reader of rule 5.2.2 can see the refusal was a
             // choice and not an omission. GetMethods, not GetMethod: the
             // corner-point overloads are as ambiguous as the loft ones.
+        }
+    }
+
+    /// <summary>
+    /// The engine half of section 5. Every cell carries the sections its own
+    /// route lofts: a COURSES or FORCE-ALIGNED cell two, the lower run and
+    /// the upper run, both in the same direction (route 5.2.3(a) and (c)); a
+    /// HEXAGON three, the bottom run, the two-point section from the left
+    /// side vertex to the right, and the top run (route (b)); a CAP none, so
+    /// the component fans it (route (d)); and any other corner count none,
+    /// so the component fans that too (route (e)). Route (e) is not optional
+    /// tidying: rule 3.3.5 requires three- and five-sided force-aligned
+    /// cells and rule 4.3 requires five- and seven-sided honeycomb cells,
+    /// and without it check 12.4(d) and check 12.5(b) could not both pass.
+    /// </summary>
+    private static void ValidateSkinSurfaceSections(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        // Courses is overloaded (the Min Piece default, task 20's own
+        // disambiguation note on RequirePublicStatic above); the name-only
+        // lookup throws AmbiguousMatchException the moment the second
+        // overload exists, so the four-argument overload this check invokes
+        // is named explicitly by its parameter types.
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        (double[][] vertices, int[][] faces, int[] rim) = SkinHemisphereNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, rim,
+            Array.Empty<(int, int, double)>());
+
+        static int SectionCount(object cell)
+        {
+            object? sections = cell.GetType()
+                .GetProperty("Sections")!.GetValue(cell);
+            return sections is null ? 0 : ((IList)sections).Count;
+        }
+        object built = courses.Invoke(
+            null, new object[] { net, 0.6, 0.35, 1.0 / 3.0 })!;
+        IList cells = (IList)built.GetType()
+            .GetProperty("Cells")!.GetValue(built)!;
+        foreach (object? item in cells)
+        {
+            object cell = item!;
+            bool cap = Reading<bool>(cell, "Cap");
+            int sections = SectionCount(cell);
+            if (cap && sections != 0)
+            {
+                throw new InvalidOperationException(
+                    "A CAP is the one cell that cannot be a single face: it " +
+                    "is emitted as a Brep of triangular faces fanned from " +
+                    "the net vertex of greatest field value inside its loop " +
+                    "to each segment of the loop, joined (route 5.2.3(d)), " +
+                    "so it carries no loft sections. A WEDGE of a split cap " +
+                    "is NOT a cap for this purpose: by rule 2.6.4(a) it is " +
+                    "an ordinary band cell and takes route (a).");
+            }
+            if (!cap && sections != 2)
+            {
+                throw new InvalidOperationException(
+                    "A courses cell is a loft of TWO sections, the lower " +
+                    $"run and the upper run (route 5.2.3(a)); got {sections}.");
+            }
+        }
+        object honeycomb = hexagonal.Invoke(
+            null, new object[] { net, 0.6, 0.35 })!;
+        foreach (object? item in (IList)honeycomb.GetType()
+                     .GetProperty("Cells")!.GetValue(honeycomb)!)
+        {
+            object cell = item!;
+            int corners = ((IList)cell.GetType()
+                .GetProperty("Outline")!.GetValue(cell)!).Count;
+            int sections = SectionCount(cell);
+            if (sections != 0 && sections != 3)
+            {
+                throw new InvalidOperationException(
+                    "A hexagon is a loft of THREE sections (route " +
+                    $"5.2.3(b)); a cell of {corners} corners carries " +
+                    $"{sections}, and a cell whose corner count its own " +
+                    "route does not fit carries NONE and takes the " +
+                    "deterministic fan of route (e).");
+            }
         }
     }
 

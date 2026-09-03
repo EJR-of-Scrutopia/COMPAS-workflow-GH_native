@@ -1990,6 +1990,38 @@ internal static class SkinPatterns
         return null;
     }
 
+    /// <summary>A plan point lifted onto the surface: the net face
+    /// containing it in plan, evaluated at that point on the face's own
+    /// plane. Null where no face contains it.</summary>
+    public static double[]? LiftPlanPoint(SkinNet net, double x, double y)
+    {
+        foreach (int[] triangle in net.Faces)
+        {
+            double[] a = net.Vertices[triangle[0]];
+            double[] b = net.Vertices[triangle[1]];
+            double[] c = net.Vertices[triangle[2]];
+            if (!PlanContains(x, y, new[] { a, b, c }))
+                continue;
+            double twice =
+                (b[0] - a[0]) * (c[1] - a[1]) -
+                (c[0] - a[0]) * (b[1] - a[1]);
+            if (Math.Abs(twice) <= 1.0e-18)
+                continue;
+            double alpha =
+                ((b[0] - x) * (c[1] - y) - (c[0] - x) * (b[1] - y)) / twice;
+            double beta =
+                ((c[0] - x) * (a[1] - y) - (a[0] - x) * (c[1] - y)) / twice;
+            double gamma = 1.0 - alpha - beta;
+            return new[]
+            {
+                x,
+                y,
+                alpha * a[2] + beta * b[2] + gamma * c[2]
+            };
+        }
+        return null;
+    }
+
     /// <summary>
     /// Do two outlines OVERLAP in plan? True when any edge of one
     /// properly crosses any edge of the other, and true when one's own
@@ -4082,14 +4114,22 @@ internal static class SkinPatterns
     {
         double lowerRatio = lowerCurve.Length / mid.Length;
         double upperRatio = upperCurve.Length / mid.Length;
-        var outline = new List<double[]>();
-        outline.AddRange(
-            Run(lowerCurve, u0 * lowerRatio, u1 * lowerRatio));
-        List<double[]> back =
-            Run(upperCurve, u0 * upperRatio, u1 * upperRatio);
+        List<double[]> lower = Run(
+            lowerCurve, u0 * lowerRatio, u1 * lowerRatio);
+        List<double[]> upper = Run(
+            upperCurve, u0 * upperRatio, u1 * upperRatio);
+        var outline = new List<double[]>(lower);
+        List<double[]> back = new List<double[]>(upper);
         back.Reverse();
         outline.AddRange(back);
-        return new SkinCell(course, Dedupe(outline), clipped, u0, u1);
+        // The surface is derived from the two RUNS the cell was built from
+        // and never re-derived from the finished closed polyline (rule
+        // 5.2.1): recovering four chains from the concatenated ring
+        // afterwards means re-detecting the joint corners, which Dedupe has
+        // already made ambiguous.
+        return new SkinCell(
+            course, Dedupe(outline), clipped, u0, u1, false,
+            Sections: new[] { (IReadOnlyList<double[]>)lower, upper });
     }
 
     /// <summary>
@@ -4679,10 +4719,36 @@ internal static class SkinPatterns
                     int setoutCorners = bottom.Count + aboveVerts.Count + 2;
                     if (setoutCorners != 6)
                         countChangeRows.Add(course);
+                    // Rule 5.2.3(b): a REGULAR hexagon (six setout corners)
+                    // lofts three sections in outline order, the bottom
+                    // run, the two-point section from the left side vertex
+                    // to the right, and the top run; a five- or seven-sided
+                    // cell carries none and takes the deterministic fan of
+                    // route (e), because its odd corner has no matching
+                    // section on the opposite run to loft against.
+                    IReadOnlyList<IReadOnlyList<double[]>>? sections =
+                        setoutCorners == 6
+                            ? new IReadOnlyList<double[]>[]
+                              {
+                                  bottom
+                                      .Select(at =>
+                                          PointAt(below, ArcOf(below, at)))
+                                      .ToList(),
+                                  new List<double[]>
+                                  {
+                                      PointAt(here, ArcOf(here, sideLeft)),
+                                      PointAt(here, ArcOf(here, sideRight))
+                                  },
+                                  aboveVerts
+                                      .Select(at =>
+                                          PointAt(above, ArcOf(above, at)))
+                                      .ToList()
+                              }
+                            : null;
                     var cell = new SkinCell(
                         course, cleaned, clipped,
                         ArcOf(here, sideLeft), ArcOf(here, sideRight),
-                        false, setoutCorners);
+                        false, setoutCorners, sections);
                     keyed.Add((course, chartAt, cell.U0, cell));
                 }
             }

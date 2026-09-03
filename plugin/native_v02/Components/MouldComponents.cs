@@ -46,6 +46,16 @@ namespace Ananke.COMPAS.Native.Components
             IEnumerable<IEnumerable<Curve>> branches) =>
             Build(branches, value => new GH_Curve(value));
 
+        /// <summary>A Brep tree that keeps a NULL where a branch's value is
+        /// null, rather than dropping the item: the Surface output stays
+        /// aligned item for item with Cells, which is the one promise it
+        /// exists to keep (spec section 5, task 29).</summary>
+        public static GH_Structure<GH_Brep> Breps(
+            IEnumerable<IEnumerable<Brep?>> branches) =>
+            Build<Brep?, GH_Brep>(
+                branches,
+                value => value is null ? null! : new GH_Brep(value));
+
         public static GH_Structure<GH_Vector> Vectors(
             IEnumerable<IEnumerable<Vector3d>> branches) =>
             Build(branches, value => new GH_Vector(value));
