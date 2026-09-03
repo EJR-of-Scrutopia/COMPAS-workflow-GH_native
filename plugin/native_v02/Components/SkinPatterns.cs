@@ -1240,6 +1240,68 @@ internal static class SkinPatterns
         return twice / 2.0;
     }
 
+    /// <summary>
+    /// What FRACTION of the net's own plan area the surviving cells cover,
+    /// which is the whole-branch review's finding 12: the honeycomb's
+    /// neighbouring rows overlap in plan often enough that the
+    /// plan-validity filter removes a third of the candidates on an
+    /// ordinary dome, and what it removes is a HOLE in the skin. The
+    /// pattern's own doc comment argues for coverage, saying a cell
+    /// crossing the boundary is clipped and KEPT because a coverage hole
+    /// is worse than an odd-shaped rim piece, while the filter downstream
+    /// was taking that coverage away and nothing said so. An author
+    /// counting cells cannot see it; a percentage he can.
+    ///
+    /// The cells are disjoint after KeepValidPlans, so the sum of their
+    /// plan areas against the net's own is real uncovered area and not an
+    /// estimate. Both are absolute values: a ring's winding is not the
+    /// question here.
+    /// </summary>
+    private static double PlanCoverage(
+        SkinNet net,
+        IReadOnlyList<SkinCell> cells)
+    {
+        double whole = 0.0;
+        foreach (int[] face in net.Faces)
+        {
+            double[] a = net.Vertices[face[0]];
+            double[] b = net.Vertices[face[1]];
+            double[] c = net.Vertices[face[2]];
+            whole += Math.Abs(
+                ((b[0] - a[0]) * (c[1] - a[1])) -
+                ((c[0] - a[0]) * (b[1] - a[1]))) / 2.0;
+        }
+        if (!(whole > 1.0e-12))
+            return double.NaN;
+        double covered = 0.0;
+        foreach (SkinCell cell in cells)
+        {
+            IReadOnlyList<double[]> ring = cell.Outline;
+            if (ring.Count < 3)
+                continue;
+            double cx = 0.0;
+            double cy = 0.0;
+            foreach (double[] corner in ring)
+            {
+                cx += corner[0];
+                cy += corner[1];
+            }
+            cx /= ring.Count;
+            cy /= ring.Count;
+            double twice = 0.0;
+            for (int at = 0; at < ring.Count; at++)
+            {
+                double[] one = ring[at];
+                double[] next = ring[(at + 1) % ring.Count];
+                twice +=
+                    ((one[0] - cx) * (next[1] - cy)) -
+                    ((next[0] - cx) * (one[1] - cy));
+            }
+            covered += Math.Abs(twice) / 2.0;
+        }
+        return covered / whole;
+    }
+
     /// <summary>The chord from an open strip's first point to its last,
     /// in plan: the direction the strip runs, reduced to one vector.
     /// </summary>
@@ -3217,7 +3279,8 @@ internal static class SkinPatterns
                     "courses", transitionBands, transitions,
                     FieldKindOf(net)),
                 capLine,
-                weldCollapsed),
+                weldCollapsed,
+                PlanCoverage(net, cells)),
             transitionBands,
             transitions,
             degenerateDropped,
@@ -3751,7 +3814,8 @@ internal static class SkinPatterns
                     "force aligned", resolved.Refused.Count, resolved.Refused,
                     FieldKindOf(net)),
                 oddLine,
-                weldCollapsed),
+                weldCollapsed,
+                PlanCoverage(net, valid)),
             resolved.Refused.Count,
             resolved.Refused,
             degenerateDropped,
@@ -4452,7 +4516,8 @@ internal static class SkinPatterns
         int planOverlapDropped,
         string? transitions = null,
         string? caps = null,
-        int weldCollapsedDropped = 0)
+        int weldCollapsedDropped = 0,
+        double planCoverage = double.NaN)
     {
         static string F(double value) =>
             value.ToString("F3", CultureInfo.InvariantCulture);
@@ -4487,6 +4552,20 @@ internal static class SkinPatterns
             "(outline fell below three distinct corners once consecutive " +
             "corners within 1e-6 m were welded at emission; excluded " +
             "automatically so the sidecar imports)");
+        if (double.IsFinite(planCoverage))
+        {
+            // Whole-branch review finding 12. A drop count tells an author
+            // how many cells went; it does not tell him how much SHELL
+            // went, and on this pattern those are different questions,
+            // because a dropped honeycomb candidate leaves a hole where a
+            // dropped courses cell rarely does.
+            lines.Add(
+                "Plan coverage: " +
+                F(planCoverage * 100.0) +
+                " per cent of the net's own plan area (the surviving " +
+                "cells are disjoint in plan, so the remainder is " +
+                "uncovered shell and not overlap)");
+        }
         if (transitions is not null)
             lines.Add(transitions);
         if (caps is not null)
@@ -5104,7 +5183,8 @@ internal static class SkinPatterns
                     "hexagonal", skippedRows.Count, transitions,
                     FieldKindOf(net)),
                 oddLine,
-                weldCollapsed),
+                weldCollapsed,
+                PlanCoverage(net, cells)),
             skippedRows.Count,
             transitions,
             degenerateDropped,

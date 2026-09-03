@@ -1382,6 +1382,24 @@ internal static class Program
 
         try
         {
+            ValidateSkinHoneycombCoverage(plugin);
+            Console.WriteLine(
+                "PASS  Skin honeycomb plan coverage (finding 12): the " +
+                "engine reports what share of the net's own plan area " +
+                "its surviving cells actually cover, the number is " +
+                "re-measured here by this file's own arithmetic, and it " +
+                "is held to a floor with the courses engine measured " +
+                "beside it as the contrast.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin honeycomb coverage: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinHoneycombMirror(plugin);
             Console.WriteLine(
                 "PASS  Skin honeycomb mirror (rule 4.2.6, finding 13): on " +
@@ -24058,10 +24076,23 @@ internal static class Program
         object doubledHeight = forceAligned.Invoke(
             null, new object[] { net, 0.6, 1.0, 1.0 / 3.0 })!;
 
-        // 1. THE CONTOUR FAMILY IS INVARIANT UNDER S. The beds at S 1.2 are
-        // the SAME curves as at S 0.6, point for point: growing the piece
-        // size cannot move, re-seed or re-jitter the family the pieces are
-        // set out on.
+        // 1. A REGRESSION GUARD ON ResolveBands, AND NOT EVIDENCE ABOUT S,
+        // which is what the whole-branch review's finding 14 corrected in
+        // this message. The beds at S 1.2 are the same curves as at S 0.6
+        // point for point, and they could not be otherwise: ForceAligned
+        // builds its levels and intervals from dMin, dMax and courseHeight
+        // alone, and `size` enters only the clearance, the seed pitch and
+        // the insertion target. So this bar compares a value with itself
+        // and cannot fail for the claim it used to make. It is kept
+        // because it does bind ONE thing: that no later change lets S
+        // reach the band derivation. The claim it used to stand for, that
+        // the family an author SEES does not re-seed under S, is measured
+        // at bar 1b below on the half of the family that actually moves.
+        // MEASURED over a five by three sweep on Param's net: bed-curve
+        // counts are 131 at CH 0.30, 105 at CH 0.375 and 65 at CH 0.60 for
+        // every one of S 0.10, 0.17, 0.25, 0.40 and 0.60 alike, and the
+        // worst bed point movement between S 0.17 and S 0.34 is exactly
+        // zero over 105 curves.
         double[][][] bedsAtOne = (double[][][])acceptedBeds.Invoke(
             null, new[] { built })!;
         double[][][] bedsAtTwo = (double[][][])acceptedBeds.Invoke(
@@ -24098,6 +24129,96 @@ internal static class Program
                         "them grow.");
                 }
             }
+        }
+
+        // 1b. THE HALF OF THE FAMILY THAT DOES MOVE, which nothing
+        // measured until the whole-branch review's finding 14. The
+        // STREAMLINES are the head joints and the visible half of the
+        // tessellation, and they are the half Param's "chaotic when i
+        // choose different sizes" complaint was actually about. They are
+        // seeded on bed 0 at a pitch of L0 / round(L0 / (S / 2)), rounded
+        // independently at each S, so the seed set at 2S is NOT in general
+        // a sub-family of the seed set at S and the pattern an author sees
+        // is re-seeded rather than dilated.
+        //
+        // On THIS fixture the two seed sets happen to nest, and the bar
+        // says so rather than claiming a guarantee: bed 0 is 6.0 m, which
+        // rounds to 20 half-pitches at S 0.6 and 10 at S 1.2, and 10
+        // divides 20, so every one of the 22 accepted lines at S 1.2 is
+        // point for point one of the 48 at S 0.6. On a bed whose length
+        // does not divide that way the rounding breaks the nesting and
+        // the family is re-seeded, which is what the review measured on
+        // Param's own net. Either way this bar is a MEASUREMENT, so a
+        // change to the seeding in either direction has to come here and
+        // say so.
+        double[][][] flowAtOne = (double[][][])acceptedLines.Invoke(
+            null, new[] { built })!;
+        double[][][] flowAtTwo = (double[][][])acceptedLines.Invoke(
+            null, new[] { doubledSize })!;
+        int identical = 0;
+        int nearSeed = 0;
+        foreach (double[][] line in flowAtTwo)
+        {
+            bool same = false;
+            double nearest = double.PositiveInfinity;
+            foreach (double[][] other in flowAtOne)
+            {
+                double gap = Math.Sqrt(
+                    ((line[0][0] - other[0][0]) * (line[0][0] - other[0][0])) +
+                    ((line[0][1] - other[0][1]) * (line[0][1] - other[0][1])) +
+                    ((line[0][2] - other[0][2]) * (line[0][2] - other[0][2])));
+                nearest = Math.Min(nearest, gap);
+                if (other.Length != line.Length)
+                    continue;
+                bool match = true;
+                for (int at = 0; match && at < line.Length; at++)
+                {
+                    for (int axis = 0; axis < 3; axis++)
+                    {
+                        match &= Math.Abs(line[at][axis] - other[at][axis])
+                            <= 1.0e-12;
+                    }
+                }
+                same |= match;
+            }
+            if (same)
+                identical++;
+            if (nearest <= 0.02)
+                nearSeed++;
+        }
+        Console.WriteLine(
+            "      Skin force-aligned streamlines under S (check 12.3(e) " +
+            $"bar 1b): {flowAtOne.Length} accepted lines at S 0.6 and " +
+            $"{flowAtTwo.Length} at S 1.2, of which {identical} are point " +
+            $"for point one of the smaller set's and {nearSeed} are seeded " +
+            "within 20 mm of one.");
+        if (flowAtOne.Length <= flowAtTwo.Length)
+        {
+            throw new InvalidOperationException(
+                "Doubling S must at least THIN the head joints, since they " +
+                "are seeded at S / 2 along bed 0: got " +
+                $"{flowAtOne.Length} accepted lines at S 0.6 and " +
+                $"{flowAtTwo.Length} at S 1.2. A count that did not fall " +
+                "would mean the seed pitch is not reading S at all.");
+        }
+        const int IdenticalLinesPinned = 22;
+        const int NearSeedLinesPinned = 22;
+        if (identical != IdenticalLinesPinned ||
+            nearSeed != NearSeedLinesPinned)
+        {
+            throw new InvalidOperationException(
+                "The streamline family under S is a MEASUREMENT and not a " +
+                "guarantee, and this is where a change to it is declared. " +
+                $"Of the {flowAtTwo.Length} lines at S 1.2, " +
+                $"{IdenticalLinesPinned} are point for point one of the " +
+                $"{flowAtOne.Length} at S 0.6 and {NearSeedLinesPinned} " +
+                $"are seeded within 20 mm of one; got {identical} and " +
+                $"{nearSeed}. The seed pitch L0 / round(L0 / (S / 2)) is " +
+                "rounded independently at each S, so the nesting this " +
+                "fixture shows is its bed length's arithmetic and not a " +
+                "guarantee: seeding at a fixed subdivision of a bed " +
+                "instead would make the set at 2S a sub-family of the set " +
+                "at S on EVERY net, and would move these numbers.");
         }
 
         // 2. THE PIECES GROW WITH S, in the along-course direction, because
@@ -25436,6 +25557,176 @@ internal static class Program
                     $"plan-validity habits; got '{diagnostics}'.");
             }
         }
+    }
+
+    /// <summary>
+    /// WHAT THE PLAN-VALIDITY FILTER COSTS THE HONEYCOMB, which is the
+    /// whole-branch review's finding 12.
+    ///
+    /// The honeycomb's neighbouring rows overlap in plan often enough that
+    /// KeepValidPlans removes a large share of the candidates, and what it
+    /// removes is a HOLE in the skin. The pattern's own doc comment argues
+    /// the other way, saying a cell crossing the boundary or the crown is
+    /// clipped and KEPT because a coverage hole is worse than an
+    /// odd-shaped rim piece, while the filter downstream was taking the
+    /// coverage away and nothing in the suite bounded it or reported it.
+    /// An author counting cells could not see it.
+    ///
+    /// So the engine now reports plan coverage in its own Diagnostics, and
+    /// this check measures the same number by its OWN arithmetic and
+    /// requires the engine's line to agree with it, then bounds it. The
+    /// bound is a floor and the numbers beside it are measurements: the
+    /// courses engine, whose rows cannot overlap each other by
+    /// construction, is measured on the same nets as the contrast, so the
+    /// floor cannot be met by an engine that simply stopped building
+    /// cells.
+    /// </summary>
+    private static void ValidateSkinHoneycombCoverage(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+
+        // THIS CHECK'S OWN ARITHMETIC, not the engine's, so a defect in
+        // PlanCoverage and a defect here cannot cancel out.
+        static double Coverage(object net, Type netType, object built)
+        {
+            int[][] faces = ((IEnumerable)netType
+                    .GetProperty("Faces")!.GetValue(net)!)
+                .Cast<int[]>().ToArray();
+            double[][] vertices = ((IEnumerable)netType
+                    .GetProperty("Vertices")!.GetValue(net)!)
+                .Cast<double[]>().ToArray();
+            double whole = 0.0;
+            foreach (int[] face in faces)
+            {
+                double[] a = vertices[face[0]];
+                double[] b = vertices[face[1]];
+                double[] c = vertices[face[2]];
+                whole += Math.Abs(
+                    ((b[0] - a[0]) * (c[1] - a[1])) -
+                    ((c[0] - a[0]) * (b[1] - a[1]))) / 2.0;
+            }
+            double covered = 0.0;
+            foreach ((_, double[][] ring, _, _, _, _) in SkinCells(built))
+            {
+                if (ring.Length < 3)
+                    continue;
+                double cx = ring.Average(corner => corner[0]);
+                double cy = ring.Average(corner => corner[1]);
+                double twice = 0.0;
+                for (int at = 0; at < ring.Length; at++)
+                {
+                    double[] one = ring[at];
+                    double[] next = ring[(at + 1) % ring.Length];
+                    twice +=
+                        ((one[0] - cx) * (next[1] - cy)) -
+                        ((next[0] - cx) * (one[1] - cy));
+                }
+                covered += Math.Abs(twice) / 2.0;
+            }
+            return whole > 1.0e-12 ? covered / whole : double.NaN;
+        }
+
+        (double[][] hemiVertices, int[][] hemiFaces, int[] hemiRim) =
+            SkinHemisphereNet();
+        object hemisphere = SkinNetWith(
+            netType, edgeType, hemiVertices, hemiFaces, hemiRim,
+            Array.Empty<(int, int, double)>());
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the build " +
+                "output (assets/param-crown-arch-contract.json): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(path));
+        object crown = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so coverage would be measured on nothing.");
+
+        var read = new List<string>();
+        void Measure(
+            string label, object net, double floor, double coursesFloor)
+        {
+            object honeycomb = hexagonal.Invoke(
+                null, new object[] { net, 0.17, 0.30 })!;
+            object running = courses.Invoke(
+                null, new object[] { net, 0.17, 0.30 })!;
+            double here = Coverage(net, netType, honeycomb);
+            double there = Coverage(net, netType, running);
+            read.Add(
+                $"{label} honeycomb {here * 100.0:F2} per cent, courses " +
+                $"{there * 100.0:F2} per cent");
+
+            // THE ENGINE MUST SAY IT, and say the same number: a
+            // diagnostic an author cannot read is not a report.
+            string diagnostics = Reading<string>(honeycomb, "Diagnostics");
+            string stated =
+                (here * 100.0).ToString(
+                    "F3", System.Globalization.CultureInfo.InvariantCulture);
+            if (!diagnostics.Contains(
+                    "Plan coverage: " + stated,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The honeycomb's Diagnostics must report its plan " +
+                    $"coverage, and report THIS number: {stated} per cent " +
+                    $"on the {label}, measured by this check's own " +
+                    "arithmetic off the cells the engine returned. The " +
+                    "diagnostics read:\n" + diagnostics);
+            }
+            if (here < floor)
+            {
+                throw new InvalidOperationException(
+                    $"The honeycomb covers {here * 100.0:F2} per cent of " +
+                    $"the {label}'s plan area, under the {floor * 100.0:F0} " +
+                    "per cent floor this check states. The remainder is " +
+                    "UNCOVERED SHELL: the surviving cells are disjoint in " +
+                    "plan, so it is a hole and not overlap, and the " +
+                    "courses engine covers " +
+                    $"{there * 100.0:F2} per cent of the same net.");
+            }
+            if (there < coursesFloor)
+            {
+                throw new InvalidOperationException(
+                    "The COURSES engine is the contrast that keeps the " +
+                    "floor above honest, and it covers " +
+                    $"{there * 100.0:F2} per cent of the {label}, under " +
+                    $"the {coursesFloor * 100.0:F0} per cent it has always " +
+                    "held. Something is wrong with the net or with this " +
+                    "check, not with the honeycomb.");
+            }
+        }
+
+        // THE FLOORS ARE MEASUREMENTS, stated with the reason beside
+        // them. On the hemisphere at S 0.17 and CH 0.30 the honeycomb
+        // covers 61.37 per cent of the net's plan area against the courses
+        // engine's 99.75, and on Param's own net 84.09 against 99.98. That
+        // gap is the finding, and it is not closed here: closing it needs
+        // the rows' column counts to be made to abut rather than overlap,
+        // which is a redesign of rule 4.2.5's vertex resolution. What is
+        // done here is to MEASURE it, report it to the author, and put a
+        // floor under it so that it cannot quietly get worse. A number
+        // that rises is the fix arriving and must be re-pinned upward.
+        const double HemisphereFloor = 0.60;
+        const double CrownFloor = 0.82;
+        Measure("hemisphere", hemisphere, HemisphereFloor, 0.95);
+        Measure("Param's own net", crown, CrownFloor, 0.95);
+        Console.WriteLine(
+            "      Skin honeycomb plan coverage (finding 12): " +
+            string.Join("; ", read) + ".");
     }
 
     /// <summary>
