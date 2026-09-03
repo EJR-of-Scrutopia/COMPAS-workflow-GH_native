@@ -1130,14 +1130,30 @@ RULE 5.2.3. Per pattern:
       side vertex to the right side vertex, and the top run, again straight and unclosed;
   (c) a FORCE-ALIGNED cell is a courses cell by rule 3.2.3 and takes route (a);
   (d) a CAP is the one cell that cannot be a single face. It is emitted as a single Brep of
-      triangular faces fanned from the net vertex of greatest field value inside its loop to each
-      segment of the loop, joined. Say plainly on the port that the cap is a Brep of many faces
+      triangular faces fanned from the cell's own PLAN INTERIOR POINT, lifted onto the surface
+      exactly as route (e) below lifts it, to each segment of the loop, joined. Say plainly on the
+      port that the cap is a Brep of many faces
       while every other cell is one, rather than pretending otherwise. `Brep.CreatePatch` is not
       used: it is a fitting solver, its output is not the surface the cell describes, and a
       deterministic fan is worth more here than a smooth guess. A WEDGE of a cap that rule 2.6 has
       split is NOT a cap for this purpose: by rule 2.6.4(a) it is an ordinary band cell between two
       level curves, so it takes route (a) and is a single face. Only the centre disc takes this
       route;
+
+      ERRATUM, 2026-09-03, from the whole-branch review's finding 6. This rule read "fanned from the
+      net vertex of greatest field value inside its loop", which is a DIFFERENT apex from route
+      (e)'s and one the engine has never built. The engine is right and the spec was wrong, and the
+      rule above is amended to the engine rather than the engine to the rule, for three measured
+      reasons. A cap's loop need not contain a net vertex at all: the crown disc rule 2.6.3 leaves
+      behind is a small ring found by bisection, sitting between vertices on any net whose crown is
+      coarser than the disc, so the apex the old wording names can simply fail to exist and the cell
+      would have no surface. Even where one exists it is a MESH vertex and not a point on the loop's
+      own patch, so a fan raised to it can leave the cap's own surface. And the two routes share one
+      code path in `CellSurface`, which has no `Cap` branch anywhere and never had: a rule that
+      wanted two apexes wanted a branch nobody wrote. What the rule was reaching for, an apex at the
+      high point of the cap, is what the lifted plan interior point gives on any cap whose loop is a
+      level curve, since the surface inside a crown loop rises to a single summit. The apex is now
+      asserted, at the height of the cap's own outline, the way route (e)'s already was.
   (e) ANY OTHER CORNER COUNT takes the same deterministic fan, and this route is not optional
       tidying. Rule 3.3.5 requires three- and five-sided force-aligned cells and rule 4.3 requires
       five- and seven-sided honeycomb cells. Route (b) is written for a cell with exactly two side

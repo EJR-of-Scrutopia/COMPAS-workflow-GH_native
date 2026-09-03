@@ -589,6 +589,21 @@ public sealed class SkinComponent : NativeComponentBase
     /// live on their own field, which this method never reads. They are its
     /// four EDGES in cyclic order, bottom to right to top to left, so lofting
     /// them would loft a cell against its own sides.
+    ///
+    /// ROUTES (d) AND (e) SHARE ONE APEX, and there is no Cap branch here.
+    /// That is deliberate and it is now what the spec says. Rule 5.2.3(d)
+    /// used to name a DIFFERENT apex, the net vertex of greatest field
+    /// value inside the cap's loop; the whole-branch review's finding 6
+    /// caught that this engine has never built it, and the spec carries an
+    /// erratum of 2026-09-03 amending the rule to this apex rather than
+    /// amending the engine to the rule. The reason is that the old apex
+    /// can simply fail to exist: rule 2.6.3's crown disc is a small ring
+    /// found by bisection and holds no net vertex at all on any net whose
+    /// crown is coarser than the disc, so the cap would have no surface,
+    /// and even where one exists it is a MESH vertex rather than a point
+    /// on the loop's own patch. The lifted plan interior point always
+    /// exists and always lies on the cell's own surface, and on a crown
+    /// loop it lands at the summit the old wording was reaching for.
     /// </summary>
     private static Brep? CellSurface(SkinCell cell, SkinNet net)
     {

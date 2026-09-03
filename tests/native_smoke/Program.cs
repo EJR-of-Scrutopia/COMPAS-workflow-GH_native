@@ -24394,6 +24394,11 @@ internal static class Program
             patterns, "Courses",
             netType, typeof(double), typeof(double), typeof(double));
         MethodInfo hexagonal = RequirePublicStatic(patterns, "Hexagonal");
+        MethodInfo capInteriorPoint = RequirePublicStatic(
+            patterns, "PlanInteriorPoint",
+            typeof(IReadOnlyList<double[]>));
+        MethodInfo capLiftPlanPoint = RequirePublicStatic(
+            patterns, "LiftPlanPoint");
         (double[][] vertices, int[][] faces, int[] rim) = SkinHemisphereNet();
         object net = SkinNetWith(
             netType, edgeType, vertices, faces, rim,
@@ -24439,6 +24444,7 @@ internal static class Program
             IList cells = (IList)built.GetType()
                 .GetProperty("Cells")!.GetValue(built)!;
             int wedges = 0;
+            int fannedCaps = 0;
             foreach (object? item in cells)
             {
                 object cell = item!;
@@ -24447,6 +24453,66 @@ internal static class Program
                 if (cap && sections == 2)
                 {
                     wedges++;
+                    continue;
+                }
+                if (cap && sections == 0)
+                {
+                    // THE CAP'S FAN APEX, which nothing measured until the
+                    // whole-branch review's finding 6. Rule 5.2.3(d) used
+                    // to name a different apex from route (e)'s, the net
+                    // vertex of greatest field value inside the loop, and
+                    // the engine has never built it; the spec carries an
+                    // erratum of 2026-09-03 amending the rule to the
+                    // lifted plan interior point instead, because the old
+                    // apex can fail to exist at all on a crown disc finer
+                    // than the net. The apex is asserted here the way
+                    // route (e)'s already is on the force-aligned half
+                    // below: it exists, it lifts, and it stands at the
+                    // cell's own height rather than somewhere else on the
+                    // net.
+                    fannedCaps++;
+                    object capOutline = cell.GetType()
+                        .GetProperty("Outline")!.GetValue(cell)!;
+                    var capInside = (double[]?)capInteriorPoint.Invoke(
+                        null, new object[] { capOutline });
+                    if (capInside is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A CAP takes route 5.2.3(d)'s fan, raised from " +
+                            "the cell's own PLAN INTERIOR POINT; this one " +
+                            "offers none, so its Surface slot would carry " +
+                            "a NULL.");
+                    }
+                    var capApex = (double[]?)capLiftPlanPoint.Invoke(
+                        null,
+                        new object[] { net, capInside[0], capInside[1] });
+                    if (capApex is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A CAP's plan interior point " +
+                            $"({capInside[0]:F4}, {capInside[1]:F4}) lifts " +
+                            "onto NO net face, so route 5.2.3(d)'s fan has " +
+                            "no apex and its Surface slot would carry a " +
+                            "NULL.");
+                    }
+                    double[][] capRing = ((IList)capOutline)
+                        .Cast<double[]>().ToArray();
+                    double capLow = capRing.Min(point => point[2]);
+                    double capHigh = capRing.Max(point => point[2]);
+                    if (capApex[2] < capLow - 0.1 * courseHeight ||
+                        capApex[2] > capHigh + 0.1 * courseHeight)
+                    {
+                        throw new InvalidOperationException(
+                            $"A CAP spans z {capLow:F4} to {capHigh:F4} " +
+                            $"at CH {courseHeight}, and route 5.2.3(d)'s " +
+                            "fan apex, lifted from its plan interior point " +
+                            $"({capInside[0]:F4}, {capInside[1]:F4}), " +
+                            $"stands at z {capApex[2]:F4}. The apex is " +
+                            "raised over the cap's OWN patch of surface, " +
+                            "so it lies within a tenth of a course of the " +
+                            "cap's own range; this one is somewhere else " +
+                            "on the net.");
+                    }
                     continue;
                 }
                 if (cap && sections != 0)
@@ -24469,6 +24535,15 @@ internal static class Program
                         "lower run and the upper run (route 5.2.3(a)); got " +
                         $"{sections} at CH {courseHeight}.");
                 }
+            }
+            if (fannedCaps == 0)
+            {
+                throw new InvalidOperationException(
+                    "This hemisphere carries a crown cap at both settings, " +
+                    "whole at CH 0.35 and as the centre disc of a rosette " +
+                    "at CH 1.2, and route 5.2.3(d)'s apex is measured on " +
+                    $"it; at CH {courseHeight} no cell came back Cap with " +
+                    "no sections at all, so that apex went unmeasured.");
             }
             if (splits != wedges > 0)
             {
