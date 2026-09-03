@@ -420,14 +420,16 @@ public sealed class ExportComponent :
             "Every JSON this Result can be, one item per kind and in the " +
             "plan's order: the portable contract and the COMPAS document " +
             "always, the bench.tessellation/1 sidecar whenever there are " +
-            "cells, and the bench.columns/1 mesh when the Mould block " +
-            "carries columns. A kind that is absent, or that failed, is " +
+            "cells, the bench.columns/1 mesh when the Mould block " +
+            "carries columns, and the bench.frames/1 animation after it " +
+            "on that same condition, since the machine that moves is the " +
+            "columns. A kind that is absent, or that failed, is " +
             "simply not in the list, and every text names itself, so a " +
             "reader knows what each item is without counting slots: the " +
             "contract by its kind and schemaVersion, the COMPAS document " +
             "by its compasVersion and the dtype inside each diagram it " +
-            "carries, the tessellation and the columns mesh by their " +
-            "schema.",
+            "carries, and the tessellation, the columns mesh and the " +
+            "frames by their schema.",
             GH_ParamAccess.list);
         parameters.AddTextParameter(
             "Status",

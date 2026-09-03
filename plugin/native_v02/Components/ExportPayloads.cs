@@ -345,12 +345,25 @@ internal static class MouldFrames
         // columnNodeCount is a property of the SET, which is what the
         // reader is told: the count and the order of the column nodes are
         // constant across frames, and the static columns block indexes
-        // into them frame by frame. It was assigned INSIDE the loop above,
-        // so the file declared whatever the LAST frame happened to carry
-        // and a set whose frames disagreed would have been written as
-        // though they agreed, with the studio finding out. Taken once,
-        // from the first frame, with the invariant asserted here beside
-        // the declaration rather than assumed.
+        // into them frame by frame. It is taken ONCE, from the first
+        // frame, with the invariant asserted here beside the declaration
+        // rather than assumed.
+        //
+        // CORRECTION, whole-branch review finding 8. An earlier version of
+        // this comment presented reading frame 0 rather than the last
+        // frame as a behavioural FIX. It is not one, and cannot be: the
+        // loop below throws before the payload is built on any set whose
+        // frames disagree, so on every input that reaches the declaration
+        // the first and the last frame carry the same count by
+        // construction, and reading either gives the same file. Measured:
+        // putting the read back on the last frame leaves the whole suite
+        // green, and inverting the guard below to fire on AGREEMENT
+        // produces its message immediately on the real contract, which
+        // shows the message path is wired and the shipped predicate's true
+        // branch is simply never taken by any fixture. What the pair
+        // actually buys is that the two readings are provably equal
+        // instead of accidentally so. The INVARIANT is the fix; the choice
+        // of frame is its corollary.
         int columnNodeCount = nodeCounts.Count == 0 ? 0 : nodeCounts[0];
         for (int k = 1; k < nodeCounts.Count; k++)
         {

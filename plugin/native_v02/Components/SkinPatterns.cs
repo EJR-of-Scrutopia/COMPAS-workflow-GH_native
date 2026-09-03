@@ -3058,9 +3058,24 @@ internal static class SkinPatterns
                 // capRefusals already carries the reason for every one that
                 // did not. A component with no plan is not a cap at all and
                 // falls through to ordinary band tiling below.
+                // BY THE INDEX THE PLAN WAS RECORDED AGAINST, which is the
+                // whole-branch review's finding 15. The cap pass walks
+                // topCurves, which is resolved.Traced at top.Low, the
+                // LOWERS list of this band, and records each plan against
+                // a position in it. This lookup read `component`, a
+                // position in MIDS, while the curve the plan is applied to
+                // is lowers[lowerAt]. Three ways of naming a component and
+                // two of them assumed to agree. Where a level's components
+                // come back in a different order at the mid than at the
+                // low, which nothing forbids, a cap takes another cap's
+                // wedge count, inner level and ring mid: a dome that
+                // needed no split is cut into a rosette at heights
+                // borrowed from its neighbour, and one that needed a split
+                // is emitted whole and oversized with CapsOversized
+                // reading zero.
                 SkinCapPlan? plan = isCapBand
                     ? capPlans.FirstOrDefault(
-                        item => item.ComponentAt == component)
+                        item => item.ComponentAt == lowerAt)
                     : null;
                 if (plan is not null)
                 {

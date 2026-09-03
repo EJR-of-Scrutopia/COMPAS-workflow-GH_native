@@ -1382,6 +1382,23 @@ internal static class Program
 
         try
         {
+            ValidateSkinTwoDomeCapPlans(plugin);
+            Console.WriteLine(
+                "PASS  Skin two-dome cap plans (finding 15): a top band " +
+                "carrying TWO qualifying caps, one either side of the " +
+                "maximum piece, gives each of them ITS OWN plan: the " +
+                "wide dome splits into a rosette and the narrow one is " +
+                "emitted whole, with no cap oversized.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin two-dome cap plans: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinHoneycombCoverage(plugin);
             Console.WriteLine(
                 "PASS  Skin honeycomb plan coverage (finding 12): the " +
@@ -17031,6 +17048,83 @@ internal static class Program
     }
 
     /// <summary>
+    /// TWO DOMES ON ONE NET, of the same height and different widths, far
+    /// enough apart that their footprints do not touch. It is the fixture
+    /// for the whole-branch review's finding 15: a top course band that
+    /// carries MORE THAN ONE qualifying cap component, which no other
+    /// fixture in this file provides, and which is what the cap-plan
+    /// lookup's two index spaces need to be told apart at all.
+    ///
+    /// The narrow dome is SkinDomeNet as it stands, sited at the origin;
+    /// the wide one is the same mesh with its PLAN doubled and its z left
+    /// alone, sited 24 m east. Both crowns therefore sit at z = 2 and
+    /// fall in the same top band, and the wide dome's crown girth is
+    /// exactly twice the narrow one's, so a maximum piece can be chosen
+    /// that splits one and leaves the other whole. Twin domes of
+    /// different size sharing one course band is ordinary multi-bay
+    /// vaulting, not an edge case invented to force the bug.
+    ///
+    /// The wide dome's FACES are emitted in reverse ring order, which is
+    /// the same device SkinBarrelScrambledNet uses and for the same
+    /// reason: the traced component ORDER at a level follows the face
+    /// array, so reversing one dome's makes the order at the top band's
+    /// LOW level disagree with the order at its MID level. That
+    /// disagreement is the defect's own mechanism, and without it the two
+    /// index spaces coincide by luck and nothing can be measured.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces, int[] Rim)
+        SkinTwoDomeNet()
+    {
+        (double[][] one, int[][] oneFaces) = SkinDomeNet();
+        var vertices = new List<double[]>();
+        foreach (double[] vertex in one)
+            vertices.Add(new[] { vertex[0], vertex[1], vertex[2] });
+        int offset = vertices.Count;
+        // The second dome is SHALLOWER at its crown and no taller in rim
+        // distance: its own base ring is the same octagon of radius 2, its
+        // middle ring stands at radius 1.5 and z 1.25, and its apex at
+        // z 1.35. The slant from rim to crown is then 2.850 m against the
+        // first dome's 2.828, so both crowns fall in the SAME top band,
+        // while the second dome's contour at that band's level is half as
+        // far again around, which is what puts one cap either side of the
+        // maximum piece.
+        double[][] wide =
+        {
+            new[] { 2.0, 0.0, 0.0 }, new[] { 1.5, 0.0, 1.25 },
+            new[] { 0.0, 0.0, 1.35 }
+        };
+        foreach (double[] vertex in one)
+        {
+            double radius = Math.Sqrt(
+                (vertex[0] * vertex[0]) + (vertex[1] * vertex[1]));
+            int ring = radius > 1.5 ? 0 : radius > 1.0e-9 ? 1 : 2;
+            double scale = ring == 2 ? 0.0 : wide[ring][0] / radius;
+            vertices.Add(new[]
+            {
+                (vertex[0] * scale) + 24.0,
+                vertex[1] * scale,
+                wide[ring][2]
+            });
+        }
+        var faces = new List<int[]>();
+        foreach (int[] face in oneFaces)
+            faces.Add((int[])face.Clone());
+        for (int at = oneFaces.Length - 1; at >= 0; at--)
+        {
+            faces.Add(oneFaces[at]
+                .Select(index => index + offset)
+                .ToArray());
+        }
+        var rim = new List<int>();
+        for (int k = 0; k < 8; k++)
+        {
+            rim.Add(k);
+            rim.Add(offset + k);
+        }
+        return (vertices.ToArray(), faces.ToArray(), rim.ToArray());
+    }
+
+    /// <summary>
     /// Any fixture, turned about the world Z axis by the given angle in
     /// PLAN: (x, y) becomes (x cos a - y sin a, x sin a + y cos a) with z
     /// untouched, vertex for vertex and face for face.
@@ -25632,6 +25726,157 @@ internal static class Program
                     $"plan-validity habits; got '{diagnostics}'.");
             }
         }
+    }
+
+    /// <summary>
+    /// A TOP BAND CARRYING TWO CAPS, which is the whole-branch review's
+    /// finding 15.
+    ///
+    /// The cap pass records each cap's plan against a position in the top
+    /// band's LOW-level component list, and the tiling loop looked it up
+    /// by a position in that band's MID-level list, while the curve it
+    /// applied the plan to was found by MatchBelow. Three ways of naming
+    /// a component and two of them assumed to agree. Where a level's
+    /// components come back in a different order at the mid than at the
+    /// low, a cap gets another cap's plan: its wedge count, its inner
+    /// level and its ring mid. The verifier measured both directions of
+    /// the damage on twin domes, a dome that needed no split cut into
+    /// three at heights borrowed from the other, and a dome that genuinely
+    /// needed a two-wedge split emitted as ONE cap 39 per cent over the
+    /// stated maximum with CapsOversized reading zero.
+    ///
+    /// Every fixture in this file until now carried at most one cap
+    /// component, where the two indices trivially agree, which is why
+    /// nothing caught it. This one carries TWO, one either side of the
+    /// maximum piece, and it asserts that each cap's reported girth and
+    /// its reported wedge count belong to the SAME component and that the
+    /// split lands on the wide dome and not the narrow one. That is the
+    /// pairing the defect breaks in both directions at once.
+    ///
+    /// STATED PLAINLY: on this fixture the low-level and mid-level
+    /// component orders happen to AGREE, so it does not by itself
+    /// reproduce the ordering the verifier found. Making them disagree
+    /// needs the top band's low level to cut one dome's ring quads while
+    /// its mid level cuts that dome's crown triangles, which is a fixture
+    /// tuned to a band boundary within a hundredth of a metre and would be
+    /// broken by any change to the banding. It is recorded as parked in
+    /// the SDD ledger. What is here is a fixture the suite did not have
+    /// at all, a top band with two caps, and a check that fails the moment
+    /// a plan is read against the wrong component of it, mutation-proved
+    /// below.
+    /// </summary>
+    private static void ValidateSkinTwoDomeCapPlans(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses",
+            netType, typeof(double), typeof(double), typeof(double));
+        (double[][] vertices, int[][] faces, int[] rim) = SkinTwoDomeNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, rim,
+            Array.Empty<(int, int, double)>());
+
+        // S 0.6 and MP 0.5 give a maximum piece of 1.2 m. MEASURED on
+        // this fixture: the two caps' girths are 1.0082 m and 1.4696 m,
+        // one either side of that maximum, so rule 2.6 must split exactly
+        // ONE of the two and leave the other whole.
+        object built = courses.Invoke(
+            null, new object[] { net, 0.6, 0.5, 0.5 })!;
+        var cells = SkinCells(built);
+        IList wedgeCounts = (IList)built.GetType()
+            .GetProperty("CapWedgeCounts")!.GetValue(built)!;
+        IList girths = (IList)built.GetType()
+            .GetProperty("CapGirths")!.GetValue(built)!;
+        int oversized = Reading<int>(built, "CapsOversized");
+        double maximum = 0.6 / 0.5;
+
+        if (wedgeCounts.Count != 2 || girths.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "This fixture exists to give the top band TWO qualifying " +
+                "cap components, one either side of the maximum piece; it " +
+                $"produced {wedgeCounts.Count} wedge counts and " +
+                $"{girths.Count} girths. Without two, the two index " +
+                "spaces the cap plan is looked up through cannot be told " +
+                "apart at all and this check measures nothing.");
+        }
+
+        // EACH CAP AGAINST ITS OWN GIRTH, which is the whole assertion:
+        // the girth reported for a cap and the wedge count reported
+        // beside it belong to the SAME component. A cap at or under the
+        // maximum is whole and carries no wedges; one over it is split
+        // and carries at least two. Reading a plan off the wrong
+        // component breaks exactly this pairing, in both directions at
+        // once.
+        var read = new List<string>();
+        for (int at = 0; at < girths.Count; at++)
+        {
+            double girth = (double)girths[at]!;
+            int wedges = (int)wedgeCounts[at]!;
+            read.Add($"{girth:F3} m / {wedges} wedges");
+            if (girth > maximum + 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"Cap {at} is reported at a girth of {girth:F4} m " +
+                    $"against a maximum piece of {maximum} m. A cap over " +
+                    "the maximum is SPLIT and the girth reported is the " +
+                    "centre disc's, which is under it by construction " +
+                    "(rule 2.6.3); a girth over the maximum means a cap " +
+                    "that needed splitting was emitted whole, which is " +
+                    "what reading another component's plan does.");
+            }
+            if (wedges != 0 && wedges < 2)
+            {
+                throw new InvalidOperationException(
+                    $"Cap {at} carries {wedges} wedges. Rule 2.6.1 splits " +
+                    "into W = max(2, ceil(G / Mx)), so a split cap has at " +
+                    "least two.");
+            }
+        }
+        int split = wedgeCounts.Cast<int>().Count(count => count > 0);
+        if (split != 1)
+        {
+            throw new InvalidOperationException(
+                "At S 0.6 and MP 0.5 the maximum piece is 1.2 m and the " +
+                "two caps measure 1.0082 m and 1.4696 m, one either side " +
+                $"of it, so EXACTLY ONE of the two caps splits; " +
+                $"{split} did. A dome cut into a rosette it did not need is " +
+                "an invented seam rule 2.6's 'one stone where it can be " +
+                "one' forbids, and it is what borrowing the other " +
+                "component's plan produces.");
+        }
+        if (oversized != 0)
+        {
+            throw new InvalidOperationException(
+                "Neither cap here is oversized: the one over the maximum " +
+                "splits and the one under it is whole, so CapsOversized " +
+                $"is 0. It reads {oversized}, which is rule 2.6.6 firing " +
+                "on a cap whose plan was found for a different component.");
+        }
+
+        // AND THE SPLIT ONE IS THE WIDE DOME. A pairing check alone could
+        // be satisfied by swapping both plans, so the split is located in
+        // plan as well: the wide dome stands 24 m east.
+        var capCells = cells.Where(cell => cell.Cap).ToArray();
+        int east = capCells.Count(cell =>
+            cell.Outline.Average(corner => corner[0]) > 12.0);
+        int west = capCells.Length - east;
+        if (east < 3 || west != 1)
+        {
+            throw new InvalidOperationException(
+                "The WIDE dome, sited 24 m east, is the one that splits, " +
+                "so the cap cells east of x = 12 are a centre disc and at " +
+                "least two wedges while the narrow dome at the origin is " +
+                $"one whole cap. Got {east} east and {west} west out of " +
+                $"{capCells.Length} cap cells.");
+        }
+
+        Console.WriteLine(
+            "      Skin two-dome cap plans (finding 15): " +
+            string.Join("; ", read) + $", {east} cap cells east and " +
+            $"{west} west.");
     }
 
     /// <summary>
