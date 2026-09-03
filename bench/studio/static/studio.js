@@ -12,11 +12,13 @@ import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContras
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
+  interpolateFormworkFrame,
 } from "/static/fields.js";
 
 // ---------- app state ----------
 const state = {
   bundle: null,
+  formwork: null,      // bench.frames/1 payload for this study, or null: frames, edges, columns.members (see applyFormworkAct)
   studies: [],
   layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
   showMode: "timeline", // R4: "framework" | "shell" | "both" | "timeline" (see applyShowMode)
@@ -1628,7 +1630,7 @@ function updateHud() {
   if (staging && staging.stages && staging.stages.length) {
     // Same build clock applySceneAtTime derives: the HUD's stage line must
     // match what is actually on screen, not run ahead during inflation.
-    const build = Math.max(0, state.timeline.t - state.timeline.inflateSeconds);
+    const build = Math.max(0, state.timeline.t - openingSeconds());
     const index = currentStageIndex(build);
     const stage = staging.stages[index === null ? staging.stages.length - 1 : index];
     lines.push("stage " + stage.stage + " of " + staging.stages.length);
@@ -2200,7 +2202,16 @@ async function loadStudy(exportName) {
     "/bundle?material=" + material + "&pattern=" + encodeURIComponent(state.pattern) +
     "&size=" + state.size + "&thickness=" + state.thickness;
   try {
+    // Fetched alongside the bundle: a missing or unpaired formwork
+    // document is an expected state (404 with the reason), never a load
+    // failure, so it resolves to null instead of throwing.
+    const formworkPromise = fetch(
+      "/api/studies/" + encodeURIComponent(exportName) + "/formwork")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
     const fresh = await fetchJson(url);
+    if (sequence !== state.loadSequence) return;
+    state.formwork = await formworkPromise;
     if (sequence !== state.loadSequence) return;
     overlay.classList.add("hidden");
     status.textContent = "";
@@ -2213,6 +2224,7 @@ async function loadStudy(exportName) {
       ? { f: state.timeline.t / timelineDuration(), playing: state.timeline.playing }
       : null;
     buildScene(fresh, preserve);
+    rebuildFormworkObjects();
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
       + ((Date.now() - startedAt) / 1000).toFixed(1) + "s");
@@ -2773,6 +2785,32 @@ function placementStep() {
   return BUILD_TARGET_SECONDS / Math.max(1, placementCount());
 }
 
+// The formwork act: when the study ships a bench.frames/1 document, the
+// timeline's first act is the MACHINE building the formwork (net reeled
+// out, raised, finished), and the abstract inflation reveal is replaced,
+// because the act ends on the solved state exactly (the writer's time-100
+// frame equals the contract's equilibrium) and re-inflating an already
+// raised net would play the reveal twice. Studies without frames keep
+// today's inflation act untouched.
+const FORMWORK_SECONDS = 12;
+
+function formworkSeconds() {
+  return state.formwork && Array.isArray(state.formwork.frames)
+    && state.formwork.frames.length ? FORMWORK_SECONDS : 0;
+}
+
+function openingSeconds() {
+  // The first act's length: the machine build when frames exist, else the
+  // inflation reveal. Every derivation of the build clock goes through
+  // here so the two acts can never drift apart.
+  const machine = formworkSeconds();
+  return machine > 0 ? machine : state.timeline.inflateSeconds;
+}
+
+function duringFormworkAct(t) {
+  return formworkSeconds() > 0 && t < formworkSeconds();
+}
+
 function rebuildTimeline(preserve) {
   state.timeline = {
     playing: false, t: 0,
@@ -2822,7 +2860,7 @@ function placementCount() {
 
 function timelineDuration() {
   const step = placementStep();
-  return state.timeline.inflateSeconds + placementCount() * step
+  return openingSeconds() + placementCount() * step
     + DROP_SECONDS + STRIKE_SECONDS;
 }
 
@@ -3102,6 +3140,13 @@ function sceneCentroid() {
 // interpolation of z toward the equilibrium surface, not an invented
 // effect.
 function inflationFactor(t) {
+  // With a formwork act, the machine raising the net IS the reveal: the
+  // net is hidden while the act plays (see the wires/nodes visibility in
+  // applySceneAtTime) and stands fully formed the instant it ends, so the
+  // factor is a step, not a ramp. The pieces gate on inflate < 1 keeps
+  // castings out of the air for the whole act, exactly as it does for
+  // inflation.
+  if (formworkSeconds() > 0) return t >= formworkSeconds() ? 1 : 0;
   // 0 is the flat form diagram, 1 the found thrust surface.
   const seconds = state.timeline.inflateSeconds;
   if (seconds <= 0) return 1;
@@ -3121,6 +3166,95 @@ function applyInflation(u) {
     // every recording writes, so without the floor frame 0 of every take
     // is wrong.
     if (object) object.scale.z = Math.max(0.001, u);
+  }
+}
+
+function rebuildFormworkObjects() {
+  const old = state.objects.formworkGroup;
+  if (old) {
+    scene.remove(old);
+    for (const child of old.children) {
+      child.geometry.dispose();
+      child.material.dispose();
+    }
+    state.objects.formworkGroup = null;
+    state.objects.formworkNet = null;
+    state.objects.formworkMembers = null;
+  }
+  const doc = state.formwork;
+  if (!doc || !Array.isArray(doc.frames) || !doc.frames.length) return;
+  // Line segments, not tubes: cheap enough to rewrite every frame (one
+  // Float32 write per endpoint), and the machine reads as scaffolding
+  // rather than competing with the shell for weight.
+  const group = new THREE.Group();
+  const edges = Array.isArray(doc.edges) ? doc.edges : [];
+  if (edges.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
+    const net = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({ color: 0x9aa4b0, transparent: true, opacity: 0.9 }));
+    net.frustumCulled = false;
+    state.objects.formworkNet = net;
+    group.add(net);
+  }
+  const members = doc.columns && Array.isArray(doc.columns.members) ? doc.columns.members : [];
+  if (members.length) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      "position", new THREE.BufferAttribute(new Float32Array(members.length * 6), 3));
+    const bars = new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({ color: 0x8a6a4a, transparent: true, opacity: 1 }));
+    bars.frustumCulled = false;
+    state.objects.formworkMembers = bars;
+    group.add(bars);
+  }
+  state.objects.formworkGroup = group;
+  scene.add(group);
+}
+
+function writeSegmentPositions(object, pairs, points) {
+  const positions = object.geometry.attributes.position;
+  for (let i = 0; i < pairs.length; i++) {
+    const a = points[pairs[i][0]];
+    const b = points[pairs[i][1]];
+    positions.setXYZ(i * 2, a[0], a[1], a[2]);
+    positions.setXYZ(i * 2 + 1, b[0], b[1], b[2]);
+  }
+  positions.needsUpdate = true;
+}
+
+// The formwork act's whole scene contribution, pure in t like everything
+// else on this clock. During the act the machine's net and members follow
+// the interpolated frame; at act end the net yields to the instanced
+// thrust wires (its final pose IS theirs, the writer's time-100
+// guarantee), while the members stand through the build and strike away
+// on the same clock as the wires. Early-returns on missing objects for
+// the same render-loop reason applySceneAtTime documents.
+function applyFormworkAct(t, strikeU) {
+  const group = state.objects.formworkGroup;
+  if (!group) return;
+  const doc = state.formwork;
+  const seconds = formworkSeconds();
+  if (!doc || seconds <= 0 || state.showMode !== "timeline") {
+    group.visible = false;
+    return;
+  }
+  group.visible = strikeU < 1;
+  const machineTime = Math.min(100, Math.max(0, (t / seconds) * 100));
+  const frame = interpolateFormworkFrame(doc.frames, machineTime);
+  const net = state.objects.formworkNet;
+  if (net) {
+    net.visible = t < seconds;
+    if (net.visible) writeSegmentPositions(net, doc.edges, frame.vertices);
+  }
+  const bars = state.objects.formworkMembers;
+  if (bars) {
+    bars.material.opacity = 1 - strikeU;
+    bars.position.z = -1.5 * strikeU;
+    writeSegmentPositions(bars, doc.columns.members, frame.columnNodes);
   }
 }
 
@@ -3147,7 +3281,7 @@ function applySceneAtTime(t) {
   // The timeline opens with the net inflating into form; everything after
   // it (drop, strike, pulse) runs on build time, which only starts once
   // inflation is complete.
-  const build = Math.max(0, t - state.timeline.inflateSeconds);
+  const build = Math.max(0, t - openingSeconds());
   const sprayed = sprayedMaterial();
   const step = placementStep();
   for (const segment of state.objects.shell.children) {
@@ -3247,7 +3381,10 @@ function applySceneAtTime(t) {
   for (const key of ["wires", "nodes"]) {
     const object = state.objects[key];
     if (!object) continue;
-    object.visible = strikeU < 1;
+    // Hidden for the whole formwork act: the act's own net IS the net,
+    // moving; the instanced wires would draw it a second time, flat on
+    // the ground at the solved plan, which is two nets and both wrong.
+    object.visible = strikeU < 1 && !duringFormworkAct(t);
     object.material.opacity = 1 - strikeU;
     object.position.z = clearance[key] - 1.5 * strikeU;
   }
@@ -3257,6 +3394,7 @@ function applySceneAtTime(t) {
   // unconditionally left the last frame's emissive tint stuck on the shell
   // after switching Show mode away from Timeline; applyShowMode's own
   // sweep, below, clears that residue on entry to the other three modes.
+  applyFormworkAct(t, strikeU);
   if (state.showMode === "timeline") applyPulse(build);
   applyShowMode();
 }
