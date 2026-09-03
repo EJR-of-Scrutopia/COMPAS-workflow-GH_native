@@ -8,8 +8,9 @@ Run inside Rhino 8, from the Script Editor's CPython engine or:
 
 Part one proves the RhinoCommon API shape directly and touches nothing in
 the plugin. Part two drives the ACTUAL plugin: it loads the built
-Ananke.COMPAS.gha, reaches SkinNet, SkinNetEdge, SkinPatterns.Courses,
-SkinPatterns.Hexagonal and SkinComponent's private CellSurface(cell, net)
+Ananke.COMPAS.gha, reaches SkinNet, SkinNetEdge, all three of
+SkinPatterns.Courses, SkinPatterns.Hexagonal and
+SkinPatterns.ForceAligned, and SkinComponent's private CellSurface(cell, net)
 by reflection -- exactly the way tests/native_smoke/Program.cs reaches the
 same members -- and calls CellSurface directly, one cell at a time, with
 no Grasshopper document at all: CellSurface takes only a cell and a net,
@@ -176,6 +177,44 @@ def _hemisphere(rings=24, around=48, radius=3.0):
     return vertices, faces, rim
 
 
+def _barrel():
+    """The barrel fixture native_smoke calls SkinBarrelNet, vertex for
+    vertex and face for face: x 0 to 6 along the barrel (7 columns), a tent
+    profile z = 2 - |y - 2| over y 0 to 4, so both eaves sit at z 0 and the
+    crest at z 2. Its rim is both eaves, and its forces are check 12.3(b)'s
+    ARCH forces, 1 kN across the arch and 0.1 kN along the generators.
+
+    That force list is not a choice of convenience. Under check 12.3(a)'s
+    along-the-barrel list the field lies along the generators, the bed
+    curves lie along them too, every streamline then runs parallel to every
+    bed and crosses none, and the force-aligned pattern comes back with 42
+    accepted lines and ZERO cells. A fixture with no cells would let
+    12.5(b) report that all of its nought cells yield a Brep.
+    """
+    vertices = []
+    for j in range(5):
+        z = 2.0 - abs(j - 2.0)
+        for i in range(7):
+            vertices.append([float(i), float(j), z])
+    faces = []
+    for j in range(4):
+        for i in range(6):
+            a = j * 7 + i
+            faces.append([a, a + 1, a + 8, a + 7])
+    rim = []
+    for i in range(7):
+        rim.append(i)
+        rim.append(4 * 7 + i)
+    forces = []
+    for j in range(5):
+        for i in range(6):
+            forces.append((j * 7 + i, j * 7 + i + 1, 0.1))
+    for j in range(4):
+        for i in range(7):
+            forces.append((j * 7 + i, (j + 1) * 7 + i, 1.0))
+    return vertices, faces, rim, forces
+
+
 def _plan_area(outline):
     """The centred signed shoelace, matching PlanArea/rule 11.2 in the
     engine: centred on the outline's own mean so a far-from-origin cell
@@ -224,6 +263,11 @@ def run_behavioural_checks():
         skin_patterns, "Courses",
         [skin_net_type, System.Double, System.Double, System.Double])
     hexagonal_method = _method(skin_patterns, "Hexagonal")
+    # ForceAligned is overloaded on Min Piece, so it is named by its
+    # parameter types the way native_smoke names it.
+    force_aligned_method = _method(
+        skin_patterns, "ForceAligned",
+        [skin_net_type, System.Double, System.Double, System.Double])
     cell_surface_method = _method(
         skin_component_type, "CellSurface", nonpublic=True)
 
@@ -235,6 +279,10 @@ def run_behavioural_checks():
         return hexagonal_method.Invoke(
             None, System.Array[object]([net, size, ch]))
 
+    def force_aligned(net, size, ch, min_piece=1.0 / 3.0):
+        return force_aligned_method.Invoke(
+            None, System.Array[object]([net, size, ch, min_piece]))
+
     def cell_surface(cell, net):
         return cell_surface_method.Invoke(
             None, System.Array[object]([cell, net]))
@@ -245,17 +293,33 @@ def run_behavioural_checks():
     # and its area matches the cell's own plan area corrected for slope.
     vertices, faces, rim = _hemisphere()
     net = _make_net(skin_net_type, skin_net_edge_type, vertices, faces, rim)
+    barrel_vertices, barrel_faces, barrel_rim, barrel_forces = _barrel()
+    barrel = _make_net(
+        skin_net_type, skin_net_edge_type, barrel_vertices, barrel_faces,
+        barrel_rim, barrel_forces)
+    # ALL THREE PATTERNS. Pattern 2 was missing here when this script first
+    # shipped, and with it the whole force-aligned Surface path: nothing in
+    # this file and nothing in native_smoke ever called CellSurface on a
+    # force-aligned cell. It carries its own net, the force-bearing barrel,
+    # because the hemisphere has no forces at all.
     fixtures = [
-        ("courses", courses(net, 0.6, 0.35)),
-        ("hexagonal", hexagonal(net, 0.6, 0.35)),
+        ("courses", net, courses(net, 0.6, 0.35)),
+        ("hexagonal", net, hexagonal(net, 0.6, 0.35)),
+        ("force aligned", barrel, force_aligned(barrel, 0.6, 0.5)),
     ]
-    for label, built in fixtures:
+    for label, fixture_net, built in fixtures:
         cells = list(_property(built, "Cells"))
+        if not cells:
+            reports.append(
+                "FAIL (12.5(b), %s): the fixture built NO cells, so this "
+                "check would report that all nought of them yield a Brep"
+                % (label,))
+            continue
         failed = 0
         worst_error = 0.0
         for cell in cells:
             outline = [list(pt) for pt in _property(cell, "Outline")]
-            brep = cell_surface(cell, net)
+            brep = cell_surface(cell, fixture_net)
             if brep is None:
                 failed += 1
                 continue
@@ -276,8 +340,68 @@ def run_behavioural_checks():
                 "area error %.4f%% against plan area / cos(slope)"
                 % (label, len(cells), worst_error * 100.0))
 
+    # ---- 12.5(b) on pattern 2 again, this time by ROUTE. Rule 5.2.3(c)
+    # sends a four-cornered force-aligned cell down route (a), a loft of the
+    # cell's two bed runs, which comes back as ONE face; rule 3.3.5's three-
+    # and five-cornered cells have an odd corner with nothing to loft
+    # against and take the fan of route (e), which comes back as several.
+    # The face count is what separates the two, and it is the measurement
+    # that catches a route lofting the cell's four ring CHAINS in place of
+    # its two cross sections: four edges in cyclic order, bottom to right to
+    # top to left, loft into a twisted face and not the cell's own surface.
+    aligned = force_aligned(barrel, 0.6, 0.5)
+    aligned_cells = list(_property(aligned, "Cells"))
+    four_cornered = 0
+    odd_cornered = 0
+    route_faults = []
+    for cell in aligned_cells:
+        setout = _property(cell, "SetoutCorners")
+        brep = cell_surface(cell, barrel)
+        if brep is None:
+            route_faults.append(
+                "a %d-cornered cell gave no Brep at all" % (setout,))
+            continue
+        if setout == 4:
+            four_cornered += 1
+            if brep.Faces.Count != 1:
+                route_faults.append(
+                    "a four-cornered cell came back with %d faces, and "
+                    "route (a) is a single-face loft" % (brep.Faces.Count,))
+        else:
+            odd_cornered += 1
+            if brep.Faces.Count < 3:
+                route_faults.append(
+                    "a %d-cornered cell came back with %d faces, and route "
+                    "(e) fans one face per outline segment"
+                    % (setout, brep.Faces.Count))
+    if route_faults:
+        reports.append(
+            "FAIL (12.5(b), force-aligned routes): %s"
+            % ("; ".join(sorted(set(route_faults))),))
+    elif not four_cornered or not odd_cornered:
+        reports.append(
+            "FAIL (12.5(b), force-aligned routes): the barrel gave %d "
+            "four-cornered and %d odd cells, so one arm of rule 5.2.3 was "
+            "measured on nothing" % (four_cornered, odd_cornered))
+    else:
+        reports.append(
+            "PASS (12.5(b), force-aligned routes): %d four-cornered cells "
+            "each came back a SINGLE-face loft of their two bed runs "
+            "(route (c) taking route (a)) and %d odd cells each a "
+            "multi-face fan (route (e))"
+            % (four_cornered, odd_cornered))
+
     # ---- 12.5(d): the split cap, W + 1 items in both trees, wedges
     # single-face and only the centre disc multi-face.
+    #
+    # COURSES ONLY, and deliberately so rather than by oversight. A cap is
+    # emitted by the courses engine alone: ForceAligned builds band cells
+    # and nothing else, so no force-aligned cell ever has Cap true and
+    # there is no split cap of pattern 2 to measure. The tree-alignment
+    # half below is engine-agnostic for the same reason it is testable at
+    # all: it replays SolveNative's own bucketing loop, which walks the
+    # cell list of WHATEVER pattern built it, one append per cell into each
+    # of two parallel lists.
     split = courses(net, 0.6, 1.2)
     split_cells = list(_property(split, "Cells"))
     course_count = _property(split, "CourseCount")
@@ -377,6 +501,11 @@ def run_behavioural_checks():
     # points cannot triangulate an interior point and cannot loft (its
     # Sections, if any, are truncated the same way), so CellSurface must
     # return None rather than throwing or silently substituting geometry.
+    #
+    # This one is PATTERN-FREE by construction: the cell is built straight
+    # off the SkinCell record and never off an engine, and CellSurface
+    # routes on the record alone, so injecting the same degenerate cell
+    # again per pattern would measure the same code path three times.
     sample_cell = list(_property(plain, "Cells"))[0]
     cell_type = sample_cell.GetType()
     degenerate = System.Activator.CreateInstance(
@@ -389,7 +518,8 @@ def run_behavioural_checks():
             0.0,
             False,
             0,
-            None,
+            None,  # Sections: the cross sections rule 5.2.3 lofts.
+            None,  # Chains: the force-aligned ring's own four edges.
         ]),
     )
     degenerate_result = cell_surface(degenerate, net)

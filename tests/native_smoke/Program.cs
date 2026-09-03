@@ -1185,13 +1185,20 @@ internal static class Program
             Console.WriteLine(
                 "PASS  Skin surface sections (spec section 5): a COURSES " +
                 "cell carries two sections, the lower run and the upper " +
-                "run, both in the same direction (route (a)/(c)); a " +
+                "run, both in the same direction (route (a)); a " +
                 "HEXAGON cell of six setout corners carries three, the " +
                 "bottom run, the two-point section from the left side " +
-                "vertex to the right, and the top run (route (b)); a CAP " +
-                "carries none, so the component fans it (route (d)); and " +
-                "any other corner count carries none, so the component " +
-                "fans that too (route (e)).");
+                "vertex to the right, and the top run (route (b)); a " +
+                "four-cornered FORCE-ALIGNED cell carries two that run the " +
+                "SAME way, MEASURED end against end, its ring's four " +
+                "chains staying on their own field for check 12.3(b) " +
+                "(route (c)); a CAP carries none, so the component fans it " +
+                "(route (d)); and any other corner count, the force-" +
+                "aligned three- and five-sided cells included, carries " +
+                "none, so the component fans that too (route (e)), every " +
+                "one of those proved to HAVE a fan: its plan interior " +
+                "point exists and lifts onto a net face, which is the " +
+                "apex the fan is raised from.");
         }
         catch (Exception exception)
         {
@@ -23035,15 +23042,20 @@ internal static class Program
             {
                 if (Reading<bool>(cell, "Cap"))
                     continue;
-                IList sections = (IList)cell.GetType()
-                    .GetProperty("Sections")!.GetValue(cell)!;
+                IList chains = (IList)cell.GetType()
+                    .GetProperty("Chains")!.GetValue(cell)!;
                 // A force-aligned cell carries four chains: the lower bed
                 // run, the upper streamline segment, the upper bed run and
                 // the lower streamline segment, in that order (rule 3.3.6).
-                double[][] lowerBed = ((IList)sections[0]!).Cast<double[]>().ToArray();
-                double[][] upFlow = ((IList)sections[1]!).Cast<double[]>().ToArray();
-                double[][] upperBed = ((IList)sections[2]!).Cast<double[]>().ToArray();
-                double[][] downFlow = ((IList)sections[3]!).Cast<double[]>().ToArray();
+                // They are the ring's own EDGES and they are read HERE, off
+                // CHAINS. The cell's SECTIONS are a different thing, the two
+                // cross sections rule 5.2.3(c) lofts, and are measured by
+                // ValidateSkinSurfaceSections; one field asked to be both is
+                // the defect this split fixed.
+                double[][] lowerBed = ((IList)chains[0]!).Cast<double[]>().ToArray();
+                double[][] upFlow = ((IList)chains[1]!).Cast<double[]>().ToArray();
+                double[][] upperBed = ((IList)chains[2]!).Cast<double[]>().ToArray();
+                double[][] downFlow = ((IList)chains[3]!).Cast<double[]>().ToArray();
                 foreach ((double[][] chain, double[][][] family, string what) in
                          new[]
                          {
@@ -23361,6 +23373,15 @@ internal static class Program
     /// tidying: rule 3.3.5 requires three- and five-sided force-aligned
     /// cells and rule 4.3 requires five- and seven-sided honeycomb cells,
     /// and without it check 12.4(d) and check 12.5(b) could not both pass.
+    ///
+    /// The FORCE-ALIGNED half is measured here too, on the force-bearing
+    /// barrel, and it is the half this check first shipped without: the
+    /// pattern's cells carry the ring's four CHAINS for check 12.3(b), and
+    /// a route reading them as sections lofts the cell's four edges in
+    /// cyclic order against each other. So the two are held on two fields
+    /// and both are measured: four chains on every cell, two sections on a
+    /// four-cornered one and none on an odd one, and the two sections
+    /// running the SAME way, which the ring's own upper chain does not.
     /// </summary>
     private static void ValidateSkinSurfaceSections(Assembly plugin)
     {
@@ -23381,12 +23402,20 @@ internal static class Program
             netType, edgeType, vertices, faces, rim,
             Array.Empty<(int, int, double)>());
 
+        static IList? SectionList(object cell) =>
+            (IList?)cell.GetType()
+                .GetProperty("Sections")!.GetValue(cell);
+
         static int SectionCount(object cell)
         {
-            object? sections = cell.GetType()
-                .GetProperty("Sections")!.GetValue(cell);
-            return sections is null ? 0 : ((IList)sections).Count;
+            IList? sections = SectionList(cell);
+            return sections is null ? 0 : sections.Count;
         }
+
+        static double Distance(double[] a, double[] b) => Math.Sqrt(
+            ((a[0] - b[0]) * (a[0] - b[0])) +
+            ((a[1] - b[1]) * (a[1] - b[1])) +
+            ((a[2] - b[2]) * (a[2] - b[2])));
         object built = courses.Invoke(
             null, new object[] { net, 0.6, 0.35, 1.0 / 3.0 })!;
         IList cells = (IList)built.GetType()
@@ -23433,6 +23462,178 @@ internal static class Program
                     "deterministic fan of route (e).");
             }
         }
+
+        // ROUTE (c), the one this check first shipped without measuring. A
+        // FORCE-ALIGNED cell is a courses cell by rule 3.2.3 and takes route
+        // (a), so a four-cornered one carries TWO sections, the two bed
+        // runs, and never the ring's four CHAINS, which are its edges in
+        // cyclic order, bottom to right to top to left. Handing those to a
+        // loft lofts a cell against its own sides. Measured on the
+        // force-bearing barrel check 12.3(b) runs on, because the hemisphere
+        // above carries no forces at all.
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned",
+            netType, typeof(double), typeof(double), typeof(double));
+        MethodInfo interiorPoint = RequirePublicStatic(
+            patterns, "PlanInteriorPoint",
+            typeof(IReadOnlyList<double[]>));
+        MethodInfo liftPlanPoint = RequirePublicStatic(
+            patterns, "LiftPlanPoint");
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrel = SkinNetWith(
+            netType, edgeType, barrelVertices, barrelFaces,
+            SkinBarrelRim(), SkinBarrelArchForces());
+        object aligned = forceAligned.Invoke(
+            null, new object[] { barrel, 0.6, 0.5, 1.0 / 3.0 })!;
+        int fourCornered = 0;
+        int oddCornered = 0;
+        foreach (object? item in (IList)aligned.GetType()
+                     .GetProperty("Cells")!.GetValue(aligned)!)
+        {
+            object cell = item!;
+            int setout = Reading<int>(cell, "SetoutCorners");
+            int sections = SectionCount(cell);
+            object? rawChains = cell.GetType()
+                .GetProperty("Chains")!.GetValue(cell);
+            if (rawChains is null || ((IList)rawChains).Count != 4)
+            {
+                throw new InvalidOperationException(
+                    "A force-aligned cell carries its ring's FOUR chains on " +
+                    "Chains, which is what check 12.3(b) measures the joints " +
+                    "and beds through (rule 3.3.6); it carried " +
+                    (rawChains is null
+                        ? "none"
+                        : $"{((IList)rawChains).Count}") + ".");
+            }
+            if (setout != 4)
+            {
+                oddCornered++;
+                if (sections != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"A {setout}-cornered force-aligned cell (rule " +
+                        "3.3.5) has an odd corner with nothing on the " +
+                        "opposite run to loft against, so it carries NO " +
+                        "sections and takes the deterministic fan of route " +
+                        $"5.2.3(e); it carried {sections}.");
+                }
+                // ROUTE (e) IS ONLY A ROUTE IF IT CAN BE BUILT. The fan is
+                // raised from the cell's own plan interior point LIFTED onto
+                // the surface, and a cell whose point cannot be found or
+                // whose lift finds no face under it comes back a NULL Brep,
+                // which rule 5.3.2 counts as a defect in this engine. Those
+                // two are pure engine calls, so they are measured HERE; the
+                // Brep they feed can only be built inside Rhino, by
+                // scripts/rhino_skin_surface.py.
+                object outline = cell.GetType()
+                    .GetProperty("Outline")!.GetValue(cell)!;
+                var inside = (double[]?)interiorPoint.Invoke(
+                    null, new object[] { outline });
+                if (inside is null)
+                {
+                    throw new InvalidOperationException(
+                        $"A {setout}-cornered force-aligned cell takes the " +
+                        "fan of route 5.2.3(e), which is raised from the " +
+                        "cell's own PLAN INTERIOR POINT; this cell offers " +
+                        "none, so its Surface slot would carry a NULL.");
+                }
+                var apex = (double[]?)liftPlanPoint.Invoke(
+                    null, new object[] { barrel, inside[0], inside[1] });
+                if (apex is null)
+                {
+                    throw new InvalidOperationException(
+                        $"A {setout}-cornered force-aligned cell's plan " +
+                        $"interior point ({inside[0]:F4}, {inside[1]:F4}) " +
+                        "lifts onto NO net face, so route 5.2.3(e)'s fan " +
+                        "has no apex and its Surface slot would carry a " +
+                        "NULL.");
+                }
+                // AND THE APEX IS THE CELL'S OWN. Not-null is too weak a
+                // bar on its own: this barrel spans x 0 to 6 and y 0 to 4,
+                // so a lift that read the plan point's coordinates in the
+                // WRONG ORDER still lands on some face of the net and still
+                // comes back non-null. It comes back at the wrong HEIGHT,
+                // and the apex of a fan raised over this cell must stand at
+                // the cell's own height: within a tenth of a course of the
+                // range its own outline spans, generous on a tent whose
+                // faces are flat.
+                double[][] ring = ((IList)outline).Cast<double[]>().ToArray();
+                double lowest = ring.Min(point => point[2]);
+                double highest = ring.Max(point => point[2]);
+                if (apex[2] < lowest - 0.05 || apex[2] > highest + 0.05)
+                {
+                    throw new InvalidOperationException(
+                        $"A {setout}-cornered force-aligned cell spans z " +
+                        $"{lowest:F4} to {highest:F4}, and route " +
+                        "5.2.3(e)'s fan apex, lifted from its plan " +
+                        $"interior point ({inside[0]:F4}, {inside[1]:F4}), " +
+                        $"stands at z {apex[2]:F4}. The apex is raised over " +
+                        "the cell's OWN patch of surface, so it lies within " +
+                        "a tenth of a course of the cell's own range; this " +
+                        "one is somewhere else on the net.");
+                }
+                continue;
+            }
+            if (sections != 2)
+            {
+                throw new InvalidOperationException(
+                    "A four-cornered FORCE-ALIGNED cell is a courses cell " +
+                    "by rule 3.2.3 and takes route 5.2.3(a): a loft of TWO " +
+                    "sections, the lower bed run and the upper bed run. It " +
+                    $"carried {sections}. Four is the ring's own chains in " +
+                    "cyclic order, which are the cell's EDGES and not two " +
+                    "cross sections, and lofting them lofts the cell " +
+                    "against its own sides.");
+            }
+            IList pair = SectionList(cell)!;
+            double[][] lowerRun = ((IList)pair[0]!).Cast<double[]>().ToArray();
+            double[][] upperRun = ((IList)pair[1]!).Cast<double[]>().ToArray();
+            if (lowerRun.Length < 2 || upperRun.Length < 2)
+            {
+                throw new InvalidOperationException(
+                    "Route 5.2.3(a) lofts two sections of at least two " +
+                    $"points each; got {lowerRun.Length} and " +
+                    $"{upperRun.Length}.");
+            }
+            // BOTH IN THE SAME DIRECTION, measured rather than asserted:
+            // pairing each section's start with the other's start must be
+            // shorter than pairing start against end. The ring holds the
+            // upper run REVERSED, so a loft pair taken off the ring
+            // unaltered fails exactly here, and the failure is a twisted
+            // surface in Rhino rather than an exception.
+            double same =
+                Distance(lowerRun[0], upperRun[0]) +
+                Distance(lowerRun[^1], upperRun[^1]);
+            double opposed =
+                Distance(lowerRun[0], upperRun[^1]) +
+                Distance(lowerRun[^1], upperRun[0]);
+            if (same >= opposed)
+            {
+                throw new InvalidOperationException(
+                    "Route 5.2.3(a) lofts the lower run and the upper run " +
+                    "BOTH IN THE SAME DIRECTION. On this cell the ends " +
+                    $"pair at {same:F4} m the same way against " +
+                    $"{opposed:F4} m the opposite way, so the two sections " +
+                    "run against each other and the loft between them is a " +
+                    "twist. The ring holds the upper run reversed, because " +
+                    "the outline closes right to left along the top, so the " +
+                    "loft pair must un-reverse it.");
+            }
+            fourCornered++;
+        }
+        if (fourCornered == 0)
+        {
+            throw new InvalidOperationException(
+                "The force-aligned barrel built no four-cornered cell, so " +
+                "route 5.2.3(c) went unmeasured and this check would have " +
+                $"passed on nothing ({oddCornered} odd cells seen).");
+        }
+        Console.WriteLine(
+            "      Skin surface sections, route 5.2.3(c): the " +
+            $"force-bearing barrel gives {fourCornered} four-cornered " +
+            $"cells taking the two-section loft and {oddCornered} odd " +
+            "cells taking the fan, so neither arm of the route is " +
+            "measured on nothing.");
     }
 
     /// <summary>

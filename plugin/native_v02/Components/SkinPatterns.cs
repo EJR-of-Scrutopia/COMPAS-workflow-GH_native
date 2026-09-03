@@ -141,14 +141,25 @@ internal sealed class SkinLevelCurve
 /// [U0, U1] along the course direction, seam-relative, which is what the
 /// harness measures the pitch, the phase and the stagger on.
 ///
-/// SECTIONS is the outline broken into its own named chains, in the order
-/// the engine laid them: for a force-aligned cell the lower bed run, the
-/// upward streamline segment, the upper bed run and the downward streamline
-/// segment (rule 3.3.6). Check 12.3(b) measures each chain against the
-/// family it is meant to lie on, which cannot be done on a single flattened
-/// ring, and Task 29's Brep route builds its edges from the same chains. It
-/// is null on a pattern that has not filled it and on a cap, which the
-/// component fans instead.
+/// SECTIONS is the one thing rule 5.2.3 lofts: the cell's own CROSS
+/// SECTIONS, in one direction, never its edges in cyclic order. A courses
+/// or force-aligned cell carries two, the lower bed run and the upper bed
+/// run, both running the same way (routes (a) and (c)); a six-cornered
+/// hexagon three, the bottom run, the two-point section from the left side
+/// vertex to the right, and the top run (route (b)); a cap none, and a cell
+/// whose corner count its own pattern's route does not fit none either, so
+/// the component fans both (routes (d) and (e)).
+///
+/// CHAINS is a different thing and is read by a different check: the outline
+/// broken into its own named edges, in the order the engine laid them round
+/// the ring. Only the force-aligned pattern fills it, with four, the lower
+/// bed run, the upward streamline segment, the upper bed run REVERSED as the
+/// ring walks it, and the downward streamline segment (rule 3.3.6). Check
+/// 12.3(b) measures each chain against the family it is meant to lie on,
+/// which cannot be done on a single flattened ring. The two fields are held
+/// apart because they disagree: the ring's four chains in cyclic order are
+/// the cell's four EDGES, and lofting those is the opposite of route (a),
+/// which is what happens when one field is asked to be both.
 /// </summary>
 internal sealed record SkinCell(
     int Course,
@@ -158,7 +169,8 @@ internal sealed record SkinCell(
     double U1,
     bool Cap = false,
     int SetoutCorners = 0,
-    IReadOnlyList<IReadOnlyList<double[]>>? Sections = null);
+    IReadOnlyList<IReadOnlyList<double[]>>? Sections = null,
+    IReadOnlyList<IReadOnlyList<double[]>>? Chains = null);
 
 /// <summary>One generated pattern. The cells sorted by course then by
 /// rule 7.1's seam-outward order, the band count, the readable diagnostics
@@ -3482,8 +3494,33 @@ internal static class SkinPatterns
                 else if (setout == 3)
                     sevenSided++;
 
+                // RULE 5.2.3(c). A four-cornered force-aligned cell is a
+                // courses cell by rule 3.2.3 and takes route (a): a loft of
+                // TWO sections, the lower bed run and the upper bed run,
+                // both in the SAME direction. The ring holds the upper run
+                // reversed, because the outline closes right to left along
+                // the top, so the loft pair un-reverses it. Handing the
+                // component the ring's four chains instead would loft the
+                // cell's four EDGES in cyclic order, bottom to right to top
+                // to left, which is the opposite of what a loft is for; the
+                // chains go on their own field for check 12.3(b) and the two
+                // never share one.
+                //
+                // A three- or five-cornered cell (rule 3.3.5) carries no
+                // sections and takes the deterministic fan of route (e):
+                // route (a) is written for a cell with exactly two bed
+                // edges, and a cell that lost or gained a side has an odd
+                // corner with nothing on the opposite run to loft against.
+                IReadOnlyList<IReadOnlyList<double[]>>? loftSections =
+                    setout == 4 && lowerRun.Length >= 2 && upperRun.Length >= 2
+                        ? new IReadOnlyList<double[]>[]
+                          {
+                              lowerRun,
+                              Enumerable.Reverse(upperRun).ToArray()
+                          }
+                        : null;
                 cells.Add(new SkinCell(
-                    r, ring, clipped, u0, u1, false, setout,
+                    r, ring, clipped, u0, u1, false, setout, loftSections,
                     new[] { lowerRun, rightSegment, upperRun, leftSegment }));
             }
         }

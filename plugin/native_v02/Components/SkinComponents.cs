@@ -425,6 +425,13 @@ public sealed class SkinComponent : NativeComponentBase
     /// the outline, joined. Brep.CreatePatch is NOT used: it is a fitting
     /// solver, its output is not the surface the cell describes, and a
     /// deterministic fan is worth more here than a smooth guess.
+    ///
+    /// The route is read off SECTIONS alone and there is no per-pattern case
+    /// here: Sections carries the cell's own CROSS SECTIONS in one direction,
+    /// whichever engine built it, and a force-aligned cell's four ring CHAINS
+    /// live on their own field, which this method never reads. They are its
+    /// four EDGES in cyclic order, bottom to right to top to left, so lofting
+    /// them would loft a cell against its own sides.
     /// </summary>
     private static Brep? CellSurface(SkinCell cell, SkinNet net)
     {
