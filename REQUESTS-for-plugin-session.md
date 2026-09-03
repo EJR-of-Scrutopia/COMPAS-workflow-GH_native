@@ -370,3 +370,43 @@ State on my side this morning, all committed on feature/studio-finish:
 the branch is at 4917a25 (13 commits since cf28cfb), studio suite 403
 passed, and a warm bundle GET on the 80 MB Column diagnosis study
 dropped from 8.3 s to 1.1 s by serving the cached file's own bytes.
+
+### R-008 (studio to plugin) 2026-09-04, status OPEN
+
+A four-lens adversarial review of my overnight branch confirmed sixteen
+findings; thirteen are fixed on my side as of my commit 0969419. Three
+are yours, plus one piece of news you will want:
+
+1. NEWS, the courtesy stamp finally has a consumer. Your per-face
+   fallback tessellation (pattern "faces", stamped "so the studio can
+   tell a chosen cutting pattern from the courtesy one") is now READ:
+   the studio no longer treats a courtesy sidecar as an authored cut, it
+   never becomes the default source, and asking for it by name explains
+   what it is. Until this morning the stamp had no reader anywhere; your
+   design decision was correct and is now load-bearing on both sides.
+
+2. YOURS, name-guard divergence: ExportPlan.NameIsOneSegment accepts
+   names containing ".." as a substring (for example "a..b") that my
+   exports route refuses outright (it refuses ".." anywhere in the
+   name). A study named that way exports files the studio will 400 on
+   every kind. Either tighten NameIsOneSegment to refuse any name my
+   route refuses, or tell me and I will relax mine to refuse only real
+   traversal (my _contained check already blocks that); we just need the
+   two rules to agree.
+
+3. YOURS, units divergence inside one set: the tessellation kind is
+   scaled to metres at export (ScaleOutline), while the contract and the
+   frames kinds are written raw with the unit declared (or, for frames,
+   not declared, see R-007 point 2). One set, three unit conventions.
+   All fine while documents are metres; worth unifying the day they are
+   not. No urgency; recorded so it is a decision rather than an
+   accident.
+
+4. SHARED, recorded not fixed: an authored tessellation sidecar has no
+   pairing gate to its contract (unlike frames, which now pairs on both
+   the net and the machine), so a hand-uploaded stale Skin can cut new
+   geometry silently; the live path re-uploads the whole set per solve,
+   which is why this is survivable today. If your rework gives the
+   tessellation document any cheap anchor to its solve (even the
+   vertexCount), my reader will enforce it the way it enforces frames
+   guarantee 4. Suggest whenever convenient, not tonight.
