@@ -103,9 +103,21 @@ internal static class Program
                 // saved definition raises the warning on open and moves
                 // its wires by name, not by slot. Spec 2026-09-02
                 // (skin-thickness-input) appends Thickness and Along
-                // Normal at slots 5 and 6, PURE APPEND: a definition
-                // saved before that task still finds its own five names
-                // at their own slots and raises no warning at all.
+                // Normal at slots 5 and 6.
+                //
+                // CORRECTION, measured 2026-09-03. That task claimed the
+                // append "raises no warning at all". It is FALSE and the
+                // claim is withdrawn. ParameterIdentity.Mismatch compares
+                // COUNTS as well as names, so five archived inputs
+                // against the seven registered is a reported change
+                // whatever the names do. What the append buys is the
+                // WORDING, not silence: the message names 'Thickness'
+                // and 'Along Normal' as appended and closes with
+                // existing wires keeping their ports, instead of sending
+                // the author to check every wire. That is the shipped,
+                // correct behaviour and it is pinned as such in
+                // ValidateParameterMismatch; nothing here tries to
+                // silence it.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[]
                     {
@@ -1919,7 +1931,11 @@ internal static class Program
                 + "'Heads' and 'Feet' as removed, in archived order, and "
                 + "still closes check-every-wire; Frame's pure append names "
                 + "'Anchor Lines' and closes with existing wires keeping "
-                + "their ports instead. SideMoved, which Export's Live hold reads, "
+                + "their ports instead, and SKIN's own five-to-seven append "
+                + "names 'Thickness' and 'Along Normal' the same way, which "
+                + "withdraws the thickness task's claim that its two new "
+                + "inputs raise no warning at all: they raise one, and it is "
+                + "the right one. SideMoved, which Export's Live hold reads, "
                 + "answers for ONE side: an input move holds, by count or "
                 + "by name, and this branch's own output-only move does "
                 + "not.");
@@ -6269,6 +6285,59 @@ internal static class Program
                 + "at the end, must name the append and say the wires kept "
                 + "their ports; 'check every' has no business in a warning "
                 + $"about a change that moved nothing; got '{appended}'.");
+        }
+
+        // SKIN's own append, spec 2026-09-02 (skin-thickness-input), and
+        // the CORRECTION of that task's own claim. It said the two new
+        // inputs "raise no warning at all". They do raise one, because
+        // Mismatch compares counts as well as names and five archived
+        // inputs against seven registered is a change whatever the names
+        // do. Measured on 2026-09-03 and pinned here rather than argued
+        // about, because the append story is exactly what the message
+        // should say and a task believing it says nothing is a task that
+        // would have tried to silence it.
+        //
+        // The behaviour that IS owed: both counts named, both new ports
+        // named as appended, existing wires keeping their slots, and NO
+        // "check every wire" close, since an append cannot have moved a
+        // wire. A notice about a change that moved nothing, not a
+        // rewiring warning. (NativeComponentBase adds it at
+        // GH_RuntimeMessageLevel.Warning, which is where every port
+        // change on this plugin is said; the grade of the sentence is in
+        // its wording and not in the level.)
+        string?[] skinArchived =
+        {
+            "Result", "Pattern", "Size", "Course Height", "Min Piece"
+        };
+        string[] skinRegistered =
+        {
+            "Result", "Pattern", "Size", "Course Height", "Min Piece",
+            "Thickness", "Along Normal"
+        };
+        string? skinAppended = Ask(
+            skinArchived,
+            new string?[] { "Cells", "Surface" },
+            skinRegistered,
+            new[] { "Cells", "Surface" });
+        if (skinAppended is not string skinText ||
+            !skinText.Contains(
+                "5 inputs and 2 outputs archived", StringComparison.Ordinal) ||
+            !skinText.Contains("7 and 2 registered", StringComparison.Ordinal) ||
+            !skinText.Contains("'Thickness'", StringComparison.Ordinal) ||
+            !skinText.Contains("'Along Normal'", StringComparison.Ordinal) ||
+            !skinText.Contains("were appended", StringComparison.Ordinal) ||
+            !skinText.Contains(
+                "existing wires kept their ports", StringComparison.Ordinal) ||
+            skinText.Contains("check every", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Skin's five inputs against the seven it registers since "
+                + "the thickness task IS reported, and the report must "
+                + "name both counts, name 'Thickness' and 'Along Normal' "
+                + "as appended, say existing wires kept their ports, and "
+                + "never send the author to check every wire. The task "
+                + "that added those ports claimed no warning is raised at "
+                + $"all; that claim is withdrawn. Got '{skinAppended}'.");
         }
 
         // The INPUT SIDE alone, which is what Export's Live hold reads.
@@ -24291,13 +24360,20 @@ internal static class Program
     /// <summary>
     /// Spec 2026-09-02 (skin-thickness-input): Th and Along Normal are a
     /// PURE APPEND after Min Piece. Every earlier port keeps its own
-    /// name, nickname and position exactly, which is what lets
-    /// ParameterIdentity's archived-name comparison stay silent on a
-    /// definition saved before this task: it simply finds no data on
-    /// ports 5 and 6 and reads their defaults (Th = 0, no thickening;
-    /// Along Normal = false). An insertion instead of an append, or a
-    /// rename anywhere earlier, would move every port after it and fail
-    /// here rather than only in Grasshopper.
+    /// name, nickname and position exactly, so a definition saved before
+    /// this task keeps every wire on the port it left and simply finds no
+    /// data on ports 5 and 6, which read their defaults (Th = 0, no
+    /// thickening; Along Normal = false). An insertion instead of an
+    /// append, or a rename anywhere earlier, would move every port after
+    /// it and fail here rather than only in Grasshopper.
+    ///
+    /// CORRECTION, measured 2026-09-03. This check's own task claimed the
+    /// append leaves ParameterIdentity's comparison SILENT. It does not:
+    /// Mismatch compares counts as well as names, so five archived inputs
+    /// against seven registered is reported, naming the two added ports
+    /// and saying existing wires kept their slots. That is the right
+    /// behaviour and it is pinned in ValidateParameterMismatch; the
+    /// silence claim is withdrawn.
     /// </summary>
     private static void ValidateSkinThicknessPorts(Assembly plugin)
     {

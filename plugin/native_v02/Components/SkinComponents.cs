@@ -144,11 +144,20 @@ public sealed class SkinComponent : NativeComponentBase
         // Spec 2026-09-02 (skin-thickness-input), PURE APPEND after Min
         // Piece: ParameterIdentity's archived-name comparison walks the
         // saved ports in order, so a definition saved before this task
-        // reattaches silently and simply has no data on these two, which
-        // read as their defaults (Th = 0, no thickening at all; Along
-        // Normal = false). Th = 0 changes nothing about the Surface
-        // output: this is the ONE port pair on this component whose
-        // absence must be provably invisible.
+        // keeps every wire on the port it left and simply has no data on
+        // these two, which read as their defaults (Th = 0, no thickening
+        // at all; Along Normal = false). Th = 0 changes nothing about the
+        // Surface output: this is the ONE port pair on this component
+        // whose absence must be provably invisible.
+        //
+        // CORRECTION, measured 2026-09-03. The task that added these two
+        // claimed the append is SILENT on load. It is not, and the claim
+        // is withdrawn: Mismatch compares counts as well as names, so
+        // five archived inputs against seven registered is reported. What
+        // the append buys is the WORDING. The author is told the two new
+        // ports were appended and that existing wires kept their ports,
+        // rather than being sent to check every wire. Pinned in
+        // ValidateParameterMismatch.
         parameters.AddNumberParameter(
             "Thickness",
             "Th",
