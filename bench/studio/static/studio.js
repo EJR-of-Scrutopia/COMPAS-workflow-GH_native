@@ -1632,80 +1632,165 @@ document.getElementById("scene-open").addEventListener("click", async () => {
   if (opening) await refreshScenes();
 });
 
-// ---------- material swatches ----------
-// The material list is a row of small painted tiles rather than a select.
-// The select itself is still there, hidden: every other piece of code reads
-// its value, and a picture that quietly disagreed with what the server was
-// asked to cut would be worse than no picture at all. Clicking a swatch
-// sets the select and dispatches its change event, so exactly the same path
-// runs as before.
-const MATERIAL_SWATCHES = {
-  "concrete": { label: "Concrete", base: "#9a9c9d", grain: 0.05 },
-  "concrete-c50": { label: "C50/60", base: "#a6a8a9", grain: 0.05 },
-  "concrete-sprayed": { label: "Sprayed", base: "#8e9091", grain: 0.12 },
-  "timber": { label: "Timber", base: "#b98b52", grain: 0.18 },
-  "brick": { label: "Brick", base: "#9c5b45", grain: 0.1 },
-  "tile": { label: "Tile", base: "#b4674e", grain: 0.08 },
-  "stone": { label: "Stone", base: "#c2bda9", grain: 0.09 },
-};
+// ---------- preview balls ----------
+// A material is a look, so the panel shows the look, not a rectangle of
+// colour beside a word. Every rendering tool worth copying draws its
+// materials as spheres under a fixed rig, and the sphere here carries the
+// SAME registry material the vault would be cut in: the preview cannot
+// drift from the thing it previews, because it IS the thing.
+//
+// One small renderer, hidden, shared by every tile. Its own environment,
+// because a PMREM texture belongs to the context that made it and cannot be
+// borrowed from the main view.
+const PREVIEW_SIZE = 128;
 
-function paintSwatch(canvasEl, look) {
-  // Painted rather than fetched: a texture request per material would be a
-  // round trip for a 60 by 26 tile, and these are meant to say "warm timber"
-  // and "grey concrete", not to be samples.
-  const context = canvasEl.getContext("2d");
-  const width = canvasEl.width, height = canvasEl.height;
-  context.fillStyle = look.base;
-  context.fillRect(0, 0, width, height);
-  let seed = 20260904;
-  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
-  for (let i = 0; i < width * height * 0.35; i += 1) {
-    const shade = Math.round((random() - 0.5) * 255 * look.grain);
-    context.fillStyle = "rgba(" + (shade > 0 ? "255,255,255," : "0,0,0,")
-      + Math.min(0.5, Math.abs(shade) / 255) + ")";
-    context.fillRect(Math.floor(random() * width), Math.floor(random() * height), 1, 1);
+// A SECOND WebGL context, and a machine is allowed to refuse one: browsers
+// cap how many a page may hold, and a driver can fail a context outright.
+// The whole rig is therefore built inside a guard, and every tile falls
+// back to the material's own colour if it could not be built. A panel that
+// shows flat colour is a disappointment; a panel that throws before the
+// first frame is a dead studio.
+let previewRig = null;
+
+function buildPreviewRig() {
+  try {
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setSize(PREVIEW_SIZE, PREVIEW_SIZE, false);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    const previewScene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 20);
+    // Z-up like the studio, so a prop preview stands the way it stands in
+    // the scene rather than lying on its face.
+    camera.up.set(0, 0, 1);
+    camera.position.set(0, -3.05, 1.02);
+    camera.lookAt(0, 0, 0);
+    // Its own generator, not the main renderer's: a PMREM texture belongs
+    // to the context that made it and cannot be lent to another.
+    const previewPmrem = new THREE.PMREMGenerator(renderer);
+    previewScene.environment = previewPmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const key = new THREE.DirectionalLight(0xfff4e6, 2.4);
+    key.position.set(-1.6, -2.2, 2.4);
+    const rim = new THREE.DirectionalLight(0xbcd4ff, 1.1);
+    rim.position.set(2.2, 1.6, 0.9);
+    previewScene.add(key, rim, new THREE.HemisphereLight(0xb8c6d8, 0x2a2622, 0.6));
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 40), materials.concrete);
+    previewScene.add(ball);
+    const holder = new THREE.Group();
+    previewScene.add(holder);
+    return { renderer, scene: previewScene, camera, ball, holder };
+  } catch (error) {
+    console.warn("no preview context; tiles fall back to flat colour", error);
+    return null;
   }
 }
 
-function buildMaterialSwatches() {
-  const holder = document.getElementById("material-swatches");
-  const select = document.getElementById("material-select");
+previewRig = buildPreviewRig();
+
+// The tile is a 2D canvas: the WebGL canvas is drawn into it once, so one
+// context serves any number of tiles and none of them holds a live context
+// open. Same rule as the scene thumbnail: render and read in one turn.
+function drawPreview(canvasEl) {
+  const context = canvasEl.getContext("2d");
+  context.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  if (!previewRig) return false;
+  previewRig.renderer.render(previewRig.scene, previewRig.camera);
+  context.drawImage(previewRig.renderer.domElement, 0, 0, canvasEl.width, canvasEl.height);
+  return true;
+}
+
+function fillFlat(canvasEl, colour) {
+  const context = canvasEl.getContext("2d");
+  context.fillStyle = "#" + colour.getHexString();
+  context.fillRect(0, 0, canvasEl.width, canvasEl.height);
+}
+
+function renderMaterialPreview(material, canvasEl) {
+  if (!previewRig) {
+    fillFlat(canvasEl, material.color || new THREE.Color(0x9a9c9d));
+    return;
+  }
+  previewRig.ball.visible = true;
+  previewRig.ball.material = material;
+  drawPreview(canvasEl);
+}
+
+// A tile: the preview, and the name beneath it. Nothing else, and no text
+// beside the picture.
+function previewTile(value, label, paint) {
+  const tile = document.createElement("button");
+  tile.className = "tile";
+  tile.dataset.value = value;
+  tile.title = label;
+  const canvasEl = document.createElement("canvas");
+  canvasEl.width = canvasEl.height = PREVIEW_SIZE;
+  tile.appendChild(canvasEl);
+  const name = document.createElement("span");
+  name.textContent = label;
+  tile.appendChild(name);
+  paint(canvasEl);
+  return tile;
+}
+
+function paintTileSelection(holder, value) {
+  for (const tile of holder.querySelectorAll(".tile")) {
+    tile.classList.toggle("active", tile.dataset.value === value);
+  }
+}
+
+// The two tile grids the panel shows. Both are driven by a select that is
+// still there and still the source of truth: every other piece of code
+// reads its value, and a picture that quietly disagreed with what the
+// server was asked to cut would be worse than no picture at all.
+function buildTileGrid(holderId, selectId, materialFor) {
+  const holder = document.getElementById(holderId);
+  const select = document.getElementById(selectId);
   if (!holder || !select) return;
   holder.innerHTML = "";
   for (const option of select.options) {
-    const look = MATERIAL_SWATCHES[option.value];
-    if (!look) continue;
-    const button = document.createElement("button");
-    button.className = "swatch";
-    button.title = option.textContent;
-    button.dataset.material = option.value;
-    const tile = document.createElement("canvas");
-    tile.width = 60;
-    tile.height = 26;
-    paintSwatch(tile, look);
-    button.appendChild(tile);
-    const name = document.createElement("span");
-    name.textContent = look.label;
-    button.appendChild(name);
-    button.addEventListener("click", () => {
+    const material = materialFor(option.value);
+    if (!material) continue;
+    const tile = previewTile(option.value, option.textContent,
+      (canvasEl) => renderMaterialPreview(material, canvasEl));
+    tile.addEventListener("click", () => {
       if (select.value === option.value) return;
       select.value = option.value;
       select.dispatchEvent(new Event("change"));
-      paintMaterialSwatches();
+      paintTileSelection(holder, option.value);
     });
-    holder.appendChild(button);
+    holder.appendChild(tile);
   }
-  paintMaterialSwatches();
+  paintTileSelection(holder, select.value);
+}
+
+function buildMaterialTiles() {
+  buildTileGrid("material-tiles", "material-select",
+    (value) => materials[value] || null);
+  buildTileGrid("skin-tiles", "render-skin", (value) => {
+    if (value === "none") return materials[document.getElementById("material-select").value]
+      || materials.concrete;
+    if (!skinMaterialCache[value] && SKINS[value]) skinMaterialCache[value] = SKINS[value]();
+    return skinMaterialCache[value] || null;
+  });
 }
 
 function paintMaterialSwatches() {
-  const select = document.getElementById("material-select");
-  for (const button of document.querySelectorAll("#material-swatches .swatch")) {
-    button.classList.toggle("active", button.dataset.material === select.value);
-  }
+  const material = document.getElementById("material-select");
+  const skin = document.getElementById("render-skin");
+  const materialHolder = document.getElementById("material-tiles");
+  const skinHolder = document.getElementById("skin-tiles");
+  if (materialHolder) paintTileSelection(materialHolder, material.value);
+  if (skinHolder) paintTileSelection(skinHolder, skin.value);
+  // The "no skin" tile shows the material it would fall back to, so the two
+  // grids never disagree about what the vault is wearing.
+  const none = skinHolder && skinHolder.querySelector('.tile[data-value="none"] canvas');
+  if (none) renderMaterialPreview(materials[material.value] || materials.concrete, none);
 }
 
-buildMaterialSwatches();
+// Built once the module has finished declaring the skins it previews: the
+// call used to sit here and reached SKINS in its temporal dead zone, which
+// is a blank panel and a ReferenceError before the first frame.
 
 // ---------- the cut (Task 8: pieces and their course/size come from the server) ----------
 // Mirrors app.py's own SIZE_MIN/SIZE_MAX. The bundle's top level "size" is
@@ -4802,6 +4887,8 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+// The tile grids are built here, after SKINS and skinMaterialCache exist.
+buildMaterialTiles();
 boot();
 requestAnimationFrame(frame);
 

@@ -419,3 +419,117 @@ def test_ground_joints_keep_their_size_when_the_floor_is_resized(tmp_path):
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+SOLAR_CHECK = textwrap.dedent("""
+    import { sunPosition, refraction, timeAtElevation, sunLight } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function close(a, b, tolerance) { return Math.abs(a - b) <= tolerance; }
+
+    const LONDON = [51.507, -0.1278];
+
+    // Midsummer noon at London. The analytic answer is 90 - latitude +
+    // declination = 90 - 51.507 + 23.438 = 61.93 degrees, and the sun is
+    // due south.
+    const noon = sunPosition(new Date(Date.UTC(2026, 5, 21, 12, 2)), ...LONDON);
+    expect(close(noon.elevation, 61.93, 0.05),
+      "London midsummer noon elevation, got " + noon.elevation);
+    expect(close(noon.azimuth, 180, 0.6),
+      "and the sun is due south, got " + noon.azimuth);
+
+    // Sunrise and sunset the same day, against published times: 04:43 and
+    // 21:21 BST, which is 03:43 and 20:21 UTC. Solved on the GEOMETRIC
+    // elevation of -0.833 degrees, the upper limb on the horizon, which is
+    // the convention every almanac uses.
+    const day = new Date(Date.UTC(2026, 5, 21));
+    const rise = timeAtElevation(day, ...LONDON, -0.833, false);
+    const set = timeAtElevation(day, ...LONDON, -0.833, true);
+    expect(rise.toISOString().slice(11, 16) === "03:43",
+      "sunrise, got " + rise.toISOString());
+    expect(set.toISOString().slice(11, 16) === "20:21",
+      "sunset, got " + set.toISOString());
+
+    // The sun never climbs to 60 degrees over London in December, and the
+    // preset that asks for it gets an honest null rather than a lie.
+    expect(timeAtElevation(new Date(Date.UTC(2026, 11, 21)), ...LONDON, 60, true) === null,
+      "no 60 degree sun over London in December");
+
+    // The equator at an equinox: overhead at noon.
+    const equator = sunPosition(new Date(Date.UTC(2026, 2, 20, 12, 7)), 0, 0);
+    expect(equator.elevation > 89, "equinox noon on the equator, got " + equator.elevation);
+
+    // Southern hemisphere: the midday sun is in the north.
+    const sydney = sunPosition(new Date(Date.UTC(2026, 5, 21, 2, 0)), -33.87, 151.21);
+    expect(sydney.azimuth < 10 || sydney.azimuth > 350,
+      "Sydney midday sun is due north, got " + sydney.azimuth);
+
+    // Refraction lifts the horizon by about 34 arcminutes and is nothing
+    // overhead. This is why the sun is visible when it is geometrically
+    // already set.
+    expect(close(refraction(0), 0.48, 0.03), "refraction at the horizon, got " + refraction(0));
+    expect(refraction(86) === 0, "no refraction overhead");
+    expect(sunPosition(new Date(Date.UTC(2026, 5, 21, 12, 2)), ...LONDON).elevation
+      > sunPosition(new Date(Date.UTC(2026, 5, 21, 12, 2)), ...LONDON).elevationGeometric,
+      "the apparent sun is higher than the geometric one");
+
+    // The light: dimming and reddening are the same variable, so strength
+    // falls monotonically with elevation and the blue channel falls with it
+    // while red stays pinned.
+    let last = Infinity;
+    for (const elevation of [60, 45, 30, 20, 10, 5, 2, 1, 0.5]) {
+      const light = sunLight(elevation);
+      expect(light.strength < last, "strength falls with elevation at " + elevation);
+      last = light.strength;
+      expect(((light.colour >> 16) & 255) === 255, "red stays pinned at " + elevation);
+    }
+    // The ramp's own figures, not a shape: 62,000 lux at 20 degrees and
+    // 15,000 at 5, against 100,000 at 60. A strength that stopped falling
+    // would pass a monotone check and fail these.
+    expect(close(sunLight(20).strength, 0.62, 0.005), "20 degrees is 62,000 lux");
+    expect(close(sunLight(5).strength, 0.15, 0.005), "5 degrees is 15,000 lux");
+    expect(close(sunLight(30).strength, 0.78, 0.005), "30 degrees is 78,000 lux");
+    expect((sunLight(60).colour & 255) > (sunLight(5).colour & 255),
+      "a low sun has less blue in it than a high one");
+    expect(sunLight(60).strength === 1, "full sun is the unit");
+    expect(sunLight(-1).strength === 0, "a set sun lights nothing");
+    // The fade across the last degree and a half. Without it the beam would
+    // still be a fiftieth of full sun at the horizon and would switch off in
+    // one frame; with it, 0 degrees is under a thousandth and the sky has
+    // already taken over.
+    expect(sunLight(0).strength < 0.001, "the horizon is dark, got " + sunLight(0).strength);
+    expect(sunLight(1.5).strength > 0.01, "and a degree and a half up is not");
+    expect(sunLight(-0.5).strength > 0 && sunLight(-0.5).strength < sunLight(0).strength,
+      "between the horizon and the almanac's sunset the beam is still fading");
+    // Clamped, not extrapolated: a sun half a degree below the horizon must
+    // not be a DIFFERENT colour from one on it.
+    expect(sunLight(-0.5).colour === sunLight(0).colour, "the ramp clamps at its bottom");
+    expect(sunLight(80).colour === sunLight(60).colour, "and at its top");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_the_sun_is_where_the_almanac_says_it_is(tmp_path):
+    """The sun is not a pair of sliders, it is a position, and the position
+    is checkable. This is the NOAA formulation (Meeus low-precision solar
+    coordinates plus his equation of time and NOAA's refraction), pinned
+    against three independent facts: the analytic midsummer noon elevation
+    for London, the published sunrise and sunset for that day, and the
+    equinox sun standing overhead at the equator.
+
+    The colour ramp is pinned the same way. Dimming and reddening are one
+    variable, optical path length, so the test holds the shape of that
+    relation: strength falls monotonically as the sun drops, blue drains out
+    of the beam while red stays pinned, and the last degree and a half fades
+    to nothing rather than switching off at the horizon."""
+
+    script = tmp_path / "check_sun.mjs"
+    script.write_text(
+        SOLAR_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())), encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

@@ -52,7 +52,7 @@
   </details>
   <details id="study-section" open>
     <summary>Skin</summary>
-    <div id="material-swatches"></div>
+    <div id="material-tiles" class="tile-grid"></div>
     <select id="material-select" class="hidden">
       <option value="concrete">Concrete C30/37</option>
       <option value="concrete-c50">Concrete C50/60</option>
@@ -62,12 +62,14 @@
       <option value="tile">Fired clay tile</option>
       <option value="stone">Limestone</option>
     </select>
-    <label>Render skin <select id="render-skin">
+    <span class="row-heading">Render skin</span>
+    <div id="skin-tiles" class="tile-grid"></div>
+    <select id="render-skin" class="hidden">
       <option value="none" selected>None (material)</option>
       <option value="white-presentation">White presentation</option>
       <option value="basalt-dark">Basalt dark</option>
       <option value="timber-ply">Timber ply</option>
-    </select></label>
+    </select>
     <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
     <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
     <button id="material-reset">Reset appearance</button>
