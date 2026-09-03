@@ -1353,7 +1353,12 @@ internal static class Program
                 "the two failures are two DISTINCT sentences, one naming " +
                 "the FACE and the null slot, one naming the SOLID, the " +
                 "Thickness in force and that those cells are STILL " +
-                "EXPORTED; the transition warning NAMES the heights " +
+                "EXPORTED; that SOLID sentence's remedy is worded " +
+                "against the ALONG NORMAL MODE IN FORCE and never " +
+                "advises turning off a toggle that is off by default " +
+                "and is itself the vertical-offset mode a vertical " +
+                "outline edge degenerates; the transition warning " +
+                "NAMES the heights " +
                 "(z=0.898 to z=0.906 on the two-peak net) instead of " +
                 "promising that Diagnostics does, which nothing has read " +
                 "since the D port went; and the force-aligned closer is " +
@@ -25659,18 +25664,23 @@ internal static class Program
 
         string? Face(int failed, int first) =>
             (string?)faceLine.Invoke(null, new object[] { failed, first });
-        string? Thick(int failed, int first, double th) =>
+        string? Thick(int failed, int first, double th, bool alongNormal) =>
             (string?)thickenLine.Invoke(
-                null, new object[] { failed, first, th });
+                null, new object[] { failed, first, th, alongNormal });
 
-        if (Face(0, -1) is not null || Thick(0, -1, 0.29) is not null)
+        if (Face(0, -1) is not null ||
+            Thick(0, -1, 0.29, false) is not null ||
+            Thick(0, -1, 0.29, true) is not null)
         {
             throw new InvalidOperationException(
                 "Neither warning is raised when nothing failed; one of " +
                 "them returned a sentence at a count of zero.");
         }
         string faceText = Face(148, 3)!;
-        string thickText = Thick(148, 3, 0.29)!;
+        // Along Normal FALSE is the port default (SkinComponents.cs:179-190)
+        // and so is the mode Param's own run was in.
+        string thickText = Thick(148, 3, 0.29, false)!;
+        string thickTextOn = Thick(148, 3, 0.29, true)!;
         if (faceText == thickText)
         {
             throw new InvalidOperationException(
@@ -25693,7 +25703,22 @@ internal static class Program
                          "force, because the remedy is a smaller one"),
                      (thickText, "STILL EXPORTED",
                          "a cell whose thickening failed is not lost: it " +
-                         "is exported and drawn as the un-thickened face")
+                         "is exported and drawn as the un-thickened face"),
+                     (thickText, "Along Normal ON",
+                         "with Along Normal OFF the offset is vertical at " +
+                         "(0, 0, Th), which is the mode that degenerates " +
+                         "the wall quad of a vertical outline edge, so ON " +
+                         "is what the author is told to try"),
+                     (thickText, "(0, 0, Th)",
+                         "the off-mode sentence names the offset that " +
+                         "caused the refusal rather than leaving the " +
+                         "author to guess at it"),
+                     (thickTextOn, "already on",
+                         "with Along Normal ON the message must not " +
+                         "advise turning ON what is on"),
+                     (thickTextOn, "smaller Thickness is the remedy",
+                         "with Along Normal ON a smaller Thickness is " +
+                         "all that is left to try")
                  })
         {
             if (!text.Contains(fragment, StringComparison.Ordinal))
@@ -25702,6 +25727,39 @@ internal static class Program
                     $"{what}; '{fragment}' is missing from '{text}'.");
             }
         }
+        // THE REMEDY MUST MATCH THE MODE IN FORCE. The first draft of this
+        // sentence advised "A smaller Thickness, or Along Normal off, is
+        // the remedy" whatever the mode, and Along Normal defaults to
+        // FALSE (SkinComponents.cs:179-190), so on a default canvas it
+        // named a toggle already off. Off is also the mode whose vertical
+        // (0, 0, Th) offset degenerates the wall quad of a vertical
+        // outline edge, so the old advice pointed AWAY from the likelier
+        // cause on a steep force-aligned arch.
+        foreach (string text in new[] { thickText, thickTextOn })
+        {
+            if (text.Contains("Along Normal off, is the remedy",
+                    StringComparison.Ordinal) ||
+                text.Contains("Along Normal OFF is the remedy",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "No wording of this warning may advise turning Along " +
+                    "Normal OFF: it is off by default, and off is the " +
+                    "mode whose vertical offset refuses a cell with a " +
+                    $"vertical outline edge; got '{text}'.");
+            }
+        }
+        if (thickTextOn.Contains("Along Normal ON", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "With Along Normal already ON the warning must not tell " +
+                $"the author to turn it ON; got '{thickTextOn}'.");
+        }
+        // No assertion here that the two sentences DIFFER. It would read
+        // well and it would never be able to fail: the two checks above
+        // require "Along Normal ON" to be present in one and absent from
+        // the other, which forces them apart already. A check that cannot
+        // go red is not a check, and this file has shipped one before.
         if (faceText.Contains("STILL EXPORTED", StringComparison.Ordinal) ||
             thickText.Contains(
                 "would not close into a FACE", StringComparison.Ordinal))
@@ -25774,28 +25832,37 @@ internal static class Program
             ParamThickness.ToString("F2", CultureInfo.InvariantCulture) +
             $": {alignedCells.Length} cells, thickener guard refuses " +
             $"{guardRefused} and passes {guardPassed}.");
-        // MEASURED 2026-09-03, and the number is the point: on this
-        // fixture every one of the cells reaches the Brep join, so
-        // NOTHING here fails on the cheap outline guard and every null
-        // this pattern produced at a nonzero Thickness came out of the
-        // join itself. That is the failure the slot rule below has to
-        // survive, and a fixture where no cell reached the join would
-        // assert nothing at all while reading as though it had.
+        // MEASURED 2026-09-03, AND THIS IS EXACTLY WHAT IT ESTABLISHES AND
+        // NO MORE: no cell on this fixture is refused by
+        // ThickenCellSurface's under-three-corner guard
+        // (SkinComponents.cs:931), so that guard is not the source of
+        // Param's nulls. It does NOT establish that the nulls came from
+        // the Brep join. Every remaining exit of the thickener is beyond
+        // this process's reach, because each needs the native core:
+        // the per-wall Brep.CreateFromCornerPoints at
+        // SkinComponents.cs:950-953, which returns null on a degenerate
+        // wall quad and leaves the method before any join; the JoinBreps
+        // result test at :957-959; and the IsSolid test at :963. Which of
+        // those three refused a given cell is a Rhino-side measurement,
+        // scripts/rhino_skin_surface.py. What matters to the slot rule
+        // below is only that the failure happens AFTER the face was
+        // built, which is true of all three.
         if (guardRefused != 0 || guardPassed != alignedCells.Length)
         {
             throw new InvalidOperationException(
                 "Every force-aligned cell carries at least three outline " +
                 "corners, so none is refused by ThickenCellSurface's own " +
                 $"guard: {alignedCells.Length} cells, {guardRefused} " +
-                $"refused and {guardPassed} through to the Brep join.");
+                $"refused and {guardPassed} past the outline guard.");
         }
         if (Slot(true, true, false) != "Face")
         {
             throw new InvalidOperationException(
-                $"Each of these {guardPassed} cells reaches the join, and " +
-                "where the join fails the cell keeps the face CellSurface " +
-                "already built for it rather than carrying a null; the " +
-                "slot came back as " + Slot(true, true, false) + ".");
+                $"Each of these {guardPassed} cells gets past the outline " +
+                "guard, and wherever the thickening then fails the cell " +
+                "keeps the face CellSurface already built for it rather " +
+                "than carrying a null; the slot came back as " +
+                Slot(true, true, false) + ".");
         }
 
         // THE TRANSITION WARNING NAMES THE HEIGHTS. The two-peak net's

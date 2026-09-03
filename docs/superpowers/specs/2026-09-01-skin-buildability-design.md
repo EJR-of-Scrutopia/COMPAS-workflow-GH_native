@@ -1198,6 +1198,25 @@ discipline `RequireNothingDropped` keeps for the plan filter (Program.cs:9728-97
       would not close into a SOLID at the Thickness in force and states plainly that those cells are
       still exported and drawn as the un-thickened face.
 
+      ADDED in fix round 1, 2026-09-03, correcting the erratum above rather than the rule. The SOLID
+      sentence's remedy is worded against the Along Normal mode ACTUALLY IN FORCE, so
+      `ThickenFailureLine` takes the flag. Its first draft advised "a smaller Thickness, or Along
+      Normal off" whatever the mode, and Along Normal defaults to FALSE (SkinComponents.cs:179-190),
+      so on a default canvas, which is the canvas Param ran, it named a toggle already off. Off is
+      also the likelier cause on a steep force-aligned arch: off means the offset is vertical at
+      (0, 0, Th) (`ThicknessOffset`), and a side wall is built per outline edge from the quad
+      (a, b, b + offset, a + offset) (SkinComponents.cs:950-953), so an outline edge that itself
+      runs vertical puts all four corners on one vertical line and `Brep.CreateFromCornerPoints` has
+      no quad to make. With Along Normal off the message therefore names ON as the thing to try;
+      with it on it offers a smaller Thickness and says the toggle is already on. Neither wording
+      may advise turning Along Normal off, and the harness pins that.
+
+      One further correction of record, same round. The Brep half of the thickener has THREE exits
+      past the under-three-corner guard, not one: the per-wall `Brep.CreateFromCornerPoints` at
+      SkinComponents.cs:950-953, which returns before any join is called; the `JoinBreps` result
+      test at :957-959; and the `IsSolid` test at :963. The harness can measure only that the guard
+      itself did not fire, and must not be read as attributing the nulls to the join.
+
       The slot decision is `SkinComponent.ClassifyCellSurface`, a static of three booleans, and the
       two sentences are `SkinComponent.FaceFailureLine` and `SkinComponent.ThickenFailureLine`. They
       are statics because RhinoCommon's native core does not initialise outside Rhino: measured

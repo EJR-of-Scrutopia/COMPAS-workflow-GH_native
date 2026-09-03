@@ -477,7 +477,8 @@ public sealed class SkinComponent : NativeComponentBase
             if (faceLine is not null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, faceLine);
             string? thickenLine = ThickenFailureLine(
-                thickenFailed, firstThickenFailedCourse, thickness);
+                thickenFailed, firstThickenFailedCourse, thickness,
+                alongNormal);
             if (thickenLine is not null)
                 AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, thickenLine);
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
@@ -661,20 +662,43 @@ public sealed class SkinComponent : NativeComponentBase
     /// drawn as the un-thickened face. One count for both failures was
     /// the defect: it told the author his cells had no surface when the
     /// engine had built every one of them.
+    ///
+    /// THE REMEDY IS WORDED AGAINST THE MODE ACTUALLY IN FORCE, which is
+    /// why <paramref name="alongNormal"/> is a parameter of a sentence
+    /// that otherwise needs only counts. The first draft of this message
+    /// advised "a smaller Thickness, or Along Normal off" unconditionally,
+    /// and Along Normal defaults to FALSE, so on a default canvas it told
+    /// the author to switch off a toggle already off. Worse, off is the
+    /// mode whose offset is vertical at (0, 0, Th)
+    /// (<see cref="ThicknessOffset"/>), and a side wall is built from the
+    /// quad (a, b, b + offset, a + offset) per outline edge
+    /// (<see cref="ThickenCellSurface"/>): where the edge a to b itself
+    /// runs vertical, all four corners lie on one vertical line,
+    /// Brep.CreateFromCornerPoints has no quad to make, and the cell is
+    /// refused. On a steep force-aligned arch with near-vertical head
+    /// joints, therefore, Along Normal ON is the thing worth trying and
+    /// off is the likelier cause. A message that misdirects the author is
+    /// the defect class this whole round exists to remove.
     /// </summary>
     internal static string? ThickenFailureLine(
-        int failed, int firstCourse, double thickness)
+        int failed, int firstCourse, double thickness, bool alongNormal)
     {
         if (failed <= 0)
             return null;
+        string remedy = alongNormal
+            ? " A smaller Thickness is the remedy. Along Normal is " +
+              "already on, so each cell is offset along its own normal."
+            : " A smaller Thickness is the remedy, and so is Along " +
+              "Normal ON: with it off the offset is vertical at " +
+              "(0, 0, Th), so an outline edge that runs vertical is " +
+              "copied onto itself and leaves no side wall to build.";
         return
             $"{failed} face" + (failed == 1 ? "" : "s") +
             " would not close into a SOLID at Thickness " +
             thickness.ToString("F3", CultureInfo.InvariantCulture) +
             $", the first at course {firstCourse}. Those cells are STILL " +
             "EXPORTED and are drawn as the un-thickened face, so the " +
-            "slot holds a surface and not a null. A smaller Thickness, " +
-            "or Along Normal off, is the remedy.";
+            "slot holds a surface and not a null." + remedy;
     }
 
     /// <summary>
