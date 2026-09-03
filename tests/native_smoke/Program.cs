@@ -1378,15 +1378,20 @@ internal static class Program
         {
             ValidateSkinOffsetVerticalEdge(plugin);
             Console.WriteLine(
-                "PASS  Skin vertical-edge annihilation (spec 2026-09-03, " +
-                "check 2): a vertical outline edge under a VERTICAL " +
-                "offset puts all four wall corners on one line and the " +
-                "cell is refused, while the same edge offset along a " +
-                "surface normal gives a proper rectangle; counted over " +
-                "the force-aligned barrel and Param's own net, the OFFSET " +
-                "branch never annihilates more walls than the extrude " +
-                "branch. The two counts are printed above and are a LOWER " +
-                "BOUND on the thickener's refusals: no Brep runs in this " +
+                "PASS  Skin vertical-edge annihilation, THE MECHANISM ONLY " +
+                "(spec 2026-09-03 check 2, relabelled 2026-09-04): on " +
+                "hand-written corners, a vertical outline edge under a " +
+                "VERTICAL offset puts all four wall corners on one line " +
+                "and WallQuadDegenerate refuses it, the same edge offset " +
+                "along a horizontal normal gives a proper rectangle, and " +
+                "an ordinary rectangle is not condemned. Counted over four " +
+                "fixtures the OFFSET branch never annihilates MORE walls " +
+                "than the extrusion, which is a one-way guard and not a " +
+                "demonstration: on every one of them the count is ZERO " +
+                "both ways, so check 2's own claim, a cell refused under " +
+                "OFF and built under ON, is DEFERRED below rather than " +
+                "claimed here. The counts printed above are a LOWER BOUND " +
+                "on the thickener's refusals: no Brep runs in this " +
                 "process, so the rest is Param's Rhino-side number.");
         }
         catch (Exception exception)
@@ -26432,31 +26437,48 @@ internal static class Program
     }
 
     /// <summary>
-    /// SPEC 2026-09-03 SECTION 4, CHECK 2: THE VERTICAL EDGE, and the
-    /// MEASUREMENT PARAM ASKED FOR.
+    /// THE VERTICAL-EDGE MECHANISM, AND THE MEASUREMENT THAT REFUTES SPEC
+    /// SECTION 1 POINT 3. Relabelled 2026-09-04 after a review found the
+    /// old label claimed more than the file measures.
     ///
-    /// A side wall is the quad (a, b, b + offset, a + offset). Where the
-    /// outline edge a to b runs VERTICAL and the offset is also vertical,
-    /// all four corners lie on one line, Brep.CreateFromCornerPoints has no
-    /// quad to make, and ThickenCellSurface refuses the whole cell. That is
-    /// spec section 1 point 3, and it refuses cells that have nothing
-    /// whatever wrong with their thickness.
+    /// WHAT THIS CHECK ENFORCES, and it is two things only.
     ///
-    /// WHAT IS MEASURED HERE AND WHAT IS NOT. RhinoCommon's native core
-    /// does not initialise outside Rhino, so no Brep can be built in this
-    /// process and NO count of cells that close into a solid can be taken
-    /// here, before or after this change. What CAN be counted, exactly, is
-    /// the class of refusal section 1 point 3 names: a wall quad
-    /// ANNIHILATED into a line, which SkinComponents.WallQuadDegenerate
-    /// decides by pure arithmetic. Every cell counted here is a cell the
-    /// thickener certainly refuses; cells refused for any of the other
-    /// three reasons (a wall Rhino declines for its own reasons, a join
-    /// that does not close, a shell that is not solid) are beyond this
-    /// process and are Param's Rhino-side number.
+    /// ONE, THE PREDICATE, hand-built and exact. A side wall is the quad
+    /// (a, b, b + offset, a + offset). Where the outline edge a to b runs
+    /// VERTICAL and the offset is also vertical, all four corners lie on
+    /// one line, Brep.CreateFromCornerPoints has no quad to make, and
+    /// ThickenCellSurface refuses the whole cell. WallQuadDegenerate says
+    /// so on exactly that configuration, says the opposite when the same
+    /// edge is offset along a horizontal normal, and does not condemn an
+    /// ordinary rectangle. Those three are asserted on hand-written
+    /// corners and they are the real content of this slot.
     ///
-    /// So the two counts printed below are a LOWER BOUND on the refusals
-    /// under each branch, and the honest reading of them is the one stated
-    /// on the console line.
+    /// TWO, A ONE-WAY GUARD: the offset branch may never annihilate MORE
+    /// walls than the extrusion, on any fixture here. It is a guard and
+    /// not a demonstration; on these fixtures both counts are zero, so it
+    /// passes without firing.
+    ///
+    /// WHAT IT DOES NOT ENFORCE, AND WHY THE CLAIM IS DEFERRED BELOW.
+    /// Spec section 4 check 2 asks for a cell REFUSED under Offset OFF and
+    /// BUILT under Offset ON. Measured 2026-09-03 and again 2026-09-04,
+    /// that cell does not exist on ANY fixture in this suite, Param's own
+    /// net included, nor on a vault built to stand on exactly vertical
+    /// walls: the count is ZERO under both branches everywhere. The
+    /// annihilation is an EXACT collinearity, a merely steep edge leaves a
+    /// sliver with real area that Rhino builds at the 1e-9 the call is
+    /// made with, and an exactly vertical outline edge cannot arise on a
+    /// height-field net except on a plan-degenerate wall. So the claim is
+    /// written and run as a Deferred assertion, which is what this file
+    /// does with a claim it cannot demonstrate, rather than being dressed
+    /// as a PASS.
+    ///
+    /// WHAT CANNOT BE MEASURED HERE AT ALL. RhinoCommon's native core does
+    /// not initialise outside Rhino, so no Brep is built in this process
+    /// and no count of cells that CLOSE can be taken, before or after this
+    /// change. The counts below are a LOWER BOUND on the thickener's
+    /// refusals: a cell may still be refused by a wall Rhino declines for
+    /// its own reasons, by a join that does not close, or by a shell that
+    /// is not solid, and all three are Param's Rhino-side number.
     /// </summary>
     private static void ValidateSkinOffsetVerticalEdge(Assembly plugin)
     {
@@ -26590,13 +26612,12 @@ internal static class Program
         // ---- THE WALLED VAULT, the ONE fixture in this file whose surface
         // stands exactly vertical. Its wall feet are its rim, so the lowest
         // beds are horizontal lines on the walls, and a cell's two head
-        // joints run between the same x on both of its beds: EXACTLY
-        // vertical. The extrude branch copies them onto themselves and
-        // refuses those cells; the offset branch moves them along a
-        // HORIZONTAL surface normal and builds them. This is the assertion
-        // spec section 4 check 2 asks for, and it can go red: an offset
-        // that read the flag and extruded anyway would annihilate the same
-        // walls and the two counts would be equal.
+        // joints run between the same x on both of its beds. It was built
+        // to be the fixture spec section 4 check 2 could be demonstrated
+        // on, and MEASURED IT IS NOT: see the deferral at the foot of this
+        // method. Its head joints come within 1e-5 rad of vertical without
+        // reaching it, leaving a wall area of about 6e-7, which is a
+        // sliver and not an annihilation.
         (double[][] walledVertices, int[][] walledFaces) =
             SkinWalledVaultNet();
         object walled = SkinNetWith(
@@ -26622,25 +26643,24 @@ internal static class Program
             $"{walledExtrudeLeast:E3}) and {walledOffset} under OFFSET " +
             $"(least {walledOffsetLeast:E3}); shortest outline edge " +
             $"{walledEdge:E3} m.");
-        // MEASURED 2026-09-03 AND IT IS A FINDING, not a pass. On a wall
-        // standing EXACTLY vertical the head joints come within 1e-5 rad of
-        // vertical and the wall quad's area falls to about 6e-7, which is a
-        // sliver and not an annihilation: Brep.CreateFromCornerPoints is
-        // called at 1e-9 and will build it. And the OFFSET branch does not
-        // improve it, because a vertical wall has NO PLAN AREA, so
-        // FaceUnder finds no face under any of its points and rule 2's
-        // (0, 0, 1) fallback makes the offset branch identical to the
-        // extrude branch exactly where it was meant to help. Both facts are
-        // recorded here rather than asserted away. What IS asserted is the
-        // direction: the offset may never annihilate more than the
-        // extrusion.
+        // MEASURED 2026-09-03, AGAIN 2026-09-04, AND IT IS A FINDING, not
+        // a pass. The OFFSET branch does not improve this fixture either,
+        // because a vertical wall has NO PLAN AREA: rule 2's amended
+        // off-mesh branch answers from the nearest face, that face is the
+        // vertical one itself, and a face with no plan area carries no
+        // barycentric coordinates, so the (0, 0, 1) fallback still stands
+        // there and the offset branch is identical to the extrude branch
+        // exactly where it was meant to help. Recorded rather than
+        // asserted away. What IS asserted is the one-way guard.
         if (walledOffset > walledExtrude)
         {
             throw new InvalidOperationException(
-                "THE VERTICAL EDGE (spec section 4 check 2). On the walled " +
-                $"vault the EXTRUDE branch annihilates {walledExtrude} " +
-                $"cells' walls and the OFFSET branch {walledOffset}; the " +
-                "offset may never annihilate more.");
+                "THE ONE-WAY GUARD. On the walled vault the EXTRUDE branch " +
+                $"annihilates {walledExtrude} cells' walls and the OFFSET " +
+                $"branch {walledOffset}; the offset may never annihilate " +
+                "more. This is a guard, not the demonstration spec section " +
+                "4 check 2 asks for; that claim is deferred at the foot of " +
+                "this method.");
         }
 
         // ---- THE FORCE-ALIGNED FIXTURE, which is the one Param asked the
@@ -26745,6 +26765,56 @@ internal static class Program
                 $"Param's force-aligned {paramAlignedExtrude} against " +
                 $"{paramAlignedOffset}.");
         }
+
+        // ---- SPEC SECTION 4 CHECK 2 ITSELF, WRITTEN AND RUN AND NOT
+        // ENFORCED. The spec asks for a cell refused under Offset OFF and
+        // BUILT under Offset ON, counted both ways. Across the four
+        // fixtures this file can reach, including the vault built to stand
+        // on exactly vertical walls, the offset branch saves NOT ONE cell
+        // from the annihilated-wall refusal, because there is not one to
+        // save: the count is zero under both branches everywhere.
+        //
+        // It is deferred rather than deleted because the mechanism is real
+        // geometry, asserted three ways on hand-written corners at the top
+        // of this method. What is not real is the spec's estimate of its
+        // REACH, and only Rhino can settle that; the deferral stands until
+        // a fixture or a Rhino run produces the cell.
+        int savedByOffset =
+            (walledExtrude - walledOffset) +
+            (alignedExtrude - alignedOffset) +
+            (paramExtrude - paramOffset) +
+            (paramAlignedExtrude - paramAlignedOffset);
+        Deferred(
+            "The vertical edge (spec 2026-09-03 section 4 check 2): some " +
+            "cell somewhere is REFUSED under Offset OFF for an annihilated " +
+            "wall and BUILT under Offset ON",
+            "scripts/rhino_skin_surface.py 12.5(i), run inside Rhino, which " +
+            "is the only place a cell's refusal can be counted at all; no " +
+            "fixture in this process produces an exactly vertical outline " +
+            "edge, because a height-field net cannot carry one except on a " +
+            "plan-degenerate wall, and the annihilation is an exact " +
+            "collinearity rather than a near one",
+            () =>
+            {
+                if (savedByOffset <= 0)
+                {
+                    throw new InvalidOperationException(
+                        "ZERO cells on ANY fixture are saved by the offset " +
+                        "branch from the annihilated-wall refusal: walled " +
+                        $"vault {walledExtrude} extrude against " +
+                        $"{walledOffset} offset, force-aligned barrel " +
+                        $"{alignedExtrude} against {alignedOffset}, Param's " +
+                        $"own net in courses {paramExtrude} against " +
+                        $"{paramOffset} and force-aligned " +
+                        $"{paramAlignedExtrude} against {paramAlignedOffset}. " +
+                        "So spec section 1 point 3's claim that an unknown " +
+                        "share of his 148 refusals are vertical outline " +
+                        "edges annihilated by a vertical offset is REFUTED " +
+                        "ON EVERY FIXTURE AVAILABLE, and the 148 remain " +
+                        "attributed to the loft-route thickening, which " +
+                        "only Rhino can settle.");
+                }
+            });
     }
 
     /// <summary>
