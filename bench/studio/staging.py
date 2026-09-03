@@ -300,6 +300,7 @@ def run_staging(
     thickness: float = DEFAULT_THICKNESS,
     cra_runner: Optional[Callable[[dict], dict]] = None,
     include_cra: bool = False,
+    source: Optional[str] = None,
 ) -> Dict:
     """Orchestrate per-stage solves and bookkeeping.
 
@@ -340,8 +341,13 @@ def run_staging(
     # stage plan could name cells the pieces do not have.
     # surface (the render mesh height field) is bundle.py's to use for
     # drawing pieces; staging only needs the cut and its analysis binding.
+    # The SAME source the caller's bundle will be built from, or the
+    # stage plan is solved on one cut and matched against another: with
+    # the source defaulted here, a Skin study's generated run staged the
+    # AUTHORED cut under the generated cache key, and _staging_matches
+    # then dropped the plan from every generated bundle, silently.
     tess, _surface, binding = bundle.build_tessellation_for(
-        export_name, contract, arrays, render, pattern, size)
+        export_name, contract, arrays, render, pattern, size, source)
     plan = stage_plan(binding["assignment"], binding["order"], binding["keys"])
     curve = formwork_curve(
         arrays["vertices"], arrays["faces"], plan, material, thickness

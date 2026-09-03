@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import collections
 import datetime
+import itertools
 import json
 import math
 import os
@@ -90,6 +91,9 @@ def tessellation_sidecar(export_name: str) -> Path:
     return UPLOAD_DIR / "{}-tessellation.json".format(export_name)
 
 
+_temporary_serial = itertools.count()
+
+
 def write_json_atomically(path: Path, document) -> None:
     """Write a JSON document so no reader ever sees a prefix of it.
 
@@ -108,7 +112,8 @@ def write_json_atomically(path: Path, document) -> None:
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".{}.tmp".format(os.getpid()))
+    temporary = path.with_name(path.name + ".{}-{}-{}.tmp".format(
+        os.getpid(), threading.get_ident(), next(_temporary_serial)))
     try:
         temporary.write_text(json.dumps(document), encoding="utf-8")
         os.replace(temporary, path)
@@ -227,15 +232,32 @@ def _staging_matches(staged: Optional[dict], made: List[dict]) -> bool:
 # nothing may mutate a returned cut in place.
 CUT_MEMO_LIMIT = 4
 _cut_memo_lock = threading.Lock()
-_cut_memo_generation = 0
+# One generation per SLUG plus a global epoch. Per-slug, because a global
+# counter made ANY study's upload veto the persist of a build the
+# invalidation never touched, and emptied every study's memo entries for
+# an upload that deleted one study's files. The epoch backs the
+# no-target clear the tests use.
+_cut_memo_generations: Dict[str, int] = {}
+_cut_memo_epoch = 0
 _cut_memo: "collections.OrderedDict" = collections.OrderedDict()
 
 
-def clear_cut_memo() -> None:
-    global _cut_memo_generation
+def _generation(slug):
+    """The freshness token a build captures and the persist re-checks."""
+
+    return (_cut_memo_epoch, _cut_memo_generations.get(slug, 0))
+
+
+def clear_cut_memo(slug=None) -> None:
+    global _cut_memo_epoch
     with _cut_memo_lock:
-        _cut_memo_generation += 1
-        _cut_memo.clear()
+        if slug is None:
+            _cut_memo_epoch += 1
+            _cut_memo.clear()
+            return
+        _cut_memo_generations[slug] = _cut_memo_generations.get(slug, 0) + 1
+        for key in [k for k in _cut_memo if geometry.slugify(k[0]) == slug]:
+            del _cut_memo[key]
 
 
 # The two places a cut can come from. "authored" is the tessellation
@@ -244,10 +266,38 @@ def clear_cut_memo() -> None:
 CUT_SOURCES = ("authored", "generated")
 
 
+# The stamp the exporter writes on the per-face courtesy tessellation it
+# attaches to EVERY live TNA solve when nobody wired Skin cells, "so the
+# studio can tell a chosen cutting pattern from the courtesy one and
+# never reports a face fallback as a decision" (DeliveryComponents.cs's
+# own words). Honouring it here is what keeps that fallback from
+# silently becoming every live study's default cut: one cell per
+# analysis face in a single course, with the pattern and size controls
+# doing nothing and the toggle calling it the Grasshopper Skin.
+COURTESY_PATTERN = "faces"
+
+
+def authored_tessellation(export_name, contract):
+    """The AUTHORED tessellation, or None.
+
+    Presence of a sidecar is not authorship: the courtesy fallback is a
+    sidecar too. Only a document that does not carry the courtesy stamp
+    counts as a cut somebody chose.
+    """
+
+    document = tessellation.read_tessellation(
+        contract, tessellation_sidecar(export_name))
+    if document is None:
+        return None
+    if str(document.get("pattern") or "") == COURTESY_PATTERN:
+        return None
+    return document
+
+
 def available_cut_sources(export_name, contract) -> List[str]:
     """Which sources this study could be cut from, authored first."""
 
-    if tessellation.read_tessellation(contract, tessellation_sidecar(export_name)) is not None:
+    if authored_tessellation(export_name, contract) is not None:
         return ["authored", "generated"]
     return ["generated"]
 
@@ -271,6 +321,14 @@ def resolve_cut_source(export_name, contract, requested=None) -> str:
             "unknown cut source {!r}: use one of {}".format(
                 requested, ", ".join(CUT_SOURCES)))
     if requested == "authored" and "authored" not in available:
+        stored = tessellation.read_tessellation(
+            contract, tessellation_sidecar(export_name))
+        if stored is not None:
+            raise ValueError(
+                "this study's tessellation is the exporter's per-face "
+                "COURTESY fallback (pattern {!r}), not a cut somebody "
+                "authored; wire Skin cells into Export for a real one, or "
+                "ask for the generated cut.".format(COURTESY_PATTERN))
         raise ValueError(
             "this study has no authored tessellation to cut from: no "
             "contract-embedded block and no {} beside the export. Upload "
@@ -348,8 +406,7 @@ def build_tessellation_for(export_name, contract, arrays, render, pattern, size,
 
     surface = cutting.Surface(render["vertices"], render["faces"])
     if resolve_cut_source(export_name, contract, source) == "authored":
-        authored = tessellation.read_tessellation(
-            contract, tessellation_sidecar(export_name))
+        authored = authored_tessellation(export_name, contract)
         tess = tessellation.from_document(authored, surface.height)
     else:
         plan = domain.plan_domain(
@@ -368,8 +425,9 @@ def _cut_for(export_name, contract, arrays, render, pattern, size, source=None):
     # memo entry and the second request is silently served the first
     # one's cut.
     key = (export_name, cut_cache_pattern(pattern, source or "generated"), size)
+    memo_slug = geometry.slugify(export_name)
     with _cut_memo_lock:
-        generation = _cut_memo_generation
+        generation = _generation(memo_slug)
         if key in _cut_memo:
             _cut_memo.move_to_end(key)
             return _cut_memo[key]
@@ -386,7 +444,7 @@ def _cut_for(export_name, contract, arrays, render, pattern, size, source=None):
         # may have changed under it: the result is still returned to its
         # own caller (built from the inputs that caller loaded) but never
         # memoised, so a stale cut cannot outlive its export.
-        if generation == _cut_memo_generation:
+        if generation == _generation(memo_slug):
             _cut_memo[key] = result
             while len(_cut_memo) > CUT_MEMO_LIMIT:
                 _cut_memo.popitem(last=False)
@@ -397,9 +455,11 @@ def build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2,
     source: Optional[str] = None,
 ) -> Dict:
-    # Captured BEFORE any input is read, so an invalidation landing at
-    # any point during this build is seen by the persist check below.
-    generation = _cut_memo_generation
+    # Captured BEFORE any input is read, for THIS study's slug, so an
+    # invalidation of this study landing at any point during the build is
+    # seen by the persist check below, and an unrelated study's upload,
+    # which deleted nothing of this one's, is not.
+    generation = _generation(geometry.slugify(export_name))
     pairs = geometry.available_exports(UPLOAD_DIR)
     if export_name not in pairs:
         raise ValueError(
@@ -527,7 +587,7 @@ def build_bundle(
     # load_or_build_bundle makes. The document is still RETURNED to the
     # caller that asked for it, built from the inputs that caller loaded,
     # exactly as _cut_for returns its own result.
-    if generation == _cut_memo_generation:
+    if generation == _generation(slug):
         write_json_atomically(target, document)
     return document
 

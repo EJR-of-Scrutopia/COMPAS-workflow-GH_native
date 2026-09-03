@@ -226,4 +226,34 @@ def pairing_error(document: Mapping[str, Any], contract: Mapping[str, Any]) -> O
                     "state at vertex {} axis {} by {:.3e}; the frames file "
                     "belongs to another solve.".format(
                         i, axis, abs(value - float(reference))))
+
+    # The machine's own half of the same check: a set where only the
+    # mould columns moved has an identical net at time 100 and a stale
+    # machine, which the net-only comparison served silently. Compared
+    # only when the contract carries a mould columns block; a frames
+    # document with its own columns and no mould block has nothing to
+    # disagree with.
+    mould = contract.get("mould") if isinstance(contract, Mapping) else None
+    columns = mould.get("columns") if isinstance(mould, Mapping) else None
+    nodes = columns.get("nodes") if isinstance(columns, Mapping) else None
+    if isinstance(nodes, list):
+        if len(nodes) != document["columnNodeCount"]:
+            return (
+                "frames carry {} column nodes but the contract's mould "
+                "block carries {}; the machine is from another "
+                "solve.".format(document["columnNodeCount"], len(nodes)))
+        for i, point in enumerate(final["columnNodes"]):
+            reference = nodes[i]
+            for axis, value in zip("xyz", point):
+                target = reference.get(axis) if isinstance(reference, Mapping) else None
+                if isinstance(target, bool) or not isinstance(target, (int, float)):
+                    return (
+                        "the contract's mould column node {} has no "
+                        "numeric {}.".format(i, axis))
+                if abs(value - float(target)) > PAIR_EPSILON:
+                    return (
+                        "the time-100 frame's column node {} axis {} "
+                        "differs from the contract's mould block by "
+                        "{:.3e}; the machine is from another solve.".format(
+                            i, axis, abs(value - float(target))))
     return None

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -63,7 +64,7 @@ def _invalidate_studio_cache(slug: str) -> None:
     recording, not to a geometry snapshot.
     """
 
-    bundle.clear_cut_memo()
+    bundle.clear_cut_memo(slug)
     studio_dir = bundle.STUDIES_DIR / slug / "studio"
     if not studio_dir.is_dir():
         return
@@ -284,6 +285,17 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                         field, body.get(field)))
         size = float(body.get("size", 0.0))
         thickness = float(body.get("thickness", 0.2))
+        # The cut source is the caller's choice, exactly as it is on the
+        # bundle route: without it a Skin study's generated cut could
+        # never be staged (the run solved the authored cut while the user
+        # watched the generated one, and reported done). None keeps the
+        # study's own default. Membership is checked here so a typo is a
+        # 400 at the POST, not a failed run minutes later.
+        source = body.get("source")
+        if source is not None and source not in bundle.CUT_SOURCES:
+            raise HTTPException(
+                400, "source must be one of {} when given".format(
+                    ", ".join(bundle.CUT_SOURCES)))
         _validate(export, material, pattern, size, thickness)
         slug = geometry.slugify(export)
         with RUNS_LOCK:
@@ -294,7 +306,7 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             RUNS[run_id] = {
                 "id": run_id, "export": export, "slug": slug,
                 "material": material, "pattern": pattern, "size": size,
-                "thickness": thickness,
+                "thickness": thickness, "source": source,
                 # "of" stays 0 until the cut is known: the number of stages
                 # is the number of courses the cut produced, so nothing can
                 # state it up front the way the old "rings" request
@@ -325,18 +337,24 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 # is "authored" rather than the requested pattern (see
                 # bundle.cut_cache_pattern). Written to the raw pattern, a
                 # Skin study's stage plan was solved, stored, and then
-                # never found again.
+                # never found again. The SOURCE is the caller's, same as
+                # the bundle route: resolved with no say from the caller,
+                # a Skin study's generated cut could never be staged at
+                # all; the run solved the authored cut while the user
+                # watched the generated one, and reported done.
                 contract = geometry.load_contract(pairs[export]["contract"])
-                cut_source = bundle.resolve_cut_source(export, contract)
+                cut_source = bundle.resolve_cut_source(export, contract, source)
                 key_pattern = bundle.cut_cache_pattern(pattern, cut_source)
                 staging.run_staging(
                     pairs[export], material, pattern, size,
                     bundle.staging_path(slug, material, key_pattern, size, thickness),
                     runner=runner, cra_runner=cra_runner, on_stage=on_stage, thickness=thickness,
+                    source=cut_source,
                 )
                 run["phase"] = "bundling"
                 run["message"] = "assembling the bundle"
-                bundle.build_bundle(export, material, pattern, size, thickness)
+                bundle.build_bundle(
+                    export, material, pattern, size, thickness, cut_source)
                 run["state"] = "done"
                 run["phase"] = "done"
                 run["message"] = ""
@@ -359,10 +377,11 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             # the whole duration of the cut.
             "phase": run.get("phase", ""),
             "message": run["message"],
-            "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}".format(
+            "bundle_url": "/api/studies/{}/bundle?material={}&pattern={}&size={}&thickness={}{}".format(
                 urllib.parse.quote(run["export"]), run["material"],
                 urllib.parse.quote(run["pattern"]), run["size"],
-                run["thickness"]),
+                run["thickness"],
+                "&source=" + run["source"] if run.get("source") else ""),
         }
 
     @app.get("/api/columns/{name}")
@@ -427,8 +446,13 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
         slug = geometry.slugify(name)
         owner = _slug_owner(slug, name)
         if owner is not None:
+            # 400, not 409: the cross-repo convention reserves 409 for a
+            # run in flight, which the exporter retries at 2, 4 and 8
+            # seconds and then defers, a transient word for a condition
+            # only a rename can clear. A refusal is what its contract
+            # treats as final and shows the author verbatim.
             raise HTTPException(
-                409,
+                400,
                 "the export name {!r} shares its study folder with the "
                 "already stored {!r} (both become {!r}); rename one of "
                 "them, or they will overwrite each other's cached "
@@ -442,39 +466,44 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             raise HTTPException(
                 413, "upload is {} bytes; the limit is {}.".format(
                     len(body), MAX_UPLOAD_BYTES))
+
+        def parse_and_validate():
+            # Everything heavy in one callable, run OFF the event loop.
+            # This handler is async, so work here otherwise executes on
+            # the loop thread: the real 1074-cell Skin's door validation
+            # is about five seconds of pure python, the exporter PUTs a
+            # tessellation on every live solve, and while it ran no other
+            # request was answered at all: bundle GETs, run polls, static
+            # files, everything.
+            try:
+                parsed = json.loads(body)
+            except json.JSONDecodeError:
+                raise ValueError("not valid JSON")
+            _finite_everywhere(parsed)
+            if kind == "contract":
+                geometry.mesh_arrays(parsed)
+                geometry.support_ids(parsed)
+                geometry.member_forces_newtons(parsed)
+                geometry.node_loads_newtons(parsed)
+                geometry.support_reactions_newtons(parsed)
+            elif kind == "compas":
+                if not isinstance(parsed, dict) or "thrustMesh" not in parsed:
+                    raise ValueError("a compas export must contain a thrustMesh key")
+            elif kind == "tessellation":
+                # The studio's own reader, so a cut that would be refused
+                # at read time is refused at the door instead of being
+                # stored and silently overriding the generated cut.
+                tessellation.validate_document(parsed)
+            elif kind == "frames":
+                frames.validate_frames_document(parsed)
+            return parsed
+
         try:
-            document = json.loads(body)
-        except json.JSONDecodeError:
-            raise HTTPException(400, "not valid JSON")
-        try:
-            _finite_everywhere(document)
+            document = await run_in_threadpool(parse_and_validate)
         except ValueError as error:
             raise HTTPException(400, str(error))
-        if kind == "contract":
-            try:
-                geometry.mesh_arrays(document)
-                geometry.support_ids(document)
-                geometry.member_forces_newtons(document)
-                geometry.node_loads_newtons(document)
-                geometry.support_reactions_newtons(document)
-            except Exception as error:
-                raise HTTPException(400, str(error))
-        elif kind == "compas":
-            if not isinstance(document, dict) or "thrustMesh" not in document:
-                raise HTTPException(400, "a compas export must contain a thrustMesh key")
-        elif kind == "tessellation":
-            # Validated with the studio's own reader, so a cut that would
-            # be refused at read time is refused at the door instead of
-            # being stored and silently overriding the generated cut.
-            try:
-                tessellation.validate_document(document)
-            except ValueError as error:
-                raise HTTPException(400, str(error))
-        elif kind == "frames":
-            try:
-                frames.validate_frames_document(document)
-            except ValueError as error:
-                raise HTTPException(400, str(error))
+        except Exception as error:
+            raise HTTPException(400, str(error))
 
         # The run interlock is re-checked AFTER the body read: reading a
         # multi-megabyte contract takes long enough (0.12 s measured on a

@@ -2238,9 +2238,13 @@ async function loadStudy(exportName) {
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
     const fresh = await fetchJson(url);
-    if (sequence !== state.loadSequence) return;
-    state.formwork = await formworkPromise;
-    if (sequence !== state.loadSequence) return;
+    if (sequence !== state.loadSequence) return "superseded";
+    // Held locally until this load is confirmed the winner: assigned
+    // before the check, a superseded load clobbered the winning study's
+    // formwork with its own.
+    const formwork = await formworkPromise;
+    if (sequence !== state.loadSequence) return "superseded";
+    state.formwork = formwork;
     overlay.classList.add("hidden");
     status.textContent = "";
     // Same export means the user is comparing settings, not changing
@@ -2251,8 +2255,12 @@ async function loadStudy(exportName) {
       && state.bundle.export === fresh.export
       ? { f: state.timeline.t / timelineDuration(), playing: state.timeline.playing }
       : null;
-    buildScene(fresh, preserve);
+    // BEFORE buildScene: the scene's first applySceneAtTime already runs
+    // with formworkSeconds() > 0, hiding the instanced wires for the act,
+    // so the act's own objects have to exist by then or the viewport
+    // opens empty until the first play.
     rebuildFormworkObjects();
+    buildScene(fresh, preserve);
     loaded = true;
     logStudio("loaded " + exportName + " (" + materialLabel + ", "
       + patternLabel(state.pattern) + ", " + state.size + " m) in "
@@ -2262,6 +2270,13 @@ async function loadStudy(exportName) {
     overlay.classList.add("hidden");
     status.textContent = "";
     showBanner("Failed to load study: " + error.message, "error");
+    // A failed SWITCH leaves the previous study's scene on screen, and
+    // the source row would otherwise sit there labelled with that
+    // study's Skin against a study that never loaded.
+    if (!state.bundle || state.bundle.export !== exportName) {
+      const row = document.getElementById("source-row");
+      if (row) row.classList.add("hidden");
+    }
   }
   return loaded;
 }
@@ -2379,7 +2394,14 @@ async function importColumns() {
 }
 
 // ---------- UI wiring ----------
-document.getElementById("study-select").addEventListener("change", (e) => loadStudy(e.target.value));
+document.getElementById("study-select").addEventListener("change", (e) => {
+  // A source choice belongs to the study it was made on. Carried across,
+  // the previous study's "authored" rode into the next study's request
+  // and 400'd every study without a Skin: basic navigation broke after
+  // opening one Skin study. Null means "whatever this study has".
+  state.source = null;
+  loadStudy(e.target.value);
+});
 document.getElementById("material-select").addEventListener("change", (e) => {
   // Same rule as loadStudy: the incoming material's stored appearance is
   // restored before anything is rebuilt, never after.
@@ -2421,7 +2443,7 @@ document.getElementById("source-select").addEventListener("change", async (e) =>
   const study = document.getElementById("study-select");
   if (!study.value) return;
   const loaded = await loadStudy(study.value);
-  if (!loaded) {
+  if (loaded === false) {
     // A source can exist and still be uncuttable: this vault's plan is
     // not star shaped, so the studio's polar generator refuses it by
     // name and only the Skin can cut it. The banner carries that
@@ -2788,6 +2810,10 @@ async function startRun() {
       body: JSON.stringify({
         export: exportName, material, pattern: params.pattern,
         size: params.size, thickness: params.thickness,
+        // The cut on screen is the cut the run stages: without this a
+        // Skin study's generated view ran the authored cut and reported
+        // done for a stage plan the user never saw.
+        source: state.source || undefined,
       }),
     });
     const body = await response.json();
@@ -3218,17 +3244,21 @@ function applyInflation(u) {
   }
 }
 
+// The act's scene objects, held OUTSIDE state.objects on purpose:
+// buildScene resets state.objects wholesale, which made the disposal
+// branch below dead code and left every previous study's group parked in
+// the scene. A module-level handle survives the reset, so disposal is
+// real and exactly one group ever exists.
+let formworkObjects = null;
+
 function rebuildFormworkObjects() {
-  const old = state.objects.formworkGroup;
-  if (old) {
-    scene.remove(old);
-    for (const child of old.children) {
+  if (formworkObjects) {
+    scene.remove(formworkObjects.group);
+    for (const child of formworkObjects.group.children) {
       child.geometry.dispose();
       child.material.dispose();
     }
-    state.objects.formworkGroup = null;
-    state.objects.formworkNet = null;
-    state.objects.formworkMembers = null;
+    formworkObjects = null;
   }
   const doc = state.formwork;
   if (!doc || !Array.isArray(doc.frames) || !doc.frames.length) return;
@@ -3236,6 +3266,8 @@ function rebuildFormworkObjects() {
   // Float32 write per endpoint), and the machine reads as scaffolding
   // rather than competing with the shell for weight.
   const group = new THREE.Group();
+  const handles = { group, net: null, members: null };
+  const first = doc.frames[0];
   const edges = Array.isArray(doc.edges) ? doc.edges : [];
   if (edges.length) {
     const geometry = new THREE.BufferGeometry();
@@ -3245,7 +3277,7 @@ function rebuildFormworkObjects() {
       geometry,
       new THREE.LineBasicMaterial({ color: 0x9aa4b0, transparent: true, opacity: 0.9 }));
     net.frustumCulled = false;
-    state.objects.formworkNet = net;
+    handles.net = net;
     group.add(net);
   }
   const members = doc.columns && Array.isArray(doc.columns.members) ? doc.columns.members : [];
@@ -3257,10 +3289,15 @@ function rebuildFormworkObjects() {
       geometry,
       new THREE.LineBasicMaterial({ color: 0x8a6a4a, transparent: true, opacity: 1 }));
     bars.frustumCulled = false;
-    state.objects.formworkMembers = bars;
+    handles.members = bars;
     group.add(bars);
   }
-  state.objects.formworkGroup = group;
+  // Seeded with the first frame, not zeros: a zero-filled buffer is a
+  // degenerate, invisible net until the first timeline apply, which is
+  // exactly the empty viewport the review reproduced.
+  if (handles.net) writeSegmentPositions(handles.net, edges, first.vertices);
+  if (handles.members) writeSegmentPositions(handles.members, members, first.columnNodes);
+  formworkObjects = handles;
   scene.add(group);
 }
 
@@ -3283,8 +3320,8 @@ function writeSegmentPositions(object, pairs, points) {
 // on the same clock as the wires. Early-returns on missing objects for
 // the same render-loop reason applySceneAtTime documents.
 function applyFormworkAct(t, strikeU) {
-  const group = state.objects.formworkGroup;
-  if (!group) return;
+  if (!formworkObjects) return;
+  const group = formworkObjects.group;
   const doc = state.formwork;
   const seconds = formworkSeconds();
   if (!doc || seconds <= 0 || state.showMode !== "timeline") {
@@ -3294,12 +3331,12 @@ function applyFormworkAct(t, strikeU) {
   group.visible = strikeU < 1;
   const machineTime = Math.min(100, Math.max(0, (t / seconds) * 100));
   const frame = interpolateFormworkFrame(doc.frames, machineTime);
-  const net = state.objects.formworkNet;
+  const net = formworkObjects.net;
   if (net) {
     net.visible = t < seconds;
     if (net.visible) writeSegmentPositions(net, doc.edges, frame.vertices);
   }
-  const bars = state.objects.formworkMembers;
+  const bars = formworkObjects.members;
   if (bars) {
     bars.material.opacity = 1 - strikeU;
     bars.position.z = -1.5 * strikeU;

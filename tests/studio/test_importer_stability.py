@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -284,7 +285,11 @@ def test_two_names_that_share_one_slug_are_refused(tmp_path, monkeypatch):
     clash = client.put(
         "/api/uploads/exports/my-vault/contract",
         content=json.dumps(tiny_contract()).encode())
-    assert clash.status_code == 409
+    # 400, not 409: re-pinned 2026-09-04 when the review showed the
+    # cross-repo convention reserves 409 for a run in flight, which the
+    # exporter retries and then defers, a transient word for a condition
+    # only a rename can clear. A refusal is final and shown verbatim.
+    assert clash.status_code == 400
     assert "My Vault" in clash.json()["detail"]
 
 
@@ -658,3 +663,138 @@ def test_a_cache_hit_serves_the_cached_bytes_without_re_encoding(tmp_path, monke
         "a fresh cache hit must serve the cached file verbatim, not "
         "re-encode the same 80 MB it just parsed")
     assert hit.json() == json.loads(raw)
+
+
+# ---------------------------------------------- the branch review's fix wave
+
+
+FACES_FALLBACK = {
+    "schema": "bench.tessellation/1", "units": "m", "domain": "plan",
+    "pattern": "faces",
+    "cells": [
+        {"key": "c0p0", "course": 0,
+         "outline": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]},
+        {"key": "c0p1", "course": 0,
+         "outline": [[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]]},
+    ],
+}
+
+
+def test_the_exporters_courtesy_faces_fallback_is_not_an_authored_cut(tmp_path, monkeypatch):
+    """Review critical, probe-confirmed: the exporter PUTs a tessellation
+    on EVERY live TNA solve, and when nobody wired Skin cells it is a
+    per-face courtesy fallback stamped pattern "faces" precisely "so the
+    studio can tell a chosen cutting pattern from the courtesy one". The
+    studio never read the stamp, so the fallback would have silently
+    become every live study's default cut: one cell per analysis face in
+    a single course, the pattern and size controls dead, the toggle
+    labelling it the Grasshopper Skin."""
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    upload_pair(client)
+    stored = client.put("/api/uploads/exports/Tiny/tessellation",
+                        content=json.dumps(FACES_FALLBACK).encode())
+    assert stored.status_code == 200, stored.text
+
+    body = client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS).json()
+    assert body["source"] == "generated", (
+        "a courtesy fallback must not displace the studio's own cut")
+    assert body["source_available"] == ["generated"]
+
+    refused = client.get("/api/studies/Tiny/bundle",
+                         params={**BUNDLE_PARAMS, "source": "authored"})
+    assert refused.status_code == 400
+    assert "courtesy" in refused.json()["detail"].lower()
+
+
+def test_an_unrelated_studys_upload_does_not_suppress_this_ones_persist(
+        tmp_path, monkeypatch):
+    """Review major: the persist guard's generation counter was global, so
+    ANY study's upload during a build vetoed the viewed study's cache
+    write, even though the invalidation it signalled deleted nothing of
+    this study's."""
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    upload_pair(client, name="Other")
+
+    released = threading.Event()
+    entered = threading.Event()
+    real_cut = bundle._cut_for
+
+    def slow_cut(*args, **kwargs):
+        result = real_cut(*args, **kwargs)
+        entered.set()
+        released.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(bundle, "_cut_for", slow_cut)
+    worker = threading.Thread(
+        target=lambda: client.get("/api/studies/Tiny/bundle", params=BUNDLE_PARAMS),
+        daemon=True)
+    worker.start()
+    assert entered.wait(timeout=10)
+
+    changed = tiny_contract()
+    changed["equilibrium"]["vertices"][4]["z"] = 3.0
+    assert client.put("/api/uploads/exports/Other/contract",
+                      content=json.dumps(changed).encode()).status_code == 200
+    released.set()
+    worker.join(timeout=10)
+
+    cached = bundle.bundle_path("tiny", "concrete", "bonded-courses", 1.2, 0.2)
+    assert cached.is_file(), (
+        "an unrelated study's upload deleted nothing of Tiny's, so Tiny's "
+        "build must still persist its cache")
+
+
+def test_a_run_can_stage_the_source_the_user_is_looking_at(tmp_path, monkeypatch):
+    """Review major: the runs route resolved the source with no say from
+    the caller, so a Skin study's generated cut could never be staged:
+    the run solved the authored cut while the user watched the generated
+    one, and reported done."""
+
+    client, _, _ = make_client(tmp_path, monkeypatch)
+    _, bundle, _ = studio()
+    upload_pair(client)
+    client.put("/api/uploads/exports/Tiny/tessellation",
+               content=json.dumps(AUTHORED_CELLS).encode())
+
+    accepted = client.post("/api/runs", json={
+        "export": "Tiny", "material": "concrete", "pattern": "bonded-courses",
+        "size": 1.2, "thickness": 0.2, "source": "generated"})
+    assert accepted.status_code == 202, accepted.text
+    run_id = accepted.json()["run"]
+    for _ in range(200):
+        state = client.get("/api/runs/{}".format(run_id)).json()
+        if state["state"] in ("done", "failed"):
+            break
+        time.sleep(0.05)
+    assert state["state"] == "done", state
+    assert bundle.staging_path(
+        "tiny", "concrete", "bonded-courses", 1.2, 0.2).is_file(), (
+        "the generated cut's staging must land under the generated key")
+    served = client.get("/api/studies/Tiny/bundle",
+                        params={**BUNDLE_PARAMS, "source": "generated"}).json()
+    assert served["staging"] is not None
+
+
+def test_frames_pairing_checks_the_columns_too(tmp_path, monkeypatch):
+    """Review major: pairing compared the NET only, so a set where only
+    the mould columns moved served a silently stale machine."""
+
+    f_mod = __import__("frames")
+    document = frames_document_for_tiny()
+    contract = tiny_contract()
+    contract["mould"] = {"ground": 0.0, "columns": {
+        "nodes": [{"x": 1.0, "y": 1.0, "z": 0.0}, {"x": 1.0, "y": 1.0, "z": 1.0}],
+        "members": [{"u": 0, "v": 1}],
+    }}
+    validated = f_mod.validate_frames_document(document)
+    assert f_mod.pairing_error(validated, contract) is None
+
+    moved = json.loads(json.dumps(contract))
+    moved["mould"]["columns"]["nodes"][1]["z"] = 2.0
+    reason = f_mod.pairing_error(validated, moved)
+    assert reason is not None and "column" in reason.lower(), reason
