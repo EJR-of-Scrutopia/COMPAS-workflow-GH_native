@@ -4312,18 +4312,40 @@ internal static class SkinPatterns
         return false;
     }
 
-    /// <summary>Which net face contains a point in plan, or -1.</summary>
+    /// <summary>Which net face contains a point in plan, or -1.
+    ///
+    /// A PLAN BOUNDING-BOX PREFILTER stands in front of the containment
+    /// test, because NormalAt made this a hot path: every outline corner of
+    /// every cell asks it, and it is a linear scan of the net's faces.
+    ///
+    /// The prefilter is ANSWER-PRESERVING and not a tolerance, which is why
+    /// it may sit in front of a predicate the engine and the harness must
+    /// never disagree about. PlanContains is a crossing count with STRICT
+    /// comparisons. Above the box in y, or below it, no edge straddles the
+    /// point's height and the count is zero. Right of the box in x, the
+    /// crossing abscissa of any straddling edge lies between that edge's
+    /// own two x, so it is no greater than the box's own maximum and the
+    /// strict "x is less than" is false at every edge. Left of the box, a
+    /// triangle straddles the point's height on exactly none or two of its
+    /// edges (a horizontal edge straddles nothing under a strict test) and
+    /// both toggles cancel. Every point the prefilter skips is a point
+    /// PlanContains would have answered false for.</summary>
     private static int FaceUnder(SkinNet net, double[] at)
     {
         for (int face = 0; face < net.Faces.Count; face++)
         {
             int[] triangle = net.Faces[face];
-            var ring = new[]
+            double[] pa = net.Vertices[triangle[0]];
+            double[] pb = net.Vertices[triangle[1]];
+            double[] pc = net.Vertices[triangle[2]];
+            if (at[0] < Math.Min(pa[0], Math.Min(pb[0], pc[0])) ||
+                at[0] > Math.Max(pa[0], Math.Max(pb[0], pc[0])) ||
+                at[1] < Math.Min(pa[1], Math.Min(pb[1], pc[1])) ||
+                at[1] > Math.Max(pa[1], Math.Max(pb[1], pc[1])))
             {
-                net.Vertices[triangle[0]],
-                net.Vertices[triangle[1]],
-                net.Vertices[triangle[2]]
-            };
+                continue;
+            }
+            var ring = new[] { pa, pb, pc };
             if (PlanContains(at[0], at[1], ring))
                 return face;
         }

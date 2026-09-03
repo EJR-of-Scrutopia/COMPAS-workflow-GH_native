@@ -1124,7 +1124,7 @@ public sealed class SkinComponent : NativeComponentBase
         }
         else
         {
-            top = OffsetTopFace(net, outline, thickness);
+            top = OffsetTopFace(net, outline, moved, thickness);
             if (top is null)
                 return null;
         }
@@ -1166,9 +1166,19 @@ public sealed class SkinComponent : NativeComponentBase
     /// point lifted onto the net and then moved by that point's own offset.
     /// Null where the cell has no plan interior point, where that point
     /// lies off the net, or where the fan will not join.
+    ///
+    /// The MOVED outline is handed in rather than recomputed. Its caller
+    /// has already built it, for the side walls, and rebuilding it here
+    /// asked SkinPatterns.NormalAt for every corner of every cell a second
+    /// time, which is a linear scan of the net's faces apiece; worse, a
+    /// later edit could have moved one of the two and left the top face
+    /// standing on different corners from the walls that meet it.
     /// </summary>
     private static Brep? OffsetTopFace(
-        SkinNet net, IReadOnlyList<double[]> outline, double thickness)
+        SkinNet net,
+        IReadOnlyList<double[]> outline,
+        IReadOnlyList<double[]> moved,
+        double thickness)
     {
         double[]? inside = SkinPatterns.PlanInteriorPoint(outline);
         if (inside is null)
@@ -1181,8 +1191,6 @@ public sealed class SkinComponent : NativeComponentBase
             apex[0] + apexOffset[0],
             apex[1] + apexOffset[1],
             apex[2] + apexOffset[2]);
-        IReadOnlyList<double[]> moved =
-            OffsetOutline(net, outline, thickness, true);
         var pieces = new List<Brep>(moved.Count);
         for (int at = 0; at < moved.Count; at++)
         {
