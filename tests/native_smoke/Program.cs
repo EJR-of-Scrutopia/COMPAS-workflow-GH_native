@@ -1287,7 +1287,12 @@ internal static class Program
             Console.WriteLine(
                 "PASS  Skin thickness offset (spec 2026-09-02): Along " +
                 "Normal false is the constant (0, 0, Th) whatever the " +
-                "cell, sign for sign; CellNormalUnit reads (0, 0, 1) off " +
+                "cell, sign for sign; on a square SLOPED 45 degrees the " +
+                "toggle CHANGES the offset to the slope's own " +
+                "arithmetic, Th/sqrt(2) across and Th/sqrt(2) up along " +
+                "the cell's own normal rather than world Z, which is " +
+                "the one fixture here an engine ignoring the flag " +
+                "cannot pass; CellNormalUnit reads (0, 0, 1) off " +
                 "a flat cell and a finite unit vector off a non-planar " +
                 "one, agreeing with vertical mode on the flat cell and " +
                 "flipping with Th's sign on both; a degenerate outline " +
@@ -24454,6 +24459,75 @@ internal static class Program
                 "Along Normal true on a flat cell must agree with " +
                 $"vertical mode, sign for sign: got {flatUp[2]} at Th " +
                 $"0.4 and {flatDown[2]} at Th -0.4.");
+        }
+
+        // ---- a genuinely SLOPED cell, and the ONLY fixture in this
+        // check that can tell the toggle apart from the vertical
+        // default. Every case above is either flat (where the two modes
+        // coincide by construction) or measures length and sign alone,
+        // so an engine that read the flag and then offset vertically
+        // anyway passed all of them: MEASURED on 2026-09-03 by mutating
+        // ThicknessOffset's guard to 'if (!alongNormal ||
+        // outline.Count >= 0)', which left the whole suite green.
+        //
+        // The fixture is a PLANAR square tilted 45 degrees about the x
+        // axis: (0,0,0), (1,0,0), (1,1,1), (0,1,1). Its Newell sum is
+        // (0, -2, 2), so the unit normal is (0, -1, 1) / sqrt(2), and
+        // the offset the toggle owes at Th is the slope's own
+        // arithmetic: Th / sqrt(2) ACROSS in -y and Th / sqrt(2) up,
+        // against vertical mode's (0, 0, Th) on the very same outline.
+        // The direction is the CELL NORMAL and not world Z, which is
+        // the whole of what the toggle offers.
+        var sloped = new List<double[]>
+        {
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+            new[] { 1.0, 1.0, 1.0 }, new[] { 0.0, 1.0, 1.0 }
+        };
+        double slopedComponent = 1.0 / Math.Sqrt(2.0);
+        double[] slopedNormal = Normal(sloped);
+        if (Math.Abs(slopedNormal[0]) > 1.0e-12 ||
+            Math.Abs(slopedNormal[1] + slopedComponent) > 1.0e-12 ||
+            Math.Abs(slopedNormal[2] - slopedComponent) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "A square tilted 45 degrees about x has unit normal " +
+                $"(0, -{slopedComponent}, {slopedComponent}); got " +
+                $"({slopedNormal[0]}, {slopedNormal[1]}, " +
+                $"{slopedNormal[2]}).");
+        }
+        const double SlopedThickness = 0.4;
+        double[] slopedNormalMode =
+            Offset(sloped, SlopedThickness, true);
+        double[] slopedVerticalMode =
+            Offset(sloped, SlopedThickness, false);
+        double slopedExpected = SlopedThickness * slopedComponent;
+        if (Math.Abs(slopedNormalMode[0]) > 1.0e-12 ||
+            Math.Abs(slopedNormalMode[1] + slopedExpected) > 1.0e-12 ||
+            Math.Abs(slopedNormalMode[2] - slopedExpected) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Along Normal TRUE on a cell sloped 45 degrees must " +
+                "translate along the CELL'S OWN normal, which is the " +
+                $"slope's own arithmetic: (0, -{slopedExpected}, " +
+                $"{slopedExpected}) at Th {SlopedThickness}. Got " +
+                $"({slopedNormalMode[0]}, {slopedNormalMode[1]}, " +
+                $"{slopedNormalMode[2]}). An engine that ignores the " +
+                "flag and offsets vertically returns (0, 0, " +
+                $"{SlopedThickness}) here.");
+        }
+        if (Math.Abs(slopedNormalMode[1] - slopedVerticalMode[1]) <=
+                1.0e-9 ||
+            Math.Abs(slopedNormalMode[2] - slopedVerticalMode[2]) <=
+                1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The toggle must CHANGE the offset on a sloped cell, " +
+                "across and up both: normal mode gave " +
+                $"({slopedNormalMode[0]}, {slopedNormalMode[1]}, " +
+                $"{slopedNormalMode[2]}) and vertical mode " +
+                $"({slopedVerticalMode[0]}, {slopedVerticalMode[1]}, " +
+                $"{slopedVerticalMode[2]}) on the same outline, which " +
+                "is a toggle that does nothing.");
         }
 
         // ---- a NON-PLANAR cell (the ruling's harness pins closedness on
