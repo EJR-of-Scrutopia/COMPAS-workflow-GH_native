@@ -202,3 +202,67 @@ def test_fields_module_exists_and_is_pure():
                  "sampleScalar", "sampleVector", "creaseNormals",
                  "estimateSunFromEquirect"):
         assert "export function {}(".format(name) in js, "fields.js lost {}".format(name)
+
+
+FORMWORK_CHECK = textwrap.dedent("""
+    import { interpolateFormworkFrame } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) < 1e-9; }
+
+    // The writer spec's own toy shape: three frames at 0, 30, 100.
+    const frames = [
+      { time: 0.0,   phase: "reel",
+        vertices: [[0,0,0],[1,0,0],[2,0,0]],
+        columnNodes: [[0.5,0,0],[0.5,0,0]] },
+      { time: 30.0,  phase: "raise",
+        vertices: [[0,0,0],[1,0,0.4],[2,0,0]],
+        columnNodes: [[0.5,0,0],[0.5,0,0.2]] },
+      { time: 100.0, phase: "hold",
+        vertices: [[0,0,0],[1,0,1],[2,0,0]],
+        columnNodes: [[0.5,0,0],[0.5,0,0.5]] },
+    ];
+
+    // Midway through the first pair: linear per coordinate.
+    const mid = interpolateFormworkFrame(frames, 15.0);
+    expect(near(mid.vertices[1][2], 0.2), "z lerps 0 to 0.4 at u = 0.5");
+    expect(near(mid.columnNodes[1][2], 0.1), "column node lerps too");
+    expect(mid.phase === "reel", "phase is the frame at or before the time");
+
+    // Midway through the long second span: u = (65-30)/(100-30) = 0.5.
+    const late = interpolateFormworkFrame(frames, 65.0);
+    expect(near(late.vertices[1][2], 0.7), "z lerps 0.4 to 1.0 at u = 0.5");
+    expect(late.phase === "raise", "phase label carries from the earlier frame");
+
+    // Exact hits return the frame's own numbers.
+    const exact = interpolateFormworkFrame(frames, 30.0);
+    expect(near(exact.vertices[1][2], 0.4), "an exact sample is exact");
+    expect(exact.phase === "raise", "an exact sample carries its own phase");
+
+    // Clamping: before the first frame and after the last.
+    const before = interpolateFormworkFrame(frames, -5.0);
+    expect(near(before.vertices[1][2], 0.0), "clamped to the first frame");
+    const after = interpolateFormworkFrame(frames, 250.0);
+    expect(near(after.vertices[1][2], 1.0), "clamped to the last frame");
+    expect(after.phase === "hold", "clamped phase is the last frame's");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_formwork_frame_interpolation_matches_hand_computed_values(tmp_path):
+    """The reader NEVER reimplements the machine's motion (writer spec,
+    section 1): it interpolates linearly between the frames it is given,
+    clamped at both ends, and that is the whole algorithm. These are the
+    hand-computed lerps that pin it."""
+
+    script = tmp_path / "check_formwork.mjs"
+    script.write_text(
+        FORMWORK_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

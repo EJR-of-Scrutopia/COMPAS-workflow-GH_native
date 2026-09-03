@@ -246,3 +246,45 @@ export function estimateSunFromEquirect(data, width, height, stride = 4) {
     intensity,
   };
 }
+
+// The formwork build playback's whole algorithm. The frames come from the
+// exporter's bench.frames/1 document (FRAMES-WRITER-SPEC-2026-09-03.md):
+// the writer samples the engine's own motion, so the reader NEVER
+// reconstructs it, it lerps between the samples it was given, clamped at
+// both ends. The spec's section 9 is explicit that easing belongs on the
+// playback clock, never here: positions between samples are linear.
+// frames must be non-empty with strictly ascending times, which the
+// server-side validator (bench/studio/frames.py) has already enforced
+// before any document reaches this function.
+export function interpolateFormworkFrame(frames, time) {
+  const lerpTriples = (a, b, u) => a.map((p, i) => [
+    p[0] + (b[i][0] - p[0]) * u,
+    p[1] + (b[i][1] - p[1]) * u,
+    p[2] + (b[i][2] - p[2]) * u,
+  ]);
+  const first = frames[0];
+  const last = frames[frames.length - 1];
+  if (time <= first.time) {
+    return { vertices: first.vertices, columnNodes: first.columnNodes, phase: first.phase };
+  }
+  if (time >= last.time) {
+    return { vertices: last.vertices, columnNodes: last.columnNodes, phase: last.phase };
+  }
+  let lo = 0;
+  let hi = frames.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (frames[mid].time <= time) lo = mid; else hi = mid;
+  }
+  const a = frames[lo];
+  const b = frames[hi];
+  if (a.time === time) {
+    return { vertices: a.vertices, columnNodes: a.columnNodes, phase: a.phase };
+  }
+  const u = (time - a.time) / (b.time - a.time);
+  return {
+    vertices: lerpTriples(a.vertices, b.vertices, u),
+    columnNodes: lerpTriples(a.columnNodes, b.columnNodes, u),
+    phase: a.phase,
+  };
+}
