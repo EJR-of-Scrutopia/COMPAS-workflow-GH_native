@@ -15,6 +15,65 @@ import {
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
 } from "/static/fields.js";
 
+// ---------- diagnosis ----------
+// When something goes wrong on screen it writes itself down, with enough
+// context to be acted on: what the studio was showing, what it was asked to
+// do, and the stack. Param asked for this after a scene restore failed with
+// a message that named a symptom and nothing else. The log is a file on the
+// server (bench/studio/diagnostics.log), one JSON object per line.
+let reportingProblem = false;
+
+function reportProblem(message, detail) {
+  // Never report a failure of the reporting itself, and never let a report
+  // throw into the code that was already failing.
+  if (reportingProblem) return;
+  reportingProblem = true;
+  try {
+    const body = {
+      message: String(message || "").slice(0, 2000),
+      stack: detail && detail.stack ? String(detail.stack).slice(0, 4000) : null,
+      page: location.pathname + location.search,
+      when: new Date().toISOString(),
+      context: {
+        study: (document.getElementById("study-select") || {}).value || null,
+        showMode: state.showMode,
+        source: state.source,
+        material: (document.getElementById("material-select") || {}).value || null,
+        pattern: state.pattern,
+        size: state.size,
+        thickness: state.thickness,
+        environment: state.environmentMode,
+        hdri: state.hdriName,
+        playing: !!(state.timeline && state.timeline.playing),
+        t: state.timeline ? state.timeline.t : null,
+        recent: recentLog.slice(-12),
+      },
+    };
+    fetch("/api/diagnostics", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => { /* the studio is not worth breaking over a log line */ });
+  } catch (error) {
+    /* the same */
+  } finally {
+    reportingProblem = false;
+  }
+}
+
+// The last few log lines travel with a report: what the user did just
+// before is usually the half of the story the message leaves out.
+const recentLog = [];
+
+window.addEventListener("error", (event) => {
+  reportProblem(event.message, event.error);
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason;
+  reportProblem(
+    reason && reason.message ? reason.message : String(reason), reason);
+});
+
 // ---------- app state ----------
 const state = {
   bundle: null,
@@ -26,7 +85,7 @@ const state = {
   lastRefusal: null,   // the server's own words for the last refused load, shown under the cut source control
   studies: [],
   layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
-  showMode: "timeline", // R4: "framework" | "shell" | "both" | "timeline" (see applyShowMode)
+  showMode: "both",    // "framework" | "shell" | "both" chosen by the three buttons; "timeline" is what playing switches to on its own (see setShowMode)
   formworkMode: "hidden", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
@@ -61,8 +120,10 @@ const state = {
   jointGap: 0.02,
   taper: 0,
   segmentIndex: null,  // Task 11
-  nodeRadius: 0.03,    // Task 6
-  wireRadius: 0.02,    // Task 6
+  // Fixed 2026-09-04 with the View panel: 30 mm nodes and 20 mm wires are
+  // the sizes Param settled on, so they are the sizes, not a control.
+  nodeRadius: 0.03,
+  wireRadius: 0.02,
   // Task 9: filled from /api/studies at boot, so the pattern control knows
   // which patterns are actually selectable and what each material's own
   // default and honesty note are.
@@ -338,6 +399,8 @@ function applyHdriBackdrop() {
     dome.rotation.y = rotation;
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
+    // The photograph's ground and the studio's floor are the same plane.
+    group.position.z = groundLevel();
     group.add(dome);
     scene.add(group);
     hdriDome = group;
@@ -532,6 +595,25 @@ function groundMaterial(preset) {
   return groundMaterialCache[preset];
 }
 
+// The plane everything stands on, and the reason it is not zero.
+//
+// The analysis surface is the vault's MID-surface, so the built vault's
+// underside at the springing sits half a thickness BELOW the support nodes,
+// the drawn net hangs a wire radius below that again (netClearance), and the
+// falsework ghost lower still. A floor at z = 0 therefore cuts through all
+// three and the vault reads as sunk into its own site, which is exactly what
+// it looked like: reported from the screen, 2026-09-04, "the vaults seems to
+// be always lower than the floor". The floor goes under the lowest of them,
+// with 40 mm of air so nothing z-fights it.
+//
+// The HDRI dome's photographic ground rides the same plane, or the two
+// floors disagree by a hand's width and the vault stands on neither.
+function groundLevel() {
+  const thickness = state.bundle && state.bundle.provenance
+    ? state.bundle.provenance.thickness : 0;
+  return -(thickness / 2 + Math.max(state.wireRadius, state.nodeRadius) + 0.04);
+}
+
 // The floor is a disc, so "how much flooring there is" is one radius. The
 // jointed presets carry the physical size of one texture image, so their
 // repeat is recomputed from the disc every time it is resized; the plain
@@ -555,9 +637,14 @@ function rebuildGround() {
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(state.groundRadius, 64), material);
   ground.receiveShadow = true;
-  // Just under the falsework ghost, as it always has been: the floor is a
-  // backdrop, never a surface anything in the analysis sits on.
-  ground.position.z = -0.03;
+  const level = groundLevel();
+  ground.position.z = level;
+  // The props stand on the floor, not on the analysis plane: their models
+  // are built with their feet at z = 0, so the group carries the drop.
+  propsGroup.position.z = level;
+  // A dome already up when the study changed would keep the old thickness's
+  // floor, so it is levelled here too rather than only where it is built.
+  if (hdriDome) hdriDome.position.z = level;
   state.objects.ground = ground;
   scene.add(ground);
 }
@@ -728,7 +815,10 @@ function groundPointAt(event) {
     -((event.clientY - rect.top) / rect.height) * 2 + 1);
   propRaycaster.setFromCamera(ndc, camera);
   const hit = new THREE.Vector3();
-  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  // The picking plane is the floor itself, not z = 0: they are a hand's
+  // width apart and a prop placed on one and drawn on the other slides
+  // under the cursor as the camera moves.
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -groundLevel());
   return propRaycaster.ray.intersectPlane(plane, hit) ? hit : null;
 }
 
@@ -971,23 +1061,6 @@ function disposeShell() {
   state.objects.shell = null;
 }
 
-function rebuildWiresAndNodes() {
-  if (!state.bundle) return;
-  disposeWiresAndNodes();
-  const { wires, nodes } = buildWiresAndNodes(state.bundle);
-  state.objects.wires = wires;
-  state.objects.nodes = nodes;
-  scene.add(wires);
-  scene.add(nodes);
-  applyWireForces();
-  // The act's net is cut from the same two radii, so a slider drag has to
-  // rebuild it as well or the machine raises a net that no longer matches
-  // the one it hands over to.
-  rebuildFormworkObjects();
-  // Scene-only recompute: a size-slider rebuild must not move the camera.
-  if (state.timeline) applySceneAtTime(state.timeline.t);
-}
-
 function columnGeometryFrom(document_) {
   // Accept either the plain {vertices, faces} shape or a contract-style
   // export (equilibrium.vertices objects + formGraph.faces records).
@@ -1194,7 +1267,6 @@ function collectScene() {
       record: state.dayCycle.record,
     },
     ground: { preset: state.groundPreset, radius: state.groundRadius },
-    net: { wireRadius: state.wireRadius, nodeRadius: state.nodeRadius },
     props: state.props.map((record) => ({
       type: record.type, x: record.x, y: record.y, rotation: record.rotation,
     })),
@@ -1207,9 +1279,7 @@ function collectScene() {
     appearance: Object.assign({}, state.appearance),
     timeline: state.timeline ? {
       t: state.timeline.t, speed: state.timeline.speed,
-      inflateSeconds: state.timeline.inflateSeconds,
       orbitSpeed: state.timeline.orbitSpeed,
-      orbitDistance: state.timeline.orbitDistance,
     } : null,
   };
 }
@@ -1254,14 +1324,6 @@ async function applyScene(record) {
       control("ground-radius").value = scene_.ground.radius;
       control("ground-radius-value").textContent = scene_.ground.radius;
     }
-  }
-  if (scene_.net) {
-    if (typeof scene_.net.wireRadius === "number") state.wireRadius = scene_.net.wireRadius;
-    if (typeof scene_.net.nodeRadius === "number") state.nodeRadius = scene_.net.nodeRadius;
-    control("wire-radius").value = state.wireRadius;
-    control("node-radius").value = state.nodeRadius;
-    control("wire-radius-value").textContent = Math.round(state.wireRadius * 1000);
-    control("node-radius-value").textContent = Math.round(state.nodeRadius * 1000);
   }
   if (scene_.layers) state.layers = Object.assign({}, state.layers, scene_.layers);
   if (scene_.appearance) state.appearance = Object.assign({}, scene_.appearance);
@@ -1349,9 +1411,7 @@ async function applyScene(record) {
   // of a saved scene.
   if (scene_.timeline && state.timeline) {
     for (const [key, id] of [["speed", "timeline-speed"],
-                             ["inflateSeconds", "inflate-seconds"],
-                             ["orbitSpeed", "orbit-speed"],
-                             ["orbitDistance", "orbit-distance"]]) {
+                             ["orbitSpeed", "orbit-speed"]]) {
       if (typeof scene_.timeline[key] === "number") {
         state.timeline[key] = scene_.timeline[key];
         control(id).value = scene_.timeline[key];
@@ -1362,10 +1422,14 @@ async function applyScene(record) {
     const t = Math.min(timelineDuration(),
       Math.max(0, +scene_.timeline.t || 0));
     applySceneAtTime(t);
-    document.getElementById("scrubber").value =
+    // The module's own handle, not getElementById("scrubber"): the element's
+    // id is "timeline-scrubber", so that lookup returned null and restoring
+    // a scene died on it with "Cannot set properties of null". The static
+    // test below now checks every id the script asks for against the page.
+    scrubber.value =
       Math.round(1000 * (timelineDuration() ? t / timelineDuration() : 0));
   }
-  if (scene_.showMode) { state.showMode = scene_.showMode; control("show-mode").value = scene_.showMode; }
+  if (scene_.showMode) { state.showMode = scene_.showMode; paintShowButtons(); }
   if (scene_.formworkMode) {
     state.formworkMode = scene_.formworkMode;
     control("formwork-mode").value = scene_.formworkMode;
@@ -1386,7 +1450,10 @@ async function applyScene(record) {
     camera.position.fromArray(view.position);
     controls.target.fromArray(view.target);
     controls.update();
-    if (state.timeline) state.timeline.autoSpin = false;
+    // No need to disable the orbit any more: a take now starts from
+    // wherever the camera is, so playing a restored scene orbits from the
+    // framing it was saved at rather than from a ring of its own.
+    if (state.timeline) state.timeline.orbitBase = null;
   }
   logStudio("restored scene " + record.name);
   return true;
@@ -2235,6 +2302,10 @@ const eventLog = { lines: [], timer: null };
 
 function logStudio(message) {
   const stamp = new Date().toLocaleTimeString("en-GB", { hour12: false });
+  // The same line travels with any problem report: what the user did just
+  // before is usually the half of the story the error message leaves out.
+  recentLog.push(stamp + "  " + message);
+  while (recentLog.length > 40) recentLog.shift();
   eventLog.lines.push(stamp + "  " + message);
   while (eventLog.lines.length > 7) eventLog.lines.shift();
   const element = document.getElementById("event-log");
@@ -2252,6 +2323,9 @@ function logStudio(message) {
 const bannerState = { timer: null, remaining: 0, since: 0, level: "info" };
 
 function showBanner(text, level = "info") {
+  // Anything shown to the user in red is worth writing down: the banner
+  // fades after twelve seconds and the log does not.
+  if (level === "error") reportProblem(text, null);
   const banner = document.getElementById("banner");
   document.getElementById("banner-text").textContent = text;
   banner.classList.remove("hidden");
@@ -3471,29 +3545,36 @@ document.getElementById("formwork-mode").addEventListener("change", (e) => {
     state.objects.falsework.visible = e.target.value !== "hidden";
   }
 });
-document.getElementById("show-mode").addEventListener("change", (e) => {
-  state.showMode = e.target.value;
+// The three ways of looking at the vault. Timeline is not among them on
+// purpose: playing is its own way of looking and switches to it by itself,
+// so there is no mode to choose before pressing Play.
+const SHOW_BUTTONS = [["show-formwork", "framework"], ["show-shell", "shell"],
+                      ["show-both", "both"]];
+
+function paintShowButtons() {
+  for (const [id, mode] of SHOW_BUTTONS) {
+    const button = document.getElementById(id);
+    if (button) button.classList.toggle("active", state.showMode === mode);
+  }
+}
+
+function setShowMode(mode) {
+  // Choosing a view during a take stops the take. The buttons and the
+  // animation are two ways of owning the scene and they cannot both hold
+  // it: picking one is a decision to look at the thing rather than watch
+  // it being built.
+  if (state.timeline && state.timeline.playing) {
+    state.timeline.playing = false;
+    document.getElementById("play-button").textContent = "Play";
+  }
+  state.showMode = mode;
+  paintShowButtons();
   if (state.timeline) applySceneAtTime(state.timeline.t);
-});
-// Same pattern as the thickness slider: "input" only updates the live mm
-// label, "change" (drag release) commits the value and rebuilds -- so a
-// drag fires one InstancedMesh rebuild, not dozens.
-document.getElementById("node-radius").addEventListener("input", (e) => {
-  document.getElementById("node-radius-value").textContent = Math.round(+e.target.value * 1000);
-});
-document.getElementById("node-radius").addEventListener("change", (e) => {
-  state.nodeRadius = +e.target.value;
-  document.getElementById("node-radius-value").textContent = Math.round(state.nodeRadius * 1000);
-  rebuildWiresAndNodes();
-});
-document.getElementById("wire-radius").addEventListener("input", (e) => {
-  document.getElementById("wire-radius-value").textContent = Math.round(+e.target.value * 1000);
-});
-document.getElementById("wire-radius").addEventListener("change", (e) => {
-  state.wireRadius = +e.target.value;
-  document.getElementById("wire-radius-value").textContent = Math.round(state.wireRadius * 1000);
-  rebuildWiresAndNodes();
-});
+}
+
+for (const [id, mode] of SHOW_BUTTONS) {
+  document.getElementById(id).addEventListener("click", () => setShowMode(mode));
+}
 document.getElementById("data-button").addEventListener("click", () => {
   const panel = document.getElementById("data-panel");
   renderDataPanel(state.bundle ? state.bundle.verification : null);
@@ -3657,10 +3738,13 @@ function rebuildTimeline(preserve) {
   state.timeline = {
     playing: false, t: 0,
     speed: +document.getElementById("timeline-speed").value,
-    inflateSeconds: +document.getElementById("inflate-seconds").value,
+    inflateSeconds: INFLATE_SECONDS,
     orbitSpeed: +document.getElementById("orbit-speed").value,
-    orbitDistance: +document.getElementById("orbit-distance").value,
     autoSpin: true,
+    // Read off the viewport when a take starts (captureOrbitBase). Null
+    // until then, and while it is null the timeline does not touch the
+    // camera at all, so loading a study leaves the view where it was.
+    orbitBase: null,
   };
   state.centre = sceneCentroid();
   if (!preserve) {
@@ -3699,6 +3783,13 @@ function rebuildTimeline(preserve) {
 function placementCount() {
   return state.bundle && state.bundle.pieces ? state.bundle.pieces.length : 0;
 }
+
+// The reveal for a study with no machine of its own: a fixed few seconds
+// rather than a slider. Param's ruling, and the reason is that the
+// animation now belongs to Grasshopper: where there are frames the machine
+// IS the reveal, and where there are none this is a courtesy, not a
+// setting worth a control.
+const INFLATE_SECONDS = 3;
 
 function timelineDuration() {
   const step = placementStep();
@@ -4369,13 +4460,37 @@ function applyShowMode() {
   }
 }
 
+// The framing the take orbits from: the camera's own distance, height and
+// bearing about the scene centre, read off the viewport rather than set by
+// sliders. Param's ruling, and it is the simpler thing as well as the one
+// he asked for: whatever you can see is what the animation shows, from
+// where you left it. The current rotation is subtracted out so a capture
+// taken mid-take does not jump the camera a quarter turn.
+function captureOrbitBase() {
+  if (!state.timeline || !state.centre) return;
+  const offset = camera.position.clone().sub(state.centre);
+  const radius = Math.hypot(offset.x, offset.y);
+  state.timeline.orbitBase = {
+    // Straight overhead there is no bearing to orbit on, so the distance
+    // falls back to the true one and the take turns about that instead of
+    // collapsing onto the axis.
+    radius: radius > 0.05 ? radius : camera.position.distanceTo(state.centre),
+    height: offset.z,
+    azimuth: Math.atan2(offset.y, offset.x)
+      - state.timeline.orbitSpeed * state.timeline.t,
+  };
+}
+
 function applyTimeline(t) {
   applySceneAtTime(t);
-  if (state.timeline.autoSpin && !state.userDragging) {
+  const base = state.timeline.orbitBase;
+  if (base && state.timeline.autoSpin && !state.userDragging) {
     const centre = state.centre;
-    const angle = state.timeline.orbitSpeed * t;
-    const r = state.timeline.orbitDistance;
-    camera.position.set(centre.x + r * Math.cos(angle), centre.y + r * Math.sin(angle), 0.55 * r);
+    const angle = base.azimuth + state.timeline.orbitSpeed * t;
+    camera.position.set(
+      centre.x + base.radius * Math.cos(angle),
+      centre.y + base.radius * Math.sin(angle),
+      centre.z + base.height);
     camera.lookAt(centre);
   }
 }
@@ -4493,19 +4608,37 @@ function resize() {
 }
 
 controls.addEventListener("start", () => { state.userDragging = true; });
-controls.addEventListener("end", () => { state.userDragging = false; });
+controls.addEventListener("end", () => {
+  state.userDragging = false;
+  // Moving the camera mid-take moves the take with it: the orbit carries on
+  // from where the drag left off instead of snapping back to where it began.
+  if (state.timeline && state.timeline.playing) captureOrbitBase();
+});
+
+function startPlaying(fromTheTop) {
+  // Playing IS the animation view: it switches to it rather than asking
+  // which mode the scene should be in first, and it takes its framing from
+  // wherever the camera is standing at that moment.
+  state.showMode = "timeline";
+  paintShowButtons();
+  captureOrbitBase();
+  if (fromTheTop || state.timeline.t >= timelineDuration()) applyTimeline(0);
+  state.timeline.playing = true;
+  document.getElementById("play-button").textContent = "Pause";
+}
 
 document.getElementById("play-button").addEventListener("click", () => {
   if (!state.timeline) return;
-  if (state.timeline.t >= timelineDuration()) applyTimeline(0);
-  state.timeline.playing = !state.timeline.playing;
-  document.getElementById("play-button").textContent = state.timeline.playing ? "Pause" : "Play";
+  if (state.timeline.playing) {
+    state.timeline.playing = false;
+    document.getElementById("play-button").textContent = "Play";
+    return;
+  }
+  startPlaying(false);
 });
 document.getElementById("restart-button").addEventListener("click", () => {
   if (!state.timeline) return;
-  applyTimeline(0);
-  state.timeline.playing = true;
-  document.getElementById("play-button").textContent = "Pause";
+  startPlaying(true);
 });
 
 scrubber.addEventListener("input", () => {
@@ -4515,7 +4648,7 @@ scrubber.addEventListener("input", () => {
   applyTimeline((+scrubber.value / 1000) * timelineDuration());
   updateHud();
 });
-for (const [id, prop] of [["inflate-seconds", "inflateSeconds"], ["orbit-speed", "orbitSpeed"], ["orbit-distance", "orbitDistance"]]) {
+for (const [id, prop] of [["orbit-speed", "orbitSpeed"]]) {
   document.getElementById(id).addEventListener("input", (e) => {
     if (state.timeline) { state.timeline[prop] = +e.target.value; applyTimeline(state.timeline.t); }
   });
@@ -4528,9 +4661,6 @@ for (const [id, prop] of [["inflate-seconds", "inflateSeconds"], ["orbit-speed",
 document.getElementById("timeline-speed").addEventListener("input", (e) => {
   document.getElementById("timeline-speed-value").textContent = (+e.target.value).toFixed(2);
   if (state.timeline) state.timeline.speed = +e.target.value;
-});
-document.getElementById("inflate-seconds").addEventListener("input", (e) => {
-  document.getElementById("inflate-value").textContent = (+e.target.value).toFixed(1);
 });
 
 let lastTime = performance.now();

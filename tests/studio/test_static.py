@@ -520,62 +520,30 @@ def test_the_finished_shell_is_governed_by_show_mode_not_a_checkbox():
     assert 'name === "wires" || name === "shell"' not in layer_body
 
 
-def test_node_and_wire_size_sliders_rebuild_the_thrust_network():
-    html = (STATIC / "index.html").read_text(encoding="utf-8")
+def test_the_thrust_network_is_freed_whenever_it_is_replaced():
+    """Replaced 2026-09-04. The two size sliders that used to drive this are
+    gone (Param fixed the sizes at 30 mm nodes and 20 mm wires and removed
+    the View panel), and rebuildWiresAndNodes went with them, but the
+    discipline they were written to enforce is unchanged and still matters:
+    a study load, a cut change and a cleared scene all REPLACE the network,
+    and whatever is replaced owns GPU buffers that nothing else frees.
+
+    FINDING 2 of the original wave, kept verbatim because it is the subtle
+    one: in three 0.185 it is InstancedMesh.dispose() that frees the
+    instanceMatrix and instanceColor buffers. Disposing only the geometry
+    and the material leaks them on every replacement."""
+
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for control_id in ("node-radius", "wire-radius", "node-radius-value", "wire-radius-value"):
-        assert 'id="{}"'.format(control_id) in html, "index.html lost {}".format(control_id)
+    assert "function rebuildWiresAndNodes(" not in js, "no callers, no function"
     assert "state.nodeRadius" in js and "state.wireRadius" in js
-    assert "function rebuildWiresAndNodes(" in js
-    start = js.index("function rebuildWiresAndNodes(")
-    end = js.index("\n}", start)
-    body = js[start:end]
-    # The freeing itself lives in disposeWiresAndNodes, which buildScene
-    # calls too: a study load replaces the network just as a size slider
-    # does, and since the rings slider started reloading, that is every ring
-    # change as well.
-    assert "disposeWiresAndNodes()" in body, "a rebuild must free the old network"
-    dispose_start = js.index("function disposeWiresAndNodes(")
-    dispose_body = js[dispose_start:js.index("\n}", dispose_start)]
-    assert "geometry.dispose()" in dispose_body, "a rebuild must dispose the old geometry"
-    assert "material.dispose()" in dispose_body, "a rebuild must dispose the old material"
-    # FINDING 2 (GPU leak): in three 0.185, InstancedMesh.dispose() is what
-    # frees the instanceMatrix/instanceColor GPU buffers; disposing only the
-    # geometry and material leaks them on every slider drag.
+    dispose_body = _function_body(js, "disposeWiresAndNodes")
+    assert "geometry.dispose()" in dispose_body
+    assert "material.dispose()" in dispose_body
     assert "object.dispose()" in dispose_body, (
-        "a rebuild must dispose the InstancedMesh itself"
+        "the InstancedMesh itself owns instanceMatrix and instanceColor"
     )
-    build_start = js.index("function buildScene(")
-    assert "disposeWiresAndNodes()" in js[build_start:js.index("\n}", build_start)]
-    assert "applyWireForces()" in body, "the forces layer must survive a rebuild"
-    # FINDING 1 (camera snap): the rebuild must recompute strike-dependent
-    # scene state through the scene-only helper, never applyTimeline itself,
-    # or a size-slider drag would also teleport the camera.
-    assert "applySceneAtTime(" in body, "the strike state must survive a rebuild"
-    assert "applyTimeline(" not in body, (
-        "rebuildWiresAndNodes must never call applyTimeline directly; that "
-        "would move the camera on a slider drag"
-    )
-
-
-def test_node_and_wire_size_sliders_rebuild_only_on_change():
-    # FINDING 2: a drag must fire one rebuild, not dozens -- the mm label
-    # updates live on "input", the rebuild itself waits for "change" (drag
-    # release), same pattern as the thickness slider.
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for control_id in ("node-radius", "wire-radius"):
-        input_start = js.index('getElementById("{}").addEventListener("input"'.format(control_id))
-        input_end = js.index("\n});", input_start)
-        input_body = js[input_start:input_end]
-        assert "rebuildWiresAndNodes()" not in input_body, (
-            "{} must not rebuild on every input event".format(control_id)
-        )
-        change_start = js.index('getElementById("{}").addEventListener("change"'.format(control_id))
-        change_end = js.index("\n});", change_start)
-        change_body = js[change_start:change_end]
-        assert "rebuildWiresAndNodes()" in change_body, (
-            "{} must rebuild on change".format(control_id)
-        )
+    for caller in ("buildScene", "clearScene"):
+        assert "disposeWiresAndNodes()" in _function_body(js, caller), caller
 
 
 def test_the_size_slider_reloads_the_study_rather_than_recutting_locally():
@@ -852,10 +820,18 @@ def test_transport_is_pause_and_restart_only():
     assert 'id="stop-button"' not in html
     assert 'getElementById("stop-button")' not in js
     assert 'id="play-button"' in html and 'id="restart-button"' in html
+    # Re-pinned 2026-09-04: both transport buttons go through startPlaying,
+    # which also switches to the animation view and reads the framing off
+    # the viewport, so a take can never begin in the wrong mode or from a
+    # camera the user did not choose.
     restart_start = js.index('getElementById("restart-button")')
     restart_body = js[restart_start:js.index("\n});", restart_start)]
-    assert "applyTimeline(0)" in restart_body
-    assert "playing = true" in restart_body
+    assert "startPlaying(true)" in restart_body
+    start_body = _function_body(js, "startPlaying")
+    assert "applyTimeline(0)" in start_body
+    assert "playing = true" in start_body
+    assert 'state.showMode = "timeline"' in start_body
+    assert "captureOrbitBase()" in start_body
 
 
 def test_the_cra_badge_is_gone_and_the_pulse_and_hud_no_longer_need_it():
@@ -1422,7 +1398,12 @@ def test_sprayed_concrete_has_no_joints_at_all():
 def test_the_net_inflates_before_the_build():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="inflate-seconds"' in html
+    # Re-pinned 2026-09-04: the slider is gone (Param: the animation belongs
+    # to Grasshopper, and where there are frames the machine IS the reveal),
+    # so the fallback reveal is a constant. The maths below is unchanged.
+    assert 'id="inflate-seconds"' not in html
+    assert "const INFLATE_SECONDS = 3;" in js
+    assert "inflateSeconds: INFLATE_SECONDS," in js
     assert "function inflationFactor(" in js
     start = js.index("function applySceneAtTime(")
     end = js.index("\n}", start)
@@ -1620,15 +1601,27 @@ def test_timeline_speed_is_a_playback_rate_outside_the_pure_timeline():
     assert "timelineDuration() / speed * fps" in record_body
 
 
-def test_the_inflation_slider_labels_its_seconds():
-    # The bare " s" after the inflation input wrapped onto its own line in
-    # the panel. The unit rides with a live value now, like the mm sliders.
+def test_the_dead_controls_are_gone_not_merely_hidden():
+    """Replaced 2026-09-04. Three controls stopped meaning anything and were
+    removed rather than left to mislead: the inflation seconds (the reveal
+    is Grasshopper's animation now, or a constant where there is none), the
+    orbit distance (the take orbits from wherever the camera is left, so the
+    distance is the camera's), and the node and wire sizes (fixed at the
+    30 mm and 20 mm Param settled on). A control that no longer decides
+    anything is worse than no control."""
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="inflate-value"' in html
-    label = html[html.index("Inflation"):html.index("</label>", html.index("Inflation"))]
-    assert "</span> s" in label
-    assert 'getElementById("inflate-value")' in js
+    for dead in ('id="inflate-seconds"', 'id="inflate-value"', 'id="orbit-distance"',
+                 'id="node-radius"', 'id="wire-radius"'):
+        assert dead not in html, dead
+        assert 'getElementById("' + dead[4:-1] + '")' not in js, dead
+    # The values they used to carry are still the values.
+    assert "nodeRadius: 0.03," in js and "wireRadius: 0.02," in js
+    assert "const INFLATE_SECONDS = 3;" in js
+    # Spin rate survives, because the rate is not something the viewport
+    # can tell us.
+    assert 'id="orbit-speed"' in html
 
 
 def test_slider_commits_settle_and_requests_cannot_race():
@@ -1717,9 +1710,12 @@ def test_the_panel_groups_into_six_collapsible_sections():
     # "record-section" nor a Styling summary exists any more.
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     positions = []
+    # Re-pinned 2026-09-04: View is gone (Param), its Show select is now the
+    # three buttons at the foot of the panel, its formwork ghost joined
+    # Animation, and its two size sliders were removed outright.
     for section_id, is_open in (
         ("import-section", False), ("study-section", True),
-        ("analysis-section", False), ("view-section", True),
+        ("analysis-section", False),
         ("animation-section", True), ("scene-section", False),
     ):
         at = html.index('id="{}"'.format(section_id))
@@ -1734,14 +1730,26 @@ def test_the_panel_groups_into_six_collapsible_sections():
     assert "#panel summary" in css
 
 
-def test_the_show_select_offers_four_exclusive_modes():
+def test_three_buttons_replace_the_show_select():
+    """Re-pinned 2026-09-04 to Param's design: three buttons at the foot of
+    the panel, Formwork, Shell and Both, the chosen one lit, Both by
+    default. Timeline is not among them because playing is its own way of
+    looking and switches to it by itself, and choosing a view during a take
+    stops the take: the buttons and the animation cannot both own the
+    scene. The applyShowMode assertions below are unchanged."""
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="show-mode"' in html
-    for value in ("framework", "shell", "both", "timeline"):
-        assert '<option value="{}"'.format(value) in html
-    assert '<option value="timeline" selected' in html
-    assert 'showMode: "timeline"' in js
+    assert 'id="show-mode"' not in html, "the select is gone"
+    assert 'id="view-section"' not in html, "and so is the panel it sat in"
+    row = html[html.index('id="mode-row"'):html.index("</aside>")]
+    for button, word in (("show-formwork", "Formwork"), ("show-shell", "Shell"),
+                         ("show-both", "Both")):
+        assert 'id="{}"'.format(button) in row and ">" + word + "<" in row
+    assert 'id="show-both" class="mode active"' in row, "Both is the default"
+    assert 'showMode: "both",' in js
+    stop = _function_body(js, "setShowMode")
+    assert "playing = false" in stop, "picking a view stops the take"
     assert "applyShowMode()" in _function_body(js, "applySceneAtTime")
     body = _function_body(js, "applyShowMode")
     assert "camera.position" not in body and "controls.target" not in body
@@ -1838,19 +1846,17 @@ def test_the_formwork_default_is_hidden():
 
 def test_the_panel_reorganises_into_six_sections():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
+    # Re-pinned 2026-09-04: five sections, View removed.
     order = [html.index('id="{}-section"'.format(name))
-             for name in ("import", "study", "analysis", "view", "animation", "scene")]
-    assert order == sorted(order), "section order is Import, Study, Analysis, View, Animation, Scene"
+             for name in ("import", "study", "analysis", "animation", "scene")]
+    assert order == sorted(order), "section order is Import, Study, Analysis, Animation, Scene"
     assert 'id="record-section"' not in html
     assert 'id="styling-section"' not in html
     # Record's controls live inside Animation now.
     animation = html[html.index('id="animation-section"'):html.index('id="scene-section"')]
     assert 'id="record-button"' in animation and 'id="record-status"' in animation
     # The analysis section owns the toggles and the analysis controls.
-    # node-radius/wire-radius moved to View in the finish wave (see
-    # test_the_run_button_lives_in_analysis_and_sizes_in_view); the run
-    # button moved here from Study in the same wave.
-    analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
+    analysis = html[html.index('id="analysis-section"'):html.index('id="animation-section"')]
     for control in ("run-button", "layer-toggles", "stress-surface",
                     "exaggeration", "data-button"):
         assert control in analysis, control
@@ -2081,12 +2087,15 @@ def test_brightness_and_contrast_grade_every_render():
             assert banned not in body
 
 
-def test_the_run_button_lives_in_analysis_and_sizes_in_view():
+def test_the_run_button_lives_in_analysis():
+    """Re-pinned 2026-09-04: the run button still belongs to Analysis rather
+    than to Study. The half of this test about the node and wire sizes is
+    gone with the sizes themselves, which are fixed now (see
+    test_the_dead_controls_are_gone_not_merely_hidden)."""
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    analysis = html[html.index('id="analysis-section"'):html.index('id="view-section"')]
-    view = html[html.index('id="view-section"'):html.index('id="animation-section"')]
+    analysis = html[html.index('id="analysis-section"'):html.index('id="animation-section"')]
     assert 'id="run-button"' in analysis and 'id="run-status"' in analysis
-    assert 'id="node-radius"' in view and 'id="wire-radius"' in view
     study = html[html.index('id="study-section"'):html.index('id="analysis-section"')]
     assert 'id="run-button"' not in study
 
@@ -2324,3 +2333,59 @@ def test_the_import_panel_is_the_way_in():
     # Refresh re-reads the folder rather than reloading the page.
     body = _function_body(js, "refreshStudies")
     assert '"/api/studies"' in body and "populateStudySelect" in body
+
+
+def test_the_take_orbits_from_wherever_the_camera_is_left():
+    """Param's ruling, and the simpler thing as well as the one he asked
+    for: the framing IS the shot. The orbit's distance, height and bearing
+    are read off the viewport when a take starts, and again when a drag ends
+    mid-take, so moving the camera moves the take with it instead of
+    snapping back. The current rotation is subtracted out of the captured
+    bearing, or a capture taken mid-take would jump the camera by however
+    far the take had already turned. Until a take has been started the
+    timeline does not touch the camera at all, so loading a study leaves the
+    view where it was."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    capture = _function_body(js, "captureOrbitBase")
+    assert "camera.position.clone().sub(state.centre)" in capture
+    assert "Math.atan2(offset.y, offset.x)" in capture
+    assert "- state.timeline.orbitSpeed * state.timeline.t" in capture, (
+        "the bearing must have the current rotation taken out of it"
+    )
+    body = _function_body(js, "applyTimeline")
+    assert "base.radius" in body and "centre.z + base.height" in body
+    assert "const base = state.timeline.orbitBase;" in body
+    assert "if (base &&" in body, "no framing captured yet means hands off the camera"
+    assert "orbitDistance" not in js, "the distance comes from the camera now"
+    assert "if (state.timeline && state.timeline.playing) captureOrbitBase();" in js
+
+
+def test_every_control_the_script_asks_for_exists_on_the_page():
+    """The whole class of bug behind "Cannot set properties of null".
+
+    Restoring a saved scene died on getElementById("scrubber"): the element
+    is called "timeline-scrubber", the lookup returned null, and the failure
+    surfaced as a symptom with no name in it (reported from the screen,
+    2026-09-04). Panels are being reorganised week by week and controls are
+    being removed outright, so a stale id is not a one-off: this walks every
+    id the script asks for and checks the page still has it.
+
+    The exceptions below are ids the script CREATES or looks up defensively,
+    which are honest and stay listed by name rather than by pattern."""
+
+    import re
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    # Whole-line comments are dropped first: this file explains its own
+    # fixes in prose, and a comment naming the id that USED to be wrong
+    # would fail the check it was written to describe. Only lines that are
+    # entirely a comment are removed, so no string literal is touched.
+    code = " ".join(
+        "" if line.lstrip().startswith("//") else line for line in js.splitlines())
+    asked = set(re.findall(r'getElementById\("([a-z0-9-]+)"\)', code))
+    present = set(re.findall(r'id="([a-z0-9-]+)"', html))
+    created = set()  # nothing is built by script id today; add names here, never patterns
+    missing = sorted(asked - present - created)
+    assert not missing, "the script talks to controls the page does not have: {}".format(missing)

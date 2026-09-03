@@ -44,6 +44,11 @@ SCENES_DIR = Path(__file__).resolve().parent / "scenes"
 # vaults are read from. Beside the studio, not in the folder itself, so
 # pointing at a new folder cannot lose the way back.
 SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
+# What went wrong on screen, one JSON object per line, newest last. Trimmed
+# rather than rotated: this is a thing to read after a failure, not an
+# archive, and a file that grows without bound is a file nobody opens.
+DIAGNOSTICS_PATH = Path(__file__).resolve().parent / "diagnostics.log"
+MAX_DIAGNOSTICS_BYTES = 512 * 1024
 SCENE_SCHEMA = "bench.scene/1"
 # The id is minted here, never taken from the caller, so no scene name can
 # reach the filesystem. The pattern is asserted on every route anyway.
@@ -543,6 +548,57 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             "exists": present,
             "studies": len(geometry.available_exports(directory)) if present else 0,
         }
+
+    @app.post("/api/diagnostics", status_code=201)
+    async def report_problem(request: Request):
+        """Write down what went wrong in the browser.
+
+        Deliberately forgiving about its input: this route exists to catch
+        failures, and a report refused on a technicality is a failure nobody
+        hears about. Anything unreadable is stored as a raw line rather than
+        rejected.
+        """
+
+        body = await request.body()
+        try:
+            document = json.loads(body)
+            if not isinstance(document, dict):
+                raise ValueError("not an object")
+        except (ValueError, UnicodeDecodeError):
+            document = {"message": body[:2000].decode("utf-8", "replace"),
+                        "malformed": True}
+        document["received"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        line = json.dumps(document, default=str)[:8000]
+        try:
+            if (DIAGNOSTICS_PATH.is_file()
+                    and DIAGNOSTICS_PATH.stat().st_size > MAX_DIAGNOSTICS_BYTES):
+                # Keep the tail: the newest failures are the ones being
+                # chased, and the oldest are the ones already fixed.
+                kept = DIAGNOSTICS_PATH.read_text(
+                    encoding="utf-8", errors="replace").splitlines()[-200:]
+                DIAGNOSTICS_PATH.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            with DIAGNOSTICS_PATH.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except OSError as error:
+            print("could not write the diagnostics log: {}".format(error))
+        print("PROBLEM REPORTED: {}".format(document.get("message")))
+        return {"logged": True}
+
+    @app.get("/api/diagnostics")
+    def read_problems(limit: int = 40):
+        """The tail of the log, newest last, for whoever is fixing it."""
+
+        if not DIAGNOSTICS_PATH.is_file():
+            return {"problems": []}
+        lines = DIAGNOSTICS_PATH.read_text(
+            encoding="utf-8", errors="replace").splitlines()
+        problems = []
+        for line in lines[-max(1, min(limit, 500)):]:
+            try:
+                problems.append(json.loads(line))
+            except ValueError:
+                problems.append({"raw": line})
+        return {"problems": problems}
 
     @app.get("/api/folder")
     def folder():

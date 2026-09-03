@@ -164,3 +164,18 @@ body { overflow: hidden; font-family: "Segoe UI", system-ui, sans-serif;
 .toggle input:checked + .track::before { transform: translateX(18px); }
 .toggle input:disabled + .track { opacity: 0.4; }
 #source-row #source-note { grid-column: 1 / -1; font-size: 11px; color: #7d838c; }
+
+/* The three ways of looking at the vault, at the foot of the panel where
+   the eye returns to them. Equal columns so the words sit level, and the
+   longest of them (Formwork) fits without wrapping at this size. */
+#mode-row { position: sticky; bottom: 0; display: grid;
+  grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 10px;
+  padding: 8px 0 4px; background: rgba(24, 26, 30, 0.94); }
+#mode-row .mode { padding: 7px 2px; border: 1px solid #3a3f47; border-radius: 3px;
+  background: #23262c; color: #9aa1a9; font-size: 11px; letter-spacing: 0.02em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+#mode-row .mode:hover { border-color: #6d7885; color: #d8dade; }
+/* Nothing is lit while the animation is running: playing is its own way of
+   looking, and none of the three owns the scene then. */
+#mode-row .mode.active { background: #3d4a58; color: #f0f2f4; border-color: #7d8b9a; }
+#orbit-note { margin: 2px 0 6px; font-size: 11px; color: #7d838c; }

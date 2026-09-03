@@ -101,31 +101,19 @@
     <label>Deflection exaggeration <input id="exaggeration" type="range" min="1" max="500" step="1" value="100"></label>
     <button id="data-button">Data</button>
   </details>
-  <details id="view-section" open>
-    <summary>View</summary>
-    <label>Show <select id="show-mode">
-      <option value="framework">Framework</option>
-      <option value="shell">Shell</option>
-      <option value="both">Both</option>
-      <option value="timeline" selected>Timeline</option>
-    </select></label>
-    <label>Formwork <select id="formwork-mode">
-      <option value="animation">Animation</option>
-      <option value="always">Always</option>
-      <option value="hidden" selected>Hidden</option>
-    </select></label>
-    <label>Node size <input id="node-radius" type="range" min="0.01" max="0.10" step="0.005" value="0.03"> <span id="node-radius-value">30</span> mm</label>
-    <label>Wire size <input id="wire-radius" type="range" min="0.005" max="0.06" step="0.005" value="0.02"> <span id="wire-radius-value">20</span> mm</label>
-  </details>
   <details id="animation-section" open>
     <summary>Animation</summary>
     <button id="play-button">Play</button>
     <button id="restart-button">Restart</button>
     <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
     <label>Timeline speed <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="timeline-speed-value">1.00</span>x</label>
-    <label>Inflation <input id="inflate-seconds" type="range" min="0" max="10" step="0.5" value="3"> <span id="inflate-value">3.0</span> s</label>
-    <label>Orbit speed <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
-    <label>Orbit distance <input id="orbit-distance" type="range" min="10" max="60" step="1" value="30"></label>
+    <label>Spin rate <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
+    <div id="orbit-note">The take orbits from wherever you leave the camera: frame the shot, then play.</div>
+    <label>Formwork <select id="formwork-mode">
+      <option value="animation">Animation</option>
+      <option value="always">Always</option>
+      <option value="hidden" selected>Hidden</option>
+    </select></label>
     <button id="record-button">Record 1080p</button>
     <div id="record-status"></div>
   </details>
@@ -190,6 +178,11 @@
       <button id="props-clear">Clear props</button>
     </div>
   </details>
+  <div id="mode-row">
+    <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>
+    <button id="show-shell" class="mode" title="The vault alone">Shell</button>
+    <button id="show-both" class="mode active" title="The vault on its formwork">Both</button>
+  </div>
 </aside>
 <div id="data-panel" class="hidden"><button id="data-close">Close</button><div id="data-content"></div></div>
 <script type="module" src="/static/studio.js"></script>
