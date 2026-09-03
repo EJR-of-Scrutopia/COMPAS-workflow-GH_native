@@ -2027,7 +2027,13 @@ internal static class Program
             Console.WriteLine(
                 "PASS  MouldFrames (bench.frames/1, the studio's animation "
                 + "kind): 51 samples at step 2.0 with 0, 30, 60, 90 and 100 "
-                + "present and strictly ascending; every frame the declared "
+                + "present and strictly ascending; the boundary INSERTION "
+                + "itself exercised at a step of 7, which lands on none of "
+                + "them, giving nineteen times with each missed boundary "
+                + "inserted exactly once, the shared 0 deduplicated to one "
+                + "and every base multiple of 7 still present, since at the "
+                + "shipped step of 2.0 the insertion is invisible and "
+                + "deleting it left this suite green; every frame the declared "
                 + "vertex and column-node counts, finite, phase-labelled by "
                 + "MouldGeometry.Phases itself; the time-100 frame EQUAL to "
                 + "the contract's equilibrium vertices to 1e-9, which is the "
@@ -25626,7 +25632,10 @@ internal static class Program
         Type frames = plugin.GetType(
             "Ananke.COMPAS.Native.Components.MouldFrames", throwOnError: true)!;
         MethodInfo json = RequirePublicStatic(frames, "Json");
-        MethodInfo timesMethod = RequirePublicStatic(frames, "Times");
+        MethodInfo timesMethod =
+            RequirePublicStatic(frames, "Times", Type.EmptyTypes);
+        MethodInfo timesAtStep =
+            RequirePublicStatic(frames, "Times", typeof(double));
         Type geometry = plugin.GetType(
             "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
         MethodInfo phases = RequirePublicStatic(geometry, "Phases");
@@ -25790,6 +25799,71 @@ internal static class Program
         {
             if (!times.Any(t => Math.Abs(t - boundary) <= 1.0e-9))
                 throw new InvalidOperationException($"The phase boundary {boundary} must be sampled exactly; the sweep does not contain it.");
+        }
+
+        // 2b. THE BOUNDARY INSERTION ITSELF, which nothing above can see.
+        // At the shipped step of 2.0 the base sweep already lands on 0, 30,
+        // 60, 90 and 100, so every assertion above passes with the
+        // insertion deleted: measured 2026-09-03 by dropping 60.0 from
+        // MouldFrames.Boundaries, which left the whole harness green. The
+        // safety net was unreachable, and a check that cannot see its
+        // subject is not a check.
+        //
+        // Driven at a step of 7, which divides none of 30, 60, 90 or 100.
+        // The base sweep is 0, 7, ... 98, so those four must be INSERTED
+        // and 0, which the sweep does land on, must appear ONCE: the
+        // insertion and the deduplication measured in one sweep. The base
+        // multiples are all still there, so the boundaries are added to the
+        // sweep rather than substituted for it.
+        var offStep = (double[])timesAtStep.Invoke(
+            null, new object?[] { 7.0 })!;
+        for (int k = 1; k < offStep.Length; k++)
+        {
+            if (offStep[k] <= offStep[k - 1])
+            {
+                throw new InvalidOperationException(
+                    "A sweep at a step that misses the boundaries must "
+                    + $"still be STRICTLY ascending; sample {k} is "
+                    + $"{offStep[k]} after {offStep[k - 1]}.");
+            }
+        }
+        foreach (double boundary in new[] { 30.0, 60.0, 90.0, 100.0 })
+        {
+            if (offStep.Count(t => Math.Abs(t - boundary) <= 1.0e-9) != 1)
+            {
+                throw new InvalidOperationException(
+                    $"A step of 7 never lands on {boundary}, so the "
+                    + "boundary must be INSERTED, exactly once. The sweep "
+                    + $"carries it {offStep.Count(t => Math.Abs(t - boundary) <= 1.0e-9)} "
+                    + "times, which means the insertion the reader depends "
+                    + "on is not happening.");
+            }
+        }
+        if (offStep.Count(t => Math.Abs(t) <= 1.0e-9) != 1)
+        {
+            throw new InvalidOperationException(
+                "Time 0 is BOTH the first base sample and a boundary, so "
+                + "the deduplication must leave exactly one of it; the "
+                + $"sweep carries it {offStep.Count(t => Math.Abs(t) <= 1.0e-9)} times.");
+        }
+        for (int k = 0; k * 7.0 <= 100.0; k++)
+        {
+            double sample = k * 7.0;
+            if (!offStep.Any(t => Math.Abs(t - sample) <= 1.0e-9))
+            {
+                throw new InvalidOperationException(
+                    $"The base sweep's own sample {sample} is missing: the "
+                    + "boundaries are ADDED to the sweep, never substituted "
+                    + "for it.");
+            }
+        }
+        if (offStep.Length != 19)
+        {
+            throw new InvalidOperationException(
+                "A step of 7 gives fifteen base samples, 0 to 98, plus the "
+                + "four boundaries it misses, 30, 60, 90 and 100, with the "
+                + "shared 0 deduplicated: nineteen times. Got "
+                + $"{offStep.Length}.");
         }
 
         // 3. Every frame the same shape, every coordinate finite, and the

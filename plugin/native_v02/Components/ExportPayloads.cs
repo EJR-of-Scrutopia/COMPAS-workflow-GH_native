@@ -218,7 +218,10 @@ internal static class MouldFrames
     /// The phase boundaries, which are always sampled exactly. At the step
     /// above the base sweep already lands on every one of them; they are
     /// inserted anyway so that a future step cannot quietly drop the frames
-    /// the reader validates for.
+    /// the reader validates for. Nothing at <see cref="Step"/> can tell
+    /// whether the insertion happens, which is why
+    /// <see cref="Times(double)"/> exists and is driven at a step that
+    /// misses them.
     /// </summary>
     public static readonly double[] Boundaries = { 0.0, 30.0, 60.0, 90.0, 100.0 };
 
@@ -229,17 +232,43 @@ internal static class MouldFrames
     private const double SameTime = 1.0e-9;
 
     /// <summary>
-    /// The sampled times: the base sweep, the boundaries, sorted and with
-    /// duplicates removed, so the array is strictly ascending. The reader is
-    /// told never to assume the count or the step, but it does require 0, 30,
+    /// The sampled times the file is written at: the base sweep at
+    /// <see cref="Step"/>, the boundaries, sorted and with duplicates
+    /// removed, so the array is strictly ascending. The reader is told
+    /// never to assume the count or the step, but it does require 0, 30,
     /// 60, 90 and 100 to be present.
     /// </summary>
-    public static double[] Times()
+    public static double[] Times() => Times(Step);
+
+    /// <summary>
+    /// The same sweep at an ARBITRARY step, which is the only way the
+    /// boundary insertion can be seen at all.
+    ///
+    /// At <see cref="Step"/> the base sweep already lands on every
+    /// boundary, so the insertion below adds nothing and the deduplication
+    /// removes exactly what it added: measured 2026-09-03, deleting 60.0
+    /// from <see cref="Boundaries"/> leaves the whole harness green. The
+    /// safety net was unreachable, not sound. It is reachable here: a step
+    /// that MISSES a boundary, 7 for instance, must still produce that
+    /// boundary, and the boundary it does land on, 0, must appear once and
+    /// not twice.
+    ///
+    /// A step at or below zero would never terminate, so it is refused
+    /// rather than hung.
+    /// </summary>
+    public static double[] Times(double step)
     {
+        if (!(step > 0.0))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(step),
+                step,
+                "The frame step is a positive number of time units.");
+        }
         var times = new List<double>();
         for (int k = 0; ; k++)
         {
-            double t = k * Step;
+            double t = k * step;
             if (t > 100.0 + SameTime)
                 break;
             times.Add(Math.Min(t, 100.0));
@@ -269,13 +298,13 @@ internal static class MouldFrames
         MouldAnimation.Setup setup = MouldAnimation.Prepare(result);
         double[] times = Times();
         var frames = new List<Dictionary<string, object?>>(times.Length);
-        int columnNodeCount = 0;
+        var nodeCounts = new List<int>(times.Length);
         foreach (double time in times)
         {
             MouldAnimation.Frame frame = MouldAnimation.At(
                 setup, time, MouldAnimation.DefaultPreSagPercent);
             Point3d[] nodes = frame.ColumnNodes ?? Array.Empty<Point3d>();
-            columnNodeCount = nodes.Length;
+            nodeCounts.Add(nodes.Length);
             frames.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["time"] = frame.Time,
@@ -283,6 +312,28 @@ internal static class MouldFrames
                 ["vertices"] = Triples(frame.Vertices),
                 ["columnNodes"] = Triples(nodes),
             });
+        }
+        // columnNodeCount is a property of the SET, which is what the
+        // reader is told: the count and the order of the column nodes are
+        // constant across frames, and the static columns block indexes
+        // into them frame by frame. It was assigned INSIDE the loop above,
+        // so the file declared whatever the LAST frame happened to carry
+        // and a set whose frames disagreed would have been written as
+        // though they agreed, with the studio finding out. Taken once,
+        // from the first frame, with the invariant asserted here beside
+        // the declaration rather than assumed.
+        int columnNodeCount = nodeCounts.Count == 0 ? 0 : nodeCounts[0];
+        for (int k = 1; k < nodeCounts.Count; k++)
+        {
+            if (nodeCounts[k] != columnNodeCount)
+            {
+                throw new InvalidOperationException(
+                    "The column-node count is constant across the frames of " +
+                    $"one set, and the reader depends on it: frame {k} at " +
+                    $"time {times[k]} carries {nodeCounts[k]} nodes against " +
+                    $"the {columnNodeCount} of frame 0. No sidecar is " +
+                    "written from frames that disagree.");
+            }
         }
         var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
