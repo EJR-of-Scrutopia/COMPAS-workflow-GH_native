@@ -80,6 +80,18 @@ internal sealed record SkinNet(
             SkinPatterns.Triangulate(Vertices, Faces),
             Rim);
 
+    /// <summary>The AREA-WEIGHTED UNIT NORMAL at every vertex (spec
+    /// 2026-09-03, skin-offset-surface, rule 1). Computed once here, beside
+    /// the Levels field, because it is the same shape of data and has the
+    /// same lifetime: one double[3] per vertex, valid for as long as the net
+    /// is. Triangulate is called again rather than the Faces property read,
+    /// for the reason Levels gives: an instance property initialiser cannot
+    /// see `this`, and Triangulate is idempotent.</summary>
+    public IReadOnlyList<double[]> Normals { get; } =
+        SkinPatterns.VertexNormals(
+            Vertices,
+            SkinPatterns.Triangulate(Vertices, Faces));
+
     /// <summary>How many named supports rule 1.3.4 dropped as unmappable,
     /// and how many force edges rule 1.3.6 dropped. Init properties and not
     /// constructor parameters, so that neither the two-argument nor the
@@ -4390,6 +4402,139 @@ internal static class SkinPatterns
         return (wa * net.Levels[triangle[0]]) +
                (wb * net.Levels[triangle[1]]) +
                (wc * net.Levels[triangle[2]]);
+    }
+
+    /// <summary>
+    /// THE NORMAL FIELD (spec 2026-09-03, skin-offset-surface, rule 1):
+    /// area-weighted unit normals, one per vertex, by the arithmetic
+    /// bench/studio/blocks.py has carried since the studio's blocks were
+    /// written (vertex_normals, lines 25 to 54).
+    ///
+    /// The area weighting is had FOR FREE by summing UNNORMALISED cross
+    /// products, because a raw cross product is twice the triangle's own
+    /// area. So a vertex shared by one large face and one small one leans
+    /// toward the large one, which is the whole of what "area-weighted"
+    /// buys and the reason no area is ever computed here explicitly.
+    ///
+    /// A face of ANY corner count is fanned from its first corner, because
+    /// this engine's nets carry both triangles and quads: the net's own
+    /// Faces property triangulates, but VertexNormals is called on raw face
+    /// lists by the harness too and a quad-only reading would throw on a
+    /// triangle. The fan is the same one blocks.py takes on its quads.
+    ///
+    /// A degenerate fan, whose crosses cancel or whose face list never
+    /// mentions the vertex at all, falls back to (0, 0, 1): an arbitrary
+    /// but FINITE direction is the honest answer where the surface has no
+    /// normal, and it is what blocks.py answers too.
+    /// </summary>
+    public static IReadOnlyList<double[]> VertexNormals(
+        IReadOnlyList<double[]> vertices, IReadOnlyList<int[]> faces)
+    {
+        var accumulator = new double[vertices.Count][];
+        for (int at = 0; at < vertices.Count; at++)
+            accumulator[at] = new double[3];
+        foreach (int[] face in faces)
+        {
+            if (face.Length < 3)
+                continue;
+            for (int corner = 1; corner + 1 < face.Length; corner++)
+            {
+                int a = face[0];
+                int b = face[corner];
+                int c = face[corner + 1];
+                if (a < 0 || a >= vertices.Count ||
+                    b < 0 || b >= vertices.Count ||
+                    c < 0 || c >= vertices.Count)
+                {
+                    continue;
+                }
+                double[] pa = vertices[a];
+                double[] pb = vertices[b];
+                double[] pc = vertices[c];
+                double ux = pb[0] - pa[0];
+                double uy = pb[1] - pa[1];
+                double uz = pb[2] - pa[2];
+                double vx = pc[0] - pa[0];
+                double vy = pc[1] - pa[1];
+                double vz = pc[2] - pa[2];
+                double nx = (uy * vz) - (uz * vy);
+                double ny = (uz * vx) - (ux * vz);
+                double nz = (ux * vy) - (uy * vx);
+                foreach (int index in new[] { a, b, c })
+                {
+                    accumulator[index][0] += nx;
+                    accumulator[index][1] += ny;
+                    accumulator[index][2] += nz;
+                }
+            }
+        }
+        var normals = new double[vertices.Count][];
+        for (int at = 0; at < vertices.Count; at++)
+        {
+            double[] sum = accumulator[at];
+            double length = Math.Sqrt(
+                (sum[0] * sum[0]) + (sum[1] * sum[1]) + (sum[2] * sum[2]));
+            normals[at] = length > 1.0e-12
+                ? new[] { sum[0] / length, sum[1] / length, sum[2] / length }
+                : new[] { 0.0, 0.0, 1.0 };
+        }
+        return normals;
+    }
+
+    /// <summary>
+    /// THE NORMAL AT AN ARBITRARY POINT (spec 2026-09-03,
+    /// skin-offset-surface, rule 2). An outline point is almost never a net
+    /// vertex: it lies on a traced level curve, which crosses faces. So the
+    /// face under the point is found in plan, by the same FaceUnder the
+    /// cap's apex already uses, and the answer is the BARYCENTRIC
+    /// combination of that face's three vertex normals, renormalised.
+    ///
+    /// WHY THIS IS ENOUGH FOR THE WELD, which is rule 3 and the whole point
+    /// of the change. Interpolated vertex normals are CONTINUOUS ACROSS A
+    /// FACE EDGE: along a shared edge both faces interpolate the same two
+    /// vertex normals with the same weights, the third weight being zero on
+    /// each side. So the answer is a continuous function of the POINT
+    /// ALONE, independent of which of the two faces the lookup happened to
+    /// pick, and two cells that share a corner move it to the same place
+    /// whether or not they agree about its face. No weld pass, no
+    /// tolerance, no shared-corner table. Nothing about the calling CELL
+    /// may enter this method, or that argument fails and the change is
+    /// worthless.
+    ///
+    /// No face under the point, a face with no plan area, or an
+    /// interpolated vector shorter than 1e-12 all fall back to (0, 0, 1).
+    /// </summary>
+    public static double[] NormalAt(SkinNet net, double[] at)
+    {
+        int face = FaceUnder(net, at);
+        if (face < 0)
+            return new[] { 0.0, 0.0, 1.0 };
+        int[] triangle = net.Faces[face];
+        double[] a = net.Vertices[triangle[0]];
+        double[] b = net.Vertices[triangle[1]];
+        double[] c = net.Vertices[triangle[2]];
+        double twice =
+            ((b[0] - a[0]) * (c[1] - a[1])) -
+            ((c[0] - a[0]) * (b[1] - a[1]));
+        if (Math.Abs(twice) <= 1.0e-18)
+            return new[] { 0.0, 0.0, 1.0 };
+        double wb =
+            (((at[0] - a[0]) * (c[1] - a[1])) -
+             ((c[0] - a[0]) * (at[1] - a[1]))) / twice;
+        double wc =
+            (((b[0] - a[0]) * (at[1] - a[1])) -
+             ((at[0] - a[0]) * (b[1] - a[1]))) / twice;
+        double wa = 1.0 - wb - wc;
+        double[] na = net.Normals[triangle[0]];
+        double[] nb = net.Normals[triangle[1]];
+        double[] nc = net.Normals[triangle[2]];
+        double x = (wa * na[0]) + (wb * nb[0]) + (wc * nc[0]);
+        double y = (wa * na[1]) + (wb * nb[1]) + (wc * nc[1]);
+        double z = (wa * na[2]) + (wb * nb[2]) + (wc * nc[2]);
+        double length = Math.Sqrt((x * x) + (y * y) + (z * z));
+        return length > 1.0e-12
+            ? new[] { x / length, y / length, z / length }
+            : new[] { 0.0, 0.0, 1.0 };
     }
 
     /// <summary>The existing private PointAtArc, reachable from this file's

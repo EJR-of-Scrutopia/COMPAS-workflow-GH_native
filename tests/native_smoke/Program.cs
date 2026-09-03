@@ -102,8 +102,11 @@ internal static class Program
                 // warning compares a saved definition against, so every
                 // saved definition raises the warning on open and moves
                 // its wires by name, not by slot. Spec 2026-09-02
-                // (skin-thickness-input) appends Thickness and Along
-                // Normal at slots 5 and 6.
+                // (skin-thickness-input) appends Thickness and a second
+                // port at slots 5 and 6. Spec 2026-09-03
+                // (skin-offset-surface) rule 5 RENAMES that second port
+                // from 'Along Normal' to 'Offset', keeping its index so no
+                // archived wire moves.
                 //
                 // CORRECTION, measured 2026-09-03. That task claimed the
                 // append "raises no warning at all". It is FALSE and the
@@ -112,17 +115,16 @@ internal static class Program
                 // against the seven registered is a reported change
                 // whatever the names do. What the append buys is the
                 // WORDING, not silence: the message names 'Thickness'
-                // and 'Along Normal' as appended and closes with
-                // existing wires keeping their ports, instead of sending
-                // the author to check every wire. That is the shipped,
-                // correct behaviour and it is pinned as such in
-                // ValidateParameterMismatch; nothing here tries to
-                // silence it.
+                // and 'Offset' as appended and closes with existing wires
+                // keeping their ports, instead of sending the author to
+                // check every wire. That is the shipped, correct behaviour
+                // and it is pinned as such in ValidateParameterMismatch;
+                // nothing here tries to silence it.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[]
                     {
                         "Result", "Pattern", "Size", "Course Height",
-                        "Min Piece", "Thickness", "Along Normal"
+                        "Min Piece", "Thickness", "Offset"
                     },
                     new[] { "Cells", "Surface" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
@@ -1281,11 +1283,16 @@ internal static class Program
         {
             ValidateSkinThicknessPorts(plugin);
             Console.WriteLine(
-                "PASS  Skin thickness ports (spec 2026-09-02): Th and " +
-                "Along Normal are a PURE APPEND at inputs 5 and 6, both " +
-                "Optional, every earlier port's name and nickname " +
-                "unmoved, and each new port's own description carries " +
-                "its load-bearing clause.");
+                "PASS  Skin thickness ports (spec 2026-09-02, renamed by " +
+                "2026-09-03): Th and Offset are a PURE APPEND at inputs 5 " +
+                "and 6, both Optional, every earlier port's name and " +
+                "nickname unmoved; port 6 is 'Offset' ('OF') at the SAME " +
+                "INDEX 'Along Normal' held, so no archived wire moves; it " +
+                "DEFAULTS TRUE, read off its own persistent data; Th's " +
+                "description says SIGNED and ONE-SIDED and never the " +
+                "middle; and Offset's says the normal is taken AT THAT " +
+                "POINT, that cells stay welded, and that false extrudes " +
+                "by (0, 0, Th).");
         }
         catch (Exception exception)
         {
@@ -1297,26 +1304,91 @@ internal static class Program
         {
             ValidateSkinThicknessOffset(plugin);
             Console.WriteLine(
-                "PASS  Skin thickness offset (spec 2026-09-02): Along " +
-                "Normal false is the constant (0, 0, Th) whatever the " +
-                "cell, sign for sign; on a square SLOPED 45 degrees the " +
-                "toggle CHANGES the offset to the slope's own " +
-                "arithmetic, Th/sqrt(2) across and Th/sqrt(2) up along " +
-                "the cell's own normal rather than world Z, which is " +
-                "the one fixture here an engine ignoring the flag " +
-                "cannot pass; CellNormalUnit reads (0, 0, 1) off " +
-                "a flat cell and a finite unit vector off a non-planar " +
-                "one, agreeing with vertical mode on the flat cell and " +
-                "flipping with Th's sign on both; a degenerate outline " +
-                "falls back to a finite unit normal; and two REAL " +
-                "adjacent cells off SkinPatterns.Courses share their " +
-                "corner bit for bit after the vertical translation, " +
-                "which is the whole of the connectedness claim.");
+                "PASS  Skin thickness offset (spec 2026-09-03, checks 3, " +
+                "4 and 5): Offset FALSE is the constant (0, 0, Th) at " +
+                "every point of the net and adds it to every corner of an " +
+                "outline, sign for sign, so the extrude branch is " +
+                "reproduced without regression; Offset TRUE on the dome's " +
+                "45 degree flank carries a real horizontal component of " +
+                "length exactly |Th|, which an engine reading the flag " +
+                "and extruding anyway cannot; a negative Th MIRRORS a " +
+                "positive one about the solved surface point for point, " +
+                "in both branches, and the corner moves the FULL Th " +
+                "rather than half of it, so the solved surface is a face " +
+                "and never the middle of the stone; and Th = 0, negative " +
+                "zero included, asks for NO thickening at all while any " +
+                "nonzero value however small asks for one.");
         }
         catch (Exception exception)
         {
             failures.Add(
                 $"Skin thickness offset: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinNormalField(plugin);
+            Console.WriteLine(
+                "PASS  Skin normal field (spec 2026-09-03, check 6): " +
+                "AREA WEIGHTING IS REAL, pinned against a hand-computed " +
+                "value on two triangles of twice-area 1 and 3, whose " +
+                "shared vertices read (-3, 0, 1)/sqrt(10) and lean toward " +
+                "the large face; a face of ANY corner count is fanned, so " +
+                "the same shape written as one quad gives the same " +
+                "normals; a degenerate fan and a vertex no face mentions " +
+                "both fall back to (0, 0, 1); SkinNet.Normals carries " +
+                "exactly this field, cached beside the level field; and " +
+                "NormalAt renormalises, answers the same on either side " +
+                "of a shared edge, falls back off the net, and walks the " +
+                "dome CONTINUOUSLY, which is rule 3 and the reason no " +
+                "weld pass is needed.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin normal field: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinOffsetWeld(plugin);
+            Console.WriteLine(
+                "PASS  Skin offset WELD (spec 2026-09-03, check 1, the " +
+                "check the whole change exists for): on the curved dome, " +
+                "every pair of cells that shares an outline corner AND " +
+                "whose own Newell normals differ by more than 0.1 rad " +
+                "offsets that corner to the same point to 1e-12. The " +
+                "pairs are refused unless they genuinely disagree, so a " +
+                "per-cell offset cannot pass this, and the separation the " +
+                "DELETED per-cell offset would have opened is printed " +
+                "beside it.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin offset weld: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinOffsetVerticalEdge(plugin);
+            Console.WriteLine(
+                "PASS  Skin vertical-edge annihilation (spec 2026-09-03, " +
+                "check 2): a vertical outline edge under a VERTICAL " +
+                "offset puts all four wall corners on one line and the " +
+                "cell is refused, while the same edge offset along a " +
+                "surface normal gives a proper rectangle; counted over " +
+                "the force-aligned barrel and Param's own net, the OFFSET " +
+                "branch never annihilates more walls than the extrude " +
+                "branch. The two counts are printed above and are a LOWER " +
+                "BOUND on the thickener's refusals: no Brep runs in this " +
+                "process, so the rest is Param's Rhino-side number.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin vertical-edge annihilation: " +
+                $"{DescribeException(exception)}");
         }
 
         try
@@ -1490,19 +1562,23 @@ internal static class Program
 
         try
         {
-            ValidateSkinThicknessAlongNormalSide(plugin);
+            ValidateSkinOffsetOneSided(plugin);
             Console.WriteLine(
-                "PASS  Skin Along Normal offsets to ONE side (finding " +
-                "10): on Param's own net the raw Newell winding points " +
-                "both ways and two cells sharing an edge disagree, yet " +
-                "one positive Th thickens every cell of the shell " +
-                "upward. The sign decides up or down; the winding does " +
-                "not.");
+                "PASS  Skin offset goes to ONE side (finding 10, restated " +
+                "against the field that replaced the per-cell normal): on " +
+                "PARAM'S OWN NET every face's vertex-normal field agrees " +
+                "with that face's own winding, recomputed here rather " +
+                "than read off the engine, and at one positive Th no cell " +
+                "sends its own corners to opposite sides. A net carries " +
+                "ONE winding, so the field is one-sided by construction " +
+                "and needs no upward-hemisphere correction; before the " +
+                "field replaced the Newell sum, one Th gave 546 cells up " +
+                "and 486 down.");
         }
         catch (Exception exception)
         {
             failures.Add(
-                "Skin Along Normal side: " +
+                "Skin offset one-sidedness: " +
                 $"{DescribeException(exception)}");
         }
 
@@ -2129,7 +2205,7 @@ internal static class Program
                 + "still closes check-every-wire; Frame's pure append names "
                 + "'Anchor Lines' and closes with existing wires keeping "
                 + "their ports instead, and SKIN's own five-to-seven append "
-                + "names 'Thickness' and 'Along Normal' the same way, which "
+                + "names 'Thickness' and 'Offset' the same way, which "
                 + "withdraws the thickness task's claim that its two new "
                 + "inputs raise no warning at all: they raise one, and it is "
                 + "the right one. SideMoved, which Export's Live hold reads, "
@@ -6515,7 +6591,7 @@ internal static class Program
         string[] skinRegistered =
         {
             "Result", "Pattern", "Size", "Course Height", "Min Piece",
-            "Thickness", "Along Normal"
+            "Thickness", "Offset"
         };
         string? skinAppended = Ask(
             skinArchived,
@@ -6527,7 +6603,7 @@ internal static class Program
                 "5 inputs and 2 outputs archived", StringComparison.Ordinal) ||
             !skinText.Contains("7 and 2 registered", StringComparison.Ordinal) ||
             !skinText.Contains("'Thickness'", StringComparison.Ordinal) ||
-            !skinText.Contains("'Along Normal'", StringComparison.Ordinal) ||
+            !skinText.Contains("'Offset'", StringComparison.Ordinal) ||
             !skinText.Contains("were appended", StringComparison.Ordinal) ||
             !skinText.Contains(
                 "existing wires kept their ports", StringComparison.Ordinal) ||
@@ -6536,7 +6612,7 @@ internal static class Program
             throw new InvalidOperationException(
                 "Skin's five inputs against the seven it registers since "
                 + "the thickness task IS reported, and the report must "
-                + "name both counts, name 'Thickness' and 'Along Normal' "
+                + "name both counts, name 'Thickness' and 'Offset' "
                 + "as appended, say existing wires kept their ports, and "
                 + "never send the author to check every wire. The task "
                 + "that added those ports claimed no warning is raised at "
@@ -16439,6 +16515,81 @@ internal static class Program
     }
 
     /// <summary>
+    /// A VAULT ON VERTICAL WALLS, and the only fixture in this file whose
+    /// surface stands EXACTLY vertical anywhere. The tent barrel above
+    /// rises at 45 degrees and nothing on it is vertical, so spec
+    /// 2026-09-03 section 1 point 3 (a vertical outline edge annihilated by
+    /// a vertical offset) could not be measured on any net this harness
+    /// had. A merely STEEP net does not measure it either, and that is
+    /// itself a finding: annihilation is an EXACT collinearity, and a
+    /// near-vertical edge still leaves a sliver quad with real area.
+    ///
+    /// The section is a U: a vertical wall at y = +2 from z 0 to 1, a
+    /// semicircular head of radius 2 about (0, 1), and a vertical wall back
+    /// down at y = -2. It is extruded along x 0..6 in seven columns.
+    ///
+    /// On the walls the rim-distance field is simply z, so the lowest beds
+    /// are horizontal lines at y = +2 and y = -2, each traced across the
+    /// same seven column edges with the same arc lengths. A cell's two head
+    /// joints therefore run between the SAME x on both of its beds, which
+    /// makes them exactly vertical, and a vertical offset copies them onto
+    /// themselves. That is Param's own steep springing in miniature and it
+    /// is the only fixture here that can make check 2 go red.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces) SkinWalledVaultNet()
+    {
+        var section = new List<double[]>
+        {
+            new[] { 2.0, 0.0 },
+            new[] { 2.0, 0.5 },
+            new[] { 2.0, 1.0 }
+        };
+        for (int k = 1; k <= 5; k++)
+        {
+            double angle = Math.PI * k / 6.0;
+            section.Add(new[]
+            {
+                2.0 * Math.Cos(angle), 1.0 + (2.0 * Math.Sin(angle))
+            });
+        }
+        section.Add(new[] { -2.0, 1.0 });
+        section.Add(new[] { -2.0, 0.5 });
+        section.Add(new[] { -2.0, 0.0 });
+
+        var vertices = new List<double[]>();
+        foreach (double[] at in section)
+        {
+            for (int i = 0; i <= 6; i++)
+                vertices.Add(new[] { (double)i, at[0], at[1] });
+        }
+        var faces = new List<int[]>();
+        for (int j = 0; j < section.Count - 1; j++)
+        {
+            for (int i = 0; i < 6; i++)
+            {
+                int a = (j * 7) + i;
+                faces.Add(new[] { a, a + 1, a + 8, a + 7 });
+            }
+        }
+        return (vertices.ToArray(), faces.ToArray());
+    }
+
+    /// <summary>The walled vault's two wall feet, which are its rim.
+    /// </summary>
+    private static int[] SkinWalledVaultRim()
+    {
+        (double[][] vertices, _) = SkinWalledVaultNet();
+        int rows = vertices.Length / 7;
+        var rim = new List<int>();
+        for (int i = 0; i <= 6; i++)
+        {
+            rim.Add(i);
+            rim.Add(((rows - 1) * 7) + i);
+        }
+        return rim.ToArray();
+    }
+
+    /// <summary>
     /// The barrel fixture again, vertex for vertex and face for face,
     /// with the faces emitted in a deliberately SCRAMBLED order. It is
     /// the fixture that measures Ruling A of the whole-branch review:
@@ -22712,18 +22863,26 @@ internal static class Program
     /// EMPTY, while the courses engine drops 10 of 15 and 3 of 10.
     /// Dropping everything there is the right answer, a level curve that
     /// wraps not being a height field's; only the sentence was wrong.
-    /// The three branches, in SkinComponent.SolveNative:
+    /// The three branches now live in
+    /// SkinComponents.LostCellsWarningLine, which task 2 of the 2026-09-03
+    /// plan put them in; they were in SkinComponent.SolveNative when this
+    /// comment was first written, and the sentence it quoted has been
+    /// superseded. As the code now stands:
     ///   nothing survives: "NOTHING survived, so this pattern is EMPTY
     ///   and covers none of the surface."
-    ///   at most a tenth dropped: "The skin has a small hole where each
+    ///   at most a tenth lost: "The skin has a small hole where each
     ///   one was, and the tessellation Export writes still imports."
     ///   more than a tenth: "That is N per cent of this pattern, so the
     ///   skin has a LARGE hole and it covers only part of the surface;
     ///   the tessellation Export writes still imports."
     /// and every branch is preceded by the count against the TOTAL the
-    /// pattern built, "D of the B cells this pattern built were DROPPED
-    /// to keep it valid in plan", so the fraction is legible whichever
-    /// branch fires.
+    /// pattern PROPOSED rather than the total it built, "L of the P cells
+    /// this pattern proposed were REFUSED or DROPPED to keep it valid",
+    /// broken down into the four kinds: self-crossing, overlapping a cell
+    /// already kept, welded below three distinct corners, and refused at
+    /// emission for leaving their band. Counting the refusals as well as
+    /// the drops is what stops the number FALLING when the pattern starts
+    /// covering less. So the fraction is legible whichever branch fires.
     /// </summary>
     private static void ValidateSkinPlanFilter(Assembly plugin)
     {
@@ -25275,6 +25434,16 @@ internal static class Program
     /// and saying existing wires kept their slots. That is the right
     /// behaviour and it is pinned in ValidateParameterMismatch; the
     /// silence claim is withdrawn.
+    ///
+    /// RENAMED 2026-09-03 (skin-offset-surface, rule 5). Port 6 was "Along
+    /// Normal" ("N") and defaulted FALSE. It named the direction of an
+    /// EXTRUSION, when what was asked for was the choice between an OFFSET
+    /// SURFACE and an extrusion. It is now "Offset" ("OF") and defaults
+    /// TRUE. THE INDEX DOES NOT MOVE, which is the whole reason a rename
+    /// is safe here: no archived wire changes port. The DEFAULT is
+    /// asserted below because the flip is the visible half of the ruling,
+    /// a component dropped fresh gets the offset surface, and a default
+    /// left at false would ship the old behaviour under the new name.
     /// </summary>
     private static void ValidateSkinThicknessPorts(Assembly plugin)
     {
@@ -25293,7 +25462,7 @@ internal static class Program
             ("Course Height", "CH"),
             ("Min Piece", "MP"),
             ("Thickness", "Th"),
-            ("Along Normal", "N")
+            ("Offset", "OF")
         };
         if (inputs.Count != expected.Length)
         {
@@ -25324,15 +25493,15 @@ internal static class Program
         }
 
         object thPort = inputs[5]!;
-        object alongNormalPort = inputs[6]!;
+        object offsetPort = inputs[6]!;
         bool ThOptional() => (bool)thPort.GetType()
             .GetProperty("Optional")!.GetValue(thPort)!;
-        bool AlongNormalOptional() => (bool)alongNormalPort.GetType()
-            .GetProperty("Optional")!.GetValue(alongNormalPort)!;
-        if (!ThOptional() || !AlongNormalOptional())
+        bool OffsetOptional() => (bool)offsetPort.GetType()
+            .GetProperty("Optional")!.GetValue(offsetPort)!;
+        if (!ThOptional() || !OffsetOptional())
         {
             throw new InvalidOperationException(
-                "Th and Along Normal must both be Optional, like every " +
+                "Th and Offset must both be Optional, like every " +
                 "port after Result: a definition saved before this task " +
                 "supplies neither, and an unwired required input would " +
                 "refuse to solve at all.");
@@ -25348,295 +25517,1073 @@ internal static class Program
                 "that a nonzero value builds a CLOSED SOLID: the " +
                 "ruling's two load-bearing clauses. Got: " + thText);
         }
-        string alongNormalText = (string)alongNormalPort.GetType()
-            .GetProperty("Description")!.GetValue(alongNormalPort)!;
-        if (!alongNormalText.Contains(
-                "own normal", StringComparison.OrdinalIgnoreCase))
+        // Rule 4's own words on Th: SIGNED and ONE-SIDED, so the solved
+        // surface is a face he can build to rather than the middle of the
+        // stone. The port is where an author reads that, and the studio's
+        // half-each-side reading is the one it must not be mistaken for.
+        if (!thText.Contains("ONE-SIDED", StringComparison.Ordinal) ||
+            !thText.Contains("never its middle", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "Along Normal's description must say it offsets each " +
-                "cell along ITS OWN normal, the toggle's whole point. " +
-                "Got: " + alongNormalText);
+                "Th's description must say the offset is SIGNED and " +
+                "ONE-SIDED and that the solved surface is never the " +
+                "middle of the stone (rule 4): the studio centres its " +
+                "blocks half each side and this engine deliberately does " +
+                "not. Got: " + thText);
+        }
+
+        string offsetText = (string)offsetPort.GetType()
+            .GetProperty("Description")!.GetValue(offsetPort)!;
+        // Rule 5's two branches, each in its own words. "AT THAT POINT" is
+        // the load-bearing half of the true branch: a description that
+        // said only "along the normal" would read exactly as the deleted
+        // Along Normal did, and the whole change is that the normal
+        // belongs to the point rather than to the cell.
+        foreach ((string fragment, string why) in new[]
+                 {
+                     ("AT THAT POINT",
+                         "the true branch's normal belongs to the POINT " +
+                         "and not to the cell, which is the whole change"),
+                     ("welded",
+                         "the true branch's consequence is that cells " +
+                         "sharing a corner stay welded"),
+                     ("(0, 0, Th)",
+                         "the false branch names the vertical extrusion " +
+                         "it actually performs")
+                 })
+        {
+            if (!offsetText.Contains(fragment, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Offset's description must carry '{fragment}', " +
+                    $"because {why}. Got: " + offsetText);
+            }
+        }
+        // THE DEFAULT FLIPPED, and it is read off the port's own
+        // persistent data rather than trusted: a component dropped fresh
+        // must build the offset surface. Left at false the old behaviour
+        // would ship under the new name and nothing else here would
+        // notice.
+        object persistent = offsetPort.GetType()
+            .GetProperty("PersistentData")!.GetValue(offsetPort)!;
+        var defaults = new List<bool>();
+        foreach (object? item in (IEnumerable)persistent.GetType()
+                     .GetMethod("AllData")!
+                     .Invoke(persistent, new object[] { true })!)
+        {
+            if (item is null)
+                continue;
+            defaults.Add((bool)item.GetType()
+                .GetProperty("Value")!.GetValue(item)!);
+        }
+        if (defaults.Count != 1 || !defaults[0])
+        {
+            throw new InvalidOperationException(
+                "Offset must default to TRUE (rule 5): a component " +
+                "dropped fresh gets the offset surface, and Param flips " +
+                "his one archived toggle by hand. The port carries " +
+                $"{defaults.Count} default value(s)" +
+                (defaults.Count == 1 ? $", and it is {defaults[0]}" : "") +
+                ".");
         }
     }
 
     /// <summary>
-    /// Spec 2026-09-02 (skin-thickness-input), the arithmetic half this
-    /// harness CAN drive without a Brep: <c>ThicknessOffset</c> and
-    /// <c>CellNormalUnit</c> take and return plain double[] and touch no
-    /// RhinoCommon type, so every claim about the DIRECTION a cell's face
-    /// is copied along is measured here directly, the same split
-    /// SkinPatterns.cs already keeps for testability. The claim that the
-    /// copy CLOSES into a solid needs the native core this harness does
-    /// not launch (rule 5.2.4's split); that half is
+    /// Spec 2026-09-03 (skin-offset-surface), the arithmetic half this
+    /// harness CAN drive without a Brep: <c>ThicknessOffset</c>,
+    /// <c>OffsetOutline</c> and <c>Thickening</c> take and return plain
+    /// doubles and double[] and touch no RhinoCommon type, so every claim
+    /// about WHERE an outline point is copied to is measured here directly,
+    /// the same split SkinPatterns.cs already keeps for testability. The
+    /// claim that the copy CLOSES into a solid needs the native core this
+    /// harness does not launch (rule 5.2.4's split); that half is
     /// scripts/rhino_skin_surface.py, run inside Rhino, the way
     /// CellSurface's own Brep behaviour already is.
+    ///
+    /// THREE of the spec's six checks live here: section 4 check 4 (no
+    /// regression in the extrude branch), check 3 (the sign mirrors) and
+    /// check 5 (Th = 0 never reaches the thickener at all). Checks 1, 2 and
+    /// 6 have fixtures of their own and their own functions below.
     /// </summary>
     private static void ValidateSkinThicknessOffset(Assembly plugin)
     {
         Type skinType = RequireComponentType(plugin, "SkinComponent");
-        MethodInfo offsetMethod = RequireStatic(skinType, "ThicknessOffset");
-        MethodInfo normalMethod = RequireStatic(skinType, "CellNormalUnit");
-
-        double[] Offset(
-            List<double[]> outline, double thickness, bool alongNormal) =>
-            (double[])offsetMethod.Invoke(
-                null, new object?[] { outline, thickness, alongNormal })!;
-        double[] Normal(List<double[]> outline) =>
-            (double[])normalMethod.Invoke(null, new object?[] { outline })!;
-
-        // ---- ALONG NORMAL FALSE is the CONSTANT vector (0, 0, Th)
-        // whatever the cell's own shape: the outline is accepted but
-        // never read, which is the entire mechanism behind "the same
-        // level of connectivness".
-        var anyOutline = new List<double[]>
-        {
-            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.3 },
-            new[] { 1.0, 1.0, 0.1 }
-        };
-        double[] zUp = Offset(anyOutline, 0.4, false);
-        double[] zDown = Offset(anyOutline, -0.4, false);
-        if (zUp[0] != 0.0 || zUp[1] != 0.0 ||
-            Math.Abs(zUp[2] - 0.4) > 1.0e-12 ||
-            zDown[0] != 0.0 || zDown[1] != 0.0 ||
-            Math.Abs(zDown[2] + 0.4) > 1.0e-12)
-        {
-            throw new InvalidOperationException(
-                "Along Normal false must translate by exactly (0, 0, " +
-                $"Th): got ({zUp[0]}, {zUp[1]}, {zUp[2]}) at Th 0.4 and " +
-                $"({zDown[0]}, {zDown[1]}, {zDown[2]}) at Th -0.4.");
-        }
-
-        // ---- a FLAT cell, traced counter-clockwise as seen from above,
-        // the winding this component's own outlines carry: CellNormalUnit
-        // must read (0, 0, 1), and Along Normal true must AGREE with
-        // vertical mode there, sign for sign, since the two directions
-        // coincide on a flat cell.
-        var flatSquare = new List<double[]>
-        {
-            new[] { 0.0, 0.0, 5.0 }, new[] { 1.0, 0.0, 5.0 },
-            new[] { 1.0, 1.0, 5.0 }, new[] { 0.0, 1.0, 5.0 }
-        };
-        double[] flatNormal = Normal(flatSquare);
-        if (Math.Abs(flatNormal[0]) > 1.0e-9 ||
-            Math.Abs(flatNormal[1]) > 1.0e-9 ||
-            Math.Abs(flatNormal[2] - 1.0) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "A flat cell traced counter-clockwise from above has " +
-                $"unit normal (0, 0, 1); got ({flatNormal[0]}, " +
-                $"{flatNormal[1]}, {flatNormal[2]}).");
-        }
-        double[] flatUp = Offset(flatSquare, 0.4, true);
-        double[] flatDown = Offset(flatSquare, -0.4, true);
-        if (Math.Abs(flatUp[2] - 0.4) > 1.0e-9 ||
-            Math.Abs(flatDown[2] + 0.4) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "Along Normal true on a flat cell must agree with " +
-                $"vertical mode, sign for sign: got {flatUp[2]} at Th " +
-                $"0.4 and {flatDown[2]} at Th -0.4.");
-        }
-
-        // ---- a genuinely SLOPED cell, and the ONLY fixture in this
-        // check that can tell the toggle apart from the vertical
-        // default. Every case above is either flat (where the two modes
-        // coincide by construction) or measures length and sign alone,
-        // so an engine that read the flag and then offset vertically
-        // anyway passed all of them: MEASURED on 2026-09-03 by mutating
-        // ThicknessOffset's guard to 'if (!alongNormal ||
-        // outline.Count >= 0)', which left the whole suite green.
-        //
-        // The fixture is a PLANAR square tilted 45 degrees about the x
-        // axis: (0,0,0), (1,0,0), (1,1,1), (0,1,1). Its Newell sum is
-        // (0, -2, 2), so the unit normal is (0, -1, 1) / sqrt(2), and
-        // the offset the toggle owes at Th is the slope's own
-        // arithmetic: Th / sqrt(2) ACROSS in -y and Th / sqrt(2) up,
-        // against vertical mode's (0, 0, Th) on the very same outline.
-        // The direction is the CELL NORMAL and not world Z, which is
-        // the whole of what the toggle offers.
-        var sloped = new List<double[]>
-        {
-            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
-            new[] { 1.0, 1.0, 1.0 }, new[] { 0.0, 1.0, 1.0 }
-        };
-        double slopedComponent = 1.0 / Math.Sqrt(2.0);
-        double[] slopedNormal = Normal(sloped);
-        if (Math.Abs(slopedNormal[0]) > 1.0e-12 ||
-            Math.Abs(slopedNormal[1] + slopedComponent) > 1.0e-12 ||
-            Math.Abs(slopedNormal[2] - slopedComponent) > 1.0e-12)
-        {
-            throw new InvalidOperationException(
-                "A square tilted 45 degrees about x has unit normal " +
-                $"(0, -{slopedComponent}, {slopedComponent}); got " +
-                $"({slopedNormal[0]}, {slopedNormal[1]}, " +
-                $"{slopedNormal[2]}).");
-        }
-        const double SlopedThickness = 0.4;
-        double[] slopedNormalMode =
-            Offset(sloped, SlopedThickness, true);
-        double[] slopedVerticalMode =
-            Offset(sloped, SlopedThickness, false);
-        double slopedExpected = SlopedThickness * slopedComponent;
-        if (Math.Abs(slopedNormalMode[0]) > 1.0e-12 ||
-            Math.Abs(slopedNormalMode[1] + slopedExpected) > 1.0e-12 ||
-            Math.Abs(slopedNormalMode[2] - slopedExpected) > 1.0e-12)
-        {
-            throw new InvalidOperationException(
-                "Along Normal TRUE on a cell sloped 45 degrees must " +
-                "translate along the CELL'S OWN normal, which is the " +
-                $"slope's own arithmetic: (0, -{slopedExpected}, " +
-                $"{slopedExpected}) at Th {SlopedThickness}. Got " +
-                $"({slopedNormalMode[0]}, {slopedNormalMode[1]}, " +
-                $"{slopedNormalMode[2]}). An engine that ignores the " +
-                "flag and offsets vertically returns (0, 0, " +
-                $"{SlopedThickness}) here.");
-        }
-        if (Math.Abs(slopedNormalMode[1] - slopedVerticalMode[1]) <=
-                1.0e-9 ||
-            Math.Abs(slopedNormalMode[2] - slopedVerticalMode[2]) <=
-                1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "The toggle must CHANGE the offset on a sloped cell, " +
-                "across and up both: normal mode gave " +
-                $"({slopedNormalMode[0]}, {slopedNormalMode[1]}, " +
-                $"{slopedNormalMode[2]}) and vertical mode " +
-                $"({slopedVerticalMode[0]}, {slopedVerticalMode[1]}, " +
-                $"{slopedVerticalMode[2]}) on the same outline, which " +
-                "is a toggle that does nothing.");
-        }
-
-        // ---- a NON-PLANAR cell (the ruling's harness pins closedness on
-        // "a planar and a non-planar cell"; the normal and its sign flip
-        // are the half of that claim provable without a Brep): still a
-        // unit vector, and Th's sign still flips it.
-        var warped = new List<double[]>
-        {
-            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
-            new[] { 1.0, 1.0, 1.0 }, new[] { 0.0, 1.0, 0.0 }
-        };
-        double[] warpedNormal = Normal(warped);
-        double warpedLength = Math.Sqrt(
-            (warpedNormal[0] * warpedNormal[0]) +
-            (warpedNormal[1] * warpedNormal[1]) +
-            (warpedNormal[2] * warpedNormal[2]));
-        if (Math.Abs(warpedLength - 1.0) > 1.0e-9)
-        {
-            throw new InvalidOperationException(
-                "A non-planar cell's own normal must still come back " +
-                $"unit length; got {warpedLength}.");
-        }
-        double[] warpedUp = Offset(warped, 0.7, true);
-        double[] warpedDown = Offset(warped, -0.7, true);
-        for (int axis = 0; axis < 3; axis++)
-        {
-            if (Math.Abs(warpedUp[axis] + warpedDown[axis]) > 1.0e-9)
-            {
-                throw new InvalidOperationException(
-                    "Flipping Th's sign must flip the offset vector on " +
-                    $"a non-planar cell too: axis {axis} gave " +
-                    $"{warpedUp[axis]} at +0.7 and {warpedDown[axis]} " +
-                    "at -0.7, which do not sum to zero.");
-            }
-        }
-
-        // ---- a DEGENERATE outline: an arbitrary but FINITE fallback
-        // rather than a division by zero, both too few corners and three
-        // coincident ones.
-        var tooFew = new List<double[]> { new[] { 0.0, 0.0, 0.0 } };
-        var coincident = new List<double[]>
-        {
-            new[] { 2.0, 2.0, 2.0 }, new[] { 2.0, 2.0, 2.0 },
-            new[] { 2.0, 2.0, 2.0 }
-        };
-        foreach (List<double[]> degenerate in new[] { tooFew, coincident })
-        {
-            double[] fallback = Normal(degenerate);
-            double length = Math.Sqrt(
-                (fallback[0] * fallback[0]) + (fallback[1] * fallback[1]) +
-                (fallback[2] * fallback[2]));
-            if (!double.IsFinite(length) || Math.Abs(length - 1.0) > 1.0e-9)
-            {
-                throw new InvalidOperationException(
-                    "A degenerate outline must fall back to a finite " +
-                    "unit normal rather than NaN or a division by zero; " +
-                    $"got ({fallback[0]}, {fallback[1]}, {fallback[2]}).");
-            }
-        }
-
-        // ---- TWO REAL ADJACENT CELLS off an actual generated pattern:
-        // their shared corner, taken verbatim off SkinPatterns.Courses,
-        // must survive Along Normal false's translation still coincident
-        // bit for bit, which is the whole of "the same level of
-        // connectivness" measured on cells the engine itself built
-        // rather than on a hand-drawn fixture.
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
         Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo offsetMethod = RequireStatic(skinType, "ThicknessOffset");
+        MethodInfo outlineMethod = RequireStatic(skinType, "OffsetOutline");
+        MethodInfo thickeningMethod = RequireStatic(skinType, "Thickening");
+        MethodInfo classify = RequireStatic(skinType, "ClassifyCellSurface");
+
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object net = SkinNetWith(
+            netType, edgeType, domeVertices, domeFaces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+
+        double[] Offset(double[] point, double thickness, bool offsetSurface) =>
+            (double[])offsetMethod.Invoke(
+                null,
+                new object?[] { net, point, thickness, offsetSurface })!;
+        double[][] Moved(
+            double[][] outline, double thickness, bool offsetSurface)
+        {
+            var read = new List<double[]>();
+            foreach (object? item in (IEnumerable)outlineMethod.Invoke(
+                         null,
+                         new object?[]
+                         {
+                             net, outline, thickness, offsetSurface
+                         })!)
+            {
+                read.Add((double[])item!);
+            }
+            return read.ToArray();
+        }
+        bool Thickening(double thickness) =>
+            (bool)thickeningMethod.Invoke(
+                null, new object[] { thickness })!;
+
+        // ---- CHECK 4, NO REGRESSION IN THE EXTRUDE BRANCH. Offset false
+        // is the constant vector (0, 0, Th) at EVERY point of the net
+        // without exception, exactly what shipped before this task, so the
+        // change is additive for anyone who wants the old solid. The
+        // points are spread over the dome deliberately: rim, mid-slope and
+        // crown, where the surface normal is nothing like world Z.
+        double[][] spread =
+        {
+            new[] { 2.0, 0.0, 0.0 },
+            new[] { 0.7, 0.7, 1.0 },
+            new[] { 0.0, 0.0, 2.0 },
+            new[] { -1.4, 1.4, 0.0 }
+        };
+        foreach (double[] point in spread)
+        {
+            foreach (double thickness in new[] { 0.4, -0.4, 3.0 })
+            {
+                double[] extruded = Offset(point, thickness, false);
+                if (extruded[0] != 0.0 || extruded[1] != 0.0 ||
+                    extruded[2] != thickness)
+                {
+                    throw new InvalidOperationException(
+                        "Offset FALSE must translate by exactly (0, 0, " +
+                        "Th) at every point, bit for bit, which is the " +
+                        "extrude branch reproduced without regression: at " +
+                        $"({point[0]}, {point[1]}, {point[2]}) and Th " +
+                        $"{thickness} it gave ({extruded[0]}, " +
+                        $"{extruded[1]}, {extruded[2]}).");
+                }
+            }
+        }
+
+        // The same claim on a whole outline, since that is what the
+        // thickener actually moves: every corner gains the same three
+        // doubles, so a shared corner stays shared in the extrude branch
+        // too, by construction and not by tolerance.
+        double[][] ring =
+        {
+            new[] { 2.0, 0.0, 0.0 }, new[] { 1.4142, 1.4142, 0.0 },
+            new[] { 0.7071, 0.7071, 1.0 }, new[] { 1.0, 0.0, 1.0 }
+        };
+        double[][] extrudedRing = Moved(ring, 0.29, false);
+        for (int at = 0; at < ring.Length; at++)
+        {
+            if (extrudedRing[at][0] != ring[at][0] ||
+                extrudedRing[at][1] != ring[at][1] ||
+                extrudedRing[at][2] != ring[at][2] + 0.29)
+            {
+                throw new InvalidOperationException(
+                    "OffsetOutline in the extrude branch must add (0, 0, " +
+                    $"Th) to every corner: corner {at} went to " +
+                    $"({extrudedRing[at][0]}, {extrudedRing[at][1]}, " +
+                    $"{extrudedRing[at][2]}) from ({ring[at][0]}, " +
+                    $"{ring[at][1]}, {ring[at][2]}) at Th 0.29.");
+            }
+        }
+
+        // ---- THE TOGGLE MUST DO SOMETHING. The dome's slope is 45
+        // degrees everywhere, so the offset branch owes a horizontal
+        // component the extrude branch cannot have. Without this the whole
+        // check would pass on an engine that read the flag and extruded
+        // anyway, which is the mutation that survived the previous task's
+        // fixtures until a sloped one was added.
+        double[] slopePoint = { 1.4142, 0.0, 0.6 };
+        double[] onNormal = Offset(slopePoint, 0.5, true);
+        double[] vertical = Offset(slopePoint, 0.5, false);
+        double horizontal = Math.Sqrt(
+            (onNormal[0] * onNormal[0]) + (onNormal[1] * onNormal[1]));
+        if (horizontal <= 1.0e-6)
+        {
+            throw new InvalidOperationException(
+                "Offset TRUE on the dome's 45 degree flank must carry a " +
+                "HORIZONTAL component, the surface normal there being " +
+                "nothing like world Z; it gave " +
+                $"({onNormal[0]}, {onNormal[1]}, {onNormal[2]}) against " +
+                $"the extrude branch's ({vertical[0]}, {vertical[1]}, " +
+                $"{vertical[2]}), so the flag is being read and ignored.");
+        }
+        double onLength = Math.Sqrt(
+            (onNormal[0] * onNormal[0]) + (onNormal[1] * onNormal[1]) +
+            (onNormal[2] * onNormal[2]));
+        if (Math.Abs(onLength - 0.5) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The offset carries the FULL Th along a UNIT normal, so " +
+                $"its length is |Th| = 0.5; got {onLength}. A normal left " +
+                "unnormalised, or a half-thickness taken from the " +
+                "studio's centred blocks, is what this notices.");
+        }
+
+        // ---- CHECK 3, THE SIGN. A negative Thickness mirrors a positive
+        // one about the solved surface, point for point, in BOTH branches:
+        // the two moved outlines average back to the outline itself. Rule
+        // 4 is signed and one-sided, so this is also the statement that
+        // the surface solved for is a FACE of the skin and not its middle.
+        foreach (bool offsetSurface in new[] { false, true })
+        {
+            double[][] up = Moved(ring, 0.37, offsetSurface);
+            double[][] down = Moved(ring, -0.37, offsetSurface);
+            for (int at = 0; at < ring.Length; at++)
+            {
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    double middle = (up[at][axis] + down[at][axis]) / 2.0;
+                    if (Math.Abs(middle - ring[at][axis]) > 1.0e-12)
+                    {
+                        throw new InvalidOperationException(
+                            "A negative Thickness must MIRROR a positive " +
+                            "one about the solved surface, point for " +
+                            $"point (offset branch {offsetSurface}): " +
+                            $"corner {at} axis {axis} went to {up[at][axis]}" +
+                            $" at +0.37 and {down[at][axis]} at -0.37, " +
+                            $"whose middle {middle} is not the corner's " +
+                            $"own {ring[at][axis]}.");
+                    }
+                }
+            }
+            // And the surface solved for is an OUTER face, not the middle
+            // of the stone: the full Th separates the two, never half of
+            // it each side the way bench/studio/voussoirs.py builds a
+            // block.
+            double span = Math.Sqrt(
+                Math.Pow(up[0][0] - ring[0][0], 2) +
+                Math.Pow(up[0][1] - ring[0][1], 2) +
+                Math.Pow(up[0][2] - ring[0][2], 2));
+            if (Math.Abs(span - 0.37) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "ONE SIDE ONLY (rule 4): a positive Th moves the " +
+                    "outline the FULL Th off the solved surface, so the " +
+                    "solved surface is the intrados or the extrados and " +
+                    $"never the middle. Corner 0 moved {span} at Th 0.37 " +
+                    $"(offset branch {offsetSurface}); half of it is the " +
+                    "studio's centred reading, which was offered and " +
+                    "declined.");
+            }
+        }
+
+        // ---- CHECK 5, Th = 0 NEVER REACHES THE THICKENER. The Surface
+        // tree must carry the SAME Brep reference CellSurface built,
+        // untouched, and not a copy built and then found equal. That rests
+        // entirely on the gate SolveNative asks, which is Thickening, so
+        // the gate is measured rather than the reference: no Brep can be
+        // built in this process at all.
+        foreach (double zero in new[] { 0.0, -0.0 })
+        {
+            if (Thickening(zero))
+            {
+                throw new InvalidOperationException(
+                    "Th = 0 must ask for NO thickening, so the face " +
+                    "CellSurface built reaches the tree untouched; " +
+                    $"Thickening({zero}) came back true. Negative zero is " +
+                    "here because it compares equal to zero and an " +
+                    "author's expression can produce it.");
+            }
+        }
+        foreach (double asked in new[] { 1.0e-300, -1.0e-300, 0.29, -0.29 })
+        {
+            if (!Thickening(asked))
+            {
+                throw new InvalidOperationException(
+                    "Any nonzero Th asks for a solid, however small: " +
+                    $"Thickening({asked}) came back false, so that cell " +
+                    "would silently keep its bare face.");
+            }
+        }
+        string zeroSlot = classify.Invoke(
+            null, new object[] { true, false, false })!.ToString()!;
+        if (zeroSlot != "Face")
+        {
+            throw new InvalidOperationException(
+                "With no thickening asked for, the slot carries the FACE " +
+                $"itself and nothing else; it came back {zeroSlot}.");
+        }
+    }
+
+    /// <summary>
+    /// SPEC 2026-09-03 SECTION 4, CHECK 6: THE NORMAL FIELD ITSELF.
+    ///
+    /// Area weighting is real, and it is pinned against a HAND-COMPUTED
+    /// value rather than against the engine's own answer. The fixture is
+    /// two triangles sharing an edge, one three times the area of the
+    /// other:
+    ///
+    ///   v0 (0, 0, 0)   v1 (1, 0, 0)   v2 (0, 1, 0)   v3 (0, 0, -3)
+    ///   face A = v0 v1 v2, face B = v0 v2 v3
+    ///
+    /// Face A's raw cross is (1, 0, 0) x (0, 1, 0) = (0, 0, 1), of length
+    /// 1. Face B's is (0, 1, 0) x (0, 0, -3) = (-3, 0, 0), of length 3. So
+    /// at the SHARED vertices v0 and v2 the unweighted sum is (-3, 0, 1),
+    /// whose unit is (-3, 0, 1) / sqrt(10) = (-0.948683298, 0,
+    /// 0.316227766): it LEANS TOWARD THE LARGE FACE, which is the whole of
+    /// what area weighting buys.
+    ///
+    /// The mutation this exists to catch is the natural one: normalising
+    /// each face's cross before accumulating it. That gives (0, 0, 1) plus
+    /// (-1, 0, 0), whose unit is (-0.707106781, 0, 0.707106781), and every
+    /// other property of the field (unit length, finiteness, the fallback)
+    /// survives it untouched.
+    ///
+    /// A raw cross product is TWICE the triangle's area, so summing
+    /// unnormalised crosses is exactly area weighting and no area is ever
+    /// computed. That is bench/studio/blocks.py's own trick
+    /// (vertex_normals, lines 36 to 46) and this engine takes it verbatim.
+    /// </summary>
+    private static void ValidateSkinNormalField(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo vertexNormals =
+            RequirePublicStatic(patterns, "VertexNormals");
+        MethodInfo normalAt = RequirePublicStatic(patterns, "NormalAt");
+
+        double[][] Field(double[][] vertices, int[][] faces)
+        {
+            var read = new List<double[]>();
+            foreach (object? item in (IEnumerable)vertexNormals.Invoke(
+                         null, new object[] { vertices, faces })!)
+            {
+                read.Add((double[])item!);
+            }
+            return read.ToArray();
+        }
+
+        double[][] leaning =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, -3.0 }
+        };
+        int[][] twoTriangles = { new[] { 0, 1, 2 }, new[] { 0, 2, 3 } };
+        double[][] field = Field(leaning, twoTriangles);
+        if (field.Length != leaning.Length)
+        {
+            throw new InvalidOperationException(
+                $"The field carries one normal per vertex: {leaning.Length} " +
+                $"vertices gave {field.Length} normals.");
+        }
+
+        double root10 = Math.Sqrt(10.0);
+        double[] wanted = { -3.0 / root10, 0.0, 1.0 / root10 };
+        foreach (int shared in new[] { 0, 2 })
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (Math.Abs(field[shared][axis] - wanted[axis]) > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        "AREA WEIGHTING IS REAL. Vertex " + shared +
+                        " is shared by a face of twice-area 1 and a face " +
+                        "of twice-area 3, so its normal is the sum of the " +
+                        "RAW crosses, (-3, 0, 1) / sqrt(10) = " +
+                        $"({wanted[0]}, {wanted[1]}, {wanted[2]}). It came " +
+                        $"back ({field[shared][0]}, {field[shared][1]}, " +
+                        $"{field[shared][2]}). Normalising each face's " +
+                        "cross before summing gives (-0.7071067811865475, " +
+                        "0, 0.7071067811865475) here and nothing else in " +
+                        "this file would notice.");
+                }
+            }
+        }
+        // The two vertices belonging to ONE face each answer that face
+        // alone, which is what says the accumulation reaches the right
+        // vertices rather than smearing over all of them.
+        (int Vertex, double[] Normal)[] lone =
+        {
+            (1, new[] { 0.0, 0.0, 1.0 }),
+            (3, new[] { -1.0, 0.0, 0.0 })
+        };
+        foreach ((int vertex, double[] want) in lone)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (Math.Abs(field[vertex][axis] - want[axis]) > 1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        $"Vertex {vertex} belongs to ONE face, so its " +
+                        $"normal is that face's: ({want[0]}, {want[1]}, " +
+                        $"{want[2]}). Got ({field[vertex][0]}, " +
+                        $"{field[vertex][1]}, {field[vertex][2]}).");
+                }
+            }
+        }
+
+        // A face of ANY corner count, not just quads: the same two
+        // triangles written as ONE quad v1 v2 v3 fanned from v1 must give
+        // the vertices they share the same normals, because the fan is the
+        // triangulation.
+        double[][] quadVertices =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 1.0, 0.0, 0.0 },
+            new[] { 0.0, 1.0, 0.0 },
+            new[] { 0.0, 0.0, -3.0 }
+        };
+        double[][] quadField =
+            Field(quadVertices, new[] { new[] { 0, 1, 2, 3 } });
+        foreach (int vertex in new[] { 0, 2 })
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (Math.Abs(quadField[vertex][axis] - wanted[axis]) >
+                    1.0e-12)
+                {
+                    throw new InvalidOperationException(
+                        "A FOUR-cornered face must be fanned from its " +
+                        "first corner, giving the same two triangles and " +
+                        $"so the same normals: vertex {vertex} came back " +
+                        $"({quadField[vertex][0]}, {quadField[vertex][1]}, " +
+                        $"{quadField[vertex][2]}) rather than " +
+                        $"({wanted[0]}, {wanted[1]}, {wanted[2]}). This " +
+                        "engine's nets carry triangles AND quads.");
+                }
+            }
+        }
+
+        // A DEGENERATE fan: a vertex no face mentions, and a face whose
+        // corners are coincident. Both fall back to (0, 0, 1), a finite
+        // arbitrary direction rather than a NaN.
+        double[][] degenerate =
+        {
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 0.0, 0.0, 0.0 },
+            new[] { 7.0, 7.0, 7.0 }
+        };
+        double[][] fallback =
+            Field(degenerate, new[] { new[] { 0, 1, 2 } });
+        foreach (int vertex in new[] { 0, 3 })
+        {
+            if (fallback[vertex][0] != 0.0 || fallback[vertex][1] != 0.0 ||
+                fallback[vertex][2] != 1.0)
+            {
+                throw new InvalidOperationException(
+                    "A degenerate fan, and a vertex no face mentions, " +
+                    "both fall back to (0, 0, 1) rather than dividing by " +
+                    $"zero: vertex {vertex} came back " +
+                    $"({fallback[vertex][0]}, {fallback[vertex][1]}, " +
+                    $"{fallback[vertex][2]}).");
+            }
+        }
+
+        // ---- THE FIELD IS CACHED ON THE NET, beside the level field and
+        // with the same lifetime, and it is the same arithmetic: a net
+        // built on these vertices and faces carries exactly this field.
+        object leaningNet = SkinNetWith(
+            netType, edgeType, leaning, twoTriangles, Array.Empty<int>(),
+            Array.Empty<(int, int, double)>());
+        IList cached = (IList)netType.GetProperty("Normals")!
+            .GetValue(leaningNet)!;
+        for (int vertex = 0; vertex < field.Length; vertex++)
+        {
+            var carried = (double[])cached[vertex]!;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (carried[axis] != field[vertex][axis])
+                {
+                    throw new InvalidOperationException(
+                        "SkinNet.Normals must be VertexNormals over the " +
+                        "net's own triangulated faces, bit for bit, or " +
+                        "the field the offset reads is not the field this " +
+                        $"check measured: vertex {vertex} axis {axis} " +
+                        $"carried {carried[axis]} against {field[vertex][axis]}.");
+                }
+            }
+        }
+
+        // ---- THE NORMAL AT A POINT, and the continuity rule 3 rests on.
+        // A point in the middle of face A gets face A's own normal, since
+        // every corner of A carries a different one and the barycentric
+        // combination is what makes them agree; a point ON the shared edge
+        // gets the SAME answer whichever face the lookup picks, because
+        // the third weight is zero on both sides. That is why no weld pass
+        // is needed anywhere.
+        double[] Normal(object net, double[] at) =>
+            (double[])normalAt.Invoke(null, new object?[] { net, at })!;
+
+        double[] onEdge = { 0.0, 0.5, 0.0 };
+        double[] edgeNormal = Normal(leaningNet, onEdge);
+        // v0 and v2 both carry (-3, 0, 1)/sqrt(10), so anywhere on the
+        // shared edge the interpolation is that same vector, whichever
+        // triangle claims the point.
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (Math.Abs(edgeNormal[axis] - wanted[axis]) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    "A point on the edge SHARED by both faces must " +
+                    "interpolate the two vertex normals that edge carries, " +
+                    "which are equal here, so the answer is independent of " +
+                    "which face the lookup picked: got " +
+                    $"({edgeNormal[0]}, {edgeNormal[1]}, {edgeNormal[2]}) " +
+                    $"rather than ({wanted[0]}, {wanted[1]}, {wanted[2]}).");
+            }
+        }
+        double edgeLength = Math.Sqrt(
+            (edgeNormal[0] * edgeNormal[0]) +
+            (edgeNormal[1] * edgeNormal[1]) +
+            (edgeNormal[2] * edgeNormal[2]));
+        if (Math.Abs(edgeLength - 1.0) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "The interpolated normal is RENORMALISED, so it comes " +
+                $"back unit length; got {edgeLength}.");
+        }
+        double[] offNet = Normal(leaningNet, new[] { 40.0, 40.0, 0.0 });
+        if (offNet[0] != 0.0 || offNet[1] != 0.0 || offNet[2] != 1.0)
+        {
+            throw new InvalidOperationException(
+                "A point with NO face under it in plan falls back to " +
+                $"(0, 0, 1); got ({offNet[0]}, {offNet[1]}, {offNet[2]}).");
+        }
+
+        // ---- CONTINUITY, MEASURED rather than argued, on the dome, whose
+        // faces genuinely disagree about their own normals. Walking a line
+        // across face boundaries, the field never jumps: consecutive
+        // samples 1e-4 m apart stay within a small multiple of that.
+        // A field read off the FACE rather than interpolated from the
+        // vertices would step at every crossing, and the weld would go
+        // with it.
+        //
+        // The walk stays INSIDE the dome's plan. Its footprint is an
+        // OCTAGON whose vertices sit at radius 2, so its inscribed circle
+        // is 2 cos(22.5 degrees) = 1.848, and a walk to radius 1.9 leaves
+        // the net near the ends and takes rule 2's (0, 0, 1) fallback,
+        // which IS a step and is not the thing this measures. Rule 2's
+        // fallback is measured on its own two lines above.
+        (double[][] domeVertices, int[][] domeFaces) = SkinDomeNet();
+        object dome = SkinNetWith(
+            netType, edgeType, domeVertices, domeFaces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+        double[]? previous = null;
+        double worstJump = 0.0;
+        int samples = 0;
+        for (double x = -1.5; x <= 1.5; x += 1.0e-4)
+        {
+            double[] here = Normal(dome, new[] { x, 0.31, 0.0 });
+            if (previous is not null)
+            {
+                double jump = Math.Sqrt(
+                    Math.Pow(here[0] - previous[0], 2) +
+                    Math.Pow(here[1] - previous[1], 2) +
+                    Math.Pow(here[2] - previous[2], 2));
+                worstJump = Math.Max(worstJump, jump);
+            }
+            previous = here;
+            samples++;
+        }
+        Console.WriteLine(
+            "      Skin normal field: walking the dome at 1e-4 m steps, " +
+            $"{samples} samples, the worst step in the unit normal is " +
+            $"{worstJump:E3}.");
+        if (worstJump > 1.0e-2)
+        {
+            throw new InvalidOperationException(
+                "THE FIELD MUST BE CONTINUOUS ACROSS A FACE EDGE, which " +
+                "is rule 3 and the reason no weld pass is needed: " +
+                $"stepping 1e-4 m across the dome the normal jumped " +
+                $"{worstJump:E3}, which is a field read off the FACE and " +
+                "not interpolated from the vertices.");
+        }
+    }
+
+    /// <summary>
+    /// SPEC 2026-09-03 SECTION 4, CHECK 1: THE WELD. This is the check the
+    /// whole change exists for; without it nothing here is verified.
+    ///
+    /// Two adjacent cells that share an outline corner must offset that
+    /// corner to the SAME point, to 1e-12. The fixture is the CURVED dome
+    /// and the check refuses to pass unless the two cells' own Newell
+    /// normals genuinely DIFFER, recomputed here by this check's own
+    /// arithmetic so that a defect in the engine and a defect in the check
+    /// cannot cancel. On a fixture where the two agreed, the weld would
+    /// prove nothing: the deleted per-cell offset would pass it too.
+    ///
+    /// The old behaviour is measured beside the new one rather than
+    /// asserted from memory: the per-cell Newell offsets of those same two
+    /// cells are computed here and their separation is printed, so the gap
+    /// the change closes is a number on the console and not a claim.
+    /// </summary>
+    private static void ValidateSkinOffsetWeld(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo outlineMethod = RequireStatic(skinType, "OffsetOutline");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
+
         (double[][] vertices, int[][] faces) = SkinDomeNet();
         object net = SkinNetWith(
             netType, edgeType, vertices, faces, SkinDomeRim(),
             Array.Empty<(int, int, double)>());
-        object generated =
-            courses.Invoke(null, new object[] { net, 0.9, 0.6 })!;
+        object generated = courses.Invoke(null, new object[] { net, 0.9, 0.6 })!;
         var built = SkinCells(generated);
 
-        (double[] A, double[] B)? sharedPair = null;
-        for (int i = 0; i < built.Length && sharedPair is null; i++)
-        for (int j = i + 1; j < built.Length && sharedPair is null; j++)
+        double[][] Moved(double[][] outline, double thickness)
         {
-            if (built[i].Course != built[j].Course)
-                continue;
-            foreach (double[] a in built[i].Outline)
+            var read = new List<double[]>();
+            foreach (object? item in (IEnumerable)outlineMethod.Invoke(
+                         null,
+                         new object?[] { net, outline, thickness, true })!)
             {
-                foreach (double[] b in built[j].Outline)
+                read.Add((double[])item!);
+            }
+            return read.ToArray();
+        }
+
+        // This check's OWN Newell arithmetic, so that it and the engine
+        // cannot be wrong together.
+        static double[] Newell(double[][] outline)
+        {
+            double nx = 0.0, ny = 0.0, nz = 0.0;
+            for (int at = 0; at < outline.Length; at++)
+            {
+                double[] a = outline[at];
+                double[] b = outline[(at + 1) % outline.Length];
+                nx += (a[1] - b[1]) * (a[2] + b[2]);
+                ny += (a[2] - b[2]) * (a[0] + b[0]);
+                nz += (a[0] - b[0]) * (a[1] + b[1]);
+            }
+            double length = Math.Sqrt((nx * nx) + (ny * ny) + (nz * nz));
+            return length > 1.0e-12
+                ? new[] { nx / length, ny / length, nz / length }
+                : new[] { 0.0, 0.0, 1.0 };
+        }
+
+        const double WeldThickness = 0.3;
+        int pairsTested = 0;
+        double worstWeld = 0.0;
+        double worstOldSplit = 0.0;
+        double bestDisagreement = 0.0;
+        for (int i = 0; i < built.Length; i++)
+        {
+            for (int j = i + 1; j < built.Length; j++)
+            {
+                double[][] left = built[i].Outline;
+                double[][] right = built[j].Outline;
+                double[] leftNormal = Newell(left);
+                double[] rightNormal = Newell(right);
+                double agreement =
+                    (leftNormal[0] * rightNormal[0]) +
+                    (leftNormal[1] * rightNormal[1]) +
+                    (leftNormal[2] * rightNormal[2]);
+                // The two cells must genuinely disagree, or this pair
+                // proves nothing about the weld. Half a degree is far too
+                // little; a tenth of a radian is a real difference.
+                if (Math.Abs(agreement) > Math.Cos(0.1))
+                    continue;
+                bestDisagreement = Math.Max(
+                    bestDisagreement, 1.0 - Math.Abs(agreement));
+                double[][] leftMoved = Moved(left, WeldThickness);
+                double[][] rightMoved = Moved(right, WeldThickness);
+                for (int a = 0; a < left.Length; a++)
                 {
-                    if (a[0] == b[0] && a[1] == b[1] && a[2] == b[2])
+                    for (int b = 0; b < right.Length; b++)
                     {
-                        sharedPair = (a, b);
-                        break;
+                        if (left[a][0] != right[b][0] ||
+                            left[a][1] != right[b][1] ||
+                            left[a][2] != right[b][2])
+                        {
+                            continue;
+                        }
+                        pairsTested++;
+                        double gap = Math.Sqrt(
+                            Math.Pow(leftMoved[a][0] - rightMoved[b][0], 2) +
+                            Math.Pow(leftMoved[a][1] - rightMoved[b][1], 2) +
+                            Math.Pow(leftMoved[a][2] - rightMoved[b][2], 2));
+                        worstWeld = Math.Max(worstWeld, gap);
+                        // What the DELETED per-cell offset would have done
+                        // with the same corner and the same Th.
+                        double oldSplit = WeldThickness * Math.Sqrt(
+                            Math.Pow(leftNormal[0] - rightNormal[0], 2) +
+                            Math.Pow(leftNormal[1] - rightNormal[1], 2) +
+                            Math.Pow(leftNormal[2] - rightNormal[2], 2));
+                        worstOldSplit = Math.Max(worstOldSplit, oldSplit);
+                        if (gap > 1.0e-12)
+                        {
+                            throw new InvalidOperationException(
+                                "THE WELD. Two cells sharing the corner " +
+                                $"({left[a][0]}, {left[a][1]}, " +
+                                $"{left[a][2]}) offset it to two different " +
+                                $"places, {gap} m apart, at Th " +
+                                $"{WeldThickness}. The normal is a " +
+                                "property of the POINT and not of the " +
+                                "cell, so two cells that share a corner " +
+                                "move it identically or the skin gaps and " +
+                                "clashes where the surface turns. Their " +
+                                "own Newell normals differ by " +
+                                $"{Math.Acos(Math.Abs(agreement)):F4} rad, " +
+                                "which is what makes this pair worth " +
+                                "measuring.");
+                        }
                     }
                 }
-                if (sharedPair is not null)
-                    break;
             }
         }
-        if (sharedPair is null)
+        if (pairsTested == 0)
         {
             throw new InvalidOperationException(
-                "The dome fixture at S 0.9, CH 0.6 must build at least " +
-                "two cells in one course sharing an outline corner; " +
-                "none were found, so the coincidence claim below was " +
-                "never actually exercised on real cells.");
+                "The dome at S 0.9, CH 0.6 must give at least one pair of " +
+                "cells that SHARE A CORNER and whose own Newell normals " +
+                "differ by more than 0.1 rad; none was found, so the weld " +
+                "claim was measured on nothing and a per-cell offset " +
+                "would pass this check unchanged.");
         }
-        double[] offsetA = Offset(
-            new List<double[]> { sharedPair.Value.A }, 0.5, false);
-        double[] offsetB = Offset(
-            new List<double[]> { sharedPair.Value.B }, 0.5, false);
-        double[] wallA =
-        {
-            sharedPair.Value.A[0] + offsetA[0],
-            sharedPair.Value.A[1] + offsetA[1],
-            sharedPair.Value.A[2] + offsetA[2]
-        };
-        double[] wallB =
-        {
-            sharedPair.Value.B[0] + offsetB[0],
-            sharedPair.Value.B[1] + offsetB[1],
-            sharedPair.Value.B[2] + offsetB[2]
-        };
-        if (wallA[0] != wallB[0] || wallA[1] != wallB[1] ||
-            wallA[2] != wallB[2])
+        if (worstOldSplit <= 1.0e-6)
         {
             throw new InvalidOperationException(
-                "Two real adjacent cells sharing a corner must still " +
-                "share it, bit for bit, after Along Normal false's " +
-                "translation (the whole of the connectedness claim); " +
-                $"got ({wallA[0]}, {wallA[1]}, {wallA[2]}) and " +
-                $"({wallB[0]}, {wallB[1]}, {wallB[2]}).");
+                "The pairs found must be ones the DELETED per-cell offset " +
+                "would genuinely have torn apart, or the weld is being " +
+                "asserted where nothing was ever at risk; the worst " +
+                $"per-cell split is {worstOldSplit} m at Th " +
+                $"{WeldThickness}.");
+        }
+        Console.WriteLine(
+            $"      Skin offset weld: {pairsTested} shared corners across " +
+            "cell pairs whose own Newell normals disagree by up to " +
+            $"{bestDisagreement:F4} in cosine; every one of them offsets " +
+            $"to within {worstWeld:E3} m, where the DELETED per-cell " +
+            $"offset would have split them by up to {worstOldSplit:F4} m " +
+            $"at Th {WeldThickness}.");
+    }
+
+    /// <summary>
+    /// SPEC 2026-09-03 SECTION 4, CHECK 2: THE VERTICAL EDGE, and the
+    /// MEASUREMENT PARAM ASKED FOR.
+    ///
+    /// A side wall is the quad (a, b, b + offset, a + offset). Where the
+    /// outline edge a to b runs VERTICAL and the offset is also vertical,
+    /// all four corners lie on one line, Brep.CreateFromCornerPoints has no
+    /// quad to make, and ThickenCellSurface refuses the whole cell. That is
+    /// spec section 1 point 3, and it refuses cells that have nothing
+    /// whatever wrong with their thickness.
+    ///
+    /// WHAT IS MEASURED HERE AND WHAT IS NOT. RhinoCommon's native core
+    /// does not initialise outside Rhino, so no Brep can be built in this
+    /// process and NO count of cells that close into a solid can be taken
+    /// here, before or after this change. What CAN be counted, exactly, is
+    /// the class of refusal section 1 point 3 names: a wall quad
+    /// ANNIHILATED into a line, which SkinComponents.WallQuadDegenerate
+    /// decides by pure arithmetic. Every cell counted here is a cell the
+    /// thickener certainly refuses; cells refused for any of the other
+    /// three reasons (a wall Rhino declines for its own reasons, a join
+    /// that does not close, a shell that is not solid) are beyond this
+    /// process and are Param's Rhino-side number.
+    ///
+    /// So the two counts printed below are a LOWER BOUND on the refusals
+    /// under each branch, and the honest reading of them is the one stated
+    /// on the console line.
+    /// </summary>
+    private static void ValidateSkinOffsetVerticalEdge(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo outlineMethod = RequireStatic(skinType, "OffsetOutline");
+        MethodInfo degenerateMethod =
+            RequireStatic(skinType, "WallQuadDegenerate");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned",
+            netType, typeof(double), typeof(double), typeof(double));
+
+        bool Degenerate(double[] a, double[] b, double[] bTop, double[] aTop) =>
+            (bool)degenerateMethod.Invoke(
+                null, new object[] { a, b, bTop, aTop })!;
+
+        // ---- THE PREDICATE ITSELF, on the exact configuration section 1
+        // point 3 describes, so that the counts below rest on arithmetic
+        // that has been read rather than trusted. One vertical outline
+        // edge; a vertical offset annihilates its wall, an offset along a
+        // horizontal surface normal does not.
+        double[] footA = { 1.0, 0.0, 0.0 };
+        double[] footB = { 1.0, 0.0, 1.0 };
+        const double Th = 0.29;
+        if (!Degenerate(
+                footA, footB,
+                new[] { footB[0], footB[1], footB[2] + Th },
+                new[] { footA[0], footA[1], footA[2] + Th }))
+        {
+            throw new InvalidOperationException(
+                "A VERTICAL outline edge under a VERTICAL offset puts all " +
+                "four wall corners on one line, so there is no quad to " +
+                "build and the cell is refused. WallQuadDegenerate must " +
+                "say so; it did not.");
+        }
+        if (Degenerate(
+                footA, footB,
+                new[] { footB[0] + Th, footB[1], footB[2] },
+                new[] { footA[0] + Th, footA[1], footA[2] }))
+        {
+            throw new InvalidOperationException(
+                "The SAME vertical outline edge, offset along a normal " +
+                "that is not parallel to it, gives a perfectly good " +
+                "rectangle; WallQuadDegenerate called it degenerate, " +
+                "which would refuse cells the offset branch saves.");
+        }
+        // And an edge that is not parallel to the offset survives a
+        // vertical one too, or the predicate would condemn every wall.
+        if (Degenerate(
+                new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+                new[] { 1.0, 0.0, Th }, new[] { 0.0, 0.0, Th }))
+        {
+            throw new InvalidOperationException(
+                "A horizontal outline edge under a vertical offset is an " +
+                "ordinary rectangle and must NOT be called degenerate.");
+        }
+
+        MethodInfo areaMethod = RequireStatic(skinType, "WallQuadArea");
+        double Area(double[] a, double[] b, double[] bTop, double[] aTop) =>
+            (double)areaMethod.Invoke(
+                null, new object[] { a, b, bTop, aTop })!;
+
+        // The count of cells with a DEAD wall, and beside it the LEAST
+        // wall area anywhere on the fixture. The count alone tells an
+        // author nothing about whether he was nearly caught, and "nearly"
+        // is the whole question on a steep net: annihilation is exact.
+        // ShortestEdge rides along because it is what tells a tight wall's
+        // CAUSE apart. A wall quad's area is half the length of its outline
+        // edge times |Th| times the sine of the angle between them, so it
+        // can fall to nothing two ways: the edge runs PARALLEL to the
+        // offset (section 1 point 3's vertical edge), or the edge is almost
+        // no length at all. The two want opposite remedies and the count
+        // alone cannot tell them apart.
+        (int Refused, double LeastArea, double ShortestEdge) DeadWalls(
+            (int Course, double[][] Outline, bool Clipped, double U0,
+                double U1, bool Cap)[] cells,
+            object net,
+            bool offsetSurface)
+        {
+            int refused = 0;
+            double least = double.PositiveInfinity;
+            double shortest = double.PositiveInfinity;
+            foreach (var cell in cells)
+            {
+                double[][] outline = cell.Outline;
+                if (outline.Length < 3)
+                    continue;
+                var moved = new List<double[]>();
+                foreach (object? item in (IEnumerable)outlineMethod.Invoke(
+                             null,
+                             new object?[]
+                             {
+                                 net, outline, Th, offsetSurface
+                             })!)
+                {
+                    moved.Add((double[])item!);
+                }
+                bool dead = false;
+                for (int at = 0; at < outline.Length; at++)
+                {
+                    int next = (at + 1) % outline.Length;
+                    least = Math.Min(
+                        least,
+                        Area(
+                            outline[at], outline[next], moved[next],
+                            moved[at]));
+                    shortest = Math.Min(
+                        shortest,
+                        Math.Sqrt(
+                            Math.Pow(outline[next][0] - outline[at][0], 2) +
+                            Math.Pow(outline[next][1] - outline[at][1], 2) +
+                            Math.Pow(outline[next][2] - outline[at][2], 2)));
+                    if (Degenerate(
+                            outline[at], outline[next], moved[next],
+                            moved[at]))
+                    {
+                        dead = true;
+                    }
+                }
+                if (dead)
+                    refused++;
+            }
+            return (refused, least, shortest);
+        }
+
+        // ---- THE WALLED VAULT, the ONE fixture in this file whose surface
+        // stands exactly vertical. Its wall feet are its rim, so the lowest
+        // beds are horizontal lines on the walls, and a cell's two head
+        // joints run between the same x on both of its beds: EXACTLY
+        // vertical. The extrude branch copies them onto themselves and
+        // refuses those cells; the offset branch moves them along a
+        // HORIZONTAL surface normal and builds them. This is the assertion
+        // spec section 4 check 2 asks for, and it can go red: an offset
+        // that read the flag and extruded anyway would annihilate the same
+        // walls and the two counts would be equal.
+        (double[][] walledVertices, int[][] walledFaces) =
+            SkinWalledVaultNet();
+        object walled = SkinNetWith(
+            netType, edgeType, walledVertices, walledFaces,
+            SkinWalledVaultRim(), Array.Empty<(int, int, double)>());
+        object walledBuilt = courses.Invoke(
+            null, new object[] { walled, 0.6, 0.4 })!;
+        var walledCells = SkinCells(walledBuilt);
+        if (walledCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The walled vault must build cells before anything can be " +
+                "said about their walls.");
+        }
+        (int walledExtrude, double walledExtrudeLeast, double walledEdge) =
+            DeadWalls(walledCells, walled, false);
+        (int walledOffset, double walledOffsetLeast, _) =
+            DeadWalls(walledCells, walled, true);
+        Console.WriteLine(
+            $"      Skin walled vault at Th {Th:F2}: " +
+            $"{walledCells.Length} course cells, {walledExtrude} with an " +
+            "ANNIHILATED wall under EXTRUDE (least wall area " +
+            $"{walledExtrudeLeast:E3}) and {walledOffset} under OFFSET " +
+            $"(least {walledOffsetLeast:E3}); shortest outline edge " +
+            $"{walledEdge:E3} m.");
+        // MEASURED 2026-09-03 AND IT IS A FINDING, not a pass. On a wall
+        // standing EXACTLY vertical the head joints come within 1e-5 rad of
+        // vertical and the wall quad's area falls to about 6e-7, which is a
+        // sliver and not an annihilation: Brep.CreateFromCornerPoints is
+        // called at 1e-9 and will build it. And the OFFSET branch does not
+        // improve it, because a vertical wall has NO PLAN AREA, so
+        // FaceUnder finds no face under any of its points and rule 2's
+        // (0, 0, 1) fallback makes the offset branch identical to the
+        // extrude branch exactly where it was meant to help. Both facts are
+        // recorded here rather than asserted away. What IS asserted is the
+        // direction: the offset may never annihilate more than the
+        // extrusion.
+        if (walledOffset > walledExtrude)
+        {
+            throw new InvalidOperationException(
+                "THE VERTICAL EDGE (spec section 4 check 2). On the walled " +
+                $"vault the EXTRUDE branch annihilates {walledExtrude} " +
+                $"cells' walls and the OFFSET branch {walledOffset}; the " +
+                "offset may never annihilate more.");
+        }
+
+        // ---- THE FORCE-ALIGNED FIXTURE, which is the one Param asked the
+        // question about, at his own Thickness of 0.29.
+        (double[][] barrelVertices, int[][] barrelFaces) = SkinBarrelNet();
+        object barrel = SkinNetWith(
+            netType, edgeType, barrelVertices, barrelFaces, SkinBarrelRim(),
+            SkinBarrelArchForces());
+        object aligned = forceAligned.Invoke(
+            null, new object[] { barrel, 0.6, 0.5, 1.0 / 3.0 })!;
+        var alignedCells = SkinCells(aligned);
+        (int alignedExtrude, double alignedExtrudeLeast, double alignedEdge) =
+            DeadWalls(alignedCells, barrel, false);
+        (int alignedOffset, double alignedOffsetLeast, _) =
+            DeadWalls(alignedCells, barrel, true);
+
+        // ---- PARAM'S OWN NET, which is where the 148 of 262 was
+        // measured, under BOTH patterns: the courses run he compared and
+        // the force-aligned run the 148 came off.
+        string path = Path.Combine(
+            AppContext.BaseDirectory, "assets",
+            "param-crown-arch-contract.json");
+        int paramExtrude = -1;
+        int paramOffset = -1;
+        int paramCells = 0;
+        double paramExtrudeLeast = double.NaN;
+        double paramOffsetLeast = double.NaN;
+        double paramEdge = double.NaN;
+        int paramAlignedExtrude = -1;
+        int paramAlignedOffset = -1;
+        int paramAlignedCells = 0;
+        double paramAlignedExtrudeLeast = double.NaN;
+        double paramAlignedOffsetLeast = double.NaN;
+        double paramAlignedEdge = double.NaN;
+        if (File.Exists(path))
+        {
+            Type resultType = RequireContractType(plugin, "ResultDto");
+            object result = DeserializeContract(
+                plugin, resultType, File.ReadAllText(path));
+            object paramNet = readNet.Invoke(null, new object?[] { result })!;
+            object paramBuilt = courses.Invoke(
+                null, new object[] { paramNet, 0.17, 0.375 })!;
+            var paramCellList = SkinCells(paramBuilt);
+            paramCells = paramCellList.Length;
+            (paramExtrude, paramExtrudeLeast, paramEdge) =
+                DeadWalls(paramCellList, paramNet, false);
+            (paramOffset, paramOffsetLeast, _) =
+                DeadWalls(paramCellList, paramNet, true);
+            object paramAligned = forceAligned.Invoke(
+                null, new object[] { paramNet, 0.17, 0.375, 1.0 / 3.0 })!;
+            var paramAlignedList = SkinCells(paramAligned);
+            paramAlignedCells = paramAlignedList.Length;
+            (paramAlignedExtrude, paramAlignedExtrudeLeast, paramAlignedEdge) =
+                DeadWalls(paramAlignedList, paramNet, false);
+            (paramAlignedOffset, paramAlignedOffsetLeast, _) =
+                DeadWalls(paramAlignedList, paramNet, true);
+        }
+
+        // THE MEASUREMENT PARAM ASKED FOR, and its honest reading. These
+        // are the cells refused by ONE mechanism, the annihilated wall
+        // quad, which is the only one this process can reach. They are a
+        // LOWER BOUND on the thickener's refusals and not the whole of
+        // them: a cell may still be refused by a wall Rhino declines for
+        // its own reasons, by a join that does not close, or by a shell
+        // that is not solid, and all three need the native core. The LEAST
+        // WALL AREA is printed beside each count because a count of zero
+        // says nothing about how nearly a fixture was caught, and on these
+        // nets it is the number that answers the question: the walls are
+        // not remotely near annihilation, so section 1 point 3 is NOT the
+        // mechanism behind Param's 148.
+        Console.WriteLine(
+            "      Skin wall annihilation at Th " +
+            Th.ToString("F2", CultureInfo.InvariantCulture) +
+            " (a LOWER BOUND on refusals, not the whole of them, since no " +
+            "Brep runs here): force-aligned barrel " +
+            $"{alignedCells.Length} cells, {alignedExtrude} EXTRUDE (least " +
+            $"wall area {alignedExtrudeLeast:E3}) and {alignedOffset} " +
+            $"OFFSET (least {alignedOffsetLeast:E3}); Param's own net " +
+            $"courses S 0.17 CH 0.375 {paramCells} cells, {paramExtrude} " +
+            $"EXTRUDE (least {paramExtrudeLeast:E3}) and {paramOffset} " +
+            $"OFFSET (least {paramOffsetLeast:E3}); Param's own net " +
+            $"FORCE-ALIGNED {paramAlignedCells} cells, " +
+            $"{paramAlignedExtrude} EXTRUDE (least " +
+            $"{paramAlignedExtrudeLeast:E3}) and {paramAlignedOffset} " +
+            $"OFFSET (least {paramAlignedOffsetLeast:E3}). SHORTEST " +
+            $"OUTLINE EDGE: barrel {alignedEdge:E3} m, Param courses " +
+            $"{paramEdge:E3} m, Param force-aligned " +
+            $"{paramAlignedEdge:E3} m.");
+
+        if (alignedOffset > alignedExtrude || paramOffset > paramExtrude ||
+            paramAlignedOffset > paramAlignedExtrude)
+        {
+            throw new InvalidOperationException(
+                "The OFFSET branch must never annihilate MORE wall quads " +
+                "than the extrude branch: an outline edge is annihilated " +
+                "when it runs parallel to its own offset, and a vertical " +
+                "offset is parallel to every vertical edge at once, where " +
+                "a surface normal is parallel only to an edge that " +
+                "happens to run along it. Barrel " +
+                $"{alignedExtrude} extrude against {alignedOffset} offset; " +
+                $"Param's courses {paramExtrude} against {paramOffset}; " +
+                $"Param's force-aligned {paramAlignedExtrude} against " +
+                $"{paramAlignedOffset}.");
         }
     }
 
@@ -25673,7 +26620,13 @@ internal static class Program
     private static void ValidateSkinThickenReach(Assembly plugin)
     {
         Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
         MethodInfo thicken = RequireStatic(skinType, "ThickenCellSurface");
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
 
         if (thicken.ReturnType.FullName != "Rhino.Geometry.Brep")
         {
@@ -25683,18 +26636,22 @@ internal static class Program
                 $"{thicken.ReturnType.FullName}.");
         }
         ParameterInfo[] taken = thicken.GetParameters();
+        // The NET joined this list on 2026-09-03: the offset branch reads
+        // the surface normal at each outline point off the net's own
+        // vertex-normal field, so the method cannot be driven without one.
         string[] wanted =
         {
             "Rhino.Geometry.Brep",
             "System.Collections.Generic.IReadOnlyList`1[[System.Double[]",
+            "Ananke.COMPAS.Native.Components.SkinNet",
             "System.Double",
             "System.Boolean"
         };
         if (taken.Length != wanted.Length)
         {
             throw new InvalidOperationException(
-                "ThickenCellSurface takes the face, the outline, Th and " +
-                $"the Along Normal flag, in that order: {wanted.Length} " +
+                "ThickenCellSurface takes the face, the outline, the net, " +
+                $"Th and the Offset flag, in that order: {wanted.Length} " +
                 $"parameters. It takes {taken.Length}.");
         }
         for (int at = 0; at < wanted.Length; at++)
@@ -25719,7 +26676,7 @@ internal static class Program
             new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }
         };
         object? refused = thicken.Invoke(
-            null, new object?[] { null, twoCorners, 0.2, false });
+            null, new object?[] { null, twoCorners, net, 0.2, false });
         if (refused is not null)
         {
             throw new InvalidOperationException(
@@ -25743,7 +26700,7 @@ internal static class Program
         try
         {
             object? handedBack = thicken.Invoke(
-                null, new object?[] { null, threeCorners, 0.2, false });
+                null, new object?[] { null, threeCorners, net, 0.2, false });
             throw new InvalidOperationException(
                 "ThickenCellSurface returned " +
                 (handedBack is null ? "null" : handedBack.GetType().Name) +
@@ -25844,9 +26801,9 @@ internal static class Program
 
         string? Face(int failed, int first) =>
             (string?)faceLine.Invoke(null, new object[] { failed, first });
-        string? Thick(int failed, int first, double th, bool alongNormal) =>
+        string? Thick(int failed, int first, double th, bool offsetSurface) =>
             (string?)thickenLine.Invoke(
-                null, new object[] { failed, first, th, alongNormal });
+                null, new object[] { failed, first, th, offsetSurface });
 
         if (Face(0, -1) is not null ||
             Thick(0, -1, 0.29, false) is not null ||
@@ -25857,8 +26814,12 @@ internal static class Program
                 "them returned a sentence at a count of zero.");
         }
         string faceText = Face(148, 3)!;
-        // Along Normal FALSE is the port default (SkinComponents.cs:179-190)
-        // and so is the mode Param's own run was in.
+        // Offset FALSE, the EXTRUDE branch, is the mode Param's own 148 of
+        // 262 run was in: the port that now says Offset used to say Along
+        // Normal and defaulted OFF, and off was the vertical (0, 0, Th)
+        // extrusion. It is no longer the default (spec 2026-09-03 rule 5
+        // flips it to true), so this is now the message an author sees only
+        // after deliberately asking for the simpler solid.
         string thickText = Thick(148, 3, 0.29, false)!;
         string thickTextOn = Thick(148, 3, 0.29, true)!;
         if (faceText == thickText)
@@ -25884,21 +26845,32 @@ internal static class Program
                      (thickText, "STILL EXPORTED",
                          "a cell whose thickening failed is not lost: it " +
                          "is exported and drawn as the un-thickened face"),
-                     (thickText, "Along Normal ON",
-                         "with Along Normal OFF the offset is vertical at " +
+                     (thickText, "Offset ON",
+                         "with Offset OFF the whole cell is extruded by " +
                          "(0, 0, Th), which is the mode that degenerates " +
                          "the wall quad of a vertical outline edge, so ON " +
                          "is what the author is told to try"),
+                     (thickText, "costs nothing",
+                         "THE REMEDY MUST NAME ITS COST, and under the " +
+                         "renamed port there is none to name: an offset " +
+                         "surface keeps neighbours welded, where the " +
+                         "deleted per-cell offset traded the weld for the " +
+                         "thickness. A reviewer's objection to the old " +
+                         "wording was that it never said what turning the " +
+                         "toggle on would break"),
+                     (thickText, "welded",
+                         "and the sentence says WHY it costs nothing, " +
+                         "rather than asserting it"),
                      (thickText, "(0, 0, Th)",
                          "the off-mode sentence names the offset that " +
                          "caused the refusal rather than leaving the " +
                          "author to guess at it"),
                      (thickTextOn, "already on",
-                         "with Along Normal ON the message must not " +
-                         "advise turning ON what is on"),
+                         "with Offset ON the message must not advise " +
+                         "turning ON what is on"),
                      (thickTextOn, "smaller Thickness is the remedy",
-                         "with Along Normal ON a smaller Thickness is " +
-                         "all that is left to try")
+                         "with Offset ON a smaller Thickness is all that " +
+                         "is left to try")
                  })
         {
             if (!text.Contains(fragment, StringComparison.Ordinal))
@@ -25907,37 +26879,38 @@ internal static class Program
                     $"{what}; '{fragment}' is missing from '{text}'.");
             }
         }
-        // THE REMEDY MUST MATCH THE MODE IN FORCE. The first draft of this
-        // sentence advised "A smaller Thickness, or Along Normal off, is
-        // the remedy" whatever the mode, and Along Normal defaults to
-        // FALSE (SkinComponents.cs:179-190), so on a default canvas it
-        // named a toggle already off. Off is also the mode whose vertical
-        // (0, 0, Th) offset degenerates the wall quad of a vertical
-        // outline edge, so the old advice pointed AWAY from the likelier
-        // cause on a steep force-aligned arch.
+        // THE REMEDY MUST MATCH THE MODE IN FORCE. The first draft advised
+        // "A smaller Thickness, or Along Normal off, is the remedy"
+        // whatever the mode, on a toggle that then defaulted to off, so on
+        // a default canvas it named a toggle already off. Off is also the
+        // branch whose vertical (0, 0, Th) extrusion degenerates the wall
+        // quad of a vertical outline edge, so the old advice pointed AWAY
+        // from the likelier cause on a steep force-aligned arch. Nothing
+        // in this message may send an author back to the extrusion to fix
+        // a refusal the extrusion caused.
         foreach (string text in new[] { thickText, thickTextOn })
         {
-            if (text.Contains("Along Normal off, is the remedy",
+            if (text.Contains("Offset off, is the remedy",
                     StringComparison.Ordinal) ||
-                text.Contains("Along Normal OFF is the remedy",
+                text.Contains("Offset OFF is the remedy",
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "No wording of this warning may advise turning Along " +
-                    "Normal OFF: it is off by default, and off is the " +
-                    "mode whose vertical offset refuses a cell with a " +
-                    $"vertical outline edge; got '{text}'.");
+                    "No wording of this warning may advise turning Offset " +
+                    "OFF: off is the extrude branch, and its vertical " +
+                    "offset is what refuses a cell with a vertical " +
+                    $"outline edge; got '{text}'.");
             }
         }
-        if (thickTextOn.Contains("Along Normal ON", StringComparison.Ordinal))
+        if (thickTextOn.Contains("Offset ON", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "With Along Normal already ON the warning must not tell " +
+                "With Offset already ON the warning must not tell " +
                 $"the author to turn it ON; got '{thickTextOn}'.");
         }
         // No assertion here that the two sentences DIFFER. It would read
         // well and it would never be able to fail: the two checks above
-        // require "Along Normal ON" to be present in one and absent from
+        // require "Offset ON" to be present in one and absent from
         // the other, which forces them apart already. A check that cannot
         // go red is not a check, and this file has shipped one before.
         if (faceText.Contains("STILL EXPORTED", StringComparison.Ordinal) ||
@@ -25986,7 +26959,7 @@ internal static class Program
                     null,
                     new object?[]
                     {
-                        null, cell.Outline, ParamThickness, false
+                        null, cell.Outline, barrel, ParamThickness, false
                     });
             }
             catch (TargetInvocationException invocation)
@@ -26973,34 +27946,40 @@ internal static class Program
     }
 
     /// <summary>
-    /// ALONG NORMAL OFFSETS EVERY CELL TO THE SAME SIDE, which is the
-    /// whole-branch review's finding 10, measured on PARAM'S OWN NET.
+    /// THE OFFSET GOES TO ONE SIDE OF THE SHELL, measured on PARAM'S OWN
+    /// NET. This is the whole-branch review's finding 10, restated against
+    /// the field that replaced the thing the finding was about.
     ///
-    /// CellNormalUnit is a Newell sum, and a Newell sum follows the
-    /// outline's WINDING. On a vault whose contours are open strips the
-    /// winding is not consistent from cell to cell, so one positive Th
-    /// thickened 546 of his 1032 course cells upward and the other 486
-    /// downward, and every one of his force-aligned cells downward, on
-    /// the same net at the same setting. The spec (2026-09-02,
-    /// skin-thickness-input, paragraphs 2 and 3) gives the SIGN of Th
-    /// that job.
+    /// WHAT THE FINDING WAS. The offset direction used to be
+    /// CellNormalUnit, a Newell sum over one cell's own outline, and a
+    /// Newell sum follows that outline's WINDING. On a vault whose contours
+    /// are open strips the winding is not consistent from cell to cell, so
+    /// one positive Th thickened 546 of his 1032 course cells upward and
+    /// the other 486 downward on the same net at the same setting. The
+    /// answer then was to force the normal into the upward hemisphere.
     ///
-    /// The check earns its own fixture twice over. It recomputes the RAW,
-    /// unoriented Newell normal here, by its own arithmetic rather than by
-    /// calling the engine, so a defect in CellNormalUnit and a defect in
-    /// this check cannot cancel; it refuses to pass unless that raw sum
-    /// genuinely points BOTH ways across the cells; and it refuses to pass
-    /// unless two cells that share an outline EDGE are among the pair that
-    /// disagree, which is the "neighbouring cells thicken in opposite
-    /// directions" the finding actually names. Only then does it assert
-    /// that the engine's own offsets all land on one side.
+    /// WHY THAT WHOLE MECHANISM IS GONE. Spec 2026-09-03
+    /// (skin-offset-surface) deletes the per-cell normal. The direction now
+    /// comes from the NET's own area-weighted vertex normals, and a net
+    /// carries ONE winding, so the field is one-sided by construction and
+    /// needs no hemisphere correction at all. The claim worth keeping is
+    /// therefore not "every cell offsets upward" but the stronger and more
+    /// useful one: THE FIELD AGREES WITH THE SURFACE IT IS READ OFF, face
+    /// by face, over the whole of his net, and no cell is turned inside out
+    /// by having its own corners sent to opposite sides.
+    ///
+    /// Both halves are measured against arithmetic this check owns. The
+    /// face's own geometric normal is recomputed here from its winding
+    /// rather than read off the engine, so a defect in VertexNormals and a
+    /// defect in this check cannot cancel.
     /// </summary>
-    private static void ValidateSkinThicknessAlongNormalSide(Assembly plugin)
+    private static void ValidateSkinOffsetOneSided(Assembly plugin)
     {
         Type skinType = RequireComponentType(plugin, "SkinComponent");
         Type patterns = RequireComponentType(plugin, "SkinPatterns");
         Type netType = RequireComponentType(plugin, "SkinNet");
         MethodInfo offsetMethod = RequireStatic(skinType, "ThicknessOffset");
+        MethodInfo normalAt = RequirePublicStatic(patterns, "NormalAt");
         MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
         MethodInfo courses = RequirePublicStatic(
             patterns, "Courses", netType, typeof(double), typeof(double));
@@ -27023,6 +28002,80 @@ internal static class Program
                 "SkinPatterns.ReadNet returned null on Param's own " +
                 "contract, so the offset side would be measured on " +
                 "nothing.");
+
+        IList netVertices =
+            (IList)netType.GetProperty("Vertices")!.GetValue(net)!;
+        IList netFaces = (IList)netType.GetProperty("Faces")!.GetValue(net)!;
+        double[] Normal(double[] at) =>
+            (double[])normalAt.Invoke(null, new object?[] { net, at })!;
+
+        // ---- THE FIELD AGREES WITH THE SURFACE, FACE BY FACE. A face's
+        // own geometric normal comes from its winding; the field's answer
+        // at that face's centroid is the area-weighted average of its three
+        // corners. On a net of one winding the two point the same way
+        // everywhere. Where a net's faces disagreed among themselves, the
+        // averaging would cancel and the dot would fall through zero, and
+        // the skin would thicken inward on one patch and outward on the
+        // next.
+        int facesTested = 0;
+        int facesAgainst = 0;
+        double leastAgreement = double.PositiveInfinity;
+        foreach (object? item in netFaces)
+        {
+            var triangle = (int[])item!;
+            var a = (double[])netVertices[triangle[0]]!;
+            var b = (double[])netVertices[triangle[1]]!;
+            var c = (double[])netVertices[triangle[2]]!;
+            double ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+            double vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+            double gx = (uy * vz) - (uz * vy);
+            double gy = (uz * vx) - (ux * vz);
+            double gz = (ux * vy) - (uy * vx);
+            double length = Math.Sqrt((gx * gx) + (gy * gy) + (gz * gz));
+            if (!(length > 1.0e-12))
+                continue;
+            gx /= length;
+            gy /= length;
+            gz /= length;
+            double[] centroid =
+            {
+                (a[0] + b[0] + c[0]) / 3.0,
+                (a[1] + b[1] + c[1]) / 3.0,
+                (a[2] + b[2] + c[2]) / 3.0
+            };
+            double[] field = Normal(centroid);
+            double agreement =
+                (field[0] * gx) + (field[1] * gy) + (field[2] * gz);
+            facesTested++;
+            leastAgreement = Math.Min(leastAgreement, agreement);
+            if (agreement <= 0.0)
+                facesAgainst++;
+        }
+        if (facesTested < 100)
+        {
+            throw new InvalidOperationException(
+                "Param's own net must carry a real triangulation for this " +
+                $"to be measured on anything; {facesTested} faces had a " +
+                "plan-independent normal at all.");
+        }
+        if (facesAgainst != 0)
+        {
+            throw new InvalidOperationException(
+                $"{facesAgainst} of {facesTested} faces on Param's own net " +
+                "carry a vertex-normal field pointing AGAINST their own " +
+                "winding, the least agreement being " +
+                $"{leastAgreement:F6}. The field is the area-weighted " +
+                "average of the faces around each vertex, so a net of one " +
+                "winding gives one side everywhere; a field that turns " +
+                "over would thicken one patch of the skin inward and the " +
+                "next outward at a single positive Th, which is the " +
+                "whole-branch review's finding 10 in its new form.");
+        }
+
+        // ---- NO CELL IS TURNED INSIDE OUT. At one positive Th every
+        // corner of a cell moves to the same side: the offsets of a cell's
+        // own corners never oppose one another. A cell whose corners went
+        // opposite ways would not be a thickened stone at all.
         object built = courses.Invoke(
             null, new object[] { net, 0.17, 0.375 })!;
         var cells = SkinCells(built);
@@ -27031,147 +28084,90 @@ internal static class Program
             throw new InvalidOperationException(
                 "The courses engine builds 1032 cells on Param's net at S " +
                 $"0.17 and CH 0.375; got {cells.Length}, too few for the " +
-                "winding claim below to be measured on anything.");
+                "one-sidedness claim below to be measured on anything.");
         }
 
-        // The RAW Newell sum, this check's own arithmetic, unoriented.
-        static double RawNormalZ(double[][] outline)
-        {
-            double nx = 0.0, ny = 0.0, nz = 0.0;
-            for (int at = 0; at < outline.Length; at++)
-            {
-                double[] a = outline[at];
-                double[] b = outline[(at + 1) % outline.Length];
-                nx += (a[1] - b[1]) * (a[2] + b[2]);
-                ny += (a[2] - b[2]) * (a[0] + b[0]);
-                nz += (a[0] - b[0]) * (a[1] + b[1]);
-            }
-            double length = Math.Sqrt((nx * nx) + (ny * ny) + (nz * nz));
-            return length > 1.0e-12 ? nz / length : 1.0;
-        }
-
-        var raw = new double[cells.Length];
-        int rawUp = 0;
-        int rawDown = 0;
-        for (int at = 0; at < cells.Length; at++)
-        {
-            raw[at] = RawNormalZ(cells[at].Outline);
-            if (raw[at] < 0.0)
-                rawDown++;
-            else
-                rawUp++;
-        }
-        if (rawUp == 0 || rawDown == 0)
-        {
-            throw new InvalidOperationException(
-                "This fixture must actually carry BOTH windings or the " +
-                "orientation below is untested: Param's net gives 546 " +
-                "cells whose raw Newell normal points up and 486 down. " +
-                $"Got {rawUp} up and {rawDown} down.");
-        }
-
-        // THE TWO NEAREST CELLS THAT DISAGREE ON WINDING, which is the
-        // finding's own words: neighbouring cells thicken in OPPOSITE
-        // directions. Measured on this net the disagreement runs between
-        // the two open STRIPS of a level rather than between two cells of
-        // one strip, so they need not share a corner; what makes them
-        // neighbours is that they stand within a course of one another on
-        // the same shell. The separation is asserted rather than assumed,
-        // so a fixture whose two windings sat at opposite ends of the
-        // vault could not pass this as a neighbour claim.
-        static double[] Middle(double[][] outline)
-        {
-            double x = 0.0, y = 0.0, z = 0.0;
-            foreach (double[] corner in outline)
-            {
-                x += corner[0];
-                y += corner[1];
-                z += corner[2];
-            }
-            return new[]
-            {
-                x / outline.Length, y / outline.Length, z / outline.Length
-            };
-        }
-
-        var middles = new double[cells.Length][];
-        for (int at = 0; at < cells.Length; at++)
-            middles[at] = Middle(cells[at].Outline);
-        int leftAt = -1;
-        int rightAt = -1;
-        double nearest = double.PositiveInfinity;
-        for (int a = 0; a < cells.Length; a++)
-        {
-            for (int b = a + 1; b < cells.Length; b++)
-            {
-                if ((raw[a] < 0.0) == (raw[b] < 0.0))
-                    continue;
-                double dx = middles[a][0] - middles[b][0];
-                double dy = middles[a][1] - middles[b][1];
-                double dz = middles[a][2] - middles[b][2];
-                double gap = Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz));
-                if (gap < nearest)
-                {
-                    nearest = gap;
-                    leftAt = a;
-                    rightAt = b;
-                }
-            }
-        }
-        if (leftAt < 0 || nearest > 0.375)
-        {
-            throw new InvalidOperationException(
-                "The two nearest cells of opposite raw winding stand " +
-                $"{nearest:F4} m apart on Param's net, over one course " +
-                "height of 0.375 m, so they are not neighbours and the " +
-                "neighbour half of finding 10 would be asserted on " +
-                "nothing.");
-        }
-
-        double[] Offset(double[][] outline) =>
+        double[] Offset(double[] point) =>
             (double[])offsetMethod.Invoke(
-                null, new object?[] { outline, 0.10, true })!;
-        double[] neighbourOne = Offset(cells[leftAt].Outline);
-        double[] neighbourTwo = Offset(cells[rightAt].Outline);
-        if (neighbourOne[2] <= 0.0 || neighbourTwo[2] <= 0.0)
-        {
-            throw new InvalidOperationException(
-                $"TWO NEIGHBOURING CELLS {nearest:F4} m apart, wound " +
-                $"opposite ways (raw Newell z {raw[leftAt]:F4} and " +
-                $"{raw[rightAt]:F4}), must " +
-                "thicken to the SAME side at one positive Th. Their " +
-                $"offsets went {neighbourOne[2]:F6} and " +
-                $"{neighbourTwo[2]:F6} in z. The sign of Th decides up or " +
-                "down (spec 2026-09-02, paragraphs 2 and 3); the winding " +
-                "does not get a vote.");
-        }
+                null, new object?[] { net, point, 0.10, true })!;
 
-        int down = 0;
-        double worst = double.PositiveInfinity;
+        // A corner that lands OFF the net in plan takes rule 2's (0, 0, 1)
+        // fallback, and that answer is nothing to do with the surface at
+        // that corner. It is separated from the measurement rather than
+        // averaged into it, and COUNTED, because the count is a real
+        // finding about this engine and not an artefact of the check: a
+        // traced level curve runs along the net's own boundary edges, and
+        // the plan-containment test claims a boundary point for a face
+        // only about half the time. The fallback is a function of the
+        // POINT alone, so two cells that share such a corner still move it
+        // identically and the skin stays welded; what suffers is the
+        // DIRECTION of the thickness at the rim, which goes vertical.
+        static bool IsFallback(double[] offset, double thickness) =>
+            offset[0] == 0.0 && offset[1] == 0.0 && offset[2] == thickness;
+
+        int cellsTurned = 0;
+        double leastWithinCell = double.PositiveInfinity;
+        int cornersMeasured = 0;
+        int cornersOnField = 0;
+        int cornersFallenBack = 0;
         foreach ((_, double[][] outline, _, _, _, _) in cells)
         {
-            double z = Offset(outline)[2];
-            worst = Math.Min(worst, z);
-            if (z <= 0.0)
-                down++;
+            if (outline.Length < 2)
+                continue;
+            var read = new List<double[]>(outline.Length);
+            foreach (double[] corner in outline)
+            {
+                double[] offset = Offset(corner);
+                cornersMeasured++;
+                if (IsFallback(offset, 0.10))
+                {
+                    cornersFallenBack++;
+                    continue;
+                }
+                cornersOnField++;
+                read.Add(offset);
+            }
+            bool turned = false;
+            for (int at = 1; at < read.Count; at++)
+            {
+                double agreement =
+                    (read[0][0] * read[at][0]) + (read[0][1] * read[at][1]) +
+                    (read[0][2] * read[at][2]);
+                leastWithinCell = Math.Min(leastWithinCell, agreement);
+                if (agreement <= 0.0)
+                    turned = true;
+            }
+            if (turned)
+                cellsTurned++;
         }
-        if (down != 0)
+        if (cornersOnField * 2 < cornersMeasured)
         {
             throw new InvalidOperationException(
-                $"Along Normal at Th +0.10 offset {down} of " +
-                $"{cells.Length} cells to the DOWNWARD side on Param's " +
-                $"own net, the worst at {worst:F6} in z. One Th and one " +
-                "toggle state must give one side of the shell; before " +
-                "the normal was oriented it gave 546 up and 486 down.");
+                $"Only {cornersOnField} of {cornersMeasured} cell corners " +
+                "on Param's net found a face under them in plan, so the " +
+                "one-sidedness below would be measured mostly on rule 2's " +
+                "(0, 0, 1) fallback rather than on the field.");
+        }
+        if (cellsTurned != 0)
+        {
+            throw new InvalidOperationException(
+                $"{cellsTurned} of {cells.Length} cells on Param's own net " +
+                "send their own corners to OPPOSITE sides of the surface " +
+                "at Th +0.10, the worst pair agreeing " +
+                $"{leastWithinCell:F6}. One Th gives one side of the " +
+                "shell; before the field replaced the per-cell Newell " +
+                "normal it gave 546 cells up and 486 down.");
         }
 
         Console.WriteLine(
-            "      Skin Along Normal side on Param's own net: " +
-            $"{cells.Length} course cells, raw winding {rawUp} up and " +
-            $"{rawDown} down, the nearest disagreeing pair {leftAt} and " +
-            $"{rightAt} at {nearest:F4} m with raw z {raw[leftAt]:F4} " +
-            $"and {raw[rightAt]:F4}, and every offset upward, the least " +
-            $"{worst:F6} m.");
+            "      Skin offset one-sidedness on Param's own net: " +
+            $"{facesTested} faces, every one of them agreeing with its own " +
+            $"winding, the least at {leastAgreement:F6}; " +
+            $"{cells.Length} course cells, {cornersOnField} of " +
+            $"{cornersMeasured} corners on the field and " +
+            $"{cornersFallenBack} off it taking rule 2's vertical " +
+            "fallback, and no cell turned, the least agreement within a " +
+            $"cell {leastWithinCell:F6}.");
     }
 
     /// <summary>
