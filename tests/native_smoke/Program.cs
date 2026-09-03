@@ -1357,6 +1357,35 @@ internal static class Program
 
         try
         {
+            ValidateSkinRealNetCornerHygiene(plugin);
+            Console.WriteLine(
+                "PASS  Skin R-006 on Param's own net (assets/" +
+                "param-crown-arch-contract.json, byte for byte his " +
+                "'Column diagnosis' contract): all three patterns, at " +
+                "two settings each, emit cells with NOT ONE consecutive " +
+                "corner pair under 1e-6 m in three dimensions and NOT " +
+                "ONE coincident to 1e-6 per axis in plan, the studio's " +
+                "own form of the test, closing seam counted both ways. " +
+                "That is the guarantee, whatever delivers it. MEASURED " +
+                "CORRECTION to commit fed48ba: on this net the R-006 " +
+                "weld delivers NOTHING, neutering it leaves every number " +
+                "identical; the mechanism is Dedupe's whole-ring " +
+                "per-axis plan pass, which when narrowed to 1e-12 lets " +
+                "two more hexagonal cells through at S 0.10 CH 0.30 " +
+                "carrying four plan-coincident pairs, so the 1046 pinned " +
+                "here is what watches it. The weld stays as the " +
+                "three-dimensional second line. The measurements are " +
+                "printed above.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin R-006 on Param's own net: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinFieldCost(plugin);
             Console.WriteLine(
                 "PASS  Skin field cost (check 12.9(b)): the field is " +
@@ -24760,6 +24789,18 @@ internal static class Program
     /// back clean, 0 of 1501). A pair just OUTSIDE the tolerance is
     /// pinned staying distinct, so the fix is not shown to be merely
     /// wider without a bound.
+    ///
+    /// WHAT THIS CHECK DOES NOT SHOW, and commit fed48ba's message
+    /// implies. Every fixture here is synthetic. Driven on Param's own
+    /// exported net (2026-09-03, see
+    /// ValidateSkinRealNetCornerHygiene), neutering this weld changes
+    /// NOTHING: all three engines, both settings, same cell counts, same
+    /// closest corners. The mechanism that removes plan duplicates there
+    /// is Dedupe's whole-ring per-axis plan pass. fed48ba's attribution
+    /// is superseded by that measurement. The weld is kept because it is
+    /// a THREE-DIMENSIONAL test taken before the plan test and catches a
+    /// pair separated in z that a plan test cannot see, which is a
+    /// second line worth having; it is not the first.
     /// </summary>
     private static void ValidateSkinWeldConsecutiveCorners(Assembly plugin)
     {
@@ -24912,6 +24953,189 @@ internal static class Program
                     $"plan-validity habits; got '{diagnostics}'.");
             }
         }
+    }
+
+    /// <summary>
+    /// Studio request R-006's actual GUARANTEE, measured on PARAM'S OWN
+    /// EXPORTED NET rather than on a hand-drawn ring: no cell this plugin
+    /// emits carries two consecutive outline corners closer than 1e-6 m,
+    /// the ring's own closing seam counted as consecutive. Whatever
+    /// mechanism delivers that is the studio's business only in so far as
+    /// the cells arrive clean, so this check names the OUTCOME and pins it
+    /// on all three patterns.
+    ///
+    /// The fixture is assets/param-crown-arch-contract.json, which is BYTE
+    /// FOR BYTE the contract of the very export the request came from:
+    /// "Column diagnosis-contract.json" in his bench demo folder, sha256
+    /// 9c6a8c37...16efa3 on both. Its own tessellation sidecar, exported
+    /// from Grasshopper on 2026-09-02, is where the studio measured 28 of
+    /// 1074 course cells with a corner pair about 3e-7 to 7e-7 m apart
+    /// (re-measured here on the sidecar itself: 28, and all 28 also
+    /// coincident per axis in plan). The armadillo-style export beside it,
+    /// 1501 force-aligned cells, carries none.
+    ///
+    /// CORRECTION TO COMMIT fed48ba, which cannot be edited and is
+    /// therefore superseded here. Its message presents the R-006 weld as
+    /// what keeps these cells clean. On Param's own net it is not.
+    /// MEASURED 2026-09-03 by driving ReadNet and all three engines on
+    /// this very contract, rebuilding the plugin for each configuration:
+    ///
+    ///   - Neutering <c>WeldConsecutiveCorners</c> to an identity leaves
+    ///     every number below IDENTICAL: all three engines, both
+    ///     settings, cell counts and closest-corner distances alike. The
+    ///     weld removes nothing here.
+    ///   - Narrowing DEDUPE'S WHOLE-RING PER-AXIS PLAN PASS (rule 3.5.4,
+    ///     commit d2d6b70) from 1e-6 to 1e-12 DOES change the answer: the
+    ///     hexagonal engine at S 0.10 / CH 0.30 goes from 1046 cells to
+    ///     1048, and those two extra cells carry FOUR consecutive corner
+    ///     pairs coincident to 1e-6 per axis in plan, the studio's own
+    ///     test and the exact defect R-006 was raised over. That pass,
+    ///     not the weld, is the mechanism on this net.
+    ///   - So the count pinned below is 1046, and it is pinned because it
+    ///     is the one measured setting on this contract where a removal
+    ///     mechanism can be seen at all.
+    ///   - The weld and its own fixture STAY. It is a three-dimensional
+    ///     test taken before the plan test, and it catches a pair
+    ///     separated in z that a plan test cannot see. A second line is
+    ///     worth keeping where it is redundant; it is not worth
+    ///     advertising as the first.
+    ///   - The 28 offending cells of his sidecar came from a plugin built
+    ///     before this branch's skin rework: his contract was written at
+    ///     14:56 on 2026-09-02 and the whole-ring pass landed at 21:00
+    ///     the same day. The engines at HEAD produce no such pair on his
+    ///     net at any of the eighty-one S and CH settings swept.
+    /// </summary>
+    private static void ValidateSkinRealNetCornerHygiene(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned", netType, typeof(double),
+            typeof(double));
+
+        // The asset, by the harness's own convention: beside Program.cs
+        // under assets/, copied to the build output and resolved against
+        // AppContext.BaseDirectory. The same file ValidateParamCrownContract
+        // drives the column placement on.
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the build " +
+                "output (assets/param-crown-arch-contract.json): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(path));
+        object net = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so no pattern was measured at all: the " +
+                "guarantee below would have passed vacuously.");
+
+        var measured = new List<string>();
+        foreach ((double size, double courseHeight) in
+                 new[] { (0.10, 0.30), (0.17, 0.375) })
+        foreach ((string label, MethodInfo engine) in
+                 new (string, MethodInfo)[]
+                 {
+                     ("courses", courses),
+                     ("hexagonal", hexagonal),
+                     ("force aligned", forceAligned)
+                 })
+        {
+            object built = engine.Invoke(
+                null, new object[] { net, size, courseHeight })!;
+            var cells = SkinCells(built);
+            if (cells.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"The {label} engine emitted NO cells on Param's own " +
+                    $"net at S {size} and CH {courseHeight}, so the " +
+                    "corner guarantee below would hold vacuously.");
+            }
+            double smallest = double.PositiveInfinity;
+            int offending = 0;
+            int planPairs = 0;
+            foreach ((_, double[][] outline, _, _, _, _) in cells)
+            {
+                for (int at = 0; at < outline.Length; at++)
+                {
+                    double[] a = outline[at];
+                    double[] b = outline[(at + 1) % outline.Length];
+                    double gap = Math.Sqrt(
+                        ((a[0] - b[0]) * (a[0] - b[0])) +
+                        ((a[1] - b[1]) * (a[1] - b[1])) +
+                        ((a[2] - b[2]) * (a[2] - b[2])));
+                    smallest = Math.Min(smallest, gap);
+                    if (gap < 1.0e-6)
+                        offending++;
+                    if (Math.Abs(a[0] - b[0]) <= 1.0e-6 &&
+                        Math.Abs(a[1] - b[1]) <= 1.0e-6)
+                    {
+                        planPairs++;
+                    }
+                }
+            }
+            if (offending != 0)
+            {
+                throw new InvalidOperationException(
+                    $"R-006 on Param's own net: the {label} engine at S " +
+                    $"{size} and CH {courseHeight} emitted {offending} " +
+                    "consecutive corner pairs closer than 1e-6 m across " +
+                    $"{cells.Length} cells, the smallest {smallest} m. " +
+                    "The studio reads such a pair as a zero-length edge " +
+                    "and refuses the WHOLE sidecar over the first one.");
+            }
+            if (planPairs != 0)
+            {
+                throw new InvalidOperationException(
+                    "R-006 in the STUDIO'S OWN FORM, which is a per-axis " +
+                    $"PLAN test: the {label} engine at S {size} and CH " +
+                    $"{courseHeight} emitted {planPairs} consecutive " +
+                    "corner pairs coincident to 1e-6 in x and y across " +
+                    $"{cells.Length} cells. That is the shape of the 28 " +
+                    "of 1074 his own export carried, and the sidecar is " +
+                    "refused whole on the first one.");
+            }
+            measured.Add(
+                $"{label} S {size} CH {courseHeight}: {cells.Length} " +
+                $"cells, closest corners {smallest:0.###e+0} m");
+        }
+
+        // THE ONE MEASURED SETTING ON THIS CONTRACT where a removal
+        // mechanism can be seen at all, pinned as a count so the check
+        // cannot pass merely because the engines never make a duplicate.
+        // Narrow Dedupe's whole-ring per-axis plan test from 1e-6 to
+        // 1e-12 and the hexagonal engine gives 1048 here instead of 1046,
+        // two cells carrying four plan-coincident corner pairs between
+        // them. Neutering the weld leaves it at 1046, which is how this
+        // check knows which mechanism it is watching.
+        object planSensitive = hexagonal.Invoke(
+            null, new object[] { net, 0.10, 0.30 })!;
+        int planSensitiveCells = SkinCells(planSensitive).Length;
+        if (planSensitiveCells != 1046)
+        {
+            throw new InvalidOperationException(
+                "The hexagonal engine on Param's own net at S 0.10 and " +
+                "CH 0.30 emits 1046 cells. With the whole-ring per-axis " +
+                "plan test narrowed to 1e-12 it emits 1048, the two " +
+                "extra carrying four plan-coincident corner pairs, which " +
+                "is the studio's own defect. Got " +
+                $"{planSensitiveCells}.");
+        }
+
+        Console.WriteLine(
+            "      Skin R-006 on Param's own net: " +
+            string.Join("; ", measured) + ".");
     }
 
     /// <summary>
