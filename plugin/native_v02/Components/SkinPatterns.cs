@@ -211,7 +211,19 @@ internal sealed record SkinCell(
 /// 1e-9 m, well under the float noise the studio's own import actually
 /// rejects; the force-aligned ("armadillo-style") export was already
 /// clean, 0 of 1501, because its own outline happens not to accumulate
-/// that noise, not because it was ever welded any wider.</summary>
+/// that noise, not because it was ever welded any wider.
+///
+/// THREESIDEDCELLS is the force-aligned pattern's own closer, rule
+/// 3.3.5's three-cornered cell, where a streamline ENDS inside the band
+/// and the cell closes against the upper bed's arc. It has its own field
+/// because it was reported in SEVENSIDEDCELLS until 2026-09-03, and the
+/// component printed that field as "seven-sided" while the engine's own
+/// diagnostics string called the same number "three-sided", so the two
+/// readings of one pattern disagreed by name. SEVENSIDEDCELLS now means
+/// only what it says: the honeycomb's genuine seven-cornered rim cell of
+/// rule 4.3. It is appended LAST, after WELDCOLLAPSEDDROPPED and with a
+/// default of 0, so every existing construction site keeps its
+/// positions.</summary>
 internal sealed record SkinPatternResult(
     IReadOnlyList<SkinCell> Cells,
     int CourseCount,
@@ -241,7 +253,8 @@ internal sealed record SkinPatternResult(
     int MergedStillShort,
     IReadOnlyList<double[][]> FlowLines,
     IReadOnlyList<double[][]> BedCurves,
-    int WeldCollapsedDropped = 0);
+    int WeldCollapsedDropped = 0,
+    int ThreeSidedCells = 0);
 
 /// <summary>
 /// The native skin patterns (spec 2026-08-31 sections 4 to 6): the setout
@@ -3571,7 +3584,13 @@ internal static class SkinPatterns
         var flowLines = new List<double[][]>();
         var bedCurves = new List<double[][]>();
         int fiveSided = 0;
-        int sevenSided = 0;
+        // Rule 3.3.5's closer has THREE corners, and this counter is named
+        // for what it counts. It was called sevenSided and reported in
+        // SevenSidedCells until 2026-09-03, so the component printed
+        // "seven-sided" over a number the engine's own diagnostics line
+        // called "three-sided". The force-aligned pattern builds no
+        // seven-cornered cell at all; that is the honeycomb's rim cell.
+        int threeSided = 0;
         int mergedPieces = 0;
         int mergedShortKept = 0;
         int mergedStillShort = 0;
@@ -3761,7 +3780,7 @@ internal static class SkinPatterns
                     if (setout == 5)
                         fiveSided++;
                     else if (setout == 3)
-                        sevenSided++;
+                        threeSided++;
 
                     // RULE 5.2.3(c). A four-cornered force-aligned cell is a
                     // courses cell by rule 3.2.3 and takes route (a): a loft
@@ -3810,8 +3829,8 @@ internal static class SkinPatterns
             out int degenerateDropped, out int overlapDropped,
             out int degenerateCentroidsSkipped);
 
-        string? oddLine = fiveSided + sevenSided > 0
-            ? $"Odd cells: {fiveSided} five-sided, {sevenSided} three-sided " +
+        string? oddLine = fiveSided + threeSided > 0
+            ? $"Odd cells: {fiveSided} five-sided, {threeSided} three-sided " +
               $"({inserted} lines inserted, {terminated} terminated)"
             : null;
         return new SkinPatternResult(
@@ -3845,7 +3864,10 @@ internal static class SkinPatterns
             Array.Empty<int>(),
             0,
             fiveSided,
-            sevenSided,
+            // SevenSidedCells is ZERO here and it is not an oversight: this
+            // pattern's closer has three corners, and it is counted in
+            // ThreeSidedCells below.
+            0,
             Array.Empty<int>(),
             Array.Empty<int>(),
             mergedPieces,
@@ -3856,7 +3878,8 @@ internal static class SkinPatterns
             mergedStillShort,
             flowLines,
             bedCurves,
-            weldCollapsed);
+            weldCollapsed,
+            threeSided);
     }
 
     /// <summary>The accepted streamlines and the traced beds this pattern
@@ -4473,6 +4496,35 @@ internal static class SkinPatterns
     }
 
     /// <summary>
+    /// WHERE the level curves stopped corresponding, as the one sentence
+    /// fragment every reader of a refusal gets. It lives on its own
+    /// because the Skin component's own transition WARNING promised the
+    /// reader "Diagnostics names the heights" while no component read
+    /// Diagnostics at all after the D port went, so the promise was
+    /// unkept from the day the port was removed. The component now
+    /// appends this same fragment to its warning, and it must be the
+    /// SAME arithmetic and the same wording as the diagnostics line, not
+    /// a second formatter that can drift.
+    ///
+    /// Rule 8.2.8: a rim distance is a DISTANCE and is named as one, in
+    /// metres; the "z=" wording survives only under the fallback of rule
+    /// 1.7.4, where it is still true.
+    /// </summary>
+    internal static string TransitionWhere(
+        IReadOnlyList<(double Low, double High)> transitions,
+        string fieldKind)
+    {
+        static string F(double value) =>
+            value.ToString("F3", CultureInfo.InvariantCulture);
+        return string.Join(
+            " and ",
+            transitions.Select(item =>
+                fieldKind == "world Z"
+                    ? $"between z={F(item.Low)} and z={F(item.High)}"
+                    : $"between d={F(item.Low)} m and d={F(item.High)} m"));
+    }
+
+    /// <summary>
     /// The diagnostics line for refused transition bands, or null when
     /// there are none. It names how many bands were skipped and the
     /// heights each transition sits between, because the author needs to
@@ -4486,17 +4538,7 @@ internal static class SkinPatterns
     {
         if (skipped == 0 || transitions.Count == 0)
             return null;
-        static string F(double value) =>
-            value.ToString("F3", CultureInfo.InvariantCulture);
-        // Rule 8.2.8: a rim distance is a DISTANCE and is named as one, in
-        // metres; the "z=" wording survives only under the fallback of rule
-        // 1.7.4, where it is still true.
-        string where = string.Join(
-            " and ",
-            transitions.Select(item =>
-                fieldKind == "world Z"
-                    ? $"between z={F(item.Low)} and z={F(item.High)}"
-                    : $"between d={F(item.Low)} m and d={F(item.High)} m"));
+        string where = TransitionWhere(transitions, fieldKind);
         // "do not correspond" rather than "splits": the refusal is decided
         // on the matching, so it fires for a curve that splits, one that
         // dies, and two that swap places at an unchanged count, and the

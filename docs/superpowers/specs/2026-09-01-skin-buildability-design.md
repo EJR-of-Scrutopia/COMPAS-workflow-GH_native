@@ -1184,6 +1184,31 @@ raised as one runtime Warning naming the count and the first offending course. A
 in this engine, not a fact about the geometry, so the harness asserts zero on every fixture, the same
 discipline `RequireNothingDropped` keeps for the plan filter (Program.cs:9728-9759).
 
+      ERRATUM, 2026-09-03, plan 2026-09-03-skin-defects-and-free-edge task 1. There are now TWO
+      failures and TWO Warnings, because there were always two failures and only one Warning. Since
+      the thickness input landed, the component built the face and then REPLACED it with the
+      thickened solid, so a cell whose face closed and whose thickening did not came back as a null
+      and was reported under this rule's wording, which sends the reader to `CellSurface` when the
+      fault is in `ThickenCellSurface`. Param measured 148 nulls of 262 cells on a force-aligned run
+      at Thickness 0.29 and 12 of 282 on a courses run. The rules are now these. A face the engine
+      built is NEVER discarded: where the thickening fails the slot carries the un-thickened face,
+      the cell is still exported, and only a failed FACE leaves a null, which is what rule 5.3.1
+      already says a null means. The two counts are separate and so are their sentences: one names
+      cells whose FACE would not close and the null slots they leave, the other names faces that
+      would not close into a SOLID at the Thickness in force and states plainly that those cells are
+      still exported and drawn as the un-thickened face.
+
+      The slot decision is `SkinComponent.ClassifyCellSurface`, a static of three booleans, and the
+      two sentences are `SkinComponent.FaceFailureLine` and `SkinComponent.ThickenFailureLine`. They
+      are statics because RhinoCommon's native core does not initialise outside Rhino: measured
+      2026-09-03 on this machine, `Brep.CreateFromCornerPoints` throws "System.DllNotFoundException:
+      Unable to load DLL 'rhcommon_c'". So no count of cells that would not close can be taken in
+      the native_smoke harness at all, and this rule's "the harness asserts zero on every fixture"
+      has never been enforceable for the Brep half. What the harness holds instead is the slot rule
+      itself, the two sentences, and a force-aligned fixture at a nonzero Thickness which it did not
+      have before, which is why this defect was never caught here. The Brep counts stay with
+      `scripts/rhino_skin_surface.py`, which Param runs inside Rhino.
+
 RULE 5.3.3. An empty course survives as an EMPTY BRANCH in both trees, because `OutputTree` creates
 every path before filling it and the component pre-creates one branch per course
 (SkinComponents.cs:365-371). Branch {2} must mean course 2 in both outputs or the alignment promise
@@ -1581,6 +1606,16 @@ of rule 1.7.4, the unreachable-vertex Warning of rule 1.7.3, and the surface fai
 They gain one more, which is not a hole but a stone nobody can lift and belongs at the same volume:
 the oversized-cap Warning of rule 2.6.6, naming the cap's girth against the maximum.
 
+      ERRATUM, 2026-09-03, plan 2026-09-03-skin-defects-and-free-edge task 1. The transition Warning
+      NAMES the heights. Its last sentence read "Diagnostics names the heights" and nothing named
+      them: the intervals live on `SkinPatternResult.TransitionIntervals` and inside the engine's own
+      `Diagnostics` string, and no component has read either since rule 9.2.2 removed the D port, so
+      the sentence sent the reader somewhere he could not go. The Warning now carries the intervals
+      themselves, formatted by `SkinPatterns.TransitionWhere`, which is the same arithmetic and the
+      same wording the diagnostics line uses, so the two readings of one refusal cannot drift apart.
+      Rule 8.2.8's distinction survives it: metres of rim distance where the field is one, "z=" only
+      under the fallback of rule 1.7.4.
+
 RULE 9.3.3. RESULT DIAGNOSTICS ENTRIES carry every number, written with
 `ResultDiagnostics.Replace(result, "Skin", entries)` (ResultDiagnostics.cs:72-82) so they travel
 forward and Diagnose reads them back beside every other component's. Numbers go in Value, Tolerance
@@ -1659,6 +1694,21 @@ string, TransitionBands, PlanDegenerateDropped and PlanOverlapDropped and nothin
         IReadOnlyList<int> CountChangeRows,
         int MergedPieces,
         int DegenerateCentroidsSkipped);
+
+      ERRATUM, 2026-09-03, plan 2026-09-03-skin-defects-and-free-edge task 1. The record gains
+      `int ThreeSidedCells = 0`, appended LAST, after `WeldCollapsedDropped`, with a default, so no
+      existing construction site moves. It exists because the force-aligned pattern's closer of rule
+      3.3.5 has THREE corners and was being carried in `SevenSidedCells`, where the component
+      printed it as "seven-sided" while the engine's own diagnostics line called the same number
+      "three-sided". The two readings of one pattern disagreed by name. `SevenSidedCells` now means
+      only rule 4.3's honeycomb rim cell, and the force-aligned pattern reports zero in it. The
+      Remark of rule 9.3.5 carries all three counts, each under its own name.
+
+      The listing above is in any case no longer the whole record: `ClosedRows`, `ExtraLevels`,
+      `TracePasses`, `MergedShortKept`, `MergedStillShort`, `FlowLines`, `BedCurves` and
+      `WeldCollapsedDropped` were each added by a later task without amending this rule. The record
+      in `SkinPatterns.cs` is the authority; this listing is the shape rule 9.3.3 was written
+      against.
 
 The three cap members are read together and each is per CAP, not per cell: `CapGirths` carries the
 girth of each emitted cap, meaning the CENTRE DISC's girth where rule 2.6 split it and the whole

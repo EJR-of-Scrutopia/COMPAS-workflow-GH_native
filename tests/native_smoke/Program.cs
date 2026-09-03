@@ -1345,6 +1345,35 @@ internal static class Program
 
         try
         {
+            ValidateSkinFaceKeptAndMessagesSplit(plugin);
+            Console.WriteLine(
+                "PASS  Skin keeps the face it built (plan 2026-09-03 task " +
+                "1): a cell whose THICKENING fails keeps the face " +
+                "CellSurface already built rather than carrying a null; " +
+                "the two failures are two DISTINCT sentences, one naming " +
+                "the FACE and the null slot, one naming the SOLID, the " +
+                "Thickness in force and that those cells are STILL " +
+                "EXPORTED; the transition warning NAMES the heights " +
+                "(z=0.898 to z=0.906 on the two-peak net) instead of " +
+                "promising that Diagnostics does, which nothing has read " +
+                "since the D port went; and the force-aligned closer is " +
+                "counted and printed as THREE-sided, with the pattern's " +
+                "SevenSidedCells at zero. Driven on the force-aligned " +
+                "barrel at Param's own Thickness 0.29. NOT PROVED HERE " +
+                "and not provable here: any count of cells that would " +
+                "not close, because RhinoCommon's native core does not " +
+                "load outside Rhino (measured: DllNotFoundException on " +
+                "rhcommon_c), so no Brep is ever built in this process.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin keeps the face it built: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinWeldConsecutiveCorners(plugin);
             Console.WriteLine(
                 "PASS  Skin weld consecutive corners (studio request " +
@@ -24138,7 +24167,13 @@ internal static class Program
             Array.Empty<(int, int, double)>());
         object domeBuilt = forceAligned.Invoke(
             null, new object[] { dome, 0.6, 0.35, 1.0 / 3.0 })!;
+        // THREESIDEDCELLS joins the sum here (2026-09-03). This pattern's
+        // closer has three corners and was carried in SevenSidedCells
+        // until that field was given back to the honeycomb, so a sum that
+        // still read Five plus Seven would be counting a field this
+        // engine now always leaves at zero.
         if (Reading<int>(domeBuilt, "FiveSidedCells") +
+            Reading<int>(domeBuilt, "ThreeSidedCells") +
             Reading<int>(domeBuilt, "SevenSidedCells") == 0)
         {
             throw new InvalidOperationException(
@@ -25544,6 +25579,314 @@ internal static class Program
                 "NullReferenceException, which is what shows the face is " +
                 "used; got " +
                 (thrown?.GetType().Name ?? "nothing") + ".");
+        }
+    }
+
+    /// <summary>
+    /// A FACE THE ENGINE BUILT IS NEVER THROWN AWAY, and the two failures
+    /// are two sentences (plan 2026-09-03, task 1, steps 1, 2 and 4).
+    ///
+    /// WHAT IS NOT PROVED HERE. Nothing about any Brep. Measured on this
+    /// machine 2026-09-03 in a scratch console app that resolved
+    /// RhinoCommon out of C:\Program Files\Rhino 8\System and called
+    /// Brep.CreateFromCornerPoints: "System.DllNotFoundException: Unable
+    /// to load DLL 'rhcommon_c' or one of its dependencies: A dynamic link
+    /// library (DLL) initialization routine failed. (0x8007045A)". So
+    /// CellSurface cannot be run here, ThickenCellSurface cannot get past
+    /// its first Brep call, and NO count of cells that "would not close
+    /// into a surface" can be taken in this harness at all, before or
+    /// after this fix. Param's own 148 of 262 is a Rhino-side number and
+    /// stays one; scripts/rhino_skin_surface.py is where it is measured.
+    ///
+    /// WHAT IS PROVED. The rule that decides the slot, which is the whole
+    /// of the fix, driven on plain booleans; the two messages, driven on
+    /// plain counts; the transition warning naming the heights it used to
+    /// only promise; the Remark's three odd-cell counts; and, on the
+    /// harness's OWN force-aligned fixture at Param's own Thickness of
+    /// 0.29, the one part of the thickener that runs without a native
+    /// core: its under-three-corner guard, invoked per real cell with a
+    /// null face, which returns null where the guard fires and throws
+    /// where the guard passes and the face is dereferenced. Every cell
+    /// whose thickening is refused that way kept a NULL slot before this
+    /// fix and keeps its face after it.
+    /// </summary>
+    private static void ValidateSkinFaceKeptAndMessagesSplit(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo classify = RequireStatic(skinType, "ClassifyCellSurface");
+        MethodInfo faceLine = RequireStatic(skinType, "FaceFailureLine");
+        MethodInfo thickenLine = RequireStatic(skinType, "ThickenFailureLine");
+        MethodInfo transitionLine =
+            RequireStatic(skinType, "TransitionWarningLine");
+        MethodInfo oddCellsLine = RequireStatic(skinType, "OddCellsLine");
+        MethodInfo thicken = RequireStatic(skinType, "ThickenCellSurface");
+
+        string Slot(bool faceBuilt, bool asked, bool solidBuilt) =>
+            classify.Invoke(
+                null, new object[] { faceBuilt, asked, solidBuilt })!
+                .ToString()!;
+
+        // The whole decision table, and the last row is the fix. Before
+        // 2026-09-03 the thickened solid simply replaced the face, so
+        // (face built, thickening asked, solid failed) put a NULL in the
+        // slot and the author lost a cell his engine had already built.
+        (bool Face, bool Asked, bool Solid, string Want, string Why)[] table =
+        {
+            (false, false, false, "Nothing",
+                "no face and no thickening asked for"),
+            (false, true, false, "Nothing",
+                "no face at a nonzero Thickness"),
+            (true, false, false, "Face",
+                "Thickness zero hands back the face itself"),
+            (true, true, true, "Solid",
+                "the solid closed and it is what the author gets"),
+            (true, true, false, "Face",
+                "THE FIX: the thickening failed, so the face the engine " +
+                "had ALREADY BUILT is kept rather than discarded")
+        };
+        foreach ((bool face, bool asked, bool solid, string want, string why)
+                 in table)
+        {
+            string got = Slot(face, asked, solid);
+            if (got != want)
+            {
+                throw new InvalidOperationException(
+                    "ClassifyCellSurface(faceBuilt " + face +
+                    ", thickeningAsked " + asked + ", solidBuilt " + solid +
+                    $") must answer {want}, because {why}; got {got}.");
+            }
+        }
+
+        string? Face(int failed, int first) =>
+            (string?)faceLine.Invoke(null, new object[] { failed, first });
+        string? Thick(int failed, int first, double th) =>
+            (string?)thickenLine.Invoke(
+                null, new object[] { failed, first, th });
+
+        if (Face(0, -1) is not null || Thick(0, -1, 0.29) is not null)
+        {
+            throw new InvalidOperationException(
+                "Neither warning is raised when nothing failed; one of " +
+                "them returned a sentence at a count of zero.");
+        }
+        string faceText = Face(148, 3)!;
+        string thickText = Thick(148, 3, 0.29)!;
+        if (faceText == thickText)
+        {
+            throw new InvalidOperationException(
+                "The two messages are DISTINCT: one names cells whose " +
+                "FACE would not close, the other faces that would not " +
+                "close into a SOLID at the thickness in force. They came " +
+                $"back identical: '{faceText}'.");
+        }
+        foreach ((string text, string fragment, string what) in new[]
+                 {
+                     (faceText, "would not close into a FACE",
+                         "the face warning names the FACE"),
+                     (faceText, "NULL",
+                         "only a failed face leaves a null slot, and spec " +
+                         "5.3.1 reads it that way"),
+                     (thickText, "would not close into a SOLID",
+                         "the thickening warning names the SOLID"),
+                     (thickText, "0.290",
+                         "the thickening warning names the Thickness in " +
+                         "force, because the remedy is a smaller one"),
+                     (thickText, "STILL EXPORTED",
+                         "a cell whose thickening failed is not lost: it " +
+                         "is exported and drawn as the un-thickened face")
+                 })
+        {
+            if (!text.Contains(fragment, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{what}; '{fragment}' is missing from '{text}'.");
+            }
+        }
+        if (faceText.Contains("STILL EXPORTED", StringComparison.Ordinal) ||
+            thickText.Contains(
+                "would not close into a FACE", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The old single message said 'N cells would not close " +
+                "into a surface' over BOTH failures, which sent the " +
+                "reader to the wrong function. Neither sentence may " +
+                "carry the other's claim; got " +
+                $"'{faceText}' and '{thickText}'.");
+        }
+
+        // THE FORCE-ALIGNED FIXTURE AT A NONZERO THICKNESS, which is what
+        // this harness had none of, and that gap is why the defect was
+        // never caught here. Param's own Thickness of 0.29.
+        const double ParamThickness = 0.29;
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo forceAligned = RequirePublicStatic(
+            patterns, "ForceAligned",
+            netType, typeof(double), typeof(double), typeof(double));
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object barrel = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinBarrelRim(),
+            SkinBarrelArchForces());
+        object aligned = forceAligned.Invoke(
+            null, new object[] { barrel, 0.6, 0.5, 1.0 / 3.0 })!;
+        var alignedCells = SkinCells(aligned);
+        if (alignedCells.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "The force-aligned fixture must build cells before " +
+                "anything can be said about their surfaces.");
+        }
+        int guardRefused = 0;
+        int guardPassed = 0;
+        foreach (var cell in alignedCells)
+        {
+            object? answer;
+            try
+            {
+                answer = thicken.Invoke(
+                    null,
+                    new object?[]
+                    {
+                        null, cell.Outline, ParamThickness, false
+                    });
+            }
+            catch (TargetInvocationException invocation)
+                when (invocation.InnerException is NullReferenceException)
+            {
+                // The guard passed and the face was dereferenced. Whether
+                // the join would then close needs the native core.
+                guardPassed++;
+                continue;
+            }
+            if (answer is not null)
+            {
+                throw new InvalidOperationException(
+                    "With a null face ThickenCellSurface either refuses " +
+                    "on its own outline guard and returns null, or " +
+                    "dereferences the face and throws; it returned " +
+                    $"{answer.GetType().Name}.");
+            }
+            guardRefused++;
+        }
+        Console.WriteLine(
+            "      force-aligned barrel at Thickness " +
+            ParamThickness.ToString("F2", CultureInfo.InvariantCulture) +
+            $": {alignedCells.Length} cells, thickener guard refuses " +
+            $"{guardRefused} and passes {guardPassed}.");
+        // MEASURED 2026-09-03, and the number is the point: on this
+        // fixture every one of the cells reaches the Brep join, so
+        // NOTHING here fails on the cheap outline guard and every null
+        // this pattern produced at a nonzero Thickness came out of the
+        // join itself. That is the failure the slot rule below has to
+        // survive, and a fixture where no cell reached the join would
+        // assert nothing at all while reading as though it had.
+        if (guardRefused != 0 || guardPassed != alignedCells.Length)
+        {
+            throw new InvalidOperationException(
+                "Every force-aligned cell carries at least three outline " +
+                "corners, so none is refused by ThickenCellSurface's own " +
+                $"guard: {alignedCells.Length} cells, {guardRefused} " +
+                $"refused and {guardPassed} through to the Brep join.");
+        }
+        if (Slot(true, true, false) != "Face")
+        {
+            throw new InvalidOperationException(
+                $"Each of these {guardPassed} cells reaches the join, and " +
+                "where the join fails the cell keeps the face CellSurface " +
+                "already built for it rather than carrying a null; the " +
+                "slot came back as " + Slot(true, true, false) + ".");
+        }
+
+        // THE TRANSITION WARNING NAMES THE HEIGHTS. The two-peak net's
+        // courses run refuses one residual sub-band, measured elsewhere in
+        // this file at z 0.898 to 0.906, and the component's warning must
+        // carry those numbers rather than point at a Diagnostics string no
+        // component has read since the D port went.
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        (double[][] peakVertices, int[][] peakFaces) = SkinTwoPeakNet();
+        object twoPeak = Activator.CreateInstance(
+            netType, new object[] { peakVertices, peakFaces })!;
+        object peakBuilt = courses.Invoke(
+            null, new object[] { twoPeak, 0.6, 0.5 })!;
+        int bands = Reading<int>(peakBuilt, "TransitionBands");
+        object intervals = peakBuilt.GetType()
+            .GetProperty("TransitionIntervals")!.GetValue(peakBuilt)!;
+        string fieldKind = Reading<string>(peakBuilt, "FieldKind");
+        if (bands != 1)
+        {
+            throw new InvalidOperationException(
+                "The two-peak net refuses exactly one residual sub-band, " +
+                $"which is what gives this check an interval; got {bands}.");
+        }
+        string? warning = (string?)transitionLine.Invoke(
+            null, new object?[] { bands, intervals, fieldKind });
+        if (warning is null)
+        {
+            throw new InvalidOperationException(
+                "One skipped band raises the transition warning.");
+        }
+        if (!warning.Contains(
+                "between z=0.898 and z=0.906", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The warning NAMES the heights the skin is holed at. The " +
+                "old wording ended 'Diagnostics names the heights' and " +
+                "nothing named them, because no component has read " +
+                "Diagnostics or TransitionIntervals since the D port " +
+                $"went; got '{warning}'.");
+        }
+        if (warning.Contains("Diagnostics", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The warning must not send the reader to a Diagnostics " +
+                $"string he cannot reach; got '{warning}'.");
+        }
+        if (transitionLine.Invoke(
+                null, new object?[] { 0, intervals, fieldKind }) is not null)
+        {
+            throw new InvalidOperationException(
+                "With no band skipped there is no transition warning.");
+        }
+
+        // THE THREE-SIDED CELLS STOP BEING REPORTED AS SEVEN-SIDED. The
+        // force-aligned closer of rule 3.3.5 has three corners; the
+        // honeycomb's rim cell of rule 4.3 has seven; they are separate
+        // fields and separate words now.
+        int threeSided = Reading<int>(aligned, "ThreeSidedCells");
+        int sevenSided = Reading<int>(aligned, "SevenSidedCells");
+        if (threeSided <= 0)
+        {
+            throw new InvalidOperationException(
+                "The force-aligned barrel terminates lines and closes " +
+                "cells with three-cornered closers, and they are counted " +
+                $"in ThreeSidedCells; got {threeSided}.");
+        }
+        if (sevenSided != 0)
+        {
+            throw new InvalidOperationException(
+                "The force-aligned pattern builds NO seven-cornered " +
+                "cell: rule 3.3.5's closer has three corners and rule " +
+                "4.3's seven-sided cell is the honeycomb's. " +
+                $"SevenSidedCells reads {sevenSided}.");
+        }
+        string odd = (string)oddCellsLine.Invoke(
+            null,
+            new object[]
+            {
+                Reading<int>(aligned, "FiveSidedCells"),
+                threeSided,
+                sevenSided,
+                Array.Empty<int>()
+            })!;
+        if (!odd.Contains($"{threeSided} three-sided", StringComparison.Ordinal) ||
+            !odd.Contains("0 seven-sided", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The Remark reports all THREE counts, each under its own " +
+                "name, so the reader is not told that a three-cornered " +
+                $"closer has seven sides; got '{odd}'.");
         }
     }
 

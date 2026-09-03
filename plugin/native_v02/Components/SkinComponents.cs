@@ -348,17 +348,16 @@ public sealed class SkinComponent : NativeComponentBase
             // separate strips higher up, a two-hump barrel). The engine
             // records the heights in D; the canvas has to be told there
             // is a HOLE, because an author who only sees the cells would
-            // read the gap as a pattern he chose.
-            if (generated.TransitionBands > 0)
+            // read the gap as a pattern he chose. The heights themselves
+            // are named by TransitionWarningLine below.
+            string? transitionLine = TransitionWarningLine(
+                generated.TransitionBands,
+                generated.TransitionIntervals,
+                generated.FieldKind);
+            if (transitionLine is not null)
             {
                 AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    $"{generated.TransitionBands} band" +
-                    (generated.TransitionBands == 1 ? " was" : "s were") +
-                    " skipped where the level curves split, so the skin " +
-                    "has a HOLE at those heights and this pattern does " +
-                    "not cover the surface. Diagnostics names the " +
-                    "heights.");
+                    GH_RuntimeMessageLevel.Warning, transitionLine);
             }
 
             // A cell the engine DROPPED because its plan projection
@@ -430,40 +429,57 @@ public sealed class SkinComponent : NativeComponentBase
             var surfaceBranches = new List<List<Brep?>>();
             for (int course = 0; course < generated.CourseCount; course++)
                 surfaceBranches.Add(new List<Brep?>());
-            int surfaceFailed = 0;
-            int firstFailedCourse = -1;
+            int faceFailed = 0;
+            int firstFaceFailedCourse = -1;
+            int thickenFailed = 0;
+            int firstThickenFailedCourse = -1;
+            bool thickening = thickness != 0.0;
             foreach (SkinCell cell in generated.Cells)
             {
                 int course = Math.Min(
                     Math.Max(cell.Course, 0),
                     Math.Max(generated.CourseCount - 1, 0));
                 cellBranches[course].Add(ClosedOutlineCurve(cell.Outline));
-                Brep? surface = CellSurface(cell, net);
-                if (surface is not null && thickness != 0.0)
+                Brep? face = CellSurface(cell, net);
+                Brep? solid =
+                    face is not null && thickening
+                        ? ThickenCellSurface(
+                            face, cell.Outline, thickness, alongNormal)
+                        : null;
+                CellSurfaceSlot slot = ClassifyCellSurface(
+                    face is not null, thickening, solid is not null);
+                surfaceBranches[course].Add(slot switch
                 {
-                    surface = ThickenCellSurface(
-                        surface, cell.Outline, thickness, alongNormal);
+                    CellSurfaceSlot.Solid => solid,
+                    CellSurfaceSlot.Face => face,
+                    _ => null
+                });
+                if (slot == CellSurfaceSlot.Nothing)
+                {
+                    faceFailed++;
+                    if (firstFaceFailedCourse < 0)
+                        firstFaceFailedCourse = course;
                 }
-                surfaceBranches[course].Add(surface);
-                if (surface is null)
+                else if (slot == CellSurfaceSlot.Face && thickening)
                 {
-                    surfaceFailed++;
-                    if (firstFailedCourse < 0)
-                        firstFailedCourse = course;
+                    thickenFailed++;
+                    if (firstThickenFailedCourse < 0)
+                        firstThickenFailedCourse = course;
                 }
             }
-            if (surfaceFailed > 0)
-            {
-                // A failure is a defect in this engine, not a fact about the
-                // geometry, so it is counted, reported and raised.
-                AddRuntimeMessage(
-                    GH_RuntimeMessageLevel.Warning,
-                    $"{surfaceFailed} cell" +
-                    (surfaceFailed == 1 ? "" : "s") +
-                    " would not close into a surface, the first at course " +
-                    $"{firstFailedCourse}; those slots carry a NULL so the " +
-                    "Surface tree stays aligned with Cells item for item.");
-            }
+            // Two failures, two sentences. One message counting both sent
+            // the reader to the wrong function: spec 5.3.1 and the
+            // thickness spec both say a NULL slot means the FACE failed,
+            // so a thickening failure reported under that wording is a
+            // false statement about which half of the engine broke.
+            string? faceLine = FaceFailureLine(
+                faceFailed, firstFaceFailedCourse);
+            if (faceLine is not null)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, faceLine);
+            string? thickenLine = ThickenFailureLine(
+                thickenFailed, firstThickenFailedCourse, thickness);
+            if (thickenLine is not null)
+                AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, thickenLine);
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
             data.SetDataTree(1, OutputTree.Breps(surfaceBranches));
 
@@ -506,12 +522,11 @@ public sealed class SkinComponent : NativeComponentBase
                             girth => $"{girth:F3} m")) + "; wedges " +
                       string.Join(", ", generated.CapWedgeCounts) + ")"
                     : string.Empty),
-                $"Odd cells: {generated.FiveSidedCells} five-sided, " +
-                $"{generated.SevenSidedCells} seven-sided" +
-                (generated.CountChangeRows.Count > 0
-                    ? " (row counts change at rows " +
-                      string.Join(", ", generated.CountChangeRows) + ")"
-                    : string.Empty),
+                OddCellsLine(
+                    generated.FiveSidedCells,
+                    generated.ThreeSidedCells,
+                    generated.SevenSidedCells,
+                    generated.CountChangeRows),
                 $"Merged pieces: {generated.MergedPieces}"
             };
             AddRuntimeMessage(
@@ -569,6 +584,148 @@ public sealed class SkinComponent : NativeComponentBase
         }
         return new PolylineCurve(points);
     }
+
+    /// <summary>
+    /// What goes into one cell's slot on the Surface tree: the thickened
+    /// SOLID, the un-thickened FACE, or NOTHING at all.
+    /// </summary>
+    internal enum CellSurfaceSlot
+    {
+        /// <summary>The face itself would not close. Only here is the slot
+        /// a null, and only here does spec 5.3.1's reading hold.</summary>
+        Nothing = 0,
+
+        /// <summary>The face is what the author gets: either Th is zero
+        /// and nothing was asked for, or the thickening failed and the
+        /// face the engine had already built is kept.</summary>
+        Face = 1,
+
+        /// <summary>The closed solid between the face and its offset
+        /// copy.</summary>
+        Solid = 2
+    }
+
+    /// <summary>
+    /// A FACE THE ENGINE BUILT IS NEVER THROWN AWAY.
+    ///
+    /// Until 2026-09-03 the thickened solid simply REPLACED the face in
+    /// the slot, so a cell whose face closed and whose thickening did not
+    /// came back as a null, indistinguishable from a cell that had no
+    /// surface at all. Param measured 148 of 262 nulls on his
+    /// force-aligned run at Th 0.29 and 12 of 282 on his courses run, and
+    /// the thickener is the suspect: it joins the face, its flipped copy
+    /// and one wall per outline corner into a single watertight shell and
+    /// refuses anything that is not solid, which is a far narrower gate
+    /// than building the face was. Half a stone is worth more than none,
+    /// so where the solid fails the face stands and the failure is
+    /// counted under its own name.
+    ///
+    /// It is a static of three booleans because the two Brep routes need
+    /// RhinoCommon's native core, which does not initialise outside
+    /// Rhino, so this rule is the only part of the decision the harness
+    /// can reach. Measured 2026-09-03 in a scratch console app on this
+    /// machine: Brep.CreateFromCornerPoints outside Rhino throws
+    /// "System.DllNotFoundException: Unable to load DLL 'rhcommon_c'".
+    /// </summary>
+    internal static CellSurfaceSlot ClassifyCellSurface(
+        bool faceBuilt, bool thickeningAsked, bool solidBuilt)
+    {
+        if (!faceBuilt)
+            return CellSurfaceSlot.Nothing;
+        if (thickeningAsked && solidBuilt)
+            return CellSurfaceSlot.Solid;
+        return CellSurfaceSlot.Face;
+    }
+
+    /// <summary>
+    /// The warning for cells whose FACE would not close, or null where
+    /// none did. This is the message spec 5.3.1 is about: these slots and
+    /// only these slots carry a null.
+    /// </summary>
+    internal static string? FaceFailureLine(int failed, int firstCourse)
+    {
+        if (failed <= 0)
+            return null;
+        return
+            $"{failed} cell" + (failed == 1 ? "" : "s") +
+            " would not close into a FACE, the first at course " +
+            $"{firstCourse}; those slots carry a NULL so the Surface tree " +
+            "stays aligned with Cells item for item.";
+    }
+
+    /// <summary>
+    /// The warning for faces that would not close into a SOLID at the
+    /// thickness in force, or null where none failed. It is a SEPARATE
+    /// sentence from <see cref="FaceFailureLine"/> and it says plainly
+    /// that nothing was lost: those cells are still exported and are
+    /// drawn as the un-thickened face. One count for both failures was
+    /// the defect: it told the author his cells had no surface when the
+    /// engine had built every one of them.
+    /// </summary>
+    internal static string? ThickenFailureLine(
+        int failed, int firstCourse, double thickness)
+    {
+        if (failed <= 0)
+            return null;
+        return
+            $"{failed} face" + (failed == 1 ? "" : "s") +
+            " would not close into a SOLID at Thickness " +
+            thickness.ToString("F3", CultureInfo.InvariantCulture) +
+            $", the first at course {firstCourse}. Those cells are STILL " +
+            "EXPORTED and are drawn as the un-thickened face, so the " +
+            "slot holds a surface and not a null. A smaller Thickness, " +
+            "or Along Normal off, is the remedy.";
+    }
+
+    /// <summary>
+    /// The transition warning, or null where no band was skipped. THE
+    /// HEIGHTS ARE NAMED HERE rather than promised: the old wording ended
+    /// "Diagnostics names the heights" and nothing named them, because the
+    /// intervals live on TransitionIntervals and inside the engine's own
+    /// Diagnostics string and no component has read either since the D
+    /// port went. The fragment comes from
+    /// <see cref="SkinPatterns.TransitionWhere"/>, which is the same
+    /// arithmetic and the same wording the diagnostics line uses, so the
+    /// two readings of one refusal cannot drift apart.
+    /// </summary>
+    internal static string? TransitionWarningLine(
+        int bands,
+        IReadOnlyList<(double Low, double High)> intervals,
+        string fieldKind)
+    {
+        if (bands <= 0)
+            return null;
+        string where = intervals.Count > 0
+            ? " The level curves stop corresponding " +
+              SkinPatterns.TransitionWhere(intervals, fieldKind) + "."
+            : string.Empty;
+        return
+            $"{bands} band" + (bands == 1 ? " was" : "s were") +
+            " skipped where the level curves split, so the skin has a " +
+            "HOLE at those heights and this pattern does not cover the " +
+            "surface." + where;
+    }
+
+    /// <summary>
+    /// The Remark's odd-cell line, all THREE counts each under its own
+    /// name. The force-aligned closer of rule 3.3.5 has THREE corners,
+    /// and until 2026-09-03 it was carried in SevenSidedCells and printed
+    /// here as "seven-sided", while the engine's own diagnostics line
+    /// called the same number three-sided. The honeycomb's seven-sided
+    /// rim cell of rule 4.3 is the only genuine seven, and it keeps the
+    /// seven-sided field.
+    /// </summary>
+    internal static string OddCellsLine(
+        int fiveSided,
+        int threeSided,
+        int sevenSided,
+        IReadOnlyList<int> countChangeRows) =>
+        $"Odd cells: {fiveSided} five-sided, {threeSided} three-sided, " +
+        $"{sevenSided} seven-sided" +
+        (countChangeRows.Count > 0
+            ? " (row counts change at rows " +
+              string.Join(", ", countChangeRows) + ")"
+            : string.Empty);
 
     /// <summary>
     /// One cell's surface (spec section 5). On the SOLVE thread and only
