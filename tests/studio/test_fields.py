@@ -366,3 +366,56 @@ def test_formwork_visibility_keeps_the_columns_and_one_drawing_of_them(tmp_path)
     result = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert "ok" in result.stdout
+
+
+GROUND_CHECK = textwrap.dedent("""
+    import { groundRepeat } from %FIELDS%;
+
+    function expect(condition, message) {
+      if (!condition) { console.error("FAIL: " + message); process.exit(1); }
+    }
+    function near(a, b) { return Math.abs(a - b) < 1e-9; }
+
+    // The patio image holds 4 x 4 pavers of 1.2 x 0.9 m, so one image is
+    // 4.8 x 3.6 m on the ground.
+    const image = [4.8, 3.6];
+
+    const at60 = groundRepeat(60, image);
+    expect(near(at60[0], 120 / 4.8), "120 m across, one image every 4.8 m");
+    expect(near(at60[1], 120 / 3.6), "and every 3.6 m the short way");
+
+    // The whole point: a paver keeps its size when the floor changes size.
+    for (const radius of [2, 15, 60, 200]) {
+      const repeat = groundRepeat(radius, image);
+      expect(near((radius * 2) / repeat[0], image[0]),
+        "one image is still 4.8 m at radius " + radius);
+      expect(near((radius * 2) / repeat[1], image[1]),
+        "and still 3.6 m the short way at radius " + radius);
+    }
+
+    const at30 = groundRepeat(30, image);
+    expect(near(at30[0], at60[0] / 2), "half the disc, half the repeats");
+
+    // A negative radius is nonsense, and a negative repeat mirrors the
+    // texture rather than shrinking it.
+    expect(groundRepeat(-5, image)[0] === 0, "a negative radius floors at nothing");
+
+    console.log("ok");
+""")
+
+
+@needs_node
+def test_ground_joints_keep_their_size_when_the_floor_is_resized(tmp_path):
+    """The joint textures are drawn with a fixed number of pavers per image,
+    so the repeat has to be recomputed from the disc whenever the Ground size
+    slider moves. Left at the old constant, resizing the floor would zoom a
+    photograph of a floor instead: 0.6 m tiles reading as 2 m tiles on a
+    small slab."""
+
+    script = tmp_path / "check_ground.mjs"
+    script.write_text(
+        GROUND_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())),
+        encoding="utf-8")
+    result = subprocess.run(["node", str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "ok" in result.stdout

@@ -2026,10 +2026,14 @@ def test_the_ground_presets_swap_one_discs_material():
         assert '<option value="{}"'.format(value) in html
         assert '"{}"'.format(value) in js
     assert 'groundPreset: "dark-studio"' in js
-    # One disc, material swapped in place, materials cached for the session.
+    # One disc, materials cached for the session. Re-pinned 2026-09-04:
+    # the disc is now built by rebuildGround, which buildScene and both
+    # ground controls call, because a resizable floor has to recompute its
+    # joint repeat and a material swap alone cannot (see
+    # test_the_ground_takes_its_size_from_one_slider).
     assert "groundMaterialCache" in js
-    body = _function_body(js, "buildScene")
-    assert "groundMaterial(state.groundPreset)" in body
+    assert "rebuildGround()" in _function_body(js, "buildScene")
+    assert "groundMaterial(state.groundPreset)" in _function_body(js, "rebuildGround")
     # The joint texture is procedural canvas work like every other texture.
     joint = _function_body(js, "groundJointTexture")
     assert "createElement" in joint and "getMaxAnisotropy" in joint
@@ -2224,3 +2228,26 @@ def test_a_columns_reload_settles_the_scene_it_joins():
     assert "applySceneAtTime(state.timeline.t)" in body
     # Scene-only: a columns reload is not a timeline event.
     assert "applyTimeline(" not in body
+
+
+def test_the_ground_takes_its_size_from_one_slider():
+    """Param asked to be able to choose how much flooring there is, so the
+    floor disc's radius is a control rather than the 60 m constant it was
+    built at. Everything that can change the floor goes through the one
+    rebuild, so a preset switch cannot leave a paver scaled for the previous
+    disc, and the cached material is never disposed on the way out (it is
+    shared through groundMaterialCache, and disposing it would take the
+    texture with it)."""
+
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    start = html.index('id="ground-radius"')
+    tag = html[html.rindex("<input", 0, start):html.index(">", start)]
+    assert 'type="range"' in tag and 'min="2"' in tag and 'max="200"' in tag
+    assert 'id="ground-radius-value"' in html
+    assert "groundRadius: 60," in js
+    body = _function_body(js, "rebuildGround")
+    assert "new THREE.CircleGeometry(state.groundRadius, 64)" in body
+    assert "groundRepeat(state.groundRadius" in body
+    assert "material.dispose()" not in body
+    assert "rebuildGround()" in _function_body(js, "buildScene")

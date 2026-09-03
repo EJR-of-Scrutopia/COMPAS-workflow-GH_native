@@ -12,7 +12,7 @@ import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContras
 import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
-  interpolateFormworkFrame, machineTime, formworkVisibility,
+  interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
 } from "/static/fields.js";
 
 // ---------- app state ----------
@@ -28,6 +28,7 @@ const state = {
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
+  groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
   props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
   armedPropType: null,  // a prop button was clicked; the next ground click places it
   selectedProp: null,   // the record whose object is highlighted and keyboard-driven
@@ -498,21 +499,25 @@ const GROUNDS = {
     roughnessMap: noiseTexture(512, 215, 30),
   }),
   "patio-pavers": () => {
-    const texture = groundJointTexture(4, 4, true, 172);
-    texture.repeat.set(120 / (4 * 1.2), 120 / (4 * 0.9)); // 1.2 x 0.9 m pavers
     const material = new THREE.MeshPhysicalMaterial({
-      color: 0xb0a698, map: texture, roughness: 0.9,
-      bumpMap: texture, bumpScale: 0.35,
+      color: 0xb0a698, map: groundJointTexture(4, 4, true, 172), roughness: 0.9,
+      bumpScale: 0.35,
     });
+    material.bumpMap = material.map;
+    // 4 x 4 pavers of 1.2 x 0.9 m in one image. The repeat is not set here:
+    // it follows the disc, so the pavers stay 1.2 x 0.9 m whatever the
+    // Ground size slider says (rebuildGround, and groundRepeat in fields.js).
+    material.userData.groundTileMetres = [4 * 1.2, 4 * 0.9];
     return material;
   },
   "tiles": () => {
-    const texture = groundJointTexture(8, 8, false, 168);
-    texture.repeat.set(120 / (8 * 0.6), 120 / (8 * 0.6)); // 0.6 m square tiles
     const material = new THREE.MeshPhysicalMaterial({
-      color: 0x9aa0a4, map: texture, roughness: 0.55,
-      bumpMap: texture, bumpScale: 0.2,
+      color: 0x9aa0a4, map: groundJointTexture(8, 8, false, 168), roughness: 0.55,
+      bumpScale: 0.2,
     });
+    material.bumpMap = material.map;
+    // 8 x 8 square tiles of 0.6 m in one image.
+    material.userData.groundTileMetres = [8 * 0.6, 8 * 0.6];
     return material;
   },
 };
@@ -522,6 +527,36 @@ const groundMaterialCache = {};
 function groundMaterial(preset) {
   if (!groundMaterialCache[preset]) groundMaterialCache[preset] = GROUNDS[preset]();
   return groundMaterialCache[preset];
+}
+
+// The floor is a disc, so "how much flooring there is" is one radius. The
+// jointed presets carry the physical size of one texture image, so their
+// repeat is recomputed from the disc every time it is resized; the plain
+// and noise presets have no joint to keep honest and are left alone.
+function rebuildGround() {
+  const existing = state.objects.ground;
+  if (existing) {
+    scene.remove(existing);
+    // The geometry is ours and is replaced on every resize. The material
+    // is NOT: groundMaterialCache hands the same one back for a preset, so
+    // disposing it here would take the texture with it.
+    existing.geometry.dispose();
+    state.objects.ground = null;
+  }
+  const material = groundMaterial(state.groundPreset);
+  const tile = material.userData.groundTileMetres;
+  if (tile && material.map) {
+    const [u, v] = groundRepeat(state.groundRadius, tile);
+    material.map.repeat.set(u, v);
+  }
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(state.groundRadius, 64), material);
+  ground.receiveShadow = true;
+  // Just under the falsework ghost, as it always has been: the floor is a
+  // backdrop, never a surface anything in the analysis sits on.
+  ground.position.z = -0.03;
+  state.objects.ground = ground;
+  scene.add(ground);
 }
 
 // ---------- E5: placeable props ----------
@@ -1064,14 +1099,7 @@ function buildScene(bundle, preserve) {
   scene.add(wires); scene.add(nodes);
   applyWireForces();
 
-  const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(60, 64),
-    groundMaterial(state.groundPreset)
-  );
-  ground.receiveShadow = true;
-  ground.position.z = -0.03;
-  state.objects.ground = ground;
-  scene.add(ground);
+  rebuildGround();
 
   applyCut(preserve);
   buildLayerToggles();
@@ -2821,9 +2849,19 @@ document.getElementById("weather-preset").addEventListener("change", (e) => {
   applyEnvironment();
   regenerateEnvironment();
 });
+// Both ground controls go through the one rebuild, so a preset switch can
+// never leave a paver scaled for the previous disc.
+document.getElementById("ground-radius").addEventListener("input", (e) => {
+  state.groundRadius = +e.target.value;
+  document.getElementById("ground-radius-value").textContent = state.groundRadius;
+  // Committed live, unlike the Node and Wire sliders: this rebuild is one
+  // 64-segment disc and a texture repeat, not thousands of instances, so
+  // there is nothing to defer to the end of the drag.
+  if (state.objects.ground) rebuildGround();
+});
 document.getElementById("ground-preset").addEventListener("change", (e) => {
   state.groundPreset = e.target.value;
-  if (state.objects.ground) state.objects.ground.material = groundMaterial(e.target.value);
+  if (state.objects.ground) rebuildGround();
 });
 for (const [id, type] of [["prop-figure", "figure"], ["prop-tree", "tree"],
                           ["prop-pallets", "pallets"], ["prop-barrier", "barrier"],

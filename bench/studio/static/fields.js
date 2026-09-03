@@ -335,3 +335,14 @@ export function formworkVisibility({
     columnMesh: !!hasColumnMesh && !hasMembers && standing,
   };
 }
+
+// How many times a joint texture repeats across the ground disc. The
+// textures are drawn with a fixed number of pavers or tiles per image, so
+// the repeat has to follow the disc's own size: a 0.6 m tile stays 0.6 m
+// at any radius, which is the difference between resizing a floor and
+// zooming a photograph of one. tileMetres is the physical size of ONE
+// image, not of one paver.
+export function groundRepeat(radius, tileMetres) {
+  const extent = Math.max(0, radius) * 2;
+  return [extent / tileMetres[0], extent / tileMetres[1]];
+}
