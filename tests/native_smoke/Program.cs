@@ -1321,6 +1321,30 @@ internal static class Program
 
         try
         {
+            ValidateSkinThickenReach(plugin);
+            Console.WriteLine(
+                "PASS  Skin thickened solid, THE REACHABLE HALF ONLY: " +
+                "ThickenCellSurface takes the face, the outline, Th and " +
+                "the flag in the order scripts/rhino_skin_surface.py " +
+                "binds, refuses an outline under three corners with a " +
+                "null before the face is touched, and DEREFERENCES its " +
+                "face on a valid outline, which is what tells the " +
+                "shipped body from a body replaced by 'return face;'. " +
+                "NOT PROVED HERE and not provable here: that the result " +
+                "is watertight, that it is oriented outward, or that two " +
+                "neighbours' walls coincide. RhinoCommon's native core " +
+                "does not initialise outside Rhino, so this green says " +
+                "nothing whatever about the Brep; that is part three of " +
+                "scripts/rhino_skin_surface.py, which Param runs.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin thickened solid reach: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinWeldConsecutiveCorners(plugin);
             Console.WriteLine(
                 "PASS  Skin weld consecutive corners (studio request " +
@@ -24771,6 +24795,133 @@ internal static class Program
                 "translation (the whole of the connectedness claim); " +
                 $"got ({wallA[0]}, {wallA[1]}, {wallA[2]}) and " +
                 $"({wallB[0]}, {wallB[1]}, {wallB[2]}).");
+        }
+    }
+
+    /// <summary>
+    /// THE THICKENED SOLID, as far as this harness can honestly reach, and
+    /// a statement of where that stops.
+    ///
+    /// WHAT IS NOT PROVED HERE. Nothing about the Brep. RhinoCommon's
+    /// native core does not initialise outside Rhino, so JoinBreps,
+    /// IsSolid, SolidOrientation and GetVolume cannot be called at all,
+    /// and the spec's three real claims -- the result is watertight, it is
+    /// oriented outward, and two neighbours' walls coincide in the
+    /// vertical mode -- are UNMEASURED by this file. They are
+    /// scripts/rhino_skin_surface.py part three, which Param runs inside
+    /// Rhino. A green line from this check is not Brep proof and must
+    /// never be read as one.
+    ///
+    /// WHAT IS PROVED. The shape of the call, and that the method
+    /// CONSUMES its face rather than handing it back. Measured
+    /// 2026-09-03: replacing ThickenCellSurface's whole body with
+    /// "return face;" left the entire harness green, because nothing
+    /// anywhere reached the method. Passing a null face is enough to tell
+    /// the two apart without a native core: the real body dereferences it
+    /// at DuplicateBrep and throws, while any body that returns the face
+    /// or a constant hands back null quietly. The under-three-corner
+    /// guard is measured the same way, since it returns BEFORE the face is
+    /// touched.
+    ///
+    /// The signature itself is pinned because the Rhino script reaches
+    /// this method by reflection, and a silently reordered or retyped
+    /// parameter list would leave that script failing in Rhino with a
+    /// binder error rather than here.
+    /// </summary>
+    private static void ValidateSkinThickenReach(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo thicken = RequireStatic(skinType, "ThickenCellSurface");
+
+        if (thicken.ReturnType.FullName != "Rhino.Geometry.Brep")
+        {
+            throw new InvalidOperationException(
+                "ThickenCellSurface returns the thickened Brep, or null " +
+                "where it cannot build one; it returns " +
+                $"{thicken.ReturnType.FullName}.");
+        }
+        ParameterInfo[] taken = thicken.GetParameters();
+        string[] wanted =
+        {
+            "Rhino.Geometry.Brep",
+            "System.Collections.Generic.IReadOnlyList`1[[System.Double[]",
+            "System.Double",
+            "System.Boolean"
+        };
+        if (taken.Length != wanted.Length)
+        {
+            throw new InvalidOperationException(
+                "ThickenCellSurface takes the face, the outline, Th and " +
+                $"the Along Normal flag, in that order: {wanted.Length} " +
+                $"parameters. It takes {taken.Length}.");
+        }
+        for (int at = 0; at < wanted.Length; at++)
+        {
+            string actual = taken[at].ParameterType.FullName ?? string.Empty;
+            if (!actual.StartsWith(wanted[at], StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"ThickenCellSurface's parameter {at} is " +
+                    $"{actual}, and scripts/rhino_skin_surface.py binds " +
+                    $"it as {wanted[at]}. A reordered or retyped " +
+                    "parameter list breaks that script in Rhino, where " +
+                    "nobody is watching for it.");
+            }
+        }
+
+        // Under three corners is refused BEFORE the face is touched, so a
+        // null face proves the guard runs first and returns null rather
+        // than throwing.
+        var twoCorners = new List<double[]>
+        {
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 }
+        };
+        object? refused = thicken.Invoke(
+            null, new object?[] { null, twoCorners, 0.2, false });
+        if (refused is not null)
+        {
+            throw new InvalidOperationException(
+                "An outline under three corners has no cell to thicken " +
+                "and must be refused with a null, before the face is " +
+                "touched at all; something came back instead.");
+        }
+
+        // A VALID outline and a null face. The shipped body duplicates
+        // the face immediately after computing the offset, so it throws.
+        // A body that returned the face, or any constant, would hand back
+        // null without complaint: that is exactly the mutation this
+        // assertion exists to catch, and it is the only structural grip
+        // on the Brep half available without the native core.
+        var threeCorners = new List<double[]>
+        {
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+            new[] { 1.0, 1.0, 0.0 }
+        };
+        Exception? thrown = null;
+        try
+        {
+            object? handedBack = thicken.Invoke(
+                null, new object?[] { null, threeCorners, 0.2, false });
+            throw new InvalidOperationException(
+                "ThickenCellSurface returned " +
+                (handedBack is null ? "null" : handedBack.GetType().Name) +
+                " for a valid outline and a NULL face. The shipped body " +
+                "duplicates that face and would have thrown, so the " +
+                "method is not consuming its face at all: a body " +
+                "replaced by 'return face;' behaves exactly like this " +
+                "and no other check in this file would notice.");
+        }
+        catch (TargetInvocationException invocation)
+        {
+            thrown = invocation.InnerException;
+        }
+        if (thrown is not NullReferenceException)
+        {
+            throw new InvalidOperationException(
+                "A null face must reach DuplicateBrep and throw a " +
+                "NullReferenceException, which is what shows the face is " +
+                "used; got " +
+                (thrown?.GetType().Name ?? "nothing") + ".");
         }
     }
 

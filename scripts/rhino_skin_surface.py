@@ -19,6 +19,14 @@ a native core to build a real Brep with. This is the split rule 5.2.1
 itself states: construction happens on the SOLVE thread, in
 SkinComponents.cs, and native_smoke can measure the SECTIONS a cell
 carries but not the Brep a section lofts into.
+
+Part three (NEW, 2026-09-03) is the THICKNESS half of spec 2026-09-02:
+a planar and a non-planar cell thickened at Th 0.2 and -0.2 in both the
+vertical and the normal mode, each asserted watertight and outward, the
+planar one against its own exact volume, and two neighbours' shared wall
+asserted coincident in the vertical mode. IT HAS NEVER BEEN RUN. It was
+written by an agent with no Rhino, to this file's own conventions, and
+its first execution is Param's.
 """
 
 import math
@@ -536,8 +544,266 @@ def run_behavioural_checks():
     return reports
 
 
+# ---------------------------------------------------------------------------
+# Part three, NEW 2026-09-03 and AWAITING PARAM'S RUN: the thickened solid.
+#
+# Spec 2026-09-02 (skin-thickness-input) promises a CLOSED SOLID between a
+# cell's face and a copy of it offset by Th, outward-oriented, and in the
+# vertical mode a shared wall that stays coincident between neighbours. Not
+# one of those three claims can be taken outside Rhino: RhinoCommon's
+# native core does not initialise there, so JoinBreps, IsSolid,
+# SolidOrientation and GetVolume are all unavailable to
+# tests/native_smoke, which measures only the offset VECTOR through
+# ThicknessOffset and says so in its own check text.
+#
+# THESE CHECKS HAVE NOT BEEN RUN. The agent that wrote them cannot execute
+# Rhino and did not execute them; they are written to this file's
+# established pattern and nothing more. Their first run is Param's, and
+# until then a green line among them says nothing about the thickened
+# solid.
+# ---------------------------------------------------------------------------
+
+
+def run_thickness_checks():
+    assembly = _load_plugin(PLUGIN_PATH)
+    skin_patterns = _find_type(assembly, "SkinPatterns")
+    skin_net_type = _find_type(assembly, "SkinNet")
+    skin_net_edge_type = _find_type(assembly, "SkinNetEdge")
+    skin_component_type = _find_type(assembly, "SkinComponent")
+
+    courses_method = _method(
+        skin_patterns, "Courses",
+        [skin_net_type, System.Double, System.Double, System.Double])
+    cell_surface_method = _method(
+        skin_component_type, "CellSurface", nonpublic=True)
+    thicken_method = _method(
+        skin_component_type, "ThickenCellSurface", nonpublic=True)
+
+    def courses(net, size, ch, min_piece=1.0 / 3.0):
+        return courses_method.Invoke(
+            None, System.Array[object]([net, size, ch, min_piece]))
+
+    def cell_surface(cell, net):
+        return cell_surface_method.Invoke(
+            None, System.Array[object]([cell, net]))
+
+    def thicken(face, outline, thickness, along_normal):
+        return thicken_method.Invoke(
+            None,
+            System.Array[object]([face, outline, thickness, along_normal]))
+
+    reports = []
+    vertices, faces, rim = _hemisphere()
+    net = _make_net(skin_net_type, skin_net_edge_type, vertices, faces, rim)
+    built = courses(net, 0.6, 0.35)
+    cells = list(_property(built, "Cells"))
+    if not cells:
+        return ["FAIL (12.5(f), NEW): the courses fixture built NO cells."]
+
+    cell_type = cells[0].GetType()
+
+    def make_cell(outline):
+        """A SkinCell straight off the record, the way check 12.5(e)'s
+        degenerate cell is built: course 0, unclipped, not a cap, no
+        sections and no chains, so CellSurface routes on the outline
+        alone."""
+        return System.Activator.CreateInstance(
+            cell_type,
+            System.Array[object]([
+                0,
+                System.Array[object]([list(p) for p in outline]),
+                False,
+                0.0,
+                0.0,
+                False,
+                len(outline),
+                None,
+                None,
+            ]),
+        )
+
+    # ---- 12.5(f): a PLANAR cell, where the arithmetic is exact. A unit
+    # square lying flat at z = 1 has plan area 1, so the vertical mode's
+    # solid encloses |Th| whatever the sign, and its own normal IS world
+    # Z, so the normal mode must agree with the vertical one here.
+    planar_outline = [
+        (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+    ]
+    planar_cell = make_cell(planar_outline)
+    planar_face = cell_surface(planar_cell, net)
+    if planar_face is None:
+        reports.append(
+            "FAIL (12.5(f), NEW, planar): CellSurface gave no face to "
+            "thicken at all")
+    else:
+        for thickness in (0.2, -0.2):
+            for along_normal in (False, True):
+                mode = "normal" if along_normal else "vertical"
+                solid = thicken(
+                    planar_face, _property(planar_cell, "Outline"),
+                    thickness, along_normal)
+                if solid is None:
+                    reports.append(
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
+                        "returned NULL rather than a solid"
+                        % (thickness, mode))
+                    continue
+                if not solid.IsSolid:
+                    reports.append(
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
+                        "did not close; a thickened cell is a watertight "
+                        "Brep or it is nothing" % (thickness, mode))
+                    continue
+                if solid.SolidOrientation != rg.BrepSolidOrientation.Outward:
+                    reports.append(
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
+                        "came back oriented %s; the spec asks for Outward"
+                        % (thickness, mode, solid.SolidOrientation))
+                    continue
+                volume = solid.GetVolume()
+                if abs(volume - abs(thickness)) > 1.0e-6:
+                    reports.append(
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
+                        "encloses %.9f, and a unit square thickened by "
+                        "|Th| encloses %.9f"
+                        % (thickness, mode, volume, abs(thickness)))
+                    continue
+                box = solid.GetBoundingBox(True)
+                low, high = box.Min.Z, box.Max.Z
+                wanted = (1.0, 1.0 + thickness)
+                if abs(low - min(wanted)) > 1.0e-9 or \
+                        abs(high - max(wanted)) > 1.0e-9:
+                    reports.append(
+                        "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
+                        "spans z %.9f to %.9f; the SIGN chooses the "
+                        "direction, so it must span %.9f to %.9f"
+                        % (thickness, mode, low, high,
+                           min(wanted), max(wanted)))
+                    continue
+                reports.append(
+                    "PASS (12.5(f), NEW, UNVERIFIED BY ITS AUTHOR, "
+                    "planar): Th %+.1f in %s mode is a watertight outward "
+                    "solid of volume %.9f spanning z %.6f to %.6f"
+                    % (thickness, mode, volume, low, high))
+
+    # ---- 12.5(g): a NON-PLANAR cell off the real courses engine, where no
+    # volume is worth predicting by hand but closedness and orientation
+    # still are. The cell chosen is the one whose corners depart furthest
+    # from their own mean height, so this is not a nearly-flat cell in
+    # disguise.
+    def out_of_plane(cell):
+        outline = [list(p) for p in _property(cell, "Outline")]
+        if len(outline) < 4:
+            return -1.0
+        mean_z = sum(p[2] for p in outline) / len(outline)
+        return max(abs(p[2] - mean_z) for p in outline)
+
+    warped = max(cells, key=out_of_plane)
+    warped_face = cell_surface(warped, net)
+    if warped_face is None:
+        reports.append(
+            "FAIL (12.5(g), NEW, non-planar): CellSurface gave no face")
+    else:
+        for thickness in (0.2, -0.2):
+            for along_normal in (False, True):
+                mode = "normal" if along_normal else "vertical"
+                solid = thicken(
+                    warped_face, _property(warped, "Outline"),
+                    thickness, along_normal)
+                if solid is None or not solid.IsSolid:
+                    reports.append(
+                        "FAIL (12.5(g), NEW, non-planar): Th %+.1f in %s "
+                        "mode did not close into a watertight solid"
+                        % (thickness, mode))
+                    continue
+                if solid.SolidOrientation != rg.BrepSolidOrientation.Outward:
+                    reports.append(
+                        "FAIL (12.5(g), NEW, non-planar): Th %+.1f in %s "
+                        "mode came back oriented %s rather than Outward"
+                        % (thickness, mode, solid.SolidOrientation))
+                    continue
+                reports.append(
+                    "PASS (12.5(g), NEW, UNVERIFIED BY ITS AUTHOR, "
+                    "non-planar): Th %+.1f in %s mode is a watertight "
+                    "outward solid of %d faces, out-of-plane departure "
+                    "%.4f m" % (thickness, mode, solid.Faces.Count,
+                                out_of_plane(warped)))
+
+    # ---- 12.5(h): the SHARED WALL, which is the whole reason the vertical
+    # mode is the default. Two cells that share an outline corner add
+    # literally the same three doubles to it, so both thickened solids must
+    # carry a vertex at that corner AND at the corner raised by Th. In the
+    # normal mode they generally do not, and that divergence is the trade
+    # the toggle offers rather than a defect.
+    shared = None
+    for i in range(len(cells)):
+        left = [tuple(p) for p in _property(cells[i], "Outline")]
+        for j in range(i + 1, len(cells)):
+            right = set(tuple(p) for p in _property(cells[j], "Outline"))
+            common = [p for p in left if p in right]
+            if common:
+                shared = (cells[i], cells[j], common[0])
+                break
+        if shared is not None:
+            break
+    if shared is None:
+        reports.append(
+            "FAIL (12.5(h), NEW): no two cells of the fixture share an "
+            "outline corner, so the coincidence claim was measured on "
+            "nothing")
+    else:
+        left_cell, right_cell, corner = shared
+        thickness = 0.2
+        wanted = [
+            rg.Point3d(corner[0], corner[1], corner[2]),
+            rg.Point3d(corner[0], corner[1], corner[2] + thickness),
+        ]
+        faults = []
+        for label, cell in (("first", left_cell), ("second", right_cell)):
+            face = cell_surface(cell, net)
+            solid = thicken(
+                face, _property(cell, "Outline"), thickness, False)
+            if solid is None or not solid.IsSolid:
+                faults.append(
+                    "the %s cell did not close into a solid" % (label,))
+                continue
+            corners = [v.Location for v in solid.Vertices]
+            for point in wanted:
+                if not any(
+                        point.DistanceTo(at) <= 1.0e-9 for at in corners):
+                    faults.append(
+                        "the %s cell's solid has no vertex at "
+                        "(%.9f, %.9f, %.9f)"
+                        % (label, point.X, point.Y, point.Z))
+        if faults:
+            reports.append(
+                "FAIL (12.5(h), NEW, shared wall): %s"
+                % ("; ".join(sorted(set(faults))),))
+        else:
+            reports.append(
+                "PASS (12.5(h), NEW, UNVERIFIED BY ITS AUTHOR, shared "
+                "wall): two cells sharing the corner (%.6f, %.6f, %.6f) "
+                "both carry a vertex there and at that corner raised by "
+                "Th 0.2 in the VERTICAL mode, so their walls meet by "
+                "construction" % (corner[0], corner[1], corner[2]))
+
+    return reports
+
+
 try:
     for line in run_behavioural_checks():
         print(line)
 except Exception as error:  # pragma: no cover - reported to the console
     print("FAIL (12.5(b) to (e)): %s" % (error,))
+
+print(
+    "---- NEW 2026-09-03, AWAITING PARAM'S RUN: the thickness checks "
+    "below have NEVER been executed. Their author has no Rhino and did "
+    "not run them. Read a green line among them as untested until this "
+    "script has been run once inside Rhino. ----"
+)
+try:
+    for line in run_thickness_checks():
+        print(line)
+except Exception as error:  # pragma: no cover - reported to the console
+    print("FAIL (12.5(f) to (h), NEW): %s" % (error,))
