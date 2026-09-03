@@ -378,6 +378,7 @@ public sealed class ExportComponent :
                 TaskList.Add(Task.Run(
                     () => ComputeAsync(
                         CloneResult(pre!.Result),
+                        StudyName(pre.Name),
                         pre.Cells,
                         pre.CellWarning,
                         pre.TessellationPattern,
@@ -421,6 +422,7 @@ public sealed class ExportComponent :
                 // "Cancelled".
                 taskResult = ComputeAsync(
                         CloneResult(inputs!.Result),
+                        StudyName(inputs.Name),
                         inputs.Cells,
                         inputs.CellWarning,
                         inputs.TessellationPattern,
@@ -458,9 +460,7 @@ public sealed class ExportComponent :
                     "Export: " + taskResult.Warning);
             }
 
-            string name = inputs!.Name.Trim();
-            if (name.Length == 0)
-                name = DefaultName;
+            string name = StudyName(inputs!.Name);
             // Checked after the blank-to-default, so the default is never
             // the thing refused. A Name that is not one segment stops the
             // two side effects and nothing else: the JSON outputs are the
@@ -1342,6 +1342,19 @@ public sealed class ExportComponent :
         ContractJson.DeepClone(result) with { RawWire = result.RawWire };
 
     /// <summary>
+    /// The study's identity, resolved once and read everywhere: trimmed, and
+    /// the default where the author left the Name blank. It is the file name
+    /// stem, the studio's route segment and the "study" key inside the frames
+    /// sidecar, and those three must agree or the studio cannot key a received
+    /// document to the set it belongs to.
+    /// </summary>
+    private static string StudyName(string name)
+    {
+        string trimmed = (name ?? string.Empty).Trim();
+        return trimmed.Length == 0 ? DefaultName : trimmed;
+    }
+
+    /// <summary>
     /// Every kind the Result can be, in ExportPlan's order, built once.
     /// The contract and the COMPAS document are always asked for; the
     /// tessellation sidecar joins them when cells were wired and the
@@ -1352,6 +1365,7 @@ public sealed class ExportComponent :
     /// </summary>
     private static async Task<ExportComponentTaskResult> ComputeAsync(
         ResultDto result,
+        string studyName,
         IReadOnlyList<TessellationCell>? cells,
         string? cellWarning,
         string tessellationPattern,
@@ -1448,6 +1462,32 @@ public sealed class ExportComponent :
                                 ForceUnitOf(result),
                                 unitFactor)));
                         break;
+                    case "frames":
+                    {
+                        // Caught on its own, the way the compas kind is. The
+                        // sweep runs the animation engine over a Result the
+                        // author may never have wired an Animate to, so a
+                        // Result the engine cannot animate (no edges, say)
+                        // must cost this kind and nothing else: the contract,
+                        // the columns, the disk write and the outputs all
+                        // stand, and the set simply lacks its animation.
+                        try
+                        {
+                            payloads.Add((
+                                kind, MouldFrames.Json(result, studyName)));
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception framesError)
+                        {
+                            warnings.Add(
+                                "frames: " +
+                                framesError.GetBaseException().Message);
+                        }
+                        break;
+                    }
                     default:
                         throw new InvalidOperationException(
                             $"Export does not know the kind '{kind}'.");

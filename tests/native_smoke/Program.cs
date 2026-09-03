@@ -1971,9 +1971,11 @@ internal static class Program
             ValidateExportPlan(plugin);
             Console.WriteLine(
                 "PASS  ExportPlan: contract and compas always, tessellation "
-                + "with cells, columns with a block, in that order; and a "
-                + "study Name is ONE path segment, so a separator, a colon "
-                + "or a dot-dot is refused before it can write the set "
+                + "with cells, columns with a block and the frames sidecar "
+                + "AFTER the columns on the same condition, in that order, "
+                + "with no frames kind where there is no machine to animate; "
+                + "and a study Name is ONE path segment, so a separator, a "
+                + "colon or a dot-dot is refused before it can write the set "
                 + "outside the folder the author chose.");
         }
         catch (Exception exception)
@@ -1996,6 +1998,28 @@ internal static class Program
         catch (Exception exception)
         {
             failures.Add($"ColumnsMesh: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateMouldFramesSidecar(plugin);
+            Console.WriteLine(
+                "PASS  MouldFrames (bench.frames/1, the studio's animation "
+                + "kind): 51 samples at step 2.0 with 0, 30, 60, 90 and 100 "
+                + "present and strictly ascending; every frame the declared "
+                + "vertex and column-node counts, finite, phase-labelled by "
+                + "MouldGeometry.Phases itself; the time-100 frame EQUAL to "
+                + "the contract's equilibrium vertices to 1e-9, which is the "
+                + "reader's integrity check of the pairing; feet immobile, "
+                + "the fork holding its built 0.4 and the trunk uncracked in "
+                + "every frame; and the blend measured at times 0, 30 and 60 "
+                + "against hand numbers off the fixture's own bare surface, "
+                + "so a still sequence or a reordered timeline reads "
+                + "differently. Byte-identical on a second run.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"MouldFrames: {DescribeException(exception)}");
         }
 
         try
@@ -25276,8 +25300,13 @@ internal static class Program
             string.Join(",", (string[])kinds.Invoke(null, new object?[] { cells, columns })!);
         if (Show(false, false) != "contract,compas") throw new InvalidOperationException($"No cells, no columns: contract,compas; got {Show(false, false)}.");
         if (Show(true, false) != "contract,compas,tessellation") throw new InvalidOperationException($"Cells add tessellation; got {Show(true, false)}.");
-        if (Show(false, true) != "contract,compas,columns") throw new InvalidOperationException($"Columns add columns; got {Show(false, true)}.");
-        if (Show(true, true) != "contract,compas,tessellation,columns") throw new InvalidOperationException($"All four in order; got {Show(true, true)}.");
+        // The frames sidecar rides with the columns and comes AFTER them, as
+        // the studio's reader was built to expect: the set's order is the
+        // order the kinds are written and uploaded in, and the studio only
+        // pairs a frames document with a contract it already holds.
+        if (Show(false, true) != "contract,compas,columns,frames") throw new InvalidOperationException($"Columns add columns then frames; got {Show(false, true)}.");
+        if (Show(true, true) != "contract,compas,tessellation,columns,frames") throw new InvalidOperationException($"All five in order; got {Show(true, true)}.");
+        if (Show(true, false).Contains("frames", StringComparison.Ordinal)) throw new InvalidOperationException($"No columns, no frames: there is no machine to animate; got {Show(true, false)}.");
 
         // The study name rule. A Name is one path segment because it is
         // both a file name stem inside the folder the author chose and
@@ -25393,6 +25422,338 @@ internal static class Program
                 + "a zero radius is floored once, for both, not floored inside "
                 + $"the mesh and declared raw beside it (got {clamped["radius"]!.GetValue<double>()}).");
         }
+    }
+
+    /// <summary>
+    /// <c>MouldFrames.Json</c>: the <c>bench.frames/1</c> sidecar, against the
+    /// six guarantees FRAMES-WRITER-SPEC-2026-09-03.md section 6 gives the
+    /// studio's reader, which the reader enforces as validation.
+    ///
+    /// The fixture is a three by three net, one unit apart, anchored at its
+    /// four corners and carrying one principal run down its middle row, so the
+    /// bare surface it relaxes to is HAND-COMPUTABLE rather than a converged
+    /// approximation: the two free nodes, 1 and 7, each have three neighbours
+    /// and all three of them are pinned, so one sweep puts each at exactly a
+    /// third of the centre's height and two thousand more leave it there.
+    ///
+    /// That is what lets this check measure the BLEND rather than merely its
+    /// shape. Frame zero is the drawn pattern, splayed 1.2 about the centre and
+    /// flat on the ground, so it is nowhere near the solved plan; at time 30
+    /// the lift is still nothing and the sag is Animate's own default 40 per
+    /// cent, so node 1 must sit at 0.4 of its relief below the pattern and 40
+    /// per cent of the way in toward its solved plan. Both numbers are worked
+    /// out from the fixture by hand below. A writer that ignored the lift, or
+    /// ran the phases in another order, or started from the solved plan rather
+    /// than the drawn one, reads differently at that one frame.
+    ///
+    /// The column fixture is a trunk, a fork at 0.4 and one arm, so the three
+    /// column rules the spec promises can each be measured per frame: the foot
+    /// never moves, the fork keeps the fraction it was built at, and trunk,
+    /// fork and main head stay collinear.
+    /// </summary>
+    private static void ValidateMouldFramesSidecar(Assembly plugin)
+    {
+        Type frames = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldFrames", throwOnError: true)!;
+        MethodInfo json = RequirePublicStatic(frames, "Json");
+        MethodInfo timesMethod = RequirePublicStatic(frames, "Times");
+        Type geometry = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.MouldGeometry", throwOnError: true)!;
+        MethodInfo phases = RequirePublicStatic(geometry, "Phases");
+
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type equilibriumProblemType =
+            RequireContractType(plugin, "EquilibriumProblemDto");
+        Type topologyType = RequireContractType(plugin, "TopologyDto");
+        Type problemType = RequireContractType(plugin, "ProblemDto");
+        Type anchoredType = RequireContractType(plugin, "AnchoredPatternDto");
+        Type tnaPatternType = RequireContractType(plugin, "TnaPatternDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        object P(double x, double y, double z) =>
+            Activator.CreateInstance(point, x, y, z)!;
+        Array Points(params object[] items)
+        {
+            Array array = Array.CreateInstance(point, items.Length);
+            for (int i = 0; i < items.Length; i++)
+                array.SetValue(items[i], i);
+            return array;
+        }
+
+        // The solved net. Corners on the ground, the middle row lifted, the
+        // two free nodes hanging BELOW the surface their neighbours would
+        // relax to, so every node reels DOWN and none of them asks to be
+        // pushed up.
+        double[] solvedZ = { 0.0, 0.3, 0.0, 0.5, 1.0, 0.5, 0.0, 0.3, 0.0 };
+        object[] solved = Enumerable.Range(0, 9)
+            .Select(i => P(i % 3, i / 3, solvedZ[i]))
+            .ToArray();
+
+        // The drawn plan: the same net splayed by 1.2 about its centre and
+        // flat on the ground. Frame zero is this, not the solved plan.
+        const double Splay = 1.2;
+        object[] drawn = Enumerable.Range(0, 9)
+            .Select(i => P(
+                1.0 + (Splay * ((i % 3) - 1.0)),
+                1.0 + (Splay * ((i / 3) - 1.0)),
+                0.0))
+            .ToArray();
+
+        var pairs = new List<(int U, int V)>();
+        for (int row = 0; row < 3; row++)
+        {
+            for (int column = 0; column < 2; column++)
+                pairs.Add(((row * 3) + column, (row * 3) + column + 1));
+        }
+        for (int column = 0; column < 3; column++)
+        {
+            for (int row = 0; row < 2; row++)
+                pairs.Add(((row * 3) + column, ((row + 1) * 3) + column));
+        }
+        Array netEdges = Array.CreateInstance(edgeType, pairs.Count);
+        for (int i = 0; i < pairs.Count; i++)
+        {
+            netEdges.SetValue(
+                Activator.CreateInstance(edgeType, pairs[i].U, pairs[i].V), i);
+        }
+
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", Points(solved));
+        SetContractProperty(equilibrium, equilibriumType, "Edges", netEdges);
+        SetContractProperty(
+            equilibrium,
+            equilibriumType,
+            "MemberForces",
+            Enumerable.Repeat(1.0, pairs.Count).ToArray());
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2, 6, 8 });
+        object analysisTopology = CreateInstance(topologyType);
+        SetContractProperty(analysisTopology, topologyType, "Vertices", Points(solved));
+        SetContractProperty(
+            analysisTopology,
+            topologyType,
+            "PrincipalRuns",
+            new int[][] { new[] { 3, 4, 5 } });
+        object analysisProblem = CreateInstance(equilibriumProblemType);
+        SetContractProperty(
+            analysisProblem, equilibriumProblemType, "Topology", analysisTopology);
+        SetContractProperty(equilibrium, equilibriumType, "Problem", analysisProblem);
+
+        object patternTopology = CreateInstance(topologyType);
+        SetContractProperty(patternTopology, topologyType, "Vertices", Points(drawn));
+        object tnaPattern = CreateInstance(tnaPatternType);
+        SetContractProperty(tnaPattern, tnaPatternType, "Topology", patternTopology);
+        object anchored = CreateInstance(anchoredType);
+        SetContractProperty(anchored, anchoredType, "Pattern", tnaPattern);
+        object spineProblem = CreateInstance(problemType);
+        SetContractProperty(spineProblem, problemType, "Anchored", anchored);
+
+        // Foot behind the net, fork at 0.4 of the way to the main head, one
+        // arm off the fork. The arm is listed BEFORE the trunk's continuation
+        // so a MainBranch that took the first member above the fork would put
+        // the fork on the arm and the collinearity check below would see it.
+        double[][] built =
+        {
+            new[] { 1.0, 2.0, 0.0 },   // 0 foot
+            new[] { 1.0, 1.6, 0.4 },   // 1 fork, 0.4 of foot to main head
+            new[] { 1.0, 1.0, 1.0 },   // 2 main head, on net vertex 4
+            new[] { 0.0, 1.0, 0.5 },   // 3 arm head, on net vertex 3
+        };
+        Array columnNodes = Array.CreateInstance(point, built.Length);
+        for (int i = 0; i < built.Length; i++)
+        {
+            columnNodes.SetValue(
+                Activator.CreateInstance(point, built[i][0], built[i][1], built[i][2]), i);
+        }
+        Array columnMembers = Array.CreateInstance(edgeType, 3);
+        columnMembers.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        columnMembers.SetValue(Activator.CreateInstance(edgeType, 1, 3), 1);
+        columnMembers.SetValue(Activator.CreateInstance(edgeType, 1, 2), 2);
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes", columnNodes);
+        SetContractProperty(block, columnsType, "Members", columnMembers);
+        SetContractProperty(block, columnsType, "MemberForce", new[] { 3.0, 1.0, 1.0 });
+        SetContractProperty(block, columnsType, "Trees", new int[][] { new[] { 0, 1, 2 } });
+        SetContractProperty(block, columnsType, "Heads", new[] { 2, 3 });
+        SetContractProperty(block, columnsType, "Forks", new[] { 1 });
+        SetContractProperty(block, columnsType, "Feet", new[] { 0 });
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 4, 3 });
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Columns", block);
+
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Problem", spineProblem);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        const string Study = "Column diagnosis";
+        string document = (string)json.Invoke(null, new object?[] { result, Study })!;
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The frames sidecar did not parse.");
+
+        // 1. The schema and the units the reader prefix-checks.
+        string schema = root["schema"]!.GetValue<string>();
+        if (schema != "bench.frames/1")
+            throw new InvalidOperationException($"The schema must be bench.frames/1; got '{schema}'.");
+        if (root["units"]!.GetValue<string>() != "m")
+            throw new InvalidOperationException("The units key must read 'm'.");
+        if (root["study"]!.GetValue<string>() != Study)
+            throw new InvalidOperationException("The study key must be the export Name, which is how the studio pairs the kinds of one set.");
+
+        // 2. The sweep: the base step, both ends, the three inner boundaries,
+        // strictly ascending, no duplicates.
+        var times = (double[])timesMethod.Invoke(null, null)!;
+        JsonArray frameArray = root["frames"]!.AsArray();
+        if (frameArray.Count != times.Length)
+            throw new InvalidOperationException($"One frame per sampled time: {times.Length} times, {frameArray.Count} frames.");
+        if (times.Length != 51)
+            throw new InvalidOperationException($"The base sweep is every 2.0 units from 0 to 100, which is 51 samples; got {times.Length}.");
+        for (int k = 1; k < times.Length; k++)
+        {
+            if (times[k] <= times[k - 1])
+                throw new InvalidOperationException($"The times must be STRICTLY ascending; sample {k} is {times[k]} after {times[k - 1]}.");
+        }
+        foreach (double boundary in new[] { 0.0, 30.0, 60.0, 90.0, 100.0 })
+        {
+            if (!times.Any(t => Math.Abs(t - boundary) <= 1.0e-9))
+                throw new InvalidOperationException($"The phase boundary {boundary} must be sampled exactly; the sweep does not contain it.");
+        }
+
+        // 3. Every frame the same shape, every coordinate finite, and the
+        // phase label the ENGINE's own state machine at that time rather than
+        // a word the writer chose for itself.
+        int vertexCount = root["vertexCount"]!.GetValue<int>();
+        int columnNodeCount = root["columnNodeCount"]!.GetValue<int>();
+        if (vertexCount != 9)
+            throw new InvalidOperationException($"vertexCount is the net's own node count, 9; got {vertexCount}.");
+        if (columnNodeCount != built.Length)
+            throw new InvalidOperationException($"columnNodeCount is the columns block's own node count, {built.Length}; got {columnNodeCount}.");
+        double[][] Triples(JsonNode? node) => node!.AsArray()
+            .Select(t => t!.AsArray().Select(v => v!.GetValue<double>()).ToArray())
+            .ToArray();
+        string Phase(double timePct)
+        {
+            object state = phases.Invoke(
+                null, new object?[] { timePct / 100.0, 40.0 / 100.0 })!;
+            return (string)state.GetType().GetField("Item3")!.GetValue(state)!;
+        }
+        for (int k = 0; k < frameArray.Count; k++)
+        {
+            JsonNode frame = frameArray[k]!;
+            double time = frame["time"]!.GetValue<double>();
+            if (Math.Abs(time - times[k]) > 1.0e-9)
+                throw new InvalidOperationException($"Frame {k} must carry time {times[k]}; it carries {time}.");
+            double[][] vertices = Triples(frame["vertices"]);
+            double[][] nodes = Triples(frame["columnNodes"]);
+            if (vertices.Length != vertexCount || nodes.Length != columnNodeCount)
+                throw new InvalidOperationException($"Frame {k} carries {vertices.Length} vertices and {nodes.Length} column nodes against a declared {vertexCount} and {columnNodeCount}.");
+            foreach (double[] triple in vertices.Concat(nodes))
+            {
+                if (triple.Length != 3 || triple.Any(v => !double.IsFinite(v)))
+                    throw new InvalidOperationException($"Frame {k} carries a coordinate that is not three finite numbers.");
+            }
+            string label = frame["phase"]!.GetValue<string>();
+            string expected = Phase(time);
+            if (label != expected)
+                throw new InvalidOperationException($"Frame {k} at time {time} is labelled '{label}'; MouldGeometry.Phases calls it '{expected}'. The label must be the engine's, not the writer's.");
+
+            // The three column rules, measured on every frame rather than at
+            // the ends: the foot is where the block built it, the fork keeps
+            // its 0.4, and the trunk does not kink at the fork.
+            if (Math.Abs(nodes[0][0] - built[0][0]) > 1.0e-9 ||
+                Math.Abs(nodes[0][1] - built[0][1]) > 1.0e-9 ||
+                Math.Abs(nodes[0][2] - built[0][2]) > 1.0e-9)
+            {
+                throw new InvalidOperationException($"The foot is fixed on the ground and must not move; at frame {k} it is at ({nodes[0][0]:0.####}, {nodes[0][1]:0.####}, {nodes[0][2]:0.####}) rather than its built ({built[0][0]}, {built[0][1]}, {built[0][2]}).");
+            }
+            double Span(double[] a, double[] b) => Math.Sqrt(
+                ((a[0] - b[0]) * (a[0] - b[0])) +
+                ((a[1] - b[1]) * (a[1] - b[1])) +
+                ((a[2] - b[2]) * (a[2] - b[2])));
+            double rail = Span(nodes[0], nodes[2]);
+            if (rail > 1.0e-9)
+            {
+                double fraction = Span(nodes[0], nodes[1]) / rail;
+                if (Math.Abs(fraction - 0.4) > 1.0e-9)
+                    throw new InvalidOperationException($"The fork keeps the fraction it was built at, 0.4 of foot to main head; at frame {k} it reads {fraction:0.######}.");
+                double kink = AngleDeg(
+                    nodes[1][0] - nodes[0][0], nodes[1][1] - nodes[0][1], nodes[1][2] - nodes[0][2],
+                    nodes[2][0] - nodes[1][0], nodes[2][1] - nodes[1][1], nodes[2][2] - nodes[1][2]);
+                if (kink > 1.0e-6)
+                    throw new InvalidOperationException($"Trunk, fork and main head must stay collinear in every frame; frame {k} kinks by {kink:0.######} degrees.");
+            }
+        }
+
+        // 4. THE INTEGRITY CHECK the reader makes of the whole pairing: the
+        // time-100 frame IS the contract's own equilibrium vertices.
+        double[][] last = Triples(frameArray[frameArray.Count - 1]!["vertices"]);
+        if (Math.Abs(frameArray[frameArray.Count - 1]!["time"]!.GetValue<double>() - 100.0) > 1.0e-9)
+            throw new InvalidOperationException("The last frame is time 100.");
+        for (int i = 0; i < 9; i++)
+        {
+            double[] want = { i % 3, i / 3, solvedZ[i] };
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (Math.Abs(last[i][axis] - want[axis]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        $"The time-100 frame must equal equilibrium.vertices to 1e-9, which is the reader's integrity check of the pairing: vertex {i} axis {axis} is {last[i][axis]:0.############} against {want[axis]}.");
+                }
+            }
+        }
+
+        // 5. THE BLEND, against hand numbers. Node 1 is free and its three
+        // neighbours (0, 2 and the centre 4) are all pinned, so the bare
+        // surface puts it at exactly a third of the centre's 1.0. Its relief
+        // is therefore 0.3 - 1/3. At time 0 it is the drawn pattern; at time
+        // 30 the lift is still nothing and the sag is 0.4, so it has dropped
+        // 0.4 of its relief and drawn 0.4 of the way in toward its solved
+        // plan; at time 60 the lift is one and it stands on the bare surface
+        // with the same 0.4 of relief taken out of it.
+        double bare = 1.0 / 3.0;
+        double relief = 0.3 - bare;
+        double drawnY = 1.0 - Splay;
+        void Node1At(double timePct, double x, double y, double z, string what)
+        {
+            int index = Array.FindIndex(times, t => Math.Abs(t - timePct) <= 1.0e-9);
+            if (index < 0)
+                throw new InvalidOperationException($"The sweep does not sample time {timePct}.");
+            double[] got = Triples(frameArray[index]!["vertices"])[1];
+            if (Math.Abs(got[0] - x) > 1.0e-9 ||
+                Math.Abs(got[1] - y) > 1.0e-9 ||
+                Math.Abs(got[2] - z) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"{what}: node 1 should be at ({x:0.########}, {y:0.########}, {z:0.########}); got ({got[0]:0.########}, {got[1]:0.########}, {got[2]:0.########}).");
+            }
+        }
+        Node1At(0.0, 1.0, drawnY, 0.0, "Frame zero is the DRAWN pattern, splayed and flat, not the solved plan");
+        Node1At(30.0, 1.0, drawnY + (0.4 * (0.0 - drawnY)), 0.4 * relief, "At time 30 the reel has taken 40 per cent of the sag and the lift is still nothing");
+        Node1At(60.0, 1.0, drawnY + (0.4 * (0.0 - drawnY)), bare + (0.4 * relief), "At time 60 the lift is one, so the net stands on the bare surface with 40 per cent of its relief reeled out");
+
+        // 6. The file MOVES. Every rule above is satisfied by 51 copies of the
+        // solved state, which is the shape a writer that forgot the timeline
+        // would emit and the one thing the studio could not tell from a still.
+        double[][] first = Triples(frameArray[0]!["vertices"]);
+        double travel = Enumerable.Range(0, 9).Max(i => Math.Sqrt(
+            ((first[i][0] - last[i][0]) * (first[i][0] - last[i][0])) +
+            ((first[i][1] - last[i][1]) * (first[i][1] - last[i][1])) +
+            ((first[i][2] - last[i][2]) * (first[i][2] - last[i][2]))));
+        if (travel < 0.1)
+            throw new InvalidOperationException($"The sweep must be a build rather than a still: the furthest node travels {travel:0.######} between frame zero and frame 100.");
+
+        // 7. Deterministic for a given Result: byte-identical on a second run.
+        string again = (string)json.Invoke(null, new object?[] { result, Study })!;
+        if (!string.Equals(document, again, StringComparison.Ordinal))
+            throw new InvalidOperationException("The sidecar must be byte-identical for the same Result; two runs differ.");
+
+        Console.WriteLine(
+            $"      frames: {frameArray.Count} at step 2.0, {vertexCount} vertices "
+            + $"and {columnNodeCount} column nodes each, {document.Length} chars, "
+            + $"furthest node travels {travel:0.###}.");
     }
 
     private static void ValidateLiveUploader(Assembly plugin)

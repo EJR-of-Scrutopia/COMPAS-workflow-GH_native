@@ -161,8 +161,7 @@ namespace Ananke.COMPAS.Native.Components
         {
         }
 
-        private string _bareKey = string.Empty;
-        private double[]? _bareSurface;
+        private readonly MouldAnimation.BareCache _bare = new();
         private Mesh? _previewMesh;
         private readonly List<Line> _previewCables = new();
         private readonly List<Line> _previewColumns = new();
@@ -351,82 +350,27 @@ namespace Ananke.COMPAS.Native.Components
                 if (errors.Count > 0)
                     throw new InvalidOperationException(string.Join(" ", errors));
 
+                // Everything about this Result the animation needs, and then
+                // this one frame of it, both from MouldAnimation: the same two
+                // calls the frames sidecar makes across its whole sweep, so
+                // what the studio replays is what the canvas shows rather than
+                // a second implementation of the same motion.
                 EquilibriumResultDto equilibrium = result.Equilibrium!;
-                Point3d[] target = equilibrium.Vertices
-                    .Select(v => new Point3d(v.X, v.Y, v.Z))
-                    .ToArray();
-                int n = target.Length;
-                if (n == 0)
-                    throw new InvalidOperationException("Result carries no vertices.");
-
-                // Keep the ORIGINAL edge index alongside each kept edge. The
-                // filter drops invalid and self edges, so a filtered position
-                // no longer matches the Result's own MemberForces array, and
-                // indexing forces by it would silently attach every force
-                // after the first dropped edge to the wrong member.
-                (int, int)[] edges = MouldGeometry.ValidEdges(
-                    equilibrium, n, out int[] edgeSource);
-                if (edges.Length == 0)
-                    throw new InvalidOperationException("Result carries no edges.");
-
-                // Start from the ORIGINAL PATTERN: the plan as drawn, taken
-                // off the SPINE PROBLEM that every solver attaches to its own
-                // Result. Deliberately not the equilibrium's analysis topology,
-                // which is the network the worker actually solved and so
-                // already carries the answer; starting there put frame zero at
-                // the finished vault and left the animation with nothing to do.
-                var anchorIds = new HashSet<int>(
-                    equilibrium.ResolvedSupportNodeIds
-                        .Where(i => i >= 0 && i < n));
-                double ground = MouldGeometry.GroundLevel(target, anchorIds);
-                IReadOnlyList<Point3Dto>? pattern =
-                    result.Problem?.Anchored?.Pattern?.Topology?.Vertices;
-                bool fromPattern = pattern is not null && pattern.Count == n;
-
-                // A start that already matches the solved shape node for node
-                // is not a plan, it is the answer. Lie the net flat and say so,
-                // rather than replay a still image and call it an animation.
-                double zSpan = Math.Max(target.Max(p => p.Z) - ground, 1.0e-9);
-                double startDrift = 0.0;
-                if (fromPattern)
-                {
-                    for (int i = 0; i < n; i++)
-                    {
-                        startDrift = Math.Max(
-                            startDrift, Math.Abs(pattern![i].Z - target[i].Z));
-                    }
-                }
-                bool startIsFinal = fromPattern && startDrift < 1.0e-4 * zSpan;
-                if (startIsFinal)
-                    fromPattern = false;
-
-                // Frame zero is the pattern WHOLE: its plan as well as its
-                // level. Reeling an infill cable in is one operation, and while
-                // the net is still flat on the ground the only place it can
-                // show is in PLAN, as the net draws in from the plan as drawn
-                // toward the solved plan. Holding the plan at the solved one
-                // and moving only Z is what lost the first phase: the net sat
-                // flat and perfectly still until the columns began to lift.
-                Point3d[] start = fromPattern
-                    ? pattern!.Select(p => new Point3d(p.X, p.Y, p.Z)).ToArray()
-                    : target.Select(p => new Point3d(p.X, p.Y, ground)).ToArray();
-                double planTravel = 0.0;
-                for (int i = 0; i < n; i++)
-                {
-                    planTravel = Math.Max(
-                        planTravel,
-                        Math.Sqrt(MouldGeometry.PlanDistanceSquared(
-                            start[i], target[i])));
-                }
-                List<int>[] neighbours = MouldGeometry.BuildAdjacency(n, edges);
-
-                // The principal lines this Result carries, resolved upstream
-                // by Pattern from the curves drawn into it. Nothing is snapped
-                // here, which is why there is no curve input: indices survive
-                // a surface that rises and curves do not.
-                List<List<int>> bars = MouldGeometry.PrincipalRuns(
-                    equilibrium, target.Length);
-                var principalIds = new HashSet<int>(bars.SelectMany(b => b));
+                MouldAnimation.Setup setup = MouldAnimation.Prepare(result, _bare);
+                Point3d[] target = setup.Target;
+                int n = setup.Count;
+                (int, int)[] edges = setup.Edges;
+                int[] edgeSource = setup.EdgeSource;
+                HashSet<int> anchorIds = setup.AnchorIds;
+                double ground = setup.Ground;
+                bool fromPattern = setup.FromPattern;
+                bool startIsFinal = setup.StartIsFinal;
+                Point3d[] start = setup.Start;
+                double planTravel = setup.PlanTravel;
+                List<List<int>> bars = setup.Bars;
+                HashSet<int> principalIds = setup.PrincipalIds;
+                double[] bare = setup.Bare;
+                double[] relief = setup.Relief;
                 if (principalIds.Count == 0)
                 {
                     AddRuntimeMessage(
@@ -436,36 +380,14 @@ namespace Ananke.COMPAS.Native.Components
                             + "Lines into Pattern upstream.");
                 }
 
-                var pinned = new bool[n];
-                foreach (int i in principalIds)
-                    pinned[i] = true;
-                foreach (int i in anchorIds)
-                    pinned[i] = true;
-
-                // BareSurface runs 2000 relaxation sweeps and reads only the
-                // solved shape and what is pinned, neither of which Time or
-                // Pre-Sag touch. Caching it is the difference between dragging
-                // the timeline and re-solving a surface on every frame.
-                string bareKey = MouldGeometry.SurfaceKey(target, pinned);
-                if (_bareSurface is null ||
-                    _bareSurface.Length != n ||
-                    !string.Equals(_bareKey, bareKey, StringComparison.Ordinal))
-                {
-                    _bareSurface = MouldGeometry.BareSurface(
-                        target, neighbours, pinned);
-                    _bareKey = bareKey;
-                }
-                double[] bare = _bareSurface;
-                var relief = new double[n];
-                for (int i = 0; i < n; i++)
-                    relief[i] = target[i].Z - bare[i];
-
                 // Sag and height both come out of the Result, so Time is the
                 // only thing left to drive.
-                double time = Math.Min(Math.Max(timePct, 0.0), 100.0) / 100.0;
+                MouldAnimation.Frame animated =
+                    MouldAnimation.At(setup, timePct, preSag);
+                double sag = animated.Sag;
+                double lift = animated.Lift;
+                string phase = animated.Phase;
                 double pre = Math.Min(Math.Max(preSag, 0.0), 100.0) / 100.0;
-                (double sag, double lift, string phase) =
-                    MouldGeometry.Phases(time, pre);
                 string phaseDetail = phase switch
                 {
                     "reel" => $"reel: reeling flat on the ground, {sag * 100:0}% "
@@ -485,23 +407,7 @@ namespace Ananke.COMPAS.Native.Components
                 // the force path the machine is at this frame.
                 var liveAim = new Dictionary<int, Vector3d>();
 
-                var live = new Point3d[n];
-                for (int i = 0; i < n; i++)
-                {
-                    // SAG drives the plan as well as the depth, because they
-                    // are the same operation seen twice: a cable reeled in
-                    // pulls the net toward its bar and lets it drop between
-                    // them at once. LIFT is the columns, and it moves only the
-                    // height, so at lift zero the whole net stays down where it
-                    // was drawn while the first reeling happens.
-                    double z = start[i].Z
-                        + (lift * (bare[i] - start[i].Z))
-                        + (sag * relief[i]);
-                    live[i] = new Point3d(
-                        start[i].X + (sag * (target[i].X - start[i].X)),
-                        start[i].Y + (sag * (target[i].Y - start[i].Y)),
-                        z);
-                }
+                Point3d[] live = animated.Vertices;
 
                 if (hasColumns)
                 {
@@ -540,9 +446,7 @@ namespace Ananke.COMPAS.Native.Components
                 // with. Worked out here, before the diagnostics, because the
                 // FRAME carries them and the frame is what the geometry is
                 // read back out of.
-                Point3d[]? liveColumnNodes = hasColumns
-                    ? MouldGeometry.LiveColumnNodes(columnsBlock!, live)
-                    : null;
+                Point3d[]? liveColumnNodes = animated.ColumnNodes;
 
                 // THE FRAME, written into the Result, and its geometry read
                 // straight back out of it. What Animate draws and what Frame
@@ -552,10 +456,10 @@ namespace Ananke.COMPAS.Native.Components
                 // animation itself.
                 var frame = new MouldFrameDto
                 {
-                    Time = Math.Min(Math.Max(timePct, 0.0), 100.0),
+                    Time = animated.Time,
                     Phase = phase,
-                    Lift = Math.Min(Math.Max(lift, 0.0), 1.0),
-                    Sag = Math.Min(Math.Max(sag, 0.0), 1.0),
+                    Lift = lift,
+                    Sag = sag,
                     Vertices = live.Select(p => new Point3Dto(p.X, p.Y, p.Z)).ToArray(),
                     ColumnNodes = liveColumnNodes?
                         .Select(p => new Point3Dto(p.X, p.Y, p.Z))
@@ -579,7 +483,7 @@ namespace Ananke.COMPAS.Native.Components
                 var entries = new List<DiagnosticDto>
                 {
                     ResultDiagnostics.Entry(S, "animate.phase", "info", phaseDetail,
-                        Math.Min(Math.Max(timePct, 0.0), 100.0), unit: "percent"),
+                        animated.Time, unit: "percent"),
                     ResultDiagnostics.Entry(S, "animate.counts", "info",
                         $"nodes {n}, cables {edges.Length}, bars {bars.Count} carrying "
                             + $"{principalIds.Count} notches; anchors {anchorIds.Count}, "
