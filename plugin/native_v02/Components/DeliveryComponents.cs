@@ -16,6 +16,91 @@ using Rhino.Geometry;
 
 namespace Ananke.COMPAS.Native.Components;
 
+/// <summary>
+/// Putting one document on disk WITHOUT a window in which it is neither the
+/// old one nor the new one.
+///
+/// This exists because of a defect the studio measured and filed as R-005.
+/// Export used to write every kind with <c>File.WriteAllText</c>, which
+/// truncates the destination and then fills it. With Live on and Path aimed at
+/// a folder the studio polls, every solve therefore opened a window, as wide as
+/// the write took, in which a reader saw a file that was empty or half a
+/// document. The frames sidecar is the widest window of all, being the largest
+/// kind.
+///
+/// So the content goes to a temporary beside the destination, in the SAME
+/// directory (the name is the destination's own with a suffix, which is what
+/// makes that true by construction rather than by care), and only a completed
+/// temporary is moved over the destination. A reader therefore sees the whole
+/// old document or the whole new one.
+///
+/// One consequence, stated rather than hidden: the move needs to displace the
+/// destination, so a reader holding the destination open without granting
+/// delete sharing makes the WRITE fail instead of making the READ tear. That is
+/// the trade this asks for. The old file stands whole, the failure is reported
+/// by name on the component, and the next solve writes again.
+/// </summary>
+internal static class AtomicFile
+{
+    /// <summary>
+    /// What an incomplete document is called while it is being written. It
+    /// ends the name rather than replacing the extension, so an interrupted
+    /// write leaves something nobody can mistake for a kind of the set.
+    /// </summary>
+    public const string TemporarySuffix = ".writing";
+
+    /// <summary>
+    /// The destination's own path with a fresh id and the suffix on the end,
+    /// so the temporary is always in the destination's directory (a move
+    /// across volumes is a copy, and a copy is not atomic) and two writers
+    /// racing on one study never collide on one temporary.
+    /// </summary>
+    public static string TemporaryFor(string target) =>
+        target + "." + Guid.NewGuid().ToString("N") + TemporarySuffix;
+
+    /// <summary>
+    /// Write, then move. The destination is never opened for writing at all,
+    /// which is the whole point: there is no instant at which it is short.
+    /// </summary>
+    public static void Write(string target, string contents)
+    {
+        string temporary = TemporaryFor(target);
+        try
+        {
+            File.WriteAllText(temporary, contents);
+            File.Move(temporary, target, overwrite: true);
+        }
+        catch
+        {
+            // A failed write must not leave its scratch behind in the
+            // author's own export folder. Swept on the way out, and the
+            // sweep's own failure never replaces the real one.
+            try
+            {
+                if (File.Exists(temporary))
+                    File.Delete(temporary);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            throw;
+        }
+    }
+}
+
+/// <summary>
+/// What one solve's disk write did: the files that landed, in order, and where
+/// and why it stopped if it stopped.
+/// </summary>
+internal sealed record ExportSetWrite(
+    IReadOnlyList<string> Written,
+    string? FailedTarget,
+    string? Error);
+
 public sealed record ExportComponentTaskResult(
     IReadOnlyList<(string Kind, string Json)>? Payloads,
     string? Warning,
@@ -490,40 +575,22 @@ public sealed class ExportComponent :
                 }
                 else
                 {
-                    // Declared outside the try so a set that fails halfway
-                    // still latches the files that did land: which kinds
-                    // reached disk is exactly what the author needs to see
-                    // when one of them could not.
-                    var written = new List<string>(taskResult.Payloads.Count);
-                    string? failedTarget = null;
-                    try
-                    {
-                        Directory.CreateDirectory(folder);
-                        foreach ((string kind, string json) in taskResult.Payloads)
-                        {
-                            string target = Path.Combine(
-                                folder, $"{name}-{kind}.json");
-                            failedTarget = target;
-                            File.WriteAllText(target, json);
-                            written.Add(target);
-                            failedTarget = null;
-                        }
-                    }
-                    catch (Exception writeException)
+                    ExportSetWrite outcome =
+                        WriteSet(folder, name, taskResult.Payloads);
+                    if (outcome.Error is not null)
                     {
                         AddRuntimeMessage(
                             GH_RuntimeMessageLevel.Error,
                             "Export: failed to write " +
-                            (failedTarget ?? folder) + ": " +
-                            writeException.Message);
+                            outcome.FailedTarget + ": " + outcome.Error);
                     }
                     // What THIS solve put on disk, even when that is
                     // nothing: a set failing on its first kind used to
                     // leave the previous solve's list standing under an
                     // Error saying the write had failed, which reads as
                     // files that are there and are not.
-                    _lastWritten = written;
-                    wroteThisSolve = written.Count > 0;
+                    _lastWritten = outcome.Written;
+                    wroteThisSolve = outcome.Written.Count > 0;
                 }
             }
 
@@ -1338,6 +1405,44 @@ public sealed class ExportComponent :
     /// drop it. Reattach it afterwards; a string needs no isolation of its
     /// own, it is immutable already.
     /// </summary>
+    /// <summary>
+    /// One study's whole set onto disk, one file a kind, EVERY one of them
+    /// through <see cref="AtomicFile.Write"/>. Lifted out of the solve so the
+    /// harness can drive the real loop on a fixture study rather than assert
+    /// against a copy of it.
+    ///
+    /// A set that fails halfway still reports the files that did land: which
+    /// kinds reached disk is exactly what the author needs to see when one of
+    /// them could not.
+    /// </summary>
+    internal static ExportSetWrite WriteSet(
+        string folder,
+        string name,
+        IReadOnlyList<(string Kind, string Json)> payloads)
+    {
+        var written = new List<string>(payloads.Count);
+        string? failedTarget = null;
+        try
+        {
+            Directory.CreateDirectory(folder);
+            foreach ((string kind, string json) in payloads)
+            {
+                string target = Path.Combine(folder, $"{name}-{kind}.json");
+                failedTarget = target;
+                AtomicFile.Write(target, json);
+                written.Add(target);
+                failedTarget = null;
+            }
+        }
+        catch (Exception writeException)
+        {
+            return new ExportSetWrite(
+                written, failedTarget ?? folder, writeException.Message);
+        }
+
+        return new ExportSetWrite(written, null, null);
+    }
+
     private static ResultDto CloneResult(ResultDto result) =>
         ContractJson.DeepClone(result) with { RawWire = result.RawWire };
 

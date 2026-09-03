@@ -2044,6 +2044,26 @@ internal static class Program
 
         try
         {
+            ValidateExportAtomicWrite(plugin);
+            Console.WriteLine(
+                "PASS  Export atomic writes (studio request R-005): every "
+                + "kind of a set goes to a temporary beside its destination "
+                + "and is MOVED over it, so the destination is never opened "
+                + "for writing and a reader holding it can never see it "
+                + "short. Measured through ExportComponent.WriteSet itself on "
+                + "a five-kind fixture study with a reader trap on the middle "
+                + "kind: the kinds before it are rewritten whole, the held "
+                + "kind is left entirely alone rather than truncated, the "
+                + "loop stops and names it, and neither the clean set nor the "
+                + "failed one leaves a temporary behind.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Export atomic writes: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateExportWriteFolder(plugin);
             Console.WriteLine(
                 "PASS  ExportComponent.TryResolveWriteFolder: an "
@@ -25855,6 +25875,283 @@ internal static class Program
         var e = new List<(string, string)> { ("compas", "{\"a\":1}") };
         if (Key("arch", Studio, d) == Key("arch", Studio, e))
             throw new InvalidOperationException("A set differing only in Kind keys differently.");
+    }
+
+    /// <summary>
+    /// <c>AtomicFile.Write</c>, which is how EVERY kind of an export set now
+    /// reaches disk (studio request R-005).
+    ///
+    /// The defect it closes: <c>File.WriteAllText</c> truncates the
+    /// destination and then fills it, so with Live on and Path aimed at a
+    /// folder the studio polls, every solve opened a window in which a reader
+    /// saw an empty or half-written document. The studio measured that window
+    /// against its own poller.
+    ///
+    /// A unit check cannot kill a process mid-write, so it pins the property
+    /// that makes the window impossible: THE DESTINATION IS NEVER OPENED FOR
+    /// WRITING. The proof is a reader holding the destination open with
+    /// FileAccess.Read and FileShare.ReadWrite, which is what a poller that
+    /// does not grant delete sharing looks like to the platform. Under
+    /// truncate-then-fill that reader's file is emptied and refilled under it,
+    /// and the writer reports success. Under write-then-move the move cannot
+    /// displace a file held that way, so the write fails as a whole and the
+    /// old document stands COMPLETE. That difference is the check.
+    ///
+    /// The rest is the convention the failure mode depends on: the temporary
+    /// is in the destination's own directory, since a move across volumes is a
+    /// copy and a copy is not atomic; it is not named like a kind of the set;
+    /// and neither a completed write nor a failed one leaves it behind.
+    /// </summary>
+    private static void ValidateExportAtomicWrite(Assembly plugin)
+    {
+        Type atomic = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.AtomicFile", throwOnError: true)!;
+        MethodInfo write = RequirePublicStatic(atomic, "Write");
+        MethodInfo temporaryFor = RequirePublicStatic(atomic, "TemporaryFor");
+        string suffix = (string)atomic.GetField(
+            "TemporarySuffix", BindingFlags.Public | BindingFlags.Static)!
+            .GetValue(null)!;
+
+        string folder = Path.Combine(
+            Path.GetTempPath(),
+            "ananke-smoke-atomic-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string target = Path.Combine(folder, "study-frames.json");
+
+            // The convention: beside the destination, not named like a kind.
+            string temporary = (string)temporaryFor.Invoke(null, new object?[] { target })!;
+            if (!string.Equals(
+                    Path.GetDirectoryName(temporary),
+                    folder,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "The temporary must be in the DESTINATION's own directory: "
+                    + "a move across volumes is a copy, and a copy is not "
+                    + $"atomic. Got '{temporary}' against '{folder}'.");
+            }
+            if (!temporary.EndsWith(suffix, StringComparison.Ordinal) ||
+                string.Equals(temporary, target, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"The temporary must be the destination's path plus a fresh "
+                    + $"id and the '{suffix}' suffix; got '{temporary}'.");
+            }
+            if (string.Equals(
+                    temporary,
+                    (string)temporaryFor.Invoke(null, new object?[] { target })!,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Two temporaries for one destination must differ, or two "
+                    + "writers racing on one study collide on one scratch file.");
+            }
+
+            // An ordinary write lands whole and sweeps up after itself.
+            const string Old = "{\"schema\":\"bench.frames/1\",\"frames\":[0,1,2,3,4,5,6,7,8,9]}";
+            write.Invoke(null, new object?[] { target, Old });
+            if (File.ReadAllText(target) != Old)
+                throw new InvalidOperationException("The document must reach the destination whole.");
+            string[] left = Directory.GetFiles(folder);
+            if (left.Length != 1)
+            {
+                throw new InvalidOperationException(
+                    "A completed write leaves the destination and nothing else; "
+                    + $"the folder holds [{string.Join(", ", left.Select(Path.GetFileName))}].");
+            }
+
+            // THE CHECK. A reader is holding the destination open the way a
+            // poller does. The new document is longer than the old one, so a
+            // truncate-then-fill would be visible even if it completed.
+            const string New = Old + "                                        ";
+            using (var reader = new FileStream(
+                       target,
+                       FileMode.Open,
+                       FileAccess.Read,
+                       FileShare.ReadWrite))
+            {
+                bool threw = false;
+                try
+                {
+                    write.Invoke(null, new object?[] { target, New });
+                }
+                catch (TargetInvocationException)
+                {
+                    threw = true;
+                }
+
+                reader.Position = 0;
+                using var text = new StreamReader(reader, leaveOpen: true);
+                string seen = text.ReadToEnd();
+                if (seen != Old)
+                {
+                    throw new InvalidOperationException(
+                        "The destination must NEVER be opened for writing, so a "
+                        + "reader holding it open can never see it short or "
+                        + "half-filled. It read "
+                        + (seen.Length == 0
+                            ? "EMPTY"
+                            : $"'{seen.Substring(0, Math.Min(seen.Length, 60))}' ({seen.Length} chars)")
+                        + $" against the {Old.Length} characters it was holding. "
+                        + "That is the truncate-then-fill window studio request "
+                        + "R-005 measured.");
+                }
+                if (!threw)
+                {
+                    throw new InvalidOperationException(
+                        "A destination a reader holds without granting delete "
+                        + "sharing cannot be displaced, so the write must FAIL "
+                        + "and say so rather than report a success the old file "
+                        + "outlived.");
+                }
+            }
+
+            // And the failed attempt left no scratch behind in the author's
+            // own export folder.
+            left = Directory.GetFiles(folder);
+            if (left.Length != 1 ||
+                left.Any(f => f.EndsWith(suffix, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException(
+                    "A FAILED write sweeps its temporary up; the folder holds "
+                    + $"[{string.Join(", ", left.Select(Path.GetFileName))}].");
+            }
+
+            // With the reader gone the same write lands, whole.
+            write.Invoke(null, new object?[] { target, New });
+            if (File.ReadAllText(target) != New)
+                throw new InvalidOperationException("The next write replaces the document whole.");
+
+            // EVERY KIND, through the production loop rather than a copy of
+            // it. A fixture study of all five kinds is written into a fresh
+            // folder by ExportComponent.WriteSet itself; the same reader trap
+            // is then set on the middle kind, and it must be the ONE file that
+            // does not change while the kinds either side of it do.
+            ValidateExportSetWriteAtomicity(plugin, folder, suffix);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// The same guarantee, but through <c>ExportComponent.WriteSet</c>, which
+    /// is the loop a solve actually runs. Asserting against AtomicFile alone
+    /// would leave the one thing that matters unmeasured: that no kind of the
+    /// set has been left on the old habit.
+    /// </summary>
+    private static void ValidateExportSetWriteAtomicity(
+        Assembly plugin, string root, string suffix)
+    {
+        Type export = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo writeSet = export.GetMethod(
+            "WriteSet", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.WriteSet was not found.");
+        Type payloadList = writeSet.GetParameters()[2].ParameterType;
+        Type pair = payloadList.GetGenericArguments()[0];
+
+        string[] kinds = { "contract", "compas", "tessellation", "columns", "frames" };
+        const string Study = "Column diagnosis";
+        object Payloads(string version)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(pair))!;
+            foreach (string kind in kinds)
+            {
+                list.Add(Activator.CreateInstance(
+                    pair, kind, $"{{\"kind\":\"{kind}\",\"version\":\"{version}\"}}")!);
+            }
+            return list;
+        }
+        (string[] Written, string? Failed, string? Error) Run(string folder, object payloads)
+        {
+            object outcome = writeSet.Invoke(
+                null, new object?[] { folder, Study, payloads })!;
+            Type type = outcome.GetType();
+            return (
+                ((System.Collections.IEnumerable)type.GetProperty("Written")!
+                    .GetValue(outcome)!).Cast<string>().ToArray(),
+                (string?)type.GetProperty("FailedTarget")!.GetValue(outcome),
+                (string?)type.GetProperty("Error")!.GetValue(outcome));
+        }
+        string Target(string folder, string kind) =>
+            Path.Combine(folder, $"{Study}-{kind}.json");
+        string Body(string kind, string version) =>
+            $"{{\"kind\":\"{kind}\",\"version\":\"{version}\"}}";
+
+        string set = Path.Combine(root, "set");
+        (string[] written, string? failed, string? error) = Run(set, Payloads("one"));
+        if (error is not null || failed is not null || written.Length != kinds.Length)
+        {
+            throw new InvalidOperationException(
+                $"A clean set writes all {kinds.Length} kinds and reports no "
+                + $"failure; got {written.Length} written, failed '{failed}', "
+                + $"error '{error}'.");
+        }
+        foreach (string kind in kinds)
+        {
+            if (File.ReadAllText(Target(set, kind)) != Body(kind, "one"))
+                throw new InvalidOperationException($"The '{kind}' kind did not land whole.");
+        }
+        if (Directory.GetFiles(set).Any(f => f.EndsWith(suffix, StringComparison.Ordinal)))
+            throw new InvalidOperationException("A clean set leaves no temporaries behind.");
+
+        // The trap on the MIDDLE kind: a reader holding it the way a poller
+        // does. The kinds before it are rewritten, the held one is not touched
+        // at all, and the loop stops there and names it.
+        string held = Target(set, "tessellation");
+        using (var reader = new FileStream(
+                   held, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            (written, failed, error) = Run(set, Payloads("two"));
+            reader.Position = 0;
+            using var text = new StreamReader(reader, leaveOpen: true);
+            string seen = text.ReadToEnd();
+            if (seen != Body("tessellation", "one"))
+            {
+                throw new InvalidOperationException(
+                    "A kind a reader is holding must be left ENTIRELY alone, "
+                    + "never truncated under it. The reader saw "
+                    + (seen.Length == 0 ? "EMPTY" : $"'{seen}'")
+                    + $" instead of the {Body("tessellation", "one").Length} "
+                    + "characters it was holding.");
+            }
+            if (error is null || failed != held)
+            {
+                throw new InvalidOperationException(
+                    $"The set must stop at the kind it could not write and name "
+                    + $"it; got failed '{failed}', error '{error}'.");
+            }
+            if (written.Length != 2 ||
+                written[0] != Target(set, "contract") ||
+                written[1] != Target(set, "compas"))
+            {
+                throw new InvalidOperationException(
+                    "The kinds written BEFORE the failure are reported, so the "
+                    + "author sees what reached disk; got "
+                    + $"[{string.Join(", ", written.Select(Path.GetFileName))}].");
+            }
+        }
+        if (File.ReadAllText(Target(set, "contract")) != Body("contract", "two") ||
+            File.ReadAllText(Target(set, "columns")) != Body("columns", "one") ||
+            File.ReadAllText(Target(set, "frames")) != Body("frames", "one"))
+        {
+            throw new InvalidOperationException(
+                "The kinds before the failure are the new document and the kinds "
+                + "after it are still the old one, whole in both cases.");
+        }
+        if (Directory.GetFiles(set).Any(f => f.EndsWith(suffix, StringComparison.Ordinal)))
+            throw new InvalidOperationException("A set that failed halfway leaves no temporaries behind either.");
     }
 
     /// <summary>
