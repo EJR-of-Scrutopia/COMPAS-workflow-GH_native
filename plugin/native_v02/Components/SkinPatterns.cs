@@ -4615,12 +4615,70 @@ internal static class SkinPatterns
     /// <summary>Signed arc about the seam from a NORMALISED position on a
     /// row: t in [0, 1) is normalised arc from the seam on a closed row and
     /// from the strip's start on an open one, and an open strip's seam is
-    /// its arc-length midpoint, which is what makes the column set j / m
-    /// symmetric about t = 0.5 and keeps the strip mirror-symmetric.</summary>
+    /// its arc-length midpoint at t = 0.5. Where the column set that feeds
+    /// this is laid out is <see cref="ColumnAt"/>'s business, not
+    /// this method's.</summary>
     private static double ArcOf(SkinLevelCurve curve, double t) =>
         curve.Closed
             ? t * curve.Length
             : t * curve.Length - curve.Length / 2.0;
+
+    /// <summary>
+    /// Rule 4.2.4's column position for one row, normalised.
+    ///
+    /// A CLOSED loop has no ends and its columns run from the seam at
+    /// j / m, a set that is its own mirror. An OPEN strip's seam is its
+    /// arc-length MIDPOINT, and AssignSeams states the guarantee that
+    /// follows in its own words: setout is centre-outward, so
+    /// mirror-symmetric geometry gets mirror-symmetric joints by
+    /// construction. j / m does not honour it. It anchors the grid on the
+    /// strip's LEFT END, so for m = 8 the arcs run -0.5 to +0.375 of L
+    /// whose mirror is -0.375 to +0.5, a different set. Measured on
+    /// Param's own net, mirror-symmetric in y to 7e-14 m: 26 of the
+    /// honeycomb's 501 cells had no mirror partner within 10 mm, against
+    /// none at all of the 1032 courses cells. Whole-branch review finding
+    /// 13.
+    ///
+    /// THE CENTRING HAS TO BE DONE ON THE USED SUBSET AND NOT ON m, and
+    /// this is where the review's own suggested one-liner, 0.5 + (j -
+    /// (m - 1) / 2) / m, goes wrong. Rule 4.2.4 takes only the columns
+    /// with j + k EVEN, which is half of them, and centring the whole set
+    /// of m leaves that half a QUARTER of a column pitch off centre.
+    /// MEASURED: it takes Param's honeycomb from 26 unpartnered cells to
+    /// 484 of 495, which is worse than what it was written to fix.
+    ///
+    /// Nor can the two row families simply both be centred and keep the
+    /// bond. A set of n columns at spacing 1 / n has exactly ONE
+    /// arrangement symmetric about the seam, so two symmetric rows of
+    /// equal count coincide and the half-pitch offset rule 4.2.4 exists
+    /// for is lost. The rows have to ALTERNATE between two counts one
+    /// apart, which is what a honeycomb strip does at its ends anyway.
+    ///
+    /// The whole of it is one shift and one extra column:
+    ///
+    ///     t = (j + 1) / m,  with j running from -1 rather than 0
+    ///
+    /// An even row takes j = 0, 2, ... m - 2 and gets m / 2 columns from
+    /// 1 / m to 1 - 1 / m, inset half a pitch at each end and symmetric
+    /// about the seam. An odd row takes j = -1, 1, ... m - 1 and gets
+    /// m / 2 + 1 columns from 0 to 1, standing ON both ends and also
+    /// symmetric about the seam, one column pitch off the even row's set.
+    /// The LONGER row is the one carrying the end columns, which is what
+    /// keeps a narrow strip alive: at n = 1 the short row takes one centre
+    /// on the seam and the long row two on the ends, where taking the
+    /// alternation the other way would have left a row with none at all.
+    /// </summary>
+    private static double ColumnAt(int j, int columns, bool closed) =>
+        closed
+            ? (double)j / columns
+            : (double)(j + 1) / columns;
+
+    /// <summary>The first column index of a row: 0 on a closed loop, which
+    /// has no ends, and -1 on an OPEN strip, where
+    /// <see cref="ColumnAt"/> shifts the whole set by one column so that
+    /// both row families stand symmetrically about the strip's own
+    /// seam.</summary>
+    private static int FirstColumn(bool closed) => closed ? 0 : -1;
 
     /// <summary>
     /// How many of a neighbouring row's columns fall within the cell's own
@@ -4639,9 +4697,9 @@ internal static class SkinPatterns
         double spanRight)
     {
         int within = 0;
-        for (int j = 0; j < columns; j++)
+        for (int j = FirstColumn(closed); j < columns; j++)
         {
-            double at = (double)j / columns;
+            double at = ColumnAt(j, columns, closed);
             if (closed)
             {
                 double shifted = at - t;
@@ -4908,7 +4966,7 @@ internal static class SkinPatterns
                     closedRows.Add(course);
                 int columnsBelow = 2 * centres[Math.Max(0, k - 1)];
                 int columnsAbove = 2 * centres[Math.Min(rows - 1, k + 1)];
-                for (int j = 0; j < columns; j++)
+                for (int j = FirstColumn(here.Closed); j < columns; j++)
                 {
                     // CENTRES (rule 4.2.4): a hexagon has its centre at
                     // (row k, column j) with j + k EVEN, so adjacent
@@ -4919,9 +4977,13 @@ internal static class SkinPatterns
                     // this ONE place: there is no phase term in the
                     // column set, because the phase and the parity are
                     // two spellings of one rule.
-                    if ((j + k) % 2 != 0)
+                    //
+                    // An OPEN strip's j starts at -1, so the remainder is
+                    // taken the mathematician's way and not the machine's:
+                    // C# gives -1 % 2 = -1.
+                    if ((((j + k) % 2) + 2) % 2 != 0)
                         continue;
-                    double t = (double)j / columns;
+                    double t = ColumnAt(j, columns, here.Closed);
 
                     // VERTICES (rule 4.2.5), as fractions of each ROW'S
                     // OWN column pitch, EACH EVALUATED ON ITS OWN ROW'S

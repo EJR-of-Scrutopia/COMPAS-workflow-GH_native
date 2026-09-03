@@ -1379,6 +1379,25 @@ internal static class Program
                 $"{DescribeException(exception)}");
         }
 
+
+        try
+        {
+            ValidateSkinHoneycombMirror(plugin);
+            Console.WriteLine(
+                "PASS  Skin honeycomb mirror (rule 4.2.6, finding 13): on " +
+                "Param's own net, itself a mirror in y to 7e-14 m, every " +
+                "honeycomb cell has a mirror partner, which it did not " +
+                "while an open strip's column grid was anchored on the " +
+                "strip's left end rather than laid centre-outward about " +
+                "its own seam.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin honeycomb mirror: " +
+                $"{DescribeException(exception)}");
+        }
+
         try
         {
             ValidateSkinLineFieldSmoothing(plugin);
@@ -16414,12 +16433,18 @@ internal static class Program
     /// (not closed) strip whose level-cut length tapers evenly with
     /// height.
     ///
-    /// At S 3.0, CH 2.0 the centre counts are 2, 2, 1 (rule 4.2.2's
-    /// n = max(1, round(L / 1.5 S))), so course 1 (whose "here" row is
-    /// the middle level, below matching at 2 and above dropping to 1) is
-    /// a genuine centre-count change, and the taper is gentle enough that
-    /// KeepValidPlans drops nothing, measured PlanDegenerateDropped and
-    /// PlanOverlapDropped both zero.
+    /// RE-MEASURED 2026-09-03 for the whole-branch review's finding 13,
+    /// which laid an open strip's columns centre-outward about its own
+    /// seam. At the old S 3.0 and CH 2.0 the two grids of this three-row
+    /// strip now AGREE everywhere, so all five of its cells are hexagons
+    /// and the fixture exercises rule 4.3.1 on nothing. That is the
+    /// centred lattice being right on a strip this small rather than an
+    /// engine that lost its pentagons.
+    ///
+    /// The setting is now S 2.5 and CH 1.5, chosen by sweeping nineteen
+    /// pairs: 7 cells, course 2 the one centre-count change, its two
+    /// cells BOTH odd, and PlanDegenerateDropped and PlanOverlapDropped
+    /// both zero.
     ///
     /// This is what neither the dome nor the two-oculus net can give
     /// check 12.4(d)'s converse: both always drop at least one cell (the
@@ -16468,16 +16493,19 @@ internal static class Program
     /// pair is contiguous, and every pair is evenly spaced. It cannot
     /// discriminate a placement rule from its own negation. This strip can.
     ///
-    /// At S 3.0, CH 2.0 the centre counts are rule 4.2.2's max(1, round(L /
-    /// 1.5 S)): 4, 4, 4 and 3. Course 2 is therefore the count-change row,
-    /// and it comes back as FOUR cells whose setout corners run 6, 5, 6, 5
-    /// in normalised arc order, with PlanDegenerateDropped and
-    /// PlanOverlapDropped both zero, so nothing here is hidden behind a
-    /// plan-validity drop. Twelve cells in all, four to a course.
+    /// RE-MEASURED 2026-09-03 for the whole-branch review's finding 13,
+    /// which laid an open strip's columns centre-outward about its own
+    /// seam. At the old S 3.0 and CH 2.0 all thirteen of this strip's
+    /// cells are hexagons, so the setting is now S 2.0 and CH 2.0, chosen
+    /// by sweeping nineteen pairs: 19 cells, course 2 the one count-change
+    /// row, and PlanDegenerateDropped and PlanOverlapDropped both zero, so
+    /// nothing here is hidden behind a plan-validity drop.
     ///
-    /// Those odd cells sit at ranks 1 and 3 of 4: NEITHER of them within a
-    /// column of an end, which is what check 12.4(e)'s open-strip half
-    /// measures, and what the deviation in progress.md records.
+    /// That row comes back as SIX cells reading six, odd, six, six, odd,
+    /// six in normalised arc order, its two odd cells at ranks 1 and 4:
+    /// NEITHER of them within a column of an end, and three ranks apart,
+    /// which is what check 12.4(e)'s open-strip half measures and what
+    /// the deviation in progress.md records.
     /// </summary>
     private static (double[][] Vertices, int[][] Faces) SkinShallowTaperNet()
     {
@@ -21832,14 +21860,22 @@ internal static class Program
         var scrambledHexagons = SkinCells(scrambledHexBuilt);
         RequireNothingDropped(
             scrambledHexBuilt, "hexagonal/barrel scrambled");
-        if (scrambledHexagons.Length != 56)
+        if (scrambledHexagons.Length != 60)
         {
             throw new InvalidOperationException(
                 "The scrambled net grows the same honeycomb the ordered " +
                 "one does: at CH 0.5 every row takes n = round(6.0 / 0.9) " +
-                "= 7 centres (rule 4.2.2), 4 interior rows (BandCount " +
-                "gives 4 bands and none merge), 28 cells per chart and " +
-                $"56 in all; got {scrambledHexagons.Length}.");
+                "= 7 centres (rule 4.2.2) and there are 4 interior rows " +
+                "(BandCount gives 4 bands and none merge). RE-MEASURED " +
+                "2026-09-03 from 56, for the whole-branch review's " +
+                "finding 13: an open strip's columns are laid " +
+                "centre-outward about its own seam now, and the two " +
+                "symmetric arrangements a honeycomb's half-pitch bond " +
+                "needs are a row of 7 inset half a pitch from each end " +
+                "and a row of 8 standing on both ends, not two rows of 7, " +
+                "so a chart carries 7 + 8 + 7 + 8 = 30 cells and the " +
+                "barrel's two charts 60 in all; got " +
+                $"{scrambledHexagons.Length}.");
         }
         RequireDisjointSimplePlans(
             scrambledHexagons.Select(cell => cell.Outline).ToArray(),
@@ -21952,14 +21988,41 @@ internal static class Program
                 "The barrel builds several honeycomb rows, or 12.4(a) has " +
                 $"nothing to compare between rows; it built {byRow.Length}.");
         }
+        // RE-MEASURED 2026-09-03 for the whole-branch review's finding 13.
+        // Rule 4.2.2's claim is unchanged and still holds: every row of a
+        // strip whose rows are one length takes the SAME centre count n = 7
+        // and the same column count m = 14. What changed is which of those
+        // columns are ON the strip. An open strip's columns are now laid
+        // centre-outward about its own seam, and a honeycomb's half-pitch
+        // bond between adjacent rows cannot survive two rows of equal count
+        // both being symmetric, because n columns at spacing 1 / n have
+        // exactly ONE symmetric arrangement. So the rows alternate between
+        // a row of 7 inset half a column pitch from each end and a row of
+        // 8 standing on both ends, both symmetric about the seam and one
+        // column pitch apart, which is what a honeycomb strip does at its
+        // ends. The barrel has TWO charts, front and back, so the row
+        // counts read 14 and 16.
         int[] perRow = byRow.Select(row => row.Count()).ToArray();
-        if (perRow.Distinct().Count() != 1)
+        int[] pinnedPerRow = { 14, 16, 14, 16, 14, 16 };
+        if (!perRow.SequenceEqual(pinnedPerRow))
         {
             throw new InvalidOperationException(
-                "The barrel's rows are ALL ONE LENGTH, so every row takes " +
-                "the SAME centre count and the same column count (rule " +
-                $"4.2.2); the rows hold [{string.Join(",", perRow)}].");
+                "The barrel's rows alternate between a row of 7 centres a " +
+                "chart, inset half a column pitch from each end, and a " +
+                "row of 8 standing on both ends, both symmetric about the " +
+                "strip's own seam and one column pitch apart (rules 4.2.2 " +
+                "and 4.2.4). Over two charts and six rows that reads " +
+                $"[{string.Join(",", pinnedPerRow)}]; the rows hold " +
+                $"[{string.Join(",", perRow)}]. Before finding 13 every " +
+                "row held 14, the grid anchored on the strip's left end.");
         }
+        // THE IN-ROW CENTRE SPACING, measured on the row's own DISTINCT
+        // centres. The barrel's two charts are congruent, so their cells
+        // share arcs pairwise and a count that did not deduplicate them
+        // divided the row's extent by twice as many gaps as it has, which
+        // is why this used to read 0.396 m for a lattice whose centres are
+        // 0.857 m apart. Distinct centres give the number rule 4.2.2
+        // actually names.
         double[] rowPitches = byRow
             .Select(row =>
             {
@@ -21967,28 +22030,40 @@ internal static class Program
                     .Select(cell => (cell.U0 + cell.U1) / 2.0)
                     .OrderBy(value => value)
                     .ToArray();
-                return (mids[^1] - mids[0]) / Math.Max(mids.Length - 1, 1);
+                var distinct = new List<double>();
+                foreach (double mid in mids)
+                {
+                    if (distinct.Count == 0 ||
+                        Math.Abs(mid - distinct[^1]) > 1.0e-9)
+                    {
+                        distinct.Add(mid);
+                    }
+                }
+                return (distinct[^1] - distinct[0]) /
+                    Math.Max(distinct.Count - 1, 1);
             })
             .ToArray();
         if (rowPitches.Max() - rowPitches.Min() > 1.0e-9)
         {
             throw new InvalidOperationException(
-                "Every row takes the SAME pitch on a strip whose rows are " +
-                $"all one length; they read {rowPitches.Min():F6} to " +
-                $"{rowPitches.Max():F6}.");
+                "Every row takes the SAME centre spacing on a strip whose " +
+                $"rows are all one length; they read {rowPitches.Min():F6} " +
+                $"to {rowPitches.Max():F6}.");
         }
         double pitch = rowPitches[0];
-        // Within ONE ROUNDING STEP of 0.75 S, which is the claim rule 4.2.2
-        // makes: the count is rounded, so the pitch cannot be exact, and the
-        // step is the pitch's own share of one column.
-        if (Math.Abs(pitch - (0.75 * 0.6)) > pitch + 1.0e-9)
+        // Within ONE COLUMN of 1.5 S, which is the claim rule 4.2.2 makes:
+        // n = max(1, round(L / (1.5 S))) is a ROUNDED count, so the spacing
+        // it gives cannot be exact, and the step it can be out by is one
+        // column, L / m.
+        if (Math.Abs(pitch - (1.5 * 0.6)) > 6.0 / 14.0 + 1.0e-9)
         {
             throw new InvalidOperationException(
                 "Row k takes its own CENTRE count n = max(1, round(L / " +
                 "(1.5 S))) from its own arc length and its COLUMN count is " +
                 "m = 2 n, so the barrel's 6.0 m strip at S 0.6 gives n = 7, " +
-                "m = 14 and a pitch within one rounding step of a target of " +
-                $"0.75 S = 0.45 m; the engine laid it at {pitch:F6} m.");
+                "m = 14 and an in-row centre spacing of 2 L / m = 0.857 m, " +
+                "within one column of the 1.5 S = 0.9 m target; the engine " +
+                $"laid it at {pitch:F6} m.");
         }
         RequireNothingDropped(generated, "barrel honeycomb");
 
@@ -21997,15 +22072,31 @@ internal static class Program
         // rather than the shipped absolute-lattice 76 and 36, which rule
         // 4.2.2 moved every column of and rule 4.2.5 removed the vertex
         // clamp the 36 was measuring.
-        const int barrelCellsPinned = 84;
-        const int barrelClippedPinned = 6;
+        // AND RE-MEASURED AGAIN, 2026-09-03, for the whole-branch review's
+        // finding 13: an OPEN strip's columns are now laid centre-outward
+        // about its seam, which is its arc-length midpoint, instead of
+        // being anchored on the strip's left end. Two numbers move and
+        // both are the centring's own arithmetic. The cell count RISES
+        // from 84 to 90, because the rows alternate between seven centres
+        // a chart, inset half a column pitch from each end, and eight
+        // standing on both ends, which is what lets both rows be
+        // symmetric about the seam and still stand one column pitch
+        // apart. And the CLIPPED count rises from 6 to 12, because the
+        // long row's two end centres each carry a cell that overhangs the
+        // strip and rule 4.2.5 clips and KEEPS it, where the left-anchored
+        // grid had one such centre a row and only at the near end.
+        const int barrelCellsPinned = 90;
+        const int barrelClippedPinned = 12;
         int barrelClipped = barrelCells.Count(cell => cell.Clipped);
         Console.WriteLine(
             "      Skin honeycomb barrel (check 12.4(a), S 0.6 CH 0.35): " +
             $"{barrelCells.Length} cells and {barrelClipped} clipped, " +
-            "against the shipped 76 and 36. Rule 4.2.2 laid the lattice in " +
-            "each row's own normalised arc so every column moved, and rule " +
-            "4.2.5 removed the vertex clamp the 36 was measuring.");
+            "against the shipped 76 and 36 and the 84 and 6 of the " +
+            "left-anchored open-strip column set. Rule 4.2.2 laid the " +
+            "lattice in each row's own normalised arc so every column " +
+            "moved, rule 4.2.5 removed the vertex clamp the 36 was " +
+            "measuring, and rule 4.2.6's centre-outward setout moved the " +
+            "open strip's grid onto its own seam.");
         if (barrelCells.Length != barrelCellsPinned ||
             barrelClipped != barrelClippedPinned)
         {
@@ -22013,9 +22104,10 @@ internal static class Program
                 $"The barrel honeycomb builds {barrelCellsPinned} cells of " +
                 $"which {barrelClippedPinned} are clipped; it built " +
                 $"{barrelCells.Length} and {barrelClipped}. These are " +
-                "RE-MEASURED numbers replacing the shipped 76 and 36, and a " +
-                "later change to either must re-measure and say why in this " +
-                "message rather than relax the pin.");
+                "RE-MEASURED numbers replacing the shipped 76 and 36 and " +
+                "then the 84 and 6 of the left-anchored open-strip column " +
+                "set, and a later change to either must re-measure and " +
+                "say why in this message rather than relax the pin.");
         }
 
         // 12.4(f): THE SCAR IS GONE. On a CLOSED row the columns sit at
@@ -22154,13 +22246,33 @@ internal static class Program
         (double[][] wedgeVertices, int[][] wedgeFaces) = SkinGentleWedgeNet();
         object wedgeNet = Activator.CreateInstance(
             netType, new object[] { wedgeVertices, wedgeFaces })!;
+        // THE TWO OPEN-STRIP SETTINGS ARE RE-MEASURED, 2026-09-03, for the
+        // whole-branch review's finding 13. An open strip's columns are
+        // laid centre-outward about its own seam now, so the two rows of a
+        // narrow strip AGREE where they used to beat: at the shipped S 3.0
+        // and CH 2.0 the wedge builds five cells and the taper thirteen,
+        // every one of them a hexagon, and neither fixture would exercise
+        // rule 4.3.1 at all. That is the centred lattice being RIGHT on a
+        // strip this small, not an engine that lost its pentagons; both
+        // fixtures still produce them the moment the strip is long enough
+        // for the two grids to drift a whole column.
+        //
+        // Both settings below were chosen by sweeping nineteen (S, CH)
+        // pairs on each fixture and are the ones that keep each fixture's
+        // OWN job: the wedge at S 2.5 and CH 1.5 gives 7 cells, 2 of them
+        // odd, on ONE count-change row and drops NOTHING, which is what
+        // lets the converse's "carries no odd cell" half actually run; the
+        // taper at S 2.0 and CH 2.0 gives 19 cells, 2 of them odd, on one
+        // count-change row and also drops nothing, and its change row
+        // holds more than two cells, which is what lets the open-strip
+        // placement claim discriminate at all.
         object wedgeBuilt = hexagonal.Invoke(
-            null, new object[] { wedgeNet, 3.0, 2.0 })!;
+            null, new object[] { wedgeNet, 2.5, 1.5 })!;
         (double[][] taperVertices, int[][] taperFaces) = SkinShallowTaperNet();
         object taperNet = Activator.CreateInstance(
             netType, new object[] { taperVertices, taperFaces })!;
         object taperBuilt = hexagonal.Invoke(
-            null, new object[] { taperNet, 3.0, 2.0 })!;
+            null, new object[] { taperNet, 2.0, 2.0 })!;
         foreach ((object built, string label) fixture in new[]
                  {
                      (domeBuilt, "dome"),
@@ -25327,6 +25439,167 @@ internal static class Program
     }
 
     /// <summary>
+    /// RULE 4.2.6'S MIRROR GUARANTEE, HONOURED BY THE HONEYCOMB AT LAST,
+    /// which is the whole-branch review's finding 13.
+    ///
+    /// AssignSeams states the guarantee in its own words: an open strip's
+    /// seam is its arc-length MIDPOINT, so setout is centre-outward and
+    /// mirror-symmetric geometry gets mirror-symmetric joints by
+    /// construction. The courses engine honoured it; the honeycomb did
+    /// not, because it laid its columns at j / m from the strip's LEFT
+    /// END, a set whose mirror is a different set. Measured on Param's own
+    /// net, which is mirror-symmetric in y to 7e-14 m: 26 of the
+    /// honeycomb's 501 cells had no mirror partner within 10 mm and the
+    /// worst residual was 0.377 m, against not one of the courses
+    /// engine's 1032.
+    ///
+    /// The check earns its fixture before it asserts anything: it measures
+    /// the NET's own mirror symmetry vertex by vertex, so a fixture that
+    /// quietly stopped being symmetric could not make this pass. Then it
+    /// requires the honeycomb to match the courses engine exactly, every
+    /// cell partnered and the worst residual at the floor.
+    /// </summary>
+    private static void ValidateSkinHoneycombMirror(Assembly plugin)
+    {
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo hexagonal = RequirePublicStatic(
+            patterns, "Hexagonal", netType, typeof(double), typeof(double));
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the build " +
+                "output (assets/param-crown-arch-contract.json): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(path));
+        object net = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so the mirror guarantee would be measured on " +
+                "nothing.");
+
+        // ---- THE FIXTURE FIRST. A mirror claim about the cells means
+        // nothing unless the NET is itself a mirror, so it is measured
+        // vertex by vertex before anything is asserted about a cell.
+        double[][] vertices = ((IEnumerable)netType
+                .GetProperty("Vertices")!.GetValue(net)!)
+            .Cast<double[]>()
+            .ToArray();
+        double netResidual = 0.0;
+        foreach (double[] one in vertices)
+        {
+            double best = double.PositiveInfinity;
+            foreach (double[] other in vertices)
+            {
+                double dx = one[0] - other[0];
+                double dy = one[1] + other[1];
+                double dz = one[2] - other[2];
+                best = Math.Min(
+                    best, Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz)));
+            }
+            netResidual = Math.Max(netResidual, best);
+        }
+        if (netResidual > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Param's own net is mirror-symmetric in y to 7e-14 m, " +
+                "which is what makes a mirror claim about its cells " +
+                $"measurable at all; this one reads {netResidual:0.###e+0} " +
+                $"m over {vertices.Length} vertices.");
+        }
+
+        (int Cells, int Orphans, double Worst) Mirror(MethodInfo engine)
+        {
+            object built = engine.Invoke(
+                null, new object[] { net, 0.17, 0.375 })!;
+            var cells = SkinCells(built);
+            var middles = new double[cells.Length][];
+            for (int at = 0; at < cells.Length; at++)
+            {
+                double x = 0.0, y = 0.0, z = 0.0;
+                foreach (double[] corner in cells[at].Outline)
+                {
+                    x += corner[0];
+                    y += corner[1];
+                    z += corner[2];
+                }
+                int count = cells[at].Outline.Length;
+                middles[at] = new[] { x / count, y / count, z / count };
+            }
+            int orphans = 0;
+            double worst = 0.0;
+            foreach (double[] one in middles)
+            {
+                double best = double.PositiveInfinity;
+                foreach (double[] other in middles)
+                {
+                    double dx = one[0] - other[0];
+                    double dy = one[1] + other[1];
+                    double dz = one[2] - other[2];
+                    best = Math.Min(
+                        best, Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz)));
+                }
+                if (best > 1.0e-6)
+                    orphans++;
+                worst = Math.Max(worst, best);
+            }
+            return (cells.Length, orphans, worst);
+        }
+
+        var honeycomb = Mirror(hexagonal);
+        var running = Mirror(courses);
+        if (honeycomb.Cells < 400 || running.Cells < 900)
+        {
+            throw new InvalidOperationException(
+                "Both engines must actually tile Param's net for the " +
+                $"mirror claim to mean anything; got {honeycomb.Cells} " +
+                $"honeycomb cells and {running.Cells} courses cells.");
+        }
+        if (running.Orphans != 0)
+        {
+            throw new InvalidOperationException(
+                "The COURSES engine is the control here and has always " +
+                "honoured rule 4.2.6: every one of its cells on a " +
+                "mirror-symmetric net has a mirror partner. " +
+                $"{running.Orphans} of {running.Cells} do not, worst " +
+                $"residual {running.Worst:F6} m, so the fault is in the " +
+                "net or in this check and not in the honeycomb.");
+        }
+        if (honeycomb.Orphans != 0)
+        {
+            throw new InvalidOperationException(
+                "Rule 4.2.6: an open strip's seam is its arc-length " +
+                "MIDPOINT, so setout is centre-outward and " +
+                "mirror-symmetric geometry gets mirror-symmetric joints " +
+                "BY CONSTRUCTION. On Param's own net, a mirror to 7e-14 " +
+                $"m, {honeycomb.Orphans} of the honeycomb's " +
+                $"{honeycomb.Cells} cells have no mirror partner and the " +
+                $"worst residual is {honeycomb.Worst:F6} m. The engine " +
+                "that shipped before this, whose open-strip column grid " +
+                "was anchored on the strip's left end at j / m, read 26 " +
+                "of 501 here with a worst residual of 0.377 m.");
+        }
+
+        Console.WriteLine(
+            "      Skin honeycomb mirror on Param's own net (rule 4.2.6): " +
+            $"the net a mirror to {netResidual:0.###e+0} m over " +
+            $"{vertices.Length} vertices, {honeycomb.Cells} honeycomb " +
+            $"cells and {running.Cells} courses cells, every one of them " +
+            "partnered, worst residual " +
+            $"{honeycomb.Worst:F6} m and {running.Worst:F6} m.");
+    }
+
+    /// <summary>
     /// RULE 3.2.9'S THREE NEIGHBOUR-AVERAGING PASSES AND THE COHERENCE
     /// WEIGHT THEY USE, which is the whole-branch review's finding 3.
     ///
@@ -26007,14 +26280,23 @@ internal static class Program
         object planSensitive = hexagonal.Invoke(
             null, new object[] { net, 0.10, 0.30 })!;
         int planSensitiveCells = SkinCells(planSensitive).Length;
-        if (planSensitiveCells != 1046)
+        if (planSensitiveCells != 1052)
         {
             throw new InvalidOperationException(
                 "The hexagonal engine on Param's own net at S 0.10 and " +
-                "CH 0.30 emits 1046 cells. With the whole-ring per-axis " +
-                "plan test narrowed to 1e-12 it emits 1048, the two " +
+                "CH 0.30 emits 1052 cells. With the whole-ring per-axis " +
+                "plan test narrowed to 1e-12 it emits 1054, the two " +
                 "extra carrying four plan-coincident corner pairs, which " +
-                "is the studio's own defect. Got " +
+                "is the studio's own defect. RE-MEASURED 2026-09-03 from " +
+                "1046 and 1048, for the whole-branch review's finding 13: " +
+                "an open strip's honeycomb columns are now laid " +
+                "centre-outward about the strip's own seam rather than " +
+                "anchored on its left end, so every column of every open " +
+                "row moved half a pitch and the cell count moved with " +
+                "them. The MECHANISM this pin watches is unchanged: " +
+                "narrowing the plan test still lets exactly two more " +
+                "cells through carrying four plan-coincident pairs " +
+                "between them. Got " +
                 $"{planSensitiveCells}.");
         }
 
