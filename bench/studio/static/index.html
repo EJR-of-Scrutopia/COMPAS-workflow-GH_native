@@ -117,7 +117,8 @@
     <div id="scene-list" class="hidden"></div>
 
     <span class="row-heading">Ground</span>
-    <label>Surface <select id="ground-preset">
+    <div id="ground-tiles" class="tile-grid"></div>
+    <label class="hidden">Surface <select id="ground-preset">
       <option value="dark-studio" selected>Dark studio</option>
       <option value="concrete-slab">Concrete slab</option>
       <option value="patio-pavers">Patio pavers</option>
@@ -126,7 +127,8 @@
     <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
 
     <span class="row-heading">Environment</span>
-    <label>Setting <select id="environment-mode">
+    <div id="environment-segments" class="segmented"></div>
+    <label class="hidden">Setting <select id="environment-mode">
       <option value="studio" selected>Studio</option>
       <option value="sky">Sky</option>
       <option value="hdri">HDRI</option>

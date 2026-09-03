@@ -250,3 +250,47 @@ body { overflow: hidden;
 #prop-library .tile-grid { grid-template-columns: 1fr 1fr 1fr; max-height: 260px;
   overflow-y: auto; }
 #prop-credit { color: #6b7078; margin-top: 4px; }
+
+/* A slider is one row: its name on the left, its value on the right, and
+   the row itself is the track. This is the shape every serious tool has
+   settled on, and it is what Param asked for when he said no text above and
+   below controls: forty parameters cost forty lines rather than eighty, and
+   the eye reads a column of names and a column of numbers.
+
+   The native input is still there, stretched over the row and invisible, so
+   dragging, arrow keys, focus and every existing handler keep working
+   exactly as they did. Only the appearance is ours. */
+.scrub { position: relative; height: 26px; margin: 3px 0; border-radius: 3px;
+  background: #17191d; overflow: hidden; }
+.scrub input[type="range"] { position: absolute; inset: 0; width: 100%;
+  height: 100%; margin: 0; opacity: 0; cursor: ew-resize; z-index: 2; }
+.scrub .fill { position: absolute; inset: 0; pointer-events: none; }
+.scrub .fill::before { content: ""; position: absolute; top: 0; bottom: 0;
+  left: 0; width: var(--fill, 0%); background: #232a33; }
+.scrub .fill::after { content: ""; position: absolute; top: 0; bottom: 0;
+  left: var(--fill, 0%); width: 1px; background: #6f8296; }
+.scrub .scrub-name { position: absolute; left: 8px; top: 0; line-height: 26px;
+  color: #c8c9c7; pointer-events: none; white-space: nowrap; }
+.scrub .scrub-value { position: absolute; right: 8px; top: 0; line-height: 26px;
+  color: #9aa0a6; pointer-events: none; white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+.scrub:hover .fill::before { background: #262e38; }
+.scrub:hover .scrub-name { color: #e6e7ea; }
+.scrub input[type="range"]:focus-visible + .fill { outline: 1px solid #6f8296;
+  outline-offset: -1px; }
+
+/* A choice between three things is one control, not a dropdown that hides
+   two of them. Equal segments, the chosen one filled, no caption above. */
+.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 3px; margin: 6px 0; padding: 3px; border: 1px solid #232529;
+  border-radius: 5px; background: #16171a; }
+.segmented button { width: auto; margin: 0; padding: 5px 2px; border: none;
+  border-radius: 3px; background: transparent; color: #7b8189; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.segmented button:hover { color: #c9ccd1; }
+.segmented button.active { background: #262a30; color: #f2f3f5;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+/* The ground surfaces are previewed on a tilted plane rather than a ball:
+   a floor is a floor, and a sphere of paving tells you nothing about the
+   joint size you are choosing. */
+#ground-tiles { grid-template-columns: 1fr 1fr; }

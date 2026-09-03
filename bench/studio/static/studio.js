@@ -2088,6 +2088,104 @@ function dragSunDial(event) {
   setSunMinutes(best, null);
 }
 
+// ---------- a select becomes a segmented row ----------
+// The select stays, hidden, and stays the source of truth: the segments
+// write to it and dispatch its change event, so every handler downstream
+// runs exactly as it did. Only what the eye sees changes.
+function buildSegmented(holderId, selectId) {
+  const holder = document.getElementById(holderId);
+  const select = document.getElementById(selectId);
+  if (!holder || !select) return;
+  holder.innerHTML = "";
+  for (const option of select.options) {
+    const segment = document.createElement("button");
+    segment.textContent = option.textContent;
+    segment.dataset.value = option.value;
+    segment.addEventListener("click", () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+      paintSegmented(holderId, selectId);
+    });
+    holder.appendChild(segment);
+  }
+  paintSegmented(holderId, selectId);
+}
+
+function paintSegmented(holderId, selectId) {
+  const holder = document.getElementById(holderId);
+  const select = document.getElementById(selectId);
+  if (!holder || !select) return;
+  for (const segment of holder.children) {
+    segment.classList.toggle("active", segment.dataset.value === select.value);
+  }
+}
+
+// ---------- sliders become rows ----------
+// Every range input in the panel is rebuilt in place as a single row: the
+// name it already carried on the left, whatever value spans it already
+// carried on the right, and the row itself as the track. The input is kept,
+// stretched over the row and made invisible, so every handler, every id and
+// every keyboard behaviour survives untouched: this is a change of
+// appearance and nothing else, which is what Param asked for.
+function upgradeSliders(root) {
+  const scope = root || document.getElementById("panel");
+  if (!scope) return;
+  for (const input of scope.querySelectorAll('input[type="range"]')) {
+    const label = input.closest("label");
+    if (!label || label.classList.contains("hidden")) continue;
+    if (label.parentElement && label.parentElement.classList.contains("scrub")) continue;
+    const row = document.createElement("div");
+    row.className = "scrub";
+    // Anything before the input is its name; anything after it is its
+    // value, which is usually a span some handler writes into. Both are
+    // MOVED rather than copied, so the ids and the handlers come with them.
+    const name = document.createElement("span");
+    name.className = "scrub-name";
+    const value = document.createElement("span");
+    value.className = "scrub-value";
+    let seenInput = false;
+    for (const node of Array.from(label.childNodes)) {
+      if (node === input) { seenInput = true; continue; }
+      (seenInput ? value : name).appendChild(node);
+    }
+    name.textContent = name.textContent.trim();
+    const fill = document.createElement("span");
+    fill.className = "fill";
+    row.appendChild(input);
+    row.appendChild(fill);
+    row.appendChild(name);
+    row.appendChild(value);
+    label.replaceWith(row);
+    // Carry the label's own id, if it had one: the panel hides and shows
+    // whole rows by id (the HDRI scale row, the weather row).
+    if (label.id) row.id = label.id;
+    if (label.className) row.className = "scrub " + label.className;
+    paintScrub(input);
+    input.addEventListener("input", () => paintScrub(input));
+    input.addEventListener("change", () => paintScrub(input));
+  }
+}
+
+function paintScrub(input) {
+  const row = input.closest(".scrub");
+  if (!row) return;
+  const min = +input.min || 0;
+  const max = input.max === "" ? 100 : +input.max;
+  const span = max - min;
+  const u = span > 0 ? (+input.value - min) / span : 0;
+  row.style.setProperty("--fill", (u * 100).toFixed(2) + "%");
+}
+
+// A value written by a handler rather than by a drag still has to move the
+// fill, and there are a dozen handlers that write one. Rather than chase
+// them all, the rows repaint whenever the panel is touched at all.
+function repaintScrubs() {
+  for (const input of document.querySelectorAll(".scrub input[type=\"range\"]")) {
+    paintScrub(input);
+  }
+}
+
 // ---------- preview balls ----------
 // A material is a look, so the panel shows the look, not a rectangle of
 // colour beside a word. Every rendering tool worth copying draws its
@@ -2220,6 +2318,60 @@ function buildTileGrid(holderId, selectId, materialFor) {
   paintTileSelection(holder, select.value);
 }
 
+// A floor previewed on a floor. The plane is tilted away from the camera so
+// the joint spacing reads, which a sphere cannot show: the whole reason for
+// choosing paving over concrete is the size of the pieces.
+function renderGroundPreview(preset, canvasEl) {
+  if (!previewRig) {
+    fillFlat(canvasEl, new THREE.Color(0x2a2e34));
+    return;
+  }
+  const material = groundMaterial(preset);
+  const tile = material.userData.groundTileMetres;
+  if (tile && material.map) {
+    // Six metres of ground in the preview, so the joints are the size they
+    // would be under a person rather than under a vault.
+    const [u, v] = groundRepeat(3, tile);
+    material.map.repeat.set(u, v);
+  }
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), material);
+  previewRig.holder.add(plane);
+  previewRig.ball.visible = false;
+  previewRig.camera.position.set(0, -3.4, 2.2);
+  previewRig.camera.lookAt(0, 0.4, 0);
+  drawPreview(canvasEl);
+  previewRig.holder.remove(plane);
+  plane.geometry.dispose();
+  previewRig.ball.visible = true;
+  previewRig.camera.position.set(0, -3.05, 1.02);
+  previewRig.camera.lookAt(0, 0, 0);
+  // Put the repeat back where the scene wants it, since the material is the
+  // same object the floor itself is drawn with.
+  if (tile && material.map) {
+    const [u, v] = groundRepeat(state.groundRadius, tile);
+    material.map.repeat.set(u, v);
+  }
+}
+
+function buildGroundTiles() {
+  const holder = document.getElementById("ground-tiles");
+  const select = document.getElementById("ground-preset");
+  if (!holder || !select) return;
+  holder.innerHTML = "";
+  for (const option of select.options) {
+    const tile = previewTile(option.value, option.textContent,
+      (canvasEl) => renderGroundPreview(option.value, canvasEl));
+    tile.addEventListener("click", () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+      paintTileSelection(holder, option.value);
+    });
+    holder.appendChild(tile);
+  }
+  paintTileSelection(holder, select.value);
+}
+
 function buildMaterialTiles() {
   buildTileGrid("material-tiles", "material-select",
     (value) => materials[value] || null);
@@ -2258,6 +2410,7 @@ const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
 
 function applyCut(preserve) {
   paintMaterialSwatches();
+  repaintScrubs();
   // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
   // server-side at the bundle's own size, and each one is looked up in
@@ -5390,6 +5543,9 @@ function frame(now) {
 
 // The tile grids are built here, after SKINS and skinMaterialCache exist.
 guarded("the material tiles", buildMaterialTiles);
+guarded("the ground tiles", buildGroundTiles);
+guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
+guarded("the slider rows", () => upgradeSliders());
 // The library loads in the background: the studio is usable before it
 // arrives, and a folder with nothing in it simply leaves the old props.
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));
