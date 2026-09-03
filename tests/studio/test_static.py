@@ -2181,13 +2181,26 @@ def test_the_day_cycle_is_a_pure_second_clock():
     body = _function_body(js, "applyDayCycle")
     for banned in ("performance.now", "Date.now", "state.timeline", "setTimeout"):
         assert banned not in body
-    assert "peakElevation" in body
-    # F1: the #sun-elevation slider's own min="5" can only clamp the DISPLAY
-    # write; the real sun position must come from the unclamped elevation
-    # (through applySunAt), or a captured low peak -- or the arc's own 2
-    # degree dawn -- flattens the instant it touches the floor.
-    assert "applySunAt(" in body
-    assert "Math.max(5, elevation)" in body
+    # Re-pinned 2026-09-04: the cycle used to synthesise its own arc, an
+    # azimuth sweep from 270 to 90 and a sine elevation whose peak came off
+    # a slider. It now runs the CLOCK from dawn to dusk on the real day at
+    # the real site and lets the solar model place the sun, which is the
+    # same code path a chosen time takes, so the cycle cannot look
+    # different from the still it passes through. Purity in u is unchanged,
+    # and that is what this test exists for.
+    assert "state.sunMinutes = from + (to - from)" in body
+    assert "applySunFromTime()" in body
+    # F1 survives the change and matters more, not less: the display write
+    # is clamped by the slider's own min="5" but the sun is placed from the
+    # unclamped elevation, so a dawn or a dusk does not flatten.
+    placer = _function_body(js, "applySunFromTime")
+    assert "applySunAt(" in placer
+    assert 'Math.round(Math.max(0, placed.elevation))' in placer, (
+        "the display value is clamped"
+    )
+    assert "Math.max(-2, placed.elevation)" in placer, (
+        "the placed sun is not"
+    )
     # frame() is the only advancer; recording drives u deterministically.
     assert "state.dayCycle.t" in _function_body(js, "frame")
     assert "applyDayCycle(" in _function_body(js, "recordAnimation")
@@ -2197,26 +2210,28 @@ def test_the_day_cycle_is_a_pure_second_clock():
     assert "dayCycle.playing" in _function_body(js, "recordAnimation")
 
 
-def test_the_day_cycle_peak_is_captured_from_the_hand_set_slider_value():
-    # F1, the headline finding: applyDayCycle writes #sun-elevation's value
-    # every frame, clamped to the slider's own min="5" for display. Both the
-    # button and a day-cycle recording used to capture their peak by
-    # re-reading that same slider, so a played-out cycle's clamped display
-    # became the NEXT cycle's peak -- the captured peak degraded to 5 after
-    # one full cycle, and every later play ran a flat sun. The peak must
-    # come from state.sunElevationSetting, written only by the slider's own
-    # input handler, never from the slider's live .value.
+def test_the_day_cycle_peak_comes_from_the_sky_not_from_a_slider():
+    """Replaced 2026-09-04. The peak elevation of the arc used to be
+    captured off the elevation slider, because the arc was invented and
+    something had to say how high it went. It is not invented any more: the
+    peak of a real day comes from the date and the latitude, and the model
+    gives it. The capture, the slider it captured from, and the reason both
+    existed are gone together.
+
+    What replaces it is the thing that was really wanted: the cycle runs
+    between dawn and dusk, which are solved for the day rather than assumed,
+    and it falls back to plain hours only where the sun never crosses those
+    heights at all."""
+
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert "sunElevationSetting: 40" in js
-    elevation_input_start = js.index('getElementById("sun-elevation").addEventListener("input"')
-    elevation_input_body = js[elevation_input_start:js.index("\n});", elevation_input_start)]
-    assert "state.sunElevationSetting = +e.target.value" in elevation_input_body
-    button_start = js.index('getElementById("day-cycle-button")')
-    button_body = js[button_start:js.index("\n});", button_start)]
-    assert "state.dayCycle.peakElevation = state.sunElevationSetting" in button_body
-    assert 'peakElevation = +document.getElementById("sun-elevation").value' not in button_body
-    record_body = _function_body(js, "recordAnimation")
-    assert "state.dayCycle.peakElevation = state.sunElevationSetting" in record_body
+    start_body = _function_body(js, "dayCycleStart")
+    end_body = _function_body(js, "dayCycleEnd")
+    assert "timeAtElevation(" in start_body and "-6, false" in start_body
+    assert "timeAtElevation(" in end_body and "-6, true" in end_body
+    assert "5 * 60" in start_body and "21 * 60" in end_body, (
+        "a day with no dawn still has a cycle"
+    )
+    assert "state.dayCycle.peakElevation" not in _function_body(js, "applyDayCycle")
 
 
 def test_appearance_overrides_are_render_only_and_persist():

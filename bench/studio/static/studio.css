@@ -216,3 +216,29 @@ body { overflow: hidden;
   align-items: center; margin: 6px 0 4px; }
 #props-row select, #props-row button { width: auto; margin: 0; }
 #props-row button.armed { outline: 2px solid #7ab3e0; }
+
+/* The sun. One instrument rather than three sliders and a colour picker:
+   a compass for where it is, an arc for how high, a day track painted with
+   the sky it produces, and six moments that are solved rather than named.
+   Nothing is labelled in words because the drawing says which is which. */
+#sun-widget { position: relative; margin: 6px 0 4px; }
+#sun-dial { display: block; width: 100%; height: auto; cursor: crosshair;
+  border-radius: 4px; background: #121417; }
+#sun-readout { position: absolute; right: 8px; bottom: 6px; display: flex;
+  gap: 10px; color: #9aa0a6; pointer-events: none;
+  font-variant-numeric: tabular-nums; }
+#sun-readout #sun-time { color: #e6e7ea; }
+#day-track { display: block; width: 100%; height: 30px; margin: 4px 0;
+  border-radius: 4px; cursor: ew-resize; }
+#sun-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
+  margin: 4px 0 8px; }
+.chip { width: auto; margin: 0; padding: 5px 2px; border: 1px solid #2b2e34;
+  border-radius: 3px; background: #16181c; color: #8b9199; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip:hover { border-color: #5a6270; color: #d8dade; }
+.chip.active { border-color: #93a6bb; color: #f2f4f6; background: #1d2126; }
+.chip:disabled { opacity: 0.35; cursor: default; }
+#day-cycle-row { display: grid; grid-template-columns: auto 1fr; gap: 8px;
+  align-items: center; margin: 4px 0 8px; }
+#day-cycle-row button { width: auto; margin: 0; }
+#day-cycle-row label { margin: 0; }

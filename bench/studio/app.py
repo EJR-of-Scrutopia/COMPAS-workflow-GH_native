@@ -40,6 +40,11 @@ COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
 # root beside the studio, like columns and hdri, because a scene is authored
 # by hand and cannot be rebuilt from anything.
 SCENES_DIR = Path(__file__).resolve().parent / "scenes"
+# The prop library: GLB models beside a manifest that says what each one is,
+# how tall it stands in the world, and who made it. An asset root like
+# columns and hdri, because these are files somebody put there rather than
+# anything the studio derives.
+PROPS_DIR = Path(__file__).resolve().parent / "props"
 # The one setting the studio remembers between runs: which folder the
 # vaults are read from. Beside the studio, not in the folder itself, so
 # pointing at a new folder cannot lose the way back.
@@ -736,6 +741,43 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
                 path.unlink()
                 removed.append(path.name)
         return {"deleted": scene_id, "removed": removed}
+
+    @app.get("/api/props")
+    def prop_library():
+        """The prop manifest, or an empty library.
+
+        The manifest is the authority on what exists: a GLB with no entry is
+        not offered, because the entry is what carries the real-world height
+        and the credit, and a prop with neither is a model of unknown size
+        by nobody.
+        """
+
+        manifest = PROPS_DIR / "props.json"
+        if not manifest.is_file():
+            return {"props": [], "library": None}
+        try:
+            document = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                400, "the prop manifest is damaged ({})".format(error))
+        props = []
+        for entry in document.get("props") or []:
+            name = str(entry.get("file") or "")
+            if not name or not (PROPS_DIR / name).is_file():
+                continue
+            props.append(entry)
+        return {"props": props, "library": document.get("library")}
+
+    @app.get("/api/props/{name}")
+    def prop_model(name: str):
+        if "/" in name or "\\" in name or ".." in name or ":" in name:
+            raise HTTPException(400, "bad prop name")
+        if not _contained(PROPS_DIR, name):
+            raise HTTPException(400, "bad prop name")
+        path = PROPS_DIR / name
+        if not path.is_file():
+            raise HTTPException(404, "no prop file {}".format(name))
+        return FileResponse(path, media_type="model/gltf-binary")
 
     @app.get("/api/hdri")
     def hdri_list():

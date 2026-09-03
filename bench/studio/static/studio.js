@@ -13,6 +13,7 @@ import {
   boxUVs, segmentUVOffset, smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
+  sunPosition, sunLight, timeAtElevation,
 } from "/static/fields.js";
 
 // ---------- diagnosis ----------
@@ -110,6 +111,12 @@ const state = {
   hdriEstimateAzimuth: null, // raw pixel-estimated azimuth from the last loadHdri; lets the rotation slider re-aim the sun without re-scanning pixels
   sunColourOverride: null,   // S5: hex string once the sun-colour input is touched; null lets a preset choose the colour again
   sunIntensityOverride: null, // F4: sun.intensity captured once a day cycle finishes; null lets a preset choose the intensity again, exactly like sunColourOverride
+  // The sun is a time and a place now, not two angles. The angles are
+  // derived (see applySunFromTime) and the two hidden inputs keep them for
+  // the code that still speaks in angles: the HDRI estimate and the sky.
+  sunDay: new Date(),          // taken once at load, so a take is not interrupted by midnight
+  sunMinutes: 13 * 60,         // early afternoon, a defensible default for a first look
+  sunPreset: null,             // which named moment is lit, if any
   sunElevationSetting: 40,   // F1: the #sun-elevation slider's own value, written only by its own input handler; the day cycle reads its peak from here, never from the slider itself (applyDayCycle also writes that slider, clamped for display -- see applyDayCycle)
   dayCycle: { playing: false, t: 0, seconds: 30, peakElevation: 40, record: false }, // S5
   brightness: 1,     // R2: multiplier on the active mode's exposure base
@@ -258,6 +265,8 @@ function applySunAt(azimuthDeg, elevationDeg) {
   sky.material.uniforms.sunPosition.value.copy(sun.position).normalize();
 }
 
+// Kept for the day cycle and the HDRI estimate, both of which speak in
+// angles rather than in times.
 function applySunFromSliders() {
   applySunAt(+document.getElementById("sun-azimuth").value, +document.getElementById("sun-elevation").value);
 }
@@ -267,20 +276,29 @@ function applySunFromSliders() {
 // start; colour and intensity ramp warm-dim, white-bright, warm-dim.
 // Writes the sliders and the colour input so the UI tells the truth.
 function applyDayCycle(u) {
-  const azimuthDeg = ((270 - 180 * u) % 360 + 360) % 360;
-  const elevation = 2 + (state.dayCycle.peakElevation - 2) * Math.sin(Math.PI * u);
-  const warmth = 1 - Math.sin(Math.PI * u);
-  const colour = new THREE.Color().setHSL(0.08, 0.55 * warmth, 0.5 + 0.3 * (1 - warmth));
-  document.getElementById("sun-azimuth").value = Math.round(azimuthDeg);
-  // F1: the slider's own min="5" cannot display a lower value, but the
-  // sun position below is driven off the unclamped elevation, not this
-  // display write -- otherwise a captured peak, or the arc's own 2 degree
-  // dawn, would flatten the instant either one touched the floor.
-  document.getElementById("sun-elevation").value = Math.round(Math.max(5, elevation));
-  document.getElementById("sun-colour").value = "#" + colour.getHexString();
-  sun.color.copy(colour);
-  sun.intensity = 0.8 + 2.4 * Math.sin(Math.PI * u);
-  applySunAt(azimuthDeg, elevation);
+  // The day cycle is the clock running, not an arc somebody drew. u sweeps
+  // the hours from dawn to dusk on the real day at the real site, and the
+  // solar model places, colours and dims the sun exactly as it does for a
+  // time chosen by hand: the same code path, so the cycle cannot look
+  // different from the still it passes through.
+  //
+  // This replaces a synthesised azimuth sweep and a sine elevation whose
+  // peak came from a slider. The peak now comes from the date and the
+  // latitude, which is where a peak comes from.
+  const from = dayCycleStart();
+  const to = dayCycleEnd();
+  state.sunMinutes = from + (to - from) * Math.max(0, Math.min(1, u));
+  applySunFromTime();
+}
+
+function dayCycleStart() {
+  const dawn = timeAtElevation(sunDay(), SUN_SITE.latitude, SUN_SITE.longitude, -6, false);
+  return dawn ? dawn.getUTCHours() * 60 + dawn.getUTCMinutes() : 5 * 60;
+}
+
+function dayCycleEnd() {
+  const dusk = timeAtElevation(sunDay(), SUN_SITE.latitude, SUN_SITE.longitude, -6, true);
+  return dusk ? dusk.getUTCHours() * 60 + dusk.getUTCMinutes() : 21 * 60;
 }
 
 function setEnvironmentTexture(texture, target) {
@@ -354,7 +372,17 @@ function applyEnvironment() {
     scene.environmentIntensity = 0.6;
   }
   applyGrade();
+  // The environment's presets write the sun's colour and intensity as a
+  // last resort, from a time when nothing else knew what colour a sun
+  // should be. Something does now, and it is the instrument: whichever
+  // preset has just been applied, the derived sun goes back on top of it,
+  // or a mode change would silently flatten an evening back to white noon.
+  if (sunInstrumentReady) applySunFromTime();
 }
+
+// False until the instrument has been placed once, so applyEnvironment can
+// run during boot before the sun has a time to be at.
+let sunInstrumentReady = false;
 
 function regenerateEnvironment() {
   // The one PMREM site (E6): mode entry, weather change, sun slider
@@ -1631,6 +1659,299 @@ document.getElementById("scene-open").addEventListener("click", async () => {
   list.classList.toggle("hidden", !opening);
   if (opening) await refreshScenes();
 });
+
+// ---------- the sun ----------
+// One instrument in place of three sliders and a colour picker. The site
+// and the instant are the real variables; azimuth, elevation, colour and
+// strength all follow from them, and the widget draws what follows rather
+// than asking for it.
+//
+// The site defaults to London because the studio is in Wales and the vault
+// work is British; it is a state field, so a location control can be added
+// later without touching any of this.
+const SUN_SITE = { latitude: 51.507, longitude: -0.1278, northOffset: 0 };
+const SUN_PRESETS = [
+  // Elevation targets and which side of noon to solve on. The figures are
+  // the conventional ones: -0.833 is the upper limb on the horizon, which
+  // is what every almanac calls sunrise and sunset; 6 degrees is the upper
+  // edge of golden hour, where the derived colour has fallen below 3000 K
+  // so the warmth is real rather than dialled in; -4 is the middle of
+  // civil twilight, which is blue hour.
+  { key: "sunrise", label: "Sunrise", elevation: -0.833, evening: false },
+  { key: "morning", label: "Morning", elevation: 20, evening: false },
+  { key: "noon", label: "Noon", elevation: null, evening: false },
+  { key: "golden", label: "Golden", elevation: 6, evening: true },
+  { key: "sunset", label: "Sunset", elevation: -0.833, evening: true },
+  { key: "blue", label: "Blue hour", elevation: -4, evening: true },
+];
+
+function sunDay() {
+  // The day the sun is being placed on. A date control can be added later;
+  // for now it is today, taken once at load so a take is not interrupted by
+  // midnight.
+  return state.sunDay;
+}
+
+function minutesToDate(minutes) {
+  const day = sunDay();
+  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(),
+    day.getUTCDate(), 0, 0, 0) + Math.round(minutes * 60000));
+}
+
+function currentSun() {
+  return sunPosition(minutesToDate(state.sunMinutes),
+    SUN_SITE.latitude, SUN_SITE.longitude, SUN_SITE.northOffset);
+}
+
+// The one place the scene learns what the sun is doing. Everything else
+// asks for a time, not for an angle.
+function applySunFromTime() {
+  const placed = currentSun();
+  const light = sunLight(placed.elevation);
+  // The scene's angle is not the compass bearing. applySunAt measures from
+  // +X counterclockwise, the survey convention puts north at +Y and east at
+  // +X, so a compass bearing A points along (sin A, cos A) and the scene
+  // angle is 90 - A. Everything that still speaks in scene angles (the sky,
+  // the HDRI estimate) keeps reading the hidden input, which holds that.
+  const sceneAngle = ((90 - placed.azimuth) % 360 + 360) % 360;
+  document.getElementById("sun-azimuth").value = Math.round(sceneAngle);
+  document.getElementById("sun-elevation").value =
+    Math.round(Math.max(0, placed.elevation));
+  const colour = new THREE.Color(light.colour);
+  if (!state.sunColourOverride) sun.color.copy(colour);
+  document.getElementById("sun-colour").value = "#" + colour.getHexString();
+  // Strength is the ramp's own figure relative to full sun, and the floor
+  // keeps a night scene lit by something rather than going black.
+  if (state.sunIntensityOverride === null) {
+    sun.intensity = 0.35 + 2.9 * light.strength;
+  }
+  applySunAt(sceneAngle, Math.max(-2, placed.elevation));
+  paintSunWidget();
+  paintDayTrack();
+}
+
+// ---------- drawing the instrument ----------
+function paintSunWidget() {
+  const canvasEl = document.getElementById("sun-dial");
+  if (!canvasEl) return;
+  const context = canvasEl.getContext("2d");
+  const width = canvasEl.width, height = canvasEl.height;
+  const placed = currentSun();
+  const light = sunLight(placed.elevation);
+  const colour = "#" + new THREE.Color(light.colour).getHexString();
+  context.clearRect(0, 0, width, height);
+
+  // The compass: north at the top, the sun's bearing as a disc on the ring.
+  const cx = 74, cy = 76, radius = 54;
+  context.strokeStyle = "#262a30";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.arc(cx, cy, radius, 0, Math.PI * 2);
+  context.stroke();
+  context.strokeStyle = "#3c4048";
+  context.lineWidth = 1;
+  for (let i = 0; i < 4; i += 1) {
+    const angle = i * Math.PI / 2;
+    context.beginPath();
+    context.moveTo(cx + Math.sin(angle) * (radius - 5), cy - Math.cos(angle) * (radius - 5));
+    context.lineTo(cx + Math.sin(angle) * (radius + 5), cy - Math.cos(angle) * (radius + 5));
+    context.stroke();
+  }
+  context.fillStyle = "#6b7078";
+  context.textAlign = "center";
+  context.font = "9px system-ui, sans-serif";
+  context.fillText("N", cx, cy - radius - 9);
+  const bearing = placed.azimuth * Math.PI / 180;
+  const handX = cx + Math.sin(bearing) * radius;
+  const handY = cy - Math.cos(bearing) * radius;
+  context.strokeStyle = "#40454d";
+  context.beginPath();
+  context.moveTo(cx, cy);
+  context.lineTo(handX, handY);
+  context.stroke();
+  context.globalAlpha = placed.elevation > 0 ? 1 : 0.4;
+  context.fillStyle = colour;
+  context.beginPath();
+  context.arc(handX, handY, 6.5, 0, Math.PI * 2);
+  context.fill();
+  context.globalAlpha = 1;
+  context.strokeStyle = "rgba(0,0,0,0.5)";
+  context.stroke();
+
+  // The arc: how high, with the horizon drawn so a set sun is visibly below
+  // the line rather than merely a small number.
+  const ax = 214, base = 132, top = 20, span = base - top;
+  context.strokeStyle = "#262a30";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.arc(ax, base, span, -Math.PI / 2, 0);
+  context.stroke();
+  context.strokeStyle = "#3c4048";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(ax - 8, base);
+  context.lineTo(ax + span + 8, base);
+  context.stroke();
+  const clamped = Math.max(-6, Math.min(90, placed.elevation));
+  const arc = (clamped / 90) * (Math.PI / 2);
+  const ex = ax + Math.cos(arc) * span;
+  const ey = base - Math.sin(arc) * span;
+  context.globalAlpha = placed.elevation > 0 ? 1 : 0.4;
+  context.fillStyle = colour;
+  context.beginPath();
+  context.arc(ex, ey, 6.5, 0, Math.PI * 2);
+  context.fill();
+  context.globalAlpha = 1;
+  context.strokeStyle = "rgba(0,0,0,0.5)";
+  context.stroke();
+
+  const hours = Math.floor(state.sunMinutes / 60) % 24;
+  const minutes = Math.round(state.sunMinutes % 60);
+  document.getElementById("sun-time").textContent =
+    String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0");
+  document.getElementById("sun-angles").textContent =
+    Math.round(placed.azimuth) + " / " + Math.round(placed.elevation);
+}
+
+// The day track carries its own legend: the sky colour the model produces
+// at each hour is painted into it, so golden hour is a place on the bar
+// rather than a number to remember.
+// Twenty-five solar positions and a gradient is too much to redraw sixty
+// times a second while a day cycle runs, and the sky it paints only changes
+// when the day or the site does. So the band is baked once into its own
+// canvas and the handle is drawn over it.
+let dayTrackBand = null;
+let dayTrackKey = null;
+
+function paintDayTrack() {
+  const canvasEl = document.getElementById("day-track");
+  if (!canvasEl) return;
+  const context = canvasEl.getContext("2d");
+  const width = canvasEl.width, height = canvasEl.height;
+  const key = sunDay().toDateString() + SUN_SITE.latitude + SUN_SITE.longitude;
+  if (dayTrackKey === key && dayTrackBand) {
+    context.clearRect(0, 0, width, height);
+    context.drawImage(dayTrackBand, 0, 0);
+    drawDayHandle(context, width, height);
+    return;
+  }
+  const gradient = context.createLinearGradient(0, 0, width, 0);
+  for (let stop = 0; stop <= 24; stop += 1) {
+    const placed = sunPosition(minutesToDate(stop * 60),
+      SUN_SITE.latitude, SUN_SITE.longitude, SUN_SITE.northOffset);
+    const light = sunLight(placed.elevation);
+    const day = new THREE.Color(light.colour);
+    // Night is the sky, not the sun: below the horizon the track fades to
+    // the deep blue a scene actually reads as at that hour.
+    const night = new THREE.Color(0x0a0d1a);
+    const mix = Math.max(0, Math.min(1, (placed.elevation + 6) / 8));
+    day.lerp(night, 1 - mix);
+    gradient.addColorStop(stop / 24, "#" + day.getHexString());
+  }
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "rgba(255,255,255,0.22)";
+  context.lineWidth = 1;
+  for (const hour of [6, 12, 18]) {
+    const x = Math.round((hour / 24) * width) + 0.5;
+    context.beginPath();
+    context.moveTo(x, 6);
+    context.lineTo(x, height - 6);
+    context.stroke();
+  }
+  dayTrackBand = document.createElement("canvas");
+  dayTrackBand.width = width;
+  dayTrackBand.height = height;
+  dayTrackBand.getContext("2d").drawImage(canvasEl, 0, 0);
+  dayTrackKey = key;
+  drawDayHandle(context, width, height);
+}
+
+function drawDayHandle(context, width, height) {
+  const handle = (state.sunMinutes / 1440) * width;
+  context.fillStyle = "#f2f3f5";
+  context.strokeStyle = "rgba(0,0,0,0.45)";
+  context.beginPath();
+  context.roundRect(Math.max(0, Math.min(width - 6, handle - 3)), -2, 6, height + 4, 3);
+  context.fill();
+  context.stroke();
+}
+
+// ---------- driving it ----------
+function setSunMinutes(minutes, why) {
+  state.sunMinutes = Math.max(0, Math.min(1439, minutes));
+  state.sunPreset = why || null;
+  paintSunPresets();
+  applySunFromTime();
+  regenerateEnvironment();
+}
+
+function paintSunPresets() {
+  for (const chip of document.querySelectorAll("#sun-presets .chip")) {
+    chip.classList.toggle("active", chip.dataset.preset === state.sunPreset);
+  }
+}
+
+function presetMinutes(preset) {
+  const day = sunDay();
+  if (preset.elevation === null) {
+    // Noon is solved as SOLAR noon, where the shadow is shortest, not as
+    // 12:00 on the clock, which is a different thing everywhere but the
+    // centre of a timezone.
+    let best = 720, highest = -90;
+    for (let m = 600; m <= 840; m += 1) {
+      const placed = sunPosition(minutesToDate(m), SUN_SITE.latitude, SUN_SITE.longitude);
+      if (placed.elevation > highest) { highest = placed.elevation; best = m; }
+    }
+    return best;
+  }
+  const when = timeAtElevation(day, SUN_SITE.latitude, SUN_SITE.longitude,
+    preset.elevation, preset.evening);
+  if (!when) return null;
+  return when.getUTCHours() * 60 + when.getUTCMinutes();
+}
+
+function buildSunPresets() {
+  for (const chip of document.querySelectorAll("#sun-presets .chip")) {
+    const preset = SUN_PRESETS.find((entry) => entry.key === chip.dataset.preset);
+    if (!preset) continue;
+    const minutes = presetMinutes(preset);
+    // A moment the sun never reaches today is greyed out rather than
+    // faked: there is no 20 degree morning sun over London in December.
+    chip.disabled = minutes === null;
+    chip.title = minutes === null
+      ? preset.label + ": the sun does not reach that height today"
+      : preset.label;
+    chip.addEventListener("click", () => {
+      const at = presetMinutes(preset);
+      if (at === null) return;
+      setSunMinutes(at, preset.key);
+      logStudio("sun: " + preset.label.toLowerCase());
+    });
+  }
+}
+
+function dragSunDial(event) {
+  const canvasEl = document.getElementById("sun-dial");
+  const rect = canvasEl.getBoundingClientRect();
+  const scale = canvasEl.width / rect.width;
+  const x = (event.clientX - rect.left) * scale;
+  const y = (event.clientY - rect.top) * scale;
+  // The compass sets the TIME, because time is the real variable: the
+  // bearing the user asks for is searched over the day and the nearest
+  // instant that produces it wins. Dragging the sun therefore moves the
+  // clock, and the elevation follows from the date and the site rather
+  // than being invented.
+  const wanted = (Math.atan2(x - 74, 76 - y) * 180 / Math.PI + 360) % 360;
+  let best = state.sunMinutes, closest = 999;
+  for (let m = 0; m < 1440; m += 2) {
+    const placed = sunPosition(minutesToDate(m), SUN_SITE.latitude, SUN_SITE.longitude,
+      SUN_SITE.northOffset);
+    let delta = Math.abs(((placed.azimuth - wanted + 540) % 360) - 180);
+    if (delta < closest) { closest = delta; best = m; }
+  }
+  setSunMinutes(best, null);
+}
 
 // ---------- preview balls ----------
 // A material is a look, so the panel shows the look, not a rectangle of
@@ -4747,6 +5068,46 @@ document.getElementById("record-button").addEventListener("click", recordAnimati
 // S5: frame() is the only wall-clock advancer (see below); this button
 // only arms/disarms state.dayCycle.playing and captures the elevation the
 // arc peaks at, exactly as play-button arms state.timeline.playing.
+function trackDragTo(event) {
+  const canvasEl = document.getElementById("day-track");
+  const rect = canvasEl.getBoundingClientRect();
+  const u = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  setSunMinutes(Math.round(u * 1439), null);
+}
+
+// Everything below is module-level initialisation, and a throw here takes
+// the whole studio down before the first frame. Each block therefore
+// reports itself and lets the rest run: a studio with a dead sun widget is
+// a bad afternoon, a studio that will not open is a lost one.
+function guarded(what, work) {
+  try {
+    work();
+  } catch (error) {
+    console.error(what, error);
+    reportProblem("could not set up " + what + ": " + error.message, error);
+  }
+}
+
+for (const [id, handler] of [["sun-dial", dragSunDial], ["day-track", trackDragTo]]) {
+  const element = document.getElementById(id);
+  element.addEventListener("pointerdown", (event) => {
+    element.setPointerCapture(event.pointerId);
+    state.dayCycle.playing = false;
+    handler(event);
+  });
+  element.addEventListener("pointermove", (event) => {
+    if (element.hasPointerCapture(event.pointerId)) handler(event);
+  });
+  element.addEventListener("pointerup", (event) => {
+    element.releasePointerCapture(event.pointerId);
+  });
+}
+guarded("the sun instrument", () => {
+  buildSunPresets();
+  sunInstrumentReady = true;
+  setSunMinutes(state.sunMinutes, null);
+});
+
 document.getElementById("day-cycle-button").addEventListener("click", () => {
   if (state.dayCycle.playing) {
     state.dayCycle.playing = false;
@@ -4888,7 +5249,7 @@ function frame(now) {
 }
 
 // The tile grids are built here, after SKINS and skinMaterialCache exist.
-buildMaterialTiles();
+guarded("the material tiles", buildMaterialTiles);
 boot();
 requestAnimationFrame(frame);
 
