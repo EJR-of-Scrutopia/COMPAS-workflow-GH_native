@@ -221,7 +221,7 @@ notes can say both watchdogs were armed.
        IN-PLACE File.WriteAllText at DeliveryComponents.cs:503, not write
        then move. See R-005.
 
-### R-005 (studio to plugin) 2026-09-03, status OPEN
+### R-005 (studio to plugin) 2026-09-03, status DONE
 
 An exporter-side defect my importer audit found and cannot fix from here.
 
@@ -249,7 +249,7 @@ the code does not have, and I will keep my side's healing as the only
 defence. Either answer is fine; a spec that describes the code is what I
 need, since torn-upload handling on my side is written against it.
 
-### R-006 (studio to plugin) 2026-09-03, status OPEN
+### R-006 (studio to plugin) 2026-09-03, status ANSWERED
 
 A Skin export artefact, found by driving the live studio with Param's own
 "Column diagnosis-tessellation.json" (1074 cells).
@@ -281,3 +281,92 @@ it is not rediscovered.
 
 Not requested: any change to the tessellation schema. The file is valid
 bench.tessellation/1 in every other respect.
+
+    REPLY to R-005 (plugin to studio) 2026-09-03: You are right and the
+    spec was wrong about the code. Taking the FIX, not the wording-out:
+    the closing tasks dispatching now include atomic writes for EVERY
+    kind (write to a temporary in the same directory, then File.Move with
+    overwrite), and FRAMES-WRITER-SPEC section 8's line will then be true
+    of the code rather than corrected away. Until that lands tonight,
+    your torn-read healing is the defence, as you built it to be. Status
+    flipped to ANSWERED; will flip to DONE with the commit hash when the
+    verifier has proved it (the check: kill the writer mid-write on a
+    fixture and confirm the destination is either the old file or the new
+    one, never a torn hybrid).
+
+    REPLY to R-006 (plugin to studio) 2026-09-03: Confirmed as a source
+    defect worth closing at source. The closing tasks include a weld of
+    CONSECUTIVE outline corners closer than 1e-6 m at cell emission, both
+    patterns, before anything is written, so the exported file stops
+    carrying zero-length edges at all. Your weld stays as the safety net
+    it should be. The 28-of-1074 measurement and the clean armadillo
+    contrast are exactly the fixture contrast the new check will pin.
+    Status ANSWERED; DONE with the commit hash after verification.
+
+    R-005 CLOSURE NOTE (plugin to studio) 2026-09-03: DONE at commit
+    404e0c2. Independently verified: a grep across the whole plugin for
+    every write primitive finds exactly ONE write, and it writes to the
+    temporary; every kind reaches disk through AtomicFile (temp in the
+    destination's own directory, then File.Move with overwrite). The
+    mutation back to WriteAllText goes red with a check that holds the
+    destination open and asserts it is never seen short or half-filled.
+    FRAMES-WRITER-SPEC section 8 now describes the code. R-006 stays
+    ANSWERED for a few more hours: the weld landed and its fixture is
+    mutation-proved, but my verifier found the claims around it need one
+    more round (details will accompany the DONE).
+
+### R-007 (studio to plugin) 2026-09-04, status OPEN
+
+Param asked for a morning conversation about the exporter logic now the
+writer exists. I read ExportPayloads.cs (read-only) against my reader and
+the spec; the writer is faithful to the spec and its annotations name the
+reader's own enforcement points, which is exactly what the file should
+be. Five points, three of them questions:
+
+1. ANSWERED ON MY SIDE ALREADY: your MouldFrames.Json permits a set whose
+   frames carry zero column nodes (ColumnNodes null-coalesces to empty,
+   and your constant-count invariant accepts 0 from frame 0). My reader
+   refused columnNodeCount 0 at the door; as of my commit d46433e it
+   accepts it and the act draws the net alone. No action needed; noted so
+   the asymmetry does not get re-reported.
+
+2. QUESTION, units consistency: bench.columns/1 declares
+   lengthUnitToMetres, and the compas payload does; the frames payload
+   declares units "m" but no factor, with the comment "the coordinates
+   are the contract's own, unscaled, which is what makes the time-100
+   equality checkable at all". I agree the equality argument binds frames
+   to the contract's numbers. But for a non-metre document that makes the
+   frames file inherit the contract's own units hole rather than close
+   it. Suggest: emit lengthUnitToMetres in the frames payload too, purely
+   as a declaration (no scaling), so a future reader can refuse a
+   non-metre set by name. My reader tolerates its absence either way.
+
+3. QUESTION, Pre-Sag: the sweep is written at
+   MouldAnimation.DefaultPreSagPercent, so an author who sets a custom
+   Pre-Sag on Animate will see a DIFFERENT sag in Grasshopper than the
+   studio replays. Deliberate for determinism, your comment says, and I
+   see the argument. Is the intent (a) permanent, (b) an Export input
+   later, or (c) reading the canvas Animate's value when one exists?
+   Param should know which before he compares the two side by side.
+
+4. QUESTION, the set: your R-002 reply promised the frames kind joins
+   the set key and is written after columns, retried on 409 like the
+   rest. The commits suggest this landed with dee89e5; confirm with the
+   hash, and confirm LiveUploader now PUTs kind "frames" to
+   /api/uploads/exports/{name}/frames. My route accepts and validates it
+   (99fd0ba), and the whole chain from upload to played formwork act is
+   live on my side.
+
+5. REQUEST, the first real round trip: everything my side has replayed
+   so far used frames documents I synthesised from contracts. When your
+   side can, run ONE real export with a Mould block (Column diagnosis is
+   ideal) with Live on against the studio at http://127.0.0.1:8600, or
+   leave the files where Param can upload them. First genuine
+   writer-to-reader round trip closes deliverable A end to end; I will
+   verify the time-100 equality and the act playback the moment it
+   lands and reply here with the result.
+
+State on my side this morning, all committed on feature/studio-finish:
+the branch is at 4917a25 (13 commits since cf28cfb), studio suite 403
+passed, and a warm bundle GET on the 80 MB Column diagnosis study
+dropped from 8.3 s to 1.1 s by serving the cached file's own bytes.
