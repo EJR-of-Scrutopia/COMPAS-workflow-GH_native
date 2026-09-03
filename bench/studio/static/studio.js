@@ -117,7 +117,14 @@ const state = {
   pattern: "bonded-courses",
   size: 0.9,
   thickness: 0.2,
-  jointGap: 0.02,
+  // Fixed 2026-09-04 (Param): a hairline joint, not a control. The cut
+  // still opens the joint at the widest corner and closes it toward the
+  // centre; this is the width it opens to.
+  jointGap: 0.001,
+  // The crown taper control is retired with the Skin panel rework: it thins
+  // pieces toward the crown in the DRAWING only, while the analysis stays
+  // uniform, so the picture and the numbers disagreed. Pinned at 0 (no
+  // taper) until it can drive the thickness the analysis actually uses.
   taper: 0,
   segmentIndex: null,  // Task 11
   // Fixed 2026-09-04 with the View panel: 30 mm nodes and 20 mm wires are
@@ -1577,6 +1584,81 @@ document.getElementById("scene-open").addEventListener("click", async () => {
   if (opening) await refreshScenes();
 });
 
+// ---------- material swatches ----------
+// The material list is a row of small painted tiles rather than a select.
+// The select itself is still there, hidden: every other piece of code reads
+// its value, and a picture that quietly disagreed with what the server was
+// asked to cut would be worse than no picture at all. Clicking a swatch
+// sets the select and dispatches its change event, so exactly the same path
+// runs as before.
+const MATERIAL_SWATCHES = {
+  "concrete": { label: "Concrete", base: "#9a9c9d", grain: 0.05 },
+  "concrete-c50": { label: "C50/60", base: "#a6a8a9", grain: 0.05 },
+  "concrete-sprayed": { label: "Sprayed", base: "#8e9091", grain: 0.12 },
+  "timber": { label: "Timber", base: "#b98b52", grain: 0.18 },
+  "brick": { label: "Brick", base: "#9c5b45", grain: 0.1 },
+  "tile": { label: "Tile", base: "#b4674e", grain: 0.08 },
+  "stone": { label: "Stone", base: "#c2bda9", grain: 0.09 },
+};
+
+function paintSwatch(canvasEl, look) {
+  // Painted rather than fetched: a texture request per material would be a
+  // round trip for a 60 by 26 tile, and these are meant to say "warm timber"
+  // and "grey concrete", not to be samples.
+  const context = canvasEl.getContext("2d");
+  const width = canvasEl.width, height = canvasEl.height;
+  context.fillStyle = look.base;
+  context.fillRect(0, 0, width, height);
+  let seed = 20260904;
+  const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  for (let i = 0; i < width * height * 0.35; i += 1) {
+    const shade = Math.round((random() - 0.5) * 255 * look.grain);
+    context.fillStyle = "rgba(" + (shade > 0 ? "255,255,255," : "0,0,0,")
+      + Math.min(0.5, Math.abs(shade) / 255) + ")";
+    context.fillRect(Math.floor(random() * width), Math.floor(random() * height), 1, 1);
+  }
+}
+
+function buildMaterialSwatches() {
+  const holder = document.getElementById("material-swatches");
+  const select = document.getElementById("material-select");
+  if (!holder || !select) return;
+  holder.innerHTML = "";
+  for (const option of select.options) {
+    const look = MATERIAL_SWATCHES[option.value];
+    if (!look) continue;
+    const button = document.createElement("button");
+    button.className = "swatch";
+    button.title = option.textContent;
+    button.dataset.material = option.value;
+    const tile = document.createElement("canvas");
+    tile.width = 60;
+    tile.height = 26;
+    paintSwatch(tile, look);
+    button.appendChild(tile);
+    const name = document.createElement("span");
+    name.textContent = look.label;
+    button.appendChild(name);
+    button.addEventListener("click", () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+      paintMaterialSwatches();
+    });
+    holder.appendChild(button);
+  }
+  paintMaterialSwatches();
+}
+
+function paintMaterialSwatches() {
+  const select = document.getElementById("material-select");
+  for (const button of document.querySelectorAll("#material-swatches .swatch")) {
+    button.classList.toggle("active", button.dataset.material === select.value);
+  }
+}
+
+buildMaterialSwatches();
+
 // ---------- the cut (Task 8: pieces and their course/size come from the server) ----------
 // Mirrors app.py's own SIZE_MIN/SIZE_MAX. The bundle's top level "size" is
 // meant to be the requested size (see bundle.py), but a client that trusts
@@ -1586,6 +1668,7 @@ document.getElementById("scene-open").addEventListener("click", async () => {
 const SIZE_MIN = 0.3, SIZE_MAX = 3.0;
 
 function applyCut(preserve) {
+  paintMaterialSwatches();
   // The cut always follows the LOADED bundle's own size, never the
   // slider's current position. The pieces the viewer draws are built
   // server-side at the bundle's own size, and each one is looked up in
@@ -3232,27 +3315,11 @@ document.getElementById("thickness-input").addEventListener("change", (e) => {
   state.thickness = +e.target.value;
   scheduleReload();
 });
-document.getElementById("joint-gap").addEventListener("input", (e) => {
-  document.getElementById("joint-gap-value").textContent = Math.round(+e.target.value * 1000);
-});
-document.getElementById("joint-gap").addEventListener("change", (e) => {
-  state.jointGap = +e.target.value;
-  if (!state.bundle) return;
-  buildPieceMeshes();
-  recolourSegments();
-  if (state.timeline) applySceneAtTime(state.timeline.t);
-});
-document.getElementById("taper").addEventListener("input", (e) => {
-  document.getElementById("taper-value").textContent = Math.round(+e.target.value * 100);
-});
-document.getElementById("taper").addEventListener("change", (e) => {
-  state.taper = +e.target.value;
-  if (!state.bundle) return;
-  buildPieceMeshes();
-  recolourSegments();
-  updateHud();
-  if (state.timeline) applySceneAtTime(state.timeline.t);
-});
+// The joint gap and the crown taper lost their controls in the Skin panel
+// rework. The gap is a hairline constant (state.jointGap) and the taper is
+// pinned at zero until it can drive the thickness the analysis uses rather
+// than only the drawing. Both are still read by buildPieceMeshes, so
+// bringing either back is a control and a handler, not an engine change.
 // Sun slider input moves the light and the sky uniform live (cheap);
 // the PMREM ambient catches up on release, and only in sky mode, where
 // the sky is what the environment is made of.
@@ -3921,10 +3988,12 @@ function updateMaterialControls() {
   // material, sprayed included: sprayed concrete can be laid thinner at
   // the crown, and taperAt has no material branch. Marking a control that
   // works as inert would be its own dishonesty.
-  const sprayed = sprayedMaterial();
-  document.getElementById("joint-gap").disabled = !!sprayed;
-  document.getElementById("joint-gap-note").textContent =
-    sprayed ? " (sprayed concrete is monolithic: no joints to open)" : "";
+  // Sprayed concrete is monolithic and opens no joints. There is no longer
+  // a control to disable and say so on, so it says so in the log, once, on
+  // the load that chose it.
+  if (sprayedMaterial()) {
+    logStudio("sprayed concrete is monolithic: no joints are opened");
+  }
 }
 
 // ---------- Task 5: tint, finish and render skins (render-only) ----------

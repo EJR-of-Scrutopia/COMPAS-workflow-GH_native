@@ -51,8 +51,9 @@
     <div id="import-status"></div>
   </details>
   <details id="study-section" open>
-    <summary>Study</summary>
-    <select id="material-select">
+    <summary>Skin</summary>
+    <div id="material-swatches"></div>
+    <select id="material-select" class="hidden">
       <option value="concrete">Concrete C30/37</option>
       <option value="concrete-c50">Concrete C50/60</option>
       <option value="concrete-sprayed">Sprayed concrete C25/30</option>
@@ -68,7 +69,7 @@
       <option value="timber-ply">Timber ply</option>
     </select></label>
     <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
-    <label>Finish <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
+    <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note">Skin, tint and finish are render tint only, analysis unchanged: none of it reaches the server.</div>
     <select id="pattern-select"></select>
@@ -77,8 +78,6 @@
       <span id="size-value">900</span><span id="size-units"> mm target</span>, <span id="piece-count">0</span> pieces in
       <span id="course-count">0</span> courses</label>
     <label>Thickness <input id="thickness-input" type="range" min="0.1" max="0.4" step="0.01" value="0.2"> <span id="thickness-value">200</span> mm</label>
-    <label>Joint gap <input id="joint-gap" type="range" min="0" max="0.06" step="0.005" value="0.02"> <span id="joint-gap-value">20</span> mm at the widest corner, less nearer the centre<span id="joint-gap-note"></span></label>
-    <label>Crown taper <input id="taper" type="range" min="0" max="0.5" step="0.05" value="0"> <span id="taper-value">0</span> %</label>
   </details>
   <details id="analysis-section">
     <summary>Analysis</summary>

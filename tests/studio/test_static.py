@@ -1332,31 +1332,32 @@ def test_piece_shading_uses_crease_angle_normals():
 def test_the_viewer_draws_bundle_pieces_and_opens_a_joint():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="joint-gap"' in html and 'id="joint-gap-value"' in html
+    # Re-pinned 2026-09-04: the gap lost its control (Param: it should
+    # always be 0.001) but not its behaviour. The cut still opens a joint,
+    # still proportionally, so only the farthest vertex of a casting moves
+    # the full half gap and everything nearer its centroid moves less.
+    assert 'id="joint-gap"' not in html
+    assert "jointGap: 0.001," in js, "a hairline, and a constant"
     assert "function buildPieceMeshes(" in js
     assert "state.bundle.pieces" in js
     assert "state.jointGap" in js
     assert "function buildSegmentMeshes(" not in js, "the old extruder is retired"
-    # The shrink is proportional: a casting is scaled toward its own
-    # centroid, so only its farthest vertex moves the full half gap and
-    # everything nearer the middle moves less. A bare millimetre figure
-    # overstates what happens at the rest of the joint.
-    label = html[html.index('id="joint-gap"'):html.index("</label>", html.index('id="joint-gap"'))]
-    assert "widest" in label and "less" in label
 
 
 def test_the_joint_gap_is_marked_inert_where_it_does_nothing():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="joint-gap-note"' in html
+    # Re-pinned 2026-09-04: with the slider gone there is no control to
+    # disable, so the fact says itself in the event log instead of sitting
+    # as a note beside a control the user cannot touch. The honesty is the
+    # same and the panel is quieter.
+    assert 'id="joint-gap-note"' not in html
     start = js.index("function updateMaterialControls(")
     body = js[start:js.index("\n}", start)]
     assert "sprayedMaterial()" in body
-    assert 'getElementById("joint-gap").disabled' in body, (
-        "buildPieceMeshes forces the gap to zero under sprayed concrete, so "
-        "the slider must not stay live and labelled in millimetres"
+    assert "logStudio(" in body and "monolithic" in body, (
+        "sprayed concrete opens no joints, and the studio still says so"
     )
-    assert "joint-gap-note" in body, "a disabled control has to say why"
     build_start = js.index("function buildScene(")
     assert "updateMaterialControls()" in js[build_start:js.index("\n}", build_start)], (
         "the availability must be recomputed whenever the material changes"
@@ -1484,7 +1485,13 @@ def test_the_pattern_control_says_what_is_not_built_yet():
 def test_taper_is_a_drawing_parameter_and_the_hud_says_so():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="taper"' in html and 'id="taper-value"' in html
+    # Re-pinned 2026-09-04: the control is retired and the value pinned at
+    # zero, because it thinned pieces in the DRAWING while the analysis
+    # stayed uniform, and a picture that disagrees with its own numbers is
+    # worse than no picture. The maths and the HUD disclosure both stay, so
+    # bringing it back is a control and a handler, not an engine change.
+    assert 'id="taper"' not in html
+    assert "taper: 0," in js
     assert "function taperAt(" in js
     hud_start = js.index("function updateHud(")
     hud_end = js.index("\n}", hud_start)
