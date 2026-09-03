@@ -1317,7 +1317,9 @@ internal static class Program
                 "rather than half of it, so the solved surface is a face " +
                 "and never the middle of the stone; and Th = 0, negative " +
                 "zero included, asks for NO thickening at all while any " +
-                "nonzero value however small asks for one.");
+                "nonzero value however small asks for one, a NaN or an " +
+                "infinity asking for none either, since NaN compares equal " +
+                "to nothing and a bare inequality would carry it in.");
         }
         catch (Exception exception)
         {
@@ -25823,6 +25825,31 @@ internal static class Program
                     "Any nonzero Th asks for a solid, however small: " +
                     $"Thickening({asked}) came back false, so that cell " +
                     "would silently keep its bare face.");
+            }
+        }
+        // A Th THAT IS NOT FINITE asks for nothing at all. NaN compares
+        // equal to nothing, itself included, so the bare "thickness != 0"
+        // is TRUE of it and a NaN reached the thickener, where every offset
+        // corner becomes NaN, every wall quad is refused and the cell is
+        // lost with no reason given. An infinity is the same story with
+        // coordinates no tolerance can reach.
+        foreach (double refused in new[]
+                 {
+                     double.NaN,
+                     double.PositiveInfinity,
+                     double.NegativeInfinity
+                 })
+        {
+            if (Thickening(refused))
+            {
+                throw new InvalidOperationException(
+                    $"Thickening({refused}) came back true, so a Th that " +
+                    "cannot be built is carried into the thickener: every " +
+                    "offset corner becomes NaN or unreachable, every wall " +
+                    "is refused, and the cell is lost with no reason " +
+                    "given. NaN compares equal to NOTHING, so a bare " +
+                    "'thickness != 0.0' is true of it and the gate needs " +
+                    "double.IsFinite as well.");
             }
         }
         string zeroSlot = classify.Invoke(

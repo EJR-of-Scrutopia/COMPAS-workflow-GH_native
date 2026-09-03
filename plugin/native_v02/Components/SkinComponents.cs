@@ -1047,8 +1047,17 @@ public sealed class SkinComponent : NativeComponentBase
     /// reference CellSurface built, untouched, and never a copy built and
     /// then found equal. A comparison that let zero through would replace
     /// every face on a default canvas with a rebuilt one.
+    ///
+    /// A Th THAT IS NOT FINITE asks for nothing either. NaN compares equal
+    /// to nothing, itself included, so "thickness != 0.0" is TRUE of it and
+    /// the bare comparison sent a NaN into the thickener, where every
+    /// offset corner becomes NaN, every wall quad is refused, and the cell
+    /// is lost with no reason given. An infinity is the same story with
+    /// coordinates the tolerance cannot reach. Neither can be built, so
+    /// neither is attempted and the face survives untouched.
     /// </summary>
-    internal static bool Thickening(double thickness) => thickness != 0.0;
+    internal static bool Thickening(double thickness) =>
+        double.IsFinite(thickness) && thickness != 0.0;
 
     /// <summary>
     /// WHAT THICKENS: one cell's Surface face becomes a CLOSED SOLID
