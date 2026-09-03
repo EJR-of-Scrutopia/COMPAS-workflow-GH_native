@@ -470,39 +470,32 @@ def test_set_layer_does_not_call_applytimeline_directly():
     )
 
 
-def test_formwork_is_a_three_state_control():
-    # A checkbox cannot resurrect what the strike removed: at the
-    # finished vault it did nothing in either direction. Three states,
-    # in the owner's own words: animation (the build story, fade in with
-    # the inflation, strike away at the end), always (the resting ghost
-    # pinned for inspection), hidden (no ghost shell anywhere, build
-    # phase included).
+def test_the_formwork_ghost_is_hidden_and_has_no_control():
+    """Replaced 2026-09-04. Param: "remove the formwork dropdown all
+    together. not needed. its just plays animation as it should". The ghost
+    was a second, translucent copy of a surface the formwork act now draws
+    properly, and its control had defaulted to hidden since the finish wave,
+    which is the state every take has been watched at. The rules that read
+    the mode are untouched, so restoring the control would be a control and
+    a handler rather than an engine change.
+
+    What this still guards is the finding underneath it: the ghost is NOT a
+    layer checkbox. A checkbox could not resurrect what the strike had
+    removed, and at the finished vault it did nothing in either direction.
+    """
+
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert 'id="formwork-mode"' in html
-    assert '<option value="animation">' in html
-    for value in ("always", "hidden"):
-        assert 'value="{}"'.format(value) in html
-    # Task 4: the default flipped to hidden (see
-    # test_the_formwork_default_is_hidden); animation and always remain
-    # selectable options.
+    assert 'id="formwork-mode"' not in html
+    assert 'getElementById("formwork-mode")' not in js
     assert 'formworkMode: "hidden"' in js
     assert '"falsework", "Formwork"' not in js, "the checkbox entry is gone"
     assert "falsework: true" not in js, (
         "state.layers must not carry falsework any more"
     )
-    body = _function_body(js, "applySceneAtTime")
-    assert "state.formworkMode" in body
-    assert 'mode === "always" || (mode === "animation" && strikeU < 1)' in body
-    # The ghost material itself is unchanged.
-    assert "opacity: 0.3" in js
-    assert "wireMaterial.transparent = true" in js
-    assert "nodeMaterial.transparent = true" in js
-    # A mode change recomputes the scene without moving the camera.
-    wiring_at = js.index('getElementById("formwork-mode")')
-    wiring = js[wiring_at:js.index("\n});", wiring_at)]
-    assert "applySceneAtTime(state.timeline.t)" in wiring
-    assert "applyTimeline(" not in wiring
+    # The three rules the mode drives are still there and still read it.
+    scene_body = _function_body(js, "applySceneAtTime")
+    assert "state.formworkMode" in scene_body
 
 
 def test_analysis_overlays_cast_no_shadows():
@@ -1858,13 +1851,6 @@ def test_both_mode_and_the_pre_strike_timeline_clear_the_net_of_the_crown_seam()
     assert "clearance[key] - 1.5 * strikeU" in scene_body
 
 
-def test_the_formwork_default_is_hidden():
-    html = (STATIC / "index.html").read_text(encoding="utf-8")
-    js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    assert '<option value="hidden" selected' in html
-    assert 'formworkMode: "hidden"' in js
-
-
 def test_the_panel_reorganises_into_six_sections():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     # Re-pinned 2026-09-04: five sections, View removed.
@@ -2305,7 +2291,12 @@ def test_live_is_a_button_that_says_which_state_it_is_in():
     body = _function_body(js, "paintLive")
     assert 'state.live ? (flaring ? "on fresh" : "on") : "off"' in body
     # The poll obeys the button: Live off is not a label, it is a stop.
-    assert "if (!state.live || !name)" in js
+    assert "if (!state.live) { paintLive(false); return; }" in js
+    # And Live follows Grasshopper rather than watching one study: a push to
+    # a vault that is not the one on screen brings that vault up, which is
+    # what a live link to a modeller means (Param, 2026-09-04).
+    assert 'logStudio("live: following Grasshopper to " + pushed)' in js
+    assert "liveStamps = stamps;" in js
 
 
 def test_a_refusal_reaches_the_screen_in_the_servers_own_words():

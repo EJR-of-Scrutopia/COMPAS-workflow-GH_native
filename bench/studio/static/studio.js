@@ -86,7 +86,13 @@ const state = {
   studies: [],
   layers: { overlays: true }, // shell and wires are gone: the Show select owns both (applyShowMode)
   showMode: "both",    // "framework" | "shell" | "both" chosen by the three buttons; "timeline" is what playing switches to on its own (see setShowMode)
-  formworkMode: "hidden", // Formwork control: "animation" | "always" | "hidden" (see applySceneAtTime)
+  // Fixed 2026-09-04 (Param: "remove the formwork dropdown all together...
+  // it just plays animation as it should"). Hidden is the value the control
+  // had defaulted to and the one every take has been watched at: the
+  // machine itself is drawn by the formwork act, and this ghost was a
+  // second, translucent copy of the same surface. The rules that read it
+  // are untouched, so restoring the control is a control and a handler.
+  formworkMode: "hidden",
   environmentMode: "studio", // E1: "studio" | "sky" | "hdri", each owns background, environment, fog, sun
   weatherPreset: "clear",    // E2: a key of WEATHER
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
@@ -1255,7 +1261,6 @@ function collectScene() {
   return {
     camera: { position: camera.position.toArray(), target: controls.target.toArray() },
     showMode: state.showMode,
-    formworkMode: state.formworkMode,
     environmentMode: state.environmentMode,
     weatherPreset: state.weatherPreset,
     backgroundTone: +control("background-tone").value,
@@ -1443,10 +1448,6 @@ async function applyScene(record) {
       Math.round(1000 * (timelineDuration() ? t / timelineDuration() : 0));
   }
   if (scene_.showMode) { state.showMode = scene_.showMode; paintShowButtons(); }
-  if (scene_.formworkMode) {
-    state.formworkMode = scene_.formworkMode;
-    control("formwork-mode").value = scene_.formworkMode;
-  }
   if (state.timeline) applySceneAtTime(state.timeline.t);
   rebuildAppearance();
   syncAppearanceControls();
@@ -3122,7 +3123,7 @@ document.getElementById("folder-choose").addEventListener("click", async () => {
   // new one, so the scene is emptied rather than left standing under a
   // list it no longer belongs to.
   clearScene();
-  liveStamp = null;
+  liveStamps = null;
   const names = await refreshStudies(null);
   if (names.length) {
     document.getElementById("study-select").value = names[0];
@@ -3186,7 +3187,13 @@ document.getElementById("clear-scene").addEventListener("click", clearScene);
 // LIVE: poll the studies list and reload the moment the loaded study's
 // files change on disk, which is exactly what a Grasshopper Live push
 // does. The dot glows while polling sees a fresh stamp arrive.
-let liveStamp = null;
+// Every study's stamp as of the last poll. Live is not "reload the study I
+// am looking at" any more: it follows Grasshopper, so a push to a DIFFERENT
+// vault brings that vault up, which is what a live link to a modeller means
+// (Param: "when live mode is turned on in the grasshopper and we had a
+// different vault loaded or same one even, these parameters change to show
+// for the live model").
+let liveStamps = null;
 let liveFlash = 0;
 function paintLive(fresh) {
   const button = document.getElementById("live-toggle");
@@ -3200,38 +3207,58 @@ function paintLive(fresh) {
 }
 document.getElementById("live-toggle").addEventListener("click", () => {
   state.live = !state.live;
-  // The stamp is forgotten on the way back in, so switching Live on adopts
-  // whatever is on disk NOW as the baseline rather than reloading once for
+  // The stamps are forgotten on the way back in, so switching Live on
+  // adopts whatever is on disk NOW as the baseline rather than chasing
   // every push that happened while nobody was watching.
-  liveStamp = null;
+  liveStamps = null;
   paintLive(false);
   logStudio(state.live ? "live: following Grasshopper" : "live: off");
 });
 paintLive(false);
 setInterval(async () => {
   const select = document.getElementById("study-select");
-  const name = select.value;
-  if (!state.live || !name) { paintLive(false); return; }
+  if (!state.live) { paintLive(false); return; }
   try {
     const payload = await fetchJson("/api/studies");
     state.studies = payload.studies;
     state.columnFiles = payload.columns || [];
-    const row = payload.studies.find((r) => r.export === name);
-    if (!row) return;
-    if (liveStamp !== null && row.stamp !== liveStamp) {
-      paintLive(true);
-      logStudio("live: " + name + " changed in Grasshopper, reloading");
-      liveStamp = row.stamp;
-      await loadStudy(name);
-    } else {
+    const stamps = {};
+    for (const row of payload.studies) stamps[row.export] = row.stamp;
+    if (liveStamps === null) {
+      // First look: adopt what is on disk as the baseline. Without this,
+      // opening the studio would reload every study it has never seen.
+      liveStamps = stamps;
       paintLive(false);
-      liveStamp = row.stamp;
+      return;
+    }
+    // The newest push wins. A vault that has just appeared counts as
+    // pushed: that is what a first Live send from Grasshopper looks like
+    // from this side.
+    let pushed = null;
+    for (const [name, stamp] of Object.entries(stamps)) {
+      const before = liveStamps[name];
+      if (before === undefined || stamp > before) {
+        if (!pushed || stamp > stamps[pushed]) pushed = name;
+      }
+    }
+    liveStamps = stamps;
+    if (!pushed) { paintLive(false); return; }
+    paintLive(true);
+    if (pushed === select.value) {
+      logStudio("live: " + pushed + " changed in Grasshopper, reloading");
+      await loadStudy(pushed);
+    } else {
+      // A different vault than the one on screen: follow it, because Live
+      // means "show me what Grasshopper is working on".
+      logStudio("live: following Grasshopper to " + pushed);
+      select.value = pushed;
+      state.source = null;
+      await loadStudy(pushed);
     }
   } catch (error) { /* the next tick retries */ }
 }, 2000);
 
 document.getElementById("study-select").addEventListener("change", (e) => {
-  liveStamp = null;
   // A source choice belongs to the study it was made on. Carried across,
   // the previous study's "authored" rode into the next study's request
   // and 400'd every study without a Skin: basic navigation broke after
@@ -3529,15 +3556,6 @@ window.addEventListener("keydown", (event) => {
 // event, which a drag fires dozens of.
 document.getElementById("exaggeration").addEventListener("change", () => recolourSegments());
 document.getElementById("stress-surface").addEventListener("change", () => recolourSegments());
-document.getElementById("formwork-mode").addEventListener("change", (e) => {
-  state.formworkMode = e.target.value;
-  // Scene-only recompute: a mode change must never move the camera.
-  if (state.timeline) {
-    applySceneAtTime(state.timeline.t);
-  } else if (state.objects.falsework) {
-    state.objects.falsework.visible = e.target.value !== "hidden";
-  }
-});
 // The three ways of looking at the vault. Timeline is not among them on
 // purpose: playing is its own way of looking and switches to it by itself,
 // so there is no mode to choose before pressing Play.
