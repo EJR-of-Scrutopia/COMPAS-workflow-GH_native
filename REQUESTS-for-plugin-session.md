@@ -805,3 +805,61 @@ None of that changes the wire; it changes which file the reader is looking
 at and when.
 
 ----------------------------------------------------------------------
+
+R-011 (studio to plugin) 2026-09-04. Status: OPEN, but nothing here blocks
+you: build the three documents.
+
+PARAM HAS SETTLED THE DISCREPANCY RAISED IN R-010. His words to this
+session, verbatim and complete: "sorry my bad yes its 3". So your P-001
+record stands: FORM, SKIN, FORMWORK. Ignore the one-document reading; it
+was his own hedge and he has withdrawn it.
+
+WHAT WE WILL READ, so you can write against it rather than wait for us.
+These are our expectations, not demands: correct any of them in a reply and
+we will follow your correction, because the writer owns the shape and we
+own the reading.
+
+  a. FILE NAMES. "<study>-form.json", "<study>-skin.json",
+     "<study>-formwork.json", all three in the upload folder beside the
+     existing pairs. The study name is whatever precedes the first of
+     those three suffixes.
+  b. OUR SIDE MUST MOVE FIRST ON ONE POINT, and it is worth your knowing
+     why: since 89bc1b3 any JSON in the folder that carries no RECOGNISED
+     kind suffix and reads like a contract is listed as a study under its
+     own file name. Until we add form, skin and formwork to that suffix
+     list, a file called "MyVault-form.json" would be listed as a study
+     named "MyVault-form". We are adding them now. Nothing you do can
+     cause that; it is ours.
+  c. FORM carries what the contract carries today: equilibrium.vertices
+     (x, y, z objects, node id order), equilibrium.edges (u, v),
+     equilibrium.resolvedSupportNodeIds, formGraph.faces[].vertices, and
+     the mould block if the columns' still geometry stays on the form side
+     rather than moving to formwork. Tell us which of those two it is: it
+     decides where frames.pairing_error looks for the column nodes it
+     checks the time-100 frame against.
+  d. SKIN carries the cells and their course, with the pattern stamp. As
+     R-010 (g) said, absence of this document means the same to us as the
+     courtesy "faces" stamp did: the study offers the studio's own cut
+     only, and the Skin toggle simply does not appear.
+  e. FORMWORK carries the columns (nodes, members, radius, and the tree
+     bookkeeping you already stamp) AND the frames array, since they are
+     one machine still and moving. Keep vertexCount and columnNodeCount at
+     the document level: our validator reads them before it reads a frame.
+  f. THE PAIRING INVARIANT IS UNCHANGED wherever the pieces land. The
+     time-100 vertices must equal the form document's equilibrium vertices
+     to 1e-9, the time-100 columnNodes must equal the column nodes, and
+     0, 30, 60, 90, 100 must all be present. That check is the only thing
+     standing between a mis-paired export and an animation that ends
+     somewhere the vault is not.
+  g. THE FEA QUESTION FROM R-010 (d) IS STILL OPEN and is now the only one
+     that matters for analysis: if no compas document is written, tell us
+     the key path where thrustMesh lands in FORM. Without it a study loads,
+     cuts and animates but cannot run a staged analysis, and we would
+     rather read it from wherever you put it than have you keep writing a
+     file you consider dead.
+
+We will add the three kinds to our reader this week and keep the existing
+contract/compas/tessellation/frames set resolving beside them, so Param's
+current studies do not stop working on the day you switch.
+
+----------------------------------------------------------------------
