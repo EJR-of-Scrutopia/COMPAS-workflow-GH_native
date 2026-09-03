@@ -24109,6 +24109,24 @@ internal static class Program
             }
         }
         RequireJointsOnFlow(built, "force-bearing barrel");
+        MethodInfo levelAt = RequirePublicStatic(
+            patterns, "LevelAt", netType, typeof(double[]));
+        RequireChainsInBand(levelAt, net, built, "force-bearing barrel");
+        // PLAN 2026-09-03 TASK 2, STEP 2, THE OTHER HALF OF THE RULE. No
+        // head joint on the barrel leaves its band, so the barrel's
+        // diagnostics must carry no refusal line at all: a counter that
+        // fired on every fixture would say nothing about the one net that
+        // has a merge in it.
+        if (Reading<string>(built, "Diagnostics").Contains(
+                "Cells refused for leaving their band",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "No head joint on the force-bearing barrel leaves its own " +
+                "band, so no cell is refused for it and the line is absent " +
+                "from the diagnostics; got '" +
+                Reading<string>(built, "Diagnostics") + "'.");
+        }
 
         // 12.3(d): UNIFORMITY. Max piece length over min is at or under 2.5,
         // measured over the non-Cap cells by rule 2.3.2a, against the 0.377
@@ -24189,6 +24207,45 @@ internal static class Program
                 "them would put a hole where a mason puts a closer.");
         }
         RequireJointsOnFlow(domeBuilt, "fine dome");
+        RequireChainsInBand(levelAt, dome, domeBuilt, "fine dome");
+
+        // PLAN 2026-09-03 TASK 2, STEP 1: A LINE RETIRES ABOVE ITS OWN BED
+        // AND NOWHERE ELSE. `retired` was one global HashSet, filled by a
+        // walk that runs bottom-up and read by a cell loop that runs
+        // afterwards against the FINISHED set, so a line terminated at bed
+        // k was excluded from every bed BELOW k as well. It vanished
+        // retroactively from courses it had been a head joint on, its two
+        // neighbours' spans merged into one, and that is where a 7.52 m
+        // piece against a Size of 0.5 m came from on Param's own net.
+        //
+        // THE FINE DOME IS THE FIXTURE THAT TERMINATES LINES here, 3 of
+        // them against 54 inserted. MEASURED 2026-09-03 at S 0.6 and
+        // CH 0.35, before the change and after: 140 cells covering 70.142
+        // per cent of the net's plan with the global set, 148 covering
+        // 71.570 per cent with the per-line bed index. The count is a
+        // MEASUREMENT and this is where a change to it is declared; the
+        // strict inequality beside it is the RULE, that restoring a line to
+        // the courses it was a head joint on can only add head joints and
+        // so can only add cells.
+        const int DomeCellsPinned = 148;
+        const int DomeCellsBeforeTheFix = 140;
+        int domeCells = SkinCells(domeBuilt).Length;
+        Console.WriteLine(
+            "      Skin force-aligned retirement (plan 2026-09-03 task 2 " +
+            $"step 1): the fine dome tiles {domeCells} cells against the " +
+            $"{DomeCellsBeforeTheFix} a retroactively retired line left.");
+        if (domeCells != DomeCellsPinned ||
+            domeCells <= DomeCellsBeforeTheFix)
+        {
+            throw new InvalidOperationException(
+                "Rule 3.3.3 terminates a line AT BED k and rule 3.3.5 says " +
+                "no cell elsewhere along the bed changes its side count, so " +
+                "a line terminated at bed k is still a head joint on bed " +
+                "k-1. The fine dome tiles " + DomeCellsPinned + " cells " +
+                "when it is, and " + DomeCellsBeforeTheFix + " when the " +
+                "retirement is global and reaches back down the form; got " +
+                $"{domeCells}.");
+        }
 
         // PARAM'S MID-PHASE INPUT, from the Armadillo Vault tessellation
         // figures: the scale parameter DILATES the contour family and does
@@ -24389,6 +24446,110 @@ internal static class Program
                 $"count: got {atHalf} courses at CH 0.5 and {atWhole} at " +
                 "CH 1.0. The bands ARE the setout and their spacing is the " +
                 "one thing that widens a course.");
+        }
+    }
+
+    /// <summary>
+    /// Plan 2026-09-03 task 2, step 2. A CELL'S TWO HEAD JOINTS STAY INSIDE
+    /// THE CELL'S OWN BAND. ChainBetween walked a joint that had no crossing
+    /// on the upper bed (rule 3.3.5's closer) to the streamline's own END,
+    /// so on a net whose level curves MERGE the closer kept climbing past
+    /// the merge and the cell closed with an implicit chord across the
+    /// topology change. That is where the self-crossing and overlapping
+    /// cells the plan filter then deleted came from.
+    ///
+    /// The band's two levels are read off the cell's OWN bed runs, which lie
+    /// on the two beds by construction, so nothing here re-derives what the
+    /// engine did: chains[0] is the lower bed's run and chains[2] the
+    /// upper's, and a course with no cell carrying an upper run cannot have
+    /// its band's top established and is not measured.
+    /// </summary>
+    private static void RequireChainsInBand(
+        MethodInfo levelAt, object subject, object generated, string label)
+    {
+        double Level(double[] point) =>
+            (double)levelAt.Invoke(null, new object[] { subject, point })!;
+        var lowerOf = new Dictionary<int, double>();
+        var upperOf = new Dictionary<int, double>();
+        var joints = new List<(int Course, double[][] Up, double[][] Down)>();
+        foreach (object cell in (IList)generated.GetType()
+                     .GetProperty("Cells")!.GetValue(generated)!)
+        {
+            if (Reading<bool>(cell, "Cap"))
+                continue;
+            int course = Reading<int>(cell, "Course");
+            IList chains = (IList)cell.GetType()
+                .GetProperty("Chains")!.GetValue(cell)!;
+            double[][] lowerRun =
+                ((IList)chains[0]!).Cast<double[]>().ToArray();
+            double[][] upperRun =
+                ((IList)chains[2]!).Cast<double[]>().ToArray();
+            if (lowerRun.Length > 0 && !lowerOf.ContainsKey(course))
+                lowerOf[course] = Level(lowerRun[0]);
+            if (upperRun.Length > 0 && !upperOf.ContainsKey(course))
+                upperOf[course] = Level(upperRun[0]);
+            joints.Add((
+                course,
+                ((IList)chains[1]!).Cast<double[]>().ToArray(),
+                ((IList)chains[3]!).Cast<double[]>().ToArray()));
+        }
+        int measured = 0;
+        int courses = 0;
+        double worst = 0.0;
+        foreach ((int course, double[][] up, double[][] down) in joints)
+        {
+            if (!lowerOf.TryGetValue(course, out double low) ||
+                !upperOf.TryGetValue(course, out double high))
+            {
+                continue;
+            }
+            courses++;
+            // A HUNDREDTH of the band's own height, which is ten times the
+            // slack ChainBetween itself allows, so this bar measures the
+            // RULE and not the field interpolation's rounding at a point
+            // standing on a bed. An escape across a merge is metres.
+            double slack = Math.Abs(high - low) / 100.0;
+            double floor = Math.Min(low, high) - slack;
+            double ceiling = Math.Max(low, high) + slack;
+            foreach (double[][] chain in new[] { up, down })
+            {
+                foreach (double[] point in chain)
+                {
+                    double at = Level(point);
+                    measured++;
+                    double over = Math.Max(at - ceiling, floor - at);
+                    if (double.IsNaN(at) || over > 0.0)
+                    {
+                        throw new InvalidOperationException(
+                            $"On the {label} a head joint of the cell on " +
+                            $"course {course} stands at field level {at}, " +
+                            $"outside its own band of {low} to {high} by " +
+                            $"{over} against a stated slack of {slack}. A " +
+                            "cell's two head joints are the stretches of " +
+                            "two streamlines BETWEEN its own two beds, and " +
+                            "a chain standing outside them closes the cell " +
+                            "with an implicit chord across whatever lies " +
+                            "between, which on Param's own net is the " +
+                            "merge of the two level-curve strips. Such a " +
+                            "cell is REFUSED where it is made (plan " +
+                            "2026-09-03 task 2, step 2) rather than " +
+                            "emitted for the plan filter to delete three " +
+                            "stages later under the name of a " +
+                            "self-crossing.");
+                    }
+                    worst = Math.Max(worst, -over);
+                }
+            }
+        }
+        Console.WriteLine(
+            $"      Skin force-aligned chains inside their band ({label}): " +
+            $"{measured} head-joint points over {courses} cells measured, " +
+            $"nearest approach to a band edge {worst:F5} m.");
+        if (measured == 0)
+        {
+            throw new InvalidOperationException(
+                $"The band check measured nothing on the {label}, so it " +
+                "would hold vacuously whatever ChainBetween did.");
         }
     }
 
@@ -27086,10 +27247,13 @@ internal static class Program
         }
         // BOTH SPRINGINGS ARE TILED. Pooled, the engine gave 23 cells and
         // every one of them had a plan centroid at negative x; per
-        // component it gives 78, 35 of them left of the crown and 43 right
+        // component it gives 71, 32 of them left of the crown and 39 right
         // of it. The bar is a QUARTER of the cells a side, which is far
-        // under the measured 35 of 78 and 43 of 78 and far over the zero
+        // under the measured 32 of 71 and 39 of 71 and far over the zero
         // that re-pooling the crossings into one list per bed produces.
+        // RE-MEASURED 2026-09-03 from 78, 35 and 43: the plan's task 2
+        // refuses 65 cells whose head joints stood outside their own band,
+        // and 7 of those had survived the plan filter.
         if (left * 4 < cells.Length || right * 4 < cells.Length)
         {
             throw new InvalidOperationException(
@@ -27105,7 +27269,7 @@ internal static class Program
         if (cells.Length < 40)
         {
             throw new InvalidOperationException(
-                "Rule 3.3.1a: the force-aligned engine emits 78 cells on " +
+                "Rule 3.3.1a: the force-aligned engine emits 71 cells on " +
                 "Param's own crown arch at S 0.17 and CH 0.375, against " +
                 "the 23 it gave while every bed's components were pooled " +
                 $"into one crossings list. Got {cells.Length}, under the " +
@@ -27115,13 +27279,19 @@ internal static class Program
         // NO CELL SPANS THE VAULT. A piece whose two ends were arcs
         // measured on two different components closes a ring across the
         // whole net, and this net is 16 m wide in plan. The widest
-        // legitimate cell measures 2.2165 m, so the bar is 4 m.
+        // legitimate cell measures 0.4024 m, so the bar of 4 m stands with
+        // a tenfold margin. RE-MEASURED 2026-09-03 from 2.2165 m: the 2.2 m
+        // cell was one of the 65 the plan's task 2 now refuses, its head
+        // joint standing outside its own band, and the widest cell that
+        // survives is a piece and not a chord. This is the piece-length
+        // number Param is watching and it fell by a factor of five and a
+        // half on his own net.
         if (widest > 4.0)
         {
             throw new InvalidOperationException(
                 "Rule 3.3.1a: a piece's two ends are two arcs on ONE " +
                 "component. A cell whose plan x-extent is " +
-                $"{widest:F4} m, against the 2.2165 m the widest " +
+                $"{widest:F4} m, against the 0.4024 m the widest " +
                 "legitimate cell measures on this net and the 16 m the " +
                 "net itself spans, is a ring closed between the two " +
                 "springings out of arcs that were never measured on the " +
@@ -27132,6 +27302,112 @@ internal static class Program
             $"      Skin rule 3.3.1a on Param's own net: {cells.Length} " +
             $"force-aligned cells, {left} left of the crown and {right} " +
             $"right, widest plan x-extent {widest:F4} m.");
+        // PLAN 2026-09-03 TASK 2, STEPS 2 AND 3, ON THE ONE NET IN THIS
+        // HARNESS WHOSE LEVEL CURVES ACTUALLY MERGE. Param's crown arch is
+        // where both defects were measured and it is the only fixture here
+        // that exercises either.
+        MethodInfo levelAt = RequirePublicStatic(
+            patterns, "LevelAt", netType, typeof(double[]));
+        RequireChainsInBand(levelAt, net, built, "Param's own crown arch");
+
+        // STEP 2: THE REFUSED-CELL COUNTER. A joint with no crossing on the
+        // upper bed used to be walked to the streamline's own END, so at
+        // the merge the closer kept climbing and the cell closed with a
+        // chord across it. MEASURED on this net at S 0.17 and CH 0.375,
+        // before the change and after: 78 cells with 50 dropped as
+        // self-crossing in plan and 14 as overlapping; 71 cells with 2 and
+        // 4 dropped and 65 refused at emission for leaving their band. The
+        // bad cells were not a plan-projection accident, they were chords
+        // across a topology change, and they are now refused where they are
+        // made rather than deleted three stages later under a name that
+        // sends the reader to the wrong function.
+        const int EscapedRefusedPinned = 65;
+        string diagnostics = Reading<string>(built, "Diagnostics");
+        string refusedLine =
+            $"Cells refused for leaving their band: {EscapedRefusedPinned}";
+        if (!diagnostics.Contains(refusedLine, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A closer whose chain leaves its band is REFUSED and " +
+                "counted, not emitted for the plan filter to delete: this " +
+                "net must report '" + refusedLine + "'. Got:\n" +
+                diagnostics);
+        }
+        Console.WriteLine(
+            "      Skin force-aligned band escapes (plan 2026-09-03 task 2 " +
+            $"step 2) on Param's own net: {EscapedRefusedPinned} cells " +
+            $"refused at emission, {cells.Length} kept, against the 78 kept " +
+            "and 64 deleted by the plan filter before the chain was clipped.");
+
+        // STEP 3: THE PATTERN STOPS CLAIMING A BAND WAS SKIPPED WHEN NONE
+        // WAS. The courses engine reads resolved.Tileable and tiles only
+        // the bands that correspond; the force-aligned band loop iterates
+        // EVERY band and has never read it. So on this net, where the
+        // curves do merge and courses honestly refuses one band, pattern 2
+        // reported the same refusal while tiling straight across it, and
+        // the component raised a warning about a hole that was not there.
+        // The RULING of the plan is that the loop is not gated: gating it
+        // alone converts the damage into a visible hole at the crown, and
+        // the merge is to be COVERED by a closer band in a later wave.
+        // What is fixed is the report.
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        object byCourses = courses.Invoke(
+            null, new object[] { net, 0.17, 0.375 })!;
+        if (Reading<int>(byCourses, "TransitionBands") != 1)
+        {
+            throw new InvalidOperationException(
+                "This check is worthless on a net with no refused band. " +
+                "The courses engine refuses exactly one on Param's crown " +
+                "arch at S 0.17 and CH 0.375; got " +
+                $"{Reading<int>(byCourses, "TransitionBands")}, so the " +
+                "zero asserted of the force-aligned engine below would " +
+                "hold vacuously.");
+        }
+        if (Reading<int>(built, "TransitionBands") != 0 ||
+            ((IReadOnlyList<(double Low, double High)>)built.GetType()
+                .GetProperty("TransitionIntervals")!
+                .GetValue(built)!).Count != 0 ||
+            diagnostics.Contains(
+                "Transition bands skipped", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The force-aligned band loop tiles EVERY band and never " +
+                "reads resolved.Tileable, so nothing is skipped and the " +
+                "skipped-band warning it used to raise beside the courses " +
+                "engine's honest one was FALSE. It must report 0 bands and " +
+                "no intervals on the very net where courses reports 1; got " +
+                $"{Reading<int>(built, "TransitionBands")} and:\n" +
+                diagnostics);
+        }
+        if (!diagnostics.Contains(
+                "Transition bands: not tested", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Silence is not honesty either: the pattern must say " +
+                "plainly that it does not test correspondence between " +
+                "beds, so an author reading D knows a course spanning a " +
+                $"merge was tiled straight across it. Got:\n{diagnostics}");
+        }
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo warningLine = RequireStatic(
+            skinType, "TransitionWarningLine");
+        if (warningLine.Invoke(
+                null,
+                new object?[]
+                {
+                    Reading<int>(built, "TransitionBands"),
+                    built.GetType().GetProperty("TransitionIntervals")!
+                        .GetValue(built),
+                    Reading<string>(built, "FieldKind")
+                }) is not null)
+        {
+            throw new InvalidOperationException(
+                "With no band skipped the component raises no transition " +
+                "warning, which is the whole point of reporting 0: Param " +
+                "read a warning about a hole the engine had in fact filled " +
+                "with cells that chorded across the merge.");
+        }
     }
 
     /// <summary>

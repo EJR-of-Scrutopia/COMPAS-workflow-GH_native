@@ -3519,9 +3519,27 @@ internal static class SkinPatterns
         // it. Anchoring on the index instead would make a head joint stop
         // running along one streamline between its own two beds, which is
         // the single property rule 3.2.2 and check 12.3(b) exist for.
+        //
+        // A LINE RETIRES ABOVE ITS OWN BED AND NOWHERE ELSE (rule 3.3.3,
+        // "TERMINATE the later of the two AT BED k", and rule 3.3.5, "no
+        // cell elsewhere along the bed changes its side count"). This was
+        // a global HashSet until 2026-09-03, and the walk that fills it
+        // runs bottom-up while the CELL loop below runs afterwards against
+        // the finished set: a line terminated at bed 12 was therefore
+        // absent from beds 0 to 11 as well, so it vanished retroactively
+        // from every course it had been a head joint on and its two
+        // neighbours' spans merged into one long piece. That is where a
+        // 7.52 m piece against a Size of 0.5 m came from on Param's own
+        // net. The bed index is recorded instead, and a line is excluded
+        // only where the bed being read is ABOVE the bed it terminated at.
+        // A line terminated while bed r is being walked is still present on
+        // bed r itself, which is the behaviour the insertion walk already
+        // had within one component and now has across all of them.
         int inserted = 0;
         int terminated = 0;
-        var retired = new HashSet<int>();
+        var retiredAt = new Dictionary<int, int>();
+        bool RetiredBelow(int line, int bed) =>
+            retiredAt.TryGetValue(line, out int at) && bed > at;
         for (int r = 0; r <= bands; r++)
         {
             IReadOnlyList<SkinLevelCurve> bed = bedsAt[r];
@@ -3534,7 +3552,7 @@ internal static class SkinPatterns
                 double target = bed[c].Length /
                     Math.Max(1.0, Math.Round(bed[c].Length / (size / 2.0)));
                 List<SkinCrossing> here = crossings[r][c]
-                    .Where(item => !retired.Contains(item.Line))
+                    .Where(item => !RetiredBelow(item.Line, r))
                     .OrderBy(item => item.U)
                     .ToList();
                 for (int at = 1; at < here.Count; at++)
@@ -3542,8 +3560,18 @@ internal static class SkinPatterns
                     double gap = here[at].U - here[at - 1].U;
                     if (gap < 0.5 * target)
                     {
-                        retired.Add(here[at].Line);
-                        terminated++;
+                        // The FIRST bed a line is terminated at is the bed
+                        // it retires above, and the count is of LINES
+                        // retired and not of terminations seen: a line
+                        // crosses two components of one bed on an arch, so
+                        // the same line can meet the half-pitch test twice
+                        // at the same bed, and counting both would report
+                        // more terminations than there are lines.
+                        if (!retiredAt.ContainsKey(here[at].Line))
+                        {
+                            retiredAt[here[at].Line] = r;
+                            terminated++;
+                        }
                     }
                     else if (gap > 1.5 * target)
                     {
@@ -3595,8 +3623,29 @@ internal static class SkinPatterns
         int mergedShortKept = 0;
         int mergedStillShort = 0;
         int weldCollapsed = 0;
+        // A cell REFUSED because one of its head joints stood outside the
+        // band it belongs to (rule 3.3.5's closer, escaping). Counted and
+        // reported rather than emitted for KeepValidPlans to delete: a cell
+        // that closes with a chord across a topology change is not a cell
+        // the pattern should have proposed, and a drop counted as
+        // "self-crossing in plan" tells the author the wrong thing about
+        // where it came from.
+        int bandEscaped = 0;
+        // THE FIELD UNDER EVERY POINT OF EVERY ACCEPTED LINE, taken once
+        // and only after the insertion walk has finished adding lines. A
+        // chain clipped to its own band needs the level at each polyline
+        // point, and LevelAt locates a face in plan, so paying for it
+        // inside the cell loop would pay for the same walk again on every
+        // band the line crosses.
+        var lineLevels = new List<double[]>();
         foreach ((double[][] points, int _) in lines)
+        {
             flowLines.Add(points);
+            var value = new double[points.Length];
+            for (int at = 0; at < points.Length; at++)
+                value[at] = LevelAt(net, points[at]);
+            lineLevels.Add(value);
+        }
         for (int r = 0; r < bands; r++)
         {
             // Bed r is this band's lower and bed r + 1 its upper, by the same
@@ -3629,7 +3678,7 @@ internal static class SkinPatterns
                 // property check 12.3(b) exists for.
                 var onLower = crossings[r][c]
                     .Where(item => lines[item.Line].Parity == (r % 2))
-                    .Where(item => !retired.Contains(item.Line))
+                    .Where(item => !RetiredBelow(item.Line, r))
                     .OrderBy(item => item.U)
                     .ToList();
                 if (onLower.Count < 2)
@@ -3735,10 +3784,30 @@ internal static class SkinPatterns
                               Math.Max(leftUpper.U, rightUpper.U))
                             .AsEnumerable().Reverse().ToArray()
                         : Array.Empty<double[]>();
+                    // A CHAIN STOPS AT THE BAND IT BELONGS TO. A cell's
+                    // two head joints are the stretches of two streamlines
+                    // between its own two beds; a chain standing outside
+                    // them closes the cell with an implicit chord across
+                    // whatever lies between, which on Param's own net is
+                    // the merge of the two level-curve strips. The band's
+                    // two bed levels go in, the closer's walk stops at the
+                    // upper one, and a chain that leaves the band anyway
+                    // refuses the cell outright rather than handing the
+                    // plan filter a self-crossing or overlapping outline to
+                    // delete three stages later under another name.
                     double[][] rightSegment = ChainBetween(
-                        lines[rightLine].Points, rightLower, rightUpper);
+                        lines[rightLine].Points, lineLevels[rightLine],
+                        bedLevels[r], bedLevels[r + 1],
+                        rightLower, rightUpper, out bool rightEscaped);
                     double[][] leftSegment = ChainBetween(
-                        lines[leftLine].Points, leftLower, leftUpper);
+                        lines[leftLine].Points, lineLevels[leftLine],
+                        bedLevels[r], bedLevels[r + 1],
+                        leftLower, leftUpper, out bool leftEscaped);
+                    if (rightEscaped || leftEscaped)
+                    {
+                        bandEscaped++;
+                        continue;
+                    }
                     // The left-hand joint is walked DOWNWARD (rule 3.3.6's
                     // fourth chain), so the ring closes on the lower bed
                     // where it started instead of doubling back up the same
@@ -3829,9 +3898,25 @@ internal static class SkinPatterns
             out int degenerateDropped, out int overlapDropped,
             out int degenerateCentroidsSkipped);
 
-        string? oddLine = fiveSided + threeSided > 0
-            ? $"Odd cells: {fiveSided} five-sided, {threeSided} three-sided " +
-              $"({inserted} lines inserted, {terminated} terminated)"
+        var oddLines = new List<string>();
+        if (fiveSided + threeSided > 0)
+        {
+            oddLines.Add(
+                $"Odd cells: {fiveSided} five-sided, {threeSided} " +
+                $"three-sided ({inserted} lines inserted, {terminated} " +
+                "terminated)");
+        }
+        if (bandEscaped > 0)
+        {
+            oddLines.Add(
+                $"Cells refused for leaving their band: {bandEscaped} (a " +
+                "head joint stood outside the band's own two beds, so the " +
+                "cell would have closed with a chord across whatever lay " +
+                "between; refused at emission rather than emitted for the " +
+                "plan filter to delete as self-crossing)");
+        }
+        string? oddLine = oddLines.Count > 0
+            ? string.Join("\n", oddLines)
             : null;
         return new SkinPatternResult(
             valid,
@@ -3844,14 +3929,36 @@ internal static class SkinPatterns
                 valid.Count(cell => cell.Clipped),
                 mergedPieces,
                 degenerateDropped, overlapDropped,
-                TransitionLine(
-                    "force aligned", resolved.Refused.Count, resolved.Refused,
-                    FieldKindOf(net)),
+                // STEP 3 OF THE 2026-09-03 PLAN, AND A DEPARTURE FROM WHAT
+                // THIS LINE USED TO SAY. The courses engine reads
+                // resolved.Tileable and tiles only the bands that
+                // correspond; this engine's band loop iterates EVERY band
+                // and has never read it. So "Transition bands skipped: 1"
+                // was FALSE on pattern 2: nothing was skipped, the band was
+                // tiled straight across the merge, and the author was sent
+                // looking for a hole that the engine had in fact filled
+                // with bad cells.
+                //
+                // The RULING, recorded rather than assumed: the loop is NOT
+                // gated here. Gating it alone converts the damage into a
+                // visible hole at the crown, and Param's ruling of record
+                // is that the merge is to be COVERED by a closer band in
+                // the next wave, which makes the gate moot. What is fixed
+                // is the report: this pattern says plainly that it does not
+                // test correspondence, and it raises no skipped-band count,
+                // so the component's warning (which reads TransitionBands)
+                // stays silent instead of describing a hole that is not
+                // there.
+                "Transition bands: not tested (this pattern tiles every " +
+                "band and never tests whether the level curves correspond " +
+                "across one, so a course that spans a split or a merge is " +
+                "tiled straight across it rather than refused; the courses " +
+                "pattern is the one that refuses such a band)",
                 oddLine,
                 weldCollapsed,
                 PlanCoverage(net, valid)),
-            resolved.Refused.Count,
-            resolved.Refused,
+            0,
+            Array.Empty<(double Low, double High)>(),
             degenerateDropped,
             overlapDropped,
             FieldKindOf(net),
@@ -4000,36 +4107,95 @@ internal static class SkinPatterns
     private sealed record SkinCrossing(
         double U, int Line, int Component, int At, double[] Point, bool Up);
 
-    /// <summary>The stretch of one streamline between its crossing of a
-    /// band's lower bed and its crossing of that band's upper bed, taken by
-    /// POLYLINE INDEX and not by field value: a joint that runs over the
-    /// crown re-enters the band's field range on the far side, and clipping
-    /// by value alone would hand this side's chain to a far-side cell. Where
-    /// the joint has no upper crossing at all (rule 3.3.5's closer) it is
-    /// walked to its own end, the way the field was rising.</summary>
+    /// <summary>
+    /// The stretch of one streamline between its crossing of a band's lower
+    /// bed and its crossing of that band's upper bed, taken by POLYLINE
+    /// INDEX and not by field value: a joint that runs over the crown
+    /// re-enters the band's field range on the far side, and clipping by
+    /// value alone would hand this side's chain to a far-side cell.
+    ///
+    /// Where the joint has NO upper crossing at all (rule 3.3.5's closer)
+    /// it is walked to its own END, and the walk now stops at the first
+    /// polyline point above the band's UPPER BED LEVEL so that a closer
+    /// cannot climb out of its own band.
+    ///
+    /// THAT CLIP IS A GUARD AND NOT A FIX, and it is said here rather than
+    /// left to be found. MEASURED 2026-09-03 across every fixture in the
+    /// harness, Param's own crown arch included: it fires ZERO times, and
+    /// it cannot fire while RecordCrossings stands as it does. A line that
+    /// reaches the upper bed's level MUST cross it, RecordCrossings records
+    /// the first crossing on every component of every bed, and Above reads
+    /// all of them, so a null upper crossing already means the line stops
+    /// inside the band. The clip is kept because that is an invariant of
+    /// another function and not of this one.
+    ///
+    /// WHAT ACTUALLY ESCAPES is the chain standing outside the band's two
+    /// beds along the way, and <paramref name="escaped"/> is what catches
+    /// it: a closer walked to a line's end that DIPS below its own lower
+    /// bed (55 of the 86 escapes on Param's crown arch at S 0.17), and a
+    /// two-crossing chain walked between its crossings BY INDEX, which is
+    /// deliberate and which lets a streamline that rises, falls and rises
+    /// again stand outside the band in between (the other 31). Rule 3.3.5
+    /// sanctions a three-sided closer, so a closer that stays inside its
+    /// band is still emitted; only the ones that escape are refused.
+    /// </summary>
     private static double[][] ChainBetween(
         double[][] line,
+        IReadOnlyList<double> levels,
+        double bandLow,
+        double bandHigh,
         SkinCrossing from,
-        SkinCrossing? to)
+        SkinCrossing? to,
+        out bool escaped)
     {
-        var chain = new List<double[]> { from.Point };
+        // The band's own slack, a thousandth of its height, which is
+        // 0.375 mm at the shipped course height of 0.375 m. It is there for
+        // the field interpolation's rounding at a polyline point standing
+        // on a bed and not to let a chain wander: an escape across a merge
+        // is measured in metres, not in microns.
+        double slack = Math.Max((bandHigh - bandLow) * 1.0e-3, 1.0e-9);
+        var taken = new List<int>();
         if (to is null)
         {
             if (from.Up)
+            {
                 for (int at = from.At + 1; at < line.Length; at++)
-                    chain.Add(line[at]);
+                {
+                    if (levels[at] > bandHigh + slack)
+                        break;
+                    taken.Add(at);
+                }
+            }
             else
+            {
                 for (int at = from.At; at >= 0; at--)
-                    chain.Add(line[at]);
-            return chain.ToArray();
+                {
+                    if (levels[at] > bandHigh + slack)
+                        break;
+                    taken.Add(at);
+                }
+            }
         }
-        if (to.At >= from.At)
+        else if (to.At >= from.At)
+        {
             for (int at = from.At + 1; at <= to.At; at++)
-                chain.Add(line[at]);
+                taken.Add(at);
+        }
         else
+        {
             for (int at = from.At; at > to.At; at--)
-                chain.Add(line[at]);
-        chain.Add(to.Point);
+                taken.Add(at);
+        }
+        escaped = false;
+        var chain = new List<double[]> { from.Point };
+        foreach (int at in taken)
+        {
+            chain.Add(line[at]);
+            escaped |= levels[at] > bandHigh + slack ||
+                       levels[at] < bandLow - slack;
+        }
+        if (to is not null)
+            chain.Add(to.Point);
         return chain.ToArray();
     }
 
