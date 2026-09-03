@@ -108,3 +108,68 @@ False, so he flips it once by hand; a component he drops fresh gets the offset s
 The closedness of a Brep needs RhinoCommon's native core, which this harness deliberately does not
 launch. scripts/rhino_skin_surface.py carries that half and MUST gain an Offset-ON case: it has
 never thickened a loft-route cell at all, which is why this defect class reached Param's screen.
+
+## 5. ERRATUM, 2026-09-04
+
+Written after the change was built and reviewed, and after the harness measured what the document
+had only argued. Two points of the text above are wrong and are corrected here rather than edited
+away, so that the reasoning that produced them stays legible.
+
+1. SECTION 1 POINT 3 CLAIMS A REACH IT DOES NOT HAVE. The mechanism it describes is real geometry:
+where an outline edge runs vertical and the offset is vertical too, the four corners of that side
+wall lie on one line, Brep.CreateFromCornerPoints has no quad to make, and the cell is refused.
+That much is asserted on hand-written corners in tests/native_smoke and goes red when the predicate
+is broken. What the section then guesses, that an unknown share of the 148 non-closing cells on
+Param's force-aligned run are this and not a thickener defect, IS REFUTED BY MEASUREMENT.
+
+2. THE NUMBERS. At Th 0.29, his own thickness, the count of cells carrying an annihilated wall is
+ZERO under the extrude branch and ZERO under the offset branch on every fixture available: the
+force-aligned barrel, 97 cells; Param's own net in courses at S 0.17 and CH 0.375, 1032 cells; his
+own net force-aligned, 71 cells; and a vault built for this question alone, standing on exactly
+vertical walls, 188 cells. Not one cell anywhere is refused by the vertical-edge mechanism, so the
+offset branch cannot reduce a count that was never above zero.
+
+3. WHY, AND IT GENERALISES. Annihilation is an EXACT collinearity. A merely steep edge leaves a
+sliver quad with real area, which Rhino builds without complaint at the 1e-9 the call is made with:
+on the walled vault the head joints come within 1e-5 rad of vertical without reaching it, leaving a
+wall area of about 6e-7. And an exactly vertical outline edge cannot arise on a height-field net at
+all except on a plan-degenerate wall, because two distinct surface points would have to share one
+plan position. The tightest walls the harness can find are not vertical edges but SHORT ones: the
+least wall area on the force-aligned run, 2.1e-7, is 0.5 times an outline edge of 1.5 microns times
+Th, and the engine's own weld tolerance at emission is 1e-6, so those corners survive it by a hair.
+
+4. WHERE THE 148 GO. They remain attributed to the loft-route thickening, which only Rhino can
+settle. A lofted bottom face whose boundary is not the outline's straight chords cannot join the
+wall quads built on those chords at the 1e-6 the join is asked for, and that would refuse every
+cell of that route rather than a scattering, which fits 148 of 262 far better than any vertical
+edge does. scripts/rhino_skin_surface.py 12.5(i) is where the count is taken.
+
+5. THE CHECK SAYS SO. Section 4 check 2's own claim, a cell refused under Offset OFF and built
+under Offset ON, is written and run in tests/native_smoke as a DEFERRED assertion with its owner
+named, rather than dressed as a pass. The slot that carries it now claims the mechanism and the
+one-way guard, which is what it enforces, and nothing more.
+
+6. RULE 2 IS AMENDED. Off the mesh in plan the answer is no longer (0, 0, 1). It is the NEAREST
+face's own, found by plan centroid and evaluated at the point, which is the branch the sibling
+function LevelAt has carried all along. The old text fired on 172 of the 8870 cell corners of
+Param's own crown arch: a traced level curve runs along the net's own boundary edges, and the
+plan-containment test claims a boundary point for a face only about half the time, so those corners
+took a VERTICAL thickness direction at the steep rim, which is exactly the defect this document
+exists to remove. (0, 0, 1) survives only where there is no usable face to read at all, meaning a
+net with no faces, a face whose plan area is below the 1e-15 LevelAt refuses to divide by on the
+same triangle, or an interpolated vector shorter than 1e-12.
+
+7. RULE 3 SURVIVES THE AMENDMENT UNTOUCHED. The nearest-face answer is still a function of the
+POINT alone, so two cells that share such a corner hand the method the same three doubles and get
+the same three back, and the corner moves to one place. Measured after the amendment, those 172
+corners agree with world Z down to -0.999467, which is inside the range the 8698 corners that do
+find a face already span on the same vault, down to -0.999984: they are answers of the same field
+and not artefacts of being off it.
+
+8. ONE LIMIT STANDS AND IS NOT FIXED HERE. On a surface standing EXACTLY vertical the offset branch
+still degrades to the extrusion. Such a face has no plan area, so the nearest face is the vertical
+one itself, and a face with no plan area carries no barycentric coordinates. LevelAt answers that
+case with the mean of the triangle's three values, and the same reading is open here, the mean of
+its three vertex normals, which would give a horizontal direction where the surface is vertical.
+It is NOT taken in this pass, because it is a change of answer rather than of tolerance and it is
+Param's to rule on.
