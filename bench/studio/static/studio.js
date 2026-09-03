@@ -1640,7 +1640,6 @@ function applyCut(preserve) {
   const available = state.bundle.source_available || ["generated"];
   const row = document.getElementById("source-row");
   const toggle = document.getElementById("source-toggle");
-  const note = document.getElementById("source-note");
   if (row && toggle) {
     // The switch appears only where there is a choice to make, and it says
     // which end it is at whether or not the study offers both.
@@ -1650,14 +1649,9 @@ function applyCut(preserve) {
     row.classList.toggle("authored", state.bundle.source === "authored");
     row.classList.toggle("generated", state.bundle.source === "generated");
     state.source = state.bundle.source;
-    if (note) {
-      note.textContent = state.bundle.source === "authored"
-        ? "cells authored in Grasshopper, with their own courses"
-        : "the studio's own cut, from the pattern and size above";
-      // A cut that loaded clears the last refusal off the control.
-      note.classList.remove("refused");
-      state.lastRefusal = null;
-    }
+    // A cut that loaded clears the last refusal. Which skin is on is said
+    // by the switch itself; it does not also need a sentence beneath it.
+    state.lastRefusal = null;
   }
   document.getElementById("piece-count").textContent = state.bundle.pieces.length;
   document.getElementById("course-count").textContent = state.bundle.tessellation.courses;
@@ -3052,81 +3046,11 @@ document.getElementById("study-refresh").addEventListener("click", async () => {
   logStudio("folder re-read: " + names.length + " vaults");
 });
 
-// ---------- browser import: export pairs and columns ----------
-async function putFile(url, file) {
-  const text = await file.text();
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: text,
-  });
-  if (!response.ok) {
-    let detail = response.status;
-    try { detail = (await response.json()).detail || detail; } catch (error) { /* body wasn't JSON */ }
-    throw new Error(url + " -> " + detail);
-  }
-  return response.json();
-}
-
-async function importExportPair() {
-  const status = document.getElementById("import-status");
-  const input = document.getElementById("import-export-input");
-  const files = Array.from(input.files || []);
-  const contractFile = files.find((f) => f.name.endsWith("-contract.json"));
-  const compasFile = files.find((f) => f.name.endsWith("-compas.json"));
-  if (files.length !== 2 || !contractFile || !compasFile) {
-    status.textContent = "pick exactly a *-contract.json and *-compas.json pair";
-    return;
-  }
-  const contractPrefix = contractFile.name.slice(0, -"-contract.json".length);
-  const compasPrefix = compasFile.name.slice(0, -"-compas.json".length);
-  if (!contractPrefix || contractPrefix !== compasPrefix) {
-    status.textContent = "the two files must share the same export name prefix";
-    return;
-  }
-  status.textContent = "uploading " + contractPrefix + "...";
-  try {
-    await putFile("/api/uploads/exports/" + encodeURIComponent(contractPrefix) + "/contract", contractFile);
-    const result = await putFile("/api/uploads/exports/" + encodeURIComponent(contractPrefix) + "/compas", compasFile);
-    status.textContent = result.pair_complete
-      ? "imported " + contractPrefix
-      : "stored " + contractPrefix + "; pair incomplete";
-    logStudio(result.pair_complete
-      ? "imported export pair " + contractPrefix
-      : "stored " + contractPrefix + "; pair incomplete");
-    input.value = "";
-    // M2 fix: select and load the export that was just imported, instead
-    // of leaving boot() to fall back to studies[0].
-    await boot(contractPrefix);
-  } catch (error) {
-    status.textContent = "import failed: " + error.message;
-    logStudio("export pair import failed: " + error.message);
-  }
-}
-
-async function importColumns() {
-  const status = document.getElementById("import-status");
-  const input = document.getElementById("import-columns-input");
-  const file = input.files && input.files[0];
-  if (!file) {
-    status.textContent = "pick a columns JSON file first";
-    return;
-  }
-  status.textContent = "uploading " + file.name + "...";
-  try {
-    await putFile("/api/uploads/columns/" + encodeURIComponent(file.name), file);
-    status.textContent = "imported " + file.name;
-    logStudio("imported columns file " + file.name);
-    input.value = "";
-    const payload = await fetchJson("/api/studies");
-    state.studies = payload.studies;
-    state.columnFiles = payload.columns || [];
-    await reloadColumns(columnsForStudy(state.columnFiles, document.getElementById("study-select").value));
-  } catch (error) {
-    status.textContent = "import failed: " + error.message;
-    logStudio("columns import failed: " + error.message);
-  }
-}
+// The hand-upload path is gone with its controls (Param, 2026-09-04: the
+// folder is the way in now, and a second way in that nobody uses is one
+// more thing to read past). putFile, importExportPair and importColumns
+// lived here; the routes they called are still there for the exporter,
+// which is their real caller.
 
 // ---------- UI wiring ----------
 document.getElementById("delete-study").addEventListener("click", async () => {
@@ -3277,11 +3201,7 @@ document.getElementById("source-toggle").addEventListener("change", async (e) =>
     state.source = previous;
     e.target.checked =
       (state.bundle ? state.bundle.source : previous) === "generated";
-    const note = document.getElementById("source-note");
-    if (note && state.lastRefusal) {
-      note.textContent = state.lastRefusal;
-      note.classList.add("refused");
-    }
+    if (state.lastRefusal) logStudio("skin refused: " + state.lastRefusal);
   }
 });
 document.getElementById("pattern-select").addEventListener("change", (e) => {
@@ -3583,8 +3503,6 @@ document.getElementById("data-button").addEventListener("click", () => {
 document.getElementById("data-close").addEventListener("click", () =>
   document.getElementById("data-panel").classList.add("hidden"));
 document.getElementById("run-button").addEventListener("click", startRun);
-document.getElementById("import-export-button").addEventListener("click", importExportPair);
-document.getElementById("import-columns-button").addEventListener("click", importColumns);
 
 // M5 fix: reload with the material/pattern/size/thickness the run actually
 // solved with, not whatever the controls read when the run happens to

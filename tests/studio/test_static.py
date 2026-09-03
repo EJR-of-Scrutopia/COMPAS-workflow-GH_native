@@ -150,8 +150,10 @@ def test_import_controls_exist_and_wire_the_uploads_endpoint():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     for control_id in (
-        "import-export-input", "import-export-button",
-        "import-columns-input", "import-columns-button", "import-status",
+        # Re-pinned 2026-09-04: the hand-upload controls are gone with the
+        # folder chooser (Param: "remove upload files by hand"). The status
+        # line stays, because the folder chooser writes to it.
+        "import-status", "folder-choose", "study-refresh",
     ):
         assert 'id="{}"'.format(control_id) in html, "index.html lost {}".format(control_id)
     assert "uploads/exports" in js
@@ -319,32 +321,44 @@ def test_every_reader_of_struck_now_gives_the_unavailable_case_its_own_reading()
     )
 
 
-def test_boot_and_import_columns_share_the_dispose_before_reload_helper():
+def test_every_columns_reload_disposes_before_it_adds():
     # M1: boot() used to add a fresh columns group on every call with no
     # dispose, so each export-pair re-import (which calls boot()) stacked
     # another copy into the scene. Both call sites must route through the
     # same dispose-then-reload helper importColumns already modelled.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    # Re-pinned 2026-09-04: importColumns is gone with the hand-upload
+    # controls, but the finding it was written for is unchanged and now has
+    # more callers, not fewer. Boot, a study load and a folder change all
+    # reload the columns, and every one of them must dispose first.
     assert "async function reloadColumns(" in js
+    assert "async function importColumns(" not in js
+    reload_body = _function_body(js, "reloadColumns")
+    assert "scene.remove(state.objects.columns)" in reload_body
+    assert "state.objects.columns = null" in reload_body
     boot_start = js.index("async function boot(")
     boot_end = js.index("\n}", boot_start)
     assert "reloadColumns(" in js[boot_start:boot_end]
-    import_start = js.index("async function importColumns(")
-    import_end = js.index("\n}", import_start)
-    assert "reloadColumns(" in js[import_start:import_end]
+    assert "reloadColumns(" in _function_body(js, "loadStudy")
 
 
-def test_export_import_selects_and_loads_the_imported_study():
-    # M2: after a successful export-pair import, the studio must select and
-    # load the export that was just imported, not fall back to studies[0].
+def test_choosing_a_folder_lands_on_a_vault_from_it():
+    # M2 was about landing on the study that had just arrived rather than on
+    # studies[0]. Re-pinned 2026-09-04 to where a study now arrives from: a
+    # folder. Choosing one empties the scene, because the vault on screen
+    # came from the old folder and may not exist in the new one, then
+    # selects and loads a vault from the new folder.
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
     boot_start = js.index("async function boot(preferredExport)")
     boot_end = js.index("\n}", boot_start)
     boot_body = js[boot_start:boot_end]
     assert "select.value = toLoad" in boot_body
-    import_start = js.index("async function importExportPair(")
-    import_end = js.index("\n}", import_start)
-    assert "boot(contractPrefix)" in js[import_start:import_end]
+    assert "async function importExportPair(" not in js
+    chooser = js[js.index('getElementById("folder-choose")'):]
+    chooser = chooser[:chooser.index("\n});")]
+    assert "clearScene()" in chooser
+    assert "refreshStudies(" in chooser
+    assert "loadStudy(names[0])" in chooser
 
 
 def test_run_completion_reloads_with_the_params_captured_at_post_time():
@@ -2305,7 +2319,10 @@ def test_a_refusal_reaches_the_screen_in_the_servers_own_words():
     assert "url + \" -> \"" not in body, "the URL is not the message"
     assert "lastRefusal: null," in js
     assert "state.lastRefusal = error.detail || error.message;" in js
-    assert "#source-note.refused" in css
+    # Re-pinned 2026-09-04: the refusal goes to the event log at the foot
+    # of the screen rather than a line under the control. Param: "this is
+    # what the text display is for at the bottom left".
+    assert 'logStudio("skin refused: " + state.lastRefusal)' in js
 
 
 def test_the_import_panel_is_the_way_in():
