@@ -1381,6 +1381,27 @@ internal static class Program
 
         try
         {
+            ValidateSkinLineFieldSmoothing(plugin);
+            Console.WriteLine(
+                "PASS  Skin line-field smoothing (rule 3.2.9, finding " +
+                "3): the three neighbour-averaging passes and the " +
+                "coherence weight are measured where they DO something, " +
+                "the bare barrel binding the pass count with every " +
+                "weight 1.0 by construction and Param's own net binding " +
+                "the weight with 188 of its 800 faces under the clamp's " +
+                "knee. Cutting the passes to none, running twelve, or " +
+                "replacing the weight with the constant 1.0 all left the " +
+                "suite green before this.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin line-field smoothing: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinThicknessAlongNormalSide(plugin);
             Console.WriteLine(
                 "PASS  Skin Along Normal offsets to ONE side (finding " +
@@ -19660,6 +19681,68 @@ internal static class Program
                 "and the second moved it.");
         }
 
+        // 12.6(f): WHICH NEIGHBOUR ABSORBS, rule 6.2's own words, which
+        // nothing asserted until the whole-branch review's finding 4. The
+        // piece-size checks pin counts, minima and maxima and every one of
+        // them is invariant under which of the two neighbours grows:
+        // MEASURED 2026-09-03, blowing the comparison's threshold out to
+        // 1e9 so the left neighbour always wins, and inverting it so the
+        // LONGER neighbour absorbs, the direct negation of the rule, each
+        // left the whole suite green.
+        //
+        // Three spans, a short middle piece, and the answer read off the
+        // spans themselves. The order the merge walks in is seam outward,
+        // so each fixture is written with its short piece reachable before
+        // its neighbours have grown.
+        string Shape(object list) => string.Join(
+            " ",
+            ReadSpans(list).Select(span => $"{span.U0:F3}..{span.U1:F3}"));
+        void RequireMerge(
+            string what,
+            (double U0, double U1, bool Clipped)[] spans,
+            string wanted)
+        {
+            object answer = RunMerge(SpansOf(spans));
+            if (Shape(answer) != wanted)
+            {
+                throw new InvalidOperationException(
+                    $"Rule 6.2, {what}: the neighbour ALONG THE COURSE " +
+                    "with the SHORTER span absorbs a piece at or under " +
+                    "the minimum, and a tie goes to the neighbour with " +
+                    "the lower U0, which is the seam-ward one. Merging " +
+                    $"[{string.Join(" ", spans.Select(s => $"{s.U0:F3}..{s.U1:F3}"))}] " +
+                    $"at a minimum of 0.2 must give [{wanted}]; it gave " +
+                    $"[{Shape(answer)}].");
+            }
+        }
+
+        // The RIGHT neighbour is the shorter one and takes the piece.
+        RequireMerge(
+            "the shorter neighbour is on the right",
+            new[]
+            {
+                (-1.4, -0.5, false), (-0.5, -0.4, false), (-0.4, 0.2, false)
+            },
+            "-1.400..-0.500 -0.500..0.200");
+
+        // The mirror, so that "always take the left" cannot pass both.
+        RequireMerge(
+            "the shorter neighbour is on the left",
+            new[]
+            {
+                (-0.2, 0.4, false), (0.4, 0.5, false), (0.5, 1.4, false)
+            },
+            "-0.200..0.500 0.500..1.400");
+
+        // THE TIE, two neighbours of equal span: the lower U0 wins.
+        RequireMerge(
+            "the two neighbours are equal and the tie goes seam-ward",
+            new[]
+            {
+                (-0.9, -0.3, false), (-0.3, -0.2, false), (-0.2, 0.4, false)
+            },
+            "-0.900..-0.200 -0.200..0.400");
+
         // 12.6(e), first half: MP at 0 changes nothing at either end. The
         // baseline is the engine's own PRE-MERGE span set, read off the
         // three-argument overload with the merge suppressed by the same zero,
@@ -20009,6 +20092,30 @@ internal static class Program
                 "The centre disc's girth is at or under Mx, which is what " +
                 "rule 2.6.3's bracket invariant guarantees rather than the " +
                 $"shape of the surface; got {disc}.");
+        }
+        // AND FROM BELOW, which is the whole-branch review's finding 5.
+        // Every bar above is an upper bound, and the TRIVIAL answer meets
+        // all of them: a search that returned the top cut at once would
+        // give the smallest possible keystone and the deepest possible
+        // ring, and wedge span, disc girth and wedge count would each
+        // still hold. MEASURED 2026-09-03 by cutting rule 2.6.3's
+        // bisection loop from six steps to none, so hi stays at its
+        // initial value: the disc girth falls from 1.739 m to 2.96e-05 m,
+        // a keystone the size of a point at the very apex, and the suite
+        // stayed green. Rule 2.6.3 says the search is for a LARGE ALLOWED
+        // disc, so the disc is pinned near its own bound: six halvings of
+        // the bracket land it at 1.739 m against Mx 1.8, and the bar is
+        // three quarters of Mx, which is far under that and far over the
+        // trivial answer.
+        if (disc < maximum * 0.75)
+        {
+            throw new InvalidOperationException(
+                "Rule 2.6.3 is a search for a LARGE ALLOWED disc, not for " +
+                "any allowed disc: six bisection steps land the centre " +
+                $"disc's girth at 1.739 m against Mx {maximum} m, and the " +
+                $"bar is three quarters of it. Got {disc} m. A search " +
+                "that returned the top cut at once passes every upper " +
+                "bound in this check and reads 2.96e-05 m here.");
         }
         var inBranch = cells
             .Where(cell => cell.Course == courseCount - 1)
@@ -25217,6 +25324,178 @@ internal static class Program
                     $"plan-validity habits; got '{diagnostics}'.");
             }
         }
+    }
+
+    /// <summary>
+    /// RULE 3.2.9'S THREE NEIGHBOUR-AVERAGING PASSES AND THE COHERENCE
+    /// WEIGHT THEY USE, which is the whole-branch review's finding 3.
+    ///
+    /// Both were covered by nothing that could fail. Check 12.3(a) reads
+    /// Directions on the FORCED barrel, where every face's raw direction
+    /// is already the generator, so the passes average vectors that
+    /// already agree and are a no-op there: measured below at 0.0000
+    /// degrees of drift on that very fixture. Its fallback half reads Raw
+    /// and never Directions at all. MEASURED 2026-09-03, each with the
+    /// plugin rebuilt: cutting the loop to no passes, running it twelve
+    /// times, and replacing the weight with the constant 1.0 the engine's
+    /// own comment forbids ALL left the whole suite green.
+    ///
+    /// So this check reads Directions against Raw on two fixtures where
+    /// they genuinely differ, and pins the difference as a measurement.
+    ///
+    /// The BARE barrel binds the PASS COUNT. Every face defaults to its
+    /// own e1 (rule 3.2.8) with coherence 1.0, so every weight is 1.0 and
+    /// the weight cannot be what moves anything; what moves the field is
+    /// the averaging alone, and it moves it a long way, because
+    /// neighbouring triangles' first edges point different ways.
+    ///
+    /// PARAM'S OWN NET binds the WEIGHT. 188 of its 800 faces carry a raw
+    /// coherence under 0.2, the clamp's own knee, the least of them
+    /// 0.0244, so the weight is a real discount on nearly a quarter of the
+    /// net rather than 1.0 everywhere. The check refuses to pass unless
+    /// that is still true of the fixture.
+    ///
+    /// The bands are stated as measurements with the reason beside them,
+    /// which is this file's rule for a number it cannot derive: they are
+    /// tight because the arithmetic is deterministic on a fixed fixture,
+    /// and a band wide enough to survive three passes becoming none would
+    /// be a band that measured nothing.
+    /// </summary>
+    private static void ValidateSkinLineFieldSmoothing(Assembly plugin)
+    {
+        Type field = RequireComponentType(plugin, "SkinFlowField");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        MethodInfo directions = RequirePublicStatic(field, "Directions");
+        MethodInfo raw = field.GetMethod(
+            "Raw",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "SkinFlowField.Raw was not found.");
+
+        (int Faces, int BelowKnee, double Least, double Worst, double Mean)
+            Drift(object net)
+        {
+            var smoothed = ((IEnumerable)directions.Invoke(
+                    null, new[] { net })!).Cast<double[]>().ToArray();
+            var state = (Array)raw.Invoke(null, new[] { net })!;
+            if (state.Length != smoothed.Length || state.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Raw returned {state.Length} entries against " +
+                    $"{smoothed.Length} smoothed directions.");
+            }
+            double worst = 0.0;
+            double sum = 0.0;
+            int below = 0;
+            double least = double.PositiveInfinity;
+            for (int at = 0; at < state.Length; at++)
+            {
+                object entry = state.GetValue(at)!;
+                Type entryType = entry.GetType();
+                var plane =
+                    (double[])entryType.GetField("Item1")!.GetValue(entry)!;
+                double coherence =
+                    (double)entryType.GetField("Item2")!.GetValue(entry)!;
+                least = Math.Min(least, coherence);
+                if (coherence < 0.2)
+                    below++;
+                double[] one = smoothed[at];
+                // A LINE field has no sign, so the angle is taken to the
+                // nearer end, the same reading check 12.3(a) already uses.
+                double dot = Math.Abs(
+                    (one[0] * plane[0]) + (one[1] * plane[1]) +
+                    (one[2] * plane[2]));
+                double angle =
+                    Math.Acos(Math.Min(1.0, dot)) * 180.0 / Math.PI;
+                worst = Math.Max(worst, angle);
+                sum += angle;
+            }
+            return (state.Length, below, least, worst, sum / state.Length);
+        }
+
+        void Pin(
+            string label,
+            (int Faces, int BelowKnee, double Least, double Worst,
+                double Mean) measured,
+            double worst,
+            double mean,
+            double tolerance)
+        {
+            if (Math.Abs(measured.Worst - worst) > tolerance ||
+                Math.Abs(measured.Mean - mean) > tolerance)
+            {
+                throw new InvalidOperationException(
+                    $"Rule 3.2.9 on the {label}: the smoothed field " +
+                    $"stands {worst:F4} degrees off the raw field at its " +
+                    $"furthest and {mean:F4} on average over " +
+                    $"{measured.Faces} faces, within {tolerance}. Got " +
+                    $"{measured.Worst:F4} and {measured.Mean:F4}. Three " +
+                    "passes is a constant and not an input, and the " +
+                    "engine's own comment says the neighbour weight was " +
+                    "measured and must not be changed; this is the " +
+                    "assertion that would notice either of them moving. " +
+                    "No passes at all reads 0.0000 and 0.0000 here.");
+            }
+        }
+
+        // ---- THE BARE BARREL, where every weight is 1.0 by construction.
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        object bare = Activator.CreateInstance(
+            netType, new object[] { vertices, faces })!;
+        var bareDrift = Drift(bare);
+        if (bareDrift.BelowKnee != 0 ||
+            Math.Abs(bareDrift.Least - 1.0) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "The bare barrel is the fixture that isolates the PASS " +
+                "COUNT from the weight, and it does that only while every " +
+                "face defaults with coherence 1.0 (rule 3.2.8). Got " +
+                $"{bareDrift.BelowKnee} faces under the 0.2 knee and a " +
+                $"least coherence of {bareDrift.Least}.");
+        }
+        Pin("bare barrel", bareDrift, 41.3795, 29.3047, 0.05);
+
+        // ---- PARAM'S OWN NET, where the clamp actually discounts.
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the build " +
+                "output (assets/param-crown-arch-contract.json): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(path));
+        object net = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so the weight would be measured on nothing.");
+        var netDrift = Drift(net);
+        if (netDrift.BelowKnee != 188 || netDrift.Least > 0.05)
+        {
+            throw new InvalidOperationException(
+                "This half binds the neighbour WEIGHT, and it can only do " +
+                "that on a fixture where the clamp Math.Min(1, coherence " +
+                "/ 0.2) actually discounts somebody: Param's net carries " +
+                "188 of its 800 faces under that knee, the least at " +
+                $"0.0244. Got {netDrift.BelowKnee} under it and a least " +
+                $"of {netDrift.Least:F6}. Replace the weight with the " +
+                "constant 1.0 and this fixture is what notices.");
+        }
+        Pin("Param's own net", netDrift, 58.0725, 6.8214, 0.05);
+
+        Console.WriteLine(
+            "      Skin line-field smoothing (rule 3.2.9): bare barrel " +
+            $"{bareDrift.Faces} faces drifting {bareDrift.Worst:F4} " +
+            $"degrees at worst and {bareDrift.Mean:F4} on average from " +
+            $"raw; Param's net {netDrift.Faces} faces, " +
+            $"{netDrift.BelowKnee} of them under the 0.2 coherence knee, " +
+            $"drifting {netDrift.Worst:F4} and {netDrift.Mean:F4}.");
     }
 
     /// <summary>
