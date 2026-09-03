@@ -101,12 +101,16 @@ internal static class Program
                 // Surface. The names below are what the ports-moved
                 // warning compares a saved definition against, so every
                 // saved definition raises the warning on open and moves
-                // its wires by name, not by slot.
+                // its wires by name, not by slot. Spec 2026-09-02
+                // (skin-thickness-input) appends Thickness and Along
+                // Normal at slots 5 and 6, PURE APPEND: a definition
+                // saved before that task still finds its own five names
+                // at their own slots and raises no warning at all.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
                     new[]
                     {
                         "Result", "Pattern", "Size", "Course Height",
-                        "Min Piece"
+                        "Min Piece", "Thickness", "Along Normal"
                     },
                     new[] { "Cells", "Surface" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
@@ -1259,6 +1263,43 @@ internal static class Program
         {
             failures.Add(
                 $"Skin Min Piece clamp: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinThicknessPorts(plugin);
+            Console.WriteLine(
+                "PASS  Skin thickness ports (spec 2026-09-02): Th and " +
+                "Along Normal are a PURE APPEND at inputs 5 and 6, both " +
+                "Optional, every earlier port's name and nickname " +
+                "unmoved, and each new port's own description carries " +
+                "its load-bearing clause.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin thickness ports: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinThicknessOffset(plugin);
+            Console.WriteLine(
+                "PASS  Skin thickness offset (spec 2026-09-02): Along " +
+                "Normal false is the constant (0, 0, Th) whatever the " +
+                "cell, sign for sign; CellNormalUnit reads (0, 0, 1) off " +
+                "a flat cell and a finite unit vector off a non-planar " +
+                "one, agreeing with vertical mode on the flat cell and " +
+                "flipping with Th's sign on both; a degenerate outline " +
+                "falls back to a finite unit normal; and two REAL " +
+                "adjacent cells off SkinPatterns.Courses share their " +
+                "corner bit for bit after the vertical translation, " +
+                "which is the whole of the connectedness claim.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin thickness offset: {DescribeException(exception)}");
         }
 
         try
@@ -24159,6 +24200,312 @@ internal static class Program
             throw new InvalidOperationException(
                 "MP at -1 clamps to 0 and behaves EXACTLY as MP at 0; a " +
                 "negative means \"off\" and not a failed solve.");
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-09-02 (skin-thickness-input): Th and Along Normal are a
+    /// PURE APPEND after Min Piece. Every earlier port keeps its own
+    /// name, nickname and position exactly, which is what lets
+    /// ParameterIdentity's archived-name comparison stay silent on a
+    /// definition saved before this task: it simply finds no data on
+    /// ports 5 and 6 and reads their defaults (Th = 0, no thickening;
+    /// Along Normal = false). An insertion instead of an append, or a
+    /// rename anywhere earlier, would move every port after it and fail
+    /// here rather than only in Grasshopper.
+    /// </summary>
+    private static void ValidateSkinThicknessPorts(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        object skin = Activator.CreateInstance(skinType)!;
+        object parameters =
+            skinType.GetProperty("Params")!.GetValue(skin)!;
+        IList inputs = (IList)parameters.GetType()
+            .GetProperty("Input")!.GetValue(parameters)!;
+
+        (string Name, string NickName)[] expected =
+        {
+            ("Result", "RES"),
+            ("Pattern", "P"),
+            ("Size", "S"),
+            ("Course Height", "CH"),
+            ("Min Piece", "MP"),
+            ("Thickness", "Th"),
+            ("Along Normal", "N")
+        };
+        if (inputs.Count != expected.Length)
+        {
+            throw new InvalidOperationException(
+                $"Skin must carry exactly {expected.Length} inputs after " +
+                $"the thickness task's pure append; got {inputs.Count}.");
+        }
+        for (int at = 0; at < expected.Length; at++)
+        {
+            object port = inputs[at]!;
+            Type portType = port.GetType();
+            string name =
+                (string)portType.GetProperty("Name")!.GetValue(port)!;
+            string nick =
+                (string)portType.GetProperty("NickName")!.GetValue(port)!;
+            if (!string.Equals(
+                    name, expected[at].Name, StringComparison.Ordinal) ||
+                !string.Equals(
+                    nick, expected[at].NickName, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Input {at} must be '{expected[at].Name}' " +
+                    $"('{expected[at].NickName}'); got '{name}' " +
+                    $"('{nick}'). Th and Along Normal must be a PURE " +
+                    "APPEND, so every earlier port keeps its own name, " +
+                    "nickname and position.");
+            }
+        }
+
+        object thPort = inputs[5]!;
+        object alongNormalPort = inputs[6]!;
+        bool ThOptional() => (bool)thPort.GetType()
+            .GetProperty("Optional")!.GetValue(thPort)!;
+        bool AlongNormalOptional() => (bool)alongNormalPort.GetType()
+            .GetProperty("Optional")!.GetValue(alongNormalPort)!;
+        if (!ThOptional() || !AlongNormalOptional())
+        {
+            throw new InvalidOperationException(
+                "Th and Along Normal must both be Optional, like every " +
+                "port after Result: a definition saved before this task " +
+                "supplies neither, and an unwired required input would " +
+                "refuse to solve at all.");
+        }
+
+        string thText = (string)thPort.GetType()
+            .GetProperty("Description")!.GetValue(thPort)!;
+        if (!thText.Contains("Zero", StringComparison.Ordinal) ||
+            !thText.Contains("CLOSED SOLID", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Th's description must say Zero changes nothing and " +
+                "that a nonzero value builds a CLOSED SOLID: the " +
+                "ruling's two load-bearing clauses. Got: " + thText);
+        }
+        string alongNormalText = (string)alongNormalPort.GetType()
+            .GetProperty("Description")!.GetValue(alongNormalPort)!;
+        if (!alongNormalText.Contains(
+                "own normal", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Along Normal's description must say it offsets each " +
+                "cell along ITS OWN normal, the toggle's whole point. " +
+                "Got: " + alongNormalText);
+        }
+    }
+
+    /// <summary>
+    /// Spec 2026-09-02 (skin-thickness-input), the arithmetic half this
+    /// harness CAN drive without a Brep: <c>ThicknessOffset</c> and
+    /// <c>CellNormalUnit</c> take and return plain double[] and touch no
+    /// RhinoCommon type, so every claim about the DIRECTION a cell's face
+    /// is copied along is measured here directly, the same split
+    /// SkinPatterns.cs already keeps for testability. The claim that the
+    /// copy CLOSES into a solid needs the native core this harness does
+    /// not launch (rule 5.2.4's split); that half is
+    /// scripts/rhino_skin_surface.py, run inside Rhino, the way
+    /// CellSurface's own Brep behaviour already is.
+    /// </summary>
+    private static void ValidateSkinThicknessOffset(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo offsetMethod = RequireStatic(skinType, "ThicknessOffset");
+        MethodInfo normalMethod = RequireStatic(skinType, "CellNormalUnit");
+
+        double[] Offset(
+            List<double[]> outline, double thickness, bool alongNormal) =>
+            (double[])offsetMethod.Invoke(
+                null, new object?[] { outline, thickness, alongNormal })!;
+        double[] Normal(List<double[]> outline) =>
+            (double[])normalMethod.Invoke(null, new object?[] { outline })!;
+
+        // ---- ALONG NORMAL FALSE is the CONSTANT vector (0, 0, Th)
+        // whatever the cell's own shape: the outline is accepted but
+        // never read, which is the entire mechanism behind "the same
+        // level of connectivness".
+        var anyOutline = new List<double[]>
+        {
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.3 },
+            new[] { 1.0, 1.0, 0.1 }
+        };
+        double[] zUp = Offset(anyOutline, 0.4, false);
+        double[] zDown = Offset(anyOutline, -0.4, false);
+        if (zUp[0] != 0.0 || zUp[1] != 0.0 ||
+            Math.Abs(zUp[2] - 0.4) > 1.0e-12 ||
+            zDown[0] != 0.0 || zDown[1] != 0.0 ||
+            Math.Abs(zDown[2] + 0.4) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "Along Normal false must translate by exactly (0, 0, " +
+                $"Th): got ({zUp[0]}, {zUp[1]}, {zUp[2]}) at Th 0.4 and " +
+                $"({zDown[0]}, {zDown[1]}, {zDown[2]}) at Th -0.4.");
+        }
+
+        // ---- a FLAT cell, traced counter-clockwise as seen from above,
+        // the winding this component's own outlines carry: CellNormalUnit
+        // must read (0, 0, 1), and Along Normal true must AGREE with
+        // vertical mode there, sign for sign, since the two directions
+        // coincide on a flat cell.
+        var flatSquare = new List<double[]>
+        {
+            new[] { 0.0, 0.0, 5.0 }, new[] { 1.0, 0.0, 5.0 },
+            new[] { 1.0, 1.0, 5.0 }, new[] { 0.0, 1.0, 5.0 }
+        };
+        double[] flatNormal = Normal(flatSquare);
+        if (Math.Abs(flatNormal[0]) > 1.0e-9 ||
+            Math.Abs(flatNormal[1]) > 1.0e-9 ||
+            Math.Abs(flatNormal[2] - 1.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A flat cell traced counter-clockwise from above has " +
+                $"unit normal (0, 0, 1); got ({flatNormal[0]}, " +
+                $"{flatNormal[1]}, {flatNormal[2]}).");
+        }
+        double[] flatUp = Offset(flatSquare, 0.4, true);
+        double[] flatDown = Offset(flatSquare, -0.4, true);
+        if (Math.Abs(flatUp[2] - 0.4) > 1.0e-9 ||
+            Math.Abs(flatDown[2] + 0.4) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "Along Normal true on a flat cell must agree with " +
+                $"vertical mode, sign for sign: got {flatUp[2]} at Th " +
+                $"0.4 and {flatDown[2]} at Th -0.4.");
+        }
+
+        // ---- a NON-PLANAR cell (the ruling's harness pins closedness on
+        // "a planar and a non-planar cell"; the normal and its sign flip
+        // are the half of that claim provable without a Brep): still a
+        // unit vector, and Th's sign still flips it.
+        var warped = new List<double[]>
+        {
+            new[] { 0.0, 0.0, 0.0 }, new[] { 1.0, 0.0, 0.0 },
+            new[] { 1.0, 1.0, 1.0 }, new[] { 0.0, 1.0, 0.0 }
+        };
+        double[] warpedNormal = Normal(warped);
+        double warpedLength = Math.Sqrt(
+            (warpedNormal[0] * warpedNormal[0]) +
+            (warpedNormal[1] * warpedNormal[1]) +
+            (warpedNormal[2] * warpedNormal[2]));
+        if (Math.Abs(warpedLength - 1.0) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "A non-planar cell's own normal must still come back " +
+                $"unit length; got {warpedLength}.");
+        }
+        double[] warpedUp = Offset(warped, 0.7, true);
+        double[] warpedDown = Offset(warped, -0.7, true);
+        for (int axis = 0; axis < 3; axis++)
+        {
+            if (Math.Abs(warpedUp[axis] + warpedDown[axis]) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "Flipping Th's sign must flip the offset vector on " +
+                    $"a non-planar cell too: axis {axis} gave " +
+                    $"{warpedUp[axis]} at +0.7 and {warpedDown[axis]} " +
+                    "at -0.7, which do not sum to zero.");
+            }
+        }
+
+        // ---- a DEGENERATE outline: an arbitrary but FINITE fallback
+        // rather than a division by zero, both too few corners and three
+        // coincident ones.
+        var tooFew = new List<double[]> { new[] { 0.0, 0.0, 0.0 } };
+        var coincident = new List<double[]>
+        {
+            new[] { 2.0, 2.0, 2.0 }, new[] { 2.0, 2.0, 2.0 },
+            new[] { 2.0, 2.0, 2.0 }
+        };
+        foreach (List<double[]> degenerate in new[] { tooFew, coincident })
+        {
+            double[] fallback = Normal(degenerate);
+            double length = Math.Sqrt(
+                (fallback[0] * fallback[0]) + (fallback[1] * fallback[1]) +
+                (fallback[2] * fallback[2]));
+            if (!double.IsFinite(length) || Math.Abs(length - 1.0) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "A degenerate outline must fall back to a finite " +
+                    "unit normal rather than NaN or a division by zero; " +
+                    $"got ({fallback[0]}, {fallback[1]}, {fallback[2]}).");
+            }
+        }
+
+        // ---- TWO REAL ADJACENT CELLS off an actual generated pattern:
+        // their shared corner, taken verbatim off SkinPatterns.Courses,
+        // must survive Along Normal false's translation still coincident
+        // bit for bit, which is the whole of "the same level of
+        // connectivness" measured on cells the engine itself built
+        // rather than on a hand-drawn fixture.
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        Type edgeType = RequireComponentType(plugin, "SkinNetEdge");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+        (double[][] vertices, int[][] faces) = SkinDomeNet();
+        object net = SkinNetWith(
+            netType, edgeType, vertices, faces, SkinDomeRim(),
+            Array.Empty<(int, int, double)>());
+        object generated =
+            courses.Invoke(null, new object[] { net, 0.9, 0.6 })!;
+        var built = SkinCells(generated);
+
+        (double[] A, double[] B)? sharedPair = null;
+        for (int i = 0; i < built.Length && sharedPair is null; i++)
+        for (int j = i + 1; j < built.Length && sharedPair is null; j++)
+        {
+            if (built[i].Course != built[j].Course)
+                continue;
+            foreach (double[] a in built[i].Outline)
+            {
+                foreach (double[] b in built[j].Outline)
+                {
+                    if (a[0] == b[0] && a[1] == b[1] && a[2] == b[2])
+                    {
+                        sharedPair = (a, b);
+                        break;
+                    }
+                }
+                if (sharedPair is not null)
+                    break;
+            }
+        }
+        if (sharedPair is null)
+        {
+            throw new InvalidOperationException(
+                "The dome fixture at S 0.9, CH 0.6 must build at least " +
+                "two cells in one course sharing an outline corner; " +
+                "none were found, so the coincidence claim below was " +
+                "never actually exercised on real cells.");
+        }
+        double[] offsetA = Offset(
+            new List<double[]> { sharedPair.Value.A }, 0.5, false);
+        double[] offsetB = Offset(
+            new List<double[]> { sharedPair.Value.B }, 0.5, false);
+        double[] wallA =
+        {
+            sharedPair.Value.A[0] + offsetA[0],
+            sharedPair.Value.A[1] + offsetA[1],
+            sharedPair.Value.A[2] + offsetA[2]
+        };
+        double[] wallB =
+        {
+            sharedPair.Value.B[0] + offsetB[0],
+            sharedPair.Value.B[1] + offsetB[1],
+            sharedPair.Value.B[2] + offsetB[2]
+        };
+        if (wallA[0] != wallB[0] || wallA[1] != wallB[1] ||
+            wallA[2] != wallB[2])
+        {
+            throw new InvalidOperationException(
+                "Two real adjacent cells sharing a corner must still " +
+                "share it, bit for bit, after Along Normal false's " +
+                "translation (the whole of the connectedness claim); " +
+                $"got ({wallA[0]}, {wallA[1]}, {wallA[2]}) and " +
+                $"({wallB[0]}, {wallB[1]}, {wallB[2]}).");
         }
     }
 

@@ -140,6 +140,47 @@ public sealed class SkinComponent : NativeComponentBase
         parameters[2].Optional = true;
         parameters[3].Optional = true;
         parameters[4].Optional = true;
+
+        // Spec 2026-09-02 (skin-thickness-input), PURE APPEND after Min
+        // Piece: ParameterIdentity's archived-name comparison walks the
+        // saved ports in order, so a definition saved before this task
+        // reattaches silently and simply has no data on these two, which
+        // read as their defaults (Th = 0, no thickening at all; Along
+        // Normal = false). Th = 0 changes nothing about the Surface
+        // output: this is the ONE port pair on this component whose
+        // absence must be provably invisible.
+        parameters.AddNumberParameter(
+            "Thickness",
+            "Th",
+            "Thicken the Surface output. Zero, the default, leaves every " +
+                "output exactly as pattern 0 and 1 shipped it: no cell is " +
+                "touched. Nonzero, each cell's face becomes a CLOSED SOLID " +
+                "between the face and a copy of it offset by this amount, " +
+                "the sign choosing the direction. The default offset is " +
+                "VERTICAL, (0, 0, Th): every cell moves by the SAME " +
+                "vector, so a wall shared by two cells stays coincident " +
+                "and the thickened skin is watertight cell to cell. That " +
+                "connectedness costs true thickness on a steep slope, " +
+                "where a vertical offset reads thinner along the surface's " +
+                "own normal by a factor of the local slope's cosine; " +
+                "Along Normal trades the connectedness for the true " +
+                "thickness instead.",
+            GH_ParamAccess.item,
+            0.0);
+        parameters.AddBooleanParameter(
+            "Along Normal",
+            "N",
+            "False, the default, offsets every cell VERTICALLY by the " +
+                "same (0, 0, Th) so neighbouring cells stay watertight " +
+                "(Param's own wording: \"the same level of " +
+                "connectivness\"). True offsets each cell along ITS OWN " +
+                "normal instead, giving true normal thickness at the cost " +
+                "of gaps between cells wherever they meet at an angle. " +
+                "Ignored while Th is 0.",
+            GH_ParamAccess.item,
+            false);
+        parameters[5].Optional = true;
+        parameters[6].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -198,11 +239,15 @@ public sealed class SkinComponent : NativeComponentBase
                 out int pattern,
                 out double size,
                 out double courseHeight,
-                out double minPiece))
+                out double minPiece,
+                out double thickness,
+                out bool alongNormal))
         {
             return;
         }
-        SolveNative(data, result!, pattern, size, courseHeight, minPiece);
+        SolveNative(
+            data, result!, pattern, size, courseHeight, minPiece,
+            thickness, alongNormal);
     }
 
     private void SolveNative(
@@ -211,7 +256,9 @@ public sealed class SkinComponent : NativeComponentBase
         int pattern,
         double size,
         double courseHeight,
-        double minPiece)
+        double minPiece,
+        double thickness,
+        bool alongNormal)
     {
         try
         {
@@ -376,6 +423,11 @@ public sealed class SkinComponent : NativeComponentBase
                     Math.Max(generated.CourseCount - 1, 0));
                 cellBranches[course].Add(ClosedOutlineCurve(cell.Outline));
                 Brep? surface = CellSurface(cell, net);
+                if (surface is not null && thickness != 0.0)
+                {
+                    surface = ThickenCellSurface(
+                        surface, cell.Outline, thickness, alongNormal);
+                }
                 surfaceBranches[course].Add(surface);
                 if (surface is null)
                 {
@@ -570,6 +622,128 @@ public sealed class SkinComponent : NativeComponentBase
     }
 
     /// <summary>
+    /// The Newell normal of a cell's own OUTLINE, unit length, never the
+    /// mesh face's normal: a cell's outline is what Along Normal offsets,
+    /// and a fanned cap or many-sided cell has no single mesh face to read
+    /// a normal off in the first place. Pure arithmetic, no RhinoCommon
+    /// type anywhere in the signature, so the harness can drive it with
+    /// plain double[] fixtures the same way it drives Dedupe. An outline
+    /// under three corners, or one whose Newell sum is too small to
+    /// normalise (collinear or coincident corners), falls back to world Z
+    /// rather than dividing by zero: an ARBITRARY direction is the honest
+    /// answer for a shape too degenerate to have one.
+    /// </summary>
+    internal static double[] CellNormalUnit(IReadOnlyList<double[]> outline)
+    {
+        int count = outline.Count;
+        if (count < 3)
+            return new[] { 0.0, 0.0, 1.0 };
+        double nx = 0.0, ny = 0.0, nz = 0.0;
+        for (int at = 0; at < count; at++)
+        {
+            double[] a = outline[at];
+            double[] b = outline[(at + 1) % count];
+            nx += (a[1] - b[1]) * (a[2] + b[2]);
+            ny += (a[2] - b[2]) * (a[0] + b[0]);
+            nz += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        double length = Math.Sqrt((nx * nx) + (ny * ny) + (nz * nz));
+        return length > 1.0e-12
+            ? new[] { nx / length, ny / length, nz / length }
+            : new[] { 0.0, 0.0, 1.0 };
+    }
+
+    /// <summary>
+    /// The skin-thickness-input ruling's own arithmetic (2026-09-02),
+    /// pulled out of <see cref="ThickenCellSurface"/> so it is testable
+    /// without a Brep: the translation a cell's face is copied by, in the
+    /// SAME units and SAME sign convention Th itself carries. Along
+    /// Normal false, the default, is (0, 0, Th) for every cell without
+    /// exception, which is the whole of Param's "same level of
+    /// connectivness": two cells built from literally the same traced
+    /// corner point add the literally same three doubles to it, so the
+    /// shared wall stays coincident by construction and not by
+    /// tolerance. Along Normal true reads the direction off THIS cell's
+    /// own outline alone, so neighbouring cells generally diverge, which
+    /// is exactly the trade the toggle exists to offer.
+    /// </summary>
+    internal static double[] ThicknessOffset(
+        IReadOnlyList<double[]> outline, double thickness, bool alongNormal)
+    {
+        if (!alongNormal)
+            return new[] { 0.0, 0.0, thickness };
+        double[] normal = CellNormalUnit(outline);
+        return new[]
+        {
+            normal[0] * thickness,
+            normal[1] * thickness,
+            normal[2] * thickness
+        };
+    }
+
+    /// <summary>
+    /// Spec 2026-09-02 (skin-thickness-input), section on WHAT THICKENS:
+    /// one cell's Surface face becomes a CLOSED SOLID between the face and
+    /// a copy of it translated by <see cref="ThicknessOffset"/>, bottom,
+    /// top and the side walls run off the cell's own Outline, exactly the
+    /// boundary CellSurface itself already treats as the cell's ring
+    /// regardless of which route built the face (loft, fan or cap), so
+    /// this one method serves every cell shape without a case on Sections.
+    ///
+    /// Th = 0 is refused entry here at all: <c>SolveNative</c> calls this
+    /// method only when thickness is nonzero, which is the fast path the
+    /// ruling's "byte-identical at Th = 0" requirement rests on -- the
+    /// Surface tree carries the SAME Brep reference CellSurface built,
+    /// untouched, rather than a copy built and then found equal.
+    ///
+    /// The closedness of the result needs RhinoCommon's native core to
+    /// prove, which this plugin's own harness deliberately does not
+    /// launch (rule 5.2.4's split): that proof is
+    /// scripts/rhino_skin_surface.py, run inside Rhino, the same split
+    /// CellSurface itself is already measured under.
+    /// </summary>
+    private static Brep? ThickenCellSurface(
+        Brep face,
+        IReadOnlyList<double[]> outline,
+        double thickness,
+        bool alongNormal)
+    {
+        if (outline.Count < 3)
+            return null;
+        double[] offset = ThicknessOffset(outline, thickness, alongNormal);
+        var translation = new Vector3d(offset[0], offset[1], offset[2]);
+
+        Brep top = face.DuplicateBrep();
+        top.Transform(Transform.Translation(translation));
+        // The top is the SAME face turned to face the opposite way, so a
+        // solid join sees a consistent shell rather than two faces both
+        // facing up; SolidOrientation below is the belt to this braces.
+        top.Flip();
+
+        var pieces = new List<Brep>(outline.Count + 2) { face, top };
+        for (int at = 0; at < outline.Count; at++)
+        {
+            double[] a = outline[at];
+            double[] b = outline[(at + 1) % outline.Count];
+            var a0 = new Point3d(a[0], a[1], a[2]);
+            var b0 = new Point3d(b[0], b[1], b[2]);
+            Brep? wall = Brep.CreateFromCornerPoints(
+                a0, b0, b0 + translation, a0 + translation, 1.0e-9);
+            if (wall is null)
+                return null;
+            pieces.Add(wall);
+        }
+
+        Brep[] joined = Brep.JoinBreps(pieces, 1.0e-6);
+        if (joined is not { Length: 1 } || !joined[0].IsValid)
+            return null;
+        Brep solid = joined[0];
+        if (solid.SolidOrientation == BrepSolidOrientation.Inward)
+            solid.Flip();
+        return solid.IsSolid ? solid : null;
+    }
+
+    /// <summary>
     /// Rule 6.4's bounds, as a static so the harness can drive them without a
     /// canvas. Anything above 0.5 clamps to 0.5, anything below 0 clamps to
     /// 0, and a value that is not finite falls back to the port default. The
@@ -615,6 +789,8 @@ public sealed class SkinComponent : NativeComponentBase
         out double size,
         out double courseHeight,
         out double minPiece,
+        out double thickness,
+        out bool alongNormal,
         bool report = true)
     {
         result = null;
@@ -622,11 +798,15 @@ public sealed class SkinComponent : NativeComponentBase
         size = DefaultSize;
         courseHeight = DefaultCourseHeight;
         minPiece = 1.0 / 3.0;
+        thickness = 0.0;
+        alongNormal = false;
         ResultGoo? resultGoo = null;
         int patternInput = 0;
         double sizeInput = DefaultSize;
         double courseHeightInput = DefaultCourseHeight;
         double minPieceInput = 1.0 / 3.0;
+        double thicknessInput = 0.0;
+        bool alongNormalInput = false;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -636,10 +816,25 @@ public sealed class SkinComponent : NativeComponentBase
         data.GetData(2, ref sizeInput);
         data.GetData(3, ref courseHeightInput);
         data.GetData(4, ref minPieceInput);
+        data.GetData(5, ref thicknessInput);
+        data.GetData(6, ref alongNormalInput);
         minPieceInput = ClampMinPiece(
             minPieceInput, out bool minPieceClamped, out string minPieceWarning);
         if (minPieceClamped && report)
             AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, minPieceWarning);
+        // Th keeps its own sign always (it is a direction, not a
+        // magnitude), so only non-finite is refused, floored to 0 -- no
+        // thickening -- rather than to the port default, which IS 0.
+        if (!double.IsFinite(thicknessInput))
+        {
+            if (report)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "Th must be finite; using 0 (no thickening).");
+            }
+            thicknessInput = 0.0;
+        }
 
         var errors = new List<string>(resultValue.Validate());
         if (patternInput < 0 || patternInput > 2)
@@ -681,6 +876,8 @@ public sealed class SkinComponent : NativeComponentBase
         size = sizeInput;
         courseHeight = courseHeightInput;
         minPiece = minPieceInput;
+        thickness = thicknessInput;
+        alongNormal = alongNormalInput;
         return true;
     }
 
