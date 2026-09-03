@@ -1506,11 +1506,11 @@ public sealed class ExportComponent :
             if (Math.Abs(unitFactor - 1.0) > 1e-12)
             {
                 warnings.Add(
-                    "Document units converted to metres by a factor of " +
+                    "Document is not in metres: the tessellation kind is CONVERTED by a factor of " +
                     unitFactor.ToString(
                         "0.################",
                         System.Globalization.CultureInfo.InvariantCulture) +
-                    ".");
+                    "; the frames and columns kinds declare that factor as lengthUnitToMetres and keep the document's own coordinates.");
             }
 
             foreach (string kind in kinds)
