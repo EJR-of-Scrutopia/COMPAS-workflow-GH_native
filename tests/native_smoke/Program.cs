@@ -16549,8 +16549,15 @@ internal static class Program
     /// same seven column edges with the same arc lengths. A cell's two head
     /// joints therefore run between the SAME x on both of its beds, which
     /// makes them exactly vertical, and a vertical offset copies them onto
-    /// themselves. That is Param's own steep springing in miniature and it
-    /// is the only fixture here that can make check 2 go red.
+    /// themselves. That is Param's own steep springing in miniature, and it
+    /// was built to be the fixture check 2 could be demonstrated on.
+    ///
+    /// MEASURED, AND IT IS NOT. Even here the head joints come within 1e-5
+    /// rad of vertical without reaching it, leaving a wall area of about
+    /// 6e-7, which is a sliver and not an annihilation. The count is zero
+    /// under both branches, and check 2's claim is deferred rather than
+    /// passed. See ValidateSkinOffsetVerticalEdge and the spec's erratum of
+    /// 2026-09-04.
     /// </summary>
     private static (double[][] Vertices, int[][] Faces) SkinWalledVaultNet()
     {
