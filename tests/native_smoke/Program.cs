@@ -1071,10 +1071,8 @@ internal static class Program
                 "PASS  Skin identity: the old Skin GUID kept, the " +
                 "Armadillo Dual class and GUID gone from every " +
                 "component, the Pattern value list pinned (input 1, " +
-                "default 0, courses/hexagonal/force aligned), all " +
-                "four outputs VISIBLE, the proposer convention, and the " +
-                "task-capable base whose iteration-indexed TaskList is " +
-                "the premise of the placeholder rule read in the check.");
+                "default 0, courses/hexagonal/force aligned), and all " +
+                "four outputs VISIBLE, the proposer convention.");
         }
         catch (Exception exception)
         {
@@ -1138,6 +1136,21 @@ internal static class Program
         {
             failures.Add(
                 $"Skin force-aligned pattern: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinNoWorkerDispatch(plugin);
+            Console.WriteLine(
+                "PASS  Skin has no worker dispatch (check 12.3(f)): the " +
+                "round trip is gone, RequestPatternAsync and DecodeResponse " +
+                "are not on the component, and the pattern computes on the " +
+                "solve thread.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin no worker dispatch: {DescribeException(exception)}");
         }
 
         try
@@ -22622,22 +22635,13 @@ internal static class Program
                     $"Four outputs (C, CO, FL, D); got {outputCount}.");
             }
 
-            // ---- Ruling C's premise. Everything the ruling turns on is
-            // that this base indexes TaskList by ITERATION; the two
-            // halves of the fix are read in the doc comment above.
-            bool taskCapable = false;
-            for (Type? at = skin; at is not null; at = at.BaseType)
-            {
-                taskCapable |= at.Name.StartsWith(
-                    "GH_TaskCapableComponent", StringComparison.Ordinal);
-            }
-            if (!taskCapable)
-            {
-                throw new InvalidOperationException(
-                    "Skin is a GH_TaskCapableComponent: its TaskList is " +
-                    "indexed by iteration, which is why every iteration " +
-                    "has to add to it, dispatching or not.");
-            }
+            // Ruling C's premise (an iteration-indexed TaskList a
+            // non-dispatching iteration still had to feed) applied only
+            // while a worker dispatch existed on this component. Task 27
+            // deletes that dispatch (rule 3.2.4); check 12.3(f),
+            // ValidateSkinNoWorkerDispatch, now asserts the OPPOSITE of
+            // what stood here -- Skin is NOT task-capable -- so the
+            // assertion moved rather than duplicating it in both places.
         }
         finally
         {
@@ -23195,6 +23199,45 @@ internal static class Program
                 $"count: got {atHalf} courses at CH 0.5 and {atWhole} at " +
                 "CH 1.0. The bands ARE the setout and their spacing is the " +
                 "one thing that widens a course.");
+        }
+    }
+
+    /// <summary>
+    /// Check 12.3(f). The pattern computes SYNCHRONOUSLY: no worker command
+    /// named pattern.armadillo_dual is reachable from the component. Read
+    /// off the compiled assembly's own string constants, the
+    /// ValidateExportDefaultTessellation convention of reading rather than
+    /// running.
+    /// </summary>
+    private static void ValidateSkinNoWorkerDispatch(Assembly plugin)
+    {
+        Type skin = RequireComponentType(plugin, "SkinComponent");
+        foreach (MethodInfo method in skin.GetMethods(
+                     BindingFlags.Public | BindingFlags.NonPublic |
+                     BindingFlags.Instance | BindingFlags.Static))
+        {
+            if (method.Name.Contains(
+                    "ArmadilloDual", StringComparison.Ordinal) ||
+                method.Name.Contains(
+                    "RequestPattern", StringComparison.Ordinal) ||
+                method.Name.Contains(
+                    "DecodeResponse", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Pattern 2 is NATIVE and synchronous like the other two " +
+                    "(rule 3.2.4), so the worker dispatch and the decode " +
+                    $"are deleted; '{method.Name}' is still here.");
+            }
+        }
+        if (skin.GetInterface("IGH_TaskCapableComponent") is not null ||
+            skin.BaseType?.Name.Contains(
+                "TaskCapable", StringComparison.Ordinal) == true)
+        {
+            throw new InvalidOperationException(
+                "With no pattern dispatching a worker, Skin is not a " +
+                "task-capable component at all, and the NoTask placeholder " +
+                "that kept TaskList's iteration indices lined up has " +
+                "nothing left to keep.");
         }
     }
 
