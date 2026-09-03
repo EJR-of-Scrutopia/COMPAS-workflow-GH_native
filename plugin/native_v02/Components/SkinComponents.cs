@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using Ananke.COMPAS.Native.Contracts;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -59,8 +61,9 @@ public sealed class SkinComponent : NativeComponentBase
                 + "running-bond courses or a stretched honeycomb, set out "
                 + "natively from a seam with Size along the course and "
                 + "Course Height up it, or the worker's force-aligned "
-                + "dual. Cells and Courses wire straight into Export, "
-                + "which projects to plan and writes the sidecar.",
+                + "dual. Cells wires straight into Export, which reads "
+                + "the branch path as the course, projects to plan and "
+                + "writes the sidecar.",
             ComponentCategories.Deliver,
             "skin")
     {
@@ -87,10 +90,20 @@ public sealed class SkinComponent : NativeComponentBase
         parameters.AddIntegerParameter(
             "Pattern",
             "P",
-            "Which pattern to propose: 0 courses (running bond), 1 "
-                + "hexagonal (stretched honeycomb), 2 force aligned (the "
-                + "worker's Armadillo dual). A value list is offered on "
-                + "the component menu.",
+            "Which tessellation to lay: 0 courses, 1 honeycomb, 2 "
+                + "force-aligned. The force-aligned pattern's flow lines are "
+                + "the MESH'S OWN EDGE DIRECTIONS weighted by member force and "
+                + "averaged in doubled-angle space. They are NOT principal "
+                + "stress directions, and the pattern does not claim to be "
+                + "one. Because the directions are read off the form "
+                + "diagram's own layout, a REMESH OF THE FORM DIAGRAM MOVES "
+                + "THE JOINTS even where the surface and the forces are "
+                + "unchanged. And where a face's edges carry no force at all "
+                + "the direction is a DEFAULT rather than a measurement: the "
+                + "face takes its own first basis vector, so the joints there "
+                + "are arbitrary and not wrong. Wire a Result that carries "
+                + "member forces, or pattern 2 defaults everywhere and says so "
+                + "in its own diagnostics.",
             GH_ParamAccess.item,
             0);
         parameters.AddNumberParameter(
@@ -108,9 +121,25 @@ public sealed class SkinComponent : NativeComponentBase
                 + "pattern 2.",
             GH_ParamAccess.item,
             DefaultCourseHeight);
+        parameters.AddNumberParameter(
+            "Min Piece",
+            "MP",
+            "The smallest piece worth laying, as a FRACTION of Size and not "
+                + "a length of its own: 1/3 by default, so the minimum piece "
+                + "is S / 3 and the maximum is S / MP = 3 S. A cell whose "
+                + "along-course span is at or under the minimum is merged "
+                + "into the shorter neighbour along its course, and a crown "
+                + "cap above the maximum becomes a ring of wedges about a "
+                + "smaller centre disc. Zero turns BOTH ends off, which is "
+                + "the value for seeing the engine's raw output; a negative "
+                + "clamps to zero and anything above 0.5 clamps to 0.5, each "
+                + "with a warning naming the clamped value.",
+            GH_ParamAccess.item,
+            1.0 / 3.0);
         parameters[1].Optional = true;
         parameters[2].Optional = true;
         parameters[3].Optional = true;
+        parameters[4].Optional = true;
     }
 
     protected override void RegisterOutputParams(
@@ -121,56 +150,43 @@ public sealed class SkinComponent : NativeComponentBase
             "C",
             "One closed polyline per cell, on the thrust surface, as a "
                 + "TREE branched by COURSE (path = course, 0 up from the "
-                + "bottom). A NATIVE pattern's branch lists one traced "
-                + "component's run after another, each run ordered SEAM "
-                + "OUTWARD, alternating either side of it with the "
-                + "negative side first; this serves the Grasshopper "
-                + "author's reading and the overlap filter, which keeps "
-                + "the first cell it is handed, and is NOT the studio's "
-                + "own build sequence. Which component comes first still "
-                + "follows the mesh's face order. The force-aligned "
-                + "pattern keeps the worker's own order. Wire into "
-                + "Export's Cells; Export flattens and projects itself.",
+                + "bottom), which is now the ONLY carrier of the course: "
+                + "Export reads the branch path. Within a branch cells run "
+                + "FROM THE SEAM OUTWARD, alternating either side of it. "
+                + "That order is for sequencing work on this canvas, and for "
+                + "one thing more: where two cells overlap in plan the FIRST "
+                + "one emitted is the one kept, so the cells nearest the "
+                + "seam survive and the losses fall out at the edges of the "
+                + "course. It is NOT the studio's build sequence. The studio "
+                + "re-sorts every tessellation by course and then by each "
+                + "cell's angle about the cut's own centre and reassigns its "
+                + "own index, so the order in the file is discarded on "
+                + "import. Courses are a RUNNING BOND, so cell 0 of one "
+                + "course does not sit above cell 0 of the course below it "
+                + "and the two courses may not even hold the same number of "
+                + "cells; do not map item k of one branch against item k of "
+                + "the next. Wire into Export's Cells. Do NOT graft, flatten "
+                + "or regraft the wire: the branch path is the course, and a "
+                + "flatten sends every cell to course 0 and every build "
+                + "stage with it.",
             GH_ParamAccess.tree);
-        parameters.AddIntegerParameter(
-            "Courses",
-            "CO",
-            "The course per cell, branched and ordered exactly as Cells, "
-                + "the index repeated per item, so the pairing survives "
-                + "Export's flatten. Wire into Export's Courses.",
-            GH_ParamAccess.tree);
-        parameters.AddCurveParameter(
-            "Flowlines",
-            "FL",
-            "The advected flow lines, force-aligned pattern only; empty "
-                + "for the native patterns.",
-            GH_ParamAccess.tree);
-        parameters.AddTextParameter(
-            "Diagnostics",
-            "D",
-            "Readable text. Native patterns: the pattern name, cell and "
-                + "course counts, mean/min/max piece length, the stagger, "
-                + "the count of boundary-clipped cells, how many cells "
-                + "were DROPPED to keep the pattern valid in plan (self-"
-                + "crossing, and overlapping a cell already kept) and, "
-                + "where bands were REFUSED because the level curves "
-                + "across them do not correspond, how many and the "
-                + "heights each refusal sits between. Force aligned: the "
-                + "worker's diagnostics verbatim.",
-            GH_ParamAccess.item);
         parameters.AddBrepParameter(
             "Surface",
-            "SF",
-            "One Brep per cell (spec section 5), branched and ordered "
-                + "EXACTLY as Cells, item for item: a two-section cell "
-                + "(courses, force aligned) lofts its lower and upper "
-                + "runs, a three-section hexagon lofts its bottom run, "
-                + "its side pair and its top run, and a cap or an odd-"
-                + "cornered cell is fanned from its own interior point "
-                + "lifted onto the surface. A cell that will not close "
-                + "into a Brep carries a NULL here rather than a missing "
-                + "item, so this tree stays aligned with Cells even where "
-                + "a cell failed.",
+            "SRF",
+            "One surface per cell, aligned with Cells BRANCH FOR BRANCH and "
+                + "ITEM FOR ITEM: item k of branch r IS the surface of cell k "
+                + "of course r. Skin's cells are non-planar many-sided rings, "
+                + "and turning one of those into a face by hand is the "
+                + "awkward job this output exists to spare. A cell that will "
+                + "not close leaves a NULL in its slot rather than being "
+                + "dropped, so the alignment holds. A crown cap comes back as "
+                + "a Brep of MANY triangular faces rather than one, and so "
+                + "does any cell whose corner count its pattern's own route "
+                + "does not fit. Courses are a running bond, so item k of one "
+                + "branch is NOT the surface sitting above item k of the "
+                + "branch below; find the piece above a given piece "
+                + "geometrically, by overlapping signed arc, and not by "
+                + "index.",
             GH_ParamAccess.tree);
     }
 
@@ -181,15 +197,12 @@ public sealed class SkinComponent : NativeComponentBase
                 out ResultDto? result,
                 out int pattern,
                 out double size,
-                out double courseHeight))
+                out double courseHeight,
+                out double minPiece))
         {
             return;
         }
-        // TryReadInputs' extra minPiece out parameter is Task 30's; until
-        // then, call the four-parameter form and pass the engine's own
-        // default here.
-        SolveNative(
-            data, result!, pattern, size, courseHeight, 1.0 / 3.0);
+        SolveNative(data, result!, pattern, size, courseHeight, minPiece);
     }
 
     private void SolveNative(
@@ -218,12 +231,7 @@ public sealed class SkinComponent : NativeComponentBase
                 data.SetDataTree(
                     0, OutputTree.Curves(Array.Empty<List<Curve>>()));
                 data.SetDataTree(
-                    1, OutputTree.Integers(Array.Empty<List<int>>()));
-                data.SetDataTree(
-                    2, OutputTree.Curves(Array.Empty<List<Curve>>()));
-                data.SetData(3, string.Empty);
-                data.SetDataTree(
-                    4, OutputTree.Breps(Array.Empty<List<Brep?>>()));
+                    1, OutputTree.Breps(Array.Empty<List<Brep?>>()));
                 Message = $"0 cells · 0 courses · {PatternName(pattern)}";
                 return;
             }
@@ -235,6 +243,49 @@ public sealed class SkinComponent : NativeComponentBase
                 _ => SkinPatterns.ForceAligned(
                     net, size, courseHeight, minPiece)
             };
+
+            // Rule 1.7.4: the field fallback, in its own words, because a
+            // world-Z fallback changes what Course Height MEANS (a rise,
+            // not a bed-to-bed spacing) and that is easy to miss on a
+            // Result that simply carries no supports.
+            if (generated.FieldKind == "world Z" && net.Rim.Count == 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    "world Z: this Result names no supports, so courses " +
+                    "are cut horizontally. Course Height is then a RISE " +
+                    "and not a bed-to-bed spacing along the surface, so " +
+                    "the courses stretch wherever the surface flattens.");
+            }
+            // Rule 1.7.3: a vertex the tracer could not reach across the
+            // triangulation from the rim leaves a hole the cells never
+            // cover, and the only place that hole is visible is here.
+            if (generated.UnreachableVertices > 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{generated.UnreachableVertices} vertices are " +
+                    "UNREACHABLE from the rim across the triangulation, so " +
+                    "no cells are laid there and the skin has a hole over " +
+                    "that region.");
+            }
+            // Rule 2.6.6: a crown cap over the maximum piece size that
+            // could not be split into a ring of wedges is emitted whole,
+            // and the girth against the maximum is named rather than
+            // left for the author to measure by eye.
+            if (generated.CapsOversized > 0)
+            {
+                AddRuntimeMessage(
+                    GH_RuntimeMessageLevel.Warning,
+                    $"{generated.CapsOversized} crown cap" +
+                    (generated.CapsOversized == 1 ? " is" : "s are") +
+                    " above the maximum piece size and could not be split " +
+                    "into a ring of wedges, so " +
+                    (generated.CapsOversized == 1 ? "it is" : "they are") +
+                    " emitted WHOLE: a stone you can see and measure beats " +
+                    "a hole you cannot fill. A smaller Course Height, or a " +
+                    "larger Min Piece for bigger stones, is the remedy.");
+            }
 
             // A band the engine REFUSED because the level curves changed
             // component count across it (a low loop splitting into
@@ -311,12 +362,8 @@ public sealed class SkinComponent : NativeComponentBase
             }
 
             var cellBranches = new List<List<Curve>>();
-            var courseBranches = new List<List<int>>();
             for (int course = 0; course < generated.CourseCount; course++)
-            {
                 cellBranches.Add(new List<Curve>());
-                courseBranches.Add(new List<int>());
-            }
             var surfaceBranches = new List<List<Brep?>>();
             for (int course = 0; course < generated.CourseCount; course++)
                 surfaceBranches.Add(new List<Brep?>());
@@ -328,7 +375,6 @@ public sealed class SkinComponent : NativeComponentBase
                     Math.Max(cell.Course, 0),
                     Math.Max(generated.CourseCount - 1, 0));
                 cellBranches[course].Add(ClosedOutlineCurve(cell.Outline));
-                courseBranches[course].Add(course);
                 Brep? surface = CellSurface(cell, net);
                 surfaceBranches[course].Add(surface);
                 if (surface is null)
@@ -351,15 +397,58 @@ public sealed class SkinComponent : NativeComponentBase
                     "Surface tree stays aligned with Cells item for item.");
             }
             data.SetDataTree(0, OutputTree.Curves(cellBranches));
-            data.SetDataTree(1, OutputTree.Integers(courseBranches));
-            data.SetDataTree(
-                2, OutputTree.Curves(Array.Empty<List<Curve>>()));
-            data.SetData(3, generated.Diagnostics);
-            data.SetDataTree(4, OutputTree.Breps(surfaceBranches));
+            data.SetDataTree(1, OutputTree.Breps(surfaceBranches));
+
+            // Rule 9.3.1's chin: min and max piece length are on the FACE
+            // of the component because they are what showed him the
+            // force-aligned pattern was not uniform, 0.377 m against
+            // 3.889 m, and losing them would remove the measurement this
+            // round exists to restore. Cap cells are excluded (rule
+            // 2.3.2a): a cap's own span is not a piece length.
+            double[] spans = generated.Cells
+                .Where(cell => !cell.Cap)
+                .Select(cell => cell.U1 - cell.U0)
+                .ToArray();
             Message =
                 $"{generated.Cells.Count} cells · " +
                 $"{generated.CourseCount} courses · " +
-                PatternName(pattern);
+                PatternName(pattern) +
+                (spans.Length > 0
+                    ? $" · piece {spans.Min():F2} to {spans.Max():F2} m"
+                    : string.Empty);
+
+            // Rule 9.3.5's single Remark: the residual diagnostics content
+            // that is not a hole and does not fit the chin reaches him
+            // nowhere at all unless it is stated here, now that the D port
+            // is gone.
+            var residual = new List<string>
+            {
+                $"Field: {generated.FieldKind} ({generated.RimVerticesUsed} " +
+                $"rim vertices, {generated.RimVerticesDropped} named " +
+                $"supports and {generated.ForceEdgesDropped} force edges " +
+                "dropped as unmappable)",
+                "Mean piece length: " +
+                $"{(spans.Length > 0 ? spans.Average() : 0.0):F3} m",
+                $"Boundary-clipped cells: {generated.ClippedCells}",
+                $"Crown caps: {generated.CapGirths.Count}" +
+                (generated.CapGirths.Count > 0
+                    ? " (girth " + string.Join(
+                        ", ",
+                        generated.CapGirths.Select(
+                            girth => $"{girth:F3} m")) + "; wedges " +
+                      string.Join(", ", generated.CapWedgeCounts) + ")"
+                    : string.Empty),
+                $"Odd cells: {generated.FiveSidedCells} five-sided, " +
+                $"{generated.SevenSidedCells} seven-sided" +
+                (generated.CountChangeRows.Count > 0
+                    ? " (row counts change at rows " +
+                      string.Join(", ", generated.CountChangeRows) + ")"
+                    : string.Empty),
+                $"Merged pieces: {generated.MergedPieces}"
+            };
+            AddRuntimeMessage(
+                GH_RuntimeMessageLevel.Remark,
+                string.Join("; ", residual));
         }
         catch (Exception error)
         {
@@ -481,14 +570,43 @@ public sealed class SkinComponent : NativeComponentBase
     }
 
     /// <summary>
-    /// Read RES, Pattern, S and CH, validating up front so the background
-    /// task never has to report a runtime message itself. S keeps the
-    /// Armadillo Dual guard: a NaN or sub-millimetre S is REFUSED with
-    /// the negated comparison (NaN fails every comparison, so a guard
-    /// written the other way round would let it through, and the worker
-    /// would return a silent empty result). CH keeps the old Skin's rule:
-    /// floored to the default with a warning. A Pattern outside 0..2 is
-    /// refused naming the three patterns.
+    /// Rule 6.4's bounds, as a static so the harness can drive them without a
+    /// canvas. Anything above 0.5 clamps to 0.5, anything below 0 clamps to
+    /// 0, and a value that is not finite falls back to the port default. The
+    /// message is returned rather than raised, so the one arithmetic serves
+    /// both the component's Warning and check 12.6(e).
+    /// </summary>
+    internal static double ClampMinPiece(
+        double asked, out bool clamped, out string warning)
+    {
+        double answer =
+            !double.IsFinite(asked)
+                ? 1.0 / 3.0
+                : Math.Min(Math.Max(asked, 0.0), 0.5);
+        clamped = !double.IsFinite(asked) || asked < 0.0 || asked > 0.5;
+        warning = clamped
+            ? "Min Piece is a fraction of Size between 0 and 0.5; using " +
+              answer.ToString("F3", CultureInfo.InvariantCulture) +
+              ". Zero turns both the merge and the crown-cap split off " +
+              "together, which is the only coherent reading of a single " +
+              "threshold turned off."
+            : string.Empty;
+        return answer;
+    }
+
+    /// <summary>
+    /// Read RES, Pattern, S, CH and MP, validating up front so the
+    /// background task never has to report a runtime message itself. S
+    /// keeps the Armadillo Dual guard: a NaN or sub-millimetre S is
+    /// REFUSED with the negated comparison (NaN fails every comparison, so
+    /// a guard written the other way round would let it through, and the
+    /// worker would return a silent empty result). CH keeps the old Skin's
+    /// rule: floored to the default with a warning. A Pattern outside 0..2
+    /// is refused naming the three patterns. MP is clamped rather than
+    /// refused, by rule 6.4's <see cref="ClampMinPiece"/>: a negative
+    /// therefore means "off" rather than meaning a failed solve, because
+    /// refusing the whole output over a number he can see and fix on the
+    /// canvas would cost him more than the mistake did.
     /// </summary>
     private bool TryReadInputs(
         IGH_DataAccess data,
@@ -496,16 +614,19 @@ public sealed class SkinComponent : NativeComponentBase
         out int pattern,
         out double size,
         out double courseHeight,
+        out double minPiece,
         bool report = true)
     {
         result = null;
         pattern = 0;
         size = DefaultSize;
         courseHeight = DefaultCourseHeight;
+        minPiece = 1.0 / 3.0;
         ResultGoo? resultGoo = null;
         int patternInput = 0;
         double sizeInput = DefaultSize;
         double courseHeightInput = DefaultCourseHeight;
+        double minPieceInput = 1.0 / 3.0;
         if (!data.GetData(0, ref resultGoo) ||
             resultGoo?.Value is not ResultDto resultValue)
         {
@@ -514,6 +635,11 @@ public sealed class SkinComponent : NativeComponentBase
         data.GetData(1, ref patternInput);
         data.GetData(2, ref sizeInput);
         data.GetData(3, ref courseHeightInput);
+        data.GetData(4, ref minPieceInput);
+        minPieceInput = ClampMinPiece(
+            minPieceInput, out bool minPieceClamped, out string minPieceWarning);
+        if (minPieceClamped && report)
+            AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, minPieceWarning);
 
         var errors = new List<string>(resultValue.Validate());
         if (patternInput < 0 || patternInput > 2)
@@ -554,6 +680,7 @@ public sealed class SkinComponent : NativeComponentBase
         pattern = patternInput;
         size = sizeInput;
         courseHeight = courseHeightInput;
+        minPiece = minPieceInput;
         return true;
     }
 

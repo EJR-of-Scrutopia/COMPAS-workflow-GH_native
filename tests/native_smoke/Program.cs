@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -94,19 +95,20 @@ internal static class Program
                     }),
                 // Skin is pinned because THIS rework reshaped it: input 1
                 // was "Course Height" and is now "Pattern", so a wired CH
-                // slider must move to slot 3, and the outputs renamed with
-                // their meanings kept. The names below are what the
-                // ports-moved warning compares a saved definition against.
-                // "Surface" is task 29's own PURE APPEND (spec section 5):
-                // a new output at the end, so a saved definition wired only
-                // to the first four outputs keeps every existing wire.
+                // slider must move to slot 3, and Task 30 both appends a
+                // fifth input (Min Piece) and DELETES three outputs
+                // (Courses, Flowlines, Diagnostics), leaving Cells and
+                // Surface. The names below are what the ports-moved
+                // warning compares a saved definition against, so every
+                // saved definition raises the warning on open and moves
+                // its wires by name, not by slot.
                 ["Ananke.COMPAS.Native.Components.SkinComponent"] = (
-                    new[] { "Result", "Pattern", "Size", "Course Height" },
                     new[]
                     {
-                        "Cells", "Courses", "Flowlines", "Diagnostics",
-                        "Surface"
-                    }),
+                        "Result", "Pattern", "Size", "Course Height",
+                        "Min Piece"
+                    },
+                    new[] { "Cells", "Surface" }),
                 // Display DRAWS. Its six outputs went to Deconstruct (the
                 // member and form lines, the load and reaction points and
                 // vectors) and to Diagnose (the report), which carry them
@@ -1078,9 +1080,9 @@ internal static class Program
                 "PASS  Skin identity: the old Skin GUID kept, the " +
                 "Armadillo Dual class and GUID gone from every " +
                 "component, the Pattern value list pinned (input 1, " +
-                "default 0, courses/hexagonal/force aligned), and all " +
-                "five outputs VISIBLE (Surface appended by task 29), the " +
-                "proposer convention.");
+                "default 0, courses/hexagonal/force aligned), and both " +
+                "outputs (Cells, Surface) VISIBLE, the proposer " +
+                "convention.");
         }
         catch (Exception exception)
         {
@@ -1204,6 +1206,38 @@ internal static class Program
         {
             failures.Add(
                 $"Skin surface sections: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinPortText(plugin);
+            Console.WriteLine(
+                "PASS  Skin port text: Cells' description carries the " +
+                "re-sorts-on-import and running-bond clauses and has lost " +
+                "the false claim that the order is the studio's build " +
+                "sequence (rule 7.5); Pattern's description carries rule " +
+                "3.5.2's three clauses (edge directions, not principal " +
+                "stress, remesh, default); and Skin registers no " +
+                "ResultParam output (rule 9.4.4's declines half).");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"Skin port text: {DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateSkinMinPieceClamp(plugin);
+            Console.WriteLine(
+                "PASS  Skin Min Piece clamp: rule 6.4's ClampMinPiece " +
+                "clamps 0.9 to 0.5 and -1 to 0, each with a Warning naming " +
+                "the clamped value, and -1 behaves exactly as 0 (check " +
+                "12.6(e)'s second half).");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Skin Min Piece clamp: {DescribeException(exception)}");
         }
 
         try
@@ -22682,11 +22716,12 @@ internal static class Program
                         "the point of the component.");
                 }
             }
-            if (outputCount != 5)
+            if (outputCount != 2)
             {
                 throw new InvalidOperationException(
-                    "Five outputs (C, CO, FL, D, SF), Surface appended " +
-                    $"by task 29 (spec section 5); got {outputCount}.");
+                    "Two outputs (C, SRF): task 30 deletes Courses, " +
+                    "Flowlines and Diagnostics (rules 9.2.1 to 9.2.3), " +
+                    $"leaving Cells and Surface; got {outputCount}.");
             }
 
             // Ruling C's premise (an iteration-indexed TaskList a
@@ -23634,6 +23669,164 @@ internal static class Program
             $"cells taking the two-section loft and {oddCornered} odd " +
             "cells taking the fan, so neither arm of the route is " +
             "measured on nothing.");
+    }
+
+    /// <summary>
+    /// Check 12.7(c), which is the operative half of Param's ruling of
+    /// 2026-09-01 and therefore a check and not a nicety. He made the
+    /// seam-outward ruling believing it fed the studio's build sequence; he
+    /// was shown that tessellation.py:473 re-sorts every tessellation by
+    /// course and by each cell's angle on import, so the order never reaches
+    /// the studio, and that it does still decide which cell survives an
+    /// overlap. He kept the order on that basis. What does not survive is
+    /// the sentence on the port claiming the order is the studio's build
+    /// sequence. Rule 3.5.2's three clauses on Pattern's own description are
+    /// checked here too, so a later edit cannot quietly drop one, and check
+    /// 12.10(d)'s declines half (rule 9.4.4): Skin registers no ResultParam
+    /// output, because his own sentence asked for a removal only.
+    /// </summary>
+    private static void ValidateSkinPortText(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        object skin = Activator.CreateInstance(skinType)!;
+        object parameters = skinType.GetProperty("Params")!.GetValue(skin)!;
+        IList outputs = (IList)parameters.GetType()
+            .GetProperty("Output")!.GetValue(parameters)!;
+        string CellsText()
+        {
+            object port = outputs[0]!;
+            return (string)port.GetType()
+                .GetProperty("Description")!.GetValue(port)!;
+        }
+        string text = CellsText();
+        if (text.Contains(
+                "the studio's build sequence within a run",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The false clause is GONE: the studio re-sorts every " +
+                "tessellation on import, so the order in the file is " +
+                "discarded the moment it is read (rule 7.5).");
+        }
+        if (!text.Contains("re-sorts", StringComparison.Ordinal) ||
+            !text.Contains(
+                "running bond", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The replacement carries its two load-bearing clauses, the " +
+                "one saying the studio re-sorts on import and the one " +
+                "saying the courses are a RUNNING BOND so item k of one " +
+                "branch is not above item k of the next; a text that " +
+                "dropped either would leave the author with a different " +
+                "false belief in place of the old one.");
+        }
+
+        IList inputs = (IList)parameters.GetType()
+            .GetProperty("Input")!.GetValue(parameters)!;
+        object patternPort = inputs[1]!;
+        string patternText = (string)patternPort.GetType()
+            .GetProperty("Description")!.GetValue(patternPort)!;
+        foreach (string clause in new[]
+                 {
+                     "edge directions", "principal stress", "remesh",
+                     "default"
+                 })
+        {
+            if (!patternText.Contains(
+                    clause, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Rule 3.5.2 ends \"Say so on the port\", and the three " +
+                    "clauses it names are load-bearing: the lines are the " +
+                    "mesh's own EDGE DIRECTIONS weighted by member force and " +
+                    "not principal stress directions; a REMESH of the form " +
+                    "diagram moves the joints; and where a face's edges " +
+                    "carry no force the direction is a DEFAULT rather than a " +
+                    "measurement. Any promise that the pattern follows the " +
+                    "forces inherits all three, and the text has dropped " +
+                    $"'{clause}'.");
+            }
+        }
+
+        // Rule 9.4.4. He declined the RES output, so the numbers live on
+        // the chin of rule 9.3.1 and in the Remark of rule 9.3.5, and
+        // section 12 measures every one of them off the engine record. If he
+        // takes it, this check becomes its other half: a ResultParam at
+        // index 0 whose Result carries at least one diagnostic sourced
+        // "Skin". One of the two is written, never both.
+        foreach (object? port in outputs)
+        {
+            if (port!.GetType().Name.Contains(
+                    "ResultParam", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Skin registers NO ResultParam output: his own sentence " +
+                    "asked for a removal only, and section 13.2 item 1 is " +
+                    "still open.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Check 12.6(e), second half. MP at 0.9 clamps to 0.5 with a Warning,
+    /// and MP at -1 clamps to 0 with a Warning and behaves exactly as MP
+    /// at 0, which is rule 9.5's answer for a negative value. Driven on
+    /// the static, because this harness never calls SolveInstance and a
+    /// clamp written inline in TryReadInputs is a clamp nothing measures.
+    /// </summary>
+    private static void ValidateSkinMinPieceClamp(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        MethodInfo clamp = skinType.GetMethod(
+            "ClampMinPiece",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "Rule 6.4's clamp is an internal static so that check " +
+                "12.6(e) can drive it; it is not one.");
+        double Clamped(double asked, out bool flagged, out string message)
+        {
+            object?[] arguments = { asked, false, string.Empty };
+            double answer = (double)clamp.Invoke(null, arguments)!;
+            flagged = (bool)arguments[1]!;
+            message = (string)arguments[2]!;
+            return answer;
+        }
+        foreach ((double asked, double wanted) in
+                 new[] { (0.9, 0.5), (-1.0, 0.0) })
+        {
+            double got = Clamped(asked, out bool flagged, out string message);
+            if (Math.Abs(got - wanted) > 1.0e-12)
+            {
+                throw new InvalidOperationException(
+                    $"Min Piece {asked} clamps to {wanted} (rule 6.4); it " +
+                    $"clamped to {got}.");
+            }
+            if (!flagged)
+            {
+                throw new InvalidOperationException(
+                    $"A clamped Min Piece raises a WARNING; {asked} was " +
+                    "clamped in silence, and an author cannot see a number " +
+                    "the component quietly changed.");
+            }
+            if (!message.Contains(
+                    wanted.ToString("F3", CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Warning NAMES the clamped value, so the author " +
+                    $"reads what the component is actually using; it said " +
+                    $"'{message}'.");
+            }
+        }
+        // And -1 behaves exactly as 0: the same value, so the same pattern.
+        if (Math.Abs(
+                Clamped(-1.0, out _, out _) -
+                Clamped(0.0, out _, out _)) > 1.0e-12)
+        {
+            throw new InvalidOperationException(
+                "MP at -1 clamps to 0 and behaves EXACTLY as MP at 0; a " +
+                "negative means \"off\" and not a failed solve.");
+        }
     }
 
     /// <summary>
