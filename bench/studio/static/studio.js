@@ -2019,6 +2019,7 @@ function setSunMinutes(minutes, why) {
   paintSunPresets();
   applySunFromTime();
   regenerateEnvironment();
+  paintGroupSummaries();
 }
 
 function paintSunPresets() {
@@ -2086,6 +2087,75 @@ function dragSunDial(event) {
     if (delta < closest) { closest = delta; best = m; }
   }
   setSunMinutes(best, null);
+}
+
+// ---------- groups fold, and say what they hold while folded ----------
+// The Scene panel is five groups in a column, and Param's complaint about it
+// was that one does not know where to begin. A heading that folds its own
+// group turns that column into five lines, and a summary on the right means
+// a folded group still answers the question you would have opened it to ask.
+const GROUP_SUMMARIES = {
+  "Ground": () => {
+    const select = document.getElementById("ground-preset");
+    const label = select.options[select.selectedIndex];
+    return (label ? label.textContent : "") + ", " + state.groundRadius + " m";
+  },
+  "Environment": () => {
+    const select = document.getElementById("environment-mode");
+    const label = select.options[select.selectedIndex];
+    return label ? label.textContent : "";
+  },
+  "Sun": () => {
+    const hours = Math.floor(state.sunMinutes / 60) % 24;
+    const minutes = Math.round(state.sunMinutes % 60);
+    return String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0")
+      + (state.sunPreset ? ", " + state.sunPreset : "");
+  },
+  "Props": () => state.props.length
+    ? state.props.length + " placed" : "none placed",
+  "Scenes": () => state.scenes.length ? state.scenes.length + " saved" : "none saved",
+};
+
+function buildGroups() {
+  for (const heading of document.querySelectorAll(".row-heading")) {
+    if (heading.dataset.grouped) continue;
+    const title = heading.textContent.trim();
+    heading.dataset.grouped = "1";
+    heading.dataset.title = title;
+    heading.textContent = title;
+    const summary = document.createElement("span");
+    summary.className = "summary";
+    heading.appendChild(summary);
+    // Everything up to the next heading belongs to this one.
+    const body = document.createElement("div");
+    body.className = "group-body";
+    let node = heading.nextSibling;
+    while (node && !(node.classList && node.classList.contains("row-heading"))) {
+      const next = node.nextSibling;
+      body.appendChild(node);
+      node = next;
+    }
+    heading.after(body);
+    heading.addEventListener("click", () => {
+      const folded = body.classList.toggle("folded");
+      heading.classList.toggle("folded", folded);
+      paintGroupSummaries();
+    });
+  }
+  paintGroupSummaries();
+}
+
+function paintGroupSummaries() {
+  for (const heading of document.querySelectorAll(".row-heading")) {
+    const summary = heading.querySelector(".summary");
+    const read = GROUP_SUMMARIES[heading.dataset.title];
+    if (!summary || !read) continue;
+    try {
+      summary.textContent = heading.classList.contains("folded") ? read() : "";
+    } catch (error) {
+      summary.textContent = "";
+    }
+  }
 }
 
 // ---------- a select becomes a segmented row ----------
@@ -5546,6 +5616,7 @@ guarded("the material tiles", buildMaterialTiles);
 guarded("the ground tiles", buildGroundTiles);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
 guarded("the slider rows", () => upgradeSliders());
+guarded("the panel groups", buildGroups);
 // The library loads in the background: the studio is usable before it
 // arrives, and a folder with nothing in it simply leaves the old props.
 loadPropLibrary().catch((error) => logStudio("prop library: " + error.message));

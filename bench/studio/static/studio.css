@@ -168,8 +168,22 @@ body { overflow: hidden;
 /* The refusal used to sit here under the control. It goes to the log at
    the foot of the screen instead: that is what the log is for, and a panel
    that explains itself in prose is a panel nobody reads. */
-.row-heading { display: block; margin: 8px 0 2px; color: #9aa0a6;
-  text-transform: uppercase; letter-spacing: 0.1em; }
+/* A group heading is a control: it folds its group away, and while folded
+   it says what the group is set to, so nothing has to be opened to be
+   read. The chevron is drawn in CSS rather than fetched as an icon. */
+.row-heading { display: flex; align-items: center; gap: 6px; margin: 10px 0 2px;
+  color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.1em;
+  cursor: pointer; user-select: none; }
+.row-heading::before { content: ""; width: 0; height: 0; flex: 0 0 auto;
+  border-left: 4px solid #6b7078; border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent; transition: transform 120ms ease;
+  transform: rotate(90deg); }
+.row-heading.folded::before { transform: rotate(0deg); }
+.row-heading:hover { color: #d8dade; }
+.row-heading .summary { margin-left: auto; color: #6b7078;
+  text-transform: none; letter-spacing: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.group-body.folded { display: none; }
 .switch-line { display: flex; align-items: center; gap: 8px; }
 
 /* The three ways of looking at the vault, at the foot of the panel where
