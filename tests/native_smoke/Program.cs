@@ -24451,12 +24451,31 @@ internal static class Program
 
     /// <summary>
     /// Plan 2026-09-03 task 2, step 2. A CELL'S TWO HEAD JOINTS STAY INSIDE
-    /// THE CELL'S OWN BAND. ChainBetween walked a joint that had no crossing
-    /// on the upper bed (rule 3.3.5's closer) to the streamline's own END,
-    /// so on a net whose level curves MERGE the closer kept climbing past
-    /// the merge and the cell closed with an implicit chord across the
-    /// topology change. That is where the self-crossing and overlapping
-    /// cells the plan filter then deleted came from.
+    /// THE CELL'S OWN BAND. A chain that stands outside the band closes the
+    /// cell with an implicit chord across whatever lies between, and on a
+    /// net whose level curves MERGE that is a chord across the merge. That
+    /// is where the self-crossing and overlapping cells the plan filter then
+    /// deleted came from.
+    ///
+    /// HOW THEY ESCAPE, measured and not assumed, because the plan's own
+    /// diagnosis named a different mechanism and this comment is where the
+    /// next reader comes to learn why these bars exist. The chains do NOT
+    /// escape by climbing past the band's top: instrumented across every
+    /// fixture here, Param's crown arch included, ChainBetween's upper clip
+    /// fires ZERO times, and it cannot fire while RecordCrossings records a
+    /// crossing on every component of every bed, since a line that reaches
+    /// the upper bed's level must then have a crossing there. They escape by
+    /// standing outside the band ALONG THE WAY. Of the 86 escaping chains on
+    /// Param's crown arch at S 0.17 and CH 0.375, 55 are closers walked to
+    /// their line's own end that DIP BELOW their own lower bed, a streamline
+    /// rising then falling, and 31 are two-crossing chains walked between
+    /// their crossings BY POLYLINE INDEX, which is deliberate (clipping by
+    /// value would hand this side's chain to a far-side cell) and which lets
+    /// a line that rises, falls and rises again stand outside the band in
+    /// between. The clip is kept as a guard on another function's invariant;
+    /// the REFUSAL is what removes the bad cells, and this check is the bar
+    /// on the refusal. SkinPatterns.cs's own doc on ChainBetween says the
+    /// same, and the two must not drift apart.
     ///
     /// The band's two levels are read off the cell's OWN bed runs, which lie
     /// on the two beds by construction, so nothing here re-derives what the
@@ -27310,17 +27329,21 @@ internal static class Program
             patterns, "LevelAt", netType, typeof(double[]));
         RequireChainsInBand(levelAt, net, built, "Param's own crown arch");
 
-        // STEP 2: THE REFUSED-CELL COUNTER. A joint with no crossing on the
-        // upper bed used to be walked to the streamline's own END, so at
-        // the merge the closer kept climbing and the cell closed with a
-        // chord across it. MEASURED on this net at S 0.17 and CH 0.375,
-        // before the change and after: 78 cells with 50 dropped as
-        // self-crossing in plan and 14 as overlapping; 71 cells with 2 and
-        // 4 dropped and 65 refused at emission for leaving their band. The
-        // bad cells were not a plan-projection accident, they were chords
-        // across a topology change, and they are now refused where they are
-        // made rather than deleted three stages later under a name that
-        // sends the reader to the wrong function.
+        // STEP 2: THE REFUSED-CELL COUNTER. A cell whose head joint stands
+        // outside its own band closes with a chord across whatever lies
+        // between, which on this net is the merge. The chains stand outside
+        // it ALONG THE WAY and not by climbing off its top: 55 of the 86
+        // escapes here are closers dipping BELOW their own lower bed, and
+        // 31 are two-crossing chains walked by polyline index over a
+        // streamline that rises, falls and rises again. The upper clip in
+        // ChainBetween is a guard and fires zero times. MEASURED on this
+        // net at S 0.17 and CH 0.375, before the change and after: 78 cells
+        // with 50 dropped as self-crossing in plan and 14 as overlapping;
+        // 71 cells with 2 and 4 dropped and 65 refused at emission for
+        // leaving their band. The bad cells were not a plan-projection
+        // accident, they were chords across a topology change, and they are
+        // now refused where they are made rather than deleted three stages
+        // later under a name that sends the reader to the wrong function.
         const int EscapedRefusedPinned = 65;
         string diagnostics = Reading<string>(built, "Diagnostics");
         string refusedLine =
