@@ -20,13 +20,15 @@ itself states: construction happens on the SOLVE thread, in
 SkinComponents.cs, and native_smoke can measure the SECTIONS a cell
 carries but not the Brep a section lofts into.
 
-Part three (NEW, 2026-09-03) is the THICKNESS half of spec 2026-09-02:
-a planar and a non-planar cell thickened at Th 0.2 and -0.2 in both the
-vertical and the normal mode, each asserted watertight and outward, the
-planar one against its own exact volume, and two neighbours' shared wall
-asserted coincident in the vertical mode. IT HAS NEVER BEEN RUN. It was
-written by an agent with no Rhino, to this file's own conventions, and
-its first execution is Param's.
+Part three (NEW, 2026-09-03) is the THICKNESS half of spec 2026-09-02 as
+amended by spec 2026-09-03 (skin-offset-surface): a planar and a
+non-planar cell thickened at Th 0.2 and -0.2 in both the EXTRUDE and the
+OFFSET branch, each asserted watertight and outward, the planar one
+against its own exact volume in the extrude branch, two neighbours'
+shared wall asserted coincident in BOTH branches, and the side-by-side
+count of cells that close into a solid under each. IT HAS NEVER BEEN RUN.
+It was written by an agent with no Rhino, to this file's own conventions,
+and its first execution is Param's.
 """
 
 import math
@@ -548,13 +550,35 @@ def run_behavioural_checks():
 # Part three, NEW 2026-09-03 and AWAITING PARAM'S RUN: the thickened solid.
 #
 # Spec 2026-09-02 (skin-thickness-input) promises a CLOSED SOLID between a
-# cell's face and a copy of it offset by Th, outward-oriented, and in the
-# vertical mode a shared wall that stays coincident between neighbours. Not
+# cell's face and a copy of it offset by Th, outward-oriented, and a
+# shared wall that stays coincident between neighbours. Not
 # one of those three claims can be taken outside Rhino: RhinoCommon's
 # native core does not initialise there, so JoinBreps, IsSolid,
 # SolidOrientation and GetVolume are all unavailable to
 # tests/native_smoke, which measures only the offset VECTOR through
 # ThicknessOffset and says so in its own check text.
+#
+# AMENDED 2026-09-03 by spec skin-offset-surface. The toggle that used to
+# say Along Normal now says OFFSET, its true branch is an OFFSET SURFACE
+# rather than a per-cell extrusion, and it DEFAULTS TRUE, so the mode this
+# script had never exercised at all is now the shipped one. Every case
+# below is therefore run in BOTH branches, and 12.5(h) gains its offset
+# half: two cells that share an outline corner must both carry a vertex at
+# that corner moved by the SAME vector, since the normal is read at the
+# POINT and not off the cell. Under the deleted per-cell normal that half
+# would have failed by construction, which is why it could not be written
+# before. ThickenCellSurface also takes the NET now, between the outline
+# and Th, because the field it reads lives there.
+#
+# WHAT THIS SCRIPT IS FOR, restated after the harness measured what it
+# could. tests/native_smoke can count the cells whose side wall is
+# ANNIHILATED into a line, and on 2026-09-03 it counted ZERO on every
+# fixture including Param's own net under both patterns, with the tightest
+# wall on the force-aligned run coming from an outline edge 1.5 microns
+# long rather than from a vertical one. So the 148 of 262 he measured is
+# NOT the vertical-edge mechanism, and which of the thickener's remaining
+# exits refuses those cells is a question only this script can answer.
+# 12.5(i) below is where that count is taken.
 #
 # THESE CHECKS HAVE NOT BEEN RUN. The agent that wrote them cannot execute
 # Rhino and did not execute them; they are written to this file's
@@ -587,10 +611,11 @@ def run_thickness_checks():
         return cell_surface_method.Invoke(
             None, System.Array[object]([cell, net]))
 
-    def thicken(face, outline, thickness, along_normal):
+    def thicken(face, outline, net, thickness, offset_surface):
         return thicken_method.Invoke(
             None,
-            System.Array[object]([face, outline, thickness, along_normal]))
+            System.Array[object](
+                [face, outline, net, thickness, offset_surface]))
 
     reports = []
     vertices, faces, rim = _hemisphere()
@@ -622,10 +647,16 @@ def run_thickness_checks():
             ]),
         )
 
-    # ---- 12.5(f): a PLANAR cell, where the arithmetic is exact. A unit
-    # square lying flat at z = 1 has plan area 1, so the vertical mode's
-    # solid encloses |Th| whatever the sign, and its own normal IS world
-    # Z, so the normal mode must agree with the vertical one here.
+    # ---- 12.5(f): a PLANAR cell, where the EXTRUDE branch's arithmetic is
+    # exact. A unit square lying flat at z = 1 has plan area 1, so the
+    # extrusion encloses |Th| whatever the sign and spans z 1 to 1 + Th.
+    #
+    # The OFFSET branch owes no such number here and is not asked for one.
+    # Its direction is read off THE NET at each corner, and the net under
+    # this square is a hemisphere, so the four corners move four different
+    # ways and the enclosed volume is a property of the hemisphere rather
+    # than of the square. What it still owes, and what is checked, is that
+    # the result CLOSES and is oriented outward.
     planar_outline = [
         (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
     ]
@@ -637,11 +668,11 @@ def run_thickness_checks():
             "thicken at all")
     else:
         for thickness in (0.2, -0.2):
-            for along_normal in (False, True):
-                mode = "normal" if along_normal else "vertical"
+            for offset_surface in (False, True):
+                mode = "offset" if offset_surface else "extrude"
                 solid = thicken(
-                    planar_face, _property(planar_cell, "Outline"),
-                    thickness, along_normal)
+                    planar_face, _property(planar_cell, "Outline"), net,
+                    thickness, offset_surface)
                 if solid is None:
                     reports.append(
                         "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
@@ -661,6 +692,17 @@ def run_thickness_checks():
                         % (thickness, mode, solid.SolidOrientation))
                     continue
                 volume = solid.GetVolume()
+                box = solid.GetBoundingBox(True)
+                low, high = box.Min.Z, box.Max.Z
+                if offset_surface:
+                    reports.append(
+                        "PASS (12.5(f), NEW, UNVERIFIED BY ITS AUTHOR, "
+                        "planar): Th %+.1f in %s mode is a watertight "
+                        "outward solid of volume %.9f spanning z %.6f to "
+                        "%.6f; no volume is predicted for this mode, the "
+                        "direction being the net's and not the square's"
+                        % (thickness, mode, volume, low, high))
+                    continue
                 if abs(volume - abs(thickness)) > 1.0e-6:
                     reports.append(
                         "FAIL (12.5(f), NEW, planar): Th %+.1f in %s mode "
@@ -668,8 +710,6 @@ def run_thickness_checks():
                         "|Th| encloses %.9f"
                         % (thickness, mode, volume, abs(thickness)))
                     continue
-                box = solid.GetBoundingBox(True)
-                low, high = box.Min.Z, box.Max.Z
                 wanted = (1.0, 1.0 + thickness)
                 if abs(low - min(wanted)) > 1.0e-9 or \
                         abs(high - max(wanted)) > 1.0e-9:
@@ -705,11 +745,11 @@ def run_thickness_checks():
             "FAIL (12.5(g), NEW, non-planar): CellSurface gave no face")
     else:
         for thickness in (0.2, -0.2):
-            for along_normal in (False, True):
-                mode = "normal" if along_normal else "vertical"
+            for offset_surface in (False, True):
+                mode = "offset" if offset_surface else "extrude"
                 solid = thicken(
-                    warped_face, _property(warped, "Outline"),
-                    thickness, along_normal)
+                    warped_face, _property(warped, "Outline"), net,
+                    thickness, offset_surface)
                 if solid is None or not solid.IsSolid:
                     reports.append(
                         "FAIL (12.5(g), NEW, non-planar): Th %+.1f in %s "
@@ -729,12 +769,20 @@ def run_thickness_checks():
                     "%.4f m" % (thickness, mode, solid.Faces.Count,
                                 out_of_plane(warped)))
 
-    # ---- 12.5(h): the SHARED WALL, which is the whole reason the vertical
-    # mode is the default. Two cells that share an outline corner add
-    # literally the same three doubles to it, so both thickened solids must
-    # carry a vertex at that corner AND at the corner raised by Th. In the
-    # normal mode they generally do not, and that divergence is the trade
-    # the toggle offers rather than a defect.
+    # ---- 12.5(h): the SHARED WALL, and it is now measured in BOTH
+    # branches, which is the point of spec 2026-09-03.
+    #
+    # EXTRUDE. Two cells that share an outline corner add literally the same
+    # three doubles to it, so both solids carry a vertex at that corner and
+    # at the corner raised by Th.
+    #
+    # OFFSET. The normal is read at the POINT and not off the cell, so the
+    # two cells move the shared corner by the same vector there too, and
+    # both solids must carry a vertex at the corner AND at the corner moved
+    # by that one vector. Under the DELETED per-cell normal this half would
+    # have failed by construction, which is why it could not be written
+    # before; it is the whole of the change, taken where the harness cannot
+    # reach, on real Breps.
     shared = None
     for i in range(len(cells)):
         left = [tuple(p) for p in _property(cells[i], "Outline")]
@@ -752,40 +800,104 @@ def run_thickness_checks():
             "outline corner, so the coincidence claim was measured on "
             "nothing")
     else:
+        offset_method = _method(
+            skin_component_type, "ThicknessOffset", nonpublic=True)
+
+        def point_offset(point, thickness, offset_surface):
+            return offset_method.Invoke(
+                None,
+                System.Array[object](
+                    [net, System.Array[float](list(point)), thickness,
+                     offset_surface]))
+
         left_cell, right_cell, corner = shared
         thickness = 0.2
-        wanted = [
-            rg.Point3d(corner[0], corner[1], corner[2]),
-            rg.Point3d(corner[0], corner[1], corner[2] + thickness),
-        ]
-        faults = []
-        for label, cell in (("first", left_cell), ("second", right_cell)):
-            face = cell_surface(cell, net)
-            solid = thicken(
-                face, _property(cell, "Outline"), thickness, False)
-            if solid is None or not solid.IsSolid:
-                faults.append(
-                    "the %s cell did not close into a solid" % (label,))
-                continue
-            corners = [v.Location for v in solid.Vertices]
-            for point in wanted:
-                if not any(
-                        point.DistanceTo(at) <= 1.0e-9 for at in corners):
+        for offset_surface in (False, True):
+            mode = "offset" if offset_surface else "extrude"
+            moved = point_offset(corner, thickness, offset_surface)
+            wanted = [
+                rg.Point3d(corner[0], corner[1], corner[2]),
+                rg.Point3d(
+                    corner[0] + moved[0],
+                    corner[1] + moved[1],
+                    corner[2] + moved[2]),
+            ]
+            faults = []
+            for label, cell in (("first", left_cell), ("second", right_cell)):
+                face = cell_surface(cell, net)
+                solid = thicken(
+                    face, _property(cell, "Outline"), net, thickness,
+                    offset_surface)
+                if solid is None or not solid.IsSolid:
                     faults.append(
-                        "the %s cell's solid has no vertex at "
-                        "(%.9f, %.9f, %.9f)"
-                        % (label, point.X, point.Y, point.Z))
-        if faults:
-            reports.append(
-                "FAIL (12.5(h), NEW, shared wall): %s"
-                % ("; ".join(sorted(set(faults))),))
-        else:
-            reports.append(
-                "PASS (12.5(h), NEW, UNVERIFIED BY ITS AUTHOR, shared "
-                "wall): two cells sharing the corner (%.6f, %.6f, %.6f) "
-                "both carry a vertex there and at that corner raised by "
-                "Th 0.2 in the VERTICAL mode, so their walls meet by "
-                "construction" % (corner[0], corner[1], corner[2]))
+                        "the %s cell did not close into a solid" % (label,))
+                    continue
+                corners = [v.Location for v in solid.Vertices]
+                for point in wanted:
+                    if not any(
+                            point.DistanceTo(at) <= 1.0e-9 for at in corners):
+                        faults.append(
+                            "the %s cell's solid has no vertex at "
+                            "(%.9f, %.9f, %.9f)"
+                            % (label, point.X, point.Y, point.Z))
+            if faults:
+                reports.append(
+                    "FAIL (12.5(h), NEW, shared wall, %s): %s"
+                    % (mode, "; ".join(sorted(set(faults)))))
+            else:
+                reports.append(
+                    "PASS (12.5(h), NEW, UNVERIFIED BY ITS AUTHOR, shared "
+                    "wall, %s): two cells sharing the corner (%.6f, %.6f, "
+                    "%.6f) both carry a vertex there and at that corner "
+                    "moved by (%.6f, %.6f, %.6f) at Th 0.2, so their walls "
+                    "meet by construction"
+                    % (mode, corner[0], corner[1], corner[2],
+                       moved[0], moved[1], moved[2]))
+
+    # ---- 12.5(i), NEW 2026-09-03: THE COUNT PARAM ASKED FOR, and the only
+    # place it can honestly be taken.
+    #
+    # tests/native_smoke can count the cells whose side wall is ANNIHILATED
+    # into a line, and on 2026-09-03 that count was ZERO on every fixture,
+    # including Param's own net under both patterns. So spec section 1
+    # point 3 is not the mechanism behind his 148 of 262, and the refusal
+    # must be happening at one of the thickener's other three exits: a wall
+    # Rhino declines for its own reasons, a join that does not close, or a
+    # shell that is not solid. All three need the native core, so the count
+    # belongs here.
+    #
+    # It is a MEASUREMENT and not an assertion. Whether the offset branch
+    # closes more cells than the extrusion is exactly the open question,
+    # and a check that decided it in advance would be worthless.
+    thickness = 0.29
+    tally = {}
+    for offset_surface in (False, True):
+        mode = "offset" if offset_surface else "extrude"
+        faces_built = 0
+        solids_built = 0
+        for cell in cells:
+            face = cell_surface(cell, net)
+            if face is None:
+                continue
+            faces_built += 1
+            solid = thicken(
+                face, _property(cell, "Outline"), net, thickness,
+                offset_surface)
+            if solid is not None and solid.IsSolid:
+                solids_built += 1
+        tally[mode] = (faces_built, solids_built)
+    reports.append(
+        "MEASURED (12.5(i), NEW, UNVERIFIED BY ITS AUTHOR): at Th %.2f "
+        "over %d cells, EXTRUDE built %d faces and closed %d of them into "
+        "solids (%d refused); OFFSET built %d faces and closed %d (%d "
+        "refused). If the two refusal counts are equal the thickener's "
+        "problem is not the offset direction and the next task belongs "
+        "elsewhere."
+        % (thickness, len(cells),
+           tally["extrude"][0], tally["extrude"][1],
+           tally["extrude"][0] - tally["extrude"][1],
+           tally["offset"][0], tally["offset"][1],
+           tally["offset"][0] - tally["offset"][1]))
 
     return reports
 
