@@ -2413,3 +2413,26 @@ def test_every_control_the_script_asks_for_exists_on_the_page():
     created = set()  # nothing is built by script id today; add names here, never patterns
     missing = sorted(asked - present - created)
     assert not missing, "the script talks to controls the page does not have: {}".format(missing)
+
+
+def test_the_hdri_ground_sits_below_the_studio_floor():
+    """Photographed 2026-09-04: with the two grounds at exactly the same
+    height, the floor tore into interleaved stripes of grass and paving
+    across its whole width. That is the depth test with nothing to decide.
+    The photograph now sits a finger's width below the studio's floor, so
+    the floor wins everywhere it exists and the photograph carries on
+    beyond its rim. Both places that position the dome apply the drop: the
+    one that builds it, and the one that re-levels an existing dome when
+    the shell thickness changes."""
+
+    js = (STATIC / "studio.js").read_text(encoding="utf-8")
+    assert "const HDRI_DROP = 0.05;" in js
+    assert js.count("groundLevel() - HDRI_DROP") == 1
+    assert js.count("level - HDRI_DROP") == 1
+    backdrop = _function_body(js, "applyHdriBackdrop")
+    assert "groundLevel() - HDRI_DROP" in backdrop
+    ground = _function_body(js, "rebuildGround")
+    assert "level - HDRI_DROP" in ground
+    assert "ground.position.z = level;" in ground, (
+        "the studio's own floor stays at the level everything stands on"
+    )

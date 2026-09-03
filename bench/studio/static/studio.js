@@ -406,8 +406,9 @@ function applyHdriBackdrop() {
     dome.rotation.y = rotation;
     const group = new THREE.Group();
     group.rotation.x = Math.PI / 2;
-    // The photograph's ground and the studio's floor are the same plane.
-    group.position.z = groundLevel();
+    // Under the studio's floor by HDRI_DROP, so the floor wins the depth
+    // test everywhere it exists and the photograph carries on beyond it.
+    group.position.z = groundLevel() - HDRI_DROP;
     group.add(dome);
     scene.add(group);
     hdriDome = group;
@@ -613,8 +614,13 @@ function groundMaterial(preset) {
 // be always lower than the floor". The floor goes under the lowest of them,
 // with 40 mm of air so nothing z-fights it.
 //
-// The HDRI dome's photographic ground rides the same plane, or the two
-// floors disagree by a hand's width and the vault stands on neither.
+// The HDRI dome's photographic ground rides just BELOW this plane, not on
+// it: coplanar surfaces z-fight, and two grounds at the same height tore
+// into stripes of grass and paving across the whole floor (photographed
+// 2026-09-04). A finger's width of separation is invisible from any camera
+// that can see the vault and settles the depth test outright.
+const HDRI_DROP = 0.05;
+
 function groundLevel() {
   const thickness = state.bundle && state.bundle.provenance
     ? state.bundle.provenance.thickness : 0;
@@ -651,7 +657,7 @@ function rebuildGround() {
   propsGroup.position.z = level;
   // A dome already up when the study changed would keep the old thickness's
   // floor, so it is levelled here too rather than only where it is built.
-  if (hdriDome) hdriDome.position.z = level;
+  if (hdriDome) hdriDome.position.z = level - HDRI_DROP;
   state.objects.ground = ground;
   scene.add(ground);
 }
