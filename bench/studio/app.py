@@ -14,15 +14,18 @@ import threading
 import urllib.parse
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import bundle
+import frames
 import generators
 import geometry
 import staging
+import tessellation
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COLUMNS_DIR = Path(__file__).resolve().parent / "columns"
@@ -91,6 +94,59 @@ def _validate(export: str, material: str, pattern: str, size: float,
         raise HTTPException(400, "thickness must be between 0.05 and 0.5 metres")
 
 
+# No route bounded its body, so a multi-hundred-megabyte PUT was read
+# whole into memory and stored. The exporter's own largest kind is the
+# frames document (about 1.5 MB for a 441-vertex net, spec section 9)
+# and a real contract runs to about 6 MB, so 64 MB is far above anything
+# the live connection sends and far below anything that hurts.
+MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+
+# The kinds the exports route stores. tessellation was refused until
+# 2026-09-03 even though the exporter PUTs one on EVERY live TNA solve,
+# so authored Skin cells could never arrive over the live connection at
+# all; frames carries the formwork build animation (bench.frames/1).
+EXPORT_KINDS = ("contract", "compas", "tessellation", "frames")
+
+
+def _finite_everywhere(node, path="") -> None:
+    """Refuse NaN and Infinity anywhere in an uploaded document.
+
+    Python's json module accepts both by default and emits them back as
+    bare NaN/Infinity tokens, which are not valid JSON: the upload
+    answered 200, the cut and the whole staging run finished 'done', and
+    then every bundle GET was a blank 500 the user could not explain,
+    because the browser's own parser refuses what python wrote.
+    """
+
+    if isinstance(node, float):
+        if node != node or node in (float("inf"), float("-inf")):
+            raise ValueError(
+                "every number must be finite; {} is {}.".format(
+                    path or "the value", node))
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            _finite_everywhere(value, "{}.{}".format(path, key) if path else str(key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            _finite_everywhere(value, "{}[{}]".format(path, index))
+
+
+def _slug_owner(slug: str, name: str) -> Optional[str]:
+    """An already-stored export whose name differs but whose slug matches.
+
+    Study identity is the export NAME, but the studies directory, the
+    caches and the run interlock are all keyed by its SLUG, and slugify
+    only lowercases and swaps spaces for hyphens. So "My Vault" and
+    "my-vault" listed as two studies while sharing one cache directory,
+    each silently serving the other's geometry.
+    """
+
+    for existing in geometry.available_exports(bundle.UPLOAD_DIR):
+        if existing != name and geometry.slugify(existing) == slug:
+            return existing
+    return None
+
+
 def create_app(runner=None, cra_runner=None) -> FastAPI:
     app = FastAPI(title="Bench Studio")
 
@@ -139,6 +195,64 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             # whole point (it says where to look), so it is carried through
             # unchanged rather than paraphrased or swallowed into a 500.
             raise HTTPException(400, str(error))
+
+    @app.get("/api/studies/{export}/formwork")
+    def get_formwork(export: str):
+        """The formwork build animation for this study, or a 404 saying why.
+
+        A 404 here is an ordinary state of the world, not a fault: most
+        studies carry no frames document, and one written for a previous
+        solve is a leftover the studio discloses and skips (R-004 in
+        REQUESTS-for-plugin-session.md). The client treats any non-200 as
+        "no formwork act" and loads the study exactly as before, so a
+        contract re-upload mid-set can never break the page.
+
+        edges are derived here rather than shipped: the frames document
+        carries positions only, and the net's connectivity is the
+        contract's own equilibrium.edges, which is the same index space
+        the frame vertices use.
+        """
+
+        pairs = geometry.available_exports(bundle.UPLOAD_DIR)
+        if export not in pairs:
+            raise HTTPException(404, "no export named {!r}".format(export))
+        document = bundle._read_optional(bundle.frames_sidecar(export))
+        if document is None:
+            raise HTTPException(404, "this study carries no formwork frames")
+        try:
+            document = frames.validate_frames_document(document)
+        except ValueError as error:
+            raise HTTPException(404, "the stored frames document is unusable: {}".format(error))
+        contract = geometry.load_contract(pairs[export]["contract"])
+        reason = frames.pairing_error(document, contract)
+        if reason is not None:
+            raise HTTPException(404, reason)
+        edges = []
+        for edge in (contract.get("equilibrium") or {}).get("edges") or []:
+            u, v = edge.get("u"), edge.get("v")
+            if isinstance(u, int) and isinstance(v, int)                     and 0 <= u < document["vertexCount"]                     and 0 <= v < document["vertexCount"]:
+                edges.append([u, v])
+        members = []
+        columns = (contract.get("mould") or {}).get("columns") or {}
+        for member in columns.get("members") or []:
+            u, v = member.get("u"), member.get("v")
+            if isinstance(u, int) and isinstance(v, int)                     and 0 <= u < document["columnNodeCount"]                     and 0 <= v < document["columnNodeCount"]:
+                members.append([u, v])
+        stored = document.get("columns")
+        if not members and isinstance(stored, dict):
+            for member in stored.get("members") or []:
+                if isinstance(member, list) and len(member) == 2:
+                    u, v = member
+                    if isinstance(u, int) and isinstance(v, int)                             and 0 <= u < document["columnNodeCount"]                             and 0 <= v < document["columnNodeCount"]:
+                        members.append([u, v])
+        return {
+            "study": export,
+            "vertexCount": document["vertexCount"],
+            "columnNodeCount": document["columnNodeCount"],
+            "frames": document["frames"],
+            "edges": edges,
+            "columns": {"members": members},
+        }
 
     @app.post("/api/runs", status_code=202)
     def start_run(body: dict):
@@ -277,39 +391,89 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
 
     @app.put("/api/uploads/exports/{name}/{kind}")
     async def upload_export(name: str, kind: str, request: Request):
-        if "/" in name or "\\" in name or ".." in name:
+        # The ':' guard and the containment check its sibling routes have
+        # carried all along: without them a drive-relative name such as
+        # "A:study" resolved outside UPLOAD_DIR entirely, the route
+        # answered 200 stored, and the export never appeared anywhere.
+        if "/" in name or "\\" in name or ".." in name or ":" in name:
             raise HTTPException(400, "bad export name")
-        if kind not in ("contract", "compas"):
-            raise HTTPException(400, "kind must be 'contract' or 'compas'")
+        if kind not in EXPORT_KINDS:
+            raise HTTPException(
+                400, "kind must be one of {}".format(", ".join(EXPORT_KINDS)))
+        directory = bundle.UPLOAD_DIR
+        filename = "{}-{}.json".format(name, kind)
+        if not _contained(directory, filename):
+            raise HTTPException(400, "bad export name")
         slug = geometry.slugify(name)
+        owner = _slug_owner(slug, name)
+        if owner is not None:
+            raise HTTPException(
+                409,
+                "the export name {!r} shares its study folder with the "
+                "already stored {!r} (both become {!r}); rename one of "
+                "them, or they will overwrite each other's cached "
+                "geometry.".format(name, owner, slug))
         with RUNS_LOCK:
             for run in RUNS.values():
                 if run["slug"] == slug and run["state"] in ("queued", "running"):
                     return JSONResponse({"run": run["id"]}, status_code=409)
         body = await request.body()
+        if len(body) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                413, "upload is {} bytes; the limit is {}.".format(
+                    len(body), MAX_UPLOAD_BYTES))
         try:
             document = json.loads(body)
         except json.JSONDecodeError:
             raise HTTPException(400, "not valid JSON")
+        try:
+            _finite_everywhere(document)
+        except ValueError as error:
+            raise HTTPException(400, str(error))
         if kind == "contract":
             try:
                 geometry.mesh_arrays(document)
                 geometry.support_ids(document)
                 geometry.member_forces_newtons(document)
+                geometry.node_loads_newtons(document)
+                geometry.support_reactions_newtons(document)
             except Exception as error:
                 raise HTTPException(400, str(error))
-        elif not isinstance(document, dict) or "thrustMesh" not in document:
-            raise HTTPException(400, "a compas export must contain a thrustMesh key")
+        elif kind == "compas":
+            if not isinstance(document, dict) or "thrustMesh" not in document:
+                raise HTTPException(400, "a compas export must contain a thrustMesh key")
+        elif kind == "tessellation":
+            # Validated with the studio's own reader, so a cut that would
+            # be refused at read time is refused at the door instead of
+            # being stored and silently overriding the generated cut.
+            try:
+                tessellation.validate_document(document)
+            except ValueError as error:
+                raise HTTPException(400, str(error))
+        elif kind == "frames":
+            try:
+                frames.validate_frames_document(document)
+            except ValueError as error:
+                raise HTTPException(400, str(error))
+
+        # The run interlock is re-checked AFTER the body read: reading a
+        # multi-megabyte contract takes long enough (0.12 s measured on a
+        # real 5.9 MB export) for a run to be accepted in between, which
+        # produced a bundle mixing this new geometry with the old
+        # geometry's stage plan.
+        with RUNS_LOCK:
+            for run in RUNS.values():
+                if run["slug"] == slug and run["state"] in ("queued", "running"):
+                    return JSONResponse({"run": run["id"]}, status_code=409)
 
         # bundle.UPLOAD_DIR, not a module-level copy, so make_client's
         # monkeypatch of bundle.UPLOAD_DIR lands here too.
-        directory = bundle.UPLOAD_DIR
-        directory.mkdir(parents=True, exist_ok=True)
-        filename = "{}-{}.json".format(name, kind)
-        (directory / filename).write_text(json.dumps(document), encoding="utf-8")
+        bundle.write_json_atomically(directory / filename, document)
         _invalidate_studio_cache(slug)
         other_kind = "compas" if kind == "contract" else "contract"
         other = directory / "{}-{}.json".format(name, other_kind)
+        if kind in ("tessellation", "frames"):
+            other = directory / "{}-contract.json".format(name)
         # An authored tessellation sidecar survives a re-upload and keeps
         # winning over the generated cut, so a pattern authored against the
         # PREVIOUS geometry silently stays in force against the new one. It

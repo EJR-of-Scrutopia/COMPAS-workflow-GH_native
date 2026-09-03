@@ -158,7 +158,7 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
             "always samples them (spec section 3).".format(
                 ", ".join("{:g}".format(b) for b in missing)))
 
-    return {
+    normalised = {
         "schema": SCHEMA,
         "units": "m",
         "study": document.get("study"),
@@ -166,6 +166,15 @@ def validate_frames_document(document: Any) -> Dict[str, Any]:
         "columnNodeCount": column_node_count,
         "frames": frames,
     }
+    # Optional and carried through untouched: the writer spec puts the
+    # columns' member list in the CONTRACT's mould block, and the reader
+    # prefers it from there, but a frames document is allowed to carry
+    # its own so a study whose contract has no mould block can still draw
+    # moving members. Validated at the point of use, not here, because an
+    # unusable member list should cost the members, never the whole act.
+    if isinstance(document.get("columns"), Mapping):
+        normalised["columns"] = dict(document["columns"])
+    return normalised
 
 
 def pairing_error(document: Mapping[str, Any], contract: Mapping[str, Any]) -> Optional[str]:

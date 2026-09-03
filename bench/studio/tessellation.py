@@ -656,6 +656,22 @@ def _is_simple(ring) -> bool:
     return True
 
 
+def validate_document(document: Dict) -> Dict:
+    """Every rule from_document enforces, without building the cut.
+
+    The upload route needs the verdict before the surface exists: an
+    authored cut that would be refused at read time should be refused at
+    the door, naming the offending cell, rather than stored and left to
+    silently override the generated cut on the next bundle GET. Building
+    with a height callback that returns None exercises every structural
+    rule (schema, units, domain, keys, outlines, holes, courses,
+    simplicity, overlap) and measures no z, which is exactly the
+    unmeasured case from_document already documents.
+    """
+
+    return from_document(document, lambda x, y: None)
+
+
 def from_document(document: Dict, surface_height) -> Dict:
     """Validate an authored tessellation and build the cut from it.
 

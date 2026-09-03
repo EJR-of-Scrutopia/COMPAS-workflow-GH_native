@@ -30,7 +30,24 @@ def slugify(name: str) -> str:
 
 
 def load_contract(path) -> Dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    """The stored contract, or a ValueError NAMING the file.
+
+    A contract torn by a killed process mid-store used to raise the bare
+    JSONDecodeError, which reaches the client as a 400 reading
+    "Expecting value: line 1 column 415" and names nothing: the study
+    tile still listed, the run still accepted, and nothing anywhere
+    pointed at the file on disk as the thing to replace.
+    """
+
+    path = Path(path)
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            "{} is not valid JSON ({}). The stored file is damaged, most "
+            "likely a write that was interrupted; re-upload this export "
+            "from Grasshopper.".format(path.name, error)
+        ) from error
 
 
 def available_exports(directory) -> Dict[str, Dict[str, Path]]:

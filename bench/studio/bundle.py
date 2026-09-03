@@ -13,6 +13,7 @@ import collections
 import datetime
 import json
 import math
+import os
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -72,14 +73,74 @@ def staging_path(slug: str, material: str, pattern: str, size: float, thickness:
         material, pattern, round(size * 1000), round(thickness * 1000))
 
 
+def frames_sidecar(export_name: str) -> Path:
+    """The formwork animation document beside the export pair."""
+
+    return UPLOAD_DIR / "{}-frames.json".format(export_name)
+
+
 def tessellation_sidecar(export_name: str) -> Path:
     return UPLOAD_DIR / "{}-tessellation.json".format(export_name)
 
 
+def write_json_atomically(path: Path, document) -> None:
+    """Write a JSON document so no reader ever sees a prefix of it.
+
+    Every file the studio stores is read by someone else while the
+    exporter is writing the next one: the live connection rewrites a
+    study's whole set on EVERY solve while the user scrubs, and a browser
+    poll or a staging run can read at any instant. An in-place write_text
+    truncates first, so a reader landing in that window got a torn
+    document, which the audit measured as transient 400s and failed runs
+    on every solve.
+
+    os.replace is atomic on Windows and POSIX alike, so a reader sees
+    either the whole old document or the whole new one. The temporary
+    lands in the destination's own directory because os.replace cannot
+    cross volumes.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".{}.tmp".format(os.getpid()))
+    try:
+        temporary.write_text(json.dumps(document), encoding="utf-8")
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def _read_optional(path: Path) -> Optional[dict]:
-    if path.is_file():
+    """A DERIVED document, or None when there is not a usable one.
+
+    Every caller reads something the studio can rebuild from the export
+    it still has: the bundle cache, the staging cache, the FEA
+    verification file. So a file that cannot be parsed is read as one
+    that is not there, and the rebuild that follows overwrites the
+    damage.
+
+    It used to call json.loads bare. A cache torn by a killed process or
+    a OneDrive sync then raised JSONDecodeError, which is a ValueError,
+    which get_bundle catches as "a malformed AUTHORED tessellation" and
+    reports as a 400 naming no file. The study was wedged on that 400
+    until someone re-uploaded, even though nothing about the export was
+    wrong. OSError is caught for the same reason and one more: is_file
+    and the read are two calls, and the invalidation pass deletes these
+    very files between them.
+    """
+
+    try:
+        if not path.is_file():
+            return None
         return json.loads(path.read_text(encoding="utf-8"))
-    return None
+    except ValueError:
+        print("bundle: discarding unreadable {}; rebuilding".format(path.name))
+        return None
+    except OSError:
+        return None
 
 
 def _staging_matches(staged: Optional[dict], made: List[dict]) -> bool:
@@ -224,6 +285,9 @@ def _cut_for(export_name, contract, arrays, render, pattern, size):
 def build_bundle(
     export_name: str, material: str, pattern: str, size: float, thickness: float = 0.2
 ) -> Dict:
+    # Captured BEFORE any input is read, so an invalidation landing at
+    # any point during this build is seen by the persist check below.
+    generation = _cut_memo_generation
     pairs = geometry.available_exports(UPLOAD_DIR)
     if export_name not in pairs:
         raise ValueError(
@@ -332,8 +396,16 @@ def build_bundle(
         },
     }
     target = bundle_path(slug, material, pattern, size, thickness)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(document), encoding="utf-8")
+    # The same guard _cut_for applies to the memo, applied to the DISK.
+    # A re-upload that landed while this build was running deleted this
+    # very file and bumped the generation; without this check the build
+    # re-created it afterwards, and every later GET served that stale
+    # geometry forever, silently, because it passes every shape check
+    # load_or_build_bundle makes. The document is still RETURNED to the
+    # caller that asked for it, built from the inputs that caller loaded,
+    # exactly as _cut_for returns its own result.
+    if generation == _cut_memo_generation:
+        write_json_atomically(target, document)
     return document
 
 
