@@ -1381,6 +1381,24 @@ internal static class Program
 
         try
         {
+            ValidateSkinThicknessAlongNormalSide(plugin);
+            Console.WriteLine(
+                "PASS  Skin Along Normal offsets to ONE side (finding " +
+                "10): on Param's own net the raw Newell winding points " +
+                "both ways and two cells sharing an edge disagree, yet " +
+                "one positive Th thickens every cell of the shell " +
+                "upward. The sign decides up or down; the winding does " +
+                "not.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                "Skin Along Normal side: " +
+                $"{DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateSkinForceAlignedComponents(plugin);
             Console.WriteLine(
                 "PASS  Skin force-aligned components (rule 3.3.1a, " +
@@ -25121,6 +25139,208 @@ internal static class Program
                     $"plan-validity habits; got '{diagnostics}'.");
             }
         }
+    }
+
+    /// <summary>
+    /// ALONG NORMAL OFFSETS EVERY CELL TO THE SAME SIDE, which is the
+    /// whole-branch review's finding 10, measured on PARAM'S OWN NET.
+    ///
+    /// CellNormalUnit is a Newell sum, and a Newell sum follows the
+    /// outline's WINDING. On a vault whose contours are open strips the
+    /// winding is not consistent from cell to cell, so one positive Th
+    /// thickened 546 of his 1032 course cells upward and the other 486
+    /// downward, and every one of his force-aligned cells downward, on
+    /// the same net at the same setting. The spec (2026-09-02,
+    /// skin-thickness-input, paragraphs 2 and 3) gives the SIGN of Th
+    /// that job.
+    ///
+    /// The check earns its own fixture twice over. It recomputes the RAW,
+    /// unoriented Newell normal here, by its own arithmetic rather than by
+    /// calling the engine, so a defect in CellNormalUnit and a defect in
+    /// this check cannot cancel; it refuses to pass unless that raw sum
+    /// genuinely points BOTH ways across the cells; and it refuses to pass
+    /// unless two cells that share an outline EDGE are among the pair that
+    /// disagree, which is the "neighbouring cells thicken in opposite
+    /// directions" the finding actually names. Only then does it assert
+    /// that the engine's own offsets all land on one side.
+    /// </summary>
+    private static void ValidateSkinThicknessAlongNormalSide(Assembly plugin)
+    {
+        Type skinType = RequireComponentType(plugin, "SkinComponent");
+        Type patterns = RequireComponentType(plugin, "SkinPatterns");
+        Type netType = RequireComponentType(plugin, "SkinNet");
+        MethodInfo offsetMethod = RequireStatic(skinType, "ThicknessOffset");
+        MethodInfo readNet = RequirePublicStatic(patterns, "ReadNet");
+        MethodInfo courses = RequirePublicStatic(
+            patterns, "Courses", netType, typeof(double), typeof(double));
+
+        string path = Path.Combine(
+            AppContext.BaseDirectory,
+            "assets",
+            "param-crown-arch-contract.json");
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                "Param's own exported contract is missing from the build " +
+                "output (assets/param-crown-arch-contract.json): " + path);
+        }
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        object result = DeserializeContract(
+            plugin, resultType, File.ReadAllText(path));
+        object net = readNet.Invoke(null, new object?[] { result })
+            ?? throw new InvalidOperationException(
+                "SkinPatterns.ReadNet returned null on Param's own " +
+                "contract, so the offset side would be measured on " +
+                "nothing.");
+        object built = courses.Invoke(
+            null, new object[] { net, 0.17, 0.375 })!;
+        var cells = SkinCells(built);
+        if (cells.Length < 500)
+        {
+            throw new InvalidOperationException(
+                "The courses engine builds 1032 cells on Param's net at S " +
+                $"0.17 and CH 0.375; got {cells.Length}, too few for the " +
+                "winding claim below to be measured on anything.");
+        }
+
+        // The RAW Newell sum, this check's own arithmetic, unoriented.
+        static double RawNormalZ(double[][] outline)
+        {
+            double nx = 0.0, ny = 0.0, nz = 0.0;
+            for (int at = 0; at < outline.Length; at++)
+            {
+                double[] a = outline[at];
+                double[] b = outline[(at + 1) % outline.Length];
+                nx += (a[1] - b[1]) * (a[2] + b[2]);
+                ny += (a[2] - b[2]) * (a[0] + b[0]);
+                nz += (a[0] - b[0]) * (a[1] + b[1]);
+            }
+            double length = Math.Sqrt((nx * nx) + (ny * ny) + (nz * nz));
+            return length > 1.0e-12 ? nz / length : 1.0;
+        }
+
+        var raw = new double[cells.Length];
+        int rawUp = 0;
+        int rawDown = 0;
+        for (int at = 0; at < cells.Length; at++)
+        {
+            raw[at] = RawNormalZ(cells[at].Outline);
+            if (raw[at] < 0.0)
+                rawDown++;
+            else
+                rawUp++;
+        }
+        if (rawUp == 0 || rawDown == 0)
+        {
+            throw new InvalidOperationException(
+                "This fixture must actually carry BOTH windings or the " +
+                "orientation below is untested: Param's net gives 546 " +
+                "cells whose raw Newell normal points up and 486 down. " +
+                $"Got {rawUp} up and {rawDown} down.");
+        }
+
+        // THE TWO NEAREST CELLS THAT DISAGREE ON WINDING, which is the
+        // finding's own words: neighbouring cells thicken in OPPOSITE
+        // directions. Measured on this net the disagreement runs between
+        // the two open STRIPS of a level rather than between two cells of
+        // one strip, so they need not share a corner; what makes them
+        // neighbours is that they stand within a course of one another on
+        // the same shell. The separation is asserted rather than assumed,
+        // so a fixture whose two windings sat at opposite ends of the
+        // vault could not pass this as a neighbour claim.
+        static double[] Middle(double[][] outline)
+        {
+            double x = 0.0, y = 0.0, z = 0.0;
+            foreach (double[] corner in outline)
+            {
+                x += corner[0];
+                y += corner[1];
+                z += corner[2];
+            }
+            return new[]
+            {
+                x / outline.Length, y / outline.Length, z / outline.Length
+            };
+        }
+
+        var middles = new double[cells.Length][];
+        for (int at = 0; at < cells.Length; at++)
+            middles[at] = Middle(cells[at].Outline);
+        int leftAt = -1;
+        int rightAt = -1;
+        double nearest = double.PositiveInfinity;
+        for (int a = 0; a < cells.Length; a++)
+        {
+            for (int b = a + 1; b < cells.Length; b++)
+            {
+                if ((raw[a] < 0.0) == (raw[b] < 0.0))
+                    continue;
+                double dx = middles[a][0] - middles[b][0];
+                double dy = middles[a][1] - middles[b][1];
+                double dz = middles[a][2] - middles[b][2];
+                double gap = Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz));
+                if (gap < nearest)
+                {
+                    nearest = gap;
+                    leftAt = a;
+                    rightAt = b;
+                }
+            }
+        }
+        if (leftAt < 0 || nearest > 0.375)
+        {
+            throw new InvalidOperationException(
+                "The two nearest cells of opposite raw winding stand " +
+                $"{nearest:F4} m apart on Param's net, over one course " +
+                "height of 0.375 m, so they are not neighbours and the " +
+                "neighbour half of finding 10 would be asserted on " +
+                "nothing.");
+        }
+
+        double[] Offset(double[][] outline) =>
+            (double[])offsetMethod.Invoke(
+                null, new object?[] { outline, 0.10, true })!;
+        double[] neighbourOne = Offset(cells[leftAt].Outline);
+        double[] neighbourTwo = Offset(cells[rightAt].Outline);
+        if (neighbourOne[2] <= 0.0 || neighbourTwo[2] <= 0.0)
+        {
+            throw new InvalidOperationException(
+                $"TWO NEIGHBOURING CELLS {nearest:F4} m apart, wound " +
+                $"opposite ways (raw Newell z {raw[leftAt]:F4} and " +
+                $"{raw[rightAt]:F4}), must " +
+                "thicken to the SAME side at one positive Th. Their " +
+                $"offsets went {neighbourOne[2]:F6} and " +
+                $"{neighbourTwo[2]:F6} in z. The sign of Th decides up or " +
+                "down (spec 2026-09-02, paragraphs 2 and 3); the winding " +
+                "does not get a vote.");
+        }
+
+        int down = 0;
+        double worst = double.PositiveInfinity;
+        foreach ((_, double[][] outline, _, _, _, _) in cells)
+        {
+            double z = Offset(outline)[2];
+            worst = Math.Min(worst, z);
+            if (z <= 0.0)
+                down++;
+        }
+        if (down != 0)
+        {
+            throw new InvalidOperationException(
+                $"Along Normal at Th +0.10 offset {down} of " +
+                $"{cells.Length} cells to the DOWNWARD side on Param's " +
+                $"own net, the worst at {worst:F6} in z. One Th and one " +
+                "toggle state must give one side of the shell; before " +
+                "the normal was oriented it gave 546 up and 486 down.");
+        }
+
+        Console.WriteLine(
+            "      Skin Along Normal side on Param's own net: " +
+            $"{cells.Length} course cells, raw winding {rawUp} up and " +
+            $"{rawDown} down, the nearest disagreeing pair {leftAt} and " +
+            $"{rightAt} at {nearest:F4} m with raw z {raw[leftAt]:F4} " +
+            $"and {raw[rightAt]:F4}, and every offset upward, the least " +
+            $"{worst:F6} m.");
     }
 
     /// <summary>

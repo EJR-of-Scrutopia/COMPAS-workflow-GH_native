@@ -648,6 +648,28 @@ public sealed class SkinComponent : NativeComponentBase
     /// normalise (collinear or coincident corners), falls back to world Z
     /// rather than dividing by zero: an ARBITRARY direction is the honest
     /// answer for a shape too degenerate to have one.
+    ///
+    /// THE NORMAL IS ORIENTED, and the rule is stated here rather than
+    /// inherited from the ring: it is taken in the UPWARD hemisphere, so
+    /// its z component is never negative. A Newell sum follows the
+    /// outline's WINDING, and a winding is not consistent from cell to
+    /// cell on a vault whose contours are open strips: BandCell builds a
+    /// ring as lower(u0 to u1) then the upper run reversed, while
+    /// NormaliseDirections orients an open strip by its plan chord, so two
+    /// strips either side of a ridge run the same way in plan although the
+    /// band's lower-to-upper direction is opposite. Left as the sum gives
+    /// it, one positive Th thickened half a shell outward and the other
+    /// half inward, which is the whole-branch review's finding 10; the
+    /// spec (2026-09-02, skin-thickness-input, paragraphs 2 and 3) says the
+    /// SIGN decides up or down, and it cannot do that while the winding is
+    /// deciding it too.
+    ///
+    /// Upward is the reading the surface itself supports: a funicular
+    /// vault's cells are hung under a rim, and a cell with no z component
+    /// at all is a wall the plan-validity filter has already dropped. Where
+    /// a normal IS exactly horizontal the tie is broken on x and then on y,
+    /// so even that cell answers by its geometry rather than by its
+    /// winding.
     /// </summary>
     internal static double[] CellNormalUnit(IReadOnlyList<double[]> outline)
     {
@@ -664,9 +686,19 @@ public sealed class SkinComponent : NativeComponentBase
             nz += (a[0] - b[0]) * (a[1] + b[1]);
         }
         double length = Math.Sqrt((nx * nx) + (ny * ny) + (nz * nz));
-        return length > 1.0e-12
-            ? new[] { nx / length, ny / length, nz / length }
-            : new[] { 0.0, 0.0, 1.0 };
+        if (!(length > 1.0e-12))
+            return new[] { 0.0, 0.0, 1.0 };
+        double x = nx / length;
+        double y = ny / length;
+        double z = nz / length;
+        bool flip =
+            z < -1.0e-12 ||
+            (Math.Abs(z) <= 1.0e-12 &&
+             (x < -1.0e-12 ||
+              (Math.Abs(x) <= 1.0e-12 && y < 0.0)));
+        return flip
+            ? new[] { -x, -y, -z }
+            : new[] { x, y, z };
     }
 
     /// <summary>
