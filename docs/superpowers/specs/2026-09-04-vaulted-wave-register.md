@@ -122,6 +122,32 @@ at its smallest, which is not even near enough".
   floor, sky and prop loads; counted, so overlapping loads keep one
   card up until the last lands.
 
+## The third walk (2026-09-05): gumball, selection truth, the shelf
+
+- SELECTION: two real bugs. The selected prop's own outline (a
+  BoxHelper in propsGroup, line raycasts carry a one-metre default
+  threshold) was hijacking clicks near its edges and returning null;
+  and triangle-exact picking missed through canopy gaps. The outline no
+  longer raycasts, every hit is walked, and a miss falls back to the
+  nearest bounding box. Delete while carrying now releases the carry,
+  the camera and the outline.
+- GUMBALL (Param: "like we might find in rhino"): blue ring about Z
+  rotates, gold square off the ring scales about the feet, body drags
+  to move. Slim visuals over fat invisible grab twins; keyboard R and
+  +/- still work. Live: ring drag = exactly the quarter turn dragged.
+- MATRIX TRAP for the findings file: Raycaster trusts matrixWorld as
+  stored; an object created the same frame has not rendered, so its ray
+  tests geometry at the origin. Picking now updates matrices first.
+- THE SHELF: bottom asset drawer (Blender asset shelf / Quixel Bridge
+  pattern). Props (chips by group, click carries, drawer STAYS open),
+  Materials (both libraries merged by key, Assign to skin / Assign to
+  ground per availability), Skies (click loads; projection, scale,
+  height, rotation moved into the drawer). Panel pickers open it; the
+  old inline grids stay hidden feeding the trigger swatches.
+- Sourcing note relayed to Param: standalone Quixel Bridge was sunset
+  in the Fab migration -- worth one try for direct FBX tree downloads,
+  else the species packs need the UE round trip.
+
 ## TREES and PEOPLE: the sourcing answers (researched 2026-09-05)
 
 - The free people site he half-remembered is almost certainly
