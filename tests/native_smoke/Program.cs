@@ -1400,14 +1400,19 @@ internal static class Program
                 "PASS  Skin TOP BY ITS BOTTOM'S ROUTE (spec 2026-09-04 " +
                 "section 5, check 8): TopTakesLoft is the ONE predicate " +
                 "both faces read the route off, and it answers two-or-more " +
-                "sections on every cell of the force-aligned barrel; a " +
-                "loft-route cell hands back ONE MOVED RAIL PER SECTION, " +
-                "point for point, every point moved exactly |Th| at " +
-                "Extrude 0, 0.5 and 1, where a fan-route cell hands back " +
-                "no rails at all and fans as it always did; and every " +
+                "sections on every cell of the force-aligned barrel AND of " +
+                "the COURSES dome, whose BandCell stores its sections in " +
+                "the other order and whose loft top went unproven until " +
+                "now; a loft-route cell hands back ONE MOVED RAIL PER " +
+                "SECTION, point for point, every point moved exactly |Th| " +
+                "at Extrude 0, 0.5 and 1, where a fan-route cell hands " +
+                "back no rails at all and fans as it always did; every " +
                 "section point that IS an outline corner moves to the " +
-                "outline's own moved corner BIT FOR BIT, so the lofted top " +
-                "stands on the wall quads rather than over them. The fan " +
+                "outline's own moved corner BIT FOR BIT at every one of " +
+                "those three stops, so the lofted top stands on the wall " +
+                "quads rather than over them; and a cell whose route says " +
+                "loft but whose rails will not loft is REFUSED rather than " +
+                "fanned, where a fan-route cell is left alone. The fan " +
                 "over a lofted bottom is the triangulated crust in Param's " +
                 "screenshot and it is gone.");
         }

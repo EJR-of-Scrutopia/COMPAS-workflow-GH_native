@@ -917,12 +917,42 @@ public sealed class SkinComponent : NativeComponentBase
     /// is (0, 0, 1), an arbitrary but FINITE direction.
     /// </summary>
     internal static double[] CellNormal(
+        SkinNet net, IReadOnlyList<double[]> outline) =>
+        CellNormalFrom(outline, CornerNormals(net, outline));
+
+    /// <summary>
+    /// THE FIELD NORMAL AT EVERY CORNER OF ONE OUTLINE, read once.
+    ///
+    /// It exists because <see cref="SkinPatterns.NormalAt"/> is not cheap:
+    /// it walks the net's faces to find the one under the point, so a cell
+    /// of n corners costs n such walks. Before 2026-09-04 every corner paid
+    /// for TWO, once inside <see cref="CellNormal"/>'s mean and once again
+    /// inside <see cref="ThicknessOffset"/>'s blend, for one answer that
+    /// cannot have changed in between. The approving review named it and
+    /// this is the fix: the corner normals are read once and handed on.
+    /// </summary>
+    internal static IReadOnlyList<double[]> CornerNormals(
         SkinNet net, IReadOnlyList<double[]> outline)
     {
-        double x = 0.0, y = 0.0, z = 0.0;
+        var normals = new List<double[]>(outline.Count);
         foreach (double[] corner in outline)
+            normals.Add(SkinPatterns.NormalAt(net, corner));
+        return normals;
+    }
+
+    /// <summary>
+    /// <see cref="CellNormal"/>'s arithmetic over corner normals ALREADY
+    /// READ. The mean, the length gate and the Newell ladder are exactly
+    /// what stood inside CellNormal, accumulated in the same order into the
+    /// same doubles, so the answer is bit-identical and not merely equal.
+    /// </summary>
+    internal static double[] CellNormalFrom(
+        IReadOnlyList<double[]> outline,
+        IReadOnlyList<double[]> cornerNormals)
+    {
+        double x = 0.0, y = 0.0, z = 0.0;
+        foreach (double[] normal in cornerNormals)
         {
-            double[] normal = SkinPatterns.NormalAt(net, corner);
             x += normal[0];
             y += normal[1];
             z += normal[2];
@@ -999,9 +1029,25 @@ public sealed class SkinComponent : NativeComponentBase
         double[] point,
         double[] cellNormal,
         double thickness,
+        double extrude) =>
+        ThicknessOffsetFrom(
+            SkinPatterns.NormalAt(net, point), cellNormal, thickness,
+            extrude);
+
+    /// <summary>
+    /// <see cref="ThicknessOffset"/>'s arithmetic, over a field normal
+    /// ALREADY READ. Split out on 2026-09-04 so an outline corner whose
+    /// normal <see cref="CornerNormals"/> has already fetched does not
+    /// fetch it a second time; the blend, the renormalisation and the
+    /// degenerate fallback are the same expressions in the same order, so
+    /// the answer is bit-identical.
+    /// </summary>
+    internal static double[] ThicknessOffsetFrom(
+        double[] normal,
+        double[] cellNormal,
+        double thickness,
         double extrude)
     {
-        double[] normal = SkinPatterns.NormalAt(net, point);
         double x = ((1.0 - extrude) * normal[0]) + (extrude * cellNormal[0]);
         double y = ((1.0 - extrude) * normal[1]) + (extrude * cellNormal[1]);
         double z = ((1.0 - extrude) * normal[2]) + (extrude * cellNormal[2]);
@@ -1034,9 +1080,16 @@ public sealed class SkinComponent : NativeComponentBase
         SkinNet net,
         IReadOnlyList<double[]> outline,
         double thickness,
-        double extrude) =>
-        OffsetPoints(
-            net, outline, CellNormal(net, outline), thickness, extrude);
+        double extrude)
+    {
+        IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
+        return OffsetPointsFrom(
+            outline,
+            cornerNormals,
+            CellNormalFrom(outline, cornerNormals),
+            thickness,
+            extrude);
+    }
 
     /// <summary>
     /// A LIST OF POINTS MOVED UNDER ONE CELL'S NORMAL. The cell normal is
@@ -1051,13 +1104,31 @@ public sealed class SkinComponent : NativeComponentBase
         IReadOnlyList<double[]> points,
         double[] cellNormal,
         double thickness,
+        double extrude) =>
+        OffsetPointsFrom(
+            points, CornerNormals(net, points), cellNormal, thickness,
+            extrude);
+
+    /// <summary>
+    /// THE SAME MOVE, over field normals ALREADY READ, one per point in
+    /// order. An outline's corners are read once by
+    /// <see cref="CornerNormals"/> and serve both the cell normal and the
+    /// blend; a cell's section RAILS have no such list of their own and go
+    /// through <see cref="OffsetPoints"/>, which reads theirs.
+    /// </summary>
+    internal static IReadOnlyList<double[]> OffsetPointsFrom(
+        IReadOnlyList<double[]> points,
+        IReadOnlyList<double[]> normals,
+        double[] cellNormal,
+        double thickness,
         double extrude)
     {
         var moved = new List<double[]>(points.Count);
-        foreach (double[] point in points)
+        for (int at = 0; at < points.Count; at++)
         {
-            double[] offset = ThicknessOffset(
-                net, point, cellNormal, thickness, extrude);
+            double[] point = points[at];
+            double[] offset = ThicknessOffsetFrom(
+                normals[at], cellNormal, thickness, extrude);
             moved.Add(new[]
             {
                 point[0] + offset[0],
@@ -1211,9 +1282,13 @@ public sealed class SkinComponent : NativeComponentBase
     {
         if (outline.Count < 3)
             return null;
-        double[] cellNormal = CellNormal(net, outline);
-        IReadOnlyList<double[]> moved =
-            OffsetPoints(net, outline, cellNormal, thickness, extrude);
+        // ONE READING OF THE FIELD PER CORNER. NormalAt walks the net's
+        // faces, and until 2026-09-04 every corner paid for two walks: one
+        // for the cell normal's mean and one for its own blend.
+        IReadOnlyList<double[]> cornerNormals = CornerNormals(net, outline);
+        double[] cellNormal = CellNormalFrom(outline, cornerNormals);
+        IReadOnlyList<double[]> moved = OffsetPointsFrom(
+            outline, cornerNormals, cellNormal, thickness, extrude);
 
         IReadOnlyList<IReadOnlyList<double[]>>? movedSections =
             MovedSections(net, sections, cellNormal, thickness, extrude);
