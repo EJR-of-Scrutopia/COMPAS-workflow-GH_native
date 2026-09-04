@@ -1245,11 +1245,22 @@ public sealed class SkinComponent : NativeComponentBase
     /// AND A LOFT THAT WILL NOT LOFT IS REFUSED RATHER THAN FANNED
     /// (<see cref="TopRefused"/>, added 2026-09-04 on the approving
     /// review's first finding). MovedSections answers null for two
-    /// different reasons -- the cell is not a loft at all, and the cell IS
-    /// a loft but carries a section under two points -- and both nulls used
-    /// to fall through to the fan. The second is now a refusal, so a cell
-    /// that cannot be capped honestly keeps its face and lands in the
-    /// thicken-failure count where an author can see it.
+    /// different reasons: the cell is not a loft at all, and the cell IS a
+    /// loft but carries a section under two points. Only the first of those
+    /// may honestly fan, so the second is refused.
+    ///
+    /// THAT REFUSAL IS DEFENCE IN DEPTH AND NOT A PRODUCTION PATH, which
+    /// the re-review of 2026-09-04 established and this prose now says
+    /// rather than implies. Down the canvas's own route the case cannot
+    /// arrive here at all: <see cref="CellSurface"/> builds a loft-route
+    /// cell's BOTTOM through LoftSections, which refuses a section under
+    /// two points on exactly the test MovedSections uses, so such a cell
+    /// has no face, and SolveNative asks for a thickening only where the
+    /// face is not null. The cell is already counted a FACE failure before
+    /// this method is reached. The guard is kept because CellSurface is not
+    /// the only caller: this plugin's harness and
+    /// scripts/rhino_skin_surface.py drive ThickenCellSurface directly,
+    /// with no such filter standing in front of it.
     ///
     /// EVERY POINT MOVES BY ITS OWN BLENDED DIRECTION (rule 3.1), under the
     /// ONE cell normal <see cref="CellNormal"/> reads off this cell's
@@ -1350,23 +1361,37 @@ public sealed class SkinComponent : NativeComponentBase
 
     /// <summary>
     /// IS THIS CELL'S TOP REFUSED OUTRIGHT? The gap the approving review of
-    /// 2026-09-04 found in section 5, closed here rather than argued away.
+    /// 2026-09-04 found in section 5, closed here rather than argued away,
+    /// and kept as DEFENCE IN DEPTH once the re-review of the same day
+    /// showed the production route cannot reach it.
     ///
     /// <see cref="TopTakesLoft"/> answers on the section COUNT alone, but
     /// <see cref="MovedSections"/> also hands back null where a section it
     /// was going to move carries under two points, which is a rail no loft
-    /// can be built from. Both nulls used to fall through to the same
-    /// <see cref="OffsetTopFace"/>, so a cell that IS a loft by the one
-    /// route predicate, and whose bottom therefore lofted, could still be
-    /// capped by a FAN: exactly the triangulated crust section 5 exists to
-    /// abolish, reached by the back door.
+    /// can be built from. Told apart here, both nulls would otherwise fall
+    /// through to the same <see cref="OffsetTopFace"/> and cap a cell that
+    /// IS a loft by the one route predicate with a FAN: exactly the
+    /// triangulated crust section 5 exists to abolish, reached by the back
+    /// door.
     ///
-    /// THE ANSWER IS A REFUSAL AND NOT A FAN. A cell whose route says loft
-    /// and whose rails will not loft has nothing honest to be capped with,
-    /// so it is refused: it keeps its own untouched Surface face and lands
-    /// in the thicken-failure count where an author can see it, rather
-    /// than being quietly given a top that does not share its bottom's
-    /// boundary and then failing the join for a reason nothing names.
+    /// THE PRODUCTION ROUTE CANNOT REACH THIS GUARD, and the reason is
+    /// CellSurface's own filter rather than anything written here. A
+    /// loft-route cell's bottom is built by <see cref="CellSurface"/>
+    /// through LoftSections, which refuses a section under two points on
+    /// exactly the test MovedSections uses; that cell therefore has NO
+    /// bottom face, SolveNative calls ThickenCellSurface only where the
+    /// face is not null, and the cell is counted a face failure before any
+    /// thickening is asked for. No cell on the canvas arrives here with a
+    /// lofted bottom and a crippled section, because no such cell has a
+    /// lofted bottom to arrive with.
+    ///
+    /// IT IS KEPT BECAUSE CELLSURFACE IS NOT THE ONLY CALLER. This plugin's
+    /// harness and scripts/rhino_skin_surface.py drive ThickenCellSurface
+    /// directly, with no pre-filter standing in front of it, and a later
+    /// caller could as easily build a bottom by some other route. The
+    /// refusal costs one comparison and keeps the invariant local to the
+    /// method that depends on it, so the answer is a refusal and never a
+    /// fan wherever the case does arise.
     ///
     /// A fan-route cell is untouched by this. Its sections are null or
     /// single, TopTakesLoft is false, MovedSections is null BECAUSE the
