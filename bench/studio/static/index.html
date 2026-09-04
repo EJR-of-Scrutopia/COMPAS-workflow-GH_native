@@ -41,7 +41,7 @@
       <button id="delete-study" title="Delete this vault's JSON from the folder">Delete</button>
     </div>
     <div id="source-row" class="hidden">
-      <span class="row-heading">Skin</span>
+      <span class="row-heading">Cut</span>
       <div class="switch-line">
         <span class="toggle-end" id="source-end-authored">Grasshopper</span>
         <label class="toggle"><input id="source-toggle" type="checkbox"><span class="track"></span></label>
@@ -78,6 +78,8 @@
     </select>
     <label>Tint <input id="material-tint" type="color" value="#ffffff"></label>
     <label>Shine <input id="material-finish" type="range" min="0.3" max="1" step="0.01" value="0.5"> <span id="material-finish-value">50</span></label>
+    <label>Relief <input id="material-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
+    <label>Occlusion <input id="material-occlusion" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note" class="hidden"></div>
     <div class="named"><span>Pattern</span><select id="pattern-select"></select></div>
@@ -114,21 +116,11 @@
   <details id="scene-section">
     <summary>Scene</summary>
     <span class="row-heading">Sun</span>
-    <div id="sun-block">
-      <div id="sun-widget">
-        <canvas id="sun-dial" width="186" height="118"></canvas>
-        <div id="sun-readout"><span id="sun-time">12:00</span><span id="sun-angles">180 / 60</span></div>
-      </div>
-      <div id="sun-presets">
-        <button class="chip" data-preset="sunrise">Sunrise</button>
-        <button class="chip" data-preset="morning">Morning</button>
-        <button class="chip" data-preset="noon">Noon</button>
-        <button class="chip" data-preset="golden">Golden</button>
-        <button class="chip" data-preset="sunset">Sunset</button>
-        <button class="chip" data-preset="blue">Blue hour</button>
-      </div>
+    <div id="sun-widget">
+      <canvas id="sun-dial" width="234" height="150"></canvas>
+      <div id="sun-readout"><span id="sun-time">12:00</span><span id="sun-angles">180 / 60</span></div>
     </div>
-    <canvas id="day-track" width="276" height="26"></canvas>
+    <canvas id="day-track" width="234" height="26"></canvas>
     <div id="day-cycle-row">
       <button id="day-cycle-button">Day cycle</button>
       <label><input id="day-cycle-record" type="checkbox"> During recordings</label>
@@ -142,9 +134,9 @@
 
     <span class="row-heading">Scenes</span>
     <div id="scene-row">
-      <button id="scene-save">Save scene</button>
+      <button id="scene-save" title="Save the viewport, the floor, the light and everything placed">Save</button>
       <button id="scene-open">Scenes</button>
-      <button id="clear-scene" title="Empty the viewport and deselect">Clear scene</button>
+      <button id="clear-scene" title="Empty the viewport and deselect">Clear</button>
       <span id="scene-count"></span>
     </div>
     <div id="scene-list" class="hidden"></div>

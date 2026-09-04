@@ -16,18 +16,27 @@ import * as THREE from "three";
 // in the library; the server snaps anything else down to one of them and
 // falls through to the master when the tier was never written, which
 // happens whenever the master was already smaller.
-export const VIEWPORT_PX = 1024;
+// 0 means the master: the largest the library holds for that map, which in
+// this library is the one-unit crop at whatever size it was cut from a 4K or
+// 8K source. There is no larger thing to ask for, and asking for a tier
+// instead would be choosing to be blurrier than the files allow.
+export const VIEWPORT_PX = 0;
 export const TILE_PX = 256;
 
-// Which file goes in which slot. height is deliberately absent: the
-// viewport does not displace, and loading a map nothing samples is a
-// megabyte of video memory spent on nothing. It is still fetched for the
-// preview's relief and for the day the CPU displacement lands.
+// Which file goes in which slot.
 const SLOTS = {
   colour: "map",
   normal: "normalMap",
   roughness: "roughnessMap",
   ao: "aoMap",
+  // The height field, as the BUMP map. A height map can drive geometry or
+  // it can drive shading, and the mesh decides which is possible:
+  // displacementMap moves vertices, and a vault piece is an extruded
+  // voussoir of a couple of dozen of them, so displacing it would do
+  // nothing whatever. Bump perturbs the shading normal per fragment, needs
+  // no vertices at all, and is what makes a mortar joint read as a recess
+  // rather than as a dark line.
+  height: "bumpMap",
 };
 
 // Only colour is colour. Setting sRGB on a normal map does not merely look
@@ -117,7 +126,12 @@ export async function loadLibraryMaterial(entry, options) {
   // that it needs a second UV set is dead: aoMap.channel defaults to 0 and
   // only a non-zero channel defines USE_UV1. The jsdoc still says otherwise
   // and contradicts its own code.
-  if (material.aoMap) material.aoMapIntensity = 1.0;
+  if (material.aoMap) material.aoMapIntensity = settings.occlusion ?? 1.0;
+  // In METRES, because the height field is a real depth and the studio is a
+  // real building. QS's own convention is that a relief of 1 means 10 mm,
+  // measured about the field's mean rather than about mid-grey, and this is
+  // that number in three's units.
+  if (material.bumpMap) material.bumpScale = (settings.relief ?? 1.0) * 0.01;
   // A material with no roughness map keeps a sensible fixed roughness
   // instead of the 1.0 the scalar wants to be when a map is present.
   if (!material.roughnessMap) material.roughness = 0.85;
@@ -158,6 +172,20 @@ export const DEFAULT_TILE_METRES = 0.6;
  */
 export function setRepeat(set, u, v) {
   for (const texture of set.textures) texture.repeat.set(u, v);
+}
+
+/**
+ * The two dials over a loaded set: how deep its relief reads, and how much
+ * of its own crevice shading it keeps.
+ *
+ * Both are per-material rather than per-map, so they change nothing on the
+ * GPU: no texture is re-uploaded and no shader is recompiled.
+ */
+export function setSurface(set, relief, occlusion) {
+  if (!set) return;
+  if (set.material.bumpMap) set.material.bumpScale = relief * 0.01;
+  if (set.material.aoMap) set.material.aoMapIntensity = occlusion;
+  set.material.needsUpdate = false;
 }
 
 /**

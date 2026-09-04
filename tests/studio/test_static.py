@@ -48,6 +48,13 @@ def test_index_wires_the_importmap_and_scripts():
 def test_no_external_urls_in_the_page_or_scripts():
     for name in ("index.html", "studio.js", "studio.css", "fields.js"):
         text = (STATIC / name).read_text(encoding="utf-8")
+        # Comments are not references. A stylesheet that cites where a
+        # design token's value came from is documenting itself, and nothing
+        # fetches a URL out of a comment; the claim this test defends is
+        # that the studio works with no network, which is about what the
+        # BROWSER loads.
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        text = re.sub(r"^\s*//.*$", "", text, flags=re.M)
         assert not re.search(r"https?://", text), (
             "{} references the network; the studio must work offline".format(name)
         )
@@ -2242,7 +2249,9 @@ def test_the_event_log_reports_studio_events():
     # F6: the log sat at right: 16px, painting over the 300px control panel
     # (#legend already solves the identical collision at 316px); pin the
     # same clearance here so the two cannot drift apart again.
-    assert "right: 316px" in css.split("#event-log", 1)[1][:400]
+    # 276 = the panel's 260 plus a 16px margin. It was 316 while the panel
+    # was 300 wide; Spectrum's standard-panel-width is 260.
+    assert "right: 276px" in css.split("#event-log", 1)[1][:400]
     body = _function_body(js, "logStudio")
     assert "toLocaleTimeString" in body or "toTimeString" in body
     # The banner helper mirrors into the log, and the named sites report.

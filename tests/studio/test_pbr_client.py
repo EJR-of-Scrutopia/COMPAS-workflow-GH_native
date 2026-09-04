@@ -75,16 +75,56 @@ def test_disposal_frees_the_maps_and_not_only_the_material():
     assert "set.material.dispose();" in body
 
 
-def test_the_height_map_is_not_loaded_into_the_viewport():
-    """Every material in the library has one and the viewport samples none
-    of them: it normal-maps rather than displacing. A map nothing reads is a
-    megabyte of video memory spent on nothing."""
+def test_the_height_map_drives_the_shading_because_the_mesh_cannot_be_moved():
+    """Reversed on 2026-09-04, on Param's ask that the library's height and
+    occlusion maps actually be used.
+
+    A height map can drive geometry or it can drive shading, and which is
+    possible is decided by the MESH. displacementMap moves vertices, and a
+    vault piece is an extruded voussoir of a couple of dozen of them, so on
+    that geometry it would do nothing whatever; subdividing fifteen hundred
+    pieces far enough to displace them is millions of triangles for relief a
+    bump map gives at every distance this studio is used at. So height is
+    the bump map, and the control over it is called Relief rather than
+    Displacement because that is what it does.
+    """
 
     source = pbr()
     slots = source[source.index("const SLOTS = {"):source.index("};", source.index("const SLOTS = {"))]
-    assert "colour:" in slots and "normal:" in slots
-    assert "roughness:" in slots and "ao:" in slots
-    assert "height:" not in slots
+    for kind in ("colour:", "normal:", "roughness:", "ao:", "height:"):
+        assert kind in slots, kind
+    assert 'height: "bumpMap"' in slots
+    # The slot as it would be WRITTEN, not the word: the comment beside it
+    # explains why displacement is wrong here and must go on saying so.
+    assert '"displacementMap"' not in source, (
+        "a vault piece has no vertices to displace; wiring the slot anyway "
+        "is how a control that does nothing gets shipped"
+    )
+
+
+def test_the_viewport_asks_for_the_master_not_a_tier():
+    """0 means the master: the largest the library holds. Asking for a tier
+    instead is choosing to be blurrier than the files allow."""
+
+    assert "export const VIEWPORT_PX = 0;" in pbr()
+    assert "anisotropy: renderer.capabilities.getMaxAnisotropy()" in studio(), (
+        "a vault is looked at from underneath, which is every texture's "
+        "worst angle, and anisotropy is the only thing that answers it"
+    )
+
+
+def test_relief_and_occlusion_move_without_reuploading_anything():
+    """Both are properties of the material, not of a piece, so they change
+    no texture and rebuild no mesh. That is what lets them move live."""
+
+    source = pbr()
+    body = source[source.index("export function setSurface"):]
+    body = body[:body.index("\n}\n")]
+    assert "set.material.bumpScale = relief * 0.01" in body, (
+        "in metres, and QS's own convention is that a relief of 1 is 10 mm"
+    )
+    assert "set.material.aoMapIntensity = occlusion" in body
+    assert "dispose" not in body and "needsUpdate = true" not in body
 
 
 def test_a_piece_is_laid_out_in_metres_when_the_material_knows_its_size():

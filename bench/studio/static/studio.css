@@ -1,35 +1,96 @@
+/* Adobe Spectrum, as published token values rather than as a mood.
+   https://opensource.adobe.com/spectrum-design-data/tokens/standard-panel/
+   https://opensource.adobe.com/spectrum-design-data/tokens/card/
+   Adopted 2026-09-04 after a survey of ten renderers and DCC tools; it was
+   the only candidate publishing exact numbers for panel width, control
+   height, thumbnail size and a dark surface ramp, and it is the system
+   behind Substance 3D Painter, whose asset panel is the nearest existing
+   thing to this one. */
+:root {
+  /* Four planes and no more. Everything the panel draws sits on one of
+     them, which is what stops thirty unrelated greys accumulating again. */
+  --ground:   #111111;   /* the viewport, and the well behind a grid */
+  --panel:    #1b1b1b;   /* the panel itself */
+  --raised:   #222222;   /* a control, a popover, a tile */
+  --well:     #2c2c2c;   /* an inset, a track, a hover */
+  --line:     #393939;   /* every border */
+  --line-lit: #5c5c5c;   /* a border under the pointer */
+  --off:      #444444;   /* disabled */
+
+  --ink:      #e6e6e6;   /* what you read */
+  --ink-2:    #a0a0a0;   /* what you read second */
+  --ink-3:    #6f6f6f;   /* metadata, and headings at rest */
+
+  --accent:   #4069fd;   /* selection and focus, Spectrum blue-800 */
+  --accent-bg:#1e2740;   /* the ground under a selected thing */
+
+  /* component-height-100 and -75. A control is 32; a chip or a list row is
+     24, which is the only other height the panel is allowed. */
+  --h:        32px;
+  --h-small:  24px;
+
+  /* The spacing scale. Nothing in the panel uses a number that is not one
+     of these, which is most of what makes a dense panel look ordered. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  --radius:   4px;       /* corner-radius-100, every control */
+  --radius-s: 3px;       /* thumbnail-corner-radius */
+
+  --t-meta:   11px;      /* a readout, a caption, a size in millimetres */
+  --t-2:      12px;      /* secondary */
+  --t:        14px;      /* body, controls, and a panel title */
+  --t-head:   16px;      /* a section heading */
+
+  --panel-w:  260px;     /* standard-panel-width */
+}
+
 :root { color-scheme: dark; }
 * { margin: 0; box-sizing: border-box; }
 body { overflow: hidden;
        font-family: "Segoe UI Variable Text", system-ui, "Inter",
                     -apple-system, "Segoe UI", sans-serif;
-       font-size: 12px; letter-spacing: 0.005em;
-       background: #101114; color: #e8e8e6; }
+       font-size: var(--t); letter-spacing: 0;
+       background: var(--ground); color: var(--ink); }
 #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-#panel { position: fixed; top: 0; right: 0; width: 300px; height: 100%;
-         overflow-y: auto; padding: 14px; background: rgba(16, 17, 20, 0.88);
-         backdrop-filter: blur(6px); border-left: 1px solid #2a2c31; }
-#panel summary { text-transform: uppercase; letter-spacing: 0.1em;
-                 color: #9aa0a6; margin: 18px 0 8px; cursor: pointer;
+/* Opaque, not translucent. A blurred panel over a moving viewport makes
+   every grey in it a different grey depending on what is behind it, which
+   is the opposite of adopting a surface ramp. */
+#panel { position: fixed; top: 0; right: 0; width: var(--panel-w);
+         min-width: 200px; max-width: 400px; height: 100%;
+         overflow-y: auto; padding: var(--s3);
+         background: var(--panel); border-left: 1px solid var(--line); }
+#panel summary { font-size: var(--t-2); text-transform: uppercase;
+                 letter-spacing: 0.08em; color: var(--ink-3);
+                 margin: var(--s6) 0 var(--s2); cursor: pointer;
                  list-style: none; user-select: none; }
+#panel summary:hover { color: var(--ink-2); }
 #panel summary::before { content: "\25B8\00A0"; }
 #panel details[open] > summary::before { content: "\25BE\00A0"; }
 #panel details:first-child > summary { margin-top: 0; }
 #styling-section > summary { margin: 10px 0 4px; }
-#panel label { display: block; margin: 8px 0; color: #c8c9c7; }
+#panel label { display: block; margin: var(--s2) 0; color: var(--ink-2); }
 #panel input[type="range"] { width: 100%; }
-#panel select, #panel button { width: 100%; margin: 4px 0; padding: 6px 8px;
-         background: #1c1e23; color: #e8e8e6; border: 1px solid #34373d;
-         border-radius: 4px; font: inherit; }
-#panel button:hover { border-color: #6f7074; cursor: pointer; }
-#props-row button.armed { outline: 2px solid #7ab3e0; }
+/* One control height for everything the panel offers, which is the single
+   change that makes a column of unlike controls read as a set. */
+#panel select, #panel button { width: 100%; height: var(--h);
+         margin: var(--s1) 0; padding: 0 var(--s3);
+         background: var(--raised); color: var(--ink);
+         border: 1px solid var(--line); border-radius: var(--radius);
+         font: inherit; }
+#panel button { text-align: center; }
+#panel button:hover, #panel select:hover { border-color: var(--line-lit);
+         cursor: pointer; }
+#panel button:focus-visible, #panel select:focus-visible,
+#panel input:focus-visible { outline: 2px solid var(--accent);
+         outline-offset: 1px; }
+#props-row button.armed { outline: 2px solid var(--accent); }
 #hud { position: fixed; left: 16px; bottom: 16px; font-size: 13px;
        line-height: 1.5; white-space: pre; pointer-events: none;
        text-shadow: 0 1px 3px #000; }
-/* F6: right: 316px clears the 300px control panel plus its own margin,
+/* F6: right: 276px clears the 300px control panel plus its own margin,
    same fix and same number as #legend below -- the log used to paint its
    text underneath the panel itself. */
-#event-log { position: fixed; right: 316px; bottom: 16px; font-size: 12px;
+#event-log { position: fixed; right: 276px; bottom: 16px; font-size: 12px;
   font-family: ui-monospace, monospace; color: #fff; text-align: right;
   pointer-events: none; opacity: 1; transition: opacity 1.2s; z-index: 15;
   text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
@@ -38,17 +99,17 @@ body { overflow: hidden;
 #banner { position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
           padding: 8px 14px; background: #7a2b20; border-radius: 4px;
           font-size: 13px; z-index: 10; }
-#run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note { color: #9aa0a6; min-height: 1.2em; }
+#run-status, #cut-status, #record-status, #import-status, #pattern-note, #appearance-note { color: var(--ink-2); min-height: 1.2em; }
 #data-panel { position: fixed; left: 16px; top: 16px; bottom: 16px; width: 420px;
               overflow: auto; background: rgba(16, 17, 20, 0.95); padding: 14px;
-              border: 1px solid #2a2c31; border-radius: 6px; z-index: 20; }
+              border: 1px solid var(--line); border-radius: 6px; z-index: 20; }
 #data-content { font-size: 12px; line-height: 1.5; }
 #data-content h3 { font-size: 13px; margin: 4px 0 8px; }
-#data-content p { margin: 0 0 10px; color: #c8c9c7; }
+#data-content p { margin: 0 0 10px; color: var(--ink-2); }
 #data-content ul { margin: 0 0 10px; padding-left: 18px; }
 #data-content table { width: 100%; border-collapse: collapse; margin: 0 0 10px; }
 #data-content th, #data-content td { text-align: left; padding: 2px 6px 2px 0;
-              border-bottom: 1px solid #2a2c31; }
+              border-bottom: 1px solid var(--line); }
 /* Specificity, and the bug it caused. "#panel button" is one id plus one
    element and beats a bare class, so every new component that set its own
    width lost to it silently: tiles and chips stretched to the full panel
@@ -69,13 +130,13 @@ body { overflow: hidden;
    likely to be read against. */
 #legend {
   position: absolute;
-  right: 316px;
+  right: 276px;
   bottom: 16px;
   padding: 8px 12px;
   min-width: 180px;
   background: rgba(16, 18, 22, 0.8);
   border-radius: 6px;
-  color: #dfe3ea;
+  color: var(--ink);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -95,11 +156,11 @@ body { overflow: hidden;
 #cut-overlay { position: fixed; left: 50%; top: 45%; transform: translate(-50%, -50%);
                display: flex; flex-direction: column; align-items: center; gap: 10px;
                padding: 18px 26px; background: rgba(16, 18, 22, 0.85);
-               border: 1px solid #34373d; border-radius: 8px; z-index: 30;
+               border: 1px solid var(--line); border-radius: 8px; z-index: 30;
                pointer-events: none; }
 #cut-overlay.hidden { display: none; }
 #cut-spinner { width: 22px; height: 22px; border-radius: 50%;
-               border: 3px solid #34373d; border-top-color: #9aa0a6;
+               border: 3px solid var(--line); border-top-color: var(--ink-2);
                animation: cut-spin 0.9s linear infinite; }
 @keyframes cut-spin { to { transform: rotate(360deg); } }
 
@@ -108,12 +169,12 @@ body { overflow: hidden;
    The beacon breathes so a still screenshot and a live window are told
    apart, and flares on the frame a push actually lands. */
 #live-toggle { display: inline-flex; align-items: center; gap: 5px;
-  margin: 0 4px; padding: 2px 7px; border: 1px solid #3a3f47; border-radius: 3px;
-  background: #23262c; color: #6b7079; letter-spacing: 0.12em;
+  margin: 0 4px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 3px;
+  background: var(--raised); color: #6b7079; letter-spacing: 0.12em;
   cursor: pointer; }
 #live-toggle .beacon { width: 7px; height: 7px; border-radius: 50%;
   background: transparent; }
-#live-toggle.on { color: #e8eaed; border-color: #6a2f33; }
+#live-toggle.on { color: var(--ink); border-color: #6a2f33; }
 #live-toggle.on .beacon { background: #e03a3a; box-shadow: 0 0 5px #e03a3a;
   animation: live-breathe 2s ease-in-out infinite; }
 #live-toggle.fresh .beacon { background: #ff6b6b; box-shadow: 0 0 10px #ff5252;
@@ -127,51 +188,51 @@ body { overflow: hidden;
 /* Saved scenes. The picker is a grid of stills rather than a select,
    because a scene is a picture and a name is a poor substitute for one. */
 #scene-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
-#scene-count { color: #7d838c; }
+#scene-count { color: var(--ink-3); }
 #scene-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
   margin: 4px 0 8px; max-height: 320px; overflow-y: auto; }
-.scene-tile { position: relative; padding: 0; border: 1px solid #3a3f47;
-  border-radius: 3px; background: #1c1f24; color: #d8dade; cursor: pointer;
+.scene-tile { position: relative; padding: 0; border: 1px solid var(--line);
+  border-radius: 3px; background: var(--raised); color: var(--ink); cursor: pointer;
   text-align: left; overflow: hidden; }
-.scene-tile:hover { border-color: #6d7885; }
+.scene-tile:hover { border-color: var(--line-lit); }
 .scene-tile img { display: block; width: 100%; aspect-ratio: 16 / 9;
-  object-fit: cover; background: #14161a; }
+  object-fit: cover; background: var(--ground); }
 .scene-tile .scene-name { display: block; padding: 3px 5px 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scene-tile .scene-study { display: block; padding: 0 5px 4px;
-  color: #7d838c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .scene-tile .scene-elsewhere { color: #c8a44a; }
 .scene-delete { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px;
   padding: 0; border: none; border-radius: 3px; background: rgba(20, 22, 26, 0.75);
-  color: #c9ccd1; line-height: 18px; cursor: pointer; }
+  color: var(--ink); line-height: 18px; cursor: pointer; }
 .scene-delete:hover { background: #7a2b2b; color: #fff; }
-.scene-empty { color: #7d838c; grid-column: 1 / -1; }
+.scene-empty { color: var(--ink-3); grid-column: 1 / -1; }
 
 /* The import panel: where the vaults are, which one is up, which skin cuts
    it, and whether the studio is following Grasshopper. */
 #folder-row, #vault-row, #vault-tools { display: flex; align-items: center;
   gap: 6px; margin: 5px 0; }
 #vault-row select { flex: 1 1 auto; min-width: 0; }
-#folder-path { flex: 1 1 auto; min-width: 0; color: #9aa1a9;
+#folder-path { flex: 1 1 auto; min-width: 0; color: var(--ink-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl;
   text-align: left; }
-#import-upload { margin: 6px 0; color: #8b9199; }
+#import-upload { margin: 6px 0; color: var(--ink-3); }
 #import-upload summary { cursor: pointer; }
 
 /* The skin choice is one switch between two named ends, not a list of two:
    a study either wears the skin Grasshopper authored or the one the studio
    cuts, and a toggle says that in a glance. */
 #source-row { margin: 7px 0; }
-.toggle-end { color: #7d838c; }
+.toggle-end { color: var(--ink-3); }
 #source-row.authored #source-end-authored,
-#source-row.generated #source-end-generated { color: #e8eaed; }
+#source-row.generated #source-end-generated { color: var(--ink); }
 .toggle { position: relative; display: inline-block; width: 34px; height: 16px; }
 .toggle input { position: absolute; opacity: 0; width: 100%; height: 100%;
   margin: 0; cursor: pointer; }
 .toggle .track { position: absolute; inset: 0; border-radius: 8px;
-  background: #3a3f47; transition: background 120ms linear; pointer-events: none; }
+  background: var(--line); transition: background 120ms linear; pointer-events: none; }
 .toggle .track::before { content: ""; position: absolute; top: 2px; left: 2px;
-  width: 12px; height: 12px; border-radius: 50%; background: #d8dade;
+  width: 12px; height: 12px; border-radius: 50%; background: var(--ink);
   transition: transform 120ms ease; }
 .toggle input:checked + .track { background: #4a6a8a; }
 .toggle input:checked + .track::before { transform: translateX(18px); }
@@ -182,18 +243,20 @@ body { overflow: hidden;
 /* A group heading is a control: it folds its group away, and while folded
    it says what the group is set to, so nothing has to be opened to be
    read. The chevron is drawn in CSS rather than fetched as an icon. */
-.row-heading { display: flex; align-items: center; gap: 6px; margin: 10px 0 2px;
-  color: #9aa0a6; text-transform: uppercase; letter-spacing: 0.1em;
-  cursor: pointer; user-select: none; }
+.row-heading { display: flex; align-items: center; gap: var(--s2);
+  height: var(--h-small); margin: var(--s3) 0 var(--s1);
+  font-size: var(--t-2); color: var(--ink-3); text-transform: uppercase;
+  letter-spacing: 0.08em; cursor: pointer; user-select: none; }
 .row-heading::before { content: ""; width: 0; height: 0; flex: 0 0 auto;
-  border-left: 4px solid #6b7078; border-top: 3.5px solid transparent;
+  border-left: 4px solid var(--ink-3); border-top: 3.5px solid transparent;
   border-bottom: 3.5px solid transparent; transition: transform 120ms ease;
   transform: rotate(90deg); }
 .row-heading.folded::before { transform: rotate(0deg); }
-.row-heading:hover { color: #d8dade; }
-.row-heading .summary { margin-left: auto; color: #6b7078;
-  text-transform: none; letter-spacing: 0; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.row-heading:hover { color: var(--ink); }
+.row-heading .summary { margin-left: auto; font-size: var(--t-meta);
+  color: var(--ink-3); text-transform: none; letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 140px; }
 .group-body.folded { display: none; }
 .switch-line { display: flex; align-items: center; gap: 8px; }
 
@@ -205,19 +268,22 @@ body { overflow: hidden;
    end with, which is otherwise a column of identical buttons and no way to
    tell where one thing stops and another starts. */
 #mode-row { position: sticky; bottom: 0; z-index: 5; display: grid;
-  grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 18px -14px 0;
-  padding: 10px 14px 12px; background: rgba(18, 20, 24, 0.97);
-  border-top: 1px solid #34373d; }
+  grid-template-columns: repeat(3, 1fr); gap: var(--s1);
+  margin: var(--s6) calc(-1 * var(--s3)) 0;
+  padding: var(--s2) var(--s3) var(--s3); background: var(--panel);
+  border-top: 1px solid var(--line); }
 /* The panel's blanket button rule would otherwise put a 4px margin between
    grid cells that already have a gap, and stretch each to the full width. */
 #mode-row .mode, #material-swatches .swatch { width: auto; margin: 0; }
-#mode-row .mode { padding: 7px 2px; border: 1px solid #3a3f47; border-radius: 3px;
-  background: #23262c; color: #9aa1a9; letter-spacing: 0.02em;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-#mode-row .mode:hover { border-color: #6d7885; color: #d8dade; }
+#mode-row .mode { height: var(--h); padding: 0 var(--s1);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--ink-2); letter-spacing: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; }
+#mode-row .mode:hover { border-color: var(--line-lit); color: var(--ink); }
 /* Nothing is lit while the animation is running: playing is its own way of
    looking, and none of the three owns the scene then. */
-#mode-row .mode.active { background: #3d4a58; color: #f0f2f4; border-color: #7d8b9a; }
+#mode-row .mode.active { background: var(--accent-bg); color: var(--ink); border-color: var(--accent); }
 
 /* Materials as rendered balls, two to a row, the name centred underneath
    and nothing beside the picture. This is the shape every rendering tool's
@@ -229,23 +295,27 @@ body { overflow: hidden;
    note was that they dominate, and he was right. A material ball wants to
    be recognised, not admired: 56px of sphere is enough to read roughness
    and colour, and the name underneath does the rest. */
-.tile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px;
-  margin: 5px 0 8px; }
-.tile { position: relative; width: auto; margin: 0; padding: 4px 4px 3px;
-  border: 1px solid #24272c; border-radius: 4px; background: #141619;
-  color: #8b9199; cursor: pointer; overflow: hidden; }
+/* An inset well behind the grid, which is what tells the eye that a grid
+   is a place to choose from rather than a row of things already chosen. */
+.tile-grid { display: grid; grid-template-columns: repeat(2, 1fr);
+  gap: var(--s1); margin: var(--s1) 0 var(--s2); padding: var(--s1);
+  border-radius: var(--radius); background: var(--ground); }
+.tile { position: relative; width: auto; margin: 0; padding: var(--s1);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--ink-2); font-size: var(--t-meta);
+  cursor: pointer; overflow: hidden; }
 /* Square, and the picture fills the tile. A material's picture is one unit
    of the substance -- one brick, one plank, one tile -- and a circle throws
    away the two ends that say how long it is. Spectrum's own corner radius
    for a thumbnail is 3px. */
 .tile canvas, .tile img { display: block; width: 100%; height: auto;
-  aspect-ratio: 1 / 1; border-radius: 3px; background: #101216;
+  aspect-ratio: 1 / 1; border-radius: 3px; background: var(--ground);
   object-fit: cover; }
 .tile span { display: block; padding: 3px 3px 0; text-align: center;
   line-height: 1.2; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
-.tile:hover { border-color: #4c545f; color: #d8dade; }
-.tile.active { border-color: #93a6bb; color: #f2f4f6; background: #191d22; }
+.tile:hover { border-color: var(--line-lit); color: var(--ink); }
+.tile.active { border-color: var(--accent); color: var(--ink); background: var(--raised); }
 /* Skies are landscapes, not spheres: they keep their shape and their width. */
 #hdri-tiles { grid-template-columns: 1fr 1fr; }
 #hdri-tiles .tile img { width: 100%; height: auto; aspect-ratio: 2 / 1;
@@ -257,7 +327,7 @@ body { overflow: hidden;
 #props-row { display: grid; grid-template-columns: 1fr auto auto; gap: 5px;
   align-items: center; margin: 6px 0 4px; }
 #props-row select, #props-row button { width: auto; margin: 0; }
-#props-row button.armed { outline: 2px solid #7ab3e0; }
+#props-row button.armed { outline: 2px solid var(--accent); }
 
 /* The sun. One instrument rather than three sliders and a colour picker:
    a compass for where it is, an arc for how high, a day track painted with
@@ -265,20 +335,22 @@ body { overflow: hidden;
    Nothing is labelled in words because the drawing says which is which. */
 #sun-widget { position: relative; margin: 6px 0 4px; }
 #sun-dial { display: block; width: 100%; height: auto; cursor: crosshair;
-  border-radius: 4px; background: #121417; }
+  border-radius: 4px; background: var(--ground); }
 #sun-readout { position: absolute; right: 8px; bottom: 6px; display: flex;
-  gap: 10px; color: #9aa0a6; pointer-events: none;
+  gap: 10px; color: var(--ink-2); pointer-events: none;
   font-variant-numeric: tabular-nums; }
-#sun-readout #sun-time { color: #e6e7ea; }
+#sun-readout #sun-time { color: var(--ink); }
 #day-track { display: block; width: 100%; height: 30px; margin: 4px 0;
   border-radius: 4px; cursor: ew-resize; }
 #sun-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;
   margin: 4px 0 8px; }
-.chip { width: auto; margin: 0; padding: 5px 2px; border: 1px solid #2b2e34;
-  border-radius: 3px; background: #16181c; color: #8b9199; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chip:hover { border-color: #5a6270; color: #d8dade; }
-.chip.active { border-color: #93a6bb; color: #f2f4f6; background: #1d2126; }
+.chip { width: auto; height: var(--h-small); margin: 0; padding: 0 var(--s2);
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--raised); color: var(--ink-2); font-size: var(--t-2);
+  cursor: pointer; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.chip:hover { border-color: var(--line-lit); color: var(--ink); }
+.chip.active { border-color: var(--accent); color: var(--ink); background: var(--raised); }
 .chip:disabled { opacity: 0.35; cursor: default; }
 #day-cycle-row { display: grid; grid-template-columns: auto 1fr; gap: 8px;
   align-items: center; margin: 4px 0 8px; }
@@ -291,7 +363,7 @@ body { overflow: hidden;
 #prop-library { margin: 4px 0 8px; }
 #prop-library .tile-grid { grid-template-columns: 1fr 1fr 1fr; max-height: 260px;
   overflow-y: auto; }
-#prop-credit { color: #6b7078; margin-top: 4px; }
+#prop-credit { color: var(--ink-3); margin-top: 4px; }
 
 /* A slider is one row: its name on the left, its value on the right, and
    the row itself is the track. This is the shape every serious tool has
@@ -305,9 +377,10 @@ body { overflow: hidden;
 /* A row, not two absolutely positioned labels hoping never to meet. The
    name keeps its width and the value takes what is left, so a long readout
    truncates at its own end instead of printing through the name. */
-.scrub { position: relative; display: flex; align-items: center; gap: 8px;
-  height: 26px; margin: 3px 0; padding: 0 8px; border-radius: 3px;
-  background: #17191d; overflow: hidden; }
+.scrub { position: relative; display: flex; align-items: center;
+  gap: var(--s2); height: var(--h); margin: var(--s1) 0;
+  padding: 0 var(--s3); border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--raised); overflow: hidden; }
 .scrub input[type="range"] { position: absolute; inset: 0; width: 100%;
   height: 100%; margin: 0; opacity: 0; cursor: ew-resize; z-index: 2; }
 .scrub .fill { position: absolute; inset: 0; pointer-events: none; }
@@ -315,33 +388,34 @@ body { overflow: hidden;
    name look like a chip and the row look like two controls; a 2px bar at
    the foot says the same thing and lets the name be a name. */
 .scrub .fill::before { content: ""; position: absolute; bottom: 0;
-  left: 0; height: 2px; width: var(--fill, 0%); background: #4a6076; }
+  left: 0; height: 2px; width: var(--fill, 0%); background: var(--accent); }
 .scrub .fill::after { content: ""; position: absolute; bottom: 0;
-  left: 0; height: 2px; right: 0; background: #23262b; z-index: -1; }
-.scrub .scrub-name { flex: 0 0 auto; color: #c8c9c7; pointer-events: none;
+  left: 0; height: 2px; right: 0; background: var(--line); z-index: -1; }
+.scrub .scrub-name { flex: 0 0 auto; color: var(--ink-2); pointer-events: none;
   white-space: nowrap; }
 /* 11px is the schema's size for metadata, and a readout is metadata: it is
    the consequence of the control, not the control. It is also what makes
    "900 mm target, 1501 pieces in 11 courses" fit a 300 pixel panel at all. */
 .scrub .scrub-value { flex: 1 1 auto; min-width: 0; text-align: right;
-  color: #9aa0a6; pointer-events: none; white-space: nowrap;
+  color: var(--ink-2); pointer-events: none; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; font-size: 11px;
   font-variant-numeric: tabular-nums; }
-.scrub:hover .fill::before { background: #262e38; }
-.scrub:hover .scrub-name { color: #e6e7ea; }
-.scrub input[type="range"]:focus-visible + .fill { outline: 1px solid #6f8296;
+.scrub:hover .fill::before { background: var(--well); }
+.scrub:hover .scrub-name { color: var(--ink); }
+.scrub input[type="range"]:focus-visible + .fill { outline: 1px solid var(--accent);
   outline-offset: -1px; }
 
 /* A choice between three things is one control, not a dropdown that hides
    two of them. Equal segments, the chosen one filled, no caption above. */
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-  gap: 3px; margin: 6px 0; padding: 3px; border: 1px solid #232529;
-  border-radius: 5px; background: #16171a; }
-.segmented button { width: auto; margin: 0; padding: 5px 2px; border: none;
-  border-radius: 3px; background: transparent; color: #7b8189; cursor: pointer;
+  gap: 2px; margin: var(--s1) 0; padding: 2px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--ground); }
+.segmented button { width: auto; height: var(--h-small); margin: 0;
+  padding: 0 var(--s1); border: none; border-radius: var(--radius-s);
+  background: transparent; color: var(--ink-3); cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.segmented button:hover { color: #c9ccd1; }
-.segmented button.active { background: #262a30; color: #f2f3f5;
+.segmented button:hover { color: var(--ink); }
+.segmented button.active { background: var(--well); color: var(--ink);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); }
 /* The ground surfaces are previewed on a tilted plane rather than a ball:
    a floor is a floor, and a sphere of paving tells you nothing about the
@@ -360,21 +434,24 @@ body { overflow: hidden;
    everything a filename withholds. */
 #hdri-tiles { grid-template-columns: 1fr 1fr; }
 #hdri-tiles .tile img { display: block; width: 100%; aspect-ratio: 2 / 1;
-  object-fit: cover; background: #14161a; }
+  object-fit: cover; background: var(--ground); }
 
 /* A grid of tiles is a choice, not a display, so it hides until it is
    wanted. The trigger says what is chosen and shows it, which is what a
    dropdown does, without pretending a picture is a word. */
-.picker { display: grid; grid-template-columns: auto 1fr auto; gap: 7px;
-  align-items: center; width: 100%; margin: 4px 0; padding: 4px 8px 4px 5px;
-  border: 1px solid #2b2e34; border-radius: 4px; background: #17191d;
-  color: #c8c9c7; cursor: pointer; text-align: left; }
-.picker:hover { border-color: #4c545f; }
-.picker .chosen-swatch { width: 22px; height: 22px; border-radius: 3px;
-  background: #2a2e34; }
+.picker { display: grid; grid-template-columns: auto 1fr auto; gap: var(--s2);
+  align-items: center; width: 100%; height: var(--h); margin: var(--s1) 0;
+  padding: 0 var(--s3) 0 var(--s1);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--raised); color: var(--ink); cursor: pointer;
+  text-align: left; }
+.picker:hover { border-color: var(--line-lit); }
+.picker .chosen-swatch { width: var(--h-small); height: var(--h-small);
+  border-radius: var(--radius-s); background: var(--well);
+  border: 1px solid var(--line); }
 .picker .chosen-name { overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
-.picker .chevron { width: 0; height: 0; border-left: 4px solid #6b7078;
+.picker .chevron { width: 0; height: 0; border-left: 4px solid var(--ink-3);
   border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
   transform: rotate(90deg); }
 .picker.open .chevron { transform: rotate(-90deg); }
@@ -392,13 +469,13 @@ body { overflow: hidden;
 
 /* The colour input, which is otherwise a browser's own idea of a button. */
 #panel input[type="color"] { width: 34px; height: 20px; padding: 0;
-  border: 1px solid #34373d; border-radius: 3px; background: #17191d;
+  border: 1px solid var(--line); border-radius: 3px; background: var(--ground);
   vertical-align: middle; cursor: pointer; }
 
 /* A select with its name beside it rather than above it, which is the same
    rule the sliders follow: one row, name left, control right. */
 #panel .named { display: grid; grid-template-columns: auto 1fr; gap: 8px;
-  align-items: center; margin: 4px 0; color: #c8c9c7; }
+  align-items: center; margin: 4px 0; color: var(--ink-2); }
 #panel .named select { width: 100%; margin: 0; }
 
 /* The folder path is a path, so it is truncated at the START: the end of it
@@ -415,7 +492,7 @@ body { overflow: hidden;
 #panel .folder-line { display: flex; align-items: center; gap: 6px;
   margin: 5px 0; }
 #panel .folder-line button { flex: 0 0 auto; width: auto; }
-#panel .folder-line span { flex: 1 1 auto; min-width: 0; color: #9aa1a9;
+#panel .folder-line span { flex: 1 1 auto; min-width: 0; color: var(--ink-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* A family's name across the grid. The library runs to a hundred and fifty
@@ -423,21 +500,21 @@ body { overflow: hidden;
    returns a wall of near-identical squares with no way to tell a grey brick
    from a grey plaster. */
 #panel .tile-family { grid-column: 1 / -1; padding: 6px 2px 1px;
-  color: #6f757d; letter-spacing: 0.04em; text-transform: uppercase; }
+  color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; }
 #panel .tile-family:first-child { padding-top: 1px; }
 
 /* The search matches family and name at once, which is how the QS picker
    does it: "brick/stock" is one string and finds what a person means. */
 #panel #skin-search { width: 100%; margin: 4px 0 2px; padding: 5px 8px;
-  border: 1px solid #2b2e34; border-radius: 4px; background: #17191d;
-  color: #e6e7ea; font: inherit; }
-#panel #skin-search::placeholder { color: #6f757d; }
+  border: 1px solid var(--line); border-radius: 4px; background: var(--ground);
+  color: var(--ink); font: inherit; }
+#panel #skin-search::placeholder { color: var(--ink-3); }
 
 /* A colour is a colour, so the control is a swatch of it and nothing else.
    The browser's own input[type=color] is a white rectangle with a chrome
    border and reads as a broken image beside everything else in this panel. */
 #panel input[type="color"] { width: 26px; height: 26px; padding: 0;
-  border: 1px solid #2b2e34; border-radius: 50%; background: none;
+  border: 1px solid var(--line); border-radius: 50%; background: none;
   cursor: pointer; overflow: hidden; }
 #panel input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
 #panel input[type="color"]::-webkit-color-swatch { border: none;
@@ -449,3 +526,84 @@ body { overflow: hidden;
 #folder-row button, #vault-row button, #vault-tools button {
   flex: 0 0 auto; width: auto; }
 #vault-row select { flex: 1 1 auto; }
+
+/* ---- the schema's remaining sizes, in one place ---- */
+
+/* Metadata is 11px wherever it appears, and nothing else is. */
+#run-status, #cut-status, #record-status, #import-status,
+#pattern-note, #appearance-note, #prop-credit, #scene-count,
+#panel .folder-line span, .tile span, .scene-tile .scene-study {
+  font-size: var(--t-meta); }
+
+/* Secondary text is 12px: the things beside a control rather than in it. */
+.toggle-end, #panel .named > span, .scene-tile .scene-name {
+  font-size: var(--t-2); }
+
+/* A folder button says two words and should not be 32px tall beside a path
+   that is one line of 11px text. */
+#panel .folder-line button { height: var(--h-small); padding: 0 var(--s2);
+  font-size: var(--t-2); }
+
+/* The search over a library grid is a control like any other. */
+#panel input[type="search"] { width: 100%; height: var(--h);
+  margin: var(--s1) 0; padding: 0 var(--s3); border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--raised); color: var(--ink);
+  font: inherit; }
+
+/* Selection, once, in the accent. Every grid and every segmented control
+   used its own idea of "chosen" before this. */
+.tile.active, .chip.active { border-color: var(--accent);
+  background: var(--accent-bg); color: var(--ink); }
+.segmented button.active { background: var(--accent-bg); color: var(--ink);
+  box-shadow: none; }
+#mode-row .mode.active { background: var(--accent-bg); color: var(--ink);
+  border-color: var(--accent); }
+
+/* The three buttons at the foot and the panel share one ground now, so the
+   rule above them is what holds them apart rather than a darker band. */
+#panel .row-heading + .tile-grid { margin-top: 0; }
+
+/* ---- what the first screenshot of the Spectrum panel showed ---- */
+
+/* Specificity, again. "#panel button" is one id plus one element and beats
+   ".picker", so the centring meant for ordinary buttons centred the name on
+   every picker trigger beside a swatch pinned to the left. The panel styles
+   buttons by element, so anything that is a button and not a button has to
+   beat it inside the panel by name. */
+#panel .picker { text-align: left; }
+#panel .picker .chosen-name { text-align: left; }
+
+/* A track you can see both halves of. The filled bar had gone to the accent
+   blue with the rest of the selection colours, and a short blue bar under
+   the word "Shine" reads as an underline on the label rather than as a
+   quantity. The unfilled half comes forward, the filled half steps back to
+   a colour that means amount rather than choice, and both sit at the foot
+   of the row where a track belongs. */
+.scrub .fill::after { height: 3px; right: 0; background: var(--well);
+  z-index: 0; }
+.scrub .fill::before { height: 3px; background: var(--ink-3); z-index: 1; }
+.scrub:hover .fill::before { background: var(--ink-2); }
+
+/* The tint swatch takes the thumbnail radius like every other small square
+   in the panel; a circle was a leftover from when the tiles were round. */
+#panel input[type="color"] { width: var(--h-small); height: var(--h-small);
+  border-radius: var(--radius-s); border: 1px solid var(--line); }
+#panel input[type="color"]::-webkit-color-swatch { border-radius: 2px; }
+
+/* The sticky footer needs the panel's own ground beneath it, or the section
+   below shows through the gap its negative margin opens. */
+#mode-row { box-shadow: 0 -8px 0 var(--panel); }
+
+/* Three buttons on one row, and none of them wraps. "Save scene" broke
+   across two lines inside a 32px control and pushed the row to 48. */
+#scene-row { display: grid; grid-template-columns: 1fr 1fr 1fr auto;
+  gap: var(--s1); align-items: center; }
+#scene-row button { width: auto; margin: 0; padding: 0 var(--s2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The chosen segment has to be legible at 24px, and an accent GROUND alone
+   is not: all three read the same in a screenshot. It keeps the ground and
+   gains the accent's own colour on the word, which is the pair Spectrum
+   uses for a selected item everywhere else. */
+.segmented button.active { background: var(--accent-bg); color: #cfd9ff;
+  box-shadow: inset 0 0 0 1px var(--accent); }

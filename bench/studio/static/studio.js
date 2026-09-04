@@ -21,7 +21,7 @@ import {
   sunPosition, sunLight, timeAtElevation,
 } from "/static/fields.js";
 import {
-  loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat,
+  loadLibraryMaterial, disposeLibraryMaterial, tileUrl, setRepeat, setSurface,
   repeatsFor, DEFAULT_TILE_METRES, VIEWPORT_PX,
 } from "/static/pbr.js";
 
@@ -128,7 +128,6 @@ const state = {
   // the code that still speaks in angles: the HDRI estimate and the sky.
   sunDay: new Date(),          // taken once at load, so a take is not interrupted by midnight
   sunMinutes: 13 * 60,         // early afternoon, a defensible default for a first look
-  sunPreset: null,             // which named moment is lit, if any
   sunElevationSetting: 40,   // F1: the #sun-elevation slider's own value, written only by its own input handler; the day cycle reads its peak from here, never from the slider itself (applyDayCycle also writes that slider, clamped for display -- see applyDayCycle)
   dayCycle: { playing: false, t: 0, seconds: 30, peakElevation: 40, record: false }, // S5
   brightness: 1,     // R2: multiplier on the active mode's exposure base
@@ -170,6 +169,8 @@ const state = {
   // (see restoreAppearance/persistAppearance). null means no override; the
   // registry material (or a skin) shows through untouched.
   appearance: { tint: null, finish: null, skin: "none" },
+  relief: 1,             // height-map depth, where 1 is QS's own 10 mm
+  occlusion: 1,          // how much of a photoscan's own crevice shading is kept
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
   materialLibrary: [],   // the index from /api/materials, or empty
   materialRoot: "",      // where it is being read from, for the panel
@@ -742,7 +743,9 @@ async function loadGroundMaterial(key) {
   try {
     const set = await loadLibraryMaterial(entry, {
       px: VIEWPORT_PX,
-      anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
+      anisotropy: renderer.capabilities.getMaxAnisotropy(),
+      relief: state.relief,
+      occlusion: state.occlusion,
     });
     // A floor is seen from one side, so it costs nothing to say so, and
     // single-sided geometry is half the fragment work.
@@ -2026,20 +2029,6 @@ document.getElementById("scene-open").addEventListener("click", async () => {
 // work is British; it is a state field, so a location control can be added
 // later without touching any of this.
 const SUN_SITE = { latitude: 51.507, longitude: -0.1278, northOffset: 0 };
-const SUN_PRESETS = [
-  // Elevation targets and which side of noon to solve on. The figures are
-  // the conventional ones: -0.833 is the upper limb on the horizon, which
-  // is what every almanac calls sunrise and sunset; 6 degrees is the upper
-  // edge of golden hour, where the derived colour has fallen below 3000 K
-  // so the warmth is real rather than dialled in; -4 is the middle of
-  // civil twilight, which is blue hour.
-  { key: "sunrise", label: "Sunrise", elevation: -0.833, evening: false },
-  { key: "morning", label: "Morning", elevation: 20, evening: false },
-  { key: "noon", label: "Noon", elevation: null, evening: false },
-  { key: "golden", label: "Golden", elevation: 6, evening: true },
-  { key: "sunset", label: "Sunset", elevation: -0.833, evening: true },
-  { key: "blue", label: "Blue hour", elevation: -4, evening: true },
-];
 
 function sunDay() {
   // The day the sun is being placed on. A date control can be added later;
@@ -2097,8 +2086,13 @@ function paintSunWidget() {
   const colour = "#" + new THREE.Color(light.colour).getHexString();
   context.clearRect(0, 0, width, height);
 
-  // The compass: north at the top, the sun's bearing as a disc on the ring.
-  const cx = 74, cy = 76, radius = 54;
+  // Both halves are measured off the canvas rather than written down, so
+  // the instrument fits whatever width the panel gives it. It has been
+  // 276 wide, then 186, then 234; the constants never followed.
+  const half = width / 2;
+  const pad = 14;
+  const cx = half / 2, cy = height / 2;
+  const radius = Math.min(half, height) / 2 - pad;
   context.strokeStyle = "#262a30";
   context.lineWidth = 3;
   context.beginPath();
@@ -2136,7 +2130,11 @@ function paintSunWidget() {
 
   // The arc: how high, with the horizon drawn so a set sun is visibly below
   // the line rather than merely a small number.
-  const ax = 214, base = 132, top = 20, span = base - top;
+  // The arc's origin is the bottom-left of the right half, and its radius
+  // is whatever fits between there and the two edges.
+  const ax = half + pad;
+  const base = height - pad;
+  const span = Math.min(half - pad * 2, height - pad * 2);
   context.strokeStyle = "#262a30";
   context.lineWidth = 3;
   context.beginPath();
@@ -2165,8 +2163,11 @@ function paintSunWidget() {
   const minutes = Math.round(state.sunMinutes % 60);
   document.getElementById("sun-time").textContent =
     String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0");
+  // Degrees, said as degrees. "286 / -4" beside a clock reading 19:01 ran
+  // together into "19:01286 / -4" the moment the block was narrow.
   document.getElementById("sun-angles").textContent =
-    Math.round(placed.azimuth) + " / " + Math.round(placed.elevation);
+    Math.round(placed.azimuth) + "\u00b0 az  "
+    + Math.round(placed.elevation) + "\u00b0 alt";
 }
 
 // The day track carries its own legend: the sky colour the model produces
@@ -2234,59 +2235,15 @@ function drawDayHandle(context, width, height) {
 }
 
 // ---------- driving it ----------
-function setSunMinutes(minutes, why) {
+function setSunMinutes(minutes) {
   state.sunMinutes = Math.max(0, Math.min(1439, minutes));
-  state.sunPreset = why || null;
-  paintSunPresets();
   applySunFromTime();
   regenerateEnvironment();
   paintGroupSummaries();
 }
 
-function paintSunPresets() {
-  for (const chip of document.querySelectorAll("#sun-presets .chip")) {
-    chip.classList.toggle("active", chip.dataset.preset === state.sunPreset);
-  }
-}
 
-function presetMinutes(preset) {
-  const day = sunDay();
-  if (preset.elevation === null) {
-    // Noon is solved as SOLAR noon, where the shadow is shortest, not as
-    // 12:00 on the clock, which is a different thing everywhere but the
-    // centre of a timezone.
-    let best = 720, highest = -90;
-    for (let m = 600; m <= 840; m += 1) {
-      const placed = sunPosition(minutesToDate(m), SUN_SITE.latitude, SUN_SITE.longitude);
-      if (placed.elevation > highest) { highest = placed.elevation; best = m; }
-    }
-    return best;
-  }
-  const when = timeAtElevation(day, SUN_SITE.latitude, SUN_SITE.longitude,
-    preset.elevation, preset.evening);
-  if (!when) return null;
-  return when.getUTCHours() * 60 + when.getUTCMinutes();
-}
 
-function buildSunPresets() {
-  for (const chip of document.querySelectorAll("#sun-presets .chip")) {
-    const preset = SUN_PRESETS.find((entry) => entry.key === chip.dataset.preset);
-    if (!preset) continue;
-    const minutes = presetMinutes(preset);
-    // A moment the sun never reaches today is greyed out rather than
-    // faked: there is no 20 degree morning sun over London in December.
-    chip.disabled = minutes === null;
-    chip.title = minutes === null
-      ? preset.label + ": the sun does not reach that height today"
-      : preset.label;
-    chip.addEventListener("click", () => {
-      const at = presetMinutes(preset);
-      if (at === null) return;
-      setSunMinutes(at, preset.key);
-      logStudio("sun: " + preset.label.toLowerCase());
-    });
-  }
-}
 
 function dragSunDial(event) {
   const canvasEl = document.getElementById("sun-dial");
@@ -2307,7 +2264,7 @@ function dragSunDial(event) {
     let delta = Math.abs(((placed.azimuth - wanted + 540) % 360) - 180);
     if (delta < closest) { closest = delta; best = m; }
   }
-  setSunMinutes(best, null);
+  setSunMinutes(best);
 }
 
 // What each folded group says about itself. Every one of these reads scene
@@ -2328,7 +2285,7 @@ const GROUP_SUMMARIES = {
     const hours = Math.floor(state.sunMinutes / 60) % 24;
     const minutes = Math.round(state.sunMinutes % 60);
     return String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0")
-      + (state.sunPreset ? ", " + state.sunPreset : "");
+  ;
   },
   "Props": () => state.props.length
     ? state.props.length + " placed" : "none placed",
@@ -2370,7 +2327,12 @@ async function ensureLibraryMaterial(key) {
   if (!entry) return null;
   const loading = loadLibraryMaterial(entry, {
     px: VIEWPORT_PX,
-    anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
+    // The most the hardware offers rather than a number chosen to be safe.
+    // A vault is looked at from underneath, which is every texture's worst
+    // angle, and anisotropy is the only thing that answers it.
+    anisotropy: renderer.capabilities.getMaxAnisotropy(),
+    relief: state.relief,
+    occlusion: state.occlusion,
   }).then((set) => {
     libraryCache.set(key, set);
     while (libraryCache.size > LIBRARY_CACHE_LIMIT) {
@@ -4678,6 +4640,30 @@ document.getElementById("material-folder-choose").addEventListener("click", asyn
   await showMaterialFolder();
 });
 
+// Relief and occlusion are properties of the MATERIAL, not of a piece, so
+// they are written straight onto the loaded sets: no texture is re-uploaded
+// and no piece mesh is rebuilt, which is why they can move live.
+function applySurfaceControls() {
+  for (const set of libraryCache.values()) {
+    setSurface(set, state.relief, state.occlusion);
+  }
+  setSurface(groundLibrarySet, state.relief, state.occlusion);
+  document.getElementById("material-relief-value").textContent =
+    Math.round(state.relief * 10);
+  document.getElementById("material-occlusion-value").textContent =
+    Math.round(state.occlusion * 100);
+}
+
+document.getElementById("material-relief").addEventListener("input", (e) => {
+  state.relief = +e.target.value;
+  applySurfaceControls();
+});
+
+document.getElementById("material-occlusion").addEventListener("input", (e) => {
+  state.occlusion = +e.target.value;
+  applySurfaceControls();
+});
+
 document.getElementById("hdri-folder-choose").addEventListener("click", () =>
   chooseLibraryFolder("hdri", "hdri-folder-path", "skies", async () => {
     // The sky on screen came out of the old folder, so it goes with it.
@@ -6116,7 +6102,7 @@ function trackDragTo(event) {
   const canvasEl = document.getElementById("day-track");
   const rect = canvasEl.getBoundingClientRect();
   const u = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-  setSunMinutes(Math.round(u * 1439), null);
+  setSunMinutes(Math.round(u * 1439));
 }
 
 // Everything below is module-level initialisation, and a throw here takes
@@ -6147,9 +6133,8 @@ for (const [id, handler] of [["sun-dial", dragSunDial], ["day-track", trackDragT
   });
 }
 guarded("the sun instrument", () => {
-  buildSunPresets();
   sunInstrumentReady = true;
-  setSunMinutes(state.sunMinutes, null);
+  setSunMinutes(state.sunMinutes);
 });
 
 document.getElementById("day-cycle-button").addEventListener("click", () => {
