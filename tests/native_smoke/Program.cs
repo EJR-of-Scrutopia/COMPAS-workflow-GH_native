@@ -21173,6 +21173,43 @@ internal static class Program
             (double bandLow, double bandHigh) = ReadInterval(intervals[0]);
             var cells = ReadSeamCells(made);
             var closers = cells.Where(cell => cell.Closer).ToArray();
+            if (closers.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"{label} refuses an interval and must CLOSE it, so " +
+                    "every claim below would hold vacuously.");
+            }
+
+            // CHECK 3 COMES FIRST, before the count is pinned, because the
+            // count is a guard and the size discipline is the substance. A
+            // stone cut to the wrong length usually changes the count too,
+            // and a count assertion standing in front of the span
+            // assertion would answer for it, which would leave rule 2.4's
+            // own claim untested by anything that could fail on it alone.
+            double[] neighbourSpans = cells
+                .Where(cell => !cell.Closer && !cell.Cap)
+                .Select(cell => cell.U1 - cell.U0)
+                .ToArray();
+            double neighbourMin = neighbourSpans.Min();
+            double neighbourMax = neighbourSpans.Max();
+            double closerMin = closers.Min(cell => cell.U1 - cell.U0);
+            double closerMax = closers.Max(cell => cell.U1 - cell.U0);
+            if (closerMin < neighbourMin - 1.0e-9 ||
+                closerMax > neighbourMax + 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: rule 2.4 puts the closer's spans INSIDE the " +
+                    $"courses' own {neighbourMin:F4} to {neighbourMax:F4} " +
+                    $"m; they run {closerMin:F4} to {closerMax:F4} m.");
+            }
+            if (closerMin < neighbourMin / 2.0)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: Param's own bar is that no closer stone is " +
+                    "cut under half the neighbouring courses' minimum " +
+                    $"span, {neighbourMin / 2.0:F4} m; the shortest is " +
+                    $"{closerMin:F4} m.");
+            }
             if (closers.Length != expectedStones)
             {
                 throw new InvalidOperationException(
@@ -21230,32 +21267,6 @@ internal static class Program
                     $"{label}: the closer covers {ratio:P2} of the refused " +
                     $"interval's own {slab:E4} m2 of plan, against a floor " +
                     $"of {coverageFloor:P2}.");
-            }
-
-            // CHECK 3. Similar size, and Param's own bar beneath it.
-            double[] neighbourSpans = cells
-                .Where(cell => !cell.Closer && !cell.Cap)
-                .Select(cell => cell.U1 - cell.U0)
-                .ToArray();
-            double neighbourMin = neighbourSpans.Min();
-            double neighbourMax = neighbourSpans.Max();
-            double closerMin = closers.Min(cell => cell.U1 - cell.U0);
-            double closerMax = closers.Max(cell => cell.U1 - cell.U0);
-            if (closerMin < neighbourMin - 1.0e-9 ||
-                closerMax > neighbourMax + 1.0e-9)
-            {
-                throw new InvalidOperationException(
-                    $"{label}: rule 2.4 puts the closer's spans INSIDE the " +
-                    $"courses' own {neighbourMin:F4} to {neighbourMax:F4} " +
-                    $"m; they run {closerMin:F4} to {closerMax:F4} m.");
-            }
-            if (closerMin < neighbourMin / 2.0)
-            {
-                throw new InvalidOperationException(
-                    $"{label}: Param's own bar is that no closer stone is " +
-                    "cut under half the neighbouring courses' minimum " +
-                    $"span, {neighbourMin / 2.0:F4} m; the shortest is " +
-                    $"{closerMin:F4} m.");
             }
 
             // CHECK 4. The corner weld to BOTH families, and no chord
