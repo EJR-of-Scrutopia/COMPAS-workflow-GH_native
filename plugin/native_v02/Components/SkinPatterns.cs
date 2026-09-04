@@ -3622,8 +3622,25 @@ internal static class SkinPatterns
                 ? rank
                 : int.MaxValue;
 
+        // THE LEAD TERM IS ONE ROSETTE'S OWN TIE-BREAK and it exists for one
+        // cell in the engine: the centre DISC of a split cap (rule 2.6.5 of
+        // the 2026-09-01 buildability spec), which must WIN any overlap
+        // against the wedges round it, since the keystone is the piece least
+        // worth dropping. Rule 2.6.5 carried that on rule 7.1's |mid| order,
+        // where the disc's mid-span of 0 put it first and an ODD W's middle
+        // wedge, also centred on the seam, was separated from it "explicitly
+        // and in the disc's favour". Rule 3.1's signed arc walks the rosette
+        // instead, and there the disc and its wedges share Course, Cap, Rank
+        // and Level, so only the signed mid separates them and at odd W the
+        // middle wedge's mid is -g/2 + (W/2)(g/W), which is 0 to within the
+        // last bits: at W = 3 and g = 1 it computes as -2.78e-17, BELOW the
+        // disc's exact 0, so the wedge would lead and take the overlap. The
+        // tie-break is therefore made structural rather than arithmetic: 0
+        // for the disc, 1 for everything else, ranked after the level and
+        // before the arc, so it reaches the disc's own rosette and nothing
+        // else in the branch.
         var keyed = new List<(
-            int Course, int Rank, double Level, SkinCell Cell)>();
+            int Course, int Rank, double Level, int Lead, SkinCell Cell)>();
         var transitions = new List<(double Low, double High)>();
         int mergedPieces = 0;
         int mergedShortKept = 0;
@@ -3670,7 +3687,7 @@ internal static class SkinPatterns
             {
                 closerCells++;
                 keyed.Add((
-                    cell.Course, RankOf(guide), guide.Level, cell));
+                    cell.Course, RankOf(guide), guide.Level, 1, cell));
             }
         }
         int transitionBands = resolved.Refused.Count;
@@ -3757,7 +3774,7 @@ internal static class SkinPatterns
                             capGirths.Add(outer.Length);
                             capWedges.Add(0);
                             keyed.Add((
-                                band.Course, rank, band.Mid,
+                                band.Course, rank, band.Mid, 1,
                                 new SkinCell(
                                     band.Course, loop, false,
                                     -outer.Length / 2.0,
@@ -3806,7 +3823,7 @@ internal static class SkinPatterns
                             capGirths.Add(outer.Length);
                             capWedges.Add(0);
                             keyed.Add((
-                                band.Course, rank, band.Mid,
+                                band.Course, rank, band.Mid, 1,
                                 new SkinCell(
                                     band.Course, whole, false,
                                     -outer.Length / 2.0,
@@ -3847,15 +3864,19 @@ internal static class SkinPatterns
                             continue;
                         }
                         keyed.Add((
-                            band.Course, rank, band.Mid,
+                            band.Course, rank, band.Mid, 1,
                             wedge with { Cap = true }));
                     }
                     var disc = Dedupe(
                         new List<double[]>(innerCurve.Points));
                     if (disc.Count >= 3)
                     {
+                        // LEAD 0: the keystone leads its own rosette, which
+                        // is rule 2.6.5's explicit tie-break restated as a
+                        // sort term rather than left to the arithmetic of
+                        // two spans both centred on the seam.
                         keyed.Add((
-                            band.Course, rank, band.Mid,
+                            band.Course, rank, band.Mid, 0,
                             new SkinCell(
                                 band.Course, disc, false,
                                 -innerCurve.Length / 2.0,
@@ -3960,15 +3981,16 @@ internal static class SkinPatterns
                         weldCollapsed++;
                         continue;
                     }
-                    keyed.Add((band.Course, rank, band.Mid, cell));
+                    keyed.Add((band.Course, rank, band.Mid, 1, cell));
                 }
             }
         }
-        // RULE 3.1'S ORDER, in four terms: the COURSE, which is the branch;
-        // then the COMPONENT, ranked by seam association and by the plan
-        // position of its start; then the LEVEL, which orders one component's
-        // several curves within one course bottom-up; then SIGNED ARC along
-        // the curve, ascending, which is one consistent direction round it.
+        // RULE 3.1'S ORDER, in terms: the COURSE, which is the branch; the
+        // CAP, which leads it; then the COMPONENT, ranked by seam association
+        // and by the plan position of its start; then the LEVEL, which orders
+        // one component's several curves within one course bottom-up; then
+        // the keystone's LEAD over its own rosette; then SIGNED ARC along the
+        // curve, ascending, which is one consistent direction round it.
         // The tree's SHAPE is untouched by all of this, the path is still the
         // course alone, and Export's own course derivation and the staging
         // read the path.
@@ -4006,12 +4028,23 @@ internal static class SkinPatterns
         // cap with them. Cells went from 95 to 108 and the cap count from 1
         // to 0, against rule 2.6.6's own pin. Led by the cap, the fixture
         // reads 95 and 1 again, which is where it stood.
+        //
+        // AND THE KEYSTONE LEADS ITS OWN ROSETTE, which is the LEAD term and
+        // the one place the four terms above cannot separate two cells that
+        // must be separated: a split cap's centre disc and its wedges share
+        // the course, the cap flag, the rank and the level, and the signed
+        // mid then decides between a disc centred on 0 and, at odd W, a
+        // middle wedge whose own centre is 0 to within the last bits. Rule
+        // 2.6.5 requires the disc to win any overlap against its own wedges
+        // and says the tie is broken "explicitly and in the disc's favour";
+        // this term is that sentence, and it reaches nothing else.
         List<SkinCell> cells = KeepValidPlans(
             keyed
                 .OrderBy(item => item.Course)
                 .ThenBy(item => item.Cell.Cap ? 0 : 1)
                 .ThenBy(item => item.Rank)
                 .ThenBy(item => item.Level)
+                .ThenBy(item => item.Lead)
                 .ThenBy(item => (item.Cell.U0 + item.Cell.U1) / 2.0)
                 .Select(item => item.Cell)
                 .ToList(),
