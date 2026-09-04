@@ -1,9 +1,10 @@
 # Self-weight under a target height: frozen, then refined
 
-HELD, 2026-09-04, ON PARAM'S WORD: "maybe we can hold off on that for when im back. but gather
-all the information and suggestions for me to read when im back." NOTHING IN THIS SPEC IS BUILT
-until he has read the briefing at docs/2026-09-04-load-and-sequence-briefing.md and lifted the
-hold. The delegation that opened this document is superseded by that instruction.
+HOLD LIFTED BY PARAM 2026-09-04, after the briefing and the sequence discussion: "I like those
+improvements you found i think we need to add all these improvement and the rhinovault sequence
+in too as it should be." Everything below is APPROVED TO BUILD, rule 2.4's RhinoVAULT loads
+model included. The build order: after the skin seams wave leaves the tree, this spec is the
+solver wave; the TNA Horizontal component (its own spec, now ruled) follows as its own wave.
 
 Written 2026-09-04, from the NaN diagnosis and the RhinoVAULT self-weight research, both
 adversarially verified with measured reproductions. His question, "why does the rhinovault do load in its

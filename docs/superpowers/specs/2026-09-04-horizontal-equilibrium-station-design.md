@@ -1,9 +1,27 @@
 # The horizontal equilibrium station: the pattern learns to carry itself
 
-DRAFT FOR PARAM'S REVIEW, written overnight 2026-09-04. NOTHING HERE IS BUILT until he has read
-this and said yes, because the station MOVES HIS DRAWING, and how far a drawing may move is a
-design decision, not an engineering one. Register section 1 is the ruling this implements; the
-2026-09-03 holed-form diagnosis is the measured ground.
+RULED BY PARAM 2026-09-04, in conversation, superseding this document's review gate and its
+section 6: BUILD IT, as a SEPARATE component in the RhinoVAULT sequence ("lets implement make a
+horizontal solver component to go in before the vertical"; his pros-and-cons choice), SLIM ("i
+prefer to keep it relatively slim, 3-4 inputs max"). The rulings:
+- NAME: TNA Horizontal, between TNA Relax and TNA Solve, RLX in and RLX out. Wiring it IS the
+  opt-in, so Move defaults to 100.
+- INPUTS, exactly two: RLX, and Move (M, 0 to 100, default 100), how far the drawing may go
+  toward equilibrium. IMPLEMENTATION NOTE from the research: this is the form-versus-force alpha
+  the worker's ITERATIVE horizontal path already accepts (only the algebraic path demands 100),
+  exposed as 100 minus alpha so the dial reads as what it does; the section 3 blend below is the
+  fallback shape if the iterative-alpha route measures badly, not the first choice.
+- AUTOMATED AWAY: Iterations (the iterative path's existing auto-stall loop governs);
+  Gate (RhinoVAULT's own 5 degree acceptance, a constant); Report-only (cut; the Solve's gate
+  advice names this component when it is needed, unwiring is the undo); Hold (cut; anchors,
+  supports and floating anchors alike, are held automatically as they always were, and
+  PRINCIPAL-LINE NODES ARE WATCHED, not pinned: the chin reports how many moved).
+- THE CHIN: "moved X m max, Y mean; N tension edges and A degrees became N' and A'; K
+  principal-line nodes moved".
+- The Solve, on a failed gate, advises: wire TNA Horizontal or accept the residual. Advice only,
+  nothing automatic.
+Register section 1 is the ruling this implements; the 2026-09-03 holed-form diagnosis is the
+measured ground; section 6 below is retained for the record of what was asked and is CLOSED.
 
 ## 1. The problem, measured on his six-lobe form
 
