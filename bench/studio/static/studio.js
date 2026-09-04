@@ -2306,6 +2306,8 @@ const GROUP_SUMMARIES = {
   "Props": () => state.props.length
     ? state.props.length + " placed" : "none placed",
   "Scenes": () => state.scenes.length ? state.scenes.length + " saved" : "none saved",
+  "Image": () => state.brightness.toFixed(2) + " / "
+    + (state.contrast >= 0 ? "+" : "") + state.contrast.toFixed(2),
 };
 
 setGroupSummaries(GROUP_SUMMARIES);

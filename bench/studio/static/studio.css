@@ -24,6 +24,7 @@
   --accent:   #4069fd;   /* selection and focus, Spectrum blue-800 */
   --accent-bg:#1e2740;   /* the ground under a selected thing */
   --accent-ink:#cfd9ff;  /* text ON --accent-bg; the pale end of the accent */
+  --accent-hover:#5b80ff; /* the filled button under the pointer */
 
   --danger:   #7a2b20;   /* the one red: banners, the stale notice, deletes */
   --scrim:    rgba(16, 18, 22, 0.85);  /* an overlay's translucent ground */
@@ -71,6 +72,7 @@
   --accent:   #2451e0;
   --accent-bg:#e3eaff;
   --accent-ink:#2451e0;
+  --accent-hover:#1c46c9;
 
   --scrim:    rgba(255, 255, 255, 0.88);
 
@@ -684,6 +686,17 @@ body { overflow: hidden;
   color: var(--ink); line-height: 18px;
 }
 #panel .scene-delete:hover { background: var(--danger); color: #fff; }
+
+/* Button hierarchy, which every renderer keeps and this panel did not:
+   the one action a section exists for is filled with the accent, and a
+   destructive action turns red only when the pointer commits to it --
+   quiet at rest, unmistakable at the moment of choice. */
+#panel button.primary { background: var(--accent); border-color: var(--accent);
+  color: #fff; }
+#panel button.primary:hover { background: var(--accent-hover);
+  border-color: var(--accent-hover); }
+#panel button.danger:hover { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
 
 /* The theme toggle and the build stamp, on one line above everything. The
    stamp is there for a specific reported problem: "nothing has changed on

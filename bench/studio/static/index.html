@@ -42,7 +42,7 @@
     </div>
     <div id="vault-tools">
       <button id="live-toggle" class="on" title="Live: follow Grasshopper"><span class="beacon"></span>LIVE</button>
-      <button id="delete-study" title="Delete this vault's JSON from the folder">Delete</button>
+      <button id="delete-study" class="danger" title="Delete this vault's JSON from the folder">Delete</button>
     </div>
     <div id="source-row" class="hidden">
       <span class="row-heading">Cut</span>
@@ -98,7 +98,7 @@
   </details>
   <details id="analysis-section">
     <summary>Analysis</summary>
-    <button id="run-button">Run staged analysis</button>
+    <button id="run-button" class="primary">Run staged analysis</button>
     <div id="run-status"></div>
     <div id="layer-toggles"></div>
     <label class="named"><span>Stress surface</span> <select id="stress-surface">
@@ -117,11 +117,16 @@
     <label>Timeline <input id="timeline-scrubber" type="range" min="0" max="1000" step="1" value="0"></label>
     <label>Timeline speed <input id="timeline-speed" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="timeline-speed-value">1.00</span>x</label>
     <label>Spin rate <input id="orbit-speed" type="range" min="0" max="2" step="0.1" value="0.3"></label>
-    <button id="record-button">Record 1080p</button>
+    <button id="record-button" class="primary">Record 1080p</button>
     <div id="record-status"></div>
   </details>
   <details id="scene-section">
     <summary>Scene</summary>
+    <!-- Group order is the order a renderer user works in: the light (sun,
+         then the sky feeding it), the image those two produce, then the
+         world under the vault (ground, props), and last the scenes that
+         capture the lot -- a capture-everything control at the boundary of
+         what it captures, not in the middle of it. -->
     <span class="row-heading">Sun</span>
     <div id="sun-widget">
       <canvas id="sun-dial" width="234" height="150"></canvas>
@@ -136,29 +141,6 @@
     <input id="sun-azimuth" type="range" min="0" max="360" step="1" value="140" class="hidden">
     <input id="sun-elevation" type="range" min="5" max="85" step="1" value="40" class="hidden">
     <input id="sun-colour" type="color" value="#ffffff" class="hidden">
-    <label>Brightness <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1"></label>
-    <label>Contrast <input id="contrast" type="range" min="-0.5" max="0.5" step="0.02" value="0"></label>
-
-    <span class="row-heading">Scenes</span>
-    <div id="scene-row">
-      <button id="scene-save" title="Save the viewport, the floor, the light and everything placed">Save</button>
-      <button id="scene-open">Scenes</button>
-      <button id="clear-scene" title="Empty the viewport and deselect">Clear</button>
-      <span id="scene-count"></span>
-    </div>
-    <div id="scene-list" class="hidden"></div>
-
-    <span class="row-heading">Ground</span>
-    <button id="ground-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Surface</span><span class="chevron"></span></button>
-    <input id="ground-search" type="search" class="hidden" placeholder="Search surfaces">
-    <div id="ground-tiles" class="tile-grid hidden"></div>
-    <label class="hidden">Surface <select id="ground-preset">
-      <option value="dark-studio" selected>Dark studio</option>
-      <option value="concrete-slab">Concrete slab</option>
-      <option value="patio-pavers">Patio pavers</option>
-      <option value="tiles">Tiles</option>
-    </select></label>
-    <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
 
     <span class="row-heading">Environment</span>
     <div id="environment-segments" class="segmented"></div>
@@ -195,6 +177,24 @@
     </div>
     <label id="background-row">Background <input id="background-tone" type="range" min="0" max="100" step="1" value="85"></label>
 
+    <span class="row-heading">Image</span>
+    <!-- Post-processing, not sunlight: these drive the grade pass, and
+         under the Sun heading a folded "12:00" summary silently hid them. -->
+    <label>Brightness <input id="brightness" type="range" min="0.3" max="2" step="0.05" value="1"></label>
+    <label>Contrast <input id="contrast" type="range" min="-0.5" max="0.5" step="0.02" value="0"></label>
+
+    <span class="row-heading">Ground</span>
+    <button id="ground-picker" class="picker" type="button"><span class="chosen-swatch"></span><span class="chosen-name">Surface</span><span class="chevron"></span></button>
+    <input id="ground-search" type="search" class="hidden" placeholder="Search surfaces">
+    <div id="ground-tiles" class="tile-grid hidden"></div>
+    <label class="hidden">Surface <select id="ground-preset">
+      <option value="dark-studio" selected>Dark studio</option>
+      <option value="concrete-slab">Concrete slab</option>
+      <option value="patio-pavers">Patio pavers</option>
+      <option value="tiles">Tiles</option>
+    </select></label>
+    <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
+
     <span class="row-heading">Props</span>
     <div id="props-folder-row" class="folder-line">
       <button id="props-folder-choose" title="Pick the folder your prop models are in">Prop folder</button>
@@ -202,13 +202,22 @@
     </div>
     <div id="props-row">
       <button id="prop-browse" title="Choose a prop and carry it">Library</button>
-      <button id="props-clear" title="Remove every placed prop">Clear</button>
+      <button id="props-clear" class="danger" title="Remove every placed prop">Clear</button>
     </div>
     <div id="prop-library" class="hidden">
       <div id="prop-tiles" class="tile-grid"></div>
       <div id="prop-credit"></div>
     </div>
     <select id="prop-type" class="hidden"></select>
+
+    <span class="row-heading">Scenes</span>
+    <div id="scene-row">
+      <button id="scene-save" title="Save the viewport, the floor, the light and everything placed">Save</button>
+      <button id="scene-open">Scenes</button>
+      <button id="clear-scene" class="danger" title="Empty the viewport and deselect">Clear</button>
+      <span id="scene-count"></span>
+    </div>
+    <div id="scene-list" class="hidden"></div>
   </details>
   <div id="mode-row">
     <button id="show-formwork" class="mode" title="The net and the machine alone">Formwork</button>
