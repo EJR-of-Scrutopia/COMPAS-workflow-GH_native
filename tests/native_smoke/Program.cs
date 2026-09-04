@@ -19757,73 +19757,18 @@ internal static class Program
                         " cells.");
                 }
 
-                foreach (List<int> run in runs)
-                {
-                    for (int at = 1; at < run.Count; at++)
-                    {
-                        double previous =
-                            (inBranch[run[at - 1]].U0 +
-                             inBranch[run[at - 1]].U1) / 2.0;
-                        double mid =
-                            (inBranch[run[at]].U0 +
-                             inBranch[run[at]].U1) / 2.0;
-                        if (mid <= previous)
-                        {
-                            throw new InvalidOperationException(
-                                $"On the {fixture.label} the signed arc " +
-                                "STRICTLY increases along one component, " +
-                                "which is rule 3.1's one consistent " +
-                                "direction and the reason an index walks " +
-                                $"one side; course {inBranch[0].Course} " +
-                                $"goes {previous} then {mid}.");
-                        }
-                    }
-                    // THE SEAM IS NO LONGER WHERE A COURSE OPENS, and the
-                    // old bar is inverted rather than dropped. Rule 7.1 put
-                    // the two pieces flanking the seam first, on opposite
-                    // sides of it, the negative one leading; rule 3.1 opens
-                    // a component at the far end of its own signed arc and
-                    // walks through the seam without pausing at it. So the
-                    // first cell of a run is the one with the LOWEST mid in
-                    // that run, which is what the strictly increasing test
-                    // above already says, and the seam-flanking pair is now
-                    // adjacent in the middle of the run rather than split
-                    // across its opening. Asserted here as the pair that
-                    // shares the u = 0 joint arriving CONSECUTIVELY, on a
-                    // course that has such a pair at all.
-                    int flanking = -1;
-                    for (int at = 0; at + 1 < run.Count; at++)
-                    {
-                        if (!inBranch[run[at]].Cap &&
-                            !inBranch[run[at + 1]].Cap &&
-                            Math.Abs(inBranch[run[at]].U1) <= 1.0e-9 &&
-                            Math.Abs(inBranch[run[at + 1]].U0) <= 1.0e-9)
-                        {
-                            flanking = at;
-                            break;
-                        }
-                    }
-                    // A CAP RUN IS EXEMPT, because its u is not a course's
-                    // u at all: a whole cap and a centre disc both span
-                    // [-L/2, +L/2] of their own outline and a wedge takes an
-                    // equal share of a ring, so a wedge ending at u = 0 is
-                    // the middle of a rosette and not a joint at a seam.
-                    // Named as an exemption rather than left to be found.
-                    bool hasJointAtSeam = run.Any(at =>
-                        !inBranch[at].Cap &&
-                        Math.Abs(inBranch[at].U1) <= 1.0e-9);
-                    if (hasJointAtSeam && run.Count >= 2 && flanking < 0)
-                    {
-                        throw new InvalidOperationException(
-                            $"On the {fixture.label} a course whose joint " +
-                            "falls AT the seam hands its two flanking " +
-                            "pieces back one after the other, because the " +
-                            "order walks through the seam instead of " +
-                            "opening at it (rule 3.1). Course " +
-                            $"{inBranch[0].Course} has a piece ending at " +
-                            "u = 0 and no piece starting there next.");
-                    }
-                }
+                // TWO ASSERTIONS THAT WERE WRITTEN HERE ARE NOT, and the
+                // reason is worth leaving behind so nobody writes them
+                // again. One re-tested that the signed arc strictly
+                // increases within a run; a run IS the maximal stretch over
+                // which it does, so nothing could have made that fire. The
+                // other said that a course whose joint falls at the seam
+                // hands its two flanking pieces back consecutively, which
+                // is true and is the visible inversion of rule 7.1, but it
+                // follows from the arc order and no break of the engine
+                // reaches it either. An assertion that cannot be made red
+                // is not a check, and the run count above and the abutment
+                // in RequireRunsFollowTheGeometry both can be and both are.
             }
         }
     }
@@ -19964,15 +19909,6 @@ internal static class Program
                 new object[] { fixture.net, fixture.size, fixture.height })!;
             var cells = SkinCells(built);
             int gaps = RequireRunsFollowTheGeometry(cells, fixture.label);
-            if (gaps != fixture.arcGaps)
-            {
-                throw new InvalidOperationException(
-                    $"{fixture.label}: a run's only gap in arc is a stone " +
-                    "the closer REFUSED, and this fixture has " +
-                    $"{fixture.arcGaps} of them; got {gaps}. A gap that " +
-                    "appears without a refusal is a stone the plan filter " +
-                    "took out of a course.");
-            }
 
             // THE RUN SHAPE, PINNED. Within-run abutment above says the
             // index walks a curve where it walks one at all; this says how
@@ -19996,6 +19932,15 @@ internal static class Program
                     $"{fixture.label}: the runs per course are " +
                     $"{fixture.runShape}, course by course from the " +
                     $"bottom; got {shape}.");
+            }
+            if (gaps != fixture.arcGaps)
+            {
+                throw new InvalidOperationException(
+                    $"{fixture.label}: a run's only gap in arc is a stone " +
+                    "the closer REFUSED, and this fixture has " +
+                    $"{fixture.arcGaps} of them; got {gaps}. A gap that " +
+                    "appears without a refusal is a stone the plan filter " +
+                    "took out of a course.");
             }
 
             int[] branchCourses = cells
@@ -20026,12 +19971,20 @@ internal static class Program
                     continue;
                 }
 
-                // THE SAME COMPONENT, measured in plan: run i of the lower
-                // branch must be nearest run i of the upper one, and no
-                // other. Where the two nearest candidates tie the answer is
-                // not a measurement at all and the pair is skipped rather
-                // than asserted on, which is the barrel's own mirror
-                // symmetry across the merge.
+                // IS THE PLAN ABLE TO TELL THESE RUNS APART AT ALL? Where a
+                // run's two nearest candidates in the next course tie, no
+                // measurement here means anything and the pair is skipped
+                // and named rather than asserted on. That is the two-hump
+                // barrel's own mirror symmetry across the merge, where the
+                // front strip stands equally far from both hump loops.
+                //
+                // THE RUN-TO-RUN CORRESPONDENCE IS NOT ASSERTED HERE, only
+                // measured for that tie. Asserting it would be the item-k
+                // test below at a coarser grain, over run centroids instead
+                // of over the cells the author actually picks, and it could
+                // never fire first: a component order that swaps between
+                // two courses moves every cell of the run, so the cell test
+                // reads it before the centroid test could.
                 bool ambiguous = false;
                 for (int run = 0; run < lowerRuns.Count && !ambiguous; run++)
                 {
@@ -20056,22 +20009,10 @@ internal static class Program
                             second = gap;
                         }
                     }
-                    if (upperRuns.Count > 1 && second - best <= 1.0e-6)
+                    if (nearest >= 0 && upperRuns.Count > 1 &&
+                        second - best <= 1.0e-6)
                     {
                         ambiguous = true;
-                        continue;
-                    }
-                    if (nearest != run)
-                    {
-                        throw new InvalidOperationException(
-                            $"{fixture.label}: run {run} of course " +
-                            $"{branchCourses[at]} and run {run} of course " +
-                            $"{branchCourses[at + 1]} are the SAME " +
-                            "component (spec 2026-09-04 rule 3.2), so each " +
-                            "is the other's nearest in plan; run " +
-                            $"{run} of the lower course is nearest run " +
-                            $"{nearest} of the upper, {best:F4} m against " +
-                            $"{second:F4} m.");
                     }
                 }
                 if (ambiguous)
@@ -20110,21 +20051,47 @@ internal static class Program
                 {
                     reach++;
                 }
-                int floor = Math.Min(
-                    lowerRuns[0].Count, upperRuns[0].Count);
-                if (reach < floor)
+                // AND THE TWO CELLS AT INDEX k ARE ON THE SAME SIDE OF THE
+                // VAULT, measured in plan rather than read off the run
+                // partition. Asking only whether the two run INDICES agree
+                // is no assertion at all: a run is a contiguous block of
+                // the branch, so item k below the shorter of the two first
+                // runs is in run 0 of both by arithmetic. What can fail,
+                // and what Param actually saw, is the CELL at index k
+                // sitting on the far component: so the cell is measured
+                // against the other branch's runs, and the nearest of them
+                // must be the run item k of that branch is itself in.
+                for (int k = 0; k < reach; k++)
                 {
+                    double[] here = SkinRunCentroid(
+                        lower, new List<int> { k });
+                    int nearestRun = -1;
+                    double closest = double.PositiveInfinity;
+                    for (int run = 0; run < upperRuns.Count; run++)
+                    {
+                        double[] to = SkinRunCentroid(upper, upperRuns[run]);
+                        double gap = Math.Sqrt(
+                            ((here[0] - to[0]) * (here[0] - to[0])) +
+                            ((here[1] - to[1]) * (here[1] - to[1])));
+                        if (gap < closest)
+                        {
+                            closest = gap;
+                            nearestRun = run;
+                        }
+                    }
+                    if (nearestRun == upperRunOf[k])
+                        continue;
                     throw new InvalidOperationException(
-                        $"{fixture.label}: item {reach} of course " +
-                        $"{branchCourses[at]} and item {reach} of course " +
+                        $"{fixture.label}: item {k} of course " +
+                        $"{branchCourses[at]} and item {k} of course " +
                         $"{branchCourses[at + 1]} belong to the SAME " +
-                        "component (spec 2026-09-04 rule 3.2) for every " +
-                        "index below the shorter of the two courses' FIRST " +
-                        $"runs, which is {floor}; they belong to runs " +
-                        $"{lowerRunOf[reach]} and {upperRunOf[reach]}. " +
-                        "This is Param's mirrored-selection find: an index " +
-                        "taken across branches must walk one side of the " +
-                        "vault.");
+                        "component (spec 2026-09-04 rule 3.2), so the cell " +
+                        "at that index in the lower course lies nearest the " +
+                        "very run the upper course puts that index in; it " +
+                        $"lies nearest run {nearestRun} and the index is in " +
+                        $"run {upperRunOf[k]}. This is Param's " +
+                        "mirrored-selection find: an index taken across " +
+                        "branches must walk one side of the vault.");
                 }
                 if (reach < shorter &&
                     lowerRuns[lowerRunOf[reach]].Count ==
