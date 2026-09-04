@@ -864,9 +864,18 @@ internal static class Program
             ValidateSkinWithinCourseOrder(plugin);
             Console.WriteLine(
                 "PASS  Skin within-course order (check 6 of the 2026-09-04 " +
-                "seam spec, rule 3.2), on the spec's own two fixtures: the " +
-                "two-hump barrel, a genuine two-component-per-course form, " +
-                "and Param's crown arch, whose merge the closer covers. " +
+                "seam spec, rule 3.2), on the spec's own two fixtures and " +
+                "on a third the component key needed: the two-hump barrel, " +
+                "a genuine two-component-per-course form, Param's crown " +
+                "arch, whose merge the closer covers, and the ROW-SWAPPED " +
+                "barrel, whose row blocks are emitted 3, 0, 1, 2 so that " +
+                "the traced component order disagrees between the low " +
+                "levels and the high ones, which no other fixture in this " +
+                "file does and which is the only way the component half of " +
+                "the rule can be failed at all: keyed on the traced index " +
+                "the order swaps between its courses 1 and 2, keyed on the " +
+                "chart it does not, and all three of its branch pairs are " +
+                "asserted over all 30 of their item indices. " +
                 "Every branch of both breaks into RUNS that tile one curve " +
                 "in order, no cell's U0 standing before the last cell's U1, " +
                 "and two cells the arc calls NEIGHBOURS share a corner " +
@@ -16877,6 +16886,48 @@ internal static class Program
     }
 
     /// <summary>
+    /// THE BARREL WITH ITS ROW BLOCKS SWAPPED, which is the one fixture in
+    /// this file where the TRACED COMPONENT ORDER at one level disagrees
+    /// with the order at the next.
+    ///
+    /// It exists because nothing else here reproduces the defect spec
+    /// 2026-09-04 rule 3.1's component key was written against. Trace
+    /// numbers a level's components in the order it meets their faces, so
+    /// the order follows the FACE ARRAY and means nothing from one level to
+    /// the next; the ordered barrel and even SkinBarrelScrambledNet keep it
+    /// fixed, the scrambled one deliberately, so an ordering keyed on that
+    /// index reads correctly on both and the defect stays invisible.
+    ///
+    /// THE DEVICE. The tent barrel's field is 2 - |j - 2|, so a LOW level
+    /// crosses the outer rows, j = 0 and j = 3, and a HIGH level the inner
+    /// rows, j = 1 and j = 2. Emit the row blocks as 3, 0, 1, 2 and the two
+    /// halves of the vault disagree by construction: low down the walk
+    /// meets row 3 first, so the BACK strip is component 0, and high up it
+    /// meets row 1 first, so the FRONT strip is. Not one vertex moves, not
+    /// one face is rewound, and the surface, the level curves and their
+    /// directions are the ordered fixture's own.
+    ///
+    /// A component order taken from the traced index therefore SWAPS
+    /// between courses on this net, and an item index taken across two
+    /// branches steps from one side of the vault to the other, which is
+    /// Param's own find. A component order taken from the CHART, the
+    /// component followed across levels by MatchBelow, does not.
+    /// </summary>
+    private static (double[][] Vertices, int[][] Faces)
+        SkinBarrelRowSwappedNet()
+    {
+        (double[][] vertices, int[][] faces) = SkinBarrelNet();
+        int[] rowOrder = { 3, 0, 1, 2 };
+        var swapped = new List<int[]>(faces.Length);
+        foreach (int row in rowOrder)
+        {
+            for (int i = 0; i < 6; i++)
+                swapped.Add(faces[(row * 6) + i]);
+        }
+        return (vertices, swapped.ToArray());
+    }
+
+    /// <summary>
     /// A VAULT ON VERTICAL WALLS, and the only fixture in this file whose
     /// surface stands EXACTLY vertical anywhere. The tent barrel above
     /// rises at 45 degrees and nothing on it is vertical, so spec
@@ -19809,12 +19860,28 @@ internal static class Program
     /// SAME component and advances monotonically along it, for every k
     /// inside the shorter branch.
     ///
-    /// TAKEN ON THE SPEC'S OWN TWO FIXTURES. The two-hump barrel is the
-    /// genuine two-component-per-course form the rule names, whose strips
-    /// become hump loops. Param's crown arch is the measured real case,
-    /// whose merge at course 19 of 21 is where the closer lays its stones,
-    /// and it carries many more consecutive pairs than the barrel does, so
-    /// it is where the rule is exercised rather than merely demonstrated.
+    /// TAKEN ON THE SPEC'S OWN TWO FIXTURES, AND ON A THIRD THE COMPONENT
+    /// KEY NEEDED. The two-hump barrel is the genuine
+    /// two-component-per-course form the rule names, whose strips become
+    /// hump loops. Param's crown arch is the measured real case, where the
+    /// closer lays its stones, and it carries far more consecutive pairs
+    /// than the barrel does, so it is where the rule is exercised rather
+    /// than merely demonstrated.
+    ///
+    /// THE ROW-SWAPPED BARREL is here because neither of those two can
+    /// fail the COMPONENT half of the rule. Trace numbers a level's
+    /// components in face-array order, and on every other fixture in this
+    /// file that order happens to agree from one level to the next, so an
+    /// ordering keyed on the traced index reads correctly on all of them
+    /// and the defect the chart key exists to remove stays invisible.
+    /// SkinBarrelRowSwappedNet emits the tent barrel's row blocks as 3, 0,
+    /// 1, 2, which makes the back strip component 0 at the low levels and
+    /// the front strip component 0 at the high ones without moving a
+    /// vertex. Keyed on the traced index the order swaps between courses 1
+    /// and 2 and this check reads it, run 0 of the lower course standing
+    /// 0.545 m from run 1 of the upper against 1.990 m from run 0; keyed
+    /// on the chart it does not, and all three of its consecutive pairs
+    /// are asserted over every one of their 30 item indices.
     ///
     /// THE COMPONENTS ARE FOUND WITHOUT ASKING THE ENGINE. A branch is
     /// broken into RUNS by SkinArrivalRuns, and
@@ -19857,6 +19924,13 @@ internal static class Program
                 SkinTwoHumpBarrelNet().Vertices,
                 SkinTwoHumpBarrelNet().Faces
             })!;
+        object rowSwapped = Activator.CreateInstance(
+            netType,
+            new object[]
+            {
+                SkinBarrelRowSwappedNet().Vertices,
+                SkinBarrelRowSwappedNet().Faces
+            })!;
         string path = Path.Combine(
             AppContext.BaseDirectory, "assets",
             "param-crown-arch-contract.json");
@@ -19877,6 +19951,8 @@ internal static class Program
                   int pairsAsserted, int pairsSkipped)
                  fixture in new[]
                  {
+                     ("row-swapped barrel", rowSwapped, 0.6, 0.5, "2,2,2,2",
+                      0, 30, 3, 0),
                      ("two-hump barrel", barrel, 0.6, 0.5, "2,14,2,2", 2, 5, 1, 2),
                      ("Param's crown arch", crown, 0.10, 0.30,
                       "2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2," +
