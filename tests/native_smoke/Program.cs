@@ -31,9 +31,13 @@ internal static class Program
             ["Ananke.COMPAS.Native.Components.LoadsComponent"] =
                 new[] { 2 },
             ["Ananke.COMPAS.Native.Components.FdSolveComponent"] =
-                new[] { 1 },
-            ["Ananke.COMPAS.Native.Components.ExportComponent"] =
-                new[] { 2 }
+                new[] { 1 }
+            // Export has NO flattened input any more. Its Courses port,
+            // which was the flattened one, is removed by the design of
+            // 2026-09-04 section 2: courses come from the Cells tree's
+            // branch paths, and the Cells port must therefore NOT flatten,
+            // which is pinned the other way round in
+            // ValidateExportBranchCourses.
         };
     private static readonly HashSet<string> RequiredPreviewComponents = new(
         StringComparer.Ordinal)
@@ -204,18 +208,19 @@ internal static class Program
                         // existing wire moved.
                         "Anchor Lines"
                     }),
-                // Export's ports are pinned because the skin phase's branch
-                // -read Cells reorder moved every input: the order below IS
-                // the canvas contract, Path immediately after Name by the
-                // controller's ruling. The outputs are one JSON list and one
-                // Status, and a reader tells the kinds apart by the schema
-                // key each text carries rather than by slot; the output side
-                // is untouched so phase three's silent Status migration
-                // still lands on the same slots.
+                // Export's ports are pinned because they are the canvas
+                // contract: Path immediately after Name by the controller's
+                // ruling, and the COURSES PORT GONE by the design of
+                // 2026-09-04 section 2, which is what slides every archived
+                // wire after it up one and is why the Live hold is checked
+                // against a definition archived with the old count. The
+                // outputs are one JSON list and one Status, and a reader
+                // tells the documents apart by the schema key each text
+                // carries rather than by slot.
                 ["Ananke.COMPAS.Native.Components.ExportComponent"] = (
                     new[]
                     {
-                        "Result", "Cells", "Courses", "Column Radius", "Name",
+                        "Result", "Cells", "Column Radius", "Name",
                         "Path", "Studio", "Live", "Write"
                     },
                     new[] { "JSON", "Status" })
@@ -611,16 +616,22 @@ internal static class Program
 
         try
         {
-            ValidateExportTessellationJsonOptions(plugin);
+            ValidateSkinDocument(plugin);
             Console.WriteLine(
-                "PASS  ExportComponent.BuildTessellationJson: shape and " +
-                "byte content match the studio's bench.tessellation/1 " +
-                "sidecar contract under the shared ContractJson.Options.");
+                "PASS  ExportComponent.BuildSkinJson (<study>-skin.json): " +
+                "shape and byte content match the studio's " +
+                "bench.tessellation/1 contract under the shared " +
+                "ContractJson.Options, with the study name, the cheap " +
+                "pairing anchor (vertexCount and the contract's " +
+                "topologyHash) and a pattern that is ALWAYS 'authored', " +
+                "since the courtesy per-face cut is never built; and the " +
+                "corners are converted to metres, which the studio reads " +
+                "and refuses any other declaration for.");
         }
         catch (Exception exception)
         {
             failures.Add(
-                $"ExportComponent.BuildTessellationJson: " +
+                $"ExportComponent.BuildSkinJson: " +
                 $"{DescribeException(exception)}");
         }
 
@@ -628,18 +639,40 @@ internal static class Program
         {
             ValidateExportBranchCourses(plugin);
             Console.WriteLine(
-                "PASS  ExportComponent branch-read Cells: the nine inputs " +
-                "land in {Result, Cells, Courses, Column Radius, Name, " +
-                "Path, Studio, Live, Write} order, Cells is a TREE read " +
-                "with GetDataTree whose branch path is the course, and " +
-                "Courses keeps its Flatten for the hand-authored flat-list " +
-                "case.");
+                "PASS  ExportComponent branch-read Cells: the COURSES PORT " +
+                "IS GONE and the eight that remain land in {Result, Cells, " +
+                "Column Radius, Name, Path, Studio, Live, Write} order, " +
+                "with no port named Courses anywhere on the component; " +
+                "Cells is a TREE read with GetDataTree whose branch path " +
+                "IS the course, and the real walk over a real multi-branch " +
+                "GH_Structure derives them.");
         }
         catch (Exception exception)
         {
             failures.Add(
                 $"ExportComponent branch-read Cells: " +
                 $"{DescribeException(exception)}");
+        }
+
+        try
+        {
+            ValidateExportLiveHoldOnMovedPorts(plugin, pluginPath);
+            Console.WriteLine(
+                "PASS  Export Live hold on a definition archived with the " +
+                "OLD port count: an archive carrying the nine names the " +
+                "Courses port stood in makes InputPortsMovedOnLoad true and " +
+                "HOLDS Live, so a wire that slid up one onto Live cannot " +
+                "push a study before the author has read the warning; an " +
+                "archive carrying today's eight holds nothing; and the hold " +
+                "is cleared only by the deliberate act of setting Live off " +
+                "and then on. The archive shape itself is the one a real " +
+                "Grasshopper file carries, pinned separately against " +
+                "ananke_equilibrium_v01.gh.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add(
+                $"Export Live hold: {DescribeException(exception)}");
         }
 
         try
@@ -2352,38 +2385,16 @@ internal static class Program
 
         try
         {
-            ValidateExportDefaultTessellation(plugin);
-            Console.WriteLine(
-                "PASS  ExportComponent.ChooseCells: wired cells win, an "
-                + "unwired Cells with faces on the Result is tessellated by "
-                + "Export itself, neither gives no sidecar at all, and Courses "
-                + "wired alone is ignored with a remark, and only where a "
-                + "default tessellation is actually coming; four faces of a "
-                + "Result's own mesh, the second of them vertical in plan, "
-                + "come out as three cells in face order at course 0, the "
-                + "unusable one SKIPPED and counted rather than costing the "
-                + "contract, the COMPAS document and every other kind; "
-                + "and the sidecar those faces make declares pattern "
-                + "'faces', where an author's own cells declare "
-                + "'authored'.");
-        }
-        catch (Exception exception)
-        {
-            failures.Add(
-                $"ExportComponent.ChooseCells: {DescribeException(exception)}");
-        }
-
-        try
-        {
             ValidateExportPlan(plugin);
             Console.WriteLine(
-                "PASS  ExportPlan: contract and compas always, tessellation "
-                + "with cells, columns with a block and the frames sidecar "
-                + "AFTER the columns on the same condition, in that order, "
-                + "with no frames kind where there is no machine to animate; "
-                + "and a study Name is ONE path segment, so a separator, a "
-                + "colon or a dot-dot is refused before it can write the set "
-                + "outside the folder the author chose.");
+                "PASS  ExportPlan: THREE documents, not five kinds. Form "
+                + "always, skin when cells are wired, formwork when the "
+                + "Mould block carries columns, in that order, with none of "
+                + "the five old kinds anywhere among them; and a study Name "
+                + "is ONE path segment, so a separator, a colon or a dot-dot "
+                + "ANYWHERE in it, not only alone, is refused before it can "
+                + "write the set outside the folder the author chose or reach "
+                + "a route the studio already 400s.");
         }
         catch (Exception exception)
         {
@@ -2392,15 +2403,34 @@ internal static class Program
 
         try
         {
+            ValidateFormDocument(plugin);
+            Console.WriteLine(
+                "PASS  FormDocument (<study>-form.json): the contract's own "
+                + "bytes survive whole. Strip the two added keys and what is "
+                + "left is EXACTLY what ContractJson.Serialize wrote, "
+                + "character for character, on a fixture carrying a mould "
+                + "block; 'study' leads and 'thrustMesh' trails, carrying the "
+                + "worker's string verbatim and parsing back to the same "
+                + "text; a worker that gave nothing writes null there and the "
+                + "document still stands; and the change key reads the "
+                + "contract half and NOT the mesh, whose fresh uuid per "
+                + "serialisation would stop the key ever repeating.");
+        }
+        catch (Exception exception)
+        {
+            failures.Add($"FormDocument: {DescribeException(exception)}");
+        }
+
+        try
+        {
             ValidateColumnsMesh(plugin);
             Console.WriteLine(
                 "PASS  ColumnsMesh: one member is a closed prism of six "
                 + "quads and eight cap triangles at the radius asked, a "
-                + "zero-length member is nothing and is absent from the "
-                + "members list too, two members index cleanly, a DIAGONAL "
+                + "zero-length member draws nothing and is named by no "
+                + "prism in Drawn, two members index cleanly, and a DIAGONAL "
                 + "member's caps are perpendicular to the member and not to "
-                + "world Z, and the radius the document declares is the one "
-                + "the mesh was built at.");
+                + "world Z.");
         }
         catch (Exception exception)
         {
@@ -2409,10 +2439,15 @@ internal static class Program
 
         try
         {
-            ValidateMouldFramesSidecar(plugin);
+            ValidateFormworkDocument(plugin);
             Console.WriteLine(
-                "PASS  MouldFrames (bench.frames/1, the studio's animation "
-                + "kind): 51 samples at step 2.0 with 0, 30, 60, 90 and 100 "
+                "PASS  FormworkDocument (bench.formwork/1, the machine and "
+                + "its motion in ONE self-contained document): the study, "
+                + "the units, the factor, the force unit and the RADIUS the "
+                + "studio draws its tubes at, all stamped; vertexCount and "
+                + "columnNodeCount at DOCUMENT level, where their validator "
+                + "reads them before any frame; 51 samples at step 2.0 with "
+                + "0, 30, 60, 90 and 100 "
                 + "present and strictly ascending; the boundary INSERTION "
                 + "itself exercised at a step of 7, which lands on none of "
                 + "them, giving nineteen times with each missed boundary "
@@ -2421,18 +2456,23 @@ internal static class Program
                 + "shipped step of 2.0 the insertion is invisible and "
                 + "deleting it left this suite green; every frame the declared "
                 + "vertex and column-node counts, finite, phase-labelled by "
-                + "MouldGeometry.Phases itself; the time-100 frame EQUAL to "
-                + "the contract's equilibrium vertices to 1e-9, which is the "
-                + "reader's integrity check of the pairing; feet immobile, "
+                + "MouldGeometry.Phases itself; BOTH PAIRING INVARIANTS, the "
+                + "time-100 vertices EQUAL to the form document's equilibrium "
+                + "to 1e-9 and the time-100 columnNodes equal to this "
+                + "document's OWN columns block, with a mis-paired Result "
+                + "refused outright rather than written; feet immobile, "
                 + "the fork holding its built 0.4 and the trunk uncracked in "
-                + "every frame; and the blend measured at times 0, 30 and 60 "
+                + "every frame; the columns block carrying the members "
+                + "UNRENUMBERED so its trees still index them, with drawnMembers "
+                + "naming which member each prism is; and the blend measured "
+                + "at times 0, 30 and 60 "
                 + "against hand numbers off the fixture's own bare surface, "
                 + "so a still sequence or a reordered timeline reads "
                 + "differently. Byte-identical on a second run.");
         }
         catch (Exception exception)
         {
-            failures.Add($"MouldFrames: {DescribeException(exception)}");
+            failures.Add($"FormworkDocument: {DescribeException(exception)}");
         }
 
         try
@@ -2440,15 +2480,15 @@ internal static class Program
             ValidateLiveUploader(plugin);
             Console.WriteLine(
                 "PASS  LiveUploader: the retry schedule is 2, 4, 8 seconds "
-                + "then deferred, the routes are the studio's, a 2xx is "
-                + "stored, a 409 retries until the schedule runs out, "
+                + "then deferred, ALL THREE documents go down the ONE "
+                + "exports route with no special case for any of them, a 2xx "
+                + "is stored, a 409 retries until the schedule runs out, "
                 + "anything else is refused, and the set key reads the "
-                + "Name, the Studio and every kind EXCEPT the compas "
-                + "document's own bytes, whose fresh uuid per serialisation "
-                + "would stop the key ever repeating; the compas kind's "
-                + "presence still counts. The study name is escaped into "
-                + "both routes, and a deferred kind names the run the "
-                + "studio is busy with when the 409 body carries one.");
+                + "Name, the Studio and every document EXCEPT the form "
+                + "document's thrust mesh, whose fresh uuid per serialisation "
+                + "would stop the key ever repeating. The study name is "
+                + "escaped into the route, and a deferred document names the "
+                + "run the studio is busy with when the 409 body carries one.");
         }
         catch (Exception exception)
         {
@@ -2460,15 +2500,18 @@ internal static class Program
             ValidateExportAtomicWrite(plugin);
             Console.WriteLine(
                 "PASS  Export atomic writes (studio request R-005): every "
-                + "kind of a set goes to a temporary beside its destination "
-                + "and is MOVED over it, so the destination is never opened "
-                + "for writing and a reader holding it can never see it "
-                + "short. Measured through ExportComponent.WriteSet itself on "
-                + "a five-kind fixture study with a reader trap on the middle "
-                + "kind: the kinds before it are rewritten whole, the held "
-                + "kind is left entirely alone rather than truncated, the "
-                + "loop stops and names it, and neither the clean set nor the "
-                + "failed one leaves a temporary behind.");
+                + "document of a set goes to a temporary beside its "
+                + "destination and is MOVED over it, so the destination is "
+                + "never opened for writing and a reader holding it can "
+                + "never see it short. Measured through "
+                + "ExportComponent.WriteSet itself on a THREE-document "
+                + "fixture study, whose files land as <study>-form.json, "
+                + "<study>-skin.json and <study>-formwork.json, with a "
+                + "reader trap on the middle one: the document before it is "
+                + "rewritten whole, the held one is left entirely alone "
+                + "rather than truncated, the loop stops and names it, and "
+                + "neither the clean set nor the failed one leaves a "
+                + "temporary behind.");
         }
         catch (Exception exception)
         {
@@ -30511,27 +30554,187 @@ internal static class Program
     }
 
     /// <summary>
-    /// Finding 2 of the 2026-08-20 plugin sweep: BuildTessellationJson now
-    /// serialises through the shared ContractJson.Options rather than
-    /// default JsonSerializer options. Every field in this payload is
-    /// non-null and every key is already a camelCase literal, so no
-    /// option ContractJson.Options sets actually changes a byte for this
-    /// shape (confirmed separately, outside this harness, by comparing
-    /// the built .gha's output before and after the change); what this
-    /// asserts is that the exact schema the studio's
-    /// tessellation.from_document expects -- key/course/outline per
-    /// cell, the bench.tessellation/1 envelope -- still comes out
-    /// byte-for-byte as written.
+    /// THE LIVE HOLD, against a definition archived with the OLD port count
+    /// (design of 2026-09-04 section 2, check 7 of its section 5).
+    ///
+    /// Removing input 2 slides every archived wire after it up one.
+    /// Grasshopper reattaches an archived wire to whatever port stands at
+    /// the same index, so an old Export's Column Radius wire lands on Name,
+    /// its Studio wire on Live, and Live obeys a number that was never
+    /// meant for it: a study pushed to a studio before the author has read
+    /// the warning saying the wires moved. That is the hazard the hold
+    /// exists for, and this is the removal it was written against, so the
+    /// detection is verified here rather than assumed.
+    ///
+    /// The archive is BUILT, and the shape it is built to is not guessed:
+    /// ParameterIdentity.ArchivedNames is pinned separately, in
+    /// ValidateArchivedNamesFromDefinition, against
+    /// plugin/definitions/ananke_equilibrium_v01.gh, a file Grasshopper
+    /// itself wrote, and the chunk and item names below are the ones read
+    /// out of that file's own XML dump. This one is round-tripped through
+    /// GH_LooseChunk's own XML serialisation, so what the component reads
+    /// is an archive that has been written and read back, not a live object
+    /// handed to itself.
+    ///
+    /// Three questions, the three an author asks the hold: does it fire on
+    /// the old surface, does it stay quiet on today's, and does the
+    /// deliberate act clear it.
     /// </summary>
-    private static void ValidateExportTessellationJsonOptions(Assembly plugin)
+    private static void ValidateExportLiveHoldOnMovedPorts(
+        Assembly plugin, string pluginPath)
+    {
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo held = exportType.GetMethod(
+            "LiveHeldOnThisSolve",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.LiveHeldOnThisSolve was not found; the "
+                + "hold has to be readable without a live IGH_DataAccess or "
+                + "it cannot be checked at all.");
+        Type identity = RequireComponentType(plugin, "ParameterIdentity");
+        MethodInfo archivedNames = RequireStatic(identity, "ArchivedNames");
+        Type readerType = archivedNames.GetParameters()[0].ParameterType;
+        Type looseChunkType = readerType.Assembly.GetType(
+            "GH_IO.Serialization.GH_LooseChunk", throwOnError: true)!;
+
+        // The nine input names an Export was archived with before this
+        // wave, and the two outputs beside them. Courses stood at index 2.
+        string[] oldInputs =
+        {
+            "Result", "Cells", "Courses", "Column Radius", "Name", "Path",
+            "Studio", "Live", "Write"
+        };
+        string[] newInputs =
+        {
+            "Result", "Cells", "Column Radius", "Name", "Path", "Studio",
+            "Live", "Write"
+        };
+        string[] outputs = { "JSON", "Status" };
+
+        object Archive(string[] inputs)
+        {
+            object container = Activator.CreateInstance(
+                looseChunkType, new object[] { "Container" })!;
+            MethodInfo createChunk = looseChunkType.GetMethod(
+                "CreateChunk", new[] { typeof(string) })!;
+            MethodInfo createIndexedChunk = looseChunkType.GetMethod(
+                "CreateChunk", new[] { typeof(string), typeof(int) })!;
+            object parameterData = createChunk.Invoke(
+                container, new object[] { "ParameterData" })!;
+            MethodInfo setInt32 = parameterData.GetType().GetMethod(
+                "SetInt32", new[] { typeof(string), typeof(int) })!;
+            setInt32.Invoke(parameterData, new object[] { "InputCount", inputs.Length });
+            setInt32.Invoke(parameterData, new object[] { "OutputCount", outputs.Length });
+            void Side(string chunkName, string[] names)
+            {
+                for (int at = 0; at < names.Length; at++)
+                {
+                    object slot = createIndexedChunk.Invoke(
+                        parameterData, new object[] { chunkName, at })!;
+                    slot.GetType()
+                        .GetMethod("SetString", new[] { typeof(string), typeof(string) })!
+                        .Invoke(slot, new object[] { "Name", names[at] });
+                }
+            }
+            Side("InputParam", inputs);
+            Side("OutputParam", outputs);
+            // Written out and read back, so the component is handed an
+            // archive rather than the object that built it.
+            string xml = (string)looseChunkType
+                .GetMethod("Serialize_Xml", Type.EmptyTypes)!
+                .Invoke(container, null)!;
+            object replayed = Activator.CreateInstance(
+                looseChunkType, new object[] { "Container" })!;
+            looseChunkType.GetMethod("Deserialize_Xml", new[] { typeof(string) })!
+                .Invoke(replayed, new object[] { xml });
+            return replayed;
+        }
+
+        bool Hold(string[] archivedInputs, params bool[] solves)
+        {
+            object component = Activator.CreateInstance(exportType)!;
+            MethodInfo read = exportType.GetMethod(
+                "Read", new[] { readerType })
+                ?? throw new InvalidOperationException(
+                    "ExportComponent.Read(GH_IReader) was not found.");
+            read.Invoke(component, new[] { Archive(archivedInputs) });
+            bool answer = false;
+            foreach (bool live in solves)
+                answer = (bool)held.Invoke(component, new object[] { live })!;
+            return answer;
+        }
+
+        // 1. The old surface HOLDS. Nine archived inputs against eight
+        // registered, and the names disagree from index 2 on, which is
+        // exactly what an archived wire sliding up one looks like.
+        if (!Hold(oldInputs, true))
+        {
+            throw new InvalidOperationException(
+                "A definition archived with the OLD nine inputs must HOLD "
+                + "Live on its first solve: removing input 2 slid every "
+                + "wire after it up one, so the Studio wire now sits on "
+                + "Live and would push a study before the author had read "
+                + "the warning. InputPortsMovedOnLoad did not fire.");
+        }
+
+        // 2. Today's surface holds NOTHING. A hold on every file ever saved
+        // is a hold nobody reads, and it would put a "held" line on a
+        // canvas that never moved a wire.
+        if (Hold(newInputs, true))
+        {
+            throw new InvalidOperationException(
+                "A definition archived against TODAY's eight inputs must "
+                + "not be held: every wire came back where it left, and a "
+                + "hold there is a false alarm on every file saved after "
+                + "this wave.");
+        }
+
+        // 3. The deliberate act clears it, and only the deliberate act.
+        // Live seen False is the author's own hand; the next True sends.
+        if (!Hold(oldInputs, true, true))
+        {
+            throw new InvalidOperationException(
+                "The hold must NOT clear itself by being solved again: a "
+                + "hold that lapsed on the second solve would push the "
+                + "study a fraction of a second after the first, which is "
+                + "no hold at all.");
+        }
+        if (Hold(oldInputs, true, false, true))
+        {
+            throw new InvalidOperationException(
+                "Setting Live off and then on again is the deliberate act "
+                + "that clears the hold; the component is still holding "
+                + "after it, so the author has no way back to Live at all.");
+        }
+    }
+
+    /// <summary>
+    /// SKIN, <c>&lt;study&gt;-skin.json</c>: the studio's
+    /// bench.tessellation/1 shape, byte for byte, under the shared
+    /// ContractJson.Options. Every field in this payload is non-null and
+    /// every key is already a camelCase literal, so no option those options
+    /// set actually changes a byte for this shape; what this asserts is
+    /// that the exact schema the studio's tessellation.from_document
+    /// expects, key/course/outline per cell inside the
+    /// bench.tessellation/1 envelope, still comes out as written.
+    ///
+    /// Three things the design of 2026-09-04 adds round it: the "study"
+    /// key, so the studio keys Live's follow-the-push on a field we stamp
+    /// (their R-010(h)(3)); the cheap pairing anchor, "vertexCount" and the
+    /// contract's "topologyHash", a declaration the reader is free to
+    /// ignore (channel agreement R-008/4); and a "pattern" that is now
+    /// ALWAYS "authored", because the courtesy per-face cut is never built
+    /// and its absence says what its "faces" stamp used to say.
+    /// </summary>
+    private static void ValidateSkinDocument(Assembly plugin)
     {
         Type exportType = RequireComponentType(plugin, "ExportComponent");
         Type cellType = RequireComponentType(plugin, "TessellationCell");
         MethodInfo method = exportType.GetMethod(
-            "BuildTessellationJson",
+            "BuildSkinJson",
             BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException(
-                "ExportComponent.BuildTessellationJson was not found.");
+                "ExportComponent.BuildSkinJson was not found.");
 
         var outline = new List<double[]>
         {
@@ -30551,24 +30754,30 @@ internal static class Program
                 $"{cellListType.FullName} does not expose Add.");
         addMethod.Invoke(cellList, new[] { cell });
 
+        const string Study = "Column diagnosis";
+        const string Hash = "sha256:abc123";
         var json =
-            method.Invoke(null, new object[] { cellList, 1.0, "authored" })
+            method.Invoke(
+                null,
+                new object[] { cellList, 1.0, Study, 9, Hash })
                 as string
             ?? throw new InvalidOperationException(
-                "BuildTessellationJson returned an unexpected type.");
+                "BuildSkinJson returned an unexpected type.");
         const string expected =
             "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
-            "\"domain\":\"plan\",\"pattern\":\"authored\",\"cells\":[" +
+            "\"domain\":\"plan\",\"pattern\":\"authored\"," +
+            "\"study\":\"Column diagnosis\",\"vertexCount\":9," +
+            "\"topologyHash\":\"sha256:abc123\",\"cells\":[" +
             "{\"key\":\"c0p0\",\"course\":0," +
             "\"outline\":[[0,0],[1,0],[0,1]]}]}";
         if (!string.Equals(json, expected, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "BuildTessellationJson output changed shape; expected " +
+                "BuildSkinJson output changed shape; expected " +
                 $"'{expected}', received '{json}'.");
         }
 
-        // A millimetre document. The sidecar declares metres and the
+        // A millimetre document. The document declares metres and the
         // studio reads metres only, refusing any other declaration
         // outright, so the corners have to BE metres by the time they
         // are written. Before this factor existed the component wrote
@@ -30576,39 +30785,47 @@ internal static class Program
         // accepts without complaint and reads a thousand times too
         // large: the one shape of unit error that never raises.
         var millimetres =
-            method.Invoke(null, new object[] { cellList, 0.001, "authored" })
+            method.Invoke(
+                null,
+                new object[] { cellList, 0.001, Study, 9, Hash })
                 as string
             ?? throw new InvalidOperationException(
-                "BuildTessellationJson returned an unexpected type.");
+                "BuildSkinJson returned an unexpected type.");
         const string expectedMillimetres =
             "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
-            "\"domain\":\"plan\",\"pattern\":\"authored\",\"cells\":[" +
+            "\"domain\":\"plan\",\"pattern\":\"authored\"," +
+            "\"study\":\"Column diagnosis\",\"vertexCount\":9," +
+            "\"topologyHash\":\"sha256:abc123\",\"cells\":[" +
             "{\"key\":\"c0p0\",\"course\":0," +
             "\"outline\":[[0,0],[0.001,0],[0,0.001]]}]}";
         if (!string.Equals(millimetres, expectedMillimetres, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "BuildTessellationJson did not convert document units to " +
+                "BuildSkinJson did not convert document units to " +
                 $"metres; expected '{expectedMillimetres}', received " +
                 $"'{millimetres}'.");
         }
     }
 
     /// <summary>
-    /// Check 12.10(b) and 12.10(e). Export's inputs are reordered and its
-    /// Cells port becomes a TREE whose branch path is the course, which
-    /// reproduces exactly what Courses supplies today for Skin-sourced
-    /// cells, since Skin already branches Cells by course. Courses SURVIVES
-    /// on Export for the one case branch-path derivation cannot serve: an
-    /// author wiring a FLAT list of hand-authored cells with an explicit
-    /// per-item course list.
+    /// Check 12.10(b), and the port half of the design of 2026-09-04
+    /// section 2: THE COURSES INPUT IS REMOVED.
     ///
-    /// The three cases of 12.10(e) are driven directly against
-    /// <c>DeriveBranchCourses</c>, the pure branch-shape helper
-    /// <c>TryReadInputs</c> calls: it takes only the branch count and the
-    /// two lists, the same reach <c>HasNegativeCourse</c> above is held to,
-    /// since <c>SolveInstance</c> needs a live <c>IGH_DataAccess</c>/
-    /// <c>GH_Structure</c> this harness never launches.
+    /// Courses derive from the Cells tree's branch paths and from nothing
+    /// else. The hand-authored escape hatch dies with the port,
+    /// deliberately: a course belongs to a branch, Skin already branches
+    /// its Cells by course, and two ways of saying the same thing could
+    /// disagree. A flat Cells list is course 0 throughout, which the
+    /// component says in a Remark.
+    ///
+    /// The walk itself is driven against REAL GH_Path and
+    /// GH_Structure&lt;GH_Integer&gt; objects built off the loaded
+    /// Grasshopper assembly: GH_Path is a bare int[] wrapper and
+    /// GH_Integer wraps a plain int, so both build without the native
+    /// Rhino core this harness deliberately never launches (the same
+    /// ground Point3d already stands on for SnapSampledLineToNodes; a real
+    /// GH_Curve needs that core for its Curve value, which is why
+    /// WalkCellTree is generic rather than hard-wired to GH_Curve).
     /// </summary>
     private static void ValidateExportBranchCourses(Assembly plugin)
     {
@@ -30619,9 +30836,15 @@ internal static class Program
             .GetProperty("Input")!.GetValue(parameters)!;
         string[] expected =
         {
-            "Result", "Cells", "Courses", "Column Radius", "Name", "Path",
+            "Result", "Cells", "Column Radius", "Name", "Path",
             "Studio", "Live", "Write"
         };
+        if (inputs.Count != expected.Length)
+        {
+            throw new InvalidOperationException(
+                $"Export registers {expected.Length} inputs now that the "
+                + $"Courses port is gone; it registers {inputs.Count}.");
+        }
         for (int at = 0; at < expected.Length; at++)
         {
             object port = inputs[at]!;
@@ -30630,11 +30853,25 @@ internal static class Program
             if (name != expected[at])
             {
                 throw new InvalidOperationException(
-                    "Export's inputs are {Result, Cells, Courses, Column " +
-                    "Radius, Name, Path, Studio, Live, Write}, Path " +
-                    "immediately AFTER Name by the ruling of section 10.1; " +
-                    $"slot {at} is '{name}' and should be " +
-                    $"'{expected[at]}'.");
+                    "Export's inputs are {Result, Cells, Column Radius, "
+                    + "Name, Path, Studio, Live, Write}, Path immediately "
+                    + "AFTER Name by the ruling of section 10.1 and no "
+                    + $"Courses among them; slot {at} is '{name}' and should "
+                    + $"be '{expected[at]}'.");
+            }
+        }
+        foreach (object? port in inputs)
+        {
+            string name = (string)port!.GetType()
+                .GetProperty("Name")!.GetValue(port)!;
+            if (name == "Courses")
+            {
+                throw new InvalidOperationException(
+                    "The Courses input is REMOVED (design of 2026-09-04 "
+                    + "section 2): courses derive from the Cells tree's "
+                    + "branch paths and from nothing else, and a port that "
+                    + "can say otherwise is a second source that can "
+                    + "disagree with the first.");
             }
         }
         object cellsPort = inputs[1]!;
@@ -30647,99 +30884,15 @@ internal static class Program
                 "read with GetDataTree (rule 10.2.1): each branch's path " +
                 "index is the course of every cell in that branch. A " +
                 "Flatten there sends every cell to course 0, which is ONE " +
-                "studio stage instead of many.");
-        }
-        object coursesPort = inputs[2]!;
-        object coursesMapping = coursesPort.GetType()
-            .GetProperty("DataMapping")!.GetValue(coursesPort)!;
-        if (coursesMapping.ToString() != "Flatten")
-        {
-            throw new InvalidOperationException(
-                "Export's Courses port KEEPS its Flatten and its list " +
-                "access (rule 10.2.2): it exists for the one case " +
-                "branch-path derivation cannot serve, and removing it " +
-                "would forbid that case outright.");
+                "studio stage instead of many, and there is no Courses " +
+                "port left to say otherwise.");
         }
 
-        MethodInfo derive = RequireStatic(exportType, "DeriveBranchCourses");
-
-        // Case 1: a tree of three branches with two cells each gives
-        // courses 0, 0, 1, 1, 2, 2 (Skin-sourced Cells; Courses empty).
-        var derivedCourses = new List<int> { 0, 0, 1, 1, 2, 2 };
-        var courseInputA = new List<int>();
-        object?[] treeArgs = { 3, derivedCourses, courseInputA };
-        object? conflictA = derive.Invoke(null, treeArgs);
-        if (conflictA is not null)
-        {
-            throw new InvalidOperationException(
-                "DeriveBranchCourses raised a conflict for a plain " +
-                $"three-branch tree with no Courses wired: '{conflictA}'.");
-        }
-        if (!courseInputA.SequenceEqual(new[] { 0, 0, 1, 1, 2, 2 }))
-        {
-            throw new InvalidOperationException(
-                "DeriveBranchCourses did not derive courses 0, 0, 1, 1, " +
-                "2, 2 from a three-branch tree of two cells each; got " +
-                $"[{string.Join(", ", courseInputA)}].");
-        }
-
-        // Case 2: a flat list (one branch) with a hand-authored Courses
-        // list gives that list back untouched.
-        var courseInputB = new List<int> { 5, 5, 7 };
-        object?[] flatArgs = { 1, new List<int>(), courseInputB };
-        object? conflictB = derive.Invoke(null, flatArgs);
-        if (conflictB is not null)
-        {
-            throw new InvalidOperationException(
-                "DeriveBranchCourses raised a conflict for a single-" +
-                $"branch Cells with a hand-authored Courses list: " +
-                $"'{conflictB}'.");
-        }
-        if (!courseInputB.SequenceEqual(new[] { 5, 5, 7 }))
-        {
-            throw new InvalidOperationException(
-                "DeriveBranchCourses altered a hand-authored Courses list " +
-                "on a single-branch Cells; the flat-list case must pass " +
-                $"it through untouched, got [{string.Join(", ", courseInputB)}].");
-        }
-
-        // Case 3: both together (more than one branch AND a non-empty
-        // Courses) give the Error, and the Courses list is left exactly
-        // as wired, not silently forced to course 0.
-        var courseInputC = new List<int> { 1, 2, 3 };
-        object?[] bothArgs = { 3, derivedCourses, courseInputC };
-        object? conflictC = derive.Invoke(null, bothArgs);
-        if (conflictC is not string conflictMessage ||
-            !conflictMessage.Contains(
-                "more than one branch AND Courses is not empty",
-                StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "DeriveBranchCourses did not refuse a tree of more than " +
-                "one branch wired alongside a non-empty Courses list; " +
-                $"got '{conflictC}'.");
-        }
-        if (!courseInputC.SequenceEqual(new[] { 1, 2, 3 }))
-        {
-            throw new InvalidOperationException(
-                "DeriveBranchCourses must leave Courses untouched when " +
-                "refusing the conflict, not resolve it by guessing; got " +
-                $"[{string.Join(", ", courseInputC)}].");
-        }
-
-        // The three cases above hand-supply an already-correct
-        // derivedCourses list, so they never exercise the tree-walking
-        // derivation code itself (TryReadInputs' GH_Path/GH_Structure
-        // read). That code is factored into two static helpers,
-        // CourseForPath(GH_Path) and the generic WalkCellTree, driven
-        // here against REAL GH_Path and GH_Structure<GH_Integer> objects
-        // built off the loaded Grasshopper assembly: GH_Path is a bare
-        // int[] wrapper and GH_Integer wraps a plain int, so both build
-        // without the native Rhino core this harness deliberately never
-        // launches (the same ground SnapSampledLineToNodes already
-        // stands on for Point3d; a real GH_Curve needs that core for its
-        // Curve value, which is why WalkCellTree is generic rather than
-        // hard-wired to GH_Curve).
+        // The real tree walk. CourseForPath and the generic WalkCellTree
+        // are the two static helpers TryReadInputs calls, and with the
+        // Courses port gone they are the WHOLE of where a course now comes
+        // from, so they are driven against real Grasshopper objects rather
+        // than a hand-fed list.
         Assembly grasshopper = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(item => item.GetName().Name == "Grasshopper")
             ?? throw new InvalidOperationException(
@@ -30832,203 +30985,49 @@ internal static class Program
         }
     }
 
-    /// <summary>
-    /// <c>ExportComponent.ChooseCells</c> and the JSON the default cells
-    /// make: where a tessellation comes from when nobody wired one.
-    ///
-    /// The rule of spec section 4. Wired cells always win, whatever the
-    /// Result carries. With no cells wired and faces on the Result, Export
-    /// tessellates the faces itself, one cell per face in face order at
-    /// course 0, so the sidecar is there for every TNA Result and the
-    /// studio's build animation has something to draw even before anyone
-    /// authors a pattern. With neither there is no sidecar. Courses wired
-    /// alone is ignored, with a remark, because a course belongs to a cell
-    /// and there are no authored cells for it to belong to.
-    ///
-    /// Split for the same reason FrameGeometry is: the decision is
-    /// arithmetic and runs here, while the faces themselves are a Rhino mesh
-    /// this process has no Rhino for. The cells the decision leads to are
-    /// measured through DefaultTessellationCells, which takes plain corner
-    /// points, and then through BuildTessellationJson, which is the code
-    /// that actually writes them.
-    ///
-    /// One half stays unmeasured and cannot be measured here: the plumbing
-    /// between the two, which rebuilds the thrust mesh, asks
-    /// SkinComponent.FacePolylines for one closed polyline per face and
-    /// reads the corners back off it. That needs a Mesh, a Curve and an
-    /// IGH_DataAccess, and this harness has RhinoCommon's structs but no
-    /// native core to build any of them with, so deleting the Faces branch
-    /// of TryReadInputs would leave this check green. Read, not run.
-    /// </summary>
-    private static void ValidateExportDefaultTessellation(Assembly plugin)
-    {
-        Type exportType = RequireComponentType(plugin, "ExportComponent");
-        MethodInfo choose = RequireStatic(exportType, "ChooseCells");
-        string Source(int cells, int courses, int faces, out string? remark)
-        {
-            object?[] arguments = { cells, courses, faces, null };
-            object verdict = choose.Invoke(null, arguments)
-                ?? throw new InvalidOperationException("ChooseCells returned null.");
-            remark = arguments[3] as string;
-            return verdict.ToString() ?? string.Empty;
-        }
-        // The verdict's own consequence: which word the sidecar's "pattern"
-        // key carries. Separate from ChooseCells so both halves can be
-        // driven here, because the plumbing between them lives in
-        // TryReadInputs, which needs a Rhino curve and an IGH_DataAccess.
-        MethodInfo patternFor = RequireStatic(exportType, "PatternFor");
-        Type cellSourceType = choose.ReturnType;
-        string PatternOf(string verdict) =>
-            patternFor.Invoke(
-                null,
-                new[] { Enum.Parse(cellSourceType, verdict) }) as string
-            ?? throw new InvalidOperationException(
-                "PatternFor returned an unexpected type.");
-        if (PatternOf("Wired") != "authored" || PatternOf("Faces") != "faces")
-        {
-            throw new InvalidOperationException(
-                "Cells somebody wired were AUTHORED and the Result's own "
-                + "faces were not; the studio reads that key to know whether "
-                + "a cutting pattern was ever chosen, and the fallback "
-                + "claiming authorship is the one lie it cannot detect. Got "
-                + $"'{PatternOf("Wired")}' and '{PatternOf("Faces")}'.");
-        }
-
-        if (Source(12, 12, 400, out string? wiredRemark) != "Wired" ||
-            wiredRemark is not null)
-        {
-            throw new InvalidOperationException(
-                "Cells wired always win, however many faces the Result "
-                + "carries, and nothing is remarked on.");
-        }
-        if (Source(0, 0, 400, out string? facesRemark) != "Faces" ||
-            facesRemark is not null)
-        {
-            throw new InvalidOperationException(
-                "With no cells wired and faces on the Result, Export "
-                + "tessellates the faces itself.");
-        }
-        if (Source(0, 0, 0, out _) != "None")
-        {
-            throw new InvalidOperationException(
-                "No cells and no faces is no tessellation: an FD Result "
-                + "carries no faces and gets the contract and the compas "
-                + "document alone.");
-        }
-        if (Source(0, 7, 400, out string? ignored) != "Faces" ||
-            ignored is null ||
-            !ignored.Contains("Courses", StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "Courses wired with no Cells is IGNORED and said out loud, "
-                + "because a course belongs to a cell and the default "
-                + $"tessellation is course 0 throughout; got '{ignored}'.");
-        }
-        if (Source(0, 7, 0, out string? silent) != "None" ||
-            silent is not null)
-        {
-            throw new InvalidOperationException(
-                "Courses wired against a Result with no faces at all earns "
-                + "no remark: the remark describes the tessellation Export "
-                + "would have built from the faces, and on this path it "
-                + $"builds none; got '{silent}'.");
-        }
-
-        // The cells the Faces verdict leads to, through the code that
-        // builds them. Four faces of a Result's own mesh are handed over,
-        // each as the closed ring FacePolylines makes (the closing repeat
-        // is dropped here, as the sidecar wants). Point3d is a plain
-        // struct and needs no native core, which is why this seam takes
-        // corners rather than the polylines themselves.
-        //
-        // The SECOND face is vertical in plan: three distinct corners in
-        // space, one corner in plan. Nobody wired it, and nobody asked for
-        // this tessellation at all, so it is SKIPPED and counted, never an
-        // error. Before this the whole export went down with it: the
-        // contract, the COMPAS document, the columns mesh, the disk write
-        // and the live push, on a solve with an empty Cells port.
-        MethodInfo build = exportType.GetMethod(
-            "BuildTessellationJson",
-            BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException(
-                "ExportComponent.BuildTessellationJson was not found.");
-        MethodInfo defaults =
-            RequireStatic(exportType, "DefaultTessellationCells");
-        Type faceType = defaults.GetParameters()[0].ParameterType
-            .GetGenericArguments()[0];
-        Type point3d = faceType.GetElementType()
-            ?? throw new InvalidOperationException(
-                "DefaultTessellationCells takes something other than arrays "
-                + "of points per face.");
-        Array faces = Array.CreateInstance(faceType, 4);
-        void Face(int slot, params (double X, double Y, double Z)[] corners)
-        {
-            Array face = Array.CreateInstance(point3d, corners.Length);
-            for (int corner = 0; corner < corners.Length; corner++)
-            {
-                face.SetValue(
-                    Activator.CreateInstance(
-                        point3d,
-                        corners[corner].X,
-                        corners[corner].Y,
-                        corners[corner].Z),
-                    corner);
-            }
-            faces.SetValue(face, slot);
-        }
-        Face(0, (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 0));
-        Face(1, (9, 9, 0), (9, 9, 1), (9, 9, 2), (9, 9, 0));
-        Face(2, (1, 0, 0), (2, 0, 0), (1, 1, 0), (1, 0, 0));
-        Face(3, (2, 0, 0), (3, 0, 0), (2, 1, 0), (2, 0, 0));
-        object?[] defaultArguments = { faces, null };
-        object cellList = defaults.Invoke(null, defaultArguments)
-            ?? throw new InvalidOperationException(
-                "DefaultTessellationCells returned null.");
-        var skipped = (int)defaultArguments[1]!;
-        if (skipped != 1)
-        {
-            throw new InvalidOperationException(
-                "The one face that will not reduce to three distinct plan "
-                + "corners is skipped and counted, and the other three "
-                + $"survive; the skipped count came back {skipped}.");
-        }
-        string json =
-            build.Invoke(
-                null,
-                new object[] { cellList, 1.0, PatternOf("Faces") }) as string
-            ?? throw new InvalidOperationException(
-                "BuildTessellationJson returned an unexpected type.");
-        const string expected =
-            "{\"schema\":\"bench.tessellation/1\",\"units\":\"m\"," +
-            "\"domain\":\"plan\",\"pattern\":\"faces\",\"cells\":[" +
-            "{\"key\":\"c0p0\",\"course\":0,\"outline\":[[0,0],[1,0],[0,1]]}," +
-            "{\"key\":\"c0p1\",\"course\":0,\"outline\":[[1,0],[2,0],[1,1]]}," +
-            "{\"key\":\"c0p2\",\"course\":0,\"outline\":[[2,0],[3,0],[2,1]]}]}";
-        if (!string.Equals(json, expected, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                "The three usable faces give three cells, in face order, "
-                + "every one at course 0, renumbered c0p0 to c0p2 with the "
-                + "skipped face leaving no hole and no error; expected "
-                + $"'{expected}', received '{json}'.");
-        }
-    }
-
     private static void ValidateExportPlan(Assembly plugin)
     {
         Type plan = plugin.GetType("Ananke.COMPAS.Native.Components.ExportPlan", throwOnError: true)!;
         MethodInfo kinds = RequirePublicStatic(plan, "Kinds");
         string Show(bool cells, bool columns) =>
             string.Join(",", (string[])kinds.Invoke(null, new object?[] { cells, columns })!);
-        if (Show(false, false) != "contract,compas") throw new InvalidOperationException($"No cells, no columns: contract,compas; got {Show(false, false)}.");
-        if (Show(true, false) != "contract,compas,tessellation") throw new InvalidOperationException($"Cells add tessellation; got {Show(true, false)}.");
-        // The frames sidecar rides with the columns and comes AFTER them, as
-        // the studio's reader was built to expect: the set's order is the
-        // order the kinds are written and uploaded in, and the studio only
-        // pairs a frames document with a contract it already holds.
-        if (Show(false, true) != "contract,compas,columns,frames") throw new InvalidOperationException($"Columns add columns then frames; got {Show(false, true)}.");
-        if (Show(true, true) != "contract,compas,tessellation,columns,frames") throw new InvalidOperationException($"All five in order; got {Show(true, true)}.");
-        if (Show(true, false).Contains("frames", StringComparison.Ordinal)) throw new InvalidOperationException($"No columns, no frames: there is no machine to animate; got {Show(true, false)}.");
+        // THREE DOCUMENTS, not five kinds (design of 2026-09-04 section 1).
+        // Form is every Result: it is the contract, and the studio resolves
+        // a study on the contract alone since their 89bc1b3. Skin joins it
+        // where somebody wired cells, formwork where the Mould block
+        // carries columns, since the machine that moves is the columns.
+        if (Show(false, false) != "form") throw new InvalidOperationException($"No cells, no columns: form alone; got {Show(false, false)}.");
+        if (Show(true, false) != "form,skin") throw new InvalidOperationException($"Cells add skin; got {Show(true, false)}.");
+        if (Show(false, true) != "form,formwork") throw new InvalidOperationException($"Columns add formwork; got {Show(false, true)}.");
+        if (Show(true, true) != "form,skin,formwork") throw new InvalidOperationException($"All three in order; got {Show(true, true)}.");
+        if (Show(true, false).Contains("formwork", StringComparison.Ordinal)) throw new InvalidOperationException($"No columns, no formwork: there is no machine to animate; got {Show(true, false)}.");
+        // AND NONE OF THE FIVE OLD KINDS ANYWHERE. The set stops being
+        // written as contract, compas, tessellation, columns and frames; a
+        // plan that still named one of them would put a file on the
+        // author's disk under a suffix the studio reads as the older shape
+        // and would pair it against the new one.
+        foreach (bool cells in new[] { false, true })
+        {
+            foreach (bool columns in new[] { false, true })
+            {
+                string[] set = (string[])kinds.Invoke(
+                    null, new object?[] { cells, columns })!;
+                foreach (string dead in new[]
+                         {
+                             "contract", "compas", "tessellation", "columns",
+                             "frames"
+                         })
+                {
+                    if (set.Contains(dead, StringComparer.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"The '{dead}' kind stops being written; the set "
+                            + $"for cells={cells}, columns={columns} is "
+                            + $"'{string.Join(",", set)}'.");
+                    }
+                }
+            }
+        }
 
         // The study name rule. A Name is one path segment because it is
         // both a file name stem inside the folder the author chose and
@@ -31037,19 +31036,282 @@ internal static class Program
         // successfully, and reaches a route nobody asked for.
         MethodInfo segment = RequirePublicStatic(plan, "NameIsOneSegment");
         bool OneSegment(string name) => (bool)segment.Invoke(null, new object?[] { name })!;
-        if (!OneSegment("study-1"))
-            throw new InvalidOperationException("An ordinary study name is one segment.");
-        foreach (string refused in new[] { "..", ".", @"a\b", "a/b", "a:b", "a?b", "", "   " })
+        foreach (string allowed in new[] { "study-1", "a.b", "MyVault", "v1.2" })
+        {
+            if (!OneSegment(allowed))
+            {
+                throw new InvalidOperationException(
+                    $"'{allowed}' is one path segment and must pass: a "
+                    + "single dot is an ordinary character in a study name, "
+                    + "and refusing it would refuse every versioned name an "
+                    + "author writes.");
+            }
+        }
+        // DOT-DOT ANYWHERE, not only alone (design of 2026-09-04 section 4
+        // item 1). The studio's deployed boundary already 400s on "a..b",
+        // demonstrated live on the channel of 2026-09-03, so a name this
+        // side accepted was a set the far side would refuse; and a segment
+        // carrying a dot-dot is the shape every traversal defence is
+        // written against, whether or not this platform would resolve it.
+        foreach (string refused in new[]
+                 {
+                     "..", ".", "a..b", "x..", "..y", "a...b", @"a\b", "a/b",
+                     "a:b", "a?b", "", "   "
+                 })
         {
             if (OneSegment(refused))
             {
                 throw new InvalidOperationException(
                     $"'{refused}' is not one path segment and must be refused: "
-                    + "a Name carrying a separator, a colon, a dot-dot or a "
-                    + "character no file name may hold escapes the folder the "
-                    + "author chose.");
+                    + "a Name carrying a separator, a colon, a dot-dot "
+                    + "anywhere in it, or a character no file name may hold, "
+                    + "escapes the folder the author chose or reaches a route "
+                    + "the studio itself refuses.");
             }
         }
+    }
+
+    /// <summary>
+    /// FORM, <c>&lt;study&gt;-form.json</c>: the contract exactly as
+    /// <c>ContractJson.Serialize</c> writes it today, mould block included,
+    /// plus two top-level keys (design of 2026-09-04 section 1, check 2 of
+    /// its section 5).
+    ///
+    /// The check that matters is the BYTE ONE. Other consumers pin the
+    /// contract kind, and the studio derives a study from it, so the whole
+    /// of this document but its two added keys has to be what the contract
+    /// kind was: serialise both, strip the two, compare character for
+    /// character. It is checkable because the writer splices the
+    /// contract's own bytes in whole rather than round-tripping them
+    /// through a JsonNode, so every number's raw text and every key order
+    /// in the middle is the contract's.
+    ///
+    /// And the thrust mesh survives verbatim: the studio's ananke_fea
+    /// json_loads that string, so a writer that re-encoded it, trimmed it
+    /// or wrote it as an object rather than a string would hand them a
+    /// mesh they cannot read (their R-010(d), settled in the REPLY's point
+    /// 3).
+    /// </summary>
+    private static void ValidateFormDocument(Assembly plugin)
+    {
+        Type form = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.FormDocument", throwOnError: true)!;
+        MethodInfo json = RequirePublicStatic(form, "Json");
+        MethodInfo keyMaterial = RequirePublicStatic(form, "KeyMaterial");
+        Type contractJson = RequireContractType(plugin, "ContractJson");
+        MethodInfo serialize = contractJson.GetMethods(
+                BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == "Serialize");
+
+        // A Result carrying a mould block, since the design says the mould
+        // block is included and a fixture without one could not tell.
+        Type resultType = RequireContractType(plugin, "ResultDto");
+        Type equilibriumType = RequireContractType(plugin, "EquilibriumResultDto");
+        Type mouldType = RequireContractType(plugin, "MouldDto");
+        Type columnsType = RequireContractType(plugin, "MouldColumnsDto");
+        Type point = RequireContractType(plugin, "Point3Dto");
+        Type edgeType = RequireContractType(plugin, "EdgeDto");
+
+        Array vertices = Array.CreateInstance(point, 3);
+        for (int i = 0; i < 3; i++)
+        {
+            vertices.SetValue(
+                Activator.CreateInstance(point, (double)i, 0.0, 0.25 * i), i);
+        }
+        Array edges = Array.CreateInstance(edgeType, 2);
+        edges.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        edges.SetValue(Activator.CreateInstance(edgeType, 1, 2), 1);
+        object equilibrium = CreateInstance(equilibriumType);
+        SetContractProperty(equilibrium, equilibriumType, "Vertices", vertices);
+        SetContractProperty(equilibrium, equilibriumType, "Edges", edges);
+        SetContractProperty(
+            equilibrium, equilibriumType, "MemberForces", new[] { 1.0, 1.0 });
+        SetContractProperty(
+            equilibrium, equilibriumType, "ResolvedSupportNodeIds", new[] { 0, 2 });
+        SetContractProperty(
+            equilibrium, equilibriumType, "TopologyHash", "sha256:fixture");
+
+        Array columnNodes = Array.CreateInstance(point, 2);
+        columnNodes.SetValue(Activator.CreateInstance(point, 1.0, 0.0, 0.0), 0);
+        columnNodes.SetValue(Activator.CreateInstance(point, 1.0, 0.0, 0.25), 1);
+        Array columnMembers = Array.CreateInstance(edgeType, 1);
+        columnMembers.SetValue(Activator.CreateInstance(edgeType, 0, 1), 0);
+        object block = CreateInstance(columnsType);
+        SetContractProperty(block, columnsType, "Nodes", columnNodes);
+        SetContractProperty(block, columnsType, "Members", columnMembers);
+        SetContractProperty(block, columnsType, "MemberForce", new[] { 2.0 });
+        SetContractProperty(block, columnsType, "Feet", new[] { 0 });
+        SetContractProperty(block, columnsType, "Heads", new[] { 1 });
+        SetContractProperty(block, columnsType, "HeadNode", new[] { 1 });
+        object mould = CreateInstance(mouldType);
+        SetContractProperty(mould, mouldType, "Columns", block);
+        object result = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(result, resultType, "Mould", mould);
+
+        string contract = (string)serialize
+            .MakeGenericMethod(resultType)
+            .Invoke(null, new[] { result })!;
+        if (!contract.Contains("\"mould\"", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The fixture must carry a mould block, or the byte "
+                + "comparison below cannot see whether the form document "
+                + "keeps one.");
+        }
+
+        const string Study = "Column diagnosis";
+        const string Mesh =
+            "{\"dtype\":\"compas.datastructures/Mesh\",\"guid\":\"aaaa\"," +
+            "\"data\":{\"vertex\":{\"0\":{\"x\":0.0}}}}";
+        string document = (string)json.Invoke(
+            null, new object?[] { result, Study, Mesh })!;
+
+        // 1. The two added keys, where the design puts them.
+        JsonNode root = JsonNode.Parse(document)
+            ?? throw new InvalidOperationException("The form document did not parse.");
+        if (root["study"]!.GetValue<string>() != Study)
+        {
+            throw new InvalidOperationException(
+                "Every document carries its own study name (their Live ask "
+                + "3), so the studio keys the push on a field we stamp "
+                + "rather than on a file name it parses; got '"
+                + root["study"]!.GetValue<string>() + "'.");
+        }
+        string carried = root["thrustMesh"]!.GetValue<string>();
+        if (!string.Equals(carried, Mesh, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The thrust mesh lands at form[\"thrustMesh\"] as the SAME "
+                + "string the worker gave, which is what their "
+                + "ananke_fea/mesh.py json_loads; got '" + carried + "'.");
+        }
+        if (JsonNode.Parse(carried) is null)
+        {
+            throw new InvalidOperationException(
+                "And it is still loadable as JSON once read back out.");
+        }
+
+        // 2. THE BYTE CHECK. Strip the two added keys and what is left is
+        // exactly what ContractJson.Serialize wrote. The leading key is
+        // "study" and the trailing one is "thrustMesh", both written by
+        // this component, so the strip is mechanical and any drift in
+        // between fails it.
+        const string StudyOpening = "{\"study\":";
+        if (!document.StartsWith(StudyOpening, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The study key leads the form document; it opens '"
+                + document[..Math.Min(document.Length, 40)] + "'.");
+        }
+        int afterStudy = document.IndexOf(',', StudyOpening.Length);
+        string thrustMeshMember = (string)form.GetField(
+            "ThrustMeshMember", BindingFlags.Public | BindingFlags.Static)!
+            .GetValue(null)!;
+        int atMesh = document.LastIndexOf(thrustMeshMember, StringComparison.Ordinal);
+        if (atMesh < 0 || afterStudy < 0)
+        {
+            throw new InvalidOperationException(
+                "The form document is the contract between a leading "
+                + "'study' member and a trailing '" + thrustMeshMember
+                + "' member; one of the two was not found.");
+        }
+        string stripped = "{" + document[(afterStudy + 1)..atMesh] + "}";
+        if (!string.Equals(stripped, contract, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The form document must be BYTE-COMPATIBLE with today's "
+                + "contract for every existing key: other consumers pin "
+                + "that serialisation and the studio derives a study from "
+                + "it, so nothing in the middle may be re-encoded, "
+                + "reordered or reformatted. Stripping the two added keys "
+                + "gave " + stripped.Length + " characters against the "
+                + "contract's " + contract.Length + ". First difference at "
+                + FirstDifference(stripped, contract) + ".");
+        }
+
+        // 3. A worker that gave nothing still leaves a document. The form
+        // document is written for every Result, so a worker that will not
+        // start must cost the staged analysis and nothing else: the study
+        // still resolves, still loads, still cuts.
+        string withoutMesh = (string)json.Invoke(
+            null, new object?[] { result, Study, null })!;
+        JsonNode withoutRoot = JsonNode.Parse(withoutMesh)!;
+        if (withoutRoot["thrustMesh"] is not null)
+        {
+            throw new InvalidOperationException(
+                "A worker that produced no mesh writes null there, not a "
+                + "missing key and not a document that failed: the study "
+                + "loads, cuts and animates, and only the staged analysis "
+                + "is unavailable.");
+        }
+        if (!string.Equals(
+                "{" + withoutMesh[(withoutMesh.IndexOf(',', StudyOpening.Length) + 1)..
+                    withoutMesh.LastIndexOf(thrustMeshMember, StringComparison.Ordinal)] + "}",
+                contract,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And the contract's bytes are the same whether the mesh "
+                + "arrived or not.");
+        }
+
+        // 4. THE CHANGE KEY reads the contract half and not the mesh. The
+        // worker's json_dumps stamps a fresh uuid4 into every
+        // serialisation, so a key that read those bytes could never
+        // repeat: every outcome expires the component, the re-solve
+        // enqueues a set that looks new, and Live sends for as long as it
+        // is left on.
+        string Material(string text) =>
+            (string)keyMaterial.Invoke(null, new object?[] { text })!;
+        string other = (string)json.Invoke(
+            null,
+            new object?[]
+            {
+                result,
+                Study,
+                Mesh.Replace("aaaa", "bbbb", StringComparison.Ordinal)
+            })!;
+        if (!string.Equals(Material(document), Material(other), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Two form documents differing ONLY in the thrust mesh's "
+                + "guid must give the SAME key material, or the "
+                + "expire-on-outcome loop never terminates.");
+        }
+        if (string.Equals(Material(document), document, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The key material is the document WITHOUT its thrust mesh; "
+                + "this one still carries it.");
+        }
+        string movedStudy = (string)json.Invoke(
+            null, new object?[] { result, "another study", Mesh })!;
+        if (string.Equals(Material(document), Material(movedStudy), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The key material still reads everything but the mesh, the "
+                + "study name included.");
+        }
+    }
+
+    /// <summary>
+    /// Where two strings first differ, said the way a diff is read: the
+    /// index and a few characters either side of it.
+    /// </summary>
+    private static string FirstDifference(string left, string right)
+    {
+        int shared = Math.Min(left.Length, right.Length);
+        for (int i = 0; i < shared; i++)
+        {
+            if (left[i] == right[i])
+                continue;
+            int from = Math.Max(0, i - 20);
+            return $"{i}: '{left[from..Math.Min(left.Length, i + 20)]}' against "
+                + $"'{right[from..Math.Min(right.Length, i + 20)]}'";
+        }
+        return shared == left.Length && shared == right.Length
+            ? "nowhere"
+            : $"{shared}, where the shorter of the two ends";
     }
 
     private static void ValidateColumnsMesh(Assembly plugin)
@@ -31119,37 +31381,54 @@ internal static class Program
                     $"Cap vertex {i} sits at {across:0.#########} from the axis point, not at the radius asked.");
         }
 
-        // The document beside the mesh. The radius it declares is the one
-        // the mesh was built at, floored once for both, and a member too
-        // short to be drawn is absent from the members list as well as
-        // from the prisms, so the nth of one is the nth of the other.
-        MethodInfo json = RequirePublicStatic(mesh, "Json");
-        string Document(object members, double radius) =>
-            (string)json.Invoke(null, new object?[] { members, radius, "kN", 1.0 })!;
-        JsonNode skipped = JsonNode.Parse(
-            Document(ListOf(Member(1, 1, 1, 1, 1, 1, 1.0)), 0.1))!;
-        if (skipped["vertices"]!.AsArray().Count != 0 ||
-            skipped["members"]!.AsArray().Count != 0)
+        // WHICH MEMBER EACH PRISM IS. A member too short to have a
+        // direction draws nothing, so the nth prism is not in general the
+        // nth member; the formwork document carries the Mould block's
+        // members UNRENUMBERED, because its trees index into them by
+        // position, so this is the pairing between the two lists and it
+        // has to be built off the same skipping rule Build uses.
+        MethodInfo drawn = RequirePublicStatic(mesh, "Drawn");
+        int[] Which(object members) => (int[])drawn.Invoke(null, new[] { members })!;
+        if (Which(ListOf(Member(1, 1, 1, 1, 1, 1, 1.0))).Length != 0)
         {
             throw new InvalidOperationException(
-                "A member too short to draw is skipped in BOTH lists; the "
-                + "document listed one of them.");
+                "A member too short to draw is named by no prism at all.");
         }
-        JsonNode clamped = JsonNode.Parse(
-            Document(ListOf(Member(0, 0, 0, 0, 0, 2, 1.0)), 0.0))!;
-        if (Math.Abs(clamped["radius"]!.GetValue<double>() - 1.0e-9) > 1.0e-18)
+        object mixedMembers = ListOf(
+            Member(0, 0, 0, 0, 0, 2, 1.0),
+            Member(1, 1, 1, 1, 1, 1, 1.0),
+            Member(1, 0, 0, 3, 0, 0, 1.0));
+        int[] mixed = Which(mixedMembers);
+        if (!mixed.SequenceEqual(new[] { 0, 2 }))
         {
             throw new InvalidOperationException(
-                "The radius in the document is the one the mesh was built at: "
-                + "a zero radius is floored once, for both, not floored inside "
-                + $"the mesh and declared raw beside it (got {clamped["radius"]!.GetValue<double>()}).");
+                "With the MIDDLE member too short to draw, the two prisms "
+                + "belong to members 0 and 2, so a consumer pairing the nth "
+                + "prism with the nth member of the block never finds them "
+                + $"out of step; got [{string.Join(", ", mixed)}].");
+        }
+        (double[][] mixedVertices, int[][] _1) = Run(mixedMembers, 0.1);
+        if (mixedVertices.Length != 12 * mixed.Length)
+        {
+            throw new InvalidOperationException(
+                "Drawn must name exactly the members Build drew, or the two "
+                + $"have drifted: {mixed.Length} named against "
+                + $"{mixedVertices.Length / 12} prisms built.");
         }
     }
 
     /// <summary>
-    /// <c>MouldFrames.Json</c>: the <c>bench.frames/1</c> sidecar, against the
-    /// six guarantees FRAMES-WRITER-SPEC-2026-09-03.md section 6 gives the
-    /// studio's reader, which the reader enforces as validation.
+    /// <c>FormworkDocument.Json</c>: the <c>bench.formwork/1</c> document,
+    /// against the guarantees FRAMES-WRITER-SPEC-2026-09-03.md section 6
+    /// gives the studio's reader, which the reader enforces as validation,
+    /// and against the two pairing invariants the design of 2026-09-04
+    /// section 1 makes true by construction.
+    ///
+    /// The frames array and the columns block are the two halves of ONE
+    /// self-contained document now, so every content check that used to
+    /// stand against the frames sidecar or the columns mesh stands here
+    /// instead: the boundaries, the strict ascent, the time-100 integrity
+    /// and the byte determinism among them.
     ///
     /// The fixture is a three by three net, one unit apart, anchored at its
     /// four corners and carrying one principal run down its middle row, so the
@@ -31173,11 +31452,14 @@ internal static class Program
     /// never moves, the fork keeps the fraction it was built at, and trunk,
     /// fork and main head stay collinear.
     /// </summary>
-    private static void ValidateMouldFramesSidecar(Assembly plugin)
+    private static void ValidateFormworkDocument(Assembly plugin)
     {
+        Type formwork = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.FormworkDocument",
+            throwOnError: true)!;
+        MethodInfo json = RequirePublicStatic(formwork, "Json");
         Type frames = plugin.GetType(
             "Ananke.COMPAS.Native.Components.MouldFrames", throwOnError: true)!;
-        MethodInfo json = RequirePublicStatic(frames, "Json");
         MethodInfo timesMethod =
             RequirePublicStatic(frames, "Times", Type.EmptyTypes);
         MethodInfo timesAtStep =
@@ -31316,50 +31598,57 @@ internal static class Program
 
         const string Study = "Column diagnosis";
         // The unit factor is DECLARED and never applied (whole-branch
-        // review finding 16), so the sidecar is driven at a factor that is
+        // review finding 16), so the document is driven at a factor that is
         // NOT 1 and the coordinates are then asserted unchanged below: a
         // fixture at 1.0 could not tell a declared factor from an applied
         // one. 0.001 is a millimetre document, which is the case the
         // finding named.
         const double MillimetreDocument = 0.001;
+        // The radius the studio draws its tubes at, and a force unit that
+        // is NOT the fallback, so a document that stamped the default
+        // rather than the Result's own reads differently.
+        const double Radius = 0.075;
+        const string ForceUnit = "MN";
         string document = (string)json.Invoke(
-            null, new object?[] { result, Study, MillimetreDocument })!;
+            null,
+            new object?[]
+            {
+                result, Study, MillimetreDocument, Radius, ForceUnit
+            })!;
         JsonNode root = JsonNode.Parse(document)
-            ?? throw new InvalidOperationException("The frames sidecar did not parse.");
+            ?? throw new InvalidOperationException("The formwork document did not parse.");
 
         // 1. The schema and the units the reader prefix-checks.
         string schema = root["schema"]!.GetValue<string>();
-        if (schema != "bench.frames/1")
-            throw new InvalidOperationException($"The schema must be bench.frames/1; got '{schema}'.");
+        if (schema != "bench.formwork/1")
+            throw new InvalidOperationException($"The schema must be bench.formwork/1; got '{schema}'.");
         if (root["units"]!.GetValue<string>() != "m")
             throw new InvalidOperationException("The units key must read 'm'.");
 
         // 1b. AND THE FACTOR BESIDE IT, which is the whole-branch review's
-        // finding 16. This was the only kind in the export set that
-        // neither converted document units to metres nor declared the
-        // factor, and it asserted "m" unconditionally: a Result's
+        // finding 16. The animation was once the only kind in the export
+        // set that neither converted document units to metres nor declared
+        // the factor, and it asserted "m" unconditionally: a Result's
         // coordinates are in whatever unit the document was in when it was
         // solved, SpineComponents scaling nothing, so a millimetre study
-        // with a Mould block wrote a frames file claiming metres over
+        // with a Mould block wrote an animation claiming metres over
         // millimetre numbers and the studio's reader, which rejects any
         // units value but "m", took the claim at face value.
         //
-        // The factor is DECLARED and the coordinates are left alone, the
-        // way the columns kind already does it. Converting would break the
-        // reader's own integrity check at step 5 below, that the time-100
-        // frame EQUALS the contract's equilibrium vertices. This fixture
-        // is driven at 0.001, a millimetre document, so a factor that was
-        // silently applied to the coordinates would show up as a
-        // thousandfold error there.
+        // The factor is DECLARED and the coordinates are left alone.
+        // Converting would break the reader's own integrity check at step 5
+        // below, that the time-100 frame EQUALS the contract's equilibrium
+        // vertices. This fixture is driven at 0.001, a millimetre document,
+        // so a factor that was silently applied to the coordinates would
+        // show up as a thousandfold error there.
         JsonNode? declaredFactor = root["lengthUnitToMetres"];
         if (declaredFactor is null)
         {
             throw new InvalidOperationException(
-                "The frames sidecar declares lengthUnitToMetres beside " +
-                "its units, the way the columns kind does, because its " +
-                "coordinates are the contract's own and unscaled and the " +
-                "studio has no other way to tell a metre document from a " +
-                "millimetre one. The key is missing.");
+                "The formwork document declares lengthUnitToMetres beside " +
+                "its units, because its coordinates are the contract's own " +
+                "and unscaled and the studio has no other way to tell a " +
+                "metre document from a millimetre one. The key is missing.");
         }
         double readFactor = declaredFactor.GetValue<double>();
         if (Math.Abs(readFactor - MillimetreDocument) > 1.0e-15)
@@ -31370,7 +31659,29 @@ internal static class Program
                 $"{readFactor}.");
         }
         if (root["study"]!.GetValue<string>() != Study)
-            throw new InvalidOperationException("The study key must be the export Name, which is how the studio pairs the kinds of one set.");
+            throw new InvalidOperationException("The study key must be the export Name, which is how the studio pairs the documents of one set and how it keys Live's follow-the-push.");
+
+        // 1c. THE FORCE UNIT AND THE RADIUS, which the columns kind used to
+        // carry and which are the document's own now that it is
+        // self-contained. The radius is not decoration: the studio draws
+        // the animated column members as tubes at exactly this number
+        // (their R-010(h)), so the machine's columns and the exported
+        // solids are one drawing rather than two.
+        if (root["forceUnit"]!.GetValue<string>() != ForceUnit)
+        {
+            throw new InvalidOperationException(
+                "The force unit is the Result's own, so the studio never " +
+                "has to assume newtons; expected " + ForceUnit + ", got '" +
+                root["forceUnit"]!.GetValue<string>() + "'.");
+        }
+        if (Math.Abs(root["radius"]!.GetValue<double>() - Radius) > 1.0e-15)
+        {
+            throw new InvalidOperationException(
+                "The radius the document declares is the radius it was " +
+                $"asked for, {Radius}; got " +
+                $"{root["radius"]!.GetValue<double>()}. The studio draws " +
+                "its tubes at this number.");
+        }
 
         // 2. The sweep: the base step, both ends, the three inner boundaries,
         // strictly ascending, no duplicates.
@@ -31539,6 +31850,206 @@ internal static class Program
             }
         }
 
+        // 4b. THE OTHER HALF OF THE PAIRING, and the reason the formwork
+        // document is self-contained at all (their R-011(f), settled in
+        // the REPLY's point 2): the time-100 columnNodes are THIS
+        // document's own columns block, so frames.pairing_error compares
+        // the machine at rest against the last instant of the machine
+        // moving without holding a second file.
+        //
+        // Said plainly about what step 4 above can and cannot see: the
+        // VERTICES half of the pairing is a tautology in this engine, since
+        // MouldAnimation reads its target off equilibrium.Vertices and At
+        // collapses exactly onto it at Time 100, so the writer's guard
+        // cannot be made to fire by any Result. It is kept as the
+        // columnNodeCount invariant is kept, and for the same reason:
+        // inverting it to fire on AGREEMENT produces its message
+        // immediately on the real fixture, which shows the message path is
+        // wired, and what the pair buys is that the equality is provably
+        // held rather than accidentally so. The COLUMN NODES half is not a
+        // tautology, and step 4e below is where that shows.
+        JsonNode columns = root["columns"]
+            ?? throw new InvalidOperationException(
+                "The formwork document carries its own columns block: "
+                + "nodes, members and the tree bookkeeping, all of it, so "
+                + "the studio never has to hold two of our files to "
+                + "validate one. The key is missing.");
+        if (columns["schema"]!.GetValue<string>() != "bench.columns/1")
+        {
+            throw new InvalidOperationException(
+                "The columns block keeps the bench.columns/1 shape the "
+                + "studio already reads; got '"
+                + columns["schema"]!.GetValue<string>() + "'.");
+        }
+        double[][] blockNodes = Triples(columns["nodes"]);
+        double[][] lastNodes =
+            Triples(frameArray[frameArray.Count - 1]!["columnNodes"]);
+        if (blockNodes.Length != built.Length)
+        {
+            throw new InvalidOperationException(
+                $"The columns block carries {built.Length} nodes, the "
+                + $"machine the members index into; got {blockNodes.Length}.");
+        }
+        for (int i = 0; i < blockNodes.Length; i++)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            {
+                if (Math.Abs(blockNodes[i][axis] - lastNodes[i][axis]) > 1.0e-9)
+                {
+                    throw new InvalidOperationException(
+                        "The time-100 columnNodes must equal THIS document's "
+                        + "own columns block, which is where their "
+                        + "frames.pairing_error now looks: node "
+                        + $"{i} axis {axis} is {lastNodes[i][axis]:0.############} "
+                        + $"in the frame and {blockNodes[i][axis]:0.############} "
+                        + "in the block.");
+                }
+            }
+        }
+
+        // 4c. THE MEMBERS ARE THE BLOCK'S OWN, UNRENUMBERED, because trees
+        // indexes into them by position: renumbering there would silently
+        // rewrite the branch structure. drawnMembers is what keeps the
+        // prisms paired with them instead.
+        JsonArray blockMembers = columns["members"]!.AsArray();
+        if (blockMembers.Count != 3)
+        {
+            throw new InvalidOperationException(
+                "The columns block carries every member of the Mould block, "
+                + $"3 of them here; got {blockMembers.Count}.");
+        }
+        foreach ((int at, int u, int v) in new[] { (0, 0, 1), (1, 1, 3), (2, 1, 2) })
+        {
+            if (blockMembers[at]!["u"]!.GetValue<int>() != u ||
+                blockMembers[at]!["v"]!.GetValue<int>() != v)
+            {
+                throw new InvalidOperationException(
+                    $"Member {at} spans nodes {u} and {v} in the Mould "
+                    + "block's own order, which is the order its trees "
+                    + "index; got "
+                    + $"{blockMembers[at]!["u"]!.GetValue<int>()} and "
+                    + $"{blockMembers[at]!["v"]!.GetValue<int>()}.");
+            }
+        }
+        int[] treeMembers = columns["trees"]!.AsArray()[0]!.AsArray()
+            .Select(m => m!.GetValue<int>()).ToArray();
+        if (!treeMembers.SequenceEqual(new[] { 0, 1, 2 }))
+        {
+            throw new InvalidOperationException(
+                "The tree bookkeeping travels with the members it indexes; "
+                + $"got [{string.Join(", ", treeMembers)}].");
+        }
+        foreach (string bookkeeping in
+                 new[] { "heads", "forks", "feet", "headNode", "memberForce" })
+        {
+            if (columns[bookkeeping] is null)
+            {
+                throw new InvalidOperationException(
+                    $"The columns block carries '{bookkeeping}': the studio "
+                    + "asked for the whole tree bookkeeping in this document "
+                    + "(their R-010(e), R-011(e)), and a self-contained "
+                    + "document that leaves half of it in the contract is "
+                    + "not self-contained.");
+            }
+        }
+        int[] drawnMembers = columns["drawnMembers"]!.AsArray()
+            .Select(m => m!.GetValue<int>()).ToArray();
+        if (!drawnMembers.SequenceEqual(new[] { 0, 1, 2 }))
+        {
+            throw new InvalidOperationException(
+                "Every member of this fixture has a direction, so every one "
+                + $"is drawn; got [{string.Join(", ", drawnMembers)}].");
+        }
+        // The prisms themselves, at the DECLARED radius and about the
+        // document's own nodes: twelve vertices a member, and the first
+        // prism's ring at that radius about the foot.
+        double[][] prisms = Triples(columns["vertices"]);
+        if (prisms.Length != 12 * drawnMembers.Length)
+        {
+            throw new InvalidOperationException(
+                "One six-sided prism per drawn member, twelve vertices "
+                + $"each: expected {12 * drawnMembers.Length}, got "
+                + $"{prisms.Length}.");
+        }
+        for (int i = 0; i < 6; i++)
+        {
+            double dx = prisms[i][0] - blockNodes[0][0];
+            double dy = prisms[i][1] - blockNodes[0][1];
+            double dz = prisms[i][2] - blockNodes[0][2];
+            double across = Math.Sqrt((dx * dx) + (dy * dy) + (dz * dz));
+            if (Math.Abs(across - Radius) > 1.0e-9)
+            {
+                throw new InvalidOperationException(
+                    "The prisms stand about the nodes this document "
+                    + "declares, at the radius it declares: cap vertex "
+                    + $"{i} sits {across:0.#########} from node 0 rather "
+                    + $"than at {Radius}.");
+            }
+        }
+
+        // 4e. WHERE THE BLOCK'S NODES COME FROM, on a fixture that can tell.
+        // In the machine above every head was built exactly on the net
+        // vertex it names, so the Mould block's own nodes and the time-100
+        // frame's coincide and a writer copying either would read the same.
+        // Here the ARM HEAD is built at z 0.9 while the net vertex it names,
+        // vertex 3, sits at 0.5. At Time 100 the head lands on the vertex,
+        // because that is what a head does. So the block written into the
+        // document must read 0.5, the machine at rest being the last
+        // instant of the machine moving, and a document that copied the
+        // Mould block's raw 0.9 would leave the studio's pairing check
+        // comparing 0.9 against 0.5 and calling the set mixed.
+        Array liftedNodes = Array.CreateInstance(point, built.Length);
+        for (int i = 0; i < built.Length; i++)
+        {
+            liftedNodes.SetValue(
+                Activator.CreateInstance(
+                    point,
+                    built[i][0],
+                    built[i][1],
+                    i == 3 ? 0.9 : built[i][2]),
+                i);
+        }
+        object liftedBlock = CreateInstance(columnsType);
+        SetContractProperty(liftedBlock, columnsType, "Nodes", liftedNodes);
+        SetContractProperty(liftedBlock, columnsType, "Members", columnMembers);
+        SetContractProperty(liftedBlock, columnsType, "MemberForce", new[] { 3.0, 1.0, 1.0 });
+        SetContractProperty(liftedBlock, columnsType, "Trees", new int[][] { new[] { 0, 1, 2 } });
+        SetContractProperty(liftedBlock, columnsType, "Heads", new[] { 2, 3 });
+        SetContractProperty(liftedBlock, columnsType, "Forks", new[] { 1 });
+        SetContractProperty(liftedBlock, columnsType, "Feet", new[] { 0 });
+        SetContractProperty(liftedBlock, columnsType, "HeadNode", new[] { 4, 3 });
+        object liftedMould = CreateInstance(mouldType);
+        SetContractProperty(liftedMould, mouldType, "Columns", liftedBlock);
+        object liftedResult = CreateResultDto(resultType, "fd", equilibrium, null, null);
+        SetContractProperty(liftedResult, resultType, "Problem", spineProblem);
+        SetContractProperty(liftedResult, resultType, "Mould", liftedMould);
+        JsonNode lifted = JsonNode.Parse((string)json.Invoke(
+            null,
+            new object?[]
+            {
+                liftedResult, Study, MillimetreDocument, Radius, ForceUnit
+            })!)!;
+        double liftedArm = Triples(lifted["columns"]!["nodes"])[3][2];
+        if (Math.Abs(liftedArm - 0.5) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "The columns block written into the formwork document is "
+                + "the TIME-100 FRAME's machine, not the Mould block's raw "
+                + "one: an arm head built at 0.9 over a net vertex at 0.5 "
+                + "must be written at 0.5, or the studio's pairing check "
+                + $"compares the two and refuses the set. It reads {liftedArm}.");
+        }
+        double[][] liftedFrames = Triples(
+            lifted["frames"]!.AsArray()[lifted["frames"]!.AsArray().Count - 1]!
+                ["columnNodes"]);
+        if (Math.Abs(liftedFrames[3][2] - liftedArm) > 1.0e-9)
+        {
+            throw new InvalidOperationException(
+                "And the two still agree on the fixture that can tell them "
+                + $"apart: the frame reads {liftedFrames[3][2]} against the "
+                + $"block's {liftedArm}.");
+        }
+
         // 5. THE BLEND, against hand numbers. Node 1 is free and its three
         // neighbours (0, 2 and the centre 4) are all pinned, so the bare
         // surface puts it at exactly a third of the centre's 1.0. Its relief
@@ -31581,12 +32092,16 @@ internal static class Program
 
         // 7. Deterministic for a given Result: byte-identical on a second run.
         string again = (string)json.Invoke(
-            null, new object?[] { result, Study, MillimetreDocument })!;
+            null,
+            new object?[]
+            {
+                result, Study, MillimetreDocument, Radius, ForceUnit
+            })!;
         if (!string.Equals(document, again, StringComparison.Ordinal))
-            throw new InvalidOperationException("The sidecar must be byte-identical for the same Result; two runs differ.");
+            throw new InvalidOperationException("The formwork document must be byte-identical for the same Result; two runs differ.");
 
         Console.WriteLine(
-            $"      frames: {frameArray.Count} at step 2.0, {vertexCount} vertices "
+            $"      formwork: {frameArray.Count} frames at step 2.0, {vertexCount} vertices "
             + $"and {columnNodeCount} column nodes each, {document.Length} chars, "
             + $"furthest node travels {travel:0.###}.");
     }
@@ -31602,29 +32117,49 @@ internal static class Program
         if (Delay(0) != 2000 || Delay(1) != 4000 || Delay(2) != 8000 || Delay(3) is not null)
             throw new InvalidOperationException("The retry schedule is 2000, 4000, 8000 then null.");
         string Route(string kind, string name, string studio) => (string)route.Invoke(null, new object?[] { kind, name, studio })!;
-        if (Route("contract", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/exports/arch/contract")
-            throw new InvalidOperationException($"Contract route wrong: {Route("contract", "arch", "http://127.0.0.1:8600")}.");
-        if (Route("tessellation", "arch", "http://127.0.0.1:8600/") != "http://127.0.0.1:8600/api/uploads/exports/arch/tessellation")
+        // ALL THREE DOWN THE ONE EXPORTS ROUTE (design of 2026-09-04
+        // section 1). The columns kind had a route of its own, a file name
+        // under /api/uploads/columns/ rather than a study and a kind, and
+        // that special case dies with the kind: a formwork document sent to
+        // the columns route would be filed by the studio as a columns mesh
+        // for a study named after a file.
+        foreach (string kind in new[] { "form", "skin", "formwork" })
+        {
+            string expected =
+                $"http://127.0.0.1:8600/api/uploads/exports/arch/{kind}";
+            if (Route(kind, "arch", "http://127.0.0.1:8600") != expected)
+            {
+                throw new InvalidOperationException(
+                    $"The {kind} document goes to {expected}; got "
+                    + Route(kind, "arch", "http://127.0.0.1:8600") + ".");
+            }
+        }
+        if (Route("skin", "arch", "http://127.0.0.1:8600/") != "http://127.0.0.1:8600/api/uploads/exports/arch/skin")
             throw new InvalidOperationException("A trailing slash on Studio is tolerated.");
-        if (Route("columns", "arch", "http://127.0.0.1:8600") != "http://127.0.0.1:8600/api/uploads/columns/arch-columns.json")
-            throw new InvalidOperationException($"Columns route wrong: {Route("columns", "arch", "http://127.0.0.1:8600")}.");
+        // And NO kind at all gets a route of its own any more, the dead
+        // columns kind included: a route built by a special case would put
+        // one document somewhere its siblings are not.
+        foreach (string kind in new[] { "columns", "frames", "contract", "compas", "tessellation" })
+        {
+            if (Route(kind, "arch", "http://127.0.0.1:8600") !=
+                $"http://127.0.0.1:8600/api/uploads/exports/arch/{kind}")
+            {
+                throw new InvalidOperationException(
+                    "RouteFor holds no special case for any kind now: "
+                    + $"'{kind}' was routed to "
+                    + Route(kind, "arch", "http://127.0.0.1:8600") + ".");
+            }
+        }
         // The study name is free text off the canvas and lands in a URL
         // path segment. Interpolated raw, a space breaks the URI and a #
         // cuts the rest of the route off as a fragment, so the PUT goes
         // somewhere nobody asked for and the author sees only a 404.
-        if (Route("contract", "my study#1", "http://127.0.0.1:8600") !=
-            "http://127.0.0.1:8600/api/uploads/exports/my%20study%231/contract")
+        if (Route("form", "my study#1", "http://127.0.0.1:8600") !=
+            "http://127.0.0.1:8600/api/uploads/exports/my%20study%231/form")
         {
             throw new InvalidOperationException(
                 "A Name with a space and a # must be escaped into the route; got "
-                + Route("contract", "my study#1", "http://127.0.0.1:8600") + ".");
-        }
-        if (Route("columns", "my study#1", "http://127.0.0.1:8600") !=
-            "http://127.0.0.1:8600/api/uploads/columns/my%20study%231-columns.json")
-        {
-            throw new InvalidOperationException(
-                "The columns route escapes the Name too; got "
-                + Route("columns", "my study#1", "http://127.0.0.1:8600") + ".");
+                + Route("form", "my study#1", "http://127.0.0.1:8600") + ".");
         }
         string Verdict(int status, int attempt) => (string)outcome.Invoke(null, new object?[] { status, attempt })!;
         if (Verdict(200, 0) != "stored" || Verdict(204, 5) != "stored") throw new InvalidOperationException("2xx is stored.");
@@ -31647,54 +32182,82 @@ internal static class Program
         // component expires itself on every outcome, so a key that cannot
         // repeat is an unbounded loop of worker calls and PUTs rather than
         // a cosmetic defect. What it must read: the Name, the Studio and
-        // every kind by name and by content. What it must NOT read: the
-        // compas document's own bytes, because the worker's json_dumps
+        // every document by name and by content. What it must NOT read:
+        // the FORM document's thrust mesh, because the worker's json_dumps
         // stamps a fresh uuid4 into every serialisation of the same Result
-        // (compas/data/data.py), so those bytes differ on every solve of
-        // an unchanged definition.
+        // (compas/data/data.py), so those bytes differ on every solve of an
+        // unchanged definition. That lesson was the compas kind's before
+        // the form document absorbed the one string anybody read out of it,
+        // and the hazard moved with the string.
         string Key(string name, string studio, List<(string, string)> set) =>
             (string)key.Invoke(null, new object?[] { name, studio, set })!;
         const string Studio = "http://127.0.0.1:8600";
-        var a = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"aaa\"}") };
-        var b = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"aaa\"}") };
+        string Form(string contract, string mesh) =>
+            "{\"study\":\"arch\"," + contract + ",\"thrustMesh\":\"" + mesh + "\"}";
+        var a = new List<(string, string)>
+        {
+            ("form", Form("\"a\":1", "guid-aaa")),
+            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
+        };
+        var b = new List<(string, string)>
+        {
+            ("form", Form("\"a\":1", "guid-aaa")),
+            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
+        };
         if (Key("arch", Studio, a) != Key("arch", Studio, b))
             throw new InvalidOperationException("Equal sets key the same.");
         // The loop guard itself: same Result, second solve, a fresh guid
-        // inside the compas document and nothing else changed.
-        var freshGuid = new List<(string, string)> { ("contract", "{\"a\":1}"), ("compas", "{\"guid\":\"bbb\"}") };
+        // inside the thrust mesh and nothing else changed.
+        var freshGuid = new List<(string, string)>
+        {
+            ("form", Form("\"a\":1", "guid-bbb")),
+            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
+        };
         if (Key("arch", Studio, a) != Key("arch", Studio, freshGuid))
         {
             throw new InvalidOperationException(
-                "Two sets differing ONLY in the compas kind's JSON must key the SAME: "
+                "Two sets differing ONLY in the form document's thrust mesh must key the SAME: "
                 + "the worker mints a fresh uuid per serialisation, so a key that read "
                 + "those bytes could never repeat and the expire-on-outcome loop would "
                 + "never terminate.");
         }
         // What the key does read, one part at a time.
-        var changedContract = new List<(string, string)> { ("contract", "{\"a\":2}"), ("compas", "{\"guid\":\"aaa\"}") };
+        var changedContract = new List<(string, string)>
+        {
+            ("form", Form("\"a\":2", "guid-aaa")),
+            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
+        };
         if (Key("arch", Studio, a) == Key("arch", Studio, changedContract))
-            throw new InvalidOperationException("A set differing in the contract kind's JSON keys differently.");
-        var withoutCompas = new List<(string, string)> { ("contract", "{\"a\":1}") };
-        if (Key("arch", Studio, a) == Key("arch", Studio, withoutCompas))
         {
             throw new InvalidOperationException(
-                "A set carrying a compas kind and the same set without one must key "
-                + "differently: the compas kind's PRESENCE counts even though its bytes "
-                + "do not, so a set recovered after a worker failure is sent.");
+                "A set differing in the CONTRACT half of the form document keys "
+                + "differently: that half is the whole of what a changed Result "
+                + "changes, so a key blind to it would never send again.");
+        }
+        var withoutFormwork = new List<(string, string)>
+        {
+            ("form", Form("\"a\":1", "guid-aaa")),
+        };
+        if (Key("arch", Studio, a) == Key("arch", Studio, withoutFormwork))
+        {
+            throw new InvalidOperationException(
+                "A set carrying a formwork document and the same set without one must "
+                + "key differently, or a set recovered after a failed formwork build is "
+                + "skipped rather than sent.");
         }
         if (Key("arch", Studio, a) == Key("arch-b", Studio, a))
             throw new InvalidOperationException("The same set under a different Name keys differently.");
         if (Key("arch", Studio, a) == Key("arch", "http://127.0.0.1:8601", a))
             throw new InvalidOperationException("The same set going to a different Studio keys differently.");
-        var d = new List<(string, string)> { ("contract", "{\"a\":1}") };
-        var e = new List<(string, string)> { ("compas", "{\"a\":1}") };
+        var d = new List<(string, string)> { ("skin", "{\"a\":1}") };
+        var e = new List<(string, string)> { ("formwork", "{\"a\":1}") };
         if (Key("arch", Studio, d) == Key("arch", Studio, e))
             throw new InvalidOperationException("A set differing only in Kind keys differently.");
     }
 
     /// <summary>
-    /// <c>AtomicFile.Write</c>, which is how EVERY kind of an export set now
-    /// reaches disk (studio request R-005).
+    /// <c>AtomicFile.Write</c>, which is how EVERY document of an export
+    /// set now reaches disk (studio request R-005).
     ///
     /// The defect it closes: <c>File.WriteAllText</c> truncates the
     /// destination and then fills it, so with Live on and Path aimed at a
@@ -31733,7 +32296,7 @@ internal static class Program
         Directory.CreateDirectory(folder);
         try
         {
-            string target = Path.Combine(folder, "study-frames.json");
+            string target = Path.Combine(folder, "study-formwork.json");
 
             // The convention: beside the destination, not named like a kind.
             string temporary = (string)temporaryFor.Invoke(null, new object?[] { target })!;
@@ -31765,7 +32328,7 @@ internal static class Program
             }
 
             // An ordinary write lands whole and sweeps up after itself.
-            const string Old = "{\"schema\":\"bench.frames/1\",\"frames\":[0,1,2,3,4,5,6,7,8,9]}";
+            const string Old = "{\"schema\":\"bench.formwork/1\",\"frames\":[0,1,2,3,4,5,6,7,8,9]}";
             write.Invoke(null, new object?[] { target, Old });
             if (File.ReadAllText(target) != Old)
                 throw new InvalidOperationException("The document must reach the destination whole.");
@@ -31839,11 +32402,13 @@ internal static class Program
             if (File.ReadAllText(target) != New)
                 throw new InvalidOperationException("The next write replaces the document whole.");
 
-            // EVERY KIND, through the production loop rather than a copy of
-            // it. A fixture study of all five kinds is written into a fresh
-            // folder by ExportComponent.WriteSet itself; the same reader trap
-            // is then set on the middle kind, and it must be the ONE file that
-            // does not change while the kinds either side of it do.
+            // EVERY DOCUMENT, through the production loop rather than a
+            // copy of it. A fixture study of all three documents is written
+            // into a fresh folder by ExportComponent.WriteSet itself, under
+            // the -form, -skin and -formwork names the studio reads; the
+            // same reader trap is then set on the middle one, and it must be
+            // the ONE file that does not change while those either side of
+            // it do.
             ValidateExportSetWriteAtomicity(plugin, folder, suffix);
         }
         finally
@@ -31861,8 +32426,10 @@ internal static class Program
     /// <summary>
     /// The same guarantee, but through <c>ExportComponent.WriteSet</c>, which
     /// is the loop a solve actually runs. Asserting against AtomicFile alone
-    /// would leave the one thing that matters unmeasured: that no kind of the
-    /// set has been left on the old habit.
+    /// would leave the one thing that matters unmeasured: that no document of
+    /// the set has been left on the old habit. It also pins the FILE NAMES,
+    /// which are the studio's own resolution rule: <c>&lt;study&gt;-form.json</c>,
+    /// <c>&lt;study&gt;-skin.json</c>, <c>&lt;study&gt;-formwork.json</c>.
     /// </summary>
     private static void ValidateExportSetWriteAtomicity(
         Assembly plugin, string root, string suffix)
@@ -31875,7 +32442,10 @@ internal static class Program
         Type payloadList = writeSet.GetParameters()[2].ParameterType;
         Type pair = payloadList.GetGenericArguments()[0];
 
-        string[] kinds = { "contract", "compas", "tessellation", "columns", "frames" };
+        // THE THREE DOCUMENTS, under the names they land as:
+        // <study>-form.json, <study>-skin.json, <study>-formwork.json,
+        // beside the older pairs on the author's disk (their R-011(a)).
+        string[] kinds = { "form", "skin", "formwork" };
         const string Study = "Column diagnosis";
         object Payloads(string version)
         {
@@ -31906,6 +32476,17 @@ internal static class Program
 
         string set = Path.Combine(root, "set");
         (string[] written, string? failed, string? error) = Run(set, Payloads("one"));
+        foreach (string kind in kinds)
+        {
+            string expected = Path.Combine(set, $"{Study}-{kind}.json");
+            if (!written.Contains(expected, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The {kind} document lands as {Path.GetFileName(expected)}, "
+                    + "which is the name the studio's own suffix list resolves; "
+                    + $"got [{string.Join(", ", written.Select(Path.GetFileName))}].");
+            }
+        }
         if (error is not null || failed is not null || written.Length != kinds.Length)
         {
             throw new InvalidOperationException(
@@ -31921,10 +32502,10 @@ internal static class Program
         if (Directory.GetFiles(set).Any(f => f.EndsWith(suffix, StringComparison.Ordinal)))
             throw new InvalidOperationException("A clean set leaves no temporaries behind.");
 
-        // The trap on the MIDDLE kind: a reader holding it the way a poller
-        // does. The kinds before it are rewritten, the held one is not touched
-        // at all, and the loop stops there and names it.
-        string held = Target(set, "tessellation");
+        // The trap on the MIDDLE document: a reader holding it the way a
+        // poller does. The documents before it are rewritten, the held one
+        // is not touched at all, and the loop stops there and names it.
+        string held = Target(set, "skin");
         using (var reader = new FileStream(
                    held, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
         {
@@ -31932,13 +32513,13 @@ internal static class Program
             reader.Position = 0;
             using var text = new StreamReader(reader, leaveOpen: true);
             string seen = text.ReadToEnd();
-            if (seen != Body("tessellation", "one"))
+            if (seen != Body("skin", "one"))
             {
                 throw new InvalidOperationException(
-                    "A kind a reader is holding must be left ENTIRELY alone, "
-                    + "never truncated under it. The reader saw "
+                    "A document a reader is holding must be left ENTIRELY "
+                    + "alone, never truncated under it. The reader saw "
                     + (seen.Length == 0 ? "EMPTY" : $"'{seen}'")
-                    + $" instead of the {Body("tessellation", "one").Length} "
+                    + $" instead of the {Body("skin", "one").Length} "
                     + "characters it was holding.");
             }
             if (error is null || failed != held)
@@ -31947,22 +32528,20 @@ internal static class Program
                     $"The set must stop at the kind it could not write and name "
                     + $"it; got failed '{failed}', error '{error}'.");
             }
-            if (written.Length != 2 ||
-                written[0] != Target(set, "contract") ||
-                written[1] != Target(set, "compas"))
+            if (written.Length != 1 ||
+                written[0] != Target(set, "form"))
             {
                 throw new InvalidOperationException(
-                    "The kinds written BEFORE the failure are reported, so the "
-                    + "author sees what reached disk; got "
+                    "The documents written BEFORE the failure are reported, "
+                    + "so the author sees what reached disk; got "
                     + $"[{string.Join(", ", written.Select(Path.GetFileName))}].");
             }
         }
-        if (File.ReadAllText(Target(set, "contract")) != Body("contract", "two") ||
-            File.ReadAllText(Target(set, "columns")) != Body("columns", "one") ||
-            File.ReadAllText(Target(set, "frames")) != Body("frames", "one"))
+        if (File.ReadAllText(Target(set, "form")) != Body("form", "two") ||
+            File.ReadAllText(Target(set, "formwork")) != Body("formwork", "one"))
         {
             throw new InvalidOperationException(
-                "The kinds before the failure are the new document and the kinds "
+                "The documents before the failure are the new one and those "
                 + "after it are still the old one, whole in both cases.");
         }
         if (Directory.GetFiles(set).Any(f => f.EndsWith(suffix, StringComparison.Ordinal)))

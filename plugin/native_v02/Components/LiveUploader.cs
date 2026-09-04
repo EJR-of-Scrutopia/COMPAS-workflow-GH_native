@@ -35,9 +35,11 @@ internal sealed class LiveUploader : IDisposable
     public const int DebounceMilliseconds = 500;
 
     /// <summary>
-    /// The one kind whose bytes <see cref="SetKey"/> does not read.
+    /// The one kind <see cref="SetKey"/> does not read whole: the form
+    /// document's thrust mesh churns per serialisation, so the key reads
+    /// the contract half of it and leaves the mesh out.
     /// </summary>
-    public const string CompasKind = "compas";
+    public const string FormKind = ExportPlan.FormKind;
 
     /// <summary>
     /// What the owner shows before anything has been sent. Named here
@@ -165,6 +167,14 @@ internal sealed class LiveUploader : IDisposable
     };
 
     /// <summary>
+    /// ONE ROUTE FOR ALL THREE DOCUMENTS, PUT
+    /// <c>/api/uploads/exports/{study}/{kind}</c> (design of 2026-09-04
+    /// section 1). The columns kind had a route of its own, a file name
+    /// under <c>/api/uploads/columns/</c> rather than a study and a kind,
+    /// and that special case dies with the kind: the formwork document goes
+    /// where its siblings go, and the studio's upload route writes all
+    /// three the same way.
+    ///
     /// The study name is free text from the canvas and lands in a URL
     /// path segment, so it is escaped: a space, a <c>#</c> or a <c>?</c>
     /// left raw either breaks the URI or silently retargets the PUT, and
@@ -174,9 +184,7 @@ internal sealed class LiveUploader : IDisposable
     {
         string root = studio.Trim().TrimEnd('/');
         string segment = Uri.EscapeDataString(name);
-        return kind == "columns"
-            ? $"{root}/api/uploads/columns/{segment}-columns.json"
-            : $"{root}/api/uploads/exports/{segment}/{kind}";
+        return $"{root}/api/uploads/exports/{segment}/{kind}";
     }
 
     public static string Outcome(int status, int attempt)
@@ -230,24 +238,23 @@ internal sealed class LiveUploader : IDisposable
 
     /// <summary>
     /// What "the same set as the last one sent" means: the study name,
-    /// the studio it is going to, and every kind in the set, by name and
-    /// by content.
+    /// the studio it is going to, and every document in the set, by name
+    /// and by content.
     ///
-    /// Except the compas kind's content. That document is the worker's
-    /// <c>compas.data.json_dumps</c> of freshly built Mesh and Graph
-    /// objects, and json_dumps writes each object's <c>guid</c>, a fresh
-    /// uuid4 per call, so two solves of an unchanged Result produce two
-    /// different compas strings. A key that read them could never repeat:
-    /// every outcome would expire the component, the re-solve would
-    /// enqueue a set that looked new, and the sending would go round for
-    /// as long as Live was left on. The compas document is a pure
-    /// function of the contract apart from those guids, so leaving its
+    /// Except the form document's THRUST MESH. That string is the worker's
+    /// <c>compas.data.json_dumps</c> of a freshly built Mesh, and json_dumps
+    /// writes the object's <c>guid</c>, a fresh uuid4 per call, so two
+    /// solves of an unchanged Result produce two different strings. A key
+    /// that read them could never repeat: every outcome would expire the
+    /// component, the re-solve would enqueue a set that looked new, and the
+    /// sending would go round for as long as Live was left on. The mesh is
+    /// a pure function of the contract apart from that guid, so leaving its
     /// bytes out of the key loses nothing: a changed Result changes the
-    /// contract kind, which IS read.
+    /// contract half of the form document, which IS read.
     ///
-    /// Its PRESENCE still counts, so a set carrying a compas kind and a
-    /// set without one (a worker failure dropped it) key differently, and
-    /// the recovered set is sent rather than skipped.
+    /// That lesson is inherited, not invented. It was the compas kind's
+    /// before the form document absorbed the one string anybody ever read
+    /// out of it, and the hazard moved with the string.
     /// </summary>
     public static string SetKey(
         string name,
@@ -261,8 +268,9 @@ internal sealed class LiveUploader : IDisposable
         foreach ((string kind, string json) in set)
         {
             builder.Append(kind).Append('\u001f');
-            if (kind != CompasKind)
-                builder.Append(json);
+            builder.Append(kind == FormKind
+                ? FormDocument.KeyMaterial(json)
+                : json);
             builder.Append('\u001e');
         }
         byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(builder.ToString()));
