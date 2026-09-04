@@ -32540,6 +32540,24 @@ internal static class Program
             "DebounceMilliseconds",
             BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
 
+        /// <summary>
+        /// Where the tick stands, read the way the component reads it. A
+        /// check waits for this to say Done rather than sleeping a guessed
+        /// interval: the send runs on a thread-pool thread and a machine
+        /// under load can take longer than any number worth hard-coding,
+        /// which is how a check that sleeps becomes a check that flakes.
+        /// </summary>
+        internal string Phase
+        {
+            get
+            {
+                object snapshot = UploaderType.GetProperty("Current")!
+                    .GetValue(Uploader)!;
+                return snapshot.GetType().GetProperty("Phase")!
+                    .GetValue(snapshot)!.ToString()!;
+            }
+        }
+
         internal string[] Sent()
         {
             lock (Routes)
@@ -32853,12 +32871,15 @@ internal static class Program
             WaitUntil(
                 () => Volatile.Read(ref builds) >= expectedBuilds,
                 "the build to land on rest");
-            // The send is started after the build, on its own task, so a
-            // moment is allowed for it to reach the wire before the routes
-            // are read. A send that never happens is what the assertions
-            // below are looking for, so this wait is what makes "nothing was
-            // sent" mean anything at all.
-            Thread.Sleep(harness.Debounce);
+            // The send runs after the build on its own task, so the tick is
+            // waited out to its own Done rather than for a guessed interval:
+            // a send that never happens is what half these assertions are
+            // looking for, and a sleep that is short on a loaded machine
+            // makes "nothing was sent" mean "nothing had been sent YET".
+            WaitUntil(
+                () => harness.Phase == "Done",
+                "the tick to finish, its send included");
+            Thread.Sleep(50);
         }
 
         // 1. THE FIRST SEND CARRIES EVERYTHING. The studio holds nothing
@@ -32994,6 +33015,123 @@ internal static class Program
                 throw new InvalidOperationException(
                     $"And they go to that study's own route; '{route}' does not.");
             }
+        }
+
+        // 8. THE BUILD'S OWN HALF OF THE GATE, driven through
+        // ExportComponent.BuildDocumentsAsync itself rather than through a
+        // closure standing in for it: the question above is the uploader's,
+        // and this is the answer being obeyed. A build told no writes the
+        // form document with "thrustMesh": null, calls NO worker at all, and
+        // says why in one line; a build told yes asks once and carries what
+        // came back.
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        MethodInfo build = exportType.GetMethod(
+            "BuildDocumentsAsync",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "ExportComponent.BuildDocumentsAsync was not found; it is "
+                + "the whole of what a rest tick does.");
+        Type inputsType = plugin.GetType(
+            "Ananke.COMPAS.Native.Components.ExportBuildInputs",
+            throwOnError: true)!;
+        Type builtType = harness.BuiltType;
+        int asked = 0;
+        string? askedAbout = null;
+        const string Mesh = "{\"dtype\":\"compas.datastructures/Mesh\"}";
+        var worker = new Func<string, object, CancellationToken,
+            Task<JsonElement>>((command, payload, token) =>
+            {
+                Interlocked.Increment(ref asked);
+                if (command != "export.compas")
+                {
+                    throw new InvalidOperationException(
+                        "The thrust mesh is asked for by the export.compas "
+                        + $"command the studio's worker answers; got '{command}'.");
+                }
+                using JsonDocument document = JsonDocument.Parse(
+                    "{\"thrustMesh\":"
+                    + JsonSerializer.Serialize(Mesh) + "}");
+                return Task.FromResult(document.RootElement.Clone());
+            });
+        object buildInputs = Activator.CreateInstance(
+            inputsType,
+            new object?[]
+            {
+                ThrustMeshFixture(plugin), "arch", null, null, 1.0, 0.05,
+                worker, CancellationToken.None,
+            })!;
+        object Run(Func<string, bool> wantMesh)
+        {
+            var task = (Task)build.Invoke(
+                null, new object?[] { buildInputs, wantMesh })!;
+            task.GetAwaiter().GetResult();
+            return task.GetType().GetProperty("Result")!.GetValue(task)!;
+        }
+        object cheap = Run(form =>
+        {
+            askedAbout = form;
+            return false;
+        });
+        IReadOnlyList<(string Kind, string Json)> built =
+            (IReadOnlyList<(string, string)>)builtType
+                .GetProperty("Payloads")!.GetValue(cheap)!;
+        if (asked != 0)
+        {
+            throw new InvalidOperationException(
+                "A build told the mesh is not wanted calls NO worker: it is "
+                + "the round trip that is being avoided, not the key. It "
+                + $"called {asked} times.");
+        }
+        if (built.Count != 1 || built[0].Kind != "form" ||
+            !built[0].Json.EndsWith(
+                ",\"thrustMesh\":null}", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And it writes the form document with \"thrustMesh\": null, "
+                + "which is what the J output then carries; it wrote "
+                + string.Join(", ", built.Select(d => d.Kind + " " + d.Json)));
+        }
+        if (askedAbout is null ||
+            !askedAbout.EndsWith(
+                ",\"thrustMesh\":null}", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The document the build asks about is the MESH-LESS form "
+                + "document, because its contract half is what the uploader "
+                + "compares and building a mesh to ask the question would be "
+                + "the round trip the question exists to avoid; it asked "
+                + "about '" + askedAbout + "'.");
+        }
+        string? note = (string?)builtType.GetProperty("Note")!.GetValue(cheap);
+        if (note is null || !note.Contains("thrustMesh", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And it says so in ONE line, because a form document whose "
+                + "mesh is null for a good reason looks exactly like one "
+                + "whose worker is down; the note reads '" + note + "'.");
+        }
+        object answered = Run(_ => true);
+        IReadOnlyList<(string Kind, string Json)> withMesh =
+            (IReadOnlyList<(string, string)>)builtType
+                .GetProperty("Payloads")!.GetValue(answered)!;
+        if (asked != 1)
+        {
+            throw new InvalidOperationException(
+                "A build told the mesh IS wanted asks exactly once; it asked "
+                + $"{asked} times in total across both builds.");
+        }
+        if (!withMesh[0].Json.EndsWith(
+                ",\"thrustMesh\":" + JsonSerializer.Serialize(Mesh) + "}",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "and carries the string the worker gave, verbatim; it wrote "
+                + withMesh[0].Json);
+        }
+        if ((string?)builtType.GetProperty("Note")!.GetValue(answered) is not null)
+        {
+            throw new InvalidOperationException(
+                "and says nothing about a null mesh, there being none.");
         }
     }
 
@@ -33151,7 +33289,10 @@ internal static class Program
             WaitUntil(
                 () => Volatile.Read(ref adopted) is not null,
                 "the second build to finish");
-            Thread.Sleep(200);
+            WaitUntil(
+                () => harness.Phase == "Done",
+                "the second build to be adopted");
+            Thread.Sleep(50);
 
             string one = Volatile.Read(ref superseded)!;
             string two = Volatile.Read(ref adopted)!;
