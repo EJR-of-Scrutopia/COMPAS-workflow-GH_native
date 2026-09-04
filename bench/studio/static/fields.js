@@ -39,9 +39,8 @@ export function segmentWindow(key) {
   return [(hash % 97) / 96, ((hash >>> 8) % 97) / 96];
 }
 
-// The piece's best-fit plane frame: Newell normal over the triangle soup
-// (robust for any winding and any curvature the cutter produces), then an
-// in-plane [e1, e2] pair for u and v. Two flavours:
+// The piece's best-fit plane frame, then an in-plane [e1, e2] pair for
+// u and v. Two flavours:
 //
 //   grain=false  e1 is world X projected into the plane (world Y when the
 //                plane is nearly vertical-X): the stable default.
@@ -51,24 +50,54 @@ export function segmentWindow(key) {
 //                vault (Param: "use the direction of the voussoir... so
 //                that each leg has the right direction"). A face lying
 //                flat has no uphill and keeps the stable default.
+//
+// The plane itself comes from the ORIENTATION TENSOR -- the area-weighted
+// sum of nn^T over every triangle -- never from a Newell sum: a voussoir
+// is a CLOSED solid (top face, bottom face, joint walls), and over any
+// closed surface the signed face-area vectors cancel to zero, so Newell
+// handed every piece floating-point noise -- and handed a symmetric piece
+// an exact zero, whose degenerate e2 collapsed v to a constant and
+// smeared the picture into streaks. The tensor is sign-blind: the top and
+// bottom faces ADD, and its dominant eigenvector is the direction most of
+// the surface faces, which is the projection plane that foreshortens
+// least -- on a flat slab it is exact, and on a wrapping band it is the
+// best single plane there is.
 function pieceFrame(positions, grain) {
-  let nx = 0, ny = 0, nz = 0;
+  let qxx = 0, qxy = 0, qxz = 0, qyy = 0, qyz = 0, qzz = 0;
   for (let i = 0; i < positions.length; i += 9) {
-    for (let corner = 0; corner < 3; corner++) {
-      const ax = positions[i + 3 * corner];
-      const ay = positions[i + 3 * corner + 1];
-      const az = positions[i + 3 * corner + 2];
-      const next = (corner + 1) % 3;
-      const bx = positions[i + 3 * next];
-      const by = positions[i + 3 * next + 1];
-      const bz = positions[i + 3 * next + 2];
-      nx += (ay - by) * (az + bz);
-      ny += (az - bz) * (ax + bx);
-      nz += (ax - bx) * (ay + by);
-    }
+    const ux = positions[i + 3] - positions[i];
+    const uy = positions[i + 4] - positions[i + 1];
+    const uz = positions[i + 5] - positions[i + 2];
+    const vx = positions[i + 6] - positions[i];
+    const vy = positions[i + 7] - positions[i + 1];
+    const vz = positions[i + 8] - positions[i + 2];
+    const wx = uy * vz - uz * vy;
+    const wy = uz * vx - ux * vz;
+    const wz = ux * vy - uy * vx;
+    const twice = Math.hypot(wx, wy, wz);
+    if (twice < 1e-12) continue;
+    // area * n n^T, with w = 2 * area * n, is w w^T / (2 |w|).
+    const weight = 1 / (2 * twice);
+    qxx += wx * wx * weight; qxy += wx * wy * weight; qxz += wx * wz * weight;
+    qyy += wy * wy * weight; qyz += wy * wz * weight; qzz += wz * wz * weight;
   }
-  const length = Math.hypot(nx, ny, nz) || 1;
-  nx /= length; ny /= length; nz /= length;
+  const q = [qxx, qxy, qxz, qyy, qyz, qzz];
+  const apply = (v) => [
+    q[0] * v[0] + q[1] * v[1] + q[2] * v[2],
+    q[1] * v[0] + q[3] * v[1] + q[4] * v[2],
+    q[2] * v[0] + q[4] * v[1] + q[5] * v[2]];
+  // Power iteration for the dominant eigenvector, seeded on the axis the
+  // tensor already leans to, so it cannot start orthogonal to the answer
+  // on an axis-aligned piece.
+  let v = qxx >= qyy && qxx >= qzz ? [1, 0, 0]
+    : (qyy >= qzz ? [0, 1, 0] : [0, 0, 1]);
+  for (let k = 0; k < 48; k++) {
+    const w = apply(v);
+    const len = Math.hypot(w[0], w[1], w[2]);
+    if (len < 1e-12) break;
+    v = [w[0] / len, w[1] / len, w[2] / len];
+  }
+  const nx = v[0], ny = v[1], nz = v[2];
   if (grain) {
     const ux = -nz * nx, uy = -nz * ny, uz = 1 - nz * nz;
     const ulen = Math.hypot(ux, uy, uz);
@@ -106,12 +135,51 @@ function projectedBounds(positions, frame) {
   return { flat, minU, minV, spanU: maxU - minU, spanV: maxV - minV };
 }
 
-// How much sheet one piece needs: its footprint's larger in-plane span, in
-// metres, measured in the same frame sheetUVs will project with. The
-// caller takes the max over every piece to size the sheet.
+// A flat piece projects onto its plane at true size, but a CURVED one
+// foreshortens: the projected footprint is smaller than the surface, so
+// dividing by the sheet alone would magnify its picture against its flat
+// neighbours -- the very "different scale between objects" Param saw. The
+// gain is how much surface each projected metre really carries,
+// sqrt(true area / projected area), measured over the faces the eye sees:
+// a triangle standing nearly edge-on to the plane (a joint wall) holds
+// real area but projects to nothing, and it is hidden inside the joint,
+// so it must not pollute the average.
+function projectionGain(positions, frame) {
+  const [e1x, e1y, e1z, e2x, e2y, e2z] = frame;
+  let surface = 0, projected = 0;
+  for (let i = 0; i < positions.length; i += 9) {
+    const ux = positions[i + 3] - positions[i];
+    const uy = positions[i + 4] - positions[i + 1];
+    const uz = positions[i + 5] - positions[i + 2];
+    const vx = positions[i + 6] - positions[i];
+    const vy = positions[i + 7] - positions[i + 1];
+    const vz = positions[i + 8] - positions[i + 2];
+    const wx = uy * vz - uz * vy;
+    const wy = uz * vx - ux * vz;
+    const wz = ux * vy - uy * vx;
+    const area = 0.5 * Math.hypot(wx, wy, wz);
+    const u1 = ux * e1x + uy * e1y + uz * e1z;
+    const v1 = ux * e2x + uy * e2y + uz * e2z;
+    const u2 = vx * e1x + vy * e1y + vz * e1z;
+    const v2 = vx * e2x + vy * e2y + vz * e2z;
+    const flat = 0.5 * Math.abs(u1 * v2 - u2 * v1);
+    if (flat > 0.3 * area) {
+      surface += area;
+      projected += flat;
+    }
+  }
+  if (surface < 1e-12 || projected < 1e-12) return 1;
+  return Math.sqrt(surface / projected);
+}
+
+// How much sheet one piece needs: its footprint's larger in-plane span
+// times its projection gain, in metres, measured in the same frame
+// sheetUVs will project with. The caller takes the max over every piece
+// to size the sheet.
 export function footprintSpan(positions, grain = false) {
-  const bounds = projectedBounds(positions, pieceFrame(positions, grain));
-  return Math.max(bounds.spanU, bounds.spanV);
+  const frame = pieceFrame(positions, grain);
+  const bounds = projectedBounds(positions, frame);
+  return Math.max(bounds.spanU, bounds.spanV) * projectionGain(positions, frame);
 }
 
 // ONE sheet of material for the whole vault, cut into voussoirs. The crop
@@ -130,19 +198,23 @@ export function footprintSpan(positions, grain = false) {
 // square, so the window never leaves the sheet.
 export function sheetUVs(positions, sheet, options = {}) {
   const { grain = false, windowU = 0, windowV = 0, rotation = 0 } = options;
-  const bounds = projectedBounds(positions, pieceFrame(positions, grain));
+  const frame = pieceFrame(positions, grain);
+  const bounds = projectedBounds(positions, frame);
+  // The gain stretches the projection back to true surface size, so a
+  // curved piece wears its picture at the same density as a flat one.
+  const gain = projectionGain(positions, frame);
   // A sheet smaller than the piece would spill past the picture's edge;
   // never let it (the caller's max-over-pieces makes this a no-op).
-  const metres = Math.max(sheet, bounds.spanU, bounds.spanV) || 1;
-  const fitU = bounds.spanU / metres;
-  const fitV = bounds.spanV / metres;
+  const metres = Math.max(sheet, bounds.spanU * gain, bounds.spanV * gain) || 1;
+  const fitU = bounds.spanU * gain / metres;
+  const fitV = bounds.spanV * gain / metres;
   const baseU = windowU * (1 - fitU);
   const baseV = windowV * (1 - fitV);
   const flat = bounds.flat;
   const uvs = new Array(flat.length);
   for (let j = 0; j < flat.length; j += 2) {
-    let u = baseU + (flat[j] - bounds.minU) / metres;
-    let v = baseV + (flat[j + 1] - bounds.minV) / metres;
+    let u = baseU + (flat[j] - bounds.minU) * gain / metres;
+    let v = baseV + (flat[j + 1] - bounds.minV) * gain / metres;
     for (let turn = 0; turn < (rotation & 3); turn++) {
       const kept = u;
       u = v;

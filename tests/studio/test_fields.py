@@ -635,6 +635,63 @@ SHEET_CHECK = textwrap.dedent("""
     expect(Number.isFinite(flatFace.spanU) && flatFace.maxU <= 1 + 1e-9,
       "a flat face survives grain mode");
 
+    // A voussoir is a CLOSED solid: top face, bottom face, joint walls.
+    // Newell's normal cancels to zero over one -- it handed symmetric
+    // pieces a degenerate frame whose v collapsed into a streak -- so the
+    // principal-axes frame must keep the footprint honest and v alive.
+    function solid(w, d, t) {
+      const p = [];
+      const quad = (a, b, c, e) => p.push(...a, ...b, ...c, ...a, ...c, ...e);
+      const v000 = [0,0,0], v100 = [w,0,0], v110 = [w,d,0], v010 = [0,d,0];
+      const v001 = [0,0,t], v101 = [w,0,t], v111 = [w,d,t], v011 = [0,d,t];
+      quad(v001, v101, v111, v011);       // top (the first two triangles)
+      quad(v000, v010, v110, v100);       // bottom
+      quad(v000, v100, v101, v001);       // four joint walls
+      quad(v100, v110, v111, v101);
+      quad(v110, v010, v011, v111);
+      quad(v010, v000, v001, v011);
+      return p;
+    }
+    const slab = solid(2, 1, 0.1);
+    expect(Math.abs(footprintSpan(slab) - 2) < 0.03,
+      "a closed slab's footprint is its plan, not Newell noise");
+    const slabBounds = bounds(sheetUVs(slab, sheet));
+    expect(slabBounds.spanV > 0.4 * slabBounds.spanU,
+      "the closed slab's v does not collapse into a streak");
+
+    // Density: metres of surface per unit of picture, over a run of
+    // triangles. THE contract -- every piece must read at sheet scale.
+    function patchDensity(pos, uvs, from, to) {
+      let a3 = 0, auv = 0;
+      for (let i = from * 9, j = from * 6; i < to * 9; i += 9, j += 6) {
+        const ux = pos[i+3]-pos[i], uy = pos[i+4]-pos[i+1], uz = pos[i+5]-pos[i+2];
+        const vx = pos[i+6]-pos[i], vy = pos[i+7]-pos[i+1], vz = pos[i+8]-pos[i+2];
+        const wx = uy*vz - uz*vy, wy = uz*vx - ux*vz, wz = ux*vy - uy*vx;
+        a3 += 0.5 * Math.hypot(wx, wy, wz);
+        const du1 = uvs[j+2]-uvs[j], dv1 = uvs[j+3]-uvs[j+1];
+        const du2 = uvs[j+4]-uvs[j], dv2 = uvs[j+5]-uvs[j+1];
+        auv += 0.5 * Math.abs(du1*dv2 - du2*dv1);
+      }
+      return Math.sqrt(a3 / auv);
+    }
+    // The joint walls hold real area but project to nothing and hide
+    // inside the joints: they must not drag the density. A thick-walled
+    // slab's TOP still reads at sheet scale.
+    const chunky = solid(2, 1, 0.4);
+    const chunkyUVs = sheetUVs(chunky, sheet);
+    expect(Math.abs(patchDensity(chunky, chunkyUVs, 0, 2) - sheet) < 0.05 * sheet,
+      "joint walls do not drag a piece's density off the sheet");
+    // A curved piece foreshortens on its plane; the projection gain must
+    // bring its density back to the sheet, or curved pieces wear
+    // magnified pictures next to flat neighbours.
+    const tent = [
+      0,0,0,  1,0,1,  1,1,1,   0,0,0,  1,1,1,  0,1,0,
+      1,0,1,  2,0,0,  2,1,0,   1,0,1,  2,1,0,  1,1,1,
+    ];
+    const tentUVs = sheetUVs(tent, sheet);
+    expect(Math.abs(patchDensity(tent, tentUVs, 0, 4) - sheet) < 0.05 * sheet,
+      "a folded piece reads at sheet density, not magnified");
+
     // The hashes behind the deal: deterministic, in range, re-dealt by the
     // seed riding in the key.
     const turnA = uvQuarterTurn("piece-1#0");
