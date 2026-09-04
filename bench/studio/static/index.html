@@ -107,7 +107,8 @@
     <label>Relief <input id="material-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="material-relief-value">10</span> mm</label>
     <label>Occlusion <input id="material-occlusion" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-occlusion-value">100</span>%</label>
     <label>Variation <input id="material-variation" type="range" min="0" max="2" step="0.05" value="1"> <span id="material-variation-value">100</span>%</label>
-    <button id="uv-randomise" title="Re-deal every voussoir's crop rotation so the courses stop looking aligned">Randomise texture</button>
+    <label title="Run the picture's grain up the slope of each voussoir, the way boards would be laid along each leg"><input id="material-grain" type="checkbox"> Match grain</label>
+    <button id="uv-randomise" title="Re-deal every voussoir's window of the sheet so no two wear the same patch">Randomise texture</button>
     <button id="material-reset">Reset appearance</button>
     <div id="appearance-note" class="hidden"></div>
     <div class="named"><span>Pattern</span><select id="pattern-select"></select></div>
@@ -219,10 +220,10 @@
       <option value="dark-studio" selected>Dark studio</option>
     </select></label>
     <label>Size <input id="ground-radius" type="range" min="2" max="200" step="1" value="60"> <span id="ground-radius-value">60</span> m radius</label>
-    <label>Scale X <input id="ground-scale-x" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="ground-scale-x-value">100</span>%</label>
-    <label>Scale Y <input id="ground-scale-y" type="range" min="0.25" max="4" step="0.05" value="1"> <span id="ground-scale-y-value">100</span>%</label>
+    <label>Scale X <input id="ground-scale-x" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-x-value">100</span>%</label>
+    <label>Scale Y <input id="ground-scale-y" type="range" min="0.05" max="4" step="0.05" value="1"> <span id="ground-scale-y-value">100</span>%</label>
     <label>Relief <input id="ground-relief" type="range" min="0" max="4" step="0.05" value="1"> <span id="ground-relief-value">10</span> mm</label>
-    <button id="ground-randomise" title="Slide the floor pattern so the grout lines land somewhere new">Randomise floor</button>
+    <button id="ground-randomise" title="Turn and slide the floor pattern to a fresh lay angle">Randomise floor</button>
 
     <span class="row-heading">Props</span>
     <div id="props-folder-row" class="folder-line">

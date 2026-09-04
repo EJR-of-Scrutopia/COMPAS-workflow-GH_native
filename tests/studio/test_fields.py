@@ -535,85 +535,136 @@ def test_the_sun_is_where_the_almanac_says_it_is(tmp_path):
     assert "ok" in result.stdout
 
 
-STRETCH_CHECK = textwrap.dedent("""
-    import { stretchUVs, uvQuarterTurn } from %FIELDS%;
+SHEET_CHECK = textwrap.dedent("""
+    import { sheetUVs, footprintSpan, segmentWindow, uvQuarterTurn } from %FIELDS%;
 
     function expect(condition, message) {
       if (!condition) { console.error("FAIL: " + message); process.exit(1); }
     }
     function near(a, b) { return Math.abs(a - b) < 1e-9; }
+    function bounds(uvs) {
+      let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+      for (let j = 0; j < uvs.length; j += 2) {
+        minU = Math.min(minU, uvs[j]); maxU = Math.max(maxU, uvs[j]);
+        minV = Math.min(minV, uvs[j + 1]); maxV = Math.max(maxV, uvs[j + 1]);
+      }
+      return { minU, maxU, minV, maxV, spanU: maxU - minU, spanV: maxV - minV };
+    }
 
-    // A flat 2 x 1 metre face in the z = 0 plane, two triangles.
-    const face = [
+    // A flat 2 x 1 metre face in the z = 0 plane, and a 1 x 0.5 one.
+    const big = [
       0,0,0,  2,0,0,  2,1,0,
       0,0,0,  2,1,0,  0,1,0,
     ];
-    const uvs = stretchUVs(face);
-    // Stretch-to-fit: the crop fills 0..1 on BOTH axes regardless of the
-    // face being twice as wide as tall -- each face is one clean texture.
-    let minU = 1, maxU = 0, minV = 1, maxV = 0;
-    for (let j = 0; j < uvs.length; j += 2) {
-      minU = Math.min(minU, uvs[j]); maxU = Math.max(maxU, uvs[j]);
-      minV = Math.min(minV, uvs[j + 1]); maxV = Math.max(maxV, uvs[j + 1]);
-    }
-    expect(near(minU, 0) && near(maxU, 1) && near(minV, 0) && near(maxV, 1),
-      "the crop fills the face exactly on both axes");
+    const small = [
+      0,0,0,  1,0,0,  1,0.5,0,
+      0,0,0,  1,0.5,0,  0,0.5,0,
+    ];
+    expect(near(footprintSpan(big), 2), "the big face needs 2 m of sheet");
+    expect(near(footprintSpan(small), 1), "the small face needs 1 m of sheet");
 
-    // Deterministic, and rotation permutes the corners within the square.
-    const turned = stretchUVs(face, 1);
-    expect(!near(turned[0], uvs[0]) || !near(turned[1], uvs[1]),
-      "a quarter turn moves the corners");
-    let tMinU = 1, tMaxU = 0;
-    for (let j = 0; j < turned.length; j += 2) {
-      tMinU = Math.min(tMinU, turned[j]); tMaxU = Math.max(tMaxU, turned[j]);
+    // ONE sheet, uniform scale: with a 4 m sheet the 2 x 1 face samples a
+    // 0.5 x 0.25 window -- the aspect of the FACE, never stretched square.
+    const sheet = 4;
+    const bigBounds = bounds(sheetUVs(big, sheet));
+    expect(near(bigBounds.spanU, 0.5) && near(bigBounds.spanV, 0.25),
+      "uniform: uv spans keep the face's metre proportions");
+    // ...and the same scale on every piece: metres-per-uv identical.
+    const smallBounds = bounds(sheetUVs(small, sheet));
+    expect(near(bigBounds.spanU / 2, smallBounds.spanU / 1)
+        && near(bigBounds.spanV / 1, smallBounds.spanV / 0.5),
+      "the texture scale is the same between objects");
+
+    // Cover without repeating: whatever the window, the sheet holds it.
+    for (const w of [[0, 0], [1, 1], [0.3, 0.9]]) {
+      const b = bounds(sheetUVs(big, sheet, { windowU: w[0], windowV: w[1] }));
+      expect(b.minU >= -1e-9 && b.maxU <= 1 + 1e-9
+          && b.minV >= -1e-9 && b.maxV <= 1 + 1e-9,
+        "no window leaves the sheet");
     }
-    expect(near(tMinU, 0) && near(tMaxU, 1),
-      "a turned crop still fills the unit square");
-    const again = stretchUVs(face, 5);
+    // The window is PLACED by the fractions: full margin puts it at the top
+    // corner of the sheet rather than the origin.
+    const cornered = bounds(sheetUVs(big, sheet, { windowU: 1, windowV: 1 }));
+    expect(near(cornered.maxU, 1) && near(cornered.maxV, 1),
+      "a full-margin window sits against the sheet's far corner");
+
+    // A sheet too small (or zero) falls back to the piece's own span rather
+    // than spilling past the picture's edge.
+    const fallback = bounds(sheetUVs(big, 0));
+    expect(near(fallback.spanU, 1) && near(fallback.spanV, 0.5)
+        && fallback.maxU <= 1 + 1e-9 && fallback.maxV <= 1 + 1e-9,
+      "a zero sheet is sized by the piece itself");
+
+    // Rotation stays inside the unit square and is modulo four.
+    const turned = sheetUVs(big, sheet, { rotation: 1 });
+    const plain = sheetUVs(big, sheet);
+    expect(!near(turned[0], plain[0]) || !near(turned[1], plain[1]),
+      "a quarter turn moves the corners");
+    const again = sheetUVs(big, sheet, { rotation: 5 });
     for (let j = 0; j < turned.length; j++) {
       expect(near(again[j], turned[j]), "rotation is modulo four");
     }
 
-    // A tilted face (45 degrees about x) still gets a full flat crop: the
-    // projection is the piece's own plane, not a world axis.
+    // Match grain, on a face where it MATTERS: a ramp tilted about Y. The
+    // stable frame's v is world Y there -- dead level -- so only the grain
+    // frame can make v climb. (A face tilted about X is no test: its
+    // stable v already happens to run uphill.)
+    const ramp = [
+      0,0,0,  2,0,2,  2,1,2,
+      0,0,0,  2,1,2,  0,1,0,
+    ];
+    // Vertex 0 is (0,0,0); vertex 1 is (2,0,2), a pure climb from it.
+    const grained = sheetUVs(ramp, sheet, { grain: true });
+    expect(grained[3] > grained[1] + 1e-9,
+      "with grain matched, v runs uphill");
+    const plainRamp = sheetUVs(ramp, sheet);
+    expect(near(plainRamp[3], plainRamp[1]),
+      "without grain, the ramp's v stays level along the climb");
+    // And the stable frame itself: on a face tilted about x, u follows
+    // world x at sheet scale.
     const tilted = [
       0,0,0,  2,0,0,  2,1,1,
       0,0,0,  2,1,1,  0,1,1,
     ];
-    const tiltedUVs = stretchUVs(tilted);
-    let sMinV = 1, sMaxV = 0;
-    for (let j = 0; j < tiltedUVs.length; j += 2) {
-      sMinV = Math.min(sMinV, tiltedUVs[j + 1]);
-      sMaxV = Math.max(sMaxV, tiltedUVs[j + 1]);
-    }
-    expect(near(sMinV, 0) && near(sMaxV, 1),
-      "a tilted face is unrolled onto its own plane, not squashed by a world axis");
+    const ungrained = sheetUVs(tilted, sheet);
+    expect(near(ungrained[2] - ungrained[0], 2 / sheet),
+      "without grain, u runs along world x at sheet scale");
+    // A face lying flat has no uphill: grain quietly keeps the stable
+    // frame instead of dividing by nothing.
+    const flatFace = bounds(sheetUVs(big, sheet, { grain: true }));
+    expect(Number.isFinite(flatFace.spanU) && flatFace.maxU <= 1 + 1e-9,
+      "a flat face survives grain mode");
 
+    // The hashes behind the deal: deterministic, in range, re-dealt by the
+    // seed riding in the key.
     const turnA = uvQuarterTurn("piece-1#0");
-    const turnB = uvQuarterTurn("piece-1#0");
-    const turnSeeded = uvQuarterTurn("piece-1#123456");
-    expect(turnA === turnB, "the quarter turn is deterministic per key");
+    expect(turnA === uvQuarterTurn("piece-1#0"), "the quarter turn is deterministic per key");
     expect(turnA >= 0 && turnA < 4 && Number.isInteger(turnA), "a turn is 0..3");
-    // Different seeds MAY collide on one piece; across a handful of pieces
-    // at least one must differ or the button would do nothing.
+    const winA = segmentWindow("piece-1#0");
+    expect(near(winA[0], segmentWindow("piece-1#0")[0]), "the window is deterministic per key");
+    expect(winA[0] >= 0 && winA[0] <= 1 && winA[1] >= 0 && winA[1] <= 1,
+      "a window fraction is 0..1");
     let differs = false;
     for (const piece of ["a", "b", "c", "d", "e", "f", "g", "h"]) {
-      if (uvQuarterTurn(piece + "#0") !== uvQuarterTurn(piece + "#123456")) differs = true;
+      if (segmentWindow(piece + "#0")[0] !== segmentWindow(piece + "#123456")[0]) differs = true;
     }
-    expect(differs, "re-seeding re-deals at least some pieces");
+    expect(differs, "re-seeding re-deals at least some windows");
 
     console.log("ok");
 """)
 
 
 @needs_node
-def test_stretch_uvs_fit_one_crop_per_voussoir(tmp_path):
-    """Param: 'the material needs to be mapped to the voussoirs not to a
-    world mapping... I think the materials should also stretch to fit on
-    the voussoirs as each face should be a clean texture.'"""
+def test_sheet_uvs_one_uniform_sheet_across_the_vault(tmp_path):
+    """Param, in order: 'the material needs to be mapped to the voussoirs
+    not to a world mapping', then 'we should keep it always uniform. but we
+    need it to cover each face without repeating' and 'the texture scale on
+    the skin always needs to be the same between objects' -- plus 'a match
+    wood grain option... use the direction of the voussoir for that, so
+    that each leg has the right direction'."""
 
-    script = tmp_path / "check_stretch.mjs"
-    script.write_text(STRETCH_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())), encoding="utf-8")
+    script = tmp_path / "check_sheet.mjs"
+    script.write_text(SHEET_CHECK.replace("%FIELDS%", json.dumps(FIELDS.as_uri())), encoding="utf-8")
     finished = subprocess.run(["node", str(script)], capture_output=True, text=True)
     assert finished.returncode == 0, finished.stderr or finished.stdout
     assert "ok" in finished.stdout

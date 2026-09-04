@@ -15,7 +15,7 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { BrightnessContrastShader } from "three/addons/shaders/BrightnessContrastShader.js";
 import {
-  boxUVs, segmentUVOffset, stretchUVs, uvQuarterTurn,
+  boxUVs, segmentUVOffset, segmentWindow, sheetUVs, footprintSpan, uvQuarterTurn,
   smoothStressField, interpolateScalarField,
   sampleScalar, sampleVector, creaseNormals, estimateSunFromEquirect,
   interpolateFormworkFrame, machineTime, formworkVisibility, groundRepeat,
@@ -113,7 +113,7 @@ const state = {
   // The floor texture's own dials: per-axis scale multipliers over the
   // real-world repeat, its own relief depth, and a slid offset from the
   // Randomise button (rebuildGround applies all four).
-  ground: { scaleX: 1, scaleY: 1, relief: 1, offset: [0, 0] },
+  ground: { scaleX: 1, scaleY: 1, relief: 1, offset: [0, 0], rotation: 0 },
   props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
   carrying: null,      // { record, from } while a prop follows the cursor (see carryNewProp)
   armedPropType: null,  // kept for the older arming path used by nothing in the panel now
@@ -174,7 +174,7 @@ const state = {
   // (see restoreAppearance/persistAppearance). null means no override; the
   // registry material (or a skin) shows through untouched.
   appearance: { tint: null, finish: null, skin: "none",
-    variation: 1, uvSeed: 0 },
+    variation: 1, uvSeed: 0, grain: false },
   relief: 1,             // height-map depth, where 1 is QS's own 10 mm
   occlusion: 1,          // how much of a photoscan's own crevice shading is kept
   hdriBackdrop: null,    // the sharp visible sky, separate from the one that lights
@@ -829,12 +829,21 @@ function rebuildGround() {
     setRepeat(groundLibrarySet, u * state.ground.scaleX, v * state.ground.scaleY);
     for (const texture of groundLibrarySet.textures) {
       texture.offset.set(state.ground.offset[0], state.ground.offset[1]);
+      // The rotation is what makes Randomise VISIBLE: sliding a periodic
+      // pattern lands it back on itself, but a fresh lay angle cannot be
+      // missed. About the disc centre, every map together. (With unequal
+      // scale dials a rotation shears the pattern a little; the dials are
+      // equal in every ordinary use.)
+      texture.center.set(0.5, 0.5);
+      texture.rotation = state.ground.rotation || 0;
     }
   } else {
     const tile = material.userData.groundTileMetres;
     if (tile && material.map) {
       const [u, v] = groundRepeat(state.groundRadius, tile);
       material.map.repeat.set(u * state.ground.scaleX, v * state.ground.scaleY);
+      material.map.center.set(0.5, 0.5);
+      material.map.rotation = state.ground.rotation || 0;
     }
   }
   const ground = new THREE.Mesh(
@@ -1707,9 +1716,11 @@ function collectScene() {
     },
     ground: { preset: state.groundPreset, radius: state.groundRadius,
       scaleX: state.ground.scaleX, scaleY: state.ground.scaleY,
-      relief: state.ground.relief, offset: state.ground.offset.slice() },
+      relief: state.ground.relief, offset: state.ground.offset.slice(),
+      rotation: state.ground.rotation },
     props: state.props.map((record) => ({
       type: record.type, x: record.x, y: record.y, rotation: record.rotation,
+      scale: record.scale,
     })),
     layers: Object.assign({}, state.layers),
     cut: {
@@ -1769,6 +1780,7 @@ async function applyScene(record) {
     if (typeof scene_.ground.scaleY === "number") state.ground.scaleY = scene_.ground.scaleY;
     if (typeof scene_.ground.relief === "number") state.ground.relief = scene_.ground.relief;
     if (Array.isArray(scene_.ground.offset)) state.ground.offset = scene_.ground.offset.slice(0, 2);
+    if (typeof scene_.ground.rotation === "number") state.ground.rotation = scene_.ground.rotation;
     syncGroundControls();
   }
   if (scene_.layers) state.layers = Object.assign({}, state.layers, scene_.layers);
@@ -2870,9 +2882,11 @@ function renderGroundPreview(preset, canvasEl) {
   const tile = material.userData.groundTileMetres;
   if (tile && material.map) {
     // Six metres of ground in the preview, so the joints are the size they
-    // would be under a person rather than under a vault.
+    // would be under a person rather than under a vault. Squared up for
+    // the tile: the floor's random lay angle belongs to the floor.
     const [u, v] = groundRepeat(3, tile);
     material.map.repeat.set(u, v);
+    material.map.rotation = 0;
   }
   const plane = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), material);
   previewRig.holder.add(plane);
@@ -2887,10 +2901,12 @@ function renderGroundPreview(preset, canvasEl) {
   previewRig.camera.lookAt(0, 0, 0);
   // Put the repeat back where the scene wants it, since the material is the
   // same object the floor itself is drawn with -- INCLUDING the scale
-  // dials, or painting one picker tile would silently reset the floor.
+  // dials and the lay angle, or painting one picker tile would silently
+  // reset the floor.
   if (tile && material.map) {
     const [u, v] = groundRepeat(state.groundRadius, tile);
     material.map.repeat.set(u * state.ground.scaleX, v * state.ground.scaleY);
+    material.map.rotation = state.ground.rotation || 0;
   }
 }
 
@@ -5065,13 +5081,21 @@ document.getElementById("material-variation").addEventListener("change", (e) => 
   persistAppearance();
   rebuildAppearance();
 });
+document.getElementById("material-grain").addEventListener("change", (e) => {
+  state.appearance.grain = e.target.checked;
+  persistAppearance();
+  rebuildAppearance();
+  logStudio(e.target.checked
+    ? "grain matched: the picture runs up the slope of each voussoir"
+    : "grain freed: back to the hashed quarter-turn deal");
+});
 document.getElementById("uv-randomise").addEventListener("click", () => {
   // A new deal, not an increment: pressing it twice should not walk back
   // through the same sequence.
   state.appearance.uvSeed = Math.floor(Math.random() * 1e9);
   persistAppearance();
   rebuildAppearance();
-  logStudio("texture crops re-dealt across the voussoirs");
+  logStudio("texture windows re-dealt across the voussoirs");
 });
 document.getElementById("material-finish").addEventListener("input", (e) => {
   document.getElementById("material-finish-value").textContent = Math.round(+e.target.value * 100);
@@ -5290,9 +5314,13 @@ document.getElementById("ground-relief").addEventListener("input", (e) => {
   setSurface(groundLibrarySet, state.ground.relief, state.occlusion);
 });
 document.getElementById("ground-randomise").addEventListener("click", () => {
+  // The slide alone was invisible -- shifting a periodic pattern by a
+  // fraction of one tile lands the grid back on itself. The random LAY
+  // ANGLE is what the eye actually sees change.
   state.ground.offset = [Math.random(), Math.random()];
+  state.ground.rotation = Math.random() * Math.PI * 2;
   if (state.objects.ground) rebuildGround();
-  logStudio("floor pattern slid to a fresh offset");
+  logStudio("floor pattern turned and slid to a fresh lay");
 });
 
 document.getElementById("ground-preset").addEventListener("change", async (e) => {
@@ -5886,6 +5914,23 @@ function buildPieceMeshes() {
     }
     welded = creaseNormals(all);
   }
+  // A library material is ONE SHEET for the whole vault, cut into
+  // voussoirs: mapped at one uniform scale, identical on every piece
+  // (Param: "keep it always uniform... the texture scale on the skin
+  // always needs to be the same between objects"), and the sheet is sized
+  // by the largest footprint so no face ever repeats. Each piece samples
+  // its own hashed window of the sheet -- voussoirs sawn from one slab.
+  // The seed rides in the key so the Randomise button re-deals every
+  // piece at once. The plain structural look keeps the eyeballed box
+  // projection: it has no picture to lay out.
+  const grain = !!(tile && state.appearance.grain);
+  let sheet = 0;
+  if (tile) {
+    for (const entry of built) {
+      sheet = Math.max(sheet, footprintSpan(entry.positions, grain));
+    }
+  }
+  const seed = state.appearance.uvSeed || 0;
   let offset = 0;
   for (const entry of built) {
     const { piece, positions, weights, surface, centre } = entry;
@@ -5893,15 +5938,20 @@ function buildPieceMeshes() {
       ? welded.slice(offset, offset + positions.length)
       : creaseNormals(positions);
     offset += positions.length;
-    // A library material is mapped to the VOUSSOIR, not the world: one
-    // unit crop stretched to fit each piece (the QS one-unit rule), with
-    // a hashed quarter-turn so the courses do not read as aligned copies.
-    // The seed rides in the key so the Randomise button re-deals every
-    // piece at once. The plain structural look keeps the eyeballed box
-    // projection: it has no picture to stretch.
-    const seedKey = piece.key + "#" + (state.appearance.uvSeed || 0);
+    const seedKey = piece.key + "#" + seed;
+    // With the grain matched, v runs up the slope of each voussoir, so the
+    // per-piece quarter-turns collapse to 0 or 180 degrees (grain has no
+    // arrow) and the seed's own parity turns the whole deal 90 degrees at
+    // once -- the switch for pictures whose grain runs across the image
+    // rather than down it. Without it, the hashed quarter-turn per piece
+    // keeps the courses from reading as aligned copies.
+    const turn = grain
+      ? ((uvQuarterTurn(seedKey) & 1) * 2 + (seed & 1)) & 3
+      : uvQuarterTurn(seedKey);
+    const window_ = segmentWindow(seedKey);
     const uvs = tile
-      ? stretchUVs(positions, uvQuarterTurn(seedKey))
+      ? sheetUVs(positions, sheet,
+          { grain, windowU: window_[0], windowV: window_[1], rotation: turn })
       : boxUVs(positions, centre, segmentUVOffset(seedKey));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
@@ -5973,6 +6023,7 @@ function syncAppearanceControls() {
   const variation = state.appearance.variation ?? 1;
   document.getElementById("material-variation").value = variation;
   document.getElementById("material-variation-value").textContent = Math.round(variation * 100);
+  document.getElementById("material-grain").checked = !!state.appearance.grain;
 }
 
 // Called from both the material-select change handler and loadStudy, both
@@ -5981,7 +6032,7 @@ function syncAppearanceControls() {
 // pieceMaterial first reads it for the material being switched to.
 function restoreAppearance(material) {
   let appearance = { tint: null, finish: null, skin: "none",
-    variation: 1, uvSeed: 0 };
+    variation: 1, uvSeed: 0, grain: false };
   const stored = localStorage.getItem(appearanceStorageKey(material));
   if (stored) {
     try {
@@ -5992,6 +6043,7 @@ function restoreAppearance(material) {
         skin: typeof parsed.skin === "string" ? parsed.skin : "none",
         variation: typeof parsed.variation === "number" ? parsed.variation : 1,
         uvSeed: typeof parsed.uvSeed === "number" ? parsed.uvSeed : 0,
+        grain: parsed.grain === true,
       };
     } catch (error) { /* corrupt localStorage entry: fall back to the defaults above */ }
   }

@@ -27,21 +27,31 @@ export function uvQuarterTurn(key) {
   return Math.floor(segmentUVOffset(key)[1] * 9.7) % 4;
 }
 
-// One unit of the substance stretched to fit ONE voussoir: the QS rule
-// (the picture IS one unit's face) applied per piece, as Param asked --
-// "the material needs to be mapped to the voussoirs not to a world
-// mapping... each face should be a clean texture."
+// The window a piece samples from the sheet (see sheetUVs): two fractions
+// in [0, 1] of the FREE margin, from the same FNV hash family as the
+// offset, so the same study always deals the same windows and the
+// Randomise button re-deals them wholesale through the key's seed.
+export function segmentWindow(key) {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash ^ key.charCodeAt(i)) * 16777619) >>> 0;
+  }
+  return [(hash % 97) / 96, ((hash >>> 8) % 97) / 96];
+}
+
+// The piece's best-fit plane frame: Newell normal over the triangle soup
+// (robust for any winding and any curvature the cutter produces), then an
+// in-plane [e1, e2] pair for u and v. Two flavours:
 //
-// The whole piece -- top face, bottom face and its thin joint walls -- is
-// projected onto the piece's own best-fit plane (Newell normal over the
-// triangle soup) and normalised to 0..1 over its footprint, so the crop
-// fills the face exactly, whatever the voussoir's size or aspect. The
-// joint walls inherit the rim of the crop, which keeps edges continuous
-// and is invisible inside a closed joint. rotation is 0..3 quarter turns
-// within the unit square.
-export function stretchUVs(positions, rotation = 0) {
-  // Newell's method over every triangle: robust for any winding and any
-  // curvature the cutter produces.
+//   grain=false  e1 is world X projected into the plane (world Y when the
+//                plane is nearly vertical-X): the stable default.
+//   grain=true   e2 is world +Z projected into the plane -- the uphill
+//                direction -- so v runs up the slope of the voussoir and a
+//                picture whose grain is vertical flows up each leg of the
+//                vault (Param: "use the direction of the voussoir... so
+//                that each leg has the right direction"). A face lying
+//                flat has no uphill and keeps the stable default.
+function pieceFrame(positions, grain) {
   let nx = 0, ny = 0, nz = 0;
   for (let i = 0; i < positions.length; i += 9) {
     for (let corner = 0; corner < 3; corner++) {
@@ -59,8 +69,16 @@ export function stretchUVs(positions, rotation = 0) {
   }
   const length = Math.hypot(nx, ny, nz) || 1;
   nx /= length; ny /= length; nz /= length;
-  // A stable in-plane basis: world X projected into the plane, unless the
-  // plane is nearly vertical-X, then world Y.
+  if (grain) {
+    const ux = -nz * nx, uy = -nz * ny, uz = 1 - nz * nz;
+    const ulen = Math.hypot(ux, uy, uz);
+    if (ulen > 1e-6) {
+      const e2x = ux / ulen, e2y = uy / ulen, e2z = uz / ulen;
+      // e1 = e2 x n keeps the frame right-handed with n.
+      return [e2y * nz - e2z * ny, e2z * nx - e2x * nz, e2x * ny - e2y * nx,
+              e2x, e2y, e2z];
+    }
+  }
   let e1x = 1 - nx * nx, e1y = -nx * ny, e1z = -nx * nz;
   let e1len = Math.hypot(e1x, e1y, e1z);
   if (e1len < 1e-6) {
@@ -68,10 +86,12 @@ export function stretchUVs(positions, rotation = 0) {
     e1len = Math.hypot(e1x, e1y, e1z) || 1;
   }
   e1x /= e1len; e1y /= e1len; e1z /= e1len;
-  const e2x = ny * e1z - nz * e1y;
-  const e2y = nz * e1x - nx * e1z;
-  const e2z = nx * e1y - ny * e1x;
+  return [e1x, e1y, e1z,
+          ny * e1z - nz * e1y, nz * e1x - nx * e1z, nx * e1y - ny * e1x];
+}
 
+function projectedBounds(positions, frame) {
+  const [e1x, e1y, e1z, e2x, e2y, e2z] = frame;
   let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
   const flat = new Array((positions.length / 3) * 2);
   for (let i = 0, j = 0; i < positions.length; i += 3, j += 2) {
@@ -83,12 +103,46 @@ export function stretchUVs(positions, rotation = 0) {
     if (v < minV) minV = v;
     if (v > maxV) maxV = v;
   }
-  const spanU = maxU - minU || 1;
-  const spanV = maxV - minV || 1;
+  return { flat, minU, minV, spanU: maxU - minU, spanV: maxV - minV };
+}
+
+// How much sheet one piece needs: its footprint's larger in-plane span, in
+// metres, measured in the same frame sheetUVs will project with. The
+// caller takes the max over every piece to size the sheet.
+export function footprintSpan(positions, grain = false) {
+  const bounds = projectedBounds(positions, pieceFrame(positions, grain));
+  return Math.max(bounds.spanU, bounds.spanV);
+}
+
+// ONE sheet of material for the whole vault, cut into voussoirs. The crop
+// is mapped at one UNIFORM scale -- the same in u and v, and the same on
+// every piece (Param: "we should keep it always uniform... the texture
+// scale on the skin always needs to be the same between objects") -- with
+// the sheet sized by the largest voussoir footprint, so no face ever
+// repeats. Each piece samples its own window of the sheet, placed by
+// windowU/windowV as fractions of the free margin: voussoirs sawn from
+// one slab, no two from quite the same patch.
+//
+// The whole piece -- top face, bottom face and its thin joint walls -- is
+// projected onto the piece's own best-fit plane; the joint walls inherit
+// the rim of the window, which keeps edges continuous and is invisible
+// inside a closed joint. rotation is 0..3 quarter turns within the unit
+// square, so the window never leaves the sheet.
+export function sheetUVs(positions, sheet, options = {}) {
+  const { grain = false, windowU = 0, windowV = 0, rotation = 0 } = options;
+  const bounds = projectedBounds(positions, pieceFrame(positions, grain));
+  // A sheet smaller than the piece would spill past the picture's edge;
+  // never let it (the caller's max-over-pieces makes this a no-op).
+  const metres = Math.max(sheet, bounds.spanU, bounds.spanV) || 1;
+  const fitU = bounds.spanU / metres;
+  const fitV = bounds.spanV / metres;
+  const baseU = windowU * (1 - fitU);
+  const baseV = windowV * (1 - fitV);
+  const flat = bounds.flat;
   const uvs = new Array(flat.length);
   for (let j = 0; j < flat.length; j += 2) {
-    let u = (flat[j] - minU) / spanU;
-    let v = (flat[j + 1] - minV) / spanV;
+    let u = baseU + (flat[j] - bounds.minU) / metres;
+    let v = baseV + (flat[j + 1] - bounds.minV) / metres;
     for (let turn = 0; turn < (rotation & 3); turn++) {
       const kept = u;
       u = v;
