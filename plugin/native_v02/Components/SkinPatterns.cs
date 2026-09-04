@@ -59,36 +59,45 @@ internal sealed record SkinNet(
     {
     }
 
+    /// <summary>
+    /// EVERYTHING THE NET DERIVES FROM ITS OWN ARRAYS, out of ONE call: the
+    /// triangulation, the field, the seed identity and the vertex normals.
+    ///
+    /// It is one call and not four property initialisers because an instance
+    /// initialiser cannot see `this`, so each of them had to call
+    /// Triangulate again for itself, and the triangulation was therefore
+    /// computed THREE times on every net a quad mesh built. Check 12.9(b)
+    /// holds this whole construction under a fifth of the pattern's own time
+    /// and sits close to that bar, so two thirds of a triangulation is worth
+    /// having back. Nothing else moves: Triangulate is idempotent, so the
+    /// three calls always agreed, and the four members below are the same
+    /// four answers read off one tuple instead of four.
+    ///
+    /// The FIELD and the SEED IDENTITY in particular are one answer and not
+    /// two (spec 2026-09-04 rule 1.1): the group that reached a vertex is
+    /// settled by the same pop that freezes its distance, so computing them
+    /// apart would mean marching twice and would let a tie break one way for
+    /// the distance and the other way for the identity.
+    /// </summary>
+    private readonly (
+        IReadOnlyList<int[]> Triangles,
+        IReadOnlyList<double> Levels,
+        IReadOnlyList<int> Seeds,
+        IReadOnlyList<double[]> Normals) _built =
+            SkinPatterns.BuildNet(Vertices, Faces, Rim);
+
     /// <summary>The faces, triangulated. An all-triangle face list comes
     /// through untouched, so the invariant is idempotent and a net built
     /// from another net's faces is the same net.</summary>
-    public IReadOnlyList<int[]> Faces { get; } =
-        SkinPatterns.Triangulate(Vertices, Faces);
+    public IReadOnlyList<int[]> Faces => _built.Triangles;
 
     /// <summary>The scalar the tracer cuts: geodesic distance from the rim
     /// in metres, or the vertices' own Z where the rim is empty (rules 1.2.1
     /// to 1.2.3). Computed once here, for the same reason the triangulation
     /// is: the harness builds its nets straight through this constructor, so
     /// a field that lived in ReadNet alone would be a field no fixture could
-    /// measure. Triangulate is called a second time rather than the Faces
-    /// property being read, because an instance property initialiser cannot
-    /// see `this`; it is idempotent and returns the same list unchanged when
-    /// every face is already a triangle.</summary>
-    /// <summary>The field AND the seed identity together, out of ONE
-    /// marching pass (spec 2026-09-04 rule 1.1). They are one answer and not
-    /// two: the group that reached a vertex is settled by the same pop that
-    /// freezes its distance, so computing them apart would mean marching
-    /// twice and, worse, would let a tie break one way for the distance and
-    /// the other way for the identity. A private field and not a second
-    /// property initialiser, because an initialiser cannot read another
-    /// property and the pair has to come out of one call.</summary>
-    private readonly (IReadOnlyList<double> Values, IReadOnlyList<int> Seeds)
-        _field = SkinPatterns.RimDistanceFieldWithSeeds(
-            Vertices,
-            SkinPatterns.Triangulate(Vertices, Faces),
-            Rim);
-
-    public IReadOnlyList<double> Levels => _field.Values;
+    /// measure.</summary>
+    public IReadOnlyList<double> Levels => _built.Levels;
 
     /// <summary>WHICH SEED GROUP REACHED THIS VERTEX FIRST (spec 2026-09-04
     /// rule 1.1): the index of the connected component of the anchor set
@@ -103,22 +112,16 @@ internal sealed record SkinNet(
     /// (<see cref="SkinPatterns.SeamCurves"/>). That is the whole of rule
     /// 1.1 inside the marching: one array carried beside the distances,
     /// written wherever a distance is written.</summary>
-    public IReadOnlyList<int> SeedGroups => _field.Seeds;
+    public IReadOnlyList<int> SeedGroups => _built.Seeds;
 
     /// <summary>The AREA-WEIGHTED UNIT NORMAL at every vertex (spec
     /// 2026-09-03, skin-offset-surface, rule 1), ORIENTED so that a
     /// positive Thickness is outward and up whatever the net's winding
     /// (spec 2026-09-04, skin-offset-extrude-slider, rule 4). Computed once
-    /// here, beside the Levels field, because it is the same shape of data
-    /// and has the same lifetime: one double[3] per vertex, valid for as
-    /// long as the net is. Triangulate is called again rather than the
-    /// Faces property read, for the reason Levels gives: an instance
-    /// property initialiser cannot see `this`, and Triangulate is
-    /// idempotent.</summary>
-    public IReadOnlyList<double[]> Normals { get; } =
-        SkinPatterns.OrientedVertexNormals(
-            Vertices,
-            SkinPatterns.Triangulate(Vertices, Faces));
+    /// here, beside the field, because it is the same shape of data and has
+    /// the same lifetime: one double[3] per vertex, valid for as long as the
+    /// net is.</summary>
+    public IReadOnlyList<double[]> Normals => _built.Normals;
 
     /// <summary>How many named supports rule 1.3.4 dropped as unmappable,
     /// and how many force edges rule 1.3.6 dropped. Init properties and not
