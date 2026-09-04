@@ -653,7 +653,21 @@ internal static class FormworkDocument
         var columns = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["schema"] = ColumnsSchema,
-            ["nodes"] = MouldFrames.Triples(nodes),
+            // THE BLOCK'S NODES ARE {"x","y","z"} OBJECTS, not triples,
+            // because that is the shape their reader has already shipped
+            // against. bench/studio/frames.py pairing_error does
+            // `target = reference.get(axis) if isinstance(reference,
+            // Mapping) else None` over exactly this list (their commit
+            // cafecc9, announced in R-012(c)); handed an [x, y, z] list it
+            // reads no numeric x, returns "column node 0 in the formwork
+            // document's own columns block has no numeric x", and the
+            // formwork act 404s on EVERY export. The contract's own
+            // mould.columns.nodes are Point3Dto objects and this block is
+            // the same bookkeeping moved, so the same encoding is also the
+            // consistent one. The FRAMES keep their triples: their reader
+            // validates columnNodes as triples and pairs the two lists
+            // across the encodings.
+            ["nodes"] = NodeObjects(nodes),
             ["members"] = memberPayloads,
             ["memberForce"] = block.MemberForce,
             ["trees"] = block.Trees,
@@ -689,6 +703,28 @@ internal static class FormworkDocument
             ["frames"] = sweep.Frames,
         };
         return JsonSerializer.Serialize(payload, ContractJson.Options);
+    }
+
+    /// <summary>
+    /// The machine's nodes in the encoding the studio's pairing check
+    /// reads: one <c>{"x":.., "y":.., "z":..}</c> object per node, the same
+    /// shape the contract's <c>mould.columns.nodes</c> carries, in the same
+    /// order the members index.
+    /// </summary>
+    internal static IReadOnlyList<Dictionary<string, object?>> NodeObjects(
+        IReadOnlyList<Point3d> nodes)
+    {
+        var written = new List<Dictionary<string, object?>>(nodes.Count);
+        foreach (Point3d node in nodes)
+        {
+            written.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["x"] = node.X,
+                ["y"] = node.Y,
+                ["z"] = node.Z,
+            });
+        }
+        return written;
     }
 
     /// <summary>

@@ -31813,6 +31813,53 @@ internal static class Program
         double[][] Triples(JsonNode? node) => node!.AsArray()
             .Select(t => t!.AsArray().Select(v => v!.GetValue<double>()).ToArray())
             .ToArray();
+        // THE COLUMNS BLOCK'S NODES ARE MAPPINGS, NOT TRIPLES, and this
+        // reader is the assertion rather than a convenience. Their
+        // frames.pairing_error reads them as
+        // `reference.get(axis) if isinstance(reference, Mapping) else None`
+        // (bench commit cafecc9, R-012(c)), the same loop it runs over the
+        // contract's mould.columns.nodes, which ARE {"x","y","z"} objects.
+        // Handed an [x, y, z] list it finds no numeric x, returns "column
+        // node 0 in the formwork document's own columns block has no
+        // numeric x", and app.py 404s the formwork act on every export we
+        // write. So the one invariant this document exists to make
+        // self-contained would fail at the far end while the writer agreed
+        // with itself here.
+        double[][] NodeObjects(JsonNode? node)
+        {
+            var read = new List<double[]>();
+            foreach (JsonNode? entry in node!.AsArray())
+            {
+                if (entry is not JsonObject mapping)
+                {
+                    throw new InvalidOperationException(
+                        "Each node of the formwork document's columns block "
+                        + "is a {\"x\",\"y\",\"z\"} OBJECT, the shape the "
+                        + "contract's own mould.columns.nodes carry and the "
+                        + "shape their frames.pairing_error reads as a "
+                        + "Mapping; this one is "
+                        + (entry is null ? "null" : entry.ToJsonString())
+                        + ", against which their reader finds no numeric x, "
+                        + "refuses the pairing and 404s the formwork act on "
+                        + "every export.");
+                }
+                var point = new double[3];
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    string named = "xyz"[axis].ToString();
+                    if (mapping[named] is not JsonValue value ||
+                        !value.TryGetValue(out double number))
+                    {
+                        throw new InvalidOperationException(
+                            $"A columns-block node carries a numeric '{named}'; "
+                            + "this one reads " + mapping.ToJsonString() + ".");
+                    }
+                    point[axis] = number;
+                }
+                read.Add(point);
+            }
+            return read.ToArray();
+        }
         string Phase(double timePct)
         {
             object state = phases.Invoke(
@@ -31915,7 +31962,7 @@ internal static class Program
                 + "studio already reads; got '"
                 + columns["schema"]!.GetValue<string>() + "'.");
         }
-        double[][] blockNodes = Triples(columns["nodes"]);
+        double[][] blockNodes = NodeObjects(columns["nodes"]);
         double[][] lastNodes =
             Triples(frameArray[frameArray.Count - 1]!["columnNodes"]);
         if (blockNodes.Length != built.Length)
@@ -32063,7 +32110,7 @@ internal static class Program
             {
                 liftedResult, Study, MillimetreDocument, Radius, ForceUnit
             })!)!;
-        double liftedArm = Triples(lifted["columns"]!["nodes"])[3][2];
+        double liftedArm = NodeObjects(lifted["columns"]!["nodes"])[3][2];
         if (Math.Abs(liftedArm - 0.5) > 1.0e-9)
         {
             throw new InvalidOperationException(
