@@ -607,3 +607,40 @@ body { overflow: hidden;
    uses for a selected item everywhere else. */
 .segmented button.active { background: var(--accent-bg); color: #cfd9ff;
   box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* ---- everything in the panel that is a <button> and is not a button ----
+
+   "#panel button" is one id plus one element, and it sets width, height,
+   margin, padding, background, border and alignment. Every component below
+   is a <button> for the keyboard's sake and a tile, chip, segment, trigger
+   or mode for the eye's, and each is styled by a bare class, which loses to
+   that rule without a word.
+
+   This has now cost three separate faults: tiles stretched to the panel's
+   width, a picker's name centred beside a swatch pinned left, and a
+   112 by 118 tile flattened to 112 by 32 with its picture clipped away
+   inside it. So every one of them states its geometry HERE, at the same
+   specificity, in one place, where the next person can see the whole set
+   at once. */
+
+#panel .tile {
+  height: auto; padding: var(--s1); text-align: center;
+}
+#panel .chip {
+  height: var(--h-small); padding: 0 var(--s2); text-align: center;
+}
+#panel .segmented button {
+  height: var(--h-small); padding: 0 var(--s1); text-align: center;
+}
+#panel .picker {
+  height: var(--h); padding: 0 var(--s3) 0 var(--s1); text-align: left;
+}
+#panel #mode-row .mode {
+  height: var(--h); padding: 0 var(--s1); text-align: center;
+}
+#panel .folder-line button {
+  height: var(--h-small); padding: 0 var(--s2);
+}
+#panel .scene-delete {
+  width: 18px; height: 18px; padding: 0;
+}
