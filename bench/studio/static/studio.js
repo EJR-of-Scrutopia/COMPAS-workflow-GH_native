@@ -4,6 +4,10 @@ import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { Sky } from "three/addons/objects/Sky.js";
 import { GroundedSkybox } from "three/addons/objects/GroundedSkybox.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import {
+  upgradeSliders, paintScrub, repaintScrubs, buildSegmented, paintSegmented,
+  buildGroups, paintGroupSummaries, setGroupSummaries,
+} from "/static/panel.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
@@ -2093,11 +2097,9 @@ function dragSunDial(event) {
   setSunMinutes(best, null);
 }
 
-// ---------- groups fold, and say what they hold while folded ----------
-// The Scene panel is five groups in a column, and Param's complaint about it
-// was that one does not know where to begin. A heading that folds its own
-// group turns that column into five lines, and a summary on the right means
-// a folded group still answers the question you would have opened it to ask.
+// What each folded group says about itself. Every one of these reads scene
+// state, which is why the table lives here and is handed to the panel
+// machinery rather than living beside it.
 const GROUP_SUMMARIES = {
   "Ground": () => {
     const select = document.getElementById("ground-preset");
@@ -2120,143 +2122,61 @@ const GROUP_SUMMARIES = {
   "Scenes": () => state.scenes.length ? state.scenes.length + " saved" : "none saved",
 };
 
-function buildGroups() {
-  for (const heading of document.querySelectorAll(".row-heading")) {
-    if (heading.dataset.grouped) continue;
-    const title = heading.textContent.trim();
-    heading.dataset.grouped = "1";
-    heading.dataset.title = title;
-    heading.textContent = title;
-    const summary = document.createElement("span");
-    summary.className = "summary";
-    heading.appendChild(summary);
-    // Everything up to the next heading belongs to this one.
-    const body = document.createElement("div");
-    body.className = "group-body";
-    let node = heading.nextSibling;
-    while (node && !(node.classList && node.classList.contains("row-heading"))) {
-      const next = node.nextSibling;
-      body.appendChild(node);
-      node = next;
-    }
-    heading.after(body);
-    heading.addEventListener("click", () => {
-      const folded = body.classList.toggle("folded");
-      heading.classList.toggle("folded", folded);
-      paintGroupSummaries();
-    });
-  }
-  paintGroupSummaries();
-}
+setGroupSummaries(GROUP_SUMMARIES);
 
-function paintGroupSummaries() {
-  for (const heading of document.querySelectorAll(".row-heading")) {
-    const summary = heading.querySelector(".summary");
-    const read = GROUP_SUMMARIES[heading.dataset.title];
-    if (!summary || !read) continue;
-    try {
-      summary.textContent = heading.classList.contains("folded") ? read() : "";
-    } catch (error) {
-      summary.textContent = "";
-    }
-  }
-}
-
-// ---------- a select becomes a segmented row ----------
-// The select stays, hidden, and stays the source of truth: the segments
-// write to it and dispatch its change event, so every handler downstream
-// runs exactly as it did. Only what the eye sees changes.
-function buildSegmented(holderId, selectId) {
+// ---------- pickers ----------
+// A tile grid is a choice, so it stays shut until it is wanted, and the
+// trigger carries what is currently chosen: a small round preview and the
+// name. This is the dropdown Param asked for, without giving up the
+// picture that made the tiles worth having.
+function wirePicker(triggerId, holderId, selectId, paint) {
+  const trigger = document.getElementById(triggerId);
   const holder = document.getElementById(holderId);
   const select = document.getElementById(selectId);
-  if (!holder || !select) return;
-  holder.innerHTML = "";
-  for (const option of select.options) {
-    const segment = document.createElement("button");
-    segment.textContent = option.textContent;
-    segment.dataset.value = option.value;
-    segment.addEventListener("click", () => {
-      if (select.value === option.value) return;
-      select.value = option.value;
-      select.dispatchEvent(new Event("change"));
-      paintSegmented(holderId, selectId);
-    });
-    holder.appendChild(segment);
-  }
-  paintSegmented(holderId, selectId);
+  if (!trigger || !holder || !select) return;
+  trigger.addEventListener("click", () => {
+    const opening = holder.classList.contains("hidden");
+    holder.classList.toggle("hidden", !opening);
+    trigger.classList.toggle("open", opening);
+  });
+  select.addEventListener("change", () => paintPicker(triggerId, selectId, paint));
+  paintPicker(triggerId, selectId, paint);
 }
 
-function paintSegmented(holderId, selectId) {
-  const holder = document.getElementById(holderId);
+function paintPicker(triggerId, selectId, paint) {
+  const trigger = document.getElementById(triggerId);
   const select = document.getElementById(selectId);
-  if (!holder || !select) return;
-  for (const segment of holder.children) {
-    segment.classList.toggle("active", segment.dataset.value === select.value);
-  }
+  if (!trigger || !select) return;
+  const chosen = select.options[select.selectedIndex];
+  const name = trigger.querySelector(".chosen-name");
+  if (name && chosen) name.textContent = chosen.textContent;
+  const swatch = trigger.querySelector(".chosen-swatch");
+  if (swatch && paint) paint(swatch, select.value);
 }
 
-// ---------- sliders become rows ----------
-// Every range input in the panel is rebuilt in place as a single row: the
-// name it already carried on the left, whatever value spans it already
-// carried on the right, and the row itself as the track. The input is kept,
-// stretched over the row and made invisible, so every handler, every id and
-// every keyboard behaviour survives untouched: this is a change of
-// appearance and nothing else, which is what Param asked for.
-function upgradeSliders(root) {
-  const scope = root || document.getElementById("panel");
-  if (!scope) return;
-  for (const input of scope.querySelectorAll('input[type="range"]')) {
-    const label = input.closest("label");
-    if (!label || label.classList.contains("hidden")) continue;
-    if (label.parentElement && label.parentElement.classList.contains("scrub")) continue;
-    const row = document.createElement("div");
-    row.className = "scrub";
-    // Anything before the input is its name; anything after it is its
-    // value, which is usually a span some handler writes into. Both are
-    // MOVED rather than copied, so the ids and the handlers come with them.
-    const name = document.createElement("span");
-    name.className = "scrub-name";
-    const value = document.createElement("span");
-    value.className = "scrub-value";
-    let seenInput = false;
-    for (const node of Array.from(label.childNodes)) {
-      if (node === input) { seenInput = true; continue; }
-      (seenInput ? value : name).appendChild(node);
-    }
-    name.textContent = name.textContent.trim();
-    const fill = document.createElement("span");
-    fill.className = "fill";
-    row.appendChild(input);
-    row.appendChild(fill);
-    row.appendChild(name);
-    row.appendChild(value);
-    label.replaceWith(row);
-    // Carry the label's own id, if it had one: the panel hides and shows
-    // whole rows by id (the HDRI scale row, the weather row).
-    if (label.id) row.id = label.id;
-    if (label.className) row.className = "scrub " + label.className;
-    paintScrub(input);
-    input.addEventListener("input", () => paintScrub(input));
-    input.addEventListener("change", () => paintScrub(input));
-  }
+// The trigger's own little preview: a canvas would be another context to
+// keep, so it borrows the tile that is already drawn for the same value.
+function borrowTileImage(swatch, holderId, value) {
+  const tile = document.querySelector(
+    "#" + holderId + ' .tile[data-value="' + CSS.escape(value) + '"]');
+  const source = tile && (tile.querySelector("canvas") || tile.querySelector("img"));
+  if (!source) return;
+  swatch.style.backgroundImage = "url(" + (source.tagName === "IMG"
+    ? source.src : source.toDataURL()) + ")";
+  swatch.style.backgroundSize = "cover";
+  swatch.style.backgroundPosition = "center";
 }
 
-function paintScrub(input) {
-  const row = input.closest(".scrub");
-  if (!row) return;
-  const min = +input.min || 0;
-  const max = input.max === "" ? 100 : +input.max;
-  const span = max - min;
-  const u = span > 0 ? (+input.value - min) / span : 0;
-  row.style.setProperty("--fill", (u * 100).toFixed(2) + "%");
-}
-
-// A value written by a handler rather than by a drag still has to move the
-// fill, and there are a dozen handlers that write one. Rather than chase
-// them all, the rows repaint whenever the panel is touched at all.
-function repaintScrubs() {
-  for (const input of document.querySelectorAll(".scrub input[type=\"range\"]")) {
-    paintScrub(input);
+function wireAllPickers() {
+  for (const [trigger, holder, select] of [
+    ["material-picker", "material-tiles", "material-select"],
+    ["skin-picker", "skin-tiles", "render-skin"],
+    ["ground-picker", "ground-tiles", "ground-preset"],
+    ["weather-picker", "weather-tiles", "weather-preset"],
+    ["hdri-picker", "hdri-tiles", "hdri-select"],
+  ]) {
+    wirePicker(trigger, holder, select,
+      (swatch, value) => borrowTileImage(swatch, holder, value));
   }
 }
 
@@ -2359,6 +2279,13 @@ function previewTile(value, label, paint) {
   tile.appendChild(name);
   paint(canvasEl);
   return tile;
+}
+
+function closePicker(holder) {
+  const trigger = document.querySelector(
+    '.picker[aria-controls="' + holder.id + '"]') || holder.previousElementSibling;
+  holder.classList.add("hidden");
+  if (trigger && trigger.classList) trigger.classList.remove("open");
 }
 
 function paintTileSelection(holder, value) {
@@ -4002,7 +3929,11 @@ async function showFolder() {
   const row = document.getElementById("folder-path");
   try {
     const folder = await fetchJson("/api/folder");
-    row.textContent = folder.path;
+    // The tail of the path, which is the part that says where you are. The
+    // whole thing is on the tooltip for anyone who wants it.
+    const parts = folder.path.split(/[\\/]/).filter(Boolean);
+    row.textContent = parts.length > 2
+      ? "..." + parts.slice(-2).join("/") : folder.path;
     row.title = folder.path + " (" + folder.studies + " vaults)";
     return folder;
   } catch (error) {
@@ -5017,7 +4948,19 @@ function restoreAppearance(material) {
 // The joint-gap handler's exact rebuild shape, reused across the four
 // appearance controls: a tint, finish or skin change never touches the
 // bundle, so it never needs a server round trip, only a redraw.
+// The disclosure that used to sit under these controls as a permanent
+// sentence. It is said once, in the log, when a skin or a tint is actually
+// applied: the panel is for controls and the log is for sentences.
+let appearanceDisclosed = false;
+
+function discloseAppearance() {
+  if (appearanceDisclosed) return;
+  appearanceDisclosed = true;
+  logStudio("skin, tint and shine are render only: the analysis is unchanged");
+}
+
 function rebuildAppearance() {
+  discloseAppearance();
   if (!state.bundle) return;
   buildPieceMeshes();
   recolourSegments();
@@ -5722,6 +5665,7 @@ function frame(now) {
 guarded("the material tiles", buildMaterialTiles);
 guarded("the ground tiles", buildGroundTiles);
 guarded("the weather tiles", buildWeatherTiles);
+guarded("the pickers", wireAllPickers);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
 guarded("the slider rows", () => upgradeSliders());
 guarded("the panel groups", buildGroups);

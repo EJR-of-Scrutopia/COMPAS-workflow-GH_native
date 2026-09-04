@@ -2295,7 +2295,13 @@ def test_appearance_overrides_are_render_only_and_persist():
     finish_start = html.index('id="material-finish"')
     finish_tag = html[finish_start:html.index(">", finish_start)]
     assert 'min="0.3"' in finish_tag
-    assert "render tint only, analysis unchanged" in html
+    # Re-pinned 2026-09-04: the disclosure left the panel with the rest of
+    # the prose (Param: the text display at the bottom left is what that is
+    # for) and is said once in the event log when a skin or tint is first
+    # applied. The claim it makes is the thing that matters, and it is still
+    # made, in a place that does not cost a line of the panel forever.
+    assert "render only: the analysis is unchanged" in js
+    assert "function discloseAppearance(" in js
     assert '"bench-studio-appearance:"' in js
     for skin in ("white-presentation", "basalt-dark", "timber-ply"):
         assert '"{}"'.format(skin) in js

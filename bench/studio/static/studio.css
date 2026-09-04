@@ -49,7 +49,18 @@ body { overflow: hidden;
 #data-content table { width: 100%; border-collapse: collapse; margin: 0 0 10px; }
 #data-content th, #data-content td { text-align: left; padding: 2px 6px 2px 0;
               border-bottom: 1px solid #2a2c31; }
+/* Specificity, and the bug it caused. "#panel button" is one id plus one
+   element and beats a bare class, so every new component that set its own
+   width lost to it silently: tiles and chips stretched to the full panel
+   width and stacked one per row, and a label carrying .hidden stayed
+   visible, which is why two floor controls appeared at once. Anything the
+   panel styles by element has to be beaten inside the panel by name. */
 .hidden { display: none; }
+#panel .hidden { display: none !important; }
+#panel .tile, #panel .chip, #panel .segmented button, #panel .swatch,
+#panel #props-row button, #panel #props-row select,
+#panel #mode-row .mode, #panel #day-cycle-row button {
+  width: auto; margin: 0; }
 #layer-toggles label { display: flex; gap: 8px; align-items: center; }
 /* Bottom right, clear of the 300px control panel, rather than bottom left
    on top of #hud. Both were anchored left: 16px; bottom: 16px, so turning
@@ -213,17 +224,29 @@ body { overflow: hidden;
    material browser has settled on, and for a good reason: a sphere under a
    fixed rig shows roughness, sheen and colour at once, which no rectangle
    of flat colour can do. */
-.tile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
-  margin: 6px 0 10px; }
-.tile { position: relative; width: auto; margin: 0; padding: 0 0 6px;
-  border: 1px solid #2b2e34; border-radius: 4px; background: #141619;
-  color: #9aa0a6; cursor: pointer; overflow: hidden; }
-.tile canvas { display: block; width: 100%; aspect-ratio: 1 / 1; }
-.tile span { display: block; padding: 0 6px; text-align: center;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tile:hover { border-color: #5a6270; color: #d8dade; }
-.tile.active { border-color: #93a6bb; color: #f2f4f6; background: #191d22;
-  box-shadow: inset 0 0 0 1px rgba(147, 166, 187, 0.35); }
+/* Small, round, three to a row. The first cut of these was 110px squares
+   two to a row, which took the whole panel to say seven words; Param's
+   note was that they dominate, and he was right. A material ball wants to
+   be recognised, not admired: 56px of sphere is enough to read roughness
+   and colour, and the name underneath does the rest. */
+.tile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px;
+  margin: 5px 0 8px; }
+.tile { position: relative; width: auto; margin: 0; padding: 5px 2px 4px;
+  border: 1px solid #24272c; border-radius: 4px; background: #141619;
+  color: #8b9199; cursor: pointer; overflow: hidden; }
+.tile canvas, .tile img { display: block; width: 56px; height: 56px;
+  margin: 0 auto; border-radius: 50%; background: #101216; }
+.tile span { display: block; padding: 3px 3px 0; text-align: center;
+  line-height: 1.2; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.tile:hover { border-color: #4c545f; color: #d8dade; }
+.tile.active { border-color: #93a6bb; color: #f2f4f6; background: #191d22; }
+/* Skies are landscapes, not spheres: they keep their shape and their width. */
+#hdri-tiles { grid-template-columns: 1fr 1fr; }
+#hdri-tiles .tile img { width: 100%; height: auto; aspect-ratio: 2 / 1;
+  border-radius: 3px; object-fit: cover; }
+#ground-tiles .tile canvas, #weather-tiles .tile canvas {
+  width: 100%; height: auto; aspect-ratio: 3 / 2; border-radius: 3px; }
 
 /* Props on one line: what to place, the placing, and the clearing. */
 #props-row { display: grid; grid-template-columns: 1fr auto auto; gap: 5px;
@@ -279,10 +302,13 @@ body { overflow: hidden;
 .scrub input[type="range"] { position: absolute; inset: 0; width: 100%;
   height: 100%; margin: 0; opacity: 0; cursor: ew-resize; z-index: 2; }
 .scrub .fill { position: absolute; inset: 0; pointer-events: none; }
-.scrub .fill::before { content: ""; position: absolute; top: 0; bottom: 0;
-  left: 0; width: var(--fill, 0%); background: #232a33; }
-.scrub .fill::after { content: ""; position: absolute; top: 0; bottom: 0;
-  left: var(--fill, 0%); width: 1px; background: #6f8296; }
+/* An underline, not a block. Filling the row behind the name made the
+   name look like a chip and the row look like two controls; a 2px bar at
+   the foot says the same thing and lets the name be a name. */
+.scrub .fill::before { content: ""; position: absolute; bottom: 0;
+  left: 0; height: 2px; width: var(--fill, 0%); background: #4a6076; }
+.scrub .fill::after { content: ""; position: absolute; bottom: 0;
+  left: 0; height: 2px; right: 0; background: #23262b; z-index: -1; }
 .scrub .scrub-name { position: absolute; left: 8px; top: 0; line-height: 26px;
   color: #c8c9c7; pointer-events: none; white-space: nowrap; }
 .scrub .scrub-value { position: absolute; right: 8px; top: 0; line-height: 26px;
@@ -322,3 +348,49 @@ body { overflow: hidden;
 #hdri-tiles { grid-template-columns: 1fr 1fr; }
 #hdri-tiles .tile img { display: block; width: 100%; aspect-ratio: 2 / 1;
   object-fit: cover; background: #14161a; }
+
+/* A grid of tiles is a choice, not a display, so it hides until it is
+   wanted. The trigger says what is chosen and shows it, which is what a
+   dropdown does, without pretending a picture is a word. */
+.picker { display: grid; grid-template-columns: auto 1fr auto; gap: 7px;
+  align-items: center; width: 100%; margin: 4px 0; padding: 4px 8px 4px 5px;
+  border: 1px solid #2b2e34; border-radius: 4px; background: #17191d;
+  color: #c8c9c7; cursor: pointer; text-align: left; }
+.picker:hover { border-color: #4c545f; }
+.picker .chosen-swatch { width: 22px; height: 22px; border-radius: 50%;
+  background: #2a2e34; }
+.picker .chosen-name { overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.picker .chevron { width: 0; height: 0; border-left: 4px solid #6b7078;
+  border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+  transform: rotate(90deg); }
+.picker.open .chevron { transform: rotate(-90deg); }
+
+/* The sun: the instrument on the left, its six moments stacked beside it,
+   so the block is one square rather than a dial with a column of buttons
+   under it. */
+#sun-block { display: grid; grid-template-columns: 1fr 84px; gap: 6px;
+  align-items: start; margin: 4px 0; }
+#sun-presets { display: grid; grid-template-columns: 1fr; gap: 3px; margin: 0; }
+#sun-presets .chip { padding: 3px 4px; text-align: left; }
+#sun-widget { margin: 0; }
+#sun-readout { position: static; display: flex; justify-content: space-between;
+  padding: 2px 2px 0; }
+
+/* The colour input, which is otherwise a browser's own idea of a button. */
+#panel input[type="color"] { width: 34px; height: 20px; padding: 0;
+  border: 1px solid #34373d; border-radius: 3px; background: #17191d;
+  vertical-align: middle; cursor: pointer; }
+
+/* A select with its name beside it rather than above it, which is the same
+   rule the sliders follow: one row, name left, control right. */
+#panel .named { display: grid; grid-template-columns: auto 1fr; gap: 8px;
+  align-items: center; margin: 4px 0; color: #c8c9c7; }
+#panel .named select { width: 100%; margin: 0; }
+
+/* The folder path is a path, so it is truncated at the START: the end of it
+   is the folder you are in, which is the part worth reading. The rtl trick
+   that did this before also reversed a plain sentence like "no folder
+   chosen" into nonsense, so the truncation is done in script now and this
+   is only the room it sits in. */
+#folder-path { direction: ltr; text-align: left; }
