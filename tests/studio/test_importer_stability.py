@@ -1075,3 +1075,114 @@ def test_the_formwork_document_pairs_against_its_own_columns(tmp_path, monkeypat
     document["frames"][0]["columnNodes"] = [[1, 2, 3]]
     reason = frames_module.pairing_error(document, contract)
     assert reason and "the contract's mould block" in reason, reason
+
+
+def _tiny_hdr(path, width=8, height=4):
+    """A flat, old-style RGBE Radiance file: a red left half and a blue
+    right half, and the two halves FOUR exposure steps apart, which is
+    what makes the exponent testable. Enough to prove the header parse,
+    the pixel walk, the exponent and the tone map without shipping a
+    hundred-megabyte sky into the repository.
+
+    Sixteen times the linear value on the right, so a decoder that threw
+    the exponent away and read the mantissa alone would put the darker
+    byte on the brighter side and be caught."""
+
+    lines = ["#?RADIANCE", "FORMAT=32-bit_rle_rgbe", "",
+             "-Y {} +X {}".format(height, width), ""]
+    header = "\n".join(lines).encode("ascii")
+    body = bytearray()
+    for _ in range(height):
+        for column in range(width):
+            if column < width // 2:
+                body.extend(bytes([200, 20, 20, 128]))
+            else:
+                # A smaller mantissa at a much larger exponent: dimmer by
+                # the byte, ten times brighter in fact.
+                body.extend(bytes([20, 20, 200, 132]))
+    path.write_bytes(header + bytes(body))
+    return path
+
+
+def test_a_sky_previews_without_a_dependency(tmp_path):
+    """The HDRI list was filenames, which asks somebody to remember what a
+    sky looks like. The files are 100 to 350 MB, so nothing can decode one
+    in a browser and nothing should decode one whole here: the header gives
+    the size, only the scanlines the thumbnail needs are decoded, and the
+    result is tone mapped to a small PNG.
+
+    Standard library only, deliberately. The studio has stayed free of
+    numpy and PIL, which is what lets it run under any interpreter that can
+    serve HTTP, and a PNG writer is thirty lines of zlib."""
+
+    import hdri_preview
+
+    source = _tiny_hdr(tmp_path / "test.hdr")
+    width, height, rows = hdri_preview.preview_rows(source, width=8)
+    assert (width, height) == (8, 4)
+    assert all(len(row) == 8 * 3 for row in rows)
+    # The left half is red-dominant and the right half blue-dominant, which
+    # is the whole picture: the walk is in the right order and the channels
+    # are not swapped.
+    left = rows[0][0:3]
+    right = rows[0][21:24]
+    assert left[0] > left[2], left
+    assert right[2] > right[0], right
+    # Tone mapping, not clipping: a value well past white must still land
+    # inside the range rather than being cut off at it.
+    assert 0 < left[0] < 255
+    # THE EXPONENT IS READ. The right half carries a smaller blue byte at a
+    # four-step larger exponent, so it is sixteen times brighter in fact and
+    # must come out brighter on screen. A decoder that read the mantissa
+    # alone would put this the other way round.
+    assert right[2] > left[0], (left, right)
+
+    # THE SIGNATURE IS CHECKED, and by name: a file that begins with a
+    # resolution line and no #? is not a Radiance image, and saying so is
+    # the difference between a refusal and a picture of nothing.
+    impostor = tmp_path / "impostor.hdr"
+    impostor.write_bytes(b"FORMAT=32-bit_rle_rgbe\n\n-Y 4 +X 8\n" + b"\x00" * 128)
+    try:
+        hdri_preview.preview_rows(impostor)
+    except ValueError as error:
+        assert "signature" in str(error), error
+    else:
+        raise AssertionError("a file with no #? signature must be refused")
+
+    out = hdri_preview.build_preview(source, tmp_path / "thumbs" / "test.png")
+    data = out.read_bytes()
+    assert data.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10]))
+    assert b"IHDR" in data[:32] and b"IEND" in data[-12:]
+
+
+def test_the_sky_thumbnail_route_builds_once(tmp_path, monkeypatch):
+    """Decoded on the first ask and kept beside the skies, rebuilt only when
+    the sky is newer than its thumbnail. A route that re-decoded a 350 MB
+    file on every scroll would be worse than the filenames it replaced."""
+
+    client, _uploads, _studies = make_client(tmp_path, monkeypatch)
+    app_module = studio()[0]
+    skies = tmp_path / "hdri"
+    skies.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app_module, "HDRI_DIR", skies)
+    _tiny_hdr(skies / "sky.hdr")
+
+    first = client.get("/api/hdri/sky.hdr/thumbnail")
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "image/png"
+    thumbnail = skies / ".thumbnails" / "sky.hdr.png"
+    assert thumbnail.is_file()
+    stamp = thumbnail.stat().st_mtime_ns
+
+    again = client.get("/api/hdri/sky.hdr/thumbnail")
+    assert again.status_code == 200
+    assert thumbnail.stat().st_mtime_ns == stamp, "the second ask reuses the first"
+
+    assert client.get("/api/hdri/nothing.hdr/thumbnail").status_code == 404
+    assert client.get("/api/hdri/..%2Fsecrets.hdr/thumbnail").status_code in (400, 404)
+    # A file that is not a Radiance image is refused by name rather than
+    # served as a broken picture.
+    (skies / "not-a-sky.hdr").write_bytes(b"just text")
+    damaged = client.get("/api/hdri/not-a-sky.hdr/thumbnail")
+    assert damaged.status_code == 400
+    assert "could not be previewed" in damaged.json()["detail"]

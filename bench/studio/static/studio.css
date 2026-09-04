@@ -315,3 +315,10 @@ body { overflow: hidden;
    tall anyway. */
 #weather-tiles { grid-template-columns: 1fr 1fr 1fr; }
 #weather-tiles .tile canvas { aspect-ratio: 4 / 3; }
+
+/* Skies as skies. The thumbnail is the equirect itself, so the eye reads
+   the horizon, the weather and where the sun sits in one glance, which is
+   everything a filename withholds. */
+#hdri-tiles { grid-template-columns: 1fr 1fr; }
+#hdri-tiles .tile img { display: block; width: 100%; aspect-ratio: 2 / 1;
+  object-fit: cover; background: #14161a; }

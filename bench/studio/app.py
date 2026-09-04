@@ -30,6 +30,7 @@ import bundle
 import frames
 import generators
 import geometry
+import hdri_preview
 import staging
 import tessellation
 
@@ -801,6 +802,33 @@ def create_app(runner=None, cra_runner=None) -> FastAPI:
             return {"files": []}
         return {"files": sorted(
             p.name for p in HDRI_DIR.glob("*.hdr") if p.is_file())}
+
+    @app.get("/api/hdri/{name}/thumbnail")
+    def hdri_thumbnail(name: str):
+        """A small tone-mapped preview of a sky, decoded once and kept.
+
+        The files are 100 to 350 MB, so this cannot happen in the browser
+        and must not happen twice. The thumbnail lands beside the skies in
+        a dot-folder and is rebuilt only when the sky is newer than it.
+        """
+
+        if "/" in name or "\\" in name or ".." in name or ":" in name:
+            raise HTTPException(400, "bad hdri name")
+        if not _contained(HDRI_DIR, name):
+            raise HTTPException(400, "bad hdri name")
+        source = HDRI_DIR / name
+        if not source.is_file():
+            raise HTTPException(404, "no hdri file {}".format(name))
+        thumbnail = HDRI_DIR / ".thumbnails" / (name + ".png")
+        if (not thumbnail.is_file()
+                or thumbnail.stat().st_mtime < source.stat().st_mtime):
+            try:
+                built = hdri_preview.build_preview(source, thumbnail)
+            except (OSError, ValueError) as error:
+                raise HTTPException(
+                    400, "{} could not be previewed ({})".format(name, error))
+            thumbnail = built
+        return FileResponse(thumbnail, media_type="image/png")
 
     @app.get("/api/hdri/{name}")
     def hdri_file(name: str):

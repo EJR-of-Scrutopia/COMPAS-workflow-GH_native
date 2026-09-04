@@ -486,6 +486,9 @@ async function refreshHdriList(selectName) {
   }
   const stored = selectName || localStorage.getItem("bench-studio-hdri");
   if (stored && files.includes(stored)) select.value = stored;
+  // The tiles are built from the same list and read the same select, so
+  // the picture and the choice cannot disagree.
+  buildHdriTiles(files);
   return files;
 }
 
@@ -2487,6 +2490,40 @@ function buildWeatherTiles() {
       select.value = option.value;
       select.dispatchEvent(new Event("change"));
       paintTileSelection(holder, option.value);
+    });
+    holder.appendChild(tile);
+  }
+  paintTileSelection(holder, select.value);
+}
+
+// The sky list, as skies. The thumbnails are decoded by the server the
+// first time they are asked for, because the files run to hundreds of
+// megabytes and nothing in a browser should touch one to draw an inch of it.
+function buildHdriTiles(names) {
+  const holder = document.getElementById("hdri-tiles");
+  const select = document.getElementById("hdri-select");
+  if (!holder || !select) return;
+  holder.innerHTML = "";
+  for (const name of names) {
+    const tile = document.createElement("button");
+    tile.className = "tile";
+    tile.dataset.value = name;
+    tile.title = name;
+    const image = document.createElement("img");
+    image.loading = "lazy";
+    image.src = "/api/hdri/" + encodeURIComponent(name) + "/thumbnail";
+    image.alt = "";
+    tile.appendChild(image);
+    const label = document.createElement("span");
+    // The name without its extension and its resolution suffix: the file
+    // is called what it is called, but the tile is a picture of a place.
+    label.textContent = name.replace(/\.hdr$/i, "").replace(/_(\d+k)$/i, "");
+    tile.appendChild(label);
+    tile.addEventListener("click", () => {
+      if (select.value === name) return;
+      select.value = name;
+      select.dispatchEvent(new Event("change"));
+      paintTileSelection(holder, name);
     });
     holder.appendChild(tile);
   }
