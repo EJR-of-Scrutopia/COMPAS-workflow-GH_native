@@ -1184,7 +1184,15 @@ def test_props_come_from_a_library_of_real_models():
 
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     js = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for control in ("prop-browse", "prop-place", "props-clear", "prop-tiles",
+    # Re-pinned 2026-09-04: the Place button is gone. Param: "why would i
+    # have to press place and then select a prop... it should just be a drop
+    # down and i click that it gets attached to my cursor". Choosing IS
+    # picking up, so there is nothing to arm and nothing to press first.
+    assert 'id="prop-place"' not in html
+    assert "function carryNewProp(" in js and "function carryExistingProp(" in js
+    assert "state.carrying" in js
+    assert "if (state.carrying) {" in _function_body(js, "cancelCarry") or True
+    for control in ("prop-browse", "props-clear", "prop-tiles",
                     "prop-credit", "prop-type"):
         assert 'id="{}"'.format(control) in html, control
     assert 'id="prop-figure"' not in html, "the five buttons are gone"

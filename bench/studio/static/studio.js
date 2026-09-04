@@ -106,7 +106,8 @@ const state = {
   groundPreset: "dark-studio", // E4: a key of GROUNDS, independent of the environment mode
   groundRadius: 60,     // the floor disc's radius in metres, the Ground size slider (rebuildGround)
   props: [],            // E5: [{ type, x, y, rotation, object }], mirrored to localStorage
-  armedPropType: null,  // a prop button was clicked; the next ground click places it
+  carrying: null,      // { record, from } while a prop follows the cursor (see carryNewProp)
+  armedPropType: null,  // kept for the older arming path used by nothing in the panel now
   selectedProp: null,   // the record whose object is highlighted and keyboard-driven
   propDrag: false,
   hdriTexture: null,         // E3: the decoded equirect, set by loadHdri (Task 4)
@@ -912,6 +913,13 @@ function buildPropTiles() {
       select.value = entry.key;
       paintTileSelection(holder, entry.key);
       showPropCredit(entry);
+      // Choosing IS picking up. Param: "it should just be a drop down and
+      // i click that it gets attached to my cursor and then i move the
+      // cursor to the place i like click again and the prop stays." So the
+      // model is carrying, not arming: the prop exists from this moment,
+      // follows the cursor, and the next click puts it down.
+      carryNewProp(entry.key);
+      document.getElementById("prop-library").classList.add("hidden");
     });
     holder.appendChild(tile);
   }
@@ -987,15 +995,12 @@ function armProp(type) {
   if (already) return;
   state.armedPropType = type;
   controls.enabled = false;
-  // One Place button now, whatever the type select is showing: the row of
-  // five buttons it replaced could not be told apart from the three view
-  // buttons beneath it, and a type is one choice, not five.
-  document.getElementById("prop-place").classList.add("armed");
+  // Nothing to light any more: the Place button is gone and choosing a
+  // prop carries it (see carryNewProp). armProp survives for the keyboard
+  // and for anything that still wants the older arming behaviour.
 }
 
 function disarmProp() {
-  const place = document.getElementById("prop-place");
-  if (place) place.classList.remove("armed");
   state.armedPropType = null;
   if (!state.propDrag) controls.enabled = true;
 }
@@ -4347,18 +4352,60 @@ document.getElementById("ground-preset").addEventListener("change", (e) => {
   state.groundPreset = e.target.value;
   if (state.objects.ground) rebuildGround();
 });
+// ---------- carrying a prop ----------
+// One idea in place of two. A prop being carried is a real prop in the
+// scene that happens to be following the cursor: it can be looked at from
+// any angle while it is carried, it lands where the ground is under the
+// pointer, and picking an existing one back up is the same state again.
+// Escape puts it back where it came from, or removes it if it was new.
+function carryNewProp(type) {
+  if (!state.bundle) return;
+  const centre = state.centre || new THREE.Vector3();
+  const record = placeProp(type, centre.x, centre.y, 0, false);
+  state.carrying = { record, from: null };
+  selectProp(record);
+  controls.enabled = false;
+  logStudio("carrying a " + type + ": click to place it, escape to cancel");
+}
+
+function carryExistingProp(record) {
+  state.carrying = { record, from: { x: record.x, y: record.y } };
+  selectProp(record);
+  controls.enabled = false;
+}
+
+function dropCarriedProp() {
+  if (!state.carrying) return;
+  state.carrying = null;
+  controls.enabled = true;
+  saveProps();
+}
+
+function cancelCarry() {
+  if (!state.carrying) return;
+  const { record, from } = state.carrying;
+  state.carrying = null;
+  controls.enabled = true;
+  if (from) {
+    // It was already in the scene: put it back where it stood.
+    record.x = from.x;
+    record.y = from.y;
+    record.object.position.set(from.x, from.y, 0);
+  } else {
+    // It was new: it never really arrived.
+    disposeProp(record.object);
+    propsGroup.remove(record.object);
+    state.props = state.props.filter((entry) => entry !== record);
+    selectProp(null);
+  }
+  saveProps();
+}
+
 document.getElementById("prop-browse").addEventListener("click", () => {
   const library = document.getElementById("prop-library");
   library.classList.toggle("hidden");
 });
 
-document.getElementById("prop-place").addEventListener("click", () => {
-  if (!state.bundle) return;
-  armProp(document.getElementById("prop-type").value);
-  logStudio(state.armedPropType
-    ? "click the ground to place the " + state.armedPropType
-    : "placing cancelled");
-});
 document.getElementById("props-clear").addEventListener("click", () => {
   if (!state.bundle) return;
   for (const record of state.props) { disposeProp(record.object); propsGroup.remove(record.object); }
@@ -4368,40 +4415,56 @@ document.getElementById("props-clear").addEventListener("click", () => {
 });
 canvas.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || !state.bundle) return;
-  if (state.armedPropType) {
-    const hit = groundPointAt(event);
-    if (hit) selectProp(placeProp(state.armedPropType, hit.x, hit.y, 0, true));
-    disarmProp();
+  // Carrying something: this click puts it down.
+  if (state.carrying) {
+    dropCarriedProp();
     return;
   }
   const record = propRecordAt(event);
   if (record) {
-    selectProp(record);
+    // Clicking a prop picks it back up, which is the same gesture that
+    // placed it. Dragging still works for anyone who prefers to drag: the
+    // pointer capture below keeps it under the cursor until release.
+    carryExistingProp(record);
     state.propDrag = true;
-    controls.enabled = false;
     canvas.setPointerCapture(event.pointerId);
   } else if (state.selectedProp) {
     selectProp(null);
   }
 });
 canvas.addEventListener("pointermove", (event) => {
-  if (!state.propDrag || !state.selectedProp) return;
+  const carried = state.carrying && state.carrying.record;
+  if (!carried) return;
   const hit = groundPointAt(event);
   if (!hit) return;
-  state.selectedProp.x = hit.x;
-  state.selectedProp.y = hit.y;
-  state.selectedProp.object.position.set(hit.x, hit.y, 0);
+  carried.x = hit.x;
+  carried.y = hit.y;
+  carried.object.position.set(hit.x, hit.y, 0);
 });
 function endPropDrag(event) {
-  if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
   if (!state.propDrag) return;
   state.propDrag = false;
-  controls.enabled = true;
-  saveProps();
+  // A drag that actually moved the prop is a placement. A press and release
+  // that did not move it leaves the prop in hand, so a click-move-click
+  // works as well as a press-drag-release, and neither has to be learnt.
+  const carried = state.carrying && state.carrying.record;
+  const from = state.carrying && state.carrying.from;
+  const moved = carried && from
+    && (Math.abs(carried.x - from.x) > 0.001 || Math.abs(carried.y - from.y) > 0.001);
+  if (moved) dropCarriedProp();
 }
 canvas.addEventListener("pointerup", endPropDrag);
 canvas.addEventListener("pointercancel", endPropDrag);
 window.addEventListener("keydown", (event) => {
+  // Escape puts a carried prop back where it came from, or removes it if it
+  // never had anywhere to go back to.
+  if (event.key === "Escape" && state.carrying) {
+    cancelCarry();
+    return;
+  }
   const tag = document.activeElement ? document.activeElement.tagName : "";
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (!state.selectedProp) return;
