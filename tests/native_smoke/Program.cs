@@ -32748,6 +32748,35 @@ internal static class Program
                 "With Live off the build still runs and NOTHING is sent; "
                 + string.Join(", ", harness.Sent()) + " went out.");
         }
+
+        // AND THE PORT SAYS SO. "always live" was the J port's own promise
+        // and it is not true any more: on a canvas that never rests longer
+        // than the debounce, J lags by design, so the port has to say the
+        // set is built on rest or the author is owed an explanation nobody
+        // gives them (design of 2026-09-04 rule 3.2).
+        Type exportType = RequireComponentType(plugin, "ExportComponent");
+        object export = Activator.CreateInstance(exportType)!;
+        object parameters = exportType.GetProperty("Params")!.GetValue(export)!;
+        IList outputs = (IList)parameters.GetType()
+            .GetProperty("Output")!.GetValue(parameters)!;
+        object json = outputs[0]!;
+        string description = (string)json.GetType()
+            .GetProperty("Description")!.GetValue(json)!;
+        if (!description.Contains("BUILT ON REST", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The JSON port's own text says the set is BUILT ON REST: "
+                + "the documents there are one solve behind the canvas by "
+                + "design, and a port that does not say so is the component "
+                + "looking broken to the author who dragged a slider.");
+        }
+        if (description.Contains("always live", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "And it no longer says the outputs are 'always live', which "
+                + "was true while every solve built the set and is the "
+                + "sentence rule 3.2 replaces.");
+        }
     }
 
     /// <summary>
