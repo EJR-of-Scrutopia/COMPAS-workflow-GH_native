@@ -33055,14 +33055,25 @@ internal static class Program
                 + "the one worker dispatch Export makes.");
         object result = ThrustMeshFixture(plugin);
         var lifetime = new CancellationTokenSource();
-        string? Mesh(CancellationToken token)
+        // Never throws, so a request that was cancelled or that came back
+        // empty is REPORTED by the assertion that cares rather than by a
+        // wait that times out with nothing to say.
+        string Mesh(CancellationToken token)
         {
-            var task = (Task)buildMesh.Invoke(
-                null, new object?[] { result, worker, token })!;
-            task.GetAwaiter().GetResult();
-            var value = ((string?, string?))task.GetType()
-                .GetProperty("Result")!.GetValue(task)!;
-            return value.Item1;
+            try
+            {
+                var task = (Task)buildMesh.Invoke(
+                    null, new object?[] { result, worker, token })!;
+                task.GetAwaiter().GetResult();
+                var value = ((string?, string?))task.GetType()
+                    .GetProperty("Result")!.GetValue(task)!;
+                return value.Item1 ?? "(the worker returned no mesh)";
+            }
+            catch (Exception error)
+            {
+                return "(the request failed: "
+                    + error.GetBaseException().Message + ")";
+            }
         }
 
         var harness = new RestHarness(plugin);
@@ -33113,20 +33124,27 @@ internal static class Program
                 "the second build to finish");
             Thread.Sleep(200);
 
-            string? one = Volatile.Read(ref superseded);
-            string? two = Volatile.Read(ref adopted);
-            if (one is null)
+            string one = Volatile.Read(ref superseded)!;
+            string two = Volatile.Read(ref adopted)!;
+            if (!one.StartsWith("{", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
                     "A SUPERSEDED BUILD FINISHES (rule 3.4): the first "
-                    + "build's thrust-mesh request came back with nothing, "
-                    + "which is what a cancelled request looks like. Nothing "
-                    + "in the schedule is allowed to cancel a worker "
-                    + "request, because a cancelled request kills the "
-                    + "worker.");
+                    + "build's thrust-mesh request came back with " + one
+                    + ", which is what a cancelled request looks like. "
+                    + "Nothing in the schedule is allowed to cancel a worker "
+                    + "request, because a cancelled request KILLS the worker "
+                    + "process and starts a fresh one behind a new "
+                    + "handshake.");
+            }
+            if (!two.StartsWith("{", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "And the build that supersedes it is answered too; it "
+                    + "came back with " + two + ".");
             }
             (int firstPid, int firstSerial) = ReadFakeMesh(one);
-            (int secondPid, int secondSerial) = ReadFakeMesh(two!);
+            (int secondPid, int secondSerial) = ReadFakeMesh(two);
             if (firstPid != secondPid)
             {
                 throw new InvalidOperationException(
@@ -33158,6 +33176,15 @@ internal static class Program
                         ? "no build at all"
                         : documents[0].Json)
                     + " rather than the newer build's own set.");
+            }
+            if (harness.Outcomes != 1)
+            {
+                throw new InvalidOperationException(
+                    "And it is discarded QUIETLY: a superseded build must "
+                    + "not ask the component to refresh its outputs, or the "
+                    + "canvas is expired once for a set nobody will ever "
+                    + "see. The owner was told " + harness.Outcomes
+                    + " times for two builds.");
             }
 
             // THE NEGATIVE HALF, last because it takes the worker down.

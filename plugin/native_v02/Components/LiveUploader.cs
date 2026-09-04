@@ -449,6 +449,14 @@ internal sealed class LiveUploader : IDisposable
             // ledger is dropped. With Live off the component calls this on
             // every solve, and a source per solve is an allocation and a
             // cancellation for nothing.
+            //
+            // THE LEDGER IS DROPPED TWICE OVER, and that is deliberate but
+            // it is defence in depth rather than two mechanisms: clearing
+            // the keys alone would do it, and forgetting the study alone
+            // would do it too, since a null study name makes every document
+            // read as belonging somewhere else. Measured: deleting either
+            // line on its own leaves the whole harness green, and deleting
+            // both reddens the Live-off-and-on assertion.
             _sentKeys.Clear();
             _sentName = null;
             _sentStudio = null;
