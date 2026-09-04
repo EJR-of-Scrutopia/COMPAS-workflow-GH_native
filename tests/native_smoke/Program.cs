@@ -31281,8 +31281,27 @@ internal static class Program
         if (string.Equals(Material(document), document, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "The key material is the document WITHOUT its thrust mesh; "
-                + "this one still carries it.");
+                "The key material is the document WITHOUT its thrust mesh's "
+                + "bytes; this one still carries them.");
+        }
+        // AND THE PRESENCE OF THE MESH IS COUNTED, which is the other half
+        // of the same rule and the half a deletion loses. A worker that
+        // will not start writes "thrustMesh": null; the same Result
+        // recovered on the next build writes the real string. If those two
+        // keyed alike the uploader would say "unchanged since: ..." and the
+        // recovered set would never be sent, so the studio would sit on a
+        // form document with no thrust mesh and no staged analysis until
+        // the Result changed or Live was toggled off and on, with nothing
+        // on the canvas saying so.
+        if (string.Equals(
+                Material(document), Material(withoutMesh), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "A form document carrying a thrust mesh and the same "
+                + "document with 'thrustMesh': null must key DIFFERENTLY: "
+                + "the mesh's BYTES are skipped, its PRESENCE is not, or a "
+                + "set recovered after a worker failure reads as unchanged "
+                + "and is never sent.");
         }
         string movedStudy = (string)json.Invoke(
             null, new object?[] { result, "another study", Mesh })!;
@@ -32248,6 +32267,28 @@ internal static class Program
                 "A set differing in the CONTRACT half of the form document keys "
                 + "differently: that half is the whole of what a changed Result "
                 + "changes, so a key blind to it would never send again.");
+        }
+        // THE COMPAS KIND'S OWN RULE, re-pointed onto the string that
+        // absorbed it: the mesh's BYTES are skipped, its PRESENCE is read.
+        // A worker that will not start leaves "thrustMesh": null in the
+        // form document; the same Result recovered on the next build
+        // carries the real mesh. If the two keyed alike the uploader would
+        // report "unchanged since: ..." and never send the recovered set,
+        // so the studio would keep a form document with no thrust mesh and
+        // no staged analysis until the Result itself changed or Live was
+        // toggled off and on, with nothing on the canvas saying so.
+        var workerDown = new List<(string, string)>
+        {
+            ("form", "{\"study\":\"arch\",\"a\":1,\"thrustMesh\":null}"),
+            ("formwork", "{\"schema\":\"bench.formwork/1\"}"),
+        };
+        if (Key("arch", Studio, a) == Key("arch", Studio, workerDown))
+        {
+            throw new InvalidOperationException(
+                "A set whose form document carries a thrust mesh and the "
+                + "same set whose form document carries 'thrustMesh': null "
+                + "must key DIFFERENTLY, or a set recovered after a worker "
+                + "failure is reported unchanged and never sent.");
         }
         var withoutFormwork = new List<(string, string)>
         {

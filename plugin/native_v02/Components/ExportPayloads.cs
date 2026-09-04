@@ -462,26 +462,44 @@ internal static class FormDocument
     }
 
     /// <summary>
-    /// The form document with its thrust mesh taken off, which is what a
-    /// change key reads.
+    /// The form document with its thrust mesh reduced to a PRESENCE TOKEN,
+    /// which is what a change key reads.
     ///
-    /// The thrust mesh is the worker's <c>compas.data.json_dumps</c> of
-    /// freshly built objects, and json_dumps stamps a fresh uuid4 into
-    /// every serialisation (compas/data/data.py), so two solves of an
-    /// unchanged Result produce two different strings. A key that read
-    /// those bytes could never repeat: every outcome expires the component,
-    /// the re-solve would enqueue a set that looked new, and the sending
-    /// would go round for as long as Live was left on. That is the standing
-    /// SetKey lesson, inherited from the compas kind this document
-    /// absorbed, and the contract half IS read, so a changed Result still
-    /// keys differently.
+    /// The mesh's BYTES are left out. It is the worker's
+    /// <c>compas.data.json_dumps</c> of freshly built objects, and
+    /// json_dumps stamps a fresh uuid4 into every serialisation
+    /// (compas/data/data.py), so two solves of an unchanged Result produce
+    /// two different strings. A key that read those bytes could never
+    /// repeat: every outcome expires the component, the re-solve would
+    /// enqueue a set that looked new, and the sending would go round for as
+    /// long as Live was left on. That is the standing SetKey lesson,
+    /// inherited from the compas kind this document absorbed, and the
+    /// contract half IS read, so a changed Result still keys differently.
+    ///
+    /// The mesh's PRESENCE is counted, and that half is not cosmetic. A
+    /// worker that will not start writes <c>"thrustMesh": null</c>, and the
+    /// same Result recovered on the next build writes the real string. If
+    /// the member were deleted outright the two would key IDENTICALLY, the
+    /// uploader would report "unchanged since: ..." and the recovered set
+    /// would never be sent: the studio would keep a form document with no
+    /// thrust mesh, and no staged analysis, until the Result itself changed
+    /// or Live was toggled off and on, with nothing on the canvas saying so.
+    /// That was the compas kind's rule too, whose bytes were skipped while
+    /// its presence counted, and it moved here with the string.
     /// </summary>
     public static string KeyMaterial(string json)
     {
         if (json is null)
             return string.Empty;
         int at = json.LastIndexOf(ThrustMeshMember, StringComparison.Ordinal);
-        return at < 0 ? json : json[..at] + "}";
+        if (at < 0)
+            return json;
+        ReadOnlySpan<char> value = json.AsSpan(at + ThrustMeshMember.Length);
+        return json[..at]
+            + ThrustMeshMember
+            + (value.StartsWith("null".AsSpan(), StringComparison.Ordinal)
+                ? "null}"
+                : "\"present\"}");
     }
 }
 
