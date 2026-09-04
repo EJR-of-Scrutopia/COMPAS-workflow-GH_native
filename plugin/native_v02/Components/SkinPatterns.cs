@@ -326,8 +326,10 @@ internal sealed record SkinPatternResult(
     /// <summary>THE SEAM CURVES of spec 2026-09-04 rule 1.1: the meeting
     /// lines of the net's seed groups, as polylines, empty on a net with one
     /// anchor group and empty under the Z fallback. They are carried here
-    /// because the closer band is cut against them and because diagnostics
-    /// names them, and an INIT PROPERTY rather than a positional parameter
+    /// because diagnostics names them and because a check measures the
+    /// closer's stones against them; the closer's own cut does not read
+    /// them, and saying otherwise was a review finding. An INIT PROPERTY
+    /// rather than a positional parameter
     /// for the reason SkinNet's own RimDropped gives: every existing
     /// construction site is positional, and a positional append would move
     /// each of them for nothing.</summary>
@@ -3322,8 +3324,15 @@ internal static class SkinPatterns
             return Empty("courses", net);
 
         // THE SEAM CURVES (spec 2026-09-04 rule 1.1), found once per pattern
-        // off the net's own seed identity: they are what the closer band is
-        // cut along and what diagnostics names.
+        // off the net's own seed identity. WHAT THEY ARE AND ARE NOT, stated
+        // exactly because the first wording of this comment overclaimed and a
+        // review round caught it: they are DATA, carried on the result and
+        // named by diagnostics, and they are what a check measures the
+        // closer's stones against. They are NOT an input to the closer's own
+        // cut. The closer divides its GUIDE LEVEL CURVE at pitch, and the
+        // guide runs alongside the seam rather than across it, so the
+        // sections fall across the seam without the seam curve ever being
+        // consulted. CloserBand therefore does not take them.
         IReadOnlyList<double[][]> seams = SeamCurves(net);
 
         int bands = BandCount(dMin, dMax, courseHeight);
@@ -3455,7 +3464,6 @@ internal static class SkinPatterns
             foreach ((int order, SkinCell cell) in CloserBand(
                          resolved.Traced[levelIndex[low]],
                          resolved.Traced[levelIndex[high]],
-                         seams,
                          refusedCourse,
                          size,
                          minimumPiece,
@@ -5488,12 +5496,19 @@ internal static class SkinPatterns
     /// other family between the two points nearest IN PLAN to the span's
     /// ends.
     ///
-    /// SO THE STONES RUN WITH THE SEAM. A guide curve at a merge lies
-    /// alongside the seam and not across it, so cutting the guide at pitch
-    /// cuts the band by sections PERPENDICULAR to the seam, the stones are
-    /// elongated ALONG it and the head joints run across it, which is how
-    /// groin masonry is coursed and is what Param's "following the tangent
-    /// curvature of the mesh" asks for.
+    /// SO THE STONES RUN WITH THE SEAM, AND THE PERPENDICULAR IS AN
+    /// ARGUMENT AND NOT A CONSTRUCTION. What is BUILT is the division of the
+    /// guide level curve at pitch: nothing here reads a seam curve, and the
+    /// method does not take one. What is CLAIMED is that a guide curve at a
+    /// merge lies alongside the seam and not across it, so a cut across the
+    /// guide falls across the seam, the stones come out elongated ALONG it
+    /// and the head joints run across it, which is how groin masonry is
+    /// coursed and is what Param's "following the tangent curvature of the
+    /// mesh" asks for. Rule 2.2 words the cut as sections PERPENDICULAR to
+    /// the seam curve; a literal perpendicular, cut by the seam's own normal
+    /// at the sampled spacing, is a different construction and is not this
+    /// one. The distinction is written down because a review round found
+    /// two places stating the stronger thing as fact.
     ///
     /// WHY THE NEAREST POINT IN PLAN AND NOT THE PROPORTIONAL ARC that
     /// BandCell uses. A proportional map is a statement that the two curves
@@ -5529,7 +5544,6 @@ internal static class SkinPatterns
     private static List<(int Order, SkinCell Cell)> CloserBand(
         IReadOnlyList<SkinLevelCurve> lows,
         IReadOnlyList<SkinLevelCurve> highs,
-        IReadOnlyList<double[][]> seams,
         int course,
         double size,
         double minimumPiece,
