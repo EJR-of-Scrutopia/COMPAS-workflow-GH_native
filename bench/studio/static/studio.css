@@ -308,3 +308,10 @@ body { overflow: hidden;
    a floor is a floor, and a sphere of paving tells you nothing about the
    joint size you are choosing. */
 #ground-tiles { grid-template-columns: 1fr 1fr; }
+
+/* The weather presets as small skies: "overcast" is a look, and a word in a
+   dropdown is a poor way to offer one. Three to a row, because five words
+   at this size do not fit a segmented control and a sky is wider than it is
+   tall anyway. */
+#weather-tiles { grid-template-columns: 1fr 1fr 1fr; }
+#weather-tiles .tile canvas { aspect-ratio: 4 / 3; }

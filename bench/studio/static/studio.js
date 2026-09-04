@@ -319,6 +319,7 @@ function applyEnvironment() {
   applySunFromSliders();
   document.getElementById("background-row").classList.toggle("hidden", state.environmentMode !== "studio");
   document.getElementById("weather-row").classList.toggle("hidden", state.environmentMode !== "sky");
+  document.getElementById("weather-tiles").classList.toggle("hidden", state.environmentMode !== "sky");
   document.getElementById("hdri-row").classList.toggle("hidden", state.environmentMode !== "hdri");
   if (state.environmentMode !== "hdri") disposeHdriDome();
   if (state.environmentMode === "sky") {
@@ -2421,6 +2422,75 @@ function renderGroundPreview(preset, canvasEl) {
     const [u, v] = groundRepeat(state.groundRadius, tile);
     material.map.repeat.set(u, v);
   }
+}
+
+// The weather presets, each rendered as its own sky. The preview rig gets
+// its own Sky mesh, because the scene's one belongs to the scene and a
+// preview must not touch the uniforms the viewport is drawing from.
+let previewSky = null;
+
+function renderWeatherPreview(preset, canvasEl) {
+  const settings = WEATHER[preset];
+  if (!previewRig || !settings) {
+    fillFlat(canvasEl, new THREE.Color(settings ? settings.fogColor : 0x2a2e34));
+    return;
+  }
+  if (!previewSky) {
+    previewSky = new Sky();
+    previewSky.scale.setScalar(4000);
+    previewSky.material.uniforms.up.value.set(0, 0, 1);
+    previewSky.material.uniforms.cloudCoverage.value = 0;
+    previewRig.scene.add(previewSky);
+  }
+  const uniforms = previewSky.material.uniforms;
+  uniforms.turbidity.value = settings.turbidity;
+  uniforms.rayleigh.value = settings.rayleigh;
+  uniforms.mieCoefficient.value = settings.mieCoefficient;
+  uniforms.mieDirectionalG.value = settings.mieDirectionalG;
+  // The sun sits where this preset wants it, or where the studio's own sun
+  // is standing, so the tiles answer "what would this weather look like
+  // now" rather than "what does this weather look like at noon".
+  const elevation = settings.elevation === null
+    ? Math.max(2, currentSun().elevation) : settings.elevation;
+  const azimuth = 40 * Math.PI / 180;
+  const height = elevation * Math.PI / 180;
+  uniforms.sunPosition.value.set(
+    Math.cos(height) * Math.cos(azimuth),
+    Math.cos(height) * Math.sin(azimuth),
+    Math.sin(height)).normalize();
+  previewSky.visible = true;
+  previewRig.ball.visible = false;
+  const exposure = previewRig.renderer.toneMappingExposure;
+  previewRig.renderer.toneMappingExposure = settings.exposure * 1.9;
+  // Looking at the horizon, slightly above it, which is where the weather
+  // of a sky actually reads.
+  previewRig.camera.position.set(0, 0, 0.2);
+  previewRig.camera.lookAt(0, 4, 0.9);
+  drawPreview(canvasEl);
+  previewRig.renderer.toneMappingExposure = exposure;
+  previewSky.visible = false;
+  previewRig.ball.visible = true;
+  previewRig.camera.position.set(0, -3.05, 1.02);
+  previewRig.camera.lookAt(0, 0, 0);
+}
+
+function buildWeatherTiles() {
+  const holder = document.getElementById("weather-tiles");
+  const select = document.getElementById("weather-preset");
+  if (!holder || !select) return;
+  holder.innerHTML = "";
+  for (const option of select.options) {
+    const tile = previewTile(option.value, option.textContent,
+      (canvasEl) => renderWeatherPreview(option.value, canvasEl));
+    tile.addEventListener("click", () => {
+      if (select.value === option.value) return;
+      select.value = option.value;
+      select.dispatchEvent(new Event("change"));
+      paintTileSelection(holder, option.value);
+    });
+    holder.appendChild(tile);
+  }
+  paintTileSelection(holder, select.value);
 }
 
 function buildGroundTiles() {
@@ -5614,6 +5684,7 @@ function frame(now) {
 // The tile grids are built here, after SKINS and skinMaterialCache exist.
 guarded("the material tiles", buildMaterialTiles);
 guarded("the ground tiles", buildGroundTiles);
+guarded("the weather tiles", buildWeatherTiles);
 guarded("the setting segments", () => buildSegmented("environment-segments", "environment-mode"));
 guarded("the slider rows", () => upgradeSliders());
 guarded("the panel groups", buildGroups);
