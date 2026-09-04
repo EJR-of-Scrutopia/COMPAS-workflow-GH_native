@@ -561,6 +561,12 @@ internal sealed class LiveUploader : IDisposable
         {
             lock (_gate)
             {
+                // The single-flight flag is put back in EVERY branch below
+                // except the one that starts a send: a send holds it too, so
+                // no build can begin while documents are on the wire. That is
+                // what makes the "a send was already running" case below a
+                // corner rather than the ordinary one, and it costs nothing:
+                // a build landing during a send could not send anyway.
                 _building = false;
                 if (_disposed)
                     return;
@@ -602,21 +608,43 @@ internal sealed class LiveUploader : IDisposable
                     _built = built;
                     _builtKey = key;
                     if (set.Live)
-                    {
                         moved.AddRange(MovedLocked(set, built));
-                        send = moved.Count > 0 && !_sending;
-                    }
+                    send = moved.Count > 0 && !_sending;
                     if (send)
                     {
                         _sending = true;
+                        // AND _building STAYS TRUE, held from here to the
+                        // send's own tail: a build that started now could
+                        // not send its documents, because one send at a time
+                        // is what keeps the ledger and the outcome text
+                        // describing the same set.
+                        _building = true;
                         _phase = Phase.Sending;
                         generation = _cancelGeneration;
                         token = _cancel.Token;
                     }
+                    else if (moved.Count > 0)
+                    {
+                        // A send was already on the wire, which takes two
+                        // writes overlapping, since every other path holds
+                        // the build flag across its send. These documents are
+                        // NOT dropped: the request goes back as pending and
+                        // the next tick builds and sends it. Dropping them
+                        // would leave the studio holding a set the canvas has
+                        // moved past, with nothing anywhere saying so.
+                        _pending = set;
+                        _phase = Phase.Pending;
+                        _timer?.Dispose();
+                        _timer = new Timer(
+                            _ => Fire(),
+                            null,
+                            DebounceMilliseconds,
+                            Timeout.Infinite);
+                    }
                     else
                     {
                         _phase = Phase.Done;
-                        if (set.Live && moved.Count == 0)
+                        if (set.Live)
                             _lastOutcome = UnchangedText(_sentOutcome);
                     }
                 }
@@ -879,6 +907,9 @@ internal sealed class LiveUploader : IDisposable
             lock (_gate)
             {
                 _sending = false;
+                // Held from the build that started this send, so that no
+                // build could begin while the documents were on the wire.
+                _building = false;
                 if (!_disposed && sequence == _latestStarted)
                 {
                     // Not latched across a Cancel: that cleared the ledger on
@@ -916,12 +947,15 @@ internal sealed class LiveUploader : IDisposable
             // it in. This task is a discard, so a fault here is an
             // unobserved task exception: the outcome is lost in silence on
             // a default runtime and takes the process on one configured to
-            // throw. The single-flight flag goes back so the next set can
-            // still go.
+            // throw. BOTH single-flight flags go back, the build's as well as
+            // the send's, so the next set can still be built and still go.
             try
             {
                 lock (_gate)
+                {
                     _sending = false;
+                    _building = false;
+                }
             }
             catch (Exception)
             {
