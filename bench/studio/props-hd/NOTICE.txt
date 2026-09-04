@@ -19,6 +19,9 @@ modular_wooden_pier
 anthurium_botany_01
   Anthurium
   https://polyhaven.com/a/anthurium_botany_01
+bark_debris_01
+  Bark debris
+  https://polyhaven.com/a/bark_debris_01
 calathea_orbifolia_01
   Calathea
   https://polyhaven.com/a/calathea_orbifolia_01
@@ -37,6 +40,9 @@ dandelion_01
 dead_quiver_trunk
   Quiver trunk
   https://polyhaven.com/a/dead_quiver_trunk
+dead_tree_trunk
+  Fallen trunk
+  https://polyhaven.com/a/dead_tree_trunk
 dead_tree_trunk_02
   Dead trunk
   https://polyhaven.com/a/dead_tree_trunk_02
@@ -76,6 +82,9 @@ pachira_aquatica_01
 periwinkle_plant
   Periwinkle
   https://polyhaven.com/a/periwinkle_plant
+pine_roots
+  Pine roots
+  https://polyhaven.com/a/pine_roots
 pine_sapling_small
   Small pine
   https://polyhaven.com/a/pine_sapling_small
@@ -100,6 +109,12 @@ quiver_tree_01
 quiver_tree_02
   Quiver tree small
   https://polyhaven.com/a/quiver_tree_02
+root_cluster_01
+  Root cluster
+  https://polyhaven.com/a/root_cluster_01
+root_cluster_02
+  Root mat
+  https://polyhaven.com/a/root_cluster_02
 searsia_lucida
   Searsia
   https://polyhaven.com/a/searsia_lucida
@@ -115,6 +130,9 @@ shrub_03
 shrub_04
   Undergrowth
   https://polyhaven.com/a/shrub_04
+single_root
+  Single root
+  https://polyhaven.com/a/single_root
 tree_small_02
   Broadleaf tree
   https://polyhaven.com/a/tree_small_02
@@ -139,21 +157,105 @@ boulder_01
 cement_bag
   Cement bag
   https://polyhaven.com/a/cement_bag
+coast_line_01
+  Coastline
+  https://polyhaven.com/a/coast_line_01
+coast_line_02
+  Coastline 2
+  https://polyhaven.com/a/coast_line_02
+coast_rocks_01
+  Coast formation
+  https://polyhaven.com/a/coast_rocks_01
+coast_rocks_03
+  Coast formation 3
+  https://polyhaven.com/a/coast_rocks_03
+coast_rocks_05
+  Reef rock
+  https://polyhaven.com/a/coast_rocks_05
+coastal_cliff_01
+  Coastal cliff
+  https://polyhaven.com/a/coastal_cliff_01
+coastal_cliff_02
+  Coastal cliff 2
+  https://polyhaven.com/a/coastal_cliff_02
+moon_rock_01
+  Moon rock 1
+  https://polyhaven.com/a/moon_rock_01
+moon_rock_02
+  Moon rock 2
+  https://polyhaven.com/a/moon_rock_02
+moon_rock_03
+  Moon rock 3
+  https://polyhaven.com/a/moon_rock_03
+moon_rock_04
+  Moon rock 4
+  https://polyhaven.com/a/moon_rock_04
+moon_rock_05
+  Moon rock 5
+  https://polyhaven.com/a/moon_rock_05
+moon_rock_06
+  Moon rock 6
+  https://polyhaven.com/a/moon_rock_06
+moon_rock_07
+  Moon rock 7
+  https://polyhaven.com/a/moon_rock_07
+mountainside
+  Mountainside
+  https://polyhaven.com/a/mountainside
 namaqualand_boulder_02
   Boulder
   https://polyhaven.com/a/namaqualand_boulder_02
+namaqualand_boulder_03
+  Boulder large
+  https://polyhaven.com/a/namaqualand_boulder_03
+namaqualand_boulder_04
+  Boulder round
+  https://polyhaven.com/a/namaqualand_boulder_04
+namaqualand_boulder_05
+  Boulder low
+  https://polyhaven.com/a/namaqualand_boulder_05
+namaqualand_boulder_06
+  Boulder tall
+  https://polyhaven.com/a/namaqualand_boulder_06
 namaqualand_boulders_01
   Boulders
   https://polyhaven.com/a/namaqualand_boulders_01
+namaqualand_cliff_01
+  Cliff outcrop
+  https://polyhaven.com/a/namaqualand_cliff_01
+namaqualand_cliff_02
+  Cliff wall
+  https://polyhaven.com/a/namaqualand_cliff_02
+namaqualand_rocks_01
+  Quartz rocks
+  https://polyhaven.com/a/namaqualand_rocks_01
 namaqualand_stones_01
   Stones
   https://polyhaven.com/a/namaqualand_stones_01
+rock_07
+  Rock
+  https://polyhaven.com/a/rock_07
+rock_09
+  Rock small
+  https://polyhaven.com/a/rock_09
+rock_face_01
+  Rock face
+  https://polyhaven.com/a/rock_face_01
+rock_face_02
+  Rock face small
+  https://polyhaven.com/a/rock_face_02
 rock_moss_set_01
   Mossy rocks
   https://polyhaven.com/a/rock_moss_set_01
+rock_moss_set_02
+  Mossy rocks 2
+  https://polyhaven.com/a/rock_moss_set_02
 sand_rocks_small_01
   Sand rocks
   https://polyhaven.com/a/sand_rocks_small_01
+stone_01
+  Stone
+  https://polyhaven.com/a/stone_01
 WetFloorSign_01
   Wet floor sign
   https://polyhaven.com/a/WetFloorSign_01

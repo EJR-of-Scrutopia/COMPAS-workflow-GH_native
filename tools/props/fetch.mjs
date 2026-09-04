@@ -144,18 +144,65 @@ const LIST = [
   { slug: "potted_plant_04",     label: "Potted aloe",      group: "planting", size: "clutter" },
   { slug: "planter_box_01",      label: "Planter box",      group: "planting", size: "clutter" },
   { slug: "planter_box_03",      label: "Long planter",     group: "planting", size: "clutter" },
-  // Buildings: everything CC0 and building-shaped that Poly Haven holds
-  // (13 in its buildings category, most of them doors and shutters; these
-  // are the ones that read as CONTEXT beside a vault). Photoreal people
-  // exist under no CC0 licence anywhere -- that hole is documented in the
-  // wave register with the account-gated sources Param can pull himself.
-  { slug: "modular_urban_apartments_facade", label: "Apartment facade", group: "buildings", size: "hero" },
-  { slug: "modular_factory_facade", label: "Factory facade", group: "buildings", size: "hero" },
-  { slug: "modular_fort_01",     label: "Stone fort kit",   group: "buildings", size: "hero" },
-  { slug: "modular_wooden_pier", label: "Wooden pier",      group: "buildings", size: "mid" },
-  { slug: "modular_fire_escape", label: "Fire escape",      group: "buildings", size: "mid" },
+  // Buildings: DROPPED 2026-09-05 on Param's review. Poly Haven's
+  // building assets are modular KITS -- disassembled facade panels,
+  // fort wall segments, pier sections floating in a bounding box --
+  // "obviously pieces of buildings that want combining", useless as
+  // one-click props. Dropped: modular_urban_apartments_facade,
+  // modular_factory_facade, modular_fort_01, modular_wooden_pier,
+  // modular_fire_escape. Photoreal people likewise exist under no CC0
+  // licence anywhere -- that hole is documented in the wave register
+  // with the account-gated sources Param can pull himself.
   { slug: "utility_box_02",      label: "Utility cabinet",  group: "street", size: "mid" },
   { slug: "concrete_road_barrier_02", label: "Road barrier low", group: "street", size: "clutter" },
+  // The 2026-09-04 tree-and-rock sweep: everything left in the catalogue
+  // that is a tree, a trunk, a root or a rock, minus the three canopy
+  // failures already dropped above (fir_tree_01, pine_tree_01,
+  // island_tree_02 stay out; their verdict was rendered, not guessed).
+  // Ten more were offered to the 30 MB pre-flight guard on 2026-09-04 and
+  // refused on the API's own .bin sizes, so they are not listed either:
+  // jacaranda_tree (214.6 MB), pine_sapling_medium (267.8 MB),
+  // island_tree_01 (66.3), island_tree_03 (84.9), searsia_burchellii
+  // (34.6), coast_land_rocks_02/03/04 (39.6/34.0/33.6), coast_rocks_02
+  // (38.5) and coastal_cliff_04 (46.5). The catalogue holds no broadleaf
+  // shade tree under the line; that hole stays a Blender job, not a fetch.
+  { slug: "dead_tree_trunk",     label: "Fallen trunk",     group: "planting", size: "mid" },
+  { slug: "root_cluster_01",     label: "Root cluster",     group: "planting", size: "mid" },
+  { slug: "root_cluster_02",     label: "Root mat",         group: "planting", size: "clutter" },
+  { slug: "single_root",         label: "Single root",      group: "planting", size: "clutter" },
+  { slug: "pine_roots",          label: "Pine roots",       group: "planting", size: "clutter" },
+  { slug: "bark_debris_01",      label: "Bark debris",      group: "planting", size: "clutter" },
+  // Rock, the rest of it. Namaqualand first, then the verdant-trail and
+  // smugglers-cove formations; the coast pieces are landscape-scale and
+  // priced as heroes because their silhouettes are the whole point.
+  { slug: "namaqualand_boulder_03", label: "Boulder large", group: "site", size: "mid" },
+  { slug: "namaqualand_boulder_04", label: "Boulder round", group: "site", size: "mid" },
+  { slug: "namaqualand_boulder_05", label: "Boulder low",   group: "site", size: "mid" },
+  { slug: "namaqualand_boulder_06", label: "Boulder tall",  group: "site", size: "mid" },
+  { slug: "namaqualand_rocks_01", label: "Quartz rocks",    group: "site", size: "clutter" },
+  { slug: "namaqualand_cliff_01", label: "Cliff outcrop",   group: "site", size: "hero" },
+  { slug: "namaqualand_cliff_02", label: "Cliff wall",      group: "site", size: "hero" },
+  { slug: "mountainside",        label: "Mountainside",     group: "site", size: "hero" },
+  { slug: "rock_face_01",        label: "Rock face",        group: "site", size: "mid" },
+  { slug: "rock_face_02",        label: "Rock face small",  group: "site", size: "mid" },
+  { slug: "rock_moss_set_02",    label: "Mossy rocks 2",    group: "site", size: "mid" },
+  { slug: "rock_07",             label: "Rock",             group: "site", size: "clutter" },
+  { slug: "rock_09",             label: "Rock small",       group: "site", size: "clutter" },
+  { slug: "stone_01",            label: "Stone",            group: "site", size: "clutter" },
+  { slug: "coast_rocks_01",      label: "Coast formation",  group: "site", size: "hero" },
+  { slug: "coast_rocks_03",      label: "Coast formation 3", group: "site", size: "hero" },
+  { slug: "coast_rocks_05",      label: "Reef rock",        group: "site", size: "mid" },
+  { slug: "coast_line_01",       label: "Coastline",        group: "site", size: "hero" },
+  { slug: "coast_line_02",       label: "Coastline 2",      group: "site", size: "hero" },
+  { slug: "coastal_cliff_01",    label: "Coastal cliff",    group: "site", size: "hero" },
+  { slug: "coastal_cliff_02",    label: "Coastal cliff 2",  group: "site", size: "hero" },
+  { slug: "moon_rock_01",        label: "Moon rock 1",      group: "site", size: "clutter" },
+  { slug: "moon_rock_02",        label: "Moon rock 2",      group: "site", size: "clutter" },
+  { slug: "moon_rock_03",        label: "Moon rock 3",      group: "site", size: "clutter" },
+  { slug: "moon_rock_04",        label: "Moon rock 4",      group: "site", size: "clutter" },
+  { slug: "moon_rock_05",        label: "Moon rock 5",      group: "site", size: "clutter" },
+  { slug: "moon_rock_06",        label: "Moon rock 6",      group: "site", size: "clutter" },
+  { slug: "moon_rock_07",        label: "Moon rock 7",      group: "site", size: "clutter" },
 ];
 
 // The pre-flight rule that would have caught every canopy failure before a
